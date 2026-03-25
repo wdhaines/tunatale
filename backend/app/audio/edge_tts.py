@@ -30,7 +30,6 @@ class EdgeTTSService:
     def __init__(self, cache_dir: Path | None = None) -> None:
         self._cache_dir = cache_dir
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
-        self._last_request_time: float = 0.0
 
     # ------------------------------------------------------------------
     # TTSService Protocol implementation

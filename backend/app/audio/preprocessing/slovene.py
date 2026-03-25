@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-
 from app.models.lesson import SectionType
 
 
@@ -37,8 +35,3 @@ class SlovenePreprocessor:
         # Insert an ellipsis between each word so TTS inserts natural gaps
         words = text.split()
         return " ... ".join(words)
-
-    def _expand_numbers(self, text: str) -> str:
-        """Placeholder for number expansion (Slovene ordinals/cardinals)."""
-        # Basic digit-word passthrough — full numeral expansion is out of scope
-        return re.sub(r"\b(\d+)\b", r"\1", text)

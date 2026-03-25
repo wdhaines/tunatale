@@ -31,6 +31,8 @@ export interface LessonSummary {
 	sections: SectionSummary[];
 }
 
+export type ContentStrategy = 'WIDER' | 'DEEPER';
+
 export interface SRSDue {
 	due: Array<{ text: string; translation: string }>;
 }
@@ -69,7 +71,7 @@ export class TunaTaleAPI {
 		return res.json();
 	}
 
-	async generateStory(curriculumId: string, day: number, strategy = 'WIDER'): Promise<LessonSummary> {
+	async generateStory(curriculumId: string, day: number, strategy: ContentStrategy = 'WIDER'): Promise<LessonSummary> {
 		const res = await fetch(`${this.baseUrl}/api/story/generate`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },

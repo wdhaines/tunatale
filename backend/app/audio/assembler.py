@@ -21,10 +21,11 @@ class AudioAssembler:
         if not audio_bytes_list:
             return b""
         gap = self.add_silence(silence_ms)
-        result = audio_bytes_list[0]
+        parts = [audio_bytes_list[0]]
         for chunk in audio_bytes_list[1:]:
-            result = result + gap + chunk
-        return result
+            parts.append(gap)
+            parts.append(chunk)
+        return b"".join(parts)
 
     def normalize(self, audio_bytes: bytes) -> bytes:
         """Return audio unchanged (normalization requires codec support)."""

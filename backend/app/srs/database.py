@@ -82,6 +82,8 @@ class SRSDatabase:
     def _init_schema(self, conn: sqlite3.Connection) -> None:
         conn.execute(_CREATE_COLLOCATIONS)
         conn.execute(_CREATE_VIOLATIONS)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_collocations_due_date ON collocations(due_date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_collocations_state ON collocations(state)")
         conn.commit()
 
     @contextmanager
