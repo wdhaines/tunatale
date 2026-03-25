@@ -1,0 +1,51 @@
+# Prototype directories — each has its own git repo
+micro-demo-0.0/
+micro-demo-0.1/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Test & coverage artifacts
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# Node / frontend
+node_modules/
+frontend/.svelte-kit/
+frontend/build/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Runtime data / DB
+*.db
+*.db-journal
+
+# TTS / audio cache
+backend/cache/
