@@ -52,3 +52,7 @@ frontend/build/
 
 # TTS / audio cache
 backend/cache/
+
+# Generated outputs and ad-hoc scripts
+backend/output/
+backend/scripts/
