@@ -3,8 +3,11 @@
 from app.config import Settings
 
 
-def test_settings_defaults():
-    s = Settings()
+def test_settings_defaults(monkeypatch, tmp_path):
+    for var in ("GROQ_API_KEY", "DATABASE_URL", "LLM_MODE", "LLM_MODEL"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.chdir(tmp_path)
+    s = Settings(_env_file=None)
     assert s.groq_api_key == ""
     assert s.database_url == "sqlite:///./tunatale.db"
     assert s.llm_mode == "mock"
