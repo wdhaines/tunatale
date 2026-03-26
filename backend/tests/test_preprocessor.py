@@ -45,3 +45,9 @@ def test_key_phrases_section_supported(preprocessor):
 def test_translated_section_supported(preprocessor):
     result = preprocessor.preprocess("good day", SectionType.TRANSLATED)
     assert isinstance(result, str)
+
+
+def test_slow_pauses_skips_already_slowed(preprocessor):
+    already_slowed = "Dober ... dan"
+    result = preprocessor.preprocess(already_slowed, SectionType.SLOW_SPEED)
+    assert result == already_slowed

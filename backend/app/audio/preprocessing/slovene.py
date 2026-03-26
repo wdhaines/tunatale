@@ -32,6 +32,8 @@ class SlovenePreprocessor:
 
     def _add_slow_pauses(self, text: str) -> str:
         """Insert pause markers between words to produce slower delivery."""
-        # Insert an ellipsis between each word so TTS inserts natural gaps
+        # Already slowed (built by section_builder) — return unchanged
+        if " ... " in text:
+            return text
         words = text.split()
         return " ... ".join(words)

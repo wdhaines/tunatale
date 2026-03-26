@@ -5,64 +5,20 @@ from __future__ import annotations
 import json
 import logging
 
+from app.generation.prompts import SYSTEM_PROMPT, get_strategy_prompt
+from app.generation.section_builder import (
+    build_key_phrases_section,
+    build_natural_speed_section,
+    build_slow_speed_section,
+    build_translated_section,
+)
 from app.models.curriculum import CurriculumDay
 from app.models.language import Language
-from app.models.lesson import Lesson, Phrase, Section, SectionType
+from app.models.lesson import Lesson
 from app.models.strategy import ContentStrategy
 from app.srs.database import SRSDatabase
 
 logger = logging.getLogger(__name__)
-
-_SECTION_TYPE_MAP = {
-    "key_phrases": SectionType.KEY_PHRASES,
-    "natural_speed": SectionType.NATURAL_SPEED,
-    "slow_speed": SectionType.SLOW_SPEED,
-    "translated": SectionType.TRANSLATED,
-}
-
-_STORY_PROMPT_TEMPLATE = """\
-Generate a Pimsleur-style language lesson for the following curriculum day.
-
-Language: {language_name} ({language_code})
-Day: {day} — {title}
-Focus: {focus}
-Learning objective: {learning_objective}
-Story guidance: {story_guidance}
-Strategy: {strategy}
-
-Key collocations to include:
-{collocations}
-
-Respond with a JSON object matching this schema:
-{{
-  "sections": [
-    {{
-      "type": "key_phrases",
-      "phrases": [{{"text": "...", "language": "{language_code}"}}]
-    }},
-    {{
-      "type": "natural_speed",
-      "phrases": [{{"text": "...", "language": "{language_code}"}}]
-    }},
-    {{
-      "type": "slow_speed",
-      "phrases": [{{"text": "...", "language": "{language_code}"}}]
-    }},
-    {{
-      "type": "translated",
-      "phrases": [{{"text": "...", "language": "en"}}]
-    }}
-  ]
-}}
-
-Requirements:
-- Respond with ONLY the JSON object, no markdown fences
-- All 4 section types must be present
-- key_phrases section: include 3–8 target collocations
-- natural_speed: full story dialogue at natural pace
-- slow_speed: repeat key phrases at reduced pace for practice
-- translated: English translation of the natural_speed dialogue
-"""
 
 
 class StoryGenerationError(Exception):
@@ -90,23 +46,28 @@ class StoryGenerator:
             strategy: WIDER or DEEPER content strategy.
 
         Returns:
-            Parsed Lesson with 4 Pimsleur sections.
+            Parsed Lesson with 4 Pimsleur sections built mechanically from LLM JSON.
         """
-        collocation_list = "\n".join(f"- {c}" for c in curriculum_day.collocations)
-        prompt = _STORY_PROMPT_TEMPLATE.format(
+        system_prompt = SYSTEM_PROMPT.format(
             language_name=language.name,
             language_code=language.code,
-            day=curriculum_day.day,
-            title=curriculum_day.title,
-            focus=curriculum_day.focus,
+        )
+
+        new_collocations = "\n".join(f"- {c}" for c in curriculum_day.collocations)
+        user_prompt_template = get_strategy_prompt(strategy)
+        user_prompt = user_prompt_template.format(
+            language_name=language.name,
+            language_code=language.code,
             learning_objective=curriculum_day.learning_objective,
+            focus=curriculum_day.focus,
             story_guidance=curriculum_day.story_guidance,
-            strategy=strategy.value,
-            collocations=collocation_list,
+            new_collocations=new_collocations,
+            review_collocations="(none yet)",
+            source_day_transcript="(not available)",
         )
 
         logger.info("Generating story for day %d (%s)", curriculum_day.day, strategy.value)
-        raw = await self._llm.complete(prompt, temperature=0.7, max_tokens=4096)
+        raw = await self._llm.complete(user_prompt, system_prompt=system_prompt, temperature=0.7, max_tokens=8192)
         return self._parse_response(raw, language=language)
 
     def _parse_response(self, raw: str, language: Language) -> Lesson:
@@ -115,28 +76,20 @@ class StoryGenerator:
         except json.JSONDecodeError as e:
             raise StoryGenerationError(f"LLM returned invalid JSON: {e}") from e
 
-        sections_data = data.get("sections", [])
-        if not sections_data:
-            raise StoryGenerationError("LLM response missing 'sections' key")
+        key_phrases = data.get("key_phrases", [])
+        scenes = data.get("scenes", [])
+        title = data.get("title", "Lesson")
 
-        sections = []
-        for s in sections_data:
-            section_type = _SECTION_TYPE_MAP.get(s.get("type", ""))
-            if section_type is None:
-                logger.warning("Unknown section type %r — skipping", s.get("type"))
-                continue
-            phrases = [
-                Phrase(
-                    text=p["text"],
-                    voice_id=language.tts_voice_map.get("female", ""),
-                    language_code=p.get("language", language.code),
-                )
-                for p in s.get("phrases", [])
-            ]
-            sections.append(Section(section_type=section_type, phrases=phrases))
+        if not key_phrases and not scenes:
+            raise StoryGenerationError("LLM response missing 'key_phrases' and 'scenes'")
 
-        return Lesson(
-            title=f"Day {sections[0].phrases[0].text[:20] if sections and sections[0].phrases else 'lesson'}",
-            language_code=language.code,
-            sections=sections,
-        )
+        narrator_voice = language.tts_voice_map.get("narrator", "en-US-GuyNeural")
+
+        sections = [
+            build_key_phrases_section(key_phrases, language.tts_voice_map, narrator_voice, language.code),
+            build_natural_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
+            build_slow_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
+            build_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
+        ]
+
+        return Lesson(title=title, language_code=language.code, sections=sections)

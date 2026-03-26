@@ -185,6 +185,37 @@ def test_lesson_has_four_section_types():
     assert SectionType.TRANSLATED in types
 
 
+# ── Phrase role field ────────────────────────────────────────────────────
+
+
+def test_phrase_role_default_empty():
+    phrase = Phrase(text="x", voice_id="v", language_code="sl")
+    assert phrase.role == ""
+
+
+def test_phrase_role_explicit():
+    phrase = Phrase(text="x", voice_id="v", language_code="sl", role="narrator")
+    assert phrase.role == "narrator"
+
+
+def test_slovene_voice_map_has_role_keys():
+    lang = Language.slovene()
+    for key in ("narrator", "female-1", "male-1"):
+        assert key in lang.tts_voice_map, f"missing key: {key}"
+
+
+def test_slovene_voice_map_has_legacy_keys():
+    lang = Language.slovene()
+    assert "female" in lang.tts_voice_map
+    assert "male" in lang.tts_voice_map
+
+
+def test_english_voice_map_has_role_keys():
+    lang = Language.english()
+    for key in ("narrator", "female-1", "male-1"):
+        assert key in lang.tts_voice_map, f"missing key: {key}"
+
+
 # ── SRSItem ───────────────────────────────────────────────────────────────
 
 

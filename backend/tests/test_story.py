@@ -38,35 +38,20 @@ def _make_curriculum_day() -> CurriculumDay:
 def _mock_story_response() -> str:
     return json.dumps(
         {
-            "sections": [
+            "title": "Ordering Coffee",
+            "key_phrases": [
+                {"phrase": "dober dan", "translation": "good day"},
+                {"phrase": "prosim kavo", "translation": "a coffee please"},
+            ],
+            "scenes": [
                 {
-                    "type": "key_phrases",
-                    "phrases": [
-                        {"text": "dober dan", "language": "sl"},
-                        {"text": "prosim kavo", "language": "sl"},
-                        {"text": "hvala lepa", "language": "sl"},
+                    "label": "At the Riverside Café",
+                    "lines": [
+                        {"speaker": "female-1", "text": "Dober dan!", "translation": "Good day!"},
+                        {"speaker": "male-1", "text": "Prosim kavo.", "translation": "A coffee please."},
                     ],
-                },
-                {
-                    "type": "natural_speed",
-                    "phrases": [
-                        {"text": "Dober dan! Prosim kavo.", "language": "sl"},
-                        {"text": "Good day! A coffee please.", "language": "en"},
-                    ],
-                },
-                {
-                    "type": "slow_speed",
-                    "phrases": [
-                        {"text": "Dober dan! Prosim kavo.", "language": "sl"},
-                    ],
-                },
-                {
-                    "type": "translated",
-                    "phrases": [
-                        {"text": "Good day! A coffee please.", "language": "en"},
-                    ],
-                },
-            ]
+                }
+            ],
         }
     )
 
@@ -106,7 +91,8 @@ async def test_generate_key_phrases_section_bounded(generator, language):
     day = _make_curriculum_day()
     lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
     kp_section = next(s for s in lesson.sections if s.section_type == SectionType.KEY_PHRASES)
-    assert len(kp_section.phrases) <= 8
+    # Each key_phrase produces multiple phrases via breakdown; at least 2 input phrases
+    assert len(kp_section.phrases) >= 2
 
 
 @pytest.mark.asyncio
@@ -119,3 +105,49 @@ async def test_generate_invalid_json_raises(language, db):
 
     with pytest.raises(StoryGenerationError):
         await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+
+
+@pytest.mark.asyncio
+async def test_generate_key_phrases_have_narrator_translations(generator, language):
+    day = _make_curriculum_day()
+    lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+    kp_section = next(s for s in lesson.sections if s.section_type == SectionType.KEY_PHRASES)
+    narrator_phrases = [p for p in kp_section.phrases if p.role == "narrator"]
+    assert len(narrator_phrases) >= 1
+
+
+@pytest.mark.asyncio
+async def test_generate_natural_speed_has_scene_labels(generator, language):
+    day = _make_curriculum_day()
+    lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+    nat_section = next(s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED)
+    narrator_phrases = [p for p in nat_section.phrases if p.role == "narrator"]
+    assert any("Riverside" in p.text or "Café" in p.text for p in narrator_phrases)
+
+
+@pytest.mark.asyncio
+async def test_generate_slow_speed_has_ellipsis(generator, language):
+    day = _make_curriculum_day()
+    lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+    slow_section = next(s for s in lesson.sections if s.section_type == SectionType.SLOW_SPEED)
+    dialogue = [p for p in slow_section.phrases if p.role != "narrator"]
+    assert any(" ... " in p.text for p in dialogue)
+
+
+@pytest.mark.asyncio
+async def test_generate_translated_interleaves(generator, language):
+    day = _make_curriculum_day()
+    lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+    trans_section = next(s for s in lesson.sections if s.section_type == SectionType.TRANSLATED)
+    narrator_translations = [p for p in trans_section.phrases if p.role == "narrator" and p.language_code == "en"]
+    assert len(narrator_translations) >= 2  # at least the translations (not just scene labels)
+
+
+@pytest.mark.asyncio
+async def test_generate_uses_system_prompt(generator, language, mock_llm):
+    day = _make_curriculum_day()
+    await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+    call_kwargs = mock_llm.complete.call_args
+    assert call_kwargs.kwargs.get("system_prompt") is not None or (
+        len(call_kwargs.args) > 1 and call_kwargs.args[1] is not None
+    )

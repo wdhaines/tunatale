@@ -23,8 +23,13 @@ class Language:
             native_name="slovenščina",
             script="latin",
             tts_voice_map={
-                "female": "sl-SI-PetraNeural",
-                "male": "sl-SI-RokNeural",
+                "narrator": "en-US-GuyNeural",
+                "female-1": "sl-SI-PetraNeural",
+                "female-2": "sl-SI-PetraNeural",
+                "male-1": "sl-SI-RokNeural",
+                "male-2": "sl-SI-RokNeural",
+                "female": "sl-SI-PetraNeural",  # legacy
+                "male": "sl-SI-RokNeural",  # legacy
             },
         )
 
@@ -36,7 +41,12 @@ class Language:
             native_name="English",
             script="latin",
             tts_voice_map={
-                "female": "en-US-AriaNeural",
-                "male": "en-US-GuyNeural",
+                "narrator": "en-US-GuyNeural",
+                "female-1": "en-US-AriaNeural",
+                "female-2": "en-US-AriaNeural",
+                "male-1": "en-US-GuyNeural",
+                "male-2": "en-US-GuyNeural",
+                "female": "en-US-AriaNeural",  # legacy
+                "male": "en-US-GuyNeural",  # legacy
             },
         )

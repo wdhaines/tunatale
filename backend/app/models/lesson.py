@@ -28,6 +28,7 @@ class Phrase:
     rate: str = "+0%"
     pitch: str = "+0Hz"
     volume: str = "+0%"
+    role: str = ""
 
 
 @dataclass
