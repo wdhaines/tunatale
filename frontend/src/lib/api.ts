@@ -32,6 +32,7 @@ export interface LessonSummary {
 }
 
 export type ContentStrategy = 'WIDER' | 'DEEPER';
+export type FeedbackSignal = 'no_help' | 'slowdown' | 'translation_request' | 'fast_forward';
 
 export interface SRSDue {
 	due: Array<{ text: string; translation: string }>;
@@ -104,6 +105,16 @@ export class TunaTaleAPI {
 	async getSRSStats(): Promise<SRSStats> {
 		const res = await fetch(`${this.baseUrl}/api/srs/stats`);
 		if (!res.ok) throw new Error('Failed to get SRS stats');
+		return res.json();
+	}
+
+	async postSRSFeedback(text: string, signal: FeedbackSignal): Promise<{ status: string; new_due_date?: string }> {
+		const res = await fetch(`${this.baseUrl}/api/srs/feedback`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ collocation_text: text, signal })
+		});
+		if (!res.ok) throw new Error('Failed to record feedback');
 		return res.json();
 	}
 }

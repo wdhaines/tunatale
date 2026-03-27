@@ -35,10 +35,9 @@ async def record_feedback(body: FeedbackRequest, request: Request):
         return {"status": "not_found"}
 
     rating = adapter.signal_to_rating(body.signal)
-    from app.srs.fsrs import FSRSScheduler
+    from app.srs.fsrs import schedule
 
-    scheduler = FSRSScheduler()
-    updated = scheduler.schedule(item, rating)
+    updated = schedule(item, rating)
     db.update_collocation(updated)
     return {"status": "ok", "new_due_date": str(updated.due_date)}
 

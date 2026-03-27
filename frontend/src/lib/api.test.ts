@@ -126,4 +126,31 @@ describe('TunaTaleAPI', () => {
 		expect(result.total).toBe(10);
 		expect(result.due_today).toBe(3);
 	});
+
+	it('postSRSFeedback calls POST /api/srs/feedback with correct body', async () => {
+		global.fetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({ status: 'ok' })
+		} as Response);
+
+		const result = await api.postSRSFeedback('dober dan', 'no_help');
+
+		expect(fetch).toHaveBeenCalledWith(
+			`${BASE}/api/srs/feedback`,
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({ collocation_text: 'dober dan', signal: 'no_help' })
+			})
+		);
+		expect(result.status).toBe('ok');
+	});
+
+	it('postSRSFeedback throws on non-ok response', async () => {
+		global.fetch = vi.fn().mockResolvedValue({
+			ok: false,
+			statusText: 'Internal Server Error'
+		} as Response);
+
+		await expect(api.postSRSFeedback('dober dan', 'no_help')).rejects.toThrow('Failed to record feedback');
+	});
 });

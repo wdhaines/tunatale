@@ -16,4 +16,7 @@ cd ../frontend
 echo "=== Frontend tests ==="
 npm test
 
+echo "=== E2E smoke tests ==="
+npm run test:e2e
+
 echo "=== All checks passed ==="

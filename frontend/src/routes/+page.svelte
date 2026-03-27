@@ -2,16 +2,16 @@
 	import { api } from '$lib/api';
 	import type { CurriculumSummary, LessonSummary } from '$lib/api';
 
-	let topic = '';
-	let cefrLevel = 'A2';
-	let numDays = 7;
+	let topic = $state('');
+	let cefrLevel = $state('A2');
+	let numDays = $state(7);
 
-	let curriculum: CurriculumSummary | null = null;
-	let lesson: LessonSummary | null = null;
-	let audioUrl: string | null = null;
+	let curriculum: CurriculumSummary | null = $state(null);
+	let lesson: LessonSummary | null = $state(null);
+	let audioUrl: string | null = $state(null);
 
-	let loading = false;
-	let error = '';
+	let loading = $state(false);
+	let error = $state('');
 
 	async function handleGenerate() {
 		if (!topic.trim()) return;
@@ -59,6 +59,7 @@
 
 <main>
 	<h1>TunaTale</h1>
+	<nav><a href="/practice">Practice (SRS)</a></nav>
 	<p>AI-powered language learning — Slovene</p>
 
 	<section class="input-section">
@@ -80,7 +81,7 @@
 			Days
 			<input type="number" bind:value={numDays} min="1" max="30" />
 		</label>
-		<button on:click={handleGenerate} disabled={loading || !topic.trim()}>
+		<button onclick={handleGenerate} disabled={loading || !topic.trim()}>
 			{loading ? 'Generating…' : 'Generate'}
 		</button>
 		{#if error}
@@ -94,7 +95,7 @@
 			<p>{curriculum.days} days · {curriculum.language_code.toUpperCase()} · {cefrLevel}</p>
 			<div class="days">
 				{#each Array(curriculum.days) as _, i}
-					<button class="day-btn" on:click={() => handleGenerateLesson(i + 1)} disabled={loading}>
+					<button class="day-btn" onclick={() => handleGenerateLesson(i + 1)} disabled={loading}>
 						Day {i + 1}
 					</button>
 				{/each}
@@ -110,7 +111,7 @@
 					<li>{section.type} — {section.phrase_count} phrase{section.phrase_count === 1 ? '' : 's'}</li>
 				{/each}
 			</ul>
-			<button on:click={handleRenderAudio} disabled={loading}>
+			<button onclick={handleRenderAudio} disabled={loading}>
 				{loading ? 'Rendering…' : 'Render Audio'}
 			</button>
 		</section>
@@ -119,7 +120,7 @@
 	{#if audioUrl}
 		<section class="audio-section">
 			<h2>Audio Player</h2>
-			<!-- svelte-ignore a11y-media-has-caption -->
+			<!-- svelte-ignore a11y_media_has_caption -->
 			<audio controls src={audioUrl}>
 				Your browser does not support the audio element.
 			</audio>

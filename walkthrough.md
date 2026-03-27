@@ -748,6 +748,8 @@ The `LLMClient` talks to Groq's OpenAI-compatible endpoint. Key behaviors:
 - **Rate-limit handling**: On HTTP 429, reads the `retry-after` header and sleeps before retrying (up to 3 retries, capped at 10s per wait). After a 429, subsequent calls are delayed automatically.
 - **Think-tag stripping**: Groq's `llama-3.3-70b` sometimes wraps reasoning in `<think>...</think>` tags. Line 143 strips these so downstream JSON parsing isn't polluted.
 - **Attempt logging**: Every failure is recorded with provider, model, status, and latency for debugging.
+- **`_make_attempt()` helper**: Static method centralizing the attempt-dict schema (`provider`, `model`, `status`, `error`, `latency_ms`) used at every raise site — one place to change the shape.
+- **`if self.on_call:` guard**: On the success path, rate-limit header parsing is wrapped in `if self.on_call:` so it's skipped entirely when no callback is configured.
 
 Here's the test that verifies the 429 retry flow using `respx` (HTTP mocking):
 
@@ -1479,6 +1481,8 @@ cat -n backend/app/generation/prompts.py
 
 Prompts are language-aware templates that inject the `Language` model fields. The curriculum prompt requests strict JSON output — no markdown fences, no preamble — so the response can be parsed directly. The system prompt establishes the LLM as a language curriculum expert who knows the target language natively.
 
+In addition to the `PromptBuilder` class, `prompts.py` now owns all story-generation prompt content: `SYSTEM_PROMPT` (shared system prompt for all story generations), `STORY_PROMPT_WIDER_TEMPLATE` / `STORY_PROMPT_DEEPER_TEMPLATE` (strategy-specific user prompts), and `get_strategy_prompt(strategy)` — returns the correct template or raises `ValueError` on unknown strategy.
+
 Here is what the actual prompt looks like for a Slovene curriculum:
 
 ```bash
@@ -1788,7 +1792,20 @@ cat -n backend/app/generation/story.py
    142	        )
 ```
 
-The story generator takes a `CurriculumDay` and produces a full `Lesson` with 4 Pimsleur sections. The prompt includes the collocations the curriculum specified, and the LLM weaves them into a dialogue. Voice assignment defaults to the "female" voice from the language's `tts_voice_map`.
+The story generator delegates all section construction to `section_builder.py`:
+
+1. Selects the user prompt via `get_strategy_prompt(strategy)` from `prompts.py`
+2. Calls `LLMClient.complete()` with the formatted user + system prompts
+3. Parses JSON response into `key_phrases` and `scenes` dicts
+4. Calls the four `section_builder` functions to build `Section` objects
+5. Returns assembled `Lesson`
+
+**`section_builder.py`** — mechanically transforms parsed LLM JSON into `Section` objects:
+- `build_key_phrases_section()` — L2 phrase → narrator translation → word breakdown steps
+- `build_natural_speed_section()` — scene labels + multi-speaker dialogue at natural speed
+- `build_slow_speed_section()` — same as natural but words joined with ` ... ` for slow delivery
+- `build_translated_section()` — every L2 line followed by narrator translation
+- `_resolve_voice(speaker, l2_voice_map, narrator_voice)` — looks up speaker in voice map, falls back to `female-1`, then narrator
 
 ### 5.4 Content Enforcer
 
@@ -2332,7 +2349,7 @@ cat -n backend/app/audio/preprocessing/base.py && echo "---" && cat -n backend/a
     37	        return " ... ".join(words)
 ```
 
-The prototype had a massive 1000-line Tagalog preprocessor (number clarification, abbreviation handling, ellipsis conversion). Production uses a pluggable `TextPreprocessor` protocol. The Slovene implementation is minimal — SLOW_SPEED sections get ellipses between words (which EdgeTTS naturally renders as pauses, a critical discovery from the prototype), everything else passes through unchanged.
+The prototype had a massive 1000-line Tagalog preprocessor (number clarification, abbreviation handling, ellipsis conversion). Production uses a pluggable `TextPreprocessor` protocol. The Slovene implementation is minimal — SLOW_SPEED sections get ellipses between words (which EdgeTTS naturally renders as pauses, a critical discovery from the prototype), everything else passes through unchanged. `_add_slow_pauses()` returns the text unchanged if ` ... ` is already present — the section builder inserts ellipses at lesson-build time, so the preprocessor acts as a guard against double-slowing.
 
 Adding a new language is creating a new class that implements `preprocess()`. Here is the Slovene preprocessor on a slow-speed phrase:
 
@@ -2467,6 +2484,8 @@ The four routers cover the full pipeline:
 | `/api/audio/render` | POST | Render a lesson to audio |
 | `/api/audio/{id}` | GET | Download rendered audio file |
 | `/api/health` | GET | Health check |
+
+`POST /api/srs/feedback` accepts a `FeedbackSignal` (`no_help` | `slowdown` | `translation_request` | `fast_forward`) that maps implicit listener behaviour to FSRS ratings. The frontend `/practice` route uses this endpoint to drive a flashcard review session — cards are fetched from `GET /api/srs/due`, rated with Again / Hard / Good / Easy buttons, and each rating fires `POST /api/srs/feedback`. SRS cards are populated when a lesson is generated (collocations are added to the database during story generation).
 
 ### 7.3 API Tests
 
@@ -2703,7 +2722,9 @@ User POST /api/story/generate {"curriculum_id": "...", "day": 1, "strategy": "wi
 StoryGenerator.generate()
    │── Formats prompt with CurriculumDay collocations + strategy
    │── LLMClient.complete() → Groq API
-   │── _parse_response() → Lesson with 4 Pimsleur Sections
+   │── prompts.get_strategy_prompt(strategy) → user prompt template
+   │── LLMClient.complete() → Groq API → JSON
+   │── section_builder.build_*() × 4 → Lesson with 4 Sections
    │
    ▼
 ContentEnforcer.enforce()  (optional)
@@ -2742,8 +2763,9 @@ Each step is independently testable: cassettes for LLM, `:memory:` for SRS, mock
 | **Voice mapping** | Hardcoded speaker→voice table | `Language.tts_voice_map` dict |
 | **Vocabulary** | Hardcoded replacement dictionary | Dynamic from SRS database (`ContentEnforcer`) |
 | **Configuration** | Module-level globals | Pydantic Settings with `.env` |
-| **Testing** | Unit tests only | 150 tests, 96% coverage, cassette fixtures, 4 mock strategies |
+| **Testing** | Unit tests only | 209 tests, 97% coverage, cassette fixtures, 4 mock strategies |
 | **API** | CLI-only | REST API with 10 endpoints |
+| **SRS UI** | No practice UI | `/practice` route — flashcard review loop with Again/Hard/Good/Easy ratings |
 | **TTS** | Multi-provider (Edge, gTTS, Google Cloud) | EdgeTTS-only with caching + retry |
 | **Audio format** | MP3 via pydub | Raw PCM (extensible) |
 | **Pause system** | Complex hierarchy with config files | Same ratios, simplified to single calculator class |
@@ -2756,3 +2778,65 @@ Each step is independently testable: cassettes for LLM, `:memory:` for SRS, mock
 - Pedagogical scoring weights (40/30/20/10)
 - Content strategy framework (WIDER vs DEEPER)
 - Ellipsis-as-pause discovery for EdgeTTS
+
+---
+
+## PART 11: Manual Testing
+
+### Prerequisites
+- `backend/.env` contains `GROQ_API_KEY=<your key>`
+- `cd backend && uv sync --all-groups`
+
+### Automated suite
+```bash
+./test.sh   # ruff lint + pytest (210 tests) + vitest (frontend)
+```
+
+### Start the dev server
+```bash
+./start-dev.sh   # FastAPI at http://localhost:8000
+```
+
+### Frontend
+```bash
+cd frontend && npm run dev   # SvelteKit at http://localhost:5173
+```
+Open http://localhost:5173, enter a topic (e.g. "ordering coffee in Ljubljana"), choose CEFR level and days, click Generate → select a day → Generate Lesson → Render Audio → play.
+
+To use the SRS practice loop, first generate a curriculum and lesson (which populates SRS cards), then navigate to http://localhost:5173/practice — click through cards, rate each with Again / Hard / Good / Easy, and view the completion screen after the last card.
+
+### API smoke test (curl)
+```bash
+# Health check
+curl http://localhost:8000/api/health
+
+# 1. Generate curriculum
+curl -s -X POST http://localhost:8000/api/curriculum/generate \
+  -H "Content-Type: application/json" \
+  -d '{"topic":"ordering coffee","cefr_level":"A1","num_days":2}' | jq .
+# → {"id": "<curriculum_id>", "topic": "ordering coffee", "language_code": "sl", "days": 2}
+
+# 2. Generate lesson (substitute <curriculum_id> from step 1)
+curl -s -X POST http://localhost:8000/api/story/generate \
+  -H "Content-Type: application/json" \
+  -d '{"curriculum_id":"<curriculum_id>","day":1,"strategy":"WIDER"}' | jq .
+# → {"id": "<lesson_id>", "title": "...", "sections": [...]}
+
+# 3. Render audio (substitute <lesson_id> from step 2)
+curl -s -X POST http://localhost:8000/api/audio/render \
+  -H "Content-Type: application/json" \
+  -d '{"lesson_id":"<lesson_id>"}' | jq .
+# → {"audio_id": "<audio_id>", "lesson_id": "<lesson_id>"}
+
+# 4. Download audio
+curl -o lesson.wav http://localhost:8000/api/audio/<audio_id>
+open lesson.wav   # plays in QuickTime on macOS
+
+# SRS endpoints (collocations are populated after generating a lesson)
+curl http://localhost:8000/api/srs/due   # → {"due": [...]}
+curl http://localhost:8000/api/srs/stats  # → {"total": N, "due_today": N}
+curl -s -X POST http://localhost:8000/api/srs/feedback \
+  -H "Content-Type: application/json" \
+  -d '{"collocation_text":"<text>","signal":"no_help"}' | jq .
+# signal options: no_help | slowdown | translation_request | fast_forward
+```

@@ -166,6 +166,26 @@ async def test_srs_stats_returns_200():
     db.close()
 
 
+@pytest.mark.asyncio
+async def test_srs_feedback_returns_ok():
+    from app.models.syntactic_unit import SyntacticUnit
+    from app.srs.database import SRSDatabase
+
+    db = SRSDatabase(":memory:")
+    unit = SyntacticUnit(text="dober dan", translation="good day", word_count=2, difficulty=1, source="llm")
+    db.add_collocation(unit)
+    app.state.srs_db = db
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/srs/feedback",
+            json={"collocation_text": "dober dan", "signal": "no_help"},
+        )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    db.close()
+
+
 # ── Audio endpoints ───────────────────────────────────────────────────
 
 

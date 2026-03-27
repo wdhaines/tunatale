@@ -56,3 +56,4 @@ backend/cache/
 # Generated outputs and ad-hoc scripts
 backend/output/
 backend/scripts/
+frontend/test-results/

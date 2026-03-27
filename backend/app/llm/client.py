@@ -214,7 +214,9 @@ class LLMClient:
                         prompt=prompt,
                         error=msg,
                     )
-                    raise LLMError(msg, [self._make_attempt("groq", self.groq_model, "timeout", msg, latency_ms)]) from err
+                    raise LLMError(
+                        msg, [self._make_attempt("groq", self.groq_model, "timeout", msg, latency_ms)]
+                    ) from err
                 latency_ms = int((time.monotonic() - start) * 1000)
 
                 # Log rate-limit headers
@@ -274,7 +276,9 @@ class LLMClient:
                         prompt=prompt,
                         error=msg,
                     )
-                    raise LLMError(msg, [self._make_attempt("groq", self.groq_model, response.status_code, msg, latency_ms)])
+                    raise LLMError(
+                        msg, [self._make_attempt("groq", self.groq_model, response.status_code, msg, latency_ms)]
+                    )
 
                 data = response.json()
                 content = data["choices"][0]["message"]["content"]
@@ -414,7 +418,9 @@ class LLMClient:
                         error=msg,
                         is_fallback=is_fallback,
                     )
-                    raise LLMError(msg, [self._make_attempt("ollama", self.ollama_model, status, msg, latency_ms)]) from err  # pragma: no cover
+                    raise LLMError(
+                        msg, [self._make_attempt("ollama", self.ollama_model, status, msg, latency_ms)]
+                    ) from err  # pragma: no cover
             else:
                 latency_ms = int((time.monotonic() - start) * 1000)
                 msg = f"Ollama connection refused at {self.ollama_url} (auto-start failed)"
@@ -427,7 +433,9 @@ class LLMClient:
                     error=msg,
                     is_fallback=is_fallback,
                 )
-                raise LLMError(msg, [self._make_attempt("ollama", self.ollama_model, "connect_error", msg, latency_ms)]) from None
+                raise LLMError(
+                    msg, [self._make_attempt("ollama", self.ollama_model, "connect_error", msg, latency_ms)]
+                ) from None
         except httpx.TimeoutException as err:
             latency_ms = int((time.monotonic() - start) * 1000)
             msg = f"Ollama timed out after {self.timeout}s"
@@ -455,7 +463,9 @@ class LLMClient:
                 error=msg,
                 is_fallback=is_fallback,
             )
-            raise LLMError(msg, [self._make_attempt("ollama", self.ollama_model, response.status_code, msg, latency_ms)])
+            raise LLMError(
+                msg, [self._make_attempt("ollama", self.ollama_model, response.status_code, msg, latency_ms)]
+            )
 
         data = response.json()
         result = data["response"].strip()
