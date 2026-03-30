@@ -10,14 +10,12 @@
 	let revealed = $state(false);
 	let loading = $state(true);
 	let error = $state('');
-	let done = $state(false);
-	let sessionStats = $state({ reviewed: 0, remaining: 0 });
+	let done = $derived(index >= cards.length && cards.length > 0);
 
 	onMount(async () => {
 		try {
 			const data = await api.getSRSDue();
 			cards = data.due;
-			sessionStats.remaining = cards.length;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -36,13 +34,8 @@
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		}
-		sessionStats.reviewed += 1;
-		sessionStats.remaining -= 1;
 		index += 1;
 		revealed = false;
-		if (index >= cards.length) {
-			done = true;
-		}
 	}
 </script>
 
@@ -58,7 +51,7 @@
 	{:else if done}
 		<section>
 			<h2>Session complete!</h2>
-			<p>Reviewed: {sessionStats.reviewed}</p>
+			<p>Reviewed: {index}</p>
 		</section>
 	{:else}
 		<section class="card-section">

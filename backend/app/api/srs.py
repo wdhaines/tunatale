@@ -7,7 +7,12 @@ import datetime
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
+from app.srs.feedback import ImplicitFeedbackAdapter
+from app.srs.fsrs import schedule
+
 router = APIRouter(prefix="/api/srs", tags=["srs"])
+
+_feedback_adapter = ImplicitFeedbackAdapter()
 
 
 class FeedbackRequest(BaseModel):
@@ -25,18 +30,13 @@ async def get_due_collocations(request: Request):
 
 @router.post("/feedback", status_code=200)
 async def record_feedback(body: FeedbackRequest, request: Request):
-    from app.srs.feedback import ImplicitFeedbackAdapter
-
     db = request.app.state.srs_db
-    adapter = ImplicitFeedbackAdapter()
 
     item = db.get_collocation(body.collocation_text)
     if item is None:
         return {"status": "not_found"}
 
-    rating = adapter.signal_to_rating(body.signal)
-    from app.srs.fsrs import schedule
-
+    rating = _feedback_adapter.signal_to_rating(body.signal)
     updated = schedule(item, rating)
     db.update_collocation(updated)
     return {"status": "ok", "new_due_date": str(updated.due_date)}
@@ -45,7 +45,5 @@ async def record_feedback(body: FeedbackRequest, request: Request):
 @router.get("/stats", status_code=200)
 async def get_stats(request: Request):
     db = request.app.state.srs_db
-    total = db.count_collocations()
     today = datetime.date.today()
-    due = len(db.get_due_collocations(today))
-    return {"total": total, "due_today": due}
+    return {"total": db.count_collocations(), "due_today": db.count_due_collocations(today)}

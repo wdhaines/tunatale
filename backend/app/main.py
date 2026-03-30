@@ -35,7 +35,6 @@ async def lifespan(app: FastAPI):
 
     language = Language.slovene()
 
-    app.state.llm = llm
     app.state.srs_db = srs_db
     app.state.language = language
     app.state.curriculum_generator = CurriculumGenerator(llm)

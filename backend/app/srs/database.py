@@ -215,6 +215,13 @@ class SRSDatabase:
         with self._get_conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
 
+    def count_due_collocations(self, as_of: date) -> int:
+        with self._get_conn() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM collocations WHERE due_date <= ? AND state != 'new'",
+                (as_of.isoformat(),),
+            ).fetchone()[0]
+
     # ── Helpers ────────────────────────────────────────────────────────
 
     @staticmethod
