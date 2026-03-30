@@ -25,7 +25,7 @@ backend/
 └── tests/
     ├── conftest.py           # Cassette fixtures, CLI options
     ├── cassettes/            # Recorded LLM responses (JSON)
-    └── test_*.py             # 18 test files, ≥95% coverage
+    └── test_*.py             # 19 test files, ≥95% coverage
 ```
 
 ---
@@ -68,51 +68,85 @@ cat -n backend/app/main.py
 
 ```output
      1	"""FastAPI application for TunaTale language learning."""
-     2	
+     2
      3	import logging
      4	from contextlib import asynccontextmanager
-     5	
-     6	from dotenv import load_dotenv
-     7	
-     8	load_dotenv()
-     9	
-    10	from fastapi import FastAPI  # noqa: E402
-    11	from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
-    12	
-    13	logger = logging.getLogger(__name__)
-    14	
-    15	
-    16	@asynccontextmanager
-    17	async def lifespan(app: FastAPI):  # pragma: no cover
-    18	    logger.info("TunaTale backend starting up")
-    19	    yield
-    20	    logger.info("TunaTale backend shutting down")
-    21	
-    22	
-    23	app = FastAPI(title="TunaTale", version="0.1.0", lifespan=lifespan)
-    24	
-    25	app.add_middleware(
-    26	    CORSMiddleware,
-    27	    allow_origins=["*"],
-    28	    allow_credentials=True,
-    29	    allow_methods=["*"],
-    30	    allow_headers=["*"],
-    31	)
-    32	
-    33	from app.api import audio, curriculum, generation, srs  # noqa: E402
-    34	
-    35	app.include_router(curriculum.router)
-    36	app.include_router(generation.router)
-    37	app.include_router(srs.router)
-    38	app.include_router(audio.router)
-    39	
-    40	
-    41	@app.get("/api/health")
-    42	async def health():
-    43	    return {"status": "ok"}
+     5	from pathlib import Path
+     6
+     7	from dotenv import load_dotenv
+     8
+     9	load_dotenv()
+    10
+    11	from fastapi import FastAPI  # noqa: E402
+    12	from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+    13
+    14	from app.audio.assembler import AudioAssembler  # noqa: E402
+    15	from app.audio.edge_tts import EdgeTTSService  # noqa: E402
+    16	from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
+    17	from app.audio.preprocessing.slovene import SlovenePreprocessor  # noqa: E402
+    18	from app.audio.renderer import LessonRenderer  # noqa: E402
+    19	from app.config import settings  # noqa: E402
+    20	from app.generation.curriculum import CurriculumGenerator  # noqa: E402
+    21	from app.generation.story import StoryGenerator  # noqa: E402
+    22	from app.llm.client import LLMClient  # noqa: E402
+    23	from app.models.language import Language  # noqa: E402
+    24	from app.srs.database import SRSDatabase  # noqa: E402
+    25
+    26	logger = logging.getLogger(__name__)
+    27
+    28
+    29	@asynccontextmanager
+    30	async def lifespan(app: FastAPI):
+    31	    llm = LLMClient(groq_api_key=settings.groq_api_key, groq_model=settings.llm_model)
+    32
+    33	    db_path = settings.database_url.removeprefix("sqlite:///")
+    34	    srs_db = SRSDatabase(db_path)
+    35
+    36	    language = Language.slovene()
+    37
+    38	    app.state.srs_db = srs_db
+    39	    app.state.language = language
+    40	    app.state.curriculum_generator = CurriculumGenerator(llm)
+    41	    app.state.story_generator = StoryGenerator(llm, srs_db)
+    42	    app.state.renderer = LessonRenderer(
+    43	        tts=EdgeTTSService(),
+    44	        preprocessor=SlovenePreprocessor(),
+    45	        pause_calculator=NaturalPauseCalculator(),
+    46	        assembler=AudioAssembler(),
+    47	    )
+    48	    app.state.audio_dir = Path("output/audio")
+    49
+    50	    logger.info("TunaTale backend starting up")
+    51	    yield
+    52
+    53	    srs_db.close()
+    54	    logger.info("TunaTale backend shutting down")
+    55
+    56
+    57	app = FastAPI(title="TunaTale", version="0.1.0", lifespan=lifespan)
+    58
+    59	app.add_middleware(
+    60	    CORSMiddleware,
+    61	    allow_origins=["*"],
+    62	    allow_credentials=True,
+    63	    allow_methods=["*"],
+    64	    allow_headers=["*"],
+    65	)
+    66
+    67	from app.api import audio, curriculum, generation, srs  # noqa: E402
+    68
+    69	app.include_router(curriculum.router)
+    70	app.include_router(generation.router)
+    71	app.include_router(srs.router)
+    72	app.include_router(audio.router)
+    73
+    74
+    75	@app.get("/api/health")
+    76	async def health():
+    77	    return {"status": "ok"}
 ```
 
-The app is minimal by design. The lifespan context manager handles startup/shutdown logging (excluded from coverage since it's infrastructure). CORS is wide-open for development. Four routers partition the API: curriculum generation, story generation, SRS tracking, and audio rendering. The health check at `/api/health` is the smoke test — if this returns `{"status": "ok"}`, the server is alive.
+The lifespan context manager is the dependency wiring hub — it constructs the `LLMClient`, `SRSDatabase`, `Language`, `CurriculumGenerator`, `StoryGenerator`, and `LessonRenderer` (with four sub-dependencies: `EdgeTTSService`, `SlovenePreprocessor`, `NaturalPauseCalculator`, `AudioAssembler`), then attaches them all to `app.state` for route handlers to consume via `request.app.state`. On shutdown it closes the SRS database. CORS is wide-open for development. Four routers partition the API: curriculum generation, story generation, SRS tracking, and audio rendering. The health check at `/api/health` is the smoke test — if this returns `{"status": "ok"}`, the server is alive.
 
 Note the `load_dotenv()` before FastAPI imports — this ensures `.env` is loaded before Pydantic Settings reads environment variables.
 
@@ -1256,10 +1290,11 @@ grep -n "def \|class " backend/app/srs/database.py
 196:    def get_new_collocations(self, limit: int = 10) -> list[SRSItem]:
 205:    def get_violations(self, collocation_text: str) -> list[dict]:
 214:    def count_collocations(self) -> int:
-221:    def _row_to_item(row: sqlite3.Row) -> SRSItem:
+218:    def count_due_collocations(self, as_of: date) -> int:
+228:    def _row_to_item(row: sqlite3.Row) -> SRSItem:
 ```
 
-The `SRSDatabase` is a SQLite repository with two tables: `collocations` (vocabulary with FSRS fields) and `violations` (content rule violations for debugging). It supports `:memory:` for tests and file-based persistence for production.
+The `SRSDatabase` is a SQLite repository with two tables: `collocations` (vocabulary with FSRS fields) and `violations` (content rule violations for debugging). It supports `:memory:` for tests and file-based persistence for production. `count_due_collocations` powers the `/api/srs/stats` endpoint's `due_today` counter.
 
 Here is a round-trip through the database — add a collocation, schedule it, and query due items:
 
@@ -2456,13 +2491,13 @@ grep -n "def \|class \|router\." backend/app/api/generation.py backend/app/api/s
 backend/app/api/generation.py:15:class GenerateStoryRequest(BaseModel):
 backend/app/api/generation.py:21:@router.post("/generate", status_code=201)
 backend/app/api/generation.py:22:async def generate_story(body: GenerateStoryRequest, request: Request):
-backend/app/api/srs.py:13:class FeedbackRequest(BaseModel):
-backend/app/api/srs.py:18:@router.get("/due", status_code=200)
-backend/app/api/srs.py:19:async def get_due_collocations(request: Request):
-backend/app/api/srs.py:26:@router.post("/feedback", status_code=200)
-backend/app/api/srs.py:27:async def record_feedback(body: FeedbackRequest, request: Request):
-backend/app/api/srs.py:46:@router.get("/stats", status_code=200)
-backend/app/api/srs.py:47:async def get_stats(request: Request):
+backend/app/api/srs.py:18:class FeedbackRequest(BaseModel):
+backend/app/api/srs.py:23:@router.get("/due", status_code=200)
+backend/app/api/srs.py:24:async def get_due_collocations(request: Request):
+backend/app/api/srs.py:31:@router.post("/feedback", status_code=200)
+backend/app/api/srs.py:32:async def record_feedback(body: FeedbackRequest, request: Request):
+backend/app/api/srs.py:45:@router.get("/stats", status_code=200)
+backend/app/api/srs.py:46:async def get_stats(request: Request):
 backend/app/api/audio.py:15:class RenderAudioRequest(BaseModel):
 backend/app/api/audio.py:19:@router.post("/render", status_code=202)
 backend/app/api/audio.py:20:async def render_audio(body: RenderAudioRequest, request: Request):
@@ -2561,9 +2596,9 @@ cd backend && uv run pytest --tb=short -q 2>&1
 ```
 
 ```output
-........................................................................ [ 48%]
-........................................................................ [ 96%]
-......                                                                   [100%]
+........................................................................ [ 34%]
+........................................................................ [ 68%]
+..................................................................       [100%]
 ================================ tests coverage ================================
 _______________ coverage: platform darwin, python 3.13.7-final-0 _______________
 
@@ -2574,7 +2609,7 @@ app/api/__init__.py                       0      0   100%
 app/api/audio.py                         34      5    85%   23, 48-52
 app/api/curriculum.py                    30      2    93%   55-56
 app/api/generation.py                    30      2    93%   25, 30
-app/api/srs.py                           35     12    66%   28-43
+app/api/srs.py                           32      1    97%   37
 app/audio/__init__.py                     0      0   100%
 app/audio/assembler.py                   22      1    95%   22
 app/audio/edge_tts.py                    53      1    98%   87
@@ -2582,37 +2617,38 @@ app/audio/pause_calculator.py            21      0   100%
 app/audio/ports.py                        7      0   100%
 app/audio/preprocessing/__init__.py       0      0   100%
 app/audio/preprocessing/base.py           5      0   100%
-app/audio/preprocessing/slovene.py       10      0   100%
+app/audio/preprocessing/slovene.py       12      0   100%
 app/audio/renderer.py                    39      1    97%   60
 app/config.py                             8      0   100%
 app/generation/__init__.py                0      0   100%
 app/generation/curriculum.py             32      1    97%   67
 app/generation/enforcer.py               37      1    97%   65
-app/generation/prompts.py                 9      0   100%
-app/generation/story.py                  40      3    92%   120, 126-127
+app/generation/prompts.py                20      1    95%   183
+app/generation/section_builder.py        55      0   100%
+app/generation/story.py                  38      1    97%   84
 app/llm/__init__.py                       0      0   100%
 app/llm/cassette.py                      72      2    97%   95, 131
-app/llm/client.py                        69      4    94%   84, 87, 97-98
-app/main.py                              17      0   100%
+app/llm/client.py                       226      0   100%
+app/main.py                              45     14    69%   31-54
 app/models/__init__.py                    0      0   100%
 app/models/curriculum.py                 30      0   100%
 app/models/language.py                   15      0   100%
-app/models/lesson.py                     28      0   100%
+app/models/lesson.py                     29      0   100%
 app/models/srs_item.py                   25      0   100%
 app/models/strategy.py                   38      2    95%   64-70
 app/models/syntactic_unit.py             15      0   100%
 app/srs/__init__.py                       0      0   100%
-app/srs/database.py                      92      0   100%
+app/srs/database.py                      95      0   100%
 app/srs/feedback.py                      12      0   100%
 app/srs/fsrs.py                          57      0   100%
 app/srs/selector.py                      40      1    98%   43
 -------------------------------------------------------------------
-TOTAL                                   922     38    96%
-Required test coverage of 95.0% reached. Total coverage: 95.88%
-150 passed in 2.25s
+TOTAL                                  1174     36    97%
+Required test coverage of 95.0% reached. Total coverage: 96.93%
+210 passed in 2.44s
 ```
 
-150 tests, 95.88% coverage, 2.25 seconds. All in mock mode — no network calls needed.
+210 tests, 96.93% coverage. All in mock mode — no network calls needed.
 
 ### 8.2 Test File Inventory
 
@@ -2621,7 +2657,7 @@ ls backend/tests/test_*.py | xargs -I{} sh -c "echo \"{}: \$(grep -c \"def test_
 ```
 
 ```output
-backend/tests/test_api.py: 9 tests
+backend/tests/test_api.py: 10 tests
 backend/tests/test_audio_ports.py: 5 tests
 backend/tests/test_config.py: 2 tests
 backend/tests/test_curriculum.py: 12 tests
@@ -2629,18 +2665,20 @@ backend/tests/test_edge_tts.py: 7 tests
 backend/tests/test_enforcer.py: 9 tests
 backend/tests/test_fsrs.py: 13 tests
 backend/tests/test_llm_cassette.py: 7 tests
-backend/tests/test_llm_client.py: 8 tests
-backend/tests/test_models.py: 24 tests
+backend/tests/test_llm_client.py: 36 tests
+backend/tests/test_models.py: 29 tests
 backend/tests/test_pauses.py: 12 tests
-backend/tests/test_preprocessor.py: 6 tests
+backend/tests/test_preprocessor.py: 7 tests
+backend/tests/test_prompts.py: 6 tests
 backend/tests/test_renderer.py: 7 tests
+backend/tests/test_section_builder.py: 14 tests
 backend/tests/test_srs_database.py: 11 tests
 backend/tests/test_srs_feedback.py: 8 tests
 backend/tests/test_srs_selector.py: 6 tests
-backend/tests/test_story.py: 4 tests
+backend/tests/test_story.py: 9 tests
 ```
 
-150 tests across 17 files. The heaviest areas: models (24), FSRS scheduling (13), curriculum generation (12), pause calculation (12), and SRS database (11). Every module has its own test file following the `test_{module}.py` convention.
+210 tests across 19 files. The heaviest areas: LLM client (36), models (29), section builder (14), FSRS scheduling (13), curriculum generation (12), and pause calculation (12). Every module has its own test file following the `test_{module}.py` convention.
 
 ### 8.3 Mocking Patterns
 
@@ -2763,7 +2801,7 @@ Each step is independently testable: cassettes for LLM, `:memory:` for SRS, mock
 | **Voice mapping** | Hardcoded speaker→voice table | `Language.tts_voice_map` dict |
 | **Vocabulary** | Hardcoded replacement dictionary | Dynamic from SRS database (`ContentEnforcer`) |
 | **Configuration** | Module-level globals | Pydantic Settings with `.env` |
-| **Testing** | Unit tests only | 209 tests, 97% coverage, cassette fixtures, 4 mock strategies |
+| **Testing** | Unit tests only | 210 tests, 97% coverage, cassette fixtures, 4 mock strategies |
 | **API** | CLI-only | REST API with 10 endpoints |
 | **SRS UI** | No practice UI | `/practice` route — flashcard review loop with Again/Hard/Good/Easy ratings |
 | **TTS** | Multi-provider (Edge, gTTS, Google Cloud) | EdgeTTS-only with caching + retry |
@@ -2794,12 +2832,7 @@ Each step is independently testable: cassettes for LLM, `:memory:` for SRS, mock
 
 ### Start the dev server
 ```bash
-./start-dev.sh   # FastAPI at http://localhost:8000
-```
-
-### Frontend
-```bash
-cd frontend && npm run dev   # SvelteKit at http://localhost:5173
+./start-dev.sh   # FastAPI at :8000 + SvelteKit at :5173
 ```
 Open http://localhost:5173, enter a topic (e.g. "ordering coffee in Ljubljana"), choose CEFR level and days, click Generate → select a day → Generate Lesson → Render Audio → play.
 
