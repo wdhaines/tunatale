@@ -7,7 +7,7 @@ import pytest
 
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.language import Language
-from app.models.lesson import Phrase, Section
+from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.models.srs_item import Rating, SRSItem, SRSState
 from app.models.strategy import (
     DEFAULT_STRATEGY_CONFIGS,
@@ -247,3 +247,56 @@ def test_srs_item_state_enum_values():
     assert SRSState.LEARNING.value == "learning"
     assert SRSState.REVIEW.value == "review"
     assert SRSState.RELEARNING.value == "relearning"
+
+
+# ── Lesson serialization ───────────────────────────────────────────────────
+
+
+def _make_lesson() -> Lesson:
+    return Lesson(
+        title="Day 1",
+        language_code="sl",
+        sections=[
+            Section(
+                section_type=SectionType.KEY_PHRASES,
+                phrases=[
+                    Phrase(text="dober dan", voice_id="sl-SI-PetraNeural", language_code="sl", role="female-1"),
+                    Phrase(text="kako ste", voice_id="sl-SI-RokNeural", language_code="sl", role="male-1"),
+                ],
+            ),
+            Section(
+                section_type=SectionType.NATURAL_SPEED,
+                phrases=[
+                    Phrase(text="dober dan, kako ste", voice_id="sl-SI-PetraNeural", language_code="sl"),
+                ],
+            ),
+        ],
+    )
+
+
+def test_lesson_serializes_to_json():
+    lesson = _make_lesson()
+    data = json.loads(lesson.to_json())
+    assert data["title"] == "Day 1"
+    assert data["language_code"] == "sl"
+    assert len(data["sections"]) == 2
+    assert data["sections"][0]["section_type"] == "key_phrases"
+    assert data["sections"][1]["section_type"] == "natural_speed"
+    phrase = data["sections"][0]["phrases"][0]
+    assert phrase["text"] == "dober dan"
+    assert phrase["role"] == "female-1"
+    assert phrase["voice_id"] == "sl-SI-PetraNeural"
+    assert phrase["language_code"] == "sl"
+
+
+def test_lesson_roundtrip_json():
+    original = _make_lesson()
+    restored = Lesson.from_json(original.to_json())
+    assert restored.title == original.title
+    assert restored.language_code == original.language_code
+    assert len(restored.sections) == len(original.sections)
+    assert restored.sections[0].section_type == SectionType.KEY_PHRASES
+    assert restored.sections[1].section_type == SectionType.NATURAL_SPEED
+    assert restored.sections[0].phrases[0].text == "dober dan"
+    assert restored.sections[0].phrases[0].role == "female-1"
+    assert restored.sections[0].phrases[1].text == "kako ste"

@@ -24,6 +24,8 @@ async def test_health_returns_ok():
 
 @pytest.mark.asyncio
 async def test_generate_curriculum_returns_201(monkeypatch):
+    from app.storage.store import ContentStore
+
     mock_curriculum = Curriculum(
         id="test-id",
         topic="ordering coffee",
@@ -46,6 +48,7 @@ async def test_generate_curriculum_returns_201(monkeypatch):
 
     app.state.curriculum_generator = mock_generator
     app.state.language = Language.slovene()
+    app.state.content_store = ContentStore(":memory:")
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
@@ -57,10 +60,17 @@ async def test_generate_curriculum_returns_201(monkeypatch):
     data = response.json()
     assert "id" in data
     assert data["topic"] == "ordering coffee"
+    # Verify persisted
+    restored = app.state.content_store.get_curriculum(data["id"])
+    assert restored is not None
+    assert restored.topic == "ordering coffee"
 
 
 @pytest.mark.asyncio
 async def test_get_curriculum_returns_404_when_missing():
+    from app.storage.store import ContentStore
+
+    app.state.content_store = ContentStore(":memory:")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/curriculum/nonexistent-id")
     assert response.status_code == 404
@@ -68,6 +78,9 @@ async def test_get_curriculum_returns_404_when_missing():
 
 @pytest.mark.asyncio
 async def test_list_curricula_returns_200():
+    from app.storage.store import ContentStore
+
+    app.state.content_store = ContentStore(":memory:")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/curriculum")
     assert response.status_code == 200
@@ -79,6 +92,8 @@ async def test_list_curricula_returns_200():
 
 @pytest.mark.asyncio
 async def test_get_lesson_returns_full_script():
+    from app.storage.store import ContentStore
+
     mock_lesson = Lesson(
         title="Day 1",
         language_code="sl",
@@ -98,9 +113,9 @@ async def test_get_lesson_returns_full_script():
         ],
     )
 
-    if not hasattr(app.state, "lessons"):
-        app.state.lessons = {}
-    app.state.lessons["lesson-abc"] = mock_lesson
+    store = ContentStore(":memory:")
+    store.save_lesson("lesson-abc", "some-curriculum-id", 1, mock_lesson)
+    app.state.content_store = store
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/story/lesson-abc")
@@ -119,6 +134,9 @@ async def test_get_lesson_returns_full_script():
 
 @pytest.mark.asyncio
 async def test_get_lesson_returns_404_when_missing():
+    from app.storage.store import ContentStore
+
+    app.state.content_store = ContentStore(":memory:")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/story/nonexistent-lesson-id")
     assert response.status_code == 404
@@ -126,6 +144,8 @@ async def test_get_lesson_returns_404_when_missing():
 
 @pytest.mark.asyncio
 async def test_generate_story_returns_201(monkeypatch):
+    from app.storage.store import ContentStore
+
     mock_lesson = Lesson(
         title="Day 1",
         language_code="sl",
@@ -159,11 +179,10 @@ async def test_generate_story_returns_201(monkeypatch):
     app.state.story_generator = mock_generator
     app.state.language = Language.slovene()
 
-    # Store a curriculum for lookup
-    if not hasattr(app.state, "curricula"):
-        app.state.curricula = {}
+    store = ContentStore(":memory:")
     curriculum_id = "test-curriculum-id"
-    app.state.curricula[curriculum_id] = mock_curriculum
+    store.save_curriculum(curriculum_id, mock_curriculum)
+    app.state.content_store = store
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
@@ -175,6 +194,8 @@ async def test_generate_story_returns_201(monkeypatch):
     data = response.json()
     assert "id" in data
     assert "sections" in data
+    # Verify lesson was persisted
+    assert store.get_lesson(data["id"]) is not None
 
 
 # ── SRS endpoints ─────────────────────────────────────────────────────
@@ -296,6 +317,8 @@ async def test_srs_new_respects_limit():
 
 @pytest.mark.asyncio
 async def test_audio_render_returns_202(tmp_path, monkeypatch):
+    from app.storage.store import ContentStore
+
     mock_renderer = AsyncMock()
     mock_renderer.render = AsyncMock(side_effect=lambda lesson, path: path.write_bytes(b"audio"))
 
@@ -310,13 +333,13 @@ async def test_audio_render_returns_202(tmp_path, monkeypatch):
         ],
     )
 
+    store = ContentStore(":memory:")
+    lesson_id = "test-lesson-id"
+    store.save_lesson(lesson_id, "some-curriculum-id", 1, mock_lesson)
+
     app.state.renderer = mock_renderer
     app.state.audio_dir = tmp_path
-
-    if not hasattr(app.state, "lessons"):
-        app.state.lessons = {}
-    lesson_id = "test-lesson-id"
-    app.state.lessons[lesson_id] = mock_lesson
+    app.state.content_store = store
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
@@ -324,10 +347,15 @@ async def test_audio_render_returns_202(tmp_path, monkeypatch):
     assert response.status_code == 202
     data = response.json()
     assert "audio_id" in data
+    # Verify audio file mapping was persisted
+    assert store.get_audio_file(data["audio_id"]) is not None
 
 
 @pytest.mark.asyncio
 async def test_audio_get_returns_404_when_missing():
+    from app.storage.store import ContentStore
+
+    app.state.content_store = ContentStore(":memory:")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/audio/nonexistent-id")
     assert response.status_code == 404

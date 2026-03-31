@@ -20,6 +20,7 @@ class GenerateCurriculumRequest(BaseModel):
 async def generate_curriculum(body: GenerateCurriculumRequest, request: Request):
     generator = request.app.state.curriculum_generator
     language = request.app.state.language
+    store = request.app.state.content_store
 
     curriculum = await generator.generate(
         topic=body.topic,
@@ -29,9 +30,7 @@ async def generate_curriculum(body: GenerateCurriculumRequest, request: Request)
     )
 
     curriculum_id = str(uuid.uuid4())
-    if not hasattr(request.app.state, "curricula"):
-        request.app.state.curricula = {}
-    request.app.state.curricula[curriculum_id] = curriculum
+    store.save_curriculum(curriculum_id, curriculum)
 
     return {
         "id": curriculum_id,
@@ -43,14 +42,19 @@ async def generate_curriculum(body: GenerateCurriculumRequest, request: Request)
 
 @router.get("", status_code=200)
 async def list_curricula(request: Request):
-    curricula = getattr(request.app.state, "curricula", {})
-    return [{"id": cid, "topic": c.topic} for cid, c in curricula.items()]
+    store = request.app.state.content_store
+    return store.list_curricula()
 
 
 @router.get("/{curriculum_id}", status_code=200)
 async def get_curriculum(curriculum_id: str, request: Request):
-    curricula = getattr(request.app.state, "curricula", {})
-    if curriculum_id not in curricula:
+    store = request.app.state.content_store
+    curriculum = store.get_curriculum(curriculum_id)
+    if curriculum is None:
         raise HTTPException(status_code=404, detail="Curriculum not found")
-    c = curricula[curriculum_id]
-    return {"id": curriculum_id, "topic": c.topic, "language_code": c.language_code, "days": len(c.days)}
+    return {
+        "id": curriculum_id,
+        "topic": curriculum.topic,
+        "language_code": curriculum.language_code,
+        "days": len(curriculum.days),
+    }

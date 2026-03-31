@@ -20,11 +20,11 @@ class GenerateStoryRequest(BaseModel):
 
 @router.post("/generate", status_code=201)
 async def generate_story(body: GenerateStoryRequest, request: Request):
-    curricula = getattr(request.app.state, "curricula", {})
-    if body.curriculum_id not in curricula:
+    store = request.app.state.content_store
+    curriculum = store.get_curriculum(body.curriculum_id)
+    if curriculum is None:
         raise HTTPException(status_code=404, detail="Curriculum not found")
 
-    curriculum = curricula[body.curriculum_id]
     days = [d for d in curriculum.days if d.day == body.day]
     if not days:
         raise HTTPException(status_code=404, detail=f"Day {body.day} not found in curriculum")
@@ -41,9 +41,7 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
     )
 
     lesson_id = str(uuid.uuid4())
-    if not hasattr(request.app.state, "lessons"):
-        request.app.state.lessons = {}
-    request.app.state.lessons[lesson_id] = lesson
+    store.save_lesson(lesson_id, body.curriculum_id, body.day, lesson)
 
     sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
     return {"id": lesson_id, "title": lesson.title, "sections": sections}
@@ -51,10 +49,10 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
 
 @router.get("/{lesson_id}", status_code=200)
 async def get_lesson(lesson_id: str, request: Request):
-    lessons = getattr(request.app.state, "lessons", {})
-    if lesson_id not in lessons:
+    store = request.app.state.content_store
+    lesson = store.get_lesson(lesson_id)
+    if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
-    lesson = lessons[lesson_id]
     return {
         "id": lesson_id,
         "title": lesson.title,
