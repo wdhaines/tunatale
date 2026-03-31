@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api';
-	import type { CurriculumSummary, LessonSummary } from '$lib/api';
+	import type { CurriculumSummary, LessonSummary, LessonDetail } from '$lib/api';
 
 	let topic = $state('');
 	let cefrLevel = $state('A2');
@@ -8,6 +8,7 @@
 
 	let curriculum: CurriculumSummary | null = $state(null);
 	let lesson: LessonSummary | null = $state(null);
+	let lessonDetail: LessonDetail | null = $state(null);
 	let audioUrl: string | null = $state(null);
 
 	let loading = $state(false);
@@ -33,8 +34,10 @@
 		if (!curriculum) return;
 		loading = true;
 		error = '';
+		lessonDetail = null;
 		try {
 			lesson = await api.generateStory(curriculum.id, day);
+			lessonDetail = await api.getLesson(lesson.id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -117,6 +120,24 @@
 		</section>
 	{/if}
 
+	{#if lessonDetail}
+		<section class="script-section">
+			<h2>Lesson Script</h2>
+			{#each lessonDetail.sections as section}
+				<div class="script-block">
+					<h3>{section.type}</h3>
+					{#each section.phrases as phrase}
+						<div class="phrase">
+							<span class="role">{phrase.role}</span>
+							<span class="phrase-text">{phrase.text}</span>
+							<span class="lang">{phrase.language_code}</span>
+						</div>
+					{/each}
+				</div>
+			{/each}
+		</section>
+	{/if}
+
 	{#if audioUrl}
 		<section class="audio-section">
 			<h2>Audio Player</h2>
@@ -176,5 +197,32 @@
 	}
 	audio {
 		width: 100%;
+	}
+	.script-block {
+		margin-bottom: 1rem;
+	}
+	.script-block h3 {
+		font-size: 0.85rem;
+		text-transform: uppercase;
+		color: #666;
+		margin-bottom: 0.5rem;
+	}
+	.phrase {
+		display: flex;
+		gap: 0.75rem;
+		padding: 0.25rem 0;
+		border-bottom: 1px solid #f0f0f0;
+		font-size: 0.9rem;
+	}
+	.role {
+		color: #2563eb;
+		min-width: 6rem;
+	}
+	.phrase-text {
+		flex: 1;
+	}
+	.lang {
+		color: #999;
+		font-size: 0.8rem;
 	}
 </style>

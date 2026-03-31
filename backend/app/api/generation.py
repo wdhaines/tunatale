@@ -47,3 +47,26 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
 
     sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
     return {"id": lesson_id, "title": lesson.title, "sections": sections}
+
+
+@router.get("/{lesson_id}", status_code=200)
+async def get_lesson(lesson_id: str, request: Request):
+    lessons = getattr(request.app.state, "lessons", {})
+    if lesson_id not in lessons:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    lesson = lessons[lesson_id]
+    return {
+        "id": lesson_id,
+        "title": lesson.title,
+        "language_code": lesson.language_code,
+        "sections": [
+            {
+                "type": s.section_type.value,
+                "phrases": [
+                    {"text": p.text, "role": p.role, "language_code": p.language_code, "voice_id": p.voice_id}
+                    for p in s.phrases
+                ],
+            }
+            for s in lesson.sections
+        ],
+    }

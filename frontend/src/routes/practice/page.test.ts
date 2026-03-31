@@ -18,11 +18,13 @@ vi.mock('$lib/api', () => ({
 import { api } from '$lib/api';
 const mockGetSRSDue = vi.mocked(api.getSRSDue);
 const mockGetSRSNew = vi.mocked(api.getSRSNew);
+const mockGetSRSStats = vi.mocked(api.getSRSStats);
 const mockPostSRSFeedback = vi.mocked(api.postSRSFeedback);
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	mockGetSRSNew.mockResolvedValue({ new: [] });
+	mockGetSRSStats.mockResolvedValue({ total: 0, due_today: 0 });
 });
 
 describe('practice/+page.svelte', () => {
@@ -126,6 +128,14 @@ describe('practice/+page.svelte', () => {
 		mockGetSRSDue.mockResolvedValue({ due: [{ text: 'dober dan', translation: 'good day' }] });
 		const { findByText } = render(PracticePage);
 		expect(await findByText('1 / 2')).toBeTruthy();
+	});
+
+	it('displays SRS stats in the header', async () => {
+		mockGetSRSDue.mockResolvedValue({ due: [] });
+		mockGetSRSStats.mockResolvedValue({ total: 25, due_today: 5 });
+		const { findByText } = render(PracticePage);
+		expect(await findByText(/25 cards total/)).toBeTruthy();
+		expect(await findByText(/5 due today/)).toBeTruthy();
 	});
 
 	it('shows error when getSRSNew rejects', async () => {

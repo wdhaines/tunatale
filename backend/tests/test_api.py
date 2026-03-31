@@ -78,6 +78,53 @@ async def test_list_curricula_returns_200():
 
 
 @pytest.mark.asyncio
+async def test_get_lesson_returns_full_script():
+    mock_lesson = Lesson(
+        title="Day 1",
+        language_code="sl",
+        sections=[
+            Section(
+                section_type=SectionType.KEY_PHRASES,
+                phrases=[
+                    Phrase(text="dober dan", role="female-1", voice_id="sl-SI-PetraNeural", language_code="sl"),
+                ],
+            ),
+            Section(
+                section_type=SectionType.NATURAL_SPEED,
+                phrases=[
+                    Phrase(text="kako ste", role="male-1", voice_id="sl-SI-RokNeural", language_code="sl"),
+                ],
+            ),
+        ],
+    )
+
+    if not hasattr(app.state, "lessons"):
+        app.state.lessons = {}
+    app.state.lessons["lesson-abc"] = mock_lesson
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/story/lesson-abc")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == "lesson-abc"
+    assert data["title"] == "Day 1"
+    assert len(data["sections"]) == 2
+    phrase = data["sections"][0]["phrases"][0]
+    assert phrase["text"] == "dober dan"
+    assert phrase["role"] == "female-1"
+    assert phrase["language_code"] == "sl"
+    assert phrase["voice_id"] == "sl-SI-PetraNeural"
+
+
+@pytest.mark.asyncio
+async def test_get_lesson_returns_404_when_missing():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/story/nonexistent-lesson-id")
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_generate_story_returns_201(monkeypatch):
     mock_lesson = Lesson(
         title="Day 1",

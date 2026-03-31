@@ -12,6 +12,7 @@ vi.mock('$lib/api', () => ({
 		listCurricula: vi.fn(),
 		getCurriculum: vi.fn(),
 		generateStory: vi.fn(),
+		getLesson: vi.fn(),
 		renderAudio: vi.fn(),
 		audioUrl: vi.fn(),
 		getSRSDue: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock('$lib/api', () => ({
 
 import { api } from '$lib/api';
 const mockGenerateCurriculum = vi.mocked(api.generateCurriculum);
+const mockGetLesson = vi.mocked(api.getLesson);
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -66,6 +68,38 @@ describe('+page.svelte', () => {
 		await fireEvent.click(getByRole('button', { name: 'Generate' }));
 
 		expect(mockGenerateCurriculum).toHaveBeenCalledWith('ordering coffee', 'A2', 7);
+	});
+
+	it('shows lesson script after generating curriculum and clicking a day button', async () => {
+		mockGenerateCurriculum.mockResolvedValue({
+			id: 'c1',
+			topic: 'ordering coffee',
+			language_code: 'sl',
+			days: 1
+		});
+		vi.mocked(api.generateStory).mockResolvedValue({ id: 'l1', title: 'Day 1', sections: [] });
+		mockGetLesson.mockResolvedValue({
+			id: 'l1',
+			title: 'Day 1',
+			language_code: 'sl',
+			sections: [
+				{
+					type: 'key_phrases',
+					phrases: [{ text: 'dober dan', role: 'female-1', language_code: 'sl', voice_id: 'sl-SI-PetraNeural' }]
+				}
+			]
+		});
+
+		const { getByRole, getByPlaceholderText, findByText, findByRole } = render(Page);
+		await fireEvent.input(getByPlaceholderText('e.g. ordering coffee in Ljubljana'), {
+			target: { value: 'ordering coffee' }
+		});
+		await fireEvent.click(getByRole('button', { name: 'Generate' }));
+		await fireEvent.click(await findByRole('button', { name: 'Day 1' }));
+
+		expect(await findByText('Lesson Script')).toBeTruthy();
+		expect(await findByText('dober dan')).toBeTruthy();
+		expect(await findByText('female-1')).toBeTruthy();
 	});
 
 	it('shows error message when api.generateCurriculum rejects', async () => {

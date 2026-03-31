@@ -34,6 +34,25 @@ export interface LessonSummary {
 export type ContentStrategy = 'WIDER' | 'DEEPER';
 export type FeedbackSignal = 'no_help' | 'slowdown' | 'translation_request' | 'fast_forward';
 
+export interface PhraseDetail {
+	text: string;
+	role: string;
+	language_code: string;
+	voice_id: string;
+}
+
+export interface SectionDetail {
+	type: string;
+	phrases: PhraseDetail[];
+}
+
+export interface LessonDetail {
+	id: string;
+	title: string;
+	language_code: string;
+	sections: SectionDetail[];
+}
+
 export interface SRSDue {
 	due: Array<{ text: string; translation: string }>;
 }
@@ -83,6 +102,12 @@ export class TunaTaleAPI {
 			body: JSON.stringify({ curriculum_id: curriculumId, day, strategy })
 		});
 		if (!res.ok) throw new Error(`Failed to generate story: ${res.statusText}`);
+		return res.json();
+	}
+
+	async getLesson(lessonId: string): Promise<LessonDetail> {
+		const res = await fetch(`${this.baseUrl}/api/story/${lessonId}`);
+		if (!res.ok) throw new Error(`Lesson not found: ${lessonId}`);
 		return res.json();
 	}
 

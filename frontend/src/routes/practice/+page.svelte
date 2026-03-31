@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import type { FeedbackSignal, SRSNew } from '$lib/api';
+	import type { FeedbackSignal, SRSStats } from '$lib/api';
 
 	type Card = { text: string; translation: string };
 
@@ -10,6 +10,7 @@
 	let revealed = $state(false);
 	let loading = $state(true);
 	let error = $state('');
+	let stats: SRSStats | null = $state(null);
 	let done = $derived(index >= cards.length && cards.length > 0);
 
 	onMount(async () => {
@@ -24,6 +25,7 @@
 		} finally {
 			loading = false;
 		}
+		api.getSRSStats().then((s) => { stats = s; }).catch(() => {});
 	});
 
 	function reveal() {
@@ -44,6 +46,9 @@
 
 <main>
 	<h1><a href="/">TunaTale</a> — Practice</h1>
+	{#if stats}
+		<p class="stats">{stats.total} cards total · {stats.due_today} due today</p>
+	{/if}
 
 	{#if loading}
 		<p>Loading cards…</p>
@@ -136,5 +141,10 @@
 	.error {
 		color: #dc2626;
 		margin-top: 0.5rem;
+	}
+	.stats {
+		color: #666;
+		font-size: 0.85rem;
+		margin-top: 0.25rem;
 	}
 </style>

@@ -175,4 +175,37 @@ describe('TunaTaleAPI', () => {
 
 		await expect(api.getSRSNew()).rejects.toThrow('Failed to get new collocations');
 	});
+
+	it('getLesson calls GET /api/story/:id', async () => {
+		const mockDetail = {
+			id: 'l1',
+			title: 'Day 1',
+			language_code: 'sl',
+			sections: [
+				{
+					type: 'key_phrases',
+					phrases: [{ text: 'dober dan', role: 'female-1', language_code: 'sl', voice_id: 'sl-SI-PetraNeural' }]
+				}
+			]
+		};
+		global.fetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => mockDetail
+		} as Response);
+
+		const result = await api.getLesson('l1');
+
+		expect(fetch).toHaveBeenCalledWith(`${BASE}/api/story/l1`);
+		expect(result.id).toBe('l1');
+		expect(result.sections[0].phrases[0].text).toBe('dober dan');
+	});
+
+	it('getLesson throws on 404', async () => {
+		global.fetch = vi.fn().mockResolvedValue({
+			ok: false,
+			statusText: 'Not Found'
+		} as Response);
+
+		await expect(api.getLesson('missing')).rejects.toThrow('Lesson not found');
+	});
 });
