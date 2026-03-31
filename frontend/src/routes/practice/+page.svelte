@@ -143,7 +143,7 @@
 		margin-top: 0.5rem;
 	}
 	.stats {
-		color: #666;
+		color: var(--color-muted);
 		font-size: 0.85rem;
 		margin-top: 0.25rem;
 	}

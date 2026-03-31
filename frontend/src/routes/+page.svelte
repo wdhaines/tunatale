@@ -204,18 +204,18 @@
 	.script-block h3 {
 		font-size: 0.85rem;
 		text-transform: uppercase;
-		color: #666;
+		color: var(--color-muted);
 		margin-bottom: 0.5rem;
 	}
 	.phrase {
 		display: flex;
 		gap: 0.75rem;
 		padding: 0.25rem 0;
-		border-bottom: 1px solid #f0f0f0;
+		border-bottom: 1px solid var(--color-border);
 		font-size: 0.9rem;
 	}
 	.role {
-		color: #2563eb;
+		color: var(--color-primary);
 		min-width: 6rem;
 	}
 	.phrase-text {
