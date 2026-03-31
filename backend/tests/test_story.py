@@ -151,3 +151,22 @@ async def test_generate_uses_system_prompt(generator, language, mock_llm):
     assert call_kwargs.kwargs.get("system_prompt") is not None or (
         len(call_kwargs.args) > 1 and call_kwargs.args[1] is not None
     )
+
+
+@pytest.mark.asyncio
+async def test_generate_persists_collocations_to_srs_db(generator, language, db):
+    day = _make_curriculum_day()
+    await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+    assert db.count_collocations() == 2
+    assert db.get_collocation("dober dan") is not None
+    assert db.get_collocation("prosim kavo") is not None
+    assert db.get_collocation("dober dan").syntactic_unit.source == "llm"
+    assert db.get_collocation("prosim kavo").syntactic_unit.source == "llm"
+
+
+@pytest.mark.asyncio
+async def test_generate_persists_collocations_idempotent(generator, language, db):
+    day = _make_curriculum_day()
+    await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+    await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+    assert db.count_collocations() == 2

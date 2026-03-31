@@ -9,6 +9,7 @@ import PracticePage from './+page.svelte';
 vi.mock('$lib/api', () => ({
 	api: {
 		getSRSDue: vi.fn(),
+		getSRSNew: vi.fn(),
 		getSRSStats: vi.fn(),
 		postSRSFeedback: vi.fn()
 	}
@@ -16,10 +17,12 @@ vi.mock('$lib/api', () => ({
 
 import { api } from '$lib/api';
 const mockGetSRSDue = vi.mocked(api.getSRSDue);
+const mockGetSRSNew = vi.mocked(api.getSRSNew);
 const mockPostSRSFeedback = vi.mocked(api.postSRSFeedback);
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mockGetSRSNew.mockResolvedValue({ new: [] });
 });
 
 describe('practice/+page.svelte', () => {
@@ -102,5 +105,33 @@ describe('practice/+page.svelte', () => {
 		const { findByRole } = render(PracticePage);
 		const link = (await findByRole('link', { name: /TunaTale/ })) as HTMLAnchorElement;
 		expect(link.href).toContain('/');
+	});
+
+	it('shows new cards before due cards', async () => {
+		mockGetSRSNew.mockResolvedValue({ new: [{ text: 'nov besedi', translation: 'new word' }] });
+		mockGetSRSDue.mockResolvedValue({ due: [{ text: 'dober dan', translation: 'good day' }] });
+		const { findByText } = render(PracticePage);
+		expect(await findByText('nov besedi')).toBeTruthy();
+	});
+
+	it('shows empty state when both new and due are empty', async () => {
+		mockGetSRSNew.mockResolvedValue({ new: [] });
+		mockGetSRSDue.mockResolvedValue({ due: [] });
+		const { findByText } = render(PracticePage);
+		expect(await findByText(/No cards due/)).toBeTruthy();
+	});
+
+	it('shows correct total count with new and due combined', async () => {
+		mockGetSRSNew.mockResolvedValue({ new: [{ text: 'nov besedi', translation: 'new word' }] });
+		mockGetSRSDue.mockResolvedValue({ due: [{ text: 'dober dan', translation: 'good day' }] });
+		const { findByText } = render(PracticePage);
+		expect(await findByText('1 / 2')).toBeTruthy();
+	});
+
+	it('shows error when getSRSNew rejects', async () => {
+		mockGetSRSNew.mockRejectedValue(new Error('Network error on new'));
+		mockGetSRSDue.mockResolvedValue({ due: [] });
+		const { findByText } = render(PracticePage);
+		expect(await findByText('Network error on new')).toBeTruthy();
 	});
 });

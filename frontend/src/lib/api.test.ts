@@ -153,4 +153,26 @@ describe('TunaTaleAPI', () => {
 
 		await expect(api.postSRSFeedback('dober dan', 'no_help')).rejects.toThrow('Failed to record feedback');
 	});
+
+	it('getSRSNew calls GET /api/srs/new', async () => {
+		const mockResponse = { new: [{ text: 'dober dan', translation: 'good day' }] };
+		global.fetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => mockResponse
+		} as Response);
+
+		const result = await api.getSRSNew();
+
+		expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/new`);
+		expect(result.new).toEqual(mockResponse.new);
+	});
+
+	it('getSRSNew throws on non-ok response', async () => {
+		global.fetch = vi.fn().mockResolvedValue({
+			ok: false,
+			statusText: 'Internal Server Error'
+		} as Response);
+
+		await expect(api.getSRSNew()).rejects.toThrow('Failed to get new collocations');
+	});
 });

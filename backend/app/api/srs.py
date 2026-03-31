@@ -28,6 +28,13 @@ async def get_due_collocations(request: Request):
     return {"due": [{"text": i.syntactic_unit.text, "translation": i.syntactic_unit.translation} for i in items]}
 
 
+@router.get("/new", status_code=200)
+async def get_new_collocations(request: Request, limit: int = 10):
+    db = request.app.state.srs_db
+    items = db.get_new_collocations(limit=limit)
+    return {"new": [{"text": i.syntactic_unit.text, "translation": i.syntactic_unit.translation} for i in items]}
+
+
 @router.post("/feedback", status_code=200)
 async def record_feedback(body: FeedbackRequest, request: Request):
     db = request.app.state.srs_db

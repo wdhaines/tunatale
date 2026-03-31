@@ -186,6 +186,64 @@ async def test_srs_feedback_returns_ok():
     db.close()
 
 
+@pytest.mark.asyncio
+async def test_srs_new_returns_200():
+    from app.models.syntactic_unit import SyntacticUnit
+    from app.srs.database import SRSDatabase
+
+    db = SRSDatabase(":memory:")
+    db.add_collocation(
+        SyntacticUnit(text="dober dan", translation="good day", word_count=2, difficulty=1, source="llm")
+    )
+    db.add_collocation(
+        SyntacticUnit(text="prosim kavo", translation="a coffee please", word_count=2, difficulty=1, source="llm")
+    )
+    app.state.srs_db = db
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/srs/new")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "new" in data
+    assert len(data["new"]) == 2
+    assert all("text" in item and "translation" in item for item in data["new"])
+    db.close()
+
+
+@pytest.mark.asyncio
+async def test_srs_new_returns_empty_when_no_new_cards():
+    from app.srs.database import SRSDatabase
+
+    db = SRSDatabase(":memory:")
+    app.state.srs_db = db
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/srs/new")
+
+    assert response.json()["new"] == []
+    db.close()
+
+
+@pytest.mark.asyncio
+async def test_srs_new_respects_limit():
+    from app.models.syntactic_unit import SyntacticUnit
+    from app.srs.database import SRSDatabase
+
+    db = SRSDatabase(":memory:")
+    for i in range(15):
+        db.add_collocation(
+            SyntacticUnit(text=f"phrase {i}", translation=f"trans {i}", word_count=2, difficulty=1, source="llm")
+        )
+    app.state.srs_db = db
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/srs/new")
+
+    assert len(response.json()["new"]) == 10
+    db.close()
+
+
 # ── Audio endpoints ───────────────────────────────────────────────────
 
 

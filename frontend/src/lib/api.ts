@@ -38,6 +38,10 @@ export interface SRSDue {
 	due: Array<{ text: string; translation: string }>;
 }
 
+export interface SRSNew {
+	new: Array<{ text: string; translation: string }>;
+}
+
 export interface SRSStats {
 	total: number;
 	due_today: number;
@@ -99,6 +103,12 @@ export class TunaTaleAPI {
 	async getSRSDue(): Promise<SRSDue> {
 		const res = await fetch(`${this.baseUrl}/api/srs/due`);
 		if (!res.ok) throw new Error('Failed to get due collocations');
+		return res.json();
+	}
+
+	async getSRSNew(): Promise<SRSNew> {
+		const res = await fetch(`${this.baseUrl}/api/srs/new`);
+		if (!res.ok) throw new Error('Failed to get new collocations');
 		return res.json();
 	}
 

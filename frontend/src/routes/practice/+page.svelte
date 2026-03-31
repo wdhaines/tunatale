@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import type { FeedbackSignal } from '$lib/api';
+	import type { FeedbackSignal, SRSNew } from '$lib/api';
 
 	type Card = { text: string; translation: string };
 
@@ -14,8 +14,11 @@
 
 	onMount(async () => {
 		try {
-			const data = await api.getSRSDue();
-			cards = data.due;
+			const [newData, dueData] = await Promise.all([
+				api.getSRSNew(),
+				api.getSRSDue()
+			]);
+			cards = [...newData.new, ...dueData.due];
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {

@@ -16,6 +16,7 @@ from app.models.curriculum import CurriculumDay
 from app.models.language import Language
 from app.models.lesson import Lesson
 from app.models.strategy import ContentStrategy
+from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 
 logger = logging.getLogger(__name__)
@@ -91,5 +92,15 @@ class StoryGenerator:
             build_slow_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
             build_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
         ]
+
+        for kp in key_phrases:
+            unit = SyntacticUnit(
+                text=kp["phrase"],
+                translation=kp["translation"],
+                word_count=min(8, max(1, len(kp["phrase"].split()))),
+                difficulty=1,
+                source="llm",
+            )
+            self._db.add_collocation(unit)
 
         return Lesson(title=title, language_code=language.code, sections=sections)
