@@ -1,14 +1,24 @@
 """LessonRenderer integration tests."""
 
+import wave
+from io import BytesIO
 from unittest.mock import AsyncMock
 
 import pytest
+from pydub import AudioSegment
 
 from app.audio.assembler import AudioAssembler
 from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.preprocessing.slovene import SlovenePreprocessor
 from app.audio.renderer import LessonRenderer
 from app.models.lesson import Lesson, Phrase, Section, SectionType
+
+
+def _make_wav_bytes(duration_ms: int = 100) -> bytes:
+    """Generate minimal valid WAV bytes using pydub (no ffmpeg needed for WAV)."""
+    buf = BytesIO()
+    AudioSegment.silent(duration=duration_ms).export(buf, format="wav")
+    return buf.getvalue()
 
 
 def _minimal_lesson() -> Lesson:
@@ -27,18 +37,11 @@ def _minimal_lesson() -> Lesson:
     )
 
 
-@pytest.fixture
-def assembler():
-    return AudioAssembler()
-
-
-@pytest.fixture
-def renderer(assembler):
+def _make_renderer(mock_tts):
     return LessonRenderer(
-        tts=None,  # replaced per-test with mock
+        tts=mock_tts,
         preprocessor=SlovenePreprocessor(),
         pause_calculator=NaturalPauseCalculator(),
-        assembler=assembler,
     )
 
 
@@ -79,7 +82,7 @@ def test_assembler_trim_silence_returns_bytes():
 async def test_render_produces_output_file(tmp_path):
     """render() writes a file to the output path."""
     lesson = _minimal_lesson()
-    fake_audio = b"\x00" * 2000  # fake WAV-like bytes
+    fake_audio = _make_wav_bytes()
 
     mock_tts = AsyncMock()
 
@@ -88,14 +91,7 @@ async def test_render_produces_output_file(tmp_path):
 
     mock_tts.synthesize = fake_synthesize
 
-    asm = AudioAssembler()
-    rdr = LessonRenderer(
-        tts=mock_tts,
-        preprocessor=SlovenePreprocessor(),
-        pause_calculator=NaturalPauseCalculator(),
-        assembler=asm,
-    )
-
+    rdr = _make_renderer(mock_tts)
     output = tmp_path / "lesson.wav"
     await rdr.render(lesson, output)
 
@@ -104,10 +100,33 @@ async def test_render_produces_output_file(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_render_produces_valid_wav(tmp_path):
+    """render() output is a valid WAV file with audio frames."""
+    lesson = _minimal_lesson()
+    fake_audio = _make_wav_bytes(duration_ms=200)
+
+    mock_tts = AsyncMock()
+
+    async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        output_path.write_bytes(fake_audio)
+
+    mock_tts.synthesize = fake_synthesize
+
+    rdr = _make_renderer(mock_tts)
+    output = tmp_path / "lesson.wav"
+    await rdr.render(lesson, output)
+
+    with wave.open(str(output), "rb") as wf:
+        assert wf.getnframes() > 0
+        assert wf.getnchannels() >= 1
+        assert wf.getframerate() > 0
+
+
+@pytest.mark.asyncio
 async def test_render_calls_tts_for_each_phrase(tmp_path):
     """render() calls synthesize once per phrase."""
     lesson = _minimal_lesson()
-    fake_audio = b"\x00" * 1000
+    fake_audio = _make_wav_bytes()
 
     synthesize_calls = []
 
@@ -118,14 +137,7 @@ async def test_render_calls_tts_for_each_phrase(tmp_path):
     mock_tts = AsyncMock()
     mock_tts.synthesize = fake_synthesize
 
-    asm = AudioAssembler()
-    rdr = LessonRenderer(
-        tts=mock_tts,
-        preprocessor=SlovenePreprocessor(),
-        pause_calculator=NaturalPauseCalculator(),
-        assembler=asm,
-    )
-
+    rdr = _make_renderer(mock_tts)
     await rdr.render(lesson, tmp_path / "out.wav")
 
     phrase_count = sum(len(s.phrases) for s in lesson.sections)

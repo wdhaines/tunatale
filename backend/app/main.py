@@ -11,7 +11,6 @@ load_dotenv()
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
-from app.audio.assembler import AudioAssembler  # noqa: E402
 from app.audio.edge_tts import EdgeTTSService  # noqa: E402
 from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
 from app.audio.preprocessing.slovene import SlovenePreprocessor  # noqa: E402
@@ -46,7 +45,6 @@ async def lifespan(app: FastAPI):
         tts=EdgeTTSService(),
         preprocessor=SlovenePreprocessor(),
         pause_calculator=NaturalPauseCalculator(),
-        assembler=AudioAssembler(),
     )
     app.state.audio_dir = Path("output/audio")
 
