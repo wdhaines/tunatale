@@ -12,21 +12,71 @@ from app.models.lesson import SectionType
 # ── build_word_breakdown ──────────────────────────────────────────────────
 
 
+def test_build_word_breakdown_empty():
+    assert build_word_breakdown("") == []
+
+
 def test_build_word_breakdown_single_word():
+    # "dan" is a single syllable — just repeat
     assert build_word_breakdown("dan") == ["dan", "dan"]
 
 
+def test_build_word_breakdown_single_multisyllable_word():
+    # "prosim" → ["pro", "sim"]; breakdown does backward syllable buildup
+    assert build_word_breakdown("prosim") == [
+        "prosim",  # full phrase
+        "sim",  # last syllable
+        "pro",  # first syllable
+        "prosim",  # rebuilt word
+        "prosim",  # final repeat
+    ]
+
+
 def test_build_word_breakdown_two_words():
-    assert build_word_breakdown("dober dan") == ["dan", "dober dan", "dober dan"]
+    # "dober dan": "dan" is single-syllable; "dober" → ["do", "ber"]
+    assert build_word_breakdown("dober dan") == [
+        "dober dan",  # full phrase
+        "dan",  # last word (single syllable)
+        "ber",  # last syllable of "dober"
+        "do",  # first syllable
+        "dober",  # rebuilt word
+        "dober dan",  # full phrase
+        "dober dan",  # final repeat
+    ]
 
 
 def test_build_word_breakdown_three_words():
+    # "eno kavo prosim": prosim→[pro,sim], kavo→[ka,vo], eno→[e,no]
     assert build_word_breakdown("eno kavo prosim") == [
-        "prosim",
-        "kavo prosim",
-        "eno kavo prosim",
-        "eno kavo prosim",
+        "eno kavo prosim",  # full phrase
+        "sim",  # last syllable of prosim
+        "pro",  # first syllable
+        "prosim",  # rebuilt
+        "vo",  # last syllable of kavo
+        "ka",  # first syllable
+        "kavo",  # rebuilt
+        "kavo prosim",  # partial phrase
+        "no",  # last syllable of eno
+        "e",  # first syllable
+        "eno",  # rebuilt
+        "eno kavo prosim",  # full phrase
+        "eno kavo prosim",  # final repeat
     ]
+
+
+def test_build_word_breakdown_starts_with_full_phrase():
+    result = build_word_breakdown("hvala lepa")
+    assert result[0] == "hvala lepa"
+
+
+def test_build_word_breakdown_ends_with_full_phrase_twice():
+    result = build_word_breakdown("hvala lepa")
+    assert result[-1] == "hvala lepa"
+    assert result[-2] == "hvala lepa"
+
+
+def test_build_word_breakdown_whitespace_normalized():
+    assert build_word_breakdown("  eno   kavo  ") == build_word_breakdown("eno kavo")
 
 
 # ── build_key_phrases_section ─────────────────────────────────────────────
