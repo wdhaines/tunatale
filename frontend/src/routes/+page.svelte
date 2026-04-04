@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { CurriculumSummary, LessonSummary, LessonDetail } from '$lib/api';
+	import { saveHomeState, loadHomeState, clearHomeState } from '$lib/storage';
 
 	let topic = $state('');
 	let cefrLevel = $state('A2');
@@ -13,6 +15,62 @@
 
 	let loading = $state(false);
 	let error = $state('');
+	let restored = $state(false);
+
+	$effect(() => {
+		if (!restored) return;
+		saveHomeState({
+			topic,
+			cefrLevel,
+			numDays,
+			...(curriculum?.id ? { curriculumId: curriculum.id } : {}),
+			...(lesson?.id ? { lessonId: lesson.id } : {}),
+			...(audioUrl ? { audioUrl } : {})
+		});
+	});
+
+	onMount(async () => {
+		const saved = loadHomeState();
+		if (!saved) {
+			restored = true;
+			return;
+		}
+
+		topic = saved.topic;
+		cefrLevel = saved.cefrLevel;
+		numDays = saved.numDays;
+
+		if (saved.curriculumId) {
+			try {
+				curriculum = await api.getCurriculum(saved.curriculumId);
+			} catch {
+				clearHomeState();
+				restored = true;
+				return;
+			}
+		}
+
+		if (saved.lessonId) {
+			try {
+				lessonDetail = await api.getLesson(saved.lessonId);
+				lesson = {
+					id: lessonDetail.id,
+					title: lessonDetail.title,
+					sections: lessonDetail.sections.map((s) => ({ type: s.type, phrase_count: s.phrases.length }))
+				};
+			} catch {
+				clearHomeState();
+				restored = true;
+				return;
+			}
+		}
+
+		if (saved.audioUrl) {
+			audioUrl = saved.audioUrl;
+		}
+
+		restored = true;
+	});
 
 	async function handleGenerate() {
 		if (!topic.trim()) return;

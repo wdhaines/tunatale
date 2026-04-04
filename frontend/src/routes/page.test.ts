@@ -3,7 +3,7 @@
  * These catch Svelte compilation issues and verify UI behaviour.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, fireEvent } from '@testing-library/svelte';
+import { render, fireEvent, waitFor } from '@testing-library/svelte';
 import Page from './+page.svelte';
 
 vi.mock('$lib/api', () => ({
@@ -21,12 +21,23 @@ vi.mock('$lib/api', () => ({
 	}
 }));
 
+vi.mock('$lib/storage', () => ({
+	saveHomeState: vi.fn(),
+	loadHomeState: vi.fn(),
+	clearHomeState: vi.fn()
+}));
+
 import { api } from '$lib/api';
+import { saveHomeState, loadHomeState, clearHomeState } from '$lib/storage';
 const mockGenerateCurriculum = vi.mocked(api.generateCurriculum);
 const mockGetLesson = vi.mocked(api.getLesson);
+const mockSaveHomeState = vi.mocked(saveHomeState);
+const mockLoadHomeState = vi.mocked(loadHomeState);
+const mockClearHomeState = vi.mocked(clearHomeState);
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mockLoadHomeState.mockReturnValue(null);
 });
 
 describe('+page.svelte', () => {
@@ -112,5 +123,203 @@ describe('+page.svelte', () => {
 		await fireEvent.click(getByRole('button', { name: 'Generate' }));
 
 		expect(await findByText('Network error')).toBeTruthy();
+	});
+
+	describe('auto-save', () => {
+		it('saves state to localStorage after curriculum is generated', async () => {
+			mockGenerateCurriculum.mockResolvedValue({
+				id: 'c1',
+				topic: 'ordering coffee',
+				language_code: 'sl',
+				days: 3
+			});
+
+			const { getByRole, getByPlaceholderText } = render(Page);
+			await fireEvent.input(getByPlaceholderText('e.g. ordering coffee in Ljubljana'), {
+				target: { value: 'ordering coffee' }
+			});
+			await fireEvent.click(getByRole('button', { name: 'Generate' }));
+
+			await waitFor(() => {
+				expect(mockSaveHomeState).toHaveBeenCalledWith(
+					expect.objectContaining({ curriculumId: 'c1' })
+				);
+			});
+		});
+
+		it('saves lessonId after lesson is generated', async () => {
+			mockGenerateCurriculum.mockResolvedValue({
+				id: 'c1',
+				topic: 'ordering coffee',
+				language_code: 'sl',
+				days: 1
+			});
+			vi.mocked(api.generateStory).mockResolvedValue({ id: 'l1', title: 'Day 1', sections: [] });
+			mockGetLesson.mockResolvedValue({
+				id: 'l1',
+				title: 'Day 1',
+				language_code: 'sl',
+				sections: []
+			});
+
+			const { getByRole, getByPlaceholderText, findByRole } = render(Page);
+			await fireEvent.input(getByPlaceholderText('e.g. ordering coffee in Ljubljana'), {
+				target: { value: 'ordering coffee' }
+			});
+			await fireEvent.click(getByRole('button', { name: 'Generate' }));
+			await fireEvent.click(await findByRole('button', { name: 'Day 1' }));
+
+			await waitFor(() => {
+				expect(mockSaveHomeState).toHaveBeenCalledWith(
+					expect.objectContaining({ curriculumId: 'c1', lessonId: 'l1' })
+				);
+			});
+		});
+	});
+
+	describe('restore on mount', () => {
+		it('restores topic, cefrLevel, numDays from localStorage on mount', async () => {
+			mockLoadHomeState.mockReturnValue({ topic: 'hiking', cefrLevel: 'B1', numDays: 5 });
+
+			const { getByPlaceholderText, getByDisplayValue } = render(Page);
+
+			await waitFor(() => {
+				expect(
+					(getByPlaceholderText('e.g. ordering coffee in Ljubljana') as HTMLInputElement).value
+				).toBe('hiking');
+			});
+			expect((getByDisplayValue('B1') as HTMLSelectElement).value).toBe('B1');
+		});
+
+		it('fetches and displays curriculum when curriculumId in localStorage', async () => {
+			mockLoadHomeState.mockReturnValue({
+				topic: 'coffee',
+				cefrLevel: 'A2',
+				numDays: 3,
+				curriculumId: 'c1'
+			});
+			vi.mocked(api.getCurriculum).mockResolvedValue({
+				id: 'c1',
+				topic: 'coffee',
+				language_code: 'sl',
+				days: 3
+			});
+
+			const { findByText, findByRole } = render(Page);
+
+			expect(await findByText('Curriculum: coffee')).toBeTruthy();
+			expect(await findByRole('button', { name: 'Day 1' })).toBeTruthy();
+		});
+
+		it('fetches and displays lesson script when lessonId in localStorage', async () => {
+			mockLoadHomeState.mockReturnValue({
+				topic: 'coffee',
+				cefrLevel: 'A2',
+				numDays: 3,
+				curriculumId: 'c1',
+				lessonId: 'l1'
+			});
+			vi.mocked(api.getCurriculum).mockResolvedValue({
+				id: 'c1',
+				topic: 'coffee',
+				language_code: 'sl',
+				days: 3
+			});
+			mockGetLesson.mockResolvedValue({
+				id: 'l1',
+				title: 'Day 1 Coffee',
+				language_code: 'sl',
+				sections: [
+					{
+						type: 'key_phrases',
+						phrases: [
+							{ text: 'dober dan', role: 'female-1', language_code: 'sl', voice_id: 'sl-SI-PetraNeural' }
+						]
+					}
+				]
+			});
+
+			const { findByText } = render(Page);
+
+			expect(await findByText('Lesson Script')).toBeTruthy();
+			expect(await findByText('dober dan')).toBeTruthy();
+		});
+
+		it('displays audio player when audioUrl in localStorage', async () => {
+			mockLoadHomeState.mockReturnValue({
+				topic: 'coffee',
+				cefrLevel: 'A2',
+				numDays: 3,
+				curriculumId: 'c1',
+				lessonId: 'l1',
+				audioUrl: '/api/audio/a1'
+			});
+			vi.mocked(api.getCurriculum).mockResolvedValue({
+				id: 'c1',
+				topic: 'coffee',
+				language_code: 'sl',
+				days: 3
+			});
+			mockGetLesson.mockResolvedValue({
+				id: 'l1',
+				title: 'Day 1',
+				language_code: 'sl',
+				sections: []
+			});
+
+			const { findByText } = render(Page);
+
+			expect(await findByText('Audio Player')).toBeTruthy();
+		});
+
+		it('clears localStorage when curriculum fetch fails', async () => {
+			mockLoadHomeState.mockReturnValue({
+				topic: 'coffee',
+				cefrLevel: 'A2',
+				numDays: 3,
+				curriculumId: 'c1'
+			});
+			vi.mocked(api.getCurriculum).mockRejectedValue(new Error('Not found'));
+
+			const { queryByText } = render(Page);
+
+			await waitFor(() => {
+				expect(mockClearHomeState).toHaveBeenCalled();
+			});
+			expect(queryByText('Curriculum: coffee')).toBeNull();
+		});
+
+		it('clears localStorage when lesson fetch fails but keeps curriculum', async () => {
+			mockLoadHomeState.mockReturnValue({
+				topic: 'coffee',
+				cefrLevel: 'A2',
+				numDays: 3,
+				curriculumId: 'c1',
+				lessonId: 'l1'
+			});
+			vi.mocked(api.getCurriculum).mockResolvedValue({
+				id: 'c1',
+				topic: 'coffee',
+				language_code: 'sl',
+				days: 3
+			});
+			mockGetLesson.mockRejectedValue(new Error('Not found'));
+
+			const { findByText, queryByText } = render(Page);
+
+			expect(await findByText('Curriculum: coffee')).toBeTruthy();
+			await waitFor(() => {
+				expect(mockClearHomeState).toHaveBeenCalled();
+			});
+			expect(queryByText('Lesson Script')).toBeNull();
+		});
+
+		it('does not call API on mount when localStorage is empty', async () => {
+			render(Page);
+
+			await waitFor(() => {});
+			expect(vi.mocked(api.getCurriculum)).not.toHaveBeenCalled();
+			expect(mockGetLesson).not.toHaveBeenCalled();
+		});
 	});
 });
