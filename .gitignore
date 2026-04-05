@@ -34,7 +34,7 @@ frontend/.svelte-kit/
 frontend/build/
 
 # Claude Code local settings (user-specific)
-.claude/settings.local.json
+.claude/
 
 # Editor / OS
 .DS_Store
