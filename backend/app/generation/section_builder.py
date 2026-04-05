@@ -14,6 +14,14 @@ KeyPhrase = dict  # {"phrase": str, "translation": str}
 DialogueLine = dict  # {"speaker": str, "text": str, "translation": str}
 Scene = dict  # {"label": str, "lines": list[DialogueLine]}
 
+# Narrator-spoken section titles matching the demo format
+SECTION_TITLES: dict[SectionType, str] = {
+    SectionType.KEY_PHRASES: "Key Phrases",
+    SectionType.NATURAL_SPEED: "Natural Speed",
+    SectionType.SLOW_SPEED: "Slow Speed",
+    SectionType.TRANSLATED: "Translated",
+}
+
 
 def _resolve_voice(speaker: str, l2_voice_map: dict[str, str], narrator_voice: str) -> str:
     return l2_voice_map.get(speaker, l2_voice_map.get("female-1", narrator_voice))
@@ -95,7 +103,11 @@ def build_key_phrases_section(
     4. Word breakdown steps (female-1)
     """
     female_1_voice = l2_voice_map.get("female-1", narrator_voice)
-    phrases: list[Phrase] = []
+    phrases: list[Phrase] = [
+        Phrase(
+            text=SECTION_TITLES[SectionType.KEY_PHRASES], voice_id=narrator_voice, language_code="en", role="narrator"
+        )
+    ]
 
     for kp in key_phrases:
         phrase_text = kp["phrase"]
@@ -116,7 +128,11 @@ def build_natural_speed_section(
     l2_code: str,
 ) -> Section:
     """Build the NATURAL_SPEED section with scene labels and multi-speaker dialogue."""
-    phrases: list[Phrase] = []
+    phrases: list[Phrase] = [
+        Phrase(
+            text=SECTION_TITLES[SectionType.NATURAL_SPEED], voice_id=narrator_voice, language_code="en", role="narrator"
+        )
+    ]
 
     for scene in scenes:
         phrases.append(Phrase(text=scene["label"], voice_id=narrator_voice, language_code="en", role="narrator"))
@@ -135,7 +151,11 @@ def build_slow_speed_section(
     l2_code: str,
 ) -> Section:
     """Build the SLOW_SPEED section — mirrors NATURAL_SPEED with '...' between words."""
-    phrases: list[Phrase] = []
+    phrases: list[Phrase] = [
+        Phrase(
+            text=SECTION_TITLES[SectionType.SLOW_SPEED], voice_id=narrator_voice, language_code="en", role="narrator"
+        )
+    ]
 
     for scene in scenes:
         phrases.append(Phrase(text=scene["label"], voice_id=narrator_voice, language_code="en", role="narrator"))
@@ -155,7 +175,11 @@ def build_translated_section(
     l2_code: str,
 ) -> Section:
     """Build the TRANSLATED section — every L2 line followed by narrator translation."""
-    phrases: list[Phrase] = []
+    phrases: list[Phrase] = [
+        Phrase(
+            text=SECTION_TITLES[SectionType.TRANSLATED], voice_id=narrator_voice, language_code="en", role="narrator"
+        )
+    ]
 
     for scene in scenes:
         phrases.append(Phrase(text=scene["label"], voice_id=narrator_voice, language_code="en", role="narrator"))

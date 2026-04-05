@@ -1,6 +1,7 @@
 """Tests for the mechanical section builder."""
 
 from app.generation.section_builder import (
+    SECTION_TITLES,
     build_key_phrases_section,
     build_natural_speed_section,
     build_slow_speed_section,
@@ -178,7 +179,9 @@ def test_slow_speed_adds_ellipsis_between_words():
 def test_slow_speed_scene_labels_not_slowed():
     section = build_slow_speed_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
     narrator_phrases = [p for p in section.phrases if p.role == "narrator"]
-    assert narrator_phrases[0].text == "At the Riverside Café"
+    # narrator_phrases[0] is the section title; scene label is at [1]
+    assert narrator_phrases[0].text == "Slow Speed"
+    assert narrator_phrases[1].text == "At the Riverside Café"
 
 
 # ── build_translated_section ─────────────────────────────────────────────
@@ -187,8 +190,8 @@ def test_slow_speed_scene_labels_not_slowed():
 def test_translated_interleaves_narrator():
     section = build_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
     assert section.section_type == SectionType.TRANSLATED
-    # Skip first narrator (scene label); then L2, narrator, L2, narrator...
-    body = [p for p in section.phrases if p.text != "At the Riverside Café"]
+    # Skip section title and scene label; then L2, narrator, L2, narrator...
+    body = [p for p in section.phrases if p.text not in ("Translated", "At the Riverside Café")]
     for i, phrase in enumerate(body):
         if i % 2 == 0:
             assert phrase.language_code == L2_CODE
@@ -201,3 +204,46 @@ def test_translated_preserves_scene_labels():
     narrator_phrases = [p for p in section.phrases if p.role == "narrator"]
     scene_labels = [p for p in narrator_phrases if "Riverside" in p.text]
     assert len(scene_labels) == 1
+
+
+# ── Section title phrases ─────────────────────────────────────────────────
+
+
+def test_section_titles_maps_all_types():
+    assert set(SECTION_TITLES.keys()) == set(SectionType)
+
+
+def test_key_phrases_section_starts_with_title_phrase():
+    section = build_key_phrases_section(_KEY_PHRASES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    first = section.phrases[0]
+    assert first.text == "Key Phrases"
+    assert first.role == "narrator"
+    assert first.voice_id == NARRATOR_VOICE
+    assert first.language_code == "en"
+
+
+def test_natural_speed_section_starts_with_title_phrase():
+    section = build_natural_speed_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    first = section.phrases[0]
+    assert first.text == "Natural Speed"
+    assert first.role == "narrator"
+    assert first.voice_id == NARRATOR_VOICE
+    assert first.language_code == "en"
+
+
+def test_slow_speed_section_starts_with_title_phrase():
+    section = build_slow_speed_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    first = section.phrases[0]
+    assert first.text == "Slow Speed"
+    assert first.role == "narrator"
+    assert first.voice_id == NARRATOR_VOICE
+    assert first.language_code == "en"
+
+
+def test_translated_section_starts_with_title_phrase():
+    section = build_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    first = section.phrases[0]
+    assert first.text == "Translated"
+    assert first.role == "narrator"
+    assert first.voice_id == NARRATOR_VOICE
+    assert first.language_code == "en"

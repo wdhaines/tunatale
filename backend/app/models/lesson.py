@@ -51,11 +51,13 @@ class Lesson:
     title: str
     language_code: str
     sections: list[Section] = field(default_factory=list)
+    narrator_voice: str = "en-US-GuyNeural"
 
     def to_json(self) -> str:
         data = {
             "title": self.title,
             "language_code": self.language_code,
+            "narrator_voice": self.narrator_voice,
             "sections": [
                 {
                     "section_type": s.section_type.value,
@@ -87,4 +89,9 @@ class Lesson:
             )
             for s in data.get("sections", [])
         ]
-        return cls(title=data["title"], language_code=data["language_code"], sections=sections)
+        return cls(
+            title=data["title"],
+            language_code=data["language_code"],
+            sections=sections,
+            narrator_voice=data.get("narrator_voice", "en-US-GuyNeural"),
+        )

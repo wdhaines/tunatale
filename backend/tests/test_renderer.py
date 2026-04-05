@@ -124,7 +124,7 @@ async def test_render_produces_valid_wav(tmp_path):
 
 @pytest.mark.asyncio
 async def test_render_calls_tts_for_each_phrase(tmp_path):
-    """render() calls synthesize once per phrase."""
+    """render() calls synthesize once per phrase plus once for the lesson title."""
     lesson = _minimal_lesson()
     fake_audio = _make_wav_bytes()
 
@@ -141,4 +141,70 @@ async def test_render_calls_tts_for_each_phrase(tmp_path):
     await rdr.render(lesson, tmp_path / "out.wav")
 
     phrase_count = sum(len(s.phrases) for s in lesson.sections)
-    assert len(synthesize_calls) == phrase_count
+    assert len(synthesize_calls) == phrase_count + 1  # +1 for lesson title
+
+
+@pytest.mark.asyncio
+async def test_render_speaks_lesson_title_first(tmp_path):
+    """render() synthesizes the lesson title as the very first TTS call."""
+    lesson = _minimal_lesson()
+    fake_audio = _make_wav_bytes()
+
+    synthesize_calls = []
+
+    async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        synthesize_calls.append((text, voice_id))
+        output_path.write_bytes(fake_audio)
+
+    mock_tts = AsyncMock()
+    mock_tts.synthesize = fake_synthesize
+
+    rdr = _make_renderer(mock_tts)
+    await rdr.render(lesson, tmp_path / "out.wav")
+
+    assert synthesize_calls[0][0] == lesson.title
+    assert synthesize_calls[0][1] == lesson.narrator_voice
+
+
+def test_lesson_narrator_voice_default():
+    """Lesson.narrator_voice defaults to en-US-GuyNeural."""
+    lesson = Lesson(title="X", language_code="sl")
+    assert lesson.narrator_voice == "en-US-GuyNeural"
+
+
+def test_lesson_narrator_voice_serialization():
+    """narrator_voice roundtrips through to_json/from_json."""
+    lesson = Lesson(title="X", language_code="sl", narrator_voice="en-US-AriaNeural")
+    restored = Lesson.from_json(lesson.to_json())
+    assert restored.narrator_voice == "en-US-AriaNeural"
+
+
+@pytest.mark.asyncio
+async def test_render_passes_phrase_rate_to_tts(tmp_path):
+    """render() uses phrase.rate rather than hardcoding '+0%'."""
+    lesson = Lesson(
+        title="Test",
+        language_code="sl",
+        sections=[
+            Section(
+                section_type=SectionType.NATURAL_SPEED,
+                phrases=[Phrase(text="hvala", voice_id="sl-SI-PetraNeural", language_code="sl", rate="-20%")],
+            )
+        ],
+    )
+    fake_audio = _make_wav_bytes()
+    rate_calls = []
+
+    async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        rate_calls.append((text, rate))
+        output_path.write_bytes(fake_audio)
+
+    mock_tts = AsyncMock()
+    mock_tts.synthesize = fake_synthesize
+
+    rdr = _make_renderer(mock_tts)
+    await rdr.render(lesson, tmp_path / "out.wav")
+
+    # Find the call for the phrase (not the title)
+    phrase_call = next(c for c in rate_calls if c[0] == "hvala")
+    assert phrase_call[1] == "-20%"

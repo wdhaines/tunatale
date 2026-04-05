@@ -51,6 +51,12 @@ class LessonRenderer:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp = Path(tmp_dir)
 
+            # Render lesson title
+            title_file = tmp / "title.mp3"
+            await self._tts.synthesize(lesson.title, lesson.narrator_voice, title_file, rate="+0%")
+            combined += AudioSegment.from_file(str(title_file))
+            combined += boundary_silence
+
             for section_idx, section in enumerate(lesson.sections):
                 if section_idx > 0:
                     combined += boundary_silence
@@ -64,7 +70,7 @@ class LessonRenderer:
                         processed,
                         phrase.voice_id,
                         phrase_file,
-                        rate="+0%",
+                        rate=phrase.rate,
                     )
 
                     seg = AudioSegment.from_file(str(phrase_file))

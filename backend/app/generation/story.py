@@ -103,4 +103,4 @@ class StoryGenerator:
             )
             self._db.add_collocation(unit)
 
-        return Lesson(title=title, language_code=language.code, sections=sections)
+        return Lesson(title=title, language_code=language.code, sections=sections, narrator_voice=narrator_voice)
