@@ -23,59 +23,54 @@ def enforcer(db):
     return ContentEnforcer(srs_db=db)
 
 
-def test_replacement_dict_built_from_srs(enforcer):
-    replacements = enforcer.get_replacement_dict()
-    assert "good day" in replacements
-    assert replacements["good day"] == "dober dan"
+class TestContentEnforcer:
+    """Tests for ContentEnforcer: replacement dict, enforce(), boundary handling."""
 
+    def test_replacement_dict_built_from_srs(self, enforcer):
+        replacements = enforcer.get_replacement_dict()
+        assert "good day" in replacements
+        assert replacements["good day"] == "dober dan"
 
-def test_replacement_dict_no_hardcoded_entries(enforcer):
-    replacements = enforcer.get_replacement_dict()
-    # No hardcoded words like "water" → "tubig" should exist
-    assert "water" not in replacements
+    def test_replacement_dict_no_hardcoded_entries(self, enforcer):
+        replacements = enforcer.get_replacement_dict()
+        # No hardcoded words like "water" → "tubig" should exist
+        assert "water" not in replacements
 
-
-def test_enforce_replaces_known_l1_with_l2(enforcer):
-    text = "She said good day to the waiter."
-    result = enforcer.enforce(text)
-    assert "dober dan" in result
-    assert "good day" not in result
-
-
-def test_enforce_case_insensitive_matching(enforcer):
-    text = "He said GOOD DAY and smiled."
-    result = enforcer.enforce(text)
-    assert "dober dan" in result.lower()
-
-
-def test_enforce_word_boundary_prevents_partial_replacement(enforcer):
-    """'good day' should not partially replace 'good days'."""
-    text = "Have good days ahead."
-    result = enforcer.enforce(text)
-    # Should NOT partially replace "good days" → "dober dans"
-    assert "dober dans" not in result
-
-
-def test_enforce_preserves_unknown_words(enforcer):
-    text = "The café is lovely."
-    result = enforcer.enforce(text)
-    assert "lovely" in result
-
-
-def test_enforce_records_violation(enforcer, db):
-    text = "She said good day and thank you."
-    enforcer.enforce(text, day_number=1)
-    # No exception should be raised - violations are recorded if any
-
-
-def test_enforce_empty_text(enforcer):
-    result = enforcer.enforce("")
-    assert result == ""
-
-
-def test_no_replacements_when_db_empty():
-    with SRSDatabase(":memory:") as db:
-        enforcer = ContentEnforcer(srs_db=db)
-        text = "Hello, how are you?"
+    def test_enforce_replaces_known_l1_with_l2(self, enforcer):
+        text = "She said good day to the waiter."
         result = enforcer.enforce(text)
-        assert result == text
+        assert "dober dan" in result
+        assert "good day" not in result
+
+    def test_enforce_case_insensitive_matching(self, enforcer):
+        text = "He said GOOD DAY and smiled."
+        result = enforcer.enforce(text)
+        assert "dober dan" in result.lower()
+
+    def test_enforce_word_boundary_prevents_partial_replacement(self, enforcer):
+        """'good day' should not partially replace 'good days'."""
+        text = "Have good days ahead."
+        result = enforcer.enforce(text)
+        # Should NOT partially replace "good days" → "dober dans"
+        assert "dober dans" not in result
+
+    def test_enforce_preserves_unknown_words(self, enforcer):
+        text = "The café is lovely."
+        result = enforcer.enforce(text)
+        assert "lovely" in result
+
+    def test_enforce_records_violation(self, enforcer, db):
+        text = "She said good day and thank you."
+        enforcer.enforce(text, day_number=1)
+        # No exception should be raised - violations are recorded if any
+
+    def test_enforce_empty_text(self, enforcer):
+        result = enforcer.enforce("")
+        assert result == ""
+
+    def test_no_replacements_when_db_empty(self):
+        with SRSDatabase(":memory:") as db:
+            enforcer = ContentEnforcer(srs_db=db)
+            text = "Hello, how are you?"
+            result = enforcer.enforce(text)
+            assert result == text

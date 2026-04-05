@@ -2,7 +2,7 @@
  * Component tests for the main +page.svelte route.
  * These catch Svelte compilation issues and verify UI behaviour.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, waitFor } from '@testing-library/svelte';
 import Page from './+page.svelte';
 
@@ -38,6 +38,10 @@ const mockClearHomeState = vi.mocked(clearHomeState);
 beforeEach(() => {
 	vi.clearAllMocks();
 	mockLoadHomeState.mockReturnValue(null);
+});
+
+afterEach(() => {
+	vi.unstubAllGlobals();
 });
 
 describe('+page.svelte', () => {

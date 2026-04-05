@@ -5,6 +5,24 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture
+def language():
+    """Slovene language configuration."""
+    from app.models.language import Language
+
+    return Language.slovene()
+
+
+@pytest.fixture
+def srs_db():
+    """In-memory SRS database, empty at test start."""
+    from app.srs.database import SRSDatabase
+
+    with SRSDatabase(":memory:") as db:
+        yield db
+
+
 _CASSETTES_DIR = Path(__file__).parent / "cassettes"
 
 

@@ -2,7 +2,7 @@
  * Component tests for the /practice +page.svelte route.
  * These catch Svelte compilation issues and verify the flashcard UI behaviour.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, waitFor } from '@testing-library/svelte';
 import PracticePage from './+page.svelte';
 
@@ -25,6 +25,10 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	mockGetSRSNew.mockResolvedValue({ new: [] });
 	mockGetSRSStats.mockResolvedValue({ total: 0, due_today: 0 });
+});
+
+afterEach(() => {
+	vi.unstubAllGlobals();
 });
 
 describe('practice/+page.svelte', () => {

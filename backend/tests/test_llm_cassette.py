@@ -29,7 +29,6 @@ def test_hash_prompt_different_prompts():
     assert _hash_prompt("a") != _hash_prompt("b")
 
 
-@pytest.mark.asyncio
 async def test_mock_mode_replays_cassette(cassette_dir, tmp_path):
     prompt = "test prompt"
     h = _hash_prompt(prompt)
@@ -52,7 +51,6 @@ async def test_mock_mode_replays_cassette(cassette_dir, tmp_path):
     assert result == "mocked!"
 
 
-@pytest.mark.asyncio
 async def test_mock_mode_raises_on_cache_miss(cassette_dir):
     cassette_path = cassette_dir / "empty.json"
     _write_cassette(cassette_path, [])
@@ -62,7 +60,6 @@ async def test_mock_mode_raises_on_cache_miss(cassette_dir):
         await client.complete("unknown prompt")
 
 
-@pytest.mark.asyncio
 async def test_record_mode_saves_response(cassette_dir, monkeypatch):
     cassette_path = cassette_dir / "record.json"
     cassette_path.parent.mkdir(parents=True, exist_ok=True)
@@ -83,7 +80,6 @@ async def test_record_mode_saves_response(cassette_dir, monkeypatch):
     assert data["calls"][0]["response"] == "recorded answer"
 
 
-@pytest.mark.asyncio
 async def test_mock_mode_repeated_same_prompt(cassette_dir):
     prompt = "repeat me"
     h = _hash_prompt(prompt)
@@ -103,7 +99,6 @@ async def test_mock_mode_repeated_same_prompt(cassette_dir):
     assert r2 == "second"
 
 
-@pytest.mark.asyncio
 async def test_patch_mode_replays_known_then_records_new(cassette_dir):
     prompt_known = "known prompt"
     h = _hash_prompt(prompt_known)

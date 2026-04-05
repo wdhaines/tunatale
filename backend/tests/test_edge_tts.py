@@ -3,8 +3,6 @@
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from app.audio.edge_tts import EdgeTTSService
 from app.audio.ports import TTSService
 
@@ -14,7 +12,6 @@ def test_edge_tts_satisfies_tts_protocol():
     assert isinstance(svc, TTSService)
 
 
-@pytest.mark.asyncio
 async def test_synthesize_writes_output_file(tmp_path):
     """synthesis creates the output file."""
     svc = EdgeTTSService()
@@ -29,7 +26,6 @@ async def test_synthesize_writes_output_file(tmp_path):
     assert output.exists()
 
 
-@pytest.mark.asyncio
 async def test_synthesize_respects_rate_parameter(tmp_path):
     """rate parameter is passed to Communicate constructor."""
     svc = EdgeTTSService()
@@ -48,7 +44,6 @@ async def test_synthesize_respects_rate_parameter(tmp_path):
     assert calls[0]["rate"] == "-20%"
 
 
-@pytest.mark.asyncio
 async def test_synthesize_uses_cache_on_second_call(tmp_path):
     """second call with same args skips synthesis and reuses existing file."""
     svc = EdgeTTSService(cache_dir=tmp_path / "cache")
@@ -76,7 +71,6 @@ async def test_synthesize_uses_cache_on_second_call(tmp_path):
     assert synthesize_count == 1  # Only synthesized once
 
 
-@pytest.mark.asyncio
 async def test_list_voices_returns_list():
     svc = EdgeTTSService()
     mock_voices = [{"ShortName": "sl-SI-PetraNeural", "Locale": "sl-SI"}]
@@ -88,7 +82,6 @@ async def test_list_voices_returns_list():
     assert len(voices) > 0
 
 
-@pytest.mark.asyncio
 async def test_list_voices_filters_by_language():
     svc = EdgeTTSService()
     mock_voices = [
@@ -102,7 +95,6 @@ async def test_list_voices_filters_by_language():
     assert all("sl" in v.get("Locale", "") for v in voices)
 
 
-@pytest.mark.asyncio
 async def test_synthesize_retries_on_transient_error(tmp_path):
     """transient errors trigger retry."""
     svc = EdgeTTSService()

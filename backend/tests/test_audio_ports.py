@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 from app.audio.ports import AudioProcessor, TTSService
 
 
@@ -56,7 +54,6 @@ def test_audio_processor_add_silence_returns_bytes():
     assert len(result) > 0
 
 
-@pytest.mark.asyncio
 async def test_tts_list_voices_returns_list():
     tts = MockTTSService()
     voices = await tts.list_voices("sl")

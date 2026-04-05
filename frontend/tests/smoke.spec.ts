@@ -30,3 +30,26 @@ test('frontend proxies /api to backend', async ({ request }) => {
 	const body = await res.json();
 	expect(body.status).toBe('ok');
 });
+
+test('generate curriculum flow', async ({ page, request }) => {
+	const health = await request.get('http://localhost:8000/api/health');
+	test.skip(!health.ok(), 'Backend not available');
+
+	await page.goto('/');
+	await page.getByPlaceholder('e.g. ordering coffee in Ljubljana').fill('ordering coffee');
+	await expect(page.getByRole('button', { name: 'Generate' })).toBeEnabled();
+	await page.getByRole('button', { name: 'Generate' }).click();
+	// Wait for curriculum to appear (calls backend LLM endpoint)
+	await expect(page.getByText(/Curriculum:/)).toBeVisible({ timeout: 30000 });
+});
+
+test('practice page shows stats from backend', async ({ page, request }) => {
+	const health = await request.get('http://localhost:8000/api/health');
+	test.skip(!health.ok(), 'Backend not available');
+
+	await page.goto('/practice');
+	// Stats section is populated once backend responds
+	await expect(
+		page.getByText(/cards total/)
+	).toBeVisible({ timeout: 5000 });
+});

@@ -1,9 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { saveHomeState, loadHomeState, clearHomeState } from './storage';
 
 beforeEach(() => {
 	localStorage.clear();
 	vi.restoreAllMocks();
+});
+
+afterEach(() => {
+	vi.unstubAllGlobals();
 });
 
 describe('storage utilities', () => {
