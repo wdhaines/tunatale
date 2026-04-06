@@ -17,7 +17,8 @@ vi.mock('$lib/api', () => ({
 		audioUrl: vi.fn(),
 		getSRSDue: vi.fn(),
 		getSRSStats: vi.fn(),
-		postSRSFeedback: vi.fn()
+		postSRSFeedback: vi.fn(),
+		markAsListened: vi.fn()
 	}
 }));
 
@@ -31,6 +32,7 @@ import { api } from '$lib/api';
 import { saveHomeState, loadHomeState, clearHomeState } from '$lib/storage';
 const mockGenerateCurriculum = vi.mocked(api.generateCurriculum);
 const mockGetLesson = vi.mocked(api.getLesson);
+const mockMarkAsListened = vi.mocked(api.markAsListened);
 const mockSaveHomeState = vi.mocked(saveHomeState);
 const mockLoadHomeState = vi.mocked(loadHomeState);
 const mockClearHomeState = vi.mocked(clearHomeState);
@@ -97,6 +99,7 @@ describe('+page.svelte', () => {
 			id: 'l1',
 			title: 'Day 1',
 			language_code: 'sl',
+			key_phrases: [],
 			sections: [
 				{
 					type: 'key_phrases',
@@ -163,6 +166,7 @@ describe('+page.svelte', () => {
 				id: 'l1',
 				title: 'Day 1',
 				language_code: 'sl',
+				key_phrases: [],
 				sections: []
 			});
 
@@ -233,6 +237,7 @@ describe('+page.svelte', () => {
 				id: 'l1',
 				title: 'Day 1 Coffee',
 				language_code: 'sl',
+				key_phrases: [],
 				sections: [
 					{
 						type: 'key_phrases',
@@ -268,6 +273,7 @@ describe('+page.svelte', () => {
 				id: 'l1',
 				title: 'Day 1',
 				language_code: 'sl',
+				key_phrases: [],
 				sections: []
 			});
 
@@ -324,6 +330,103 @@ describe('+page.svelte', () => {
 			await waitFor(() => {});
 			expect(vi.mocked(api.getCurriculum)).not.toHaveBeenCalled();
 			expect(mockGetLesson).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('mark as listened', () => {
+		function setupWithAudioAndPhrases(keyPhrases = [{ phrase: 'dober dan', translation: 'good day' }]) {
+			mockLoadHomeState.mockReturnValue({
+				topic: 'coffee',
+				cefrLevel: 'A2',
+				numDays: 3,
+				curriculumId: 'c1',
+				lessonId: 'l1',
+				audioUrl: '/api/audio/a1'
+			});
+			vi.mocked(api.getCurriculum).mockResolvedValue({
+				id: 'c1',
+				topic: 'coffee',
+				language_code: 'sl',
+				days: 3
+			});
+			mockGetLesson.mockResolvedValue({
+				id: 'l1',
+				title: 'Day 1',
+				language_code: 'sl',
+				key_phrases: keyPhrases,
+				sections: []
+			});
+		}
+
+		it('shows "Mark as Listened" button when audio is rendered and key_phrases exist', async () => {
+			setupWithAudioAndPhrases();
+			const { findByRole } = render(Page);
+			expect(await findByRole('button', { name: 'Mark as Listened' })).toBeTruthy();
+		});
+
+		it('does not show "Mark as Listened" when key_phrases is empty', async () => {
+			setupWithAudioAndPhrases([]);
+			const { findByText, queryByRole } = render(Page);
+			await findByText('Audio Player');
+			expect(queryByRole('button', { name: 'Mark as Listened' })).toBeNull();
+		});
+
+		it('calls markAsListened and shows confirmation', async () => {
+			setupWithAudioAndPhrases([
+				{ phrase: 'dober dan', translation: 'good day' },
+				{ phrase: 'prosim', translation: 'please' }
+			]);
+			mockMarkAsListened.mockResolvedValue({ status: 'ok', registered: 2 });
+
+			const { findByRole, findByText } = render(Page);
+			await fireEvent.click(await findByRole('button', { name: 'Mark as Listened' }));
+
+			expect(mockMarkAsListened).toHaveBeenCalledWith('l1');
+			expect(await findByText('2 phrases added to SRS')).toBeTruthy();
+		});
+
+		it('shows "✓ Listened" when lesson is in listenedLessonIds', async () => {
+			mockLoadHomeState.mockReturnValue({
+				topic: 'coffee',
+				cefrLevel: 'A2',
+				numDays: 3,
+				curriculumId: 'c1',
+				lessonId: 'l1',
+				audioUrl: '/api/audio/a1',
+				listenedLessonIds: ['l1']
+			});
+			vi.mocked(api.getCurriculum).mockResolvedValue({
+				id: 'c1',
+				topic: 'coffee',
+				language_code: 'sl',
+				days: 3
+			});
+			mockGetLesson.mockResolvedValue({
+				id: 'l1',
+				title: 'Day 1',
+				language_code: 'sl',
+				key_phrases: [{ phrase: 'dober dan', translation: 'good day' }],
+				sections: []
+			});
+
+			const { findByRole } = render(Page);
+			expect(await findByRole('button', { name: '✓ Listened' })).toBeTruthy();
+		});
+
+		it('shows key phrases summary in expandable details', async () => {
+			setupWithAudioAndPhrases([{ phrase: 'dober dan', translation: 'good day' }]);
+			const { findByText } = render(Page);
+			expect(await findByText('1 key phrase in this lesson')).toBeTruthy();
+		});
+
+		it('shows error when markAsListened fails', async () => {
+			setupWithAudioAndPhrases();
+			mockMarkAsListened.mockRejectedValue(new Error('Network error'));
+
+			const { findByRole, findByText } = render(Page);
+			await fireEvent.click(await findByRole('button', { name: 'Mark as Listened' }));
+
+			expect(await findByText('Network error')).toBeTruthy();
 		});
 	});
 });

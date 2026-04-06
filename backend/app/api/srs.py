@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from app.models.syntactic_unit import SyntacticUnit
 from app.srs.feedback import ImplicitFeedbackAdapter
 from app.srs.fsrs import schedule
 
@@ -18,6 +19,10 @@ _feedback_adapter = ImplicitFeedbackAdapter()
 class FeedbackRequest(BaseModel):
     collocation_text: str
     signal: str  # no_help | slowdown | translation_request | fast_forward
+
+
+class ListenRequest(BaseModel):
+    lesson_id: str
 
 
 @router.get("/due", status_code=200)
@@ -47,6 +52,27 @@ async def record_feedback(body: FeedbackRequest, request: Request):
     updated = schedule(item, rating)
     db.update_collocation(updated)
     return {"status": "ok", "new_due_date": str(updated.due_date)}
+
+
+@router.post("/listen", status_code=200)
+async def mark_lesson_listened(body: ListenRequest, request: Request):
+    store = request.app.state.content_store
+    lesson = store.get_lesson(body.lesson_id)
+    if lesson is None:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+
+    db = request.app.state.srs_db
+    for kp in lesson.key_phrases:
+        unit = SyntacticUnit(
+            text=kp.phrase,
+            translation=kp.translation,
+            word_count=min(8, max(1, len(kp.phrase.split()))),
+            difficulty=1,
+            source="llm",
+        )
+        db.add_collocation(unit, language_code=lesson.language_code)
+
+    return {"status": "ok", "registered": len(lesson.key_phrases)}
 
 
 @router.get("/stats", status_code=200)

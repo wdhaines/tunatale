@@ -57,4 +57,20 @@ describe('storage utilities', () => {
 		saveHomeState(state);
 		expect(loadHomeState()).toEqual(state);
 	});
+
+	it('round-trips listenedLessonIds', () => {
+		const state = {
+			topic: 'hiking',
+			cefrLevel: 'A1',
+			numDays: 3,
+			listenedLessonIds: ['l1', 'l2']
+		};
+		saveHomeState(state);
+		expect(loadHomeState()).toEqual(state);
+	});
+
+	it('listenedLessonIds is undefined when absent from stored state', () => {
+		saveHomeState({ topic: 'hiking', cefrLevel: 'A1', numDays: 3 });
+		expect(loadHomeState()?.listenedLessonIds).toBeUndefined();
+	});
 });

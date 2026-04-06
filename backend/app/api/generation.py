@@ -57,6 +57,7 @@ async def get_lesson(lesson_id: str, request: Request):
         "id": lesson_id,
         "title": lesson.title,
         "language_code": lesson.language_code,
+        "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in lesson.key_phrases],
         "sections": [
             {
                 "type": s.section_type.value,

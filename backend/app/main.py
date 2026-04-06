@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
     app.state.content_store = content_store
     app.state.language = language
     app.state.curriculum_generator = CurriculumGenerator(llm)
-    app.state.story_generator = StoryGenerator(llm, srs_db)
+    app.state.story_generator = StoryGenerator(llm)
     app.state.renderer = LessonRenderer(
         tts=EdgeTTSService(),
         preprocessor=SlovenePreprocessor(),

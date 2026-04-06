@@ -7,7 +7,7 @@ import pytest
 
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.language import Language
-from app.models.lesson import Lesson, Phrase, Section, SectionType
+from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 from app.models.srs_item import Rating, SRSItem, SRSState
 from app.models.strategy import (
     DEFAULT_STRATEGY_CONFIGS,
@@ -231,6 +231,35 @@ class TestLesson:
         assert restored.sections[0].phrases[0].text == "dober dan"
         assert restored.sections[0].phrases[0].role == "female-1"
         assert restored.sections[0].phrases[1].text == "kako ste"
+
+    def test_lesson_with_key_phrases_roundtrip(self):
+        lesson = _make_lesson()
+        lesson.key_phrases = [
+            KeyPhraseInfo(phrase="dober dan", translation="good day"),
+            KeyPhraseInfo(phrase="kako ste", translation="how are you"),
+        ]
+        restored = Lesson.from_json(lesson.to_json())
+        assert len(restored.key_phrases) == 2
+        assert restored.key_phrases[0].phrase == "dober dan"
+        assert restored.key_phrases[0].translation == "good day"
+        assert restored.key_phrases[1].phrase == "kako ste"
+
+    def test_lesson_without_key_phrases_deserializes_empty(self):
+        """Old lessons serialized without key_phrases should deserialize with empty list."""
+        lesson = _make_lesson()
+        data = json.loads(lesson.to_json())
+        data.pop("key_phrases", None)
+        restored = Lesson.from_json(json.dumps(data))
+        assert restored.key_phrases == []
+
+
+class TestKeyPhraseInfo:
+    """Tests for KeyPhraseInfo dataclass."""
+
+    def test_stores_phrase_and_translation(self):
+        kp = KeyPhraseInfo(phrase="dober dan", translation="good day")
+        assert kp.phrase == "dober dan"
+        assert kp.translation == "good day"
 
 
 class TestPhrase:

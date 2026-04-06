@@ -8,7 +8,7 @@ from httpx import ASGITransport, AsyncClient
 from app.main import app
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.language import Language
-from app.models.lesson import Lesson, Phrase, Section, SectionType
+from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 
 
 @pytest.fixture(autouse=True)
@@ -142,6 +142,45 @@ class TestStoryEndpoints:
         assert phrase["role"] == "female-1"
         assert phrase["language_code"] == "sl"
         assert phrase["voice_id"] == "sl-SI-PetraNeural"
+
+    async def test_get_lesson_includes_key_phrases(self):
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        mock_lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[],
+            key_phrases=[
+                KeyPhraseInfo(phrase="dober dan", translation="good day"),
+                KeyPhraseInfo(phrase="prosim kavo", translation="a coffee please"),
+            ],
+        )
+        store.save_lesson("lesson-kp", "curriculum-1", 1, mock_lesson)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/story/lesson-kp")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["key_phrases"]) == 2
+        assert data["key_phrases"][0] == {"phrase": "dober dan", "translation": "good day"}
+        assert data["key_phrases"][1] == {"phrase": "prosim kavo", "translation": "a coffee please"}
+
+    async def test_get_lesson_returns_empty_key_phrases_for_old_lesson(self):
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        mock_lesson = Lesson(title="Day 1", language_code="sl", sections=[])
+        store.save_lesson("lesson-old", "curriculum-1", 1, mock_lesson)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/story/lesson-old")
+
+        assert response.status_code == 200
+        assert response.json()["key_phrases"] == []
 
     async def test_get_lesson_returns_404_when_missing(self):
         from app.storage.store import ContentStore
@@ -301,6 +340,83 @@ class TestSRSEndpoints:
             response = await client.get("/api/srs/new")
 
         assert len(response.json()["new"]) == 10
+
+    async def test_listen_registers_collocations(self):
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.KEY_PHRASES,
+                    phrases=[Phrase(text="dober dan", voice_id="sl-SI-PetraNeural", language_code="sl")],
+                )
+            ],
+            key_phrases=[
+                KeyPhraseInfo(phrase="dober dan", translation="good day"),
+                KeyPhraseInfo(phrase="prosim kavo", translation="a coffee please"),
+            ],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["registered"] == 2
+        assert db.count_collocations() == 2
+        assert db.get_collocation("dober dan") is not None
+        assert db.get_collocation("prosim kavo") is not None
+
+    async def test_listen_is_idempotent(self):
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.KEY_PHRASES,
+                    phrases=[Phrase(text="dober dan", voice_id="sl-SI-PetraNeural", language_code="sl")],
+                )
+            ],
+            key_phrases=[KeyPhraseInfo(phrase="dober dan", translation="good day")],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        assert response.status_code == 200
+        assert db.count_collocations() == 1
+
+    async def test_listen_returns_404_for_missing_lesson(self):
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        app.state.srs_db = SRSDatabase(":memory:")
+        app.state.content_store = ContentStore(":memory:")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "nonexistent"})
+
+        assert response.status_code == 404
 
 
 class TestAudioEndpoints:

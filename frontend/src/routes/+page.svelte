@@ -4,6 +4,7 @@
 	import type { CurriculumSummary, LessonSummary, LessonDetail } from '$lib/api';
 	import { saveHomeState, loadHomeState, clearHomeState } from '$lib/storage';
 
+
 	let topic = $state('');
 	let cefrLevel = $state('A2');
 	let numDays = $state(7);
@@ -17,6 +18,12 @@
 	let error = $state('');
 	let restored = $state(false);
 
+	let listenedLessonIds: string[] = $state([]);
+	let listenLoading = $state(false);
+	let listenResult: { registered: number } | null = $state(null);
+
+	let isListened = $derived(lessonDetail ? listenedLessonIds.includes(lessonDetail.id) : false);
+
 	$effect(() => {
 		if (!restored) return;
 		saveHomeState({
@@ -25,7 +32,8 @@
 			numDays,
 			...(curriculum?.id ? { curriculumId: curriculum.id } : {}),
 			...(lesson?.id ? { lessonId: lesson.id } : {}),
-			...(audioUrl ? { audioUrl } : {})
+			...(audioUrl ? { audioUrl } : {}),
+			...(listenedLessonIds.length > 0 ? { listenedLessonIds } : {})
 		});
 	});
 
@@ -69,6 +77,10 @@
 			audioUrl = saved.audioUrl;
 		}
 
+		if (saved.listenedLessonIds) {
+			listenedLessonIds = saved.listenedLessonIds;
+		}
+
 		restored = true;
 	});
 
@@ -88,11 +100,29 @@
 		}
 	}
 
+	async function handleMarkAsListened() {
+		if (!lessonDetail) return;
+		listenLoading = true;
+		error = '';
+		try {
+			const result = await api.markAsListened(lessonDetail.id);
+			listenResult = result;
+			if (!listenedLessonIds.includes(lessonDetail.id)) {
+				listenedLessonIds = [...listenedLessonIds, lessonDetail.id];
+			}
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			listenLoading = false;
+		}
+	}
+
 	async function handleGenerateLesson(day: number) {
 		if (!curriculum) return;
 		loading = true;
 		error = '';
 		lessonDetail = null;
+		listenResult = null;
 		try {
 			lesson = await api.generateStory(curriculum.id, day);
 			lessonDetail = await api.getLesson(lesson.id);
@@ -203,6 +233,47 @@
 			<audio controls src={audioUrl}>
 				Your browser does not support the audio element.
 			</audio>
+
+			{#if lessonDetail?.key_phrases?.length}
+				<div class="listen-action">
+					<button
+						class="listen-btn"
+						class:listened={isListened}
+						onclick={handleMarkAsListened}
+						disabled={listenLoading}
+					>
+						{#if listenLoading}
+							Registering…
+						{:else if isListened}
+							✓ Listened
+						{:else}
+							Mark as Listened
+						{/if}
+					</button>
+
+					{#if listenResult && !error}
+						<p class="listen-confirmation">
+							{listenResult.registered}
+							{listenResult.registered === 1 ? 'phrase' : 'phrases'} added to SRS
+						</p>
+					{/if}
+
+					<details class="key-phrases-detail">
+						<summary>
+							{lessonDetail.key_phrases.length}
+							{lessonDetail.key_phrases.length === 1 ? 'key phrase' : 'key phrases'} in this lesson
+						</summary>
+						<ul class="key-phrases-list">
+							{#each lessonDetail.key_phrases as kp}
+								<li>
+									<span class="kp-phrase">{kp.phrase}</span>
+									<span class="kp-translation">{kp.translation}</span>
+								</li>
+							{/each}
+						</ul>
+					</details>
+				</div>
+			{/if}
 		</section>
 	{/if}
 </main>
@@ -255,6 +326,48 @@
 	}
 	audio {
 		width: 100%;
+	}
+	.listen-action {
+		margin-top: 1rem;
+		padding-top: 1rem;
+		border-top: 1px solid var(--color-border);
+	}
+	.listen-btn {
+		background: var(--color-primary);
+	}
+	.listen-btn.listened {
+		background: var(--color-success);
+	}
+	.listen-confirmation {
+		color: var(--color-success);
+		font-size: 0.85rem;
+		margin-top: 0.5rem;
+	}
+	.key-phrases-detail {
+		margin-top: 0.75rem;
+		font-size: 0.9rem;
+	}
+	.key-phrases-detail summary {
+		cursor: pointer;
+		color: var(--color-muted);
+	}
+	.key-phrases-list {
+		list-style: none;
+		padding: 0;
+		margin-top: 0.5rem;
+	}
+	.key-phrases-list li {
+		display: flex;
+		justify-content: space-between;
+		padding: 0.25rem 0;
+		border-bottom: 1px solid var(--color-border);
+	}
+	.kp-phrase {
+		font-weight: 500;
+	}
+	.kp-translation {
+		color: var(--color-muted);
+		font-style: italic;
 	}
 	.script-block {
 		margin-bottom: 1rem;

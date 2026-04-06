@@ -10,6 +10,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 
+@dataclass
+class KeyPhraseInfo:
+    """A key phrase with its L1 translation, stored on the Lesson for deferred SRS registration."""
+
+    phrase: str
+    translation: str
+
+
 class SectionType(Enum):
     """Four Pimsleur section types for each lesson."""
 
@@ -52,12 +60,14 @@ class Lesson:
     language_code: str
     sections: list[Section] = field(default_factory=list)
     narrator_voice: str = "en-US-GuyNeural"
+    key_phrases: list[KeyPhraseInfo] = field(default_factory=list)
 
     def to_json(self) -> str:
         data = {
             "title": self.title,
             "language_code": self.language_code,
             "narrator_voice": self.narrator_voice,
+            "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in self.key_phrases],
             "sections": [
                 {
                     "section_type": s.section_type.value,
@@ -89,9 +99,11 @@ class Lesson:
             )
             for s in data.get("sections", [])
         ]
+        key_phrases = [KeyPhraseInfo(**kp) for kp in data.get("key_phrases", [])]
         return cls(
             title=data["title"],
             language_code=data["language_code"],
             sections=sections,
             narrator_voice=data.get("narrator_voice", "en-US-GuyNeural"),
+            key_phrases=key_phrases,
         )

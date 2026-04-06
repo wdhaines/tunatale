@@ -46,11 +46,22 @@ export interface SectionDetail {
 	phrases: PhraseDetail[];
 }
 
+export interface KeyPhrase {
+	phrase: string;
+	translation: string;
+}
+
 export interface LessonDetail {
 	id: string;
 	title: string;
 	language_code: string;
 	sections: SectionDetail[];
+	key_phrases: KeyPhrase[];
+}
+
+export interface ListenResponse {
+	status: string;
+	registered: number;
 }
 
 export interface SRSDue {
@@ -150,6 +161,16 @@ export class TunaTaleAPI {
 			body: JSON.stringify({ collocation_text: text, signal })
 		});
 		if (!res.ok) throw new Error('Failed to record feedback');
+		return res.json();
+	}
+
+	async markAsListened(lessonId: string): Promise<ListenResponse> {
+		const res = await fetch(`${this.baseUrl}/api/srs/listen`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ lesson_id: lessonId })
+		});
+		if (!res.ok) throw new Error('Failed to mark lesson as listened');
 		return res.json();
 	}
 }

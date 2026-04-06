@@ -14,10 +14,8 @@ from app.generation.section_builder import (
 )
 from app.models.curriculum import CurriculumDay
 from app.models.language import Language
-from app.models.lesson import Lesson
+from app.models.lesson import KeyPhraseInfo, Lesson
 from app.models.strategy import ContentStrategy
-from app.models.syntactic_unit import SyntacticUnit
-from app.srs.database import SRSDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +27,8 @@ class StoryGenerationError(Exception):
 class StoryGenerator:
     """Generates a Lesson from a CurriculumDay using the LLM client."""
 
-    def __init__(self, llm_client, srs_db: SRSDatabase) -> None:
+    def __init__(self, llm_client) -> None:
         self._llm = llm_client
-        self._db = srs_db
 
     async def generate(
         self,
@@ -93,14 +90,12 @@ class StoryGenerator:
             build_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
         ]
 
-        for kp in key_phrases:
-            unit = SyntacticUnit(
-                text=kp["phrase"],
-                translation=kp["translation"],
-                word_count=min(8, max(1, len(kp["phrase"].split()))),
-                difficulty=1,
-                source="llm",
-            )
-            self._db.add_collocation(unit)
+        kp_infos = [KeyPhraseInfo(phrase=kp["phrase"], translation=kp["translation"]) for kp in key_phrases]
 
-        return Lesson(title=title, language_code=language.code, sections=sections, narrator_voice=narrator_voice)
+        return Lesson(
+            title=title,
+            language_code=language.code,
+            sections=sections,
+            narrator_voice=narrator_voice,
+            key_phrases=kp_infos,
+        )

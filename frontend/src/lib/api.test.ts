@@ -210,5 +210,29 @@ describe('TunaTaleAPI', () => {
 
 			await expect(api.getSRSNew()).rejects.toThrow('Failed to get new collocations');
 		});
+
+		it('markAsListened calls POST /api/srs/listen with lesson_id', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ status: 'ok', registered: 3 })));
+
+			const result = await api.markAsListened('lesson-1');
+
+			expect(fetch).toHaveBeenCalledWith(
+				`${BASE}/api/srs/listen`,
+				expect.objectContaining({
+					method: 'POST',
+					body: JSON.stringify({ lesson_id: 'lesson-1' })
+				})
+			);
+			expect(result.status).toBe('ok');
+			expect(result.registered).toBe(3);
+		});
+
+		it('markAsListened throws on non-ok response', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail()));
+
+			await expect(api.markAsListened('lesson-1')).rejects.toThrow(
+				'Failed to mark lesson as listened'
+			);
+		});
 	});
 });

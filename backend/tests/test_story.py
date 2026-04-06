@@ -51,8 +51,8 @@ def mock_llm():
 
 
 @pytest.fixture
-def generator(mock_llm, srs_db):
-    return StoryGenerator(llm_client=mock_llm, srs_db=srs_db)
+def generator(mock_llm):
+    return StoryGenerator(llm_client=mock_llm)
 
 
 class TestStoryGeneration:
@@ -79,10 +79,10 @@ class TestStoryGeneration:
         # Each key_phrase produces multiple phrases via breakdown; at least 2 input phrases
         assert len(kp_section.phrases) >= 2
 
-    async def test_generate_invalid_json_raises(self, language, srs_db):
+    async def test_generate_invalid_json_raises(self, language):
         bad_client = MagicMock()
         bad_client.complete = AsyncMock(return_value="not json")
-        gen = StoryGenerator(llm_client=bad_client, srs_db=srs_db)
+        gen = StoryGenerator(llm_client=bad_client)
         day = _make_curriculum_day()
         from app.generation.story import StoryGenerationError
 
@@ -125,17 +125,10 @@ class TestStoryGeneration:
             len(call_kwargs.args) > 1 and call_kwargs.args[1] is not None
         )
 
-    async def test_generate_persists_collocations_to_srs_db(self, generator, language, srs_db):
+    async def test_generate_populates_key_phrases(self, generator, language):
         day = _make_curriculum_day()
-        await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
-        assert srs_db.count_collocations() == 2
-        assert srs_db.get_collocation("dober dan") is not None
-        assert srs_db.get_collocation("prosim kavo") is not None
-        assert srs_db.get_collocation("dober dan").syntactic_unit.source == "llm"
-        assert srs_db.get_collocation("prosim kavo").syntactic_unit.source == "llm"
-
-    async def test_generate_persists_collocations_idempotent(self, generator, language, srs_db):
-        day = _make_curriculum_day()
-        await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
-        await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
-        assert srs_db.count_collocations() == 2
+        lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        assert len(lesson.key_phrases) == 2
+        phrases = {kp.phrase: kp.translation for kp in lesson.key_phrases}
+        assert phrases["dober dan"] == "good day"
+        assert phrases["prosim kavo"] == "a coffee please"

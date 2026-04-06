@@ -7,6 +7,7 @@ export interface PersistedHomeState {
 	curriculumId?: string;
 	lessonId?: string;
 	audioUrl?: string;
+	listenedLessonIds?: string[];
 }
 
 export function saveHomeState(state: PersistedHomeState): void {
