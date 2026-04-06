@@ -83,6 +83,19 @@ export interface ListenResponse {
 	registered: number;
 }
 
+export interface SectionAudio {
+	audio_id: string;
+	section_index: number;
+	section_type: string;
+	title: string;
+}
+
+export interface LessonAudio {
+	audio_id: string;
+	lesson_id: string;
+	sections: SectionAudio[];
+}
+
 export interface SRSDue {
 	due: Array<{ text: string; translation: string }>;
 }
@@ -141,7 +154,7 @@ export class TunaTaleAPI {
 		return res.json();
 	}
 
-	async renderAudio(lessonId: string): Promise<{ audio_id: string; lesson_id: string }> {
+	async renderAudio(lessonId: string): Promise<LessonAudio> {
 		const res = await fetch(`${this.baseUrl}/api/audio/render`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -153,6 +166,12 @@ export class TunaTaleAPI {
 
 	audioUrl(audioId: string): string {
 		return `${this.baseUrl}/api/audio/${audioId}`;
+	}
+
+	async getLessonAudio(lessonId: string): Promise<LessonAudio> {
+		const res = await fetch(`${this.baseUrl}/api/audio/lesson/${lessonId}`);
+		if (!res.ok) throw new Error(`No audio found for lesson: ${lessonId}`);
+		return res.json();
 	}
 
 	async getSRSDue(): Promise<SRSDue> {

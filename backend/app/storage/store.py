@@ -35,9 +35,17 @@ CREATE TABLE IF NOT EXISTS audio_files (
     id TEXT PRIMARY KEY,
     lesson_id TEXT NOT NULL,
     file_path TEXT NOT NULL,
+    section_index INTEGER,
+    section_type TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 )
 """
+
+# Columns added after initial schema — applied via migration in _init_schema
+_AUDIO_FILES_MIGRATION_COLUMNS = [
+    ("section_index", "INTEGER"),
+    ("section_type", "TEXT"),
+]
 
 
 class ContentStore:
@@ -65,7 +73,15 @@ class ContentStore:
         conn.execute(_CREATE_LESSONS)
         conn.execute(_CREATE_AUDIO_FILES)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_lessons_curriculum_id ON lessons(curriculum_id)")
+        self._migrate_audio_files(conn)
         conn.commit()
+
+    def _migrate_audio_files(self, conn: sqlite3.Connection) -> None:
+        """Add any missing columns to audio_files (idempotent)."""
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(audio_files)").fetchall()}
+        for col_name, col_type in _AUDIO_FILES_MIGRATION_COLUMNS:
+            if col_name not in existing:
+                conn.execute(f"ALTER TABLE audio_files ADD COLUMN {col_name} {col_type}")
 
     @contextmanager
     def _file_conn(self):
@@ -143,11 +159,20 @@ class ContentStore:
 
     # ── Audio files ───────────────────────────────────────────────────────
 
-    def save_audio_file(self, audio_id: str, lesson_id: str, file_path: str) -> None:
+    def save_audio_file(
+        self,
+        audio_id: str,
+        lesson_id: str,
+        file_path: str,
+        *,
+        section_index: int | None = None,
+        section_type: str | None = None,
+    ) -> None:
         with self._get_conn() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO audio_files (id, lesson_id, file_path) VALUES (?, ?, ?)",
-                (audio_id, lesson_id, file_path),
+                "INSERT OR REPLACE INTO audio_files (id, lesson_id, file_path, section_index, section_type)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (audio_id, lesson_id, file_path, section_index, section_type),
             )
             if self._in_memory:
                 conn.commit()
@@ -158,3 +183,29 @@ class ContentStore:
         if row is None:
             return None
         return row["file_path"]
+
+    def get_audio_file_row(self, audio_id: str) -> dict | None:
+        """Return all fields for an audio_files row, or None if not found."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT id, lesson_id, file_path, section_index, section_type FROM audio_files WHERE id = ?",
+                (audio_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def list_audio_files_for_lesson(self, lesson_id: str) -> list[dict]:
+        """Return all audio file rows for a lesson.
+
+        Ordering: full-lesson row first (section_index IS NULL), then sections
+        in ascending section_index order.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, lesson_id, file_path, section_index, section_type FROM audio_files"
+                " WHERE lesson_id = ?"
+                " ORDER BY section_index IS NOT NULL, section_index ASC",
+                (lesson_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]

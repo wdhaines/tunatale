@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import type { CurriculumSummary, LessonSummary, LessonDetail, TranscriptData, WordRating } from '$lib/api';
+	import type { CurriculumSummary, LessonSummary, LessonDetail, TranscriptData, WordRating, SectionAudio } from '$lib/api';
 	import { saveHomeState, loadHomeState, clearHomeState } from '$lib/storage';
 	import WordSpan from '$lib/WordSpan.svelte';
 
@@ -14,6 +14,7 @@
 	let lesson: LessonSummary | null = $state(null);
 	let lessonDetail: LessonDetail | null = $state(null);
 	let audioUrl: string | null = $state(null);
+	let sections: SectionAudio[] = $state([]);
 
 	let loading = $state(false);
 	let error = $state('');
@@ -81,6 +82,12 @@
 			audioUrl = saved.audioUrl;
 			if (saved.lessonId) {
 				await loadTranscript(saved.lessonId);
+				try {
+					const lessonAudio = await api.getLessonAudio(saved.lessonId);
+					sections = lessonAudio.sections;
+				} catch {
+					sections = [];
+				}
 			}
 		}
 
@@ -167,6 +174,7 @@
 		try {
 			const result = await api.renderAudio(lesson.id);
 			audioUrl = api.audioUrl(result.audio_id);
+			sections = result.sections;
 			await loadTranscript(lesson.id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -261,6 +269,21 @@
 			<audio controls src={audioUrl}>
 				Your browser does not support the audio element.
 			</audio>
+
+			{#if sections.length > 0}
+				<div class="download-sections">
+					<h3>Download Sections</h3>
+					<div class="section-links">
+						{#each sections as sec}
+							<a
+								class="section-dl-btn"
+								href={api.audioUrl(sec.audio_id)}
+								download
+							>{sec.title}</a>
+						{/each}
+					</div>
+				</div>
+			{/if}
 
 			<div class="listen-action">
 				<button
@@ -375,6 +398,30 @@
 	}
 	audio {
 		width: 100%;
+	}
+	.download-sections {
+		margin-top: 1rem;
+	}
+	.download-sections h3 {
+		font-size: 0.9rem;
+		color: #555;
+		margin-bottom: 0.5rem;
+	}
+	.section-links {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+	.section-dl-btn {
+		padding: 0.4rem 0.9rem;
+		background: #4b5563;
+		color: white;
+		border-radius: 4px;
+		text-decoration: none;
+		font-size: 0.85rem;
+	}
+	.section-dl-btn:hover {
+		background: #374151;
 	}
 	.listen-action {
 		margin-top: 1rem;

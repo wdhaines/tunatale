@@ -107,6 +107,92 @@ class TestAudioFileStorage:
         assert store.get_audio_file("nonexistent") is None
 
 
+class TestSectionAudioStorage:
+    """Tests for per-section audio file save/list/get operations."""
+
+    def test_save_audio_file_with_section_metadata(self, store):
+        """save_audio_file accepts section_index and section_type kwargs."""
+        store.save_audio_file("full1", "l1", "/output/full1.wav")
+        store.save_audio_file("sec0", "l1", "/output/sec0.wav", section_index=0, section_type="key_phrases")
+        store.save_audio_file("sec1", "l1", "/output/sec1.wav", section_index=1, section_type="natural_speed")
+
+        assert store.get_audio_file("full1") == "/output/full1.wav"
+        assert store.get_audio_file("sec0") == "/output/sec0.wav"
+
+    def test_list_audio_files_for_lesson_ordering(self, store):
+        """list_audio_files_for_lesson returns full row first, then sections in order."""
+        store.save_audio_file("sec1", "l1", "/s1.wav", section_index=1, section_type="natural_speed")
+        store.save_audio_file("full", "l1", "/full.wav")
+        store.save_audio_file("sec0", "l1", "/s0.wav", section_index=0, section_type="key_phrases")
+
+        rows = store.list_audio_files_for_lesson("l1")
+        assert len(rows) == 3
+        # Full row first (section_index is NULL)
+        assert rows[0]["id"] == "full"
+        assert rows[0]["section_index"] is None
+        # Then sections in order
+        assert rows[1]["section_index"] == 0
+        assert rows[1]["section_type"] == "key_phrases"
+        assert rows[2]["section_index"] == 1
+
+    def test_list_audio_files_for_lesson_empty(self, store):
+        """list_audio_files_for_lesson returns empty list when no audio exists."""
+        assert store.list_audio_files_for_lesson("nonexistent") == []
+
+    def test_get_audio_file_row(self, store):
+        """get_audio_file_row returns dict with all fields including section metadata."""
+        store.save_audio_file("full1", "l1", "/full.wav")
+        store.save_audio_file("sec0", "l1", "/s0.wav", section_index=0, section_type="key_phrases")
+
+        full_row = store.get_audio_file_row("full1")
+        assert full_row is not None
+        assert full_row["file_path"] == "/full.wav"
+        assert full_row["lesson_id"] == "l1"
+        assert full_row["section_index"] is None
+        assert full_row["section_type"] is None
+
+        sec_row = store.get_audio_file_row("sec0")
+        assert sec_row is not None
+        assert sec_row["section_index"] == 0
+        assert sec_row["section_type"] == "key_phrases"
+
+    def test_get_audio_file_row_returns_none_when_missing(self, store):
+        """get_audio_file_row returns None for unknown audio_id."""
+        assert store.get_audio_file_row("nonexistent") is None
+
+    def test_schema_migration_adds_missing_columns(self, tmp_path):
+        """ContentStore adds section_index/section_type columns when opening an old-schema DB."""
+        import sqlite3
+
+        db_file = str(tmp_path / "old.db")
+
+        # Create DB with original schema (no section columns)
+        conn = sqlite3.connect(db_file)
+        conn.execute("""
+            CREATE TABLE audio_files (
+                id TEXT PRIMARY KEY,
+                lesson_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("INSERT INTO audio_files (id, lesson_id, file_path) VALUES ('old1', 'l1', '/old.wav')")
+        conn.commit()
+        conn.close()
+
+        # Opening with ContentStore should add the new columns
+        with ContentStore(db_file) as store:
+            row = store.get_audio_file_row("old1")
+            assert row is not None
+            assert row["section_index"] is None
+            assert row["section_type"] is None
+
+            # Can save new-style rows
+            store.save_audio_file("new1", "l1", "/new.wav", section_index=0, section_type="key_phrases")
+            new_row = store.get_audio_file_row("new1")
+            assert new_row["section_index"] == 0
+
+
 class TestPersistence:
     """Tests for file-backed store persistence and multi-database coexistence."""
 
