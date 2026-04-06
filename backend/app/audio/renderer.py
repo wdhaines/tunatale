@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import tempfile
+import time
 from pathlib import Path
 
 from pydub import AudioSegment
@@ -49,26 +51,30 @@ class LessonRenderer:
         Returns:
             AudioSegment containing all phrases with inter-phrase pauses.
         """
+        phrase_files = [tmp / f"s{section_idx}_p{i}.mp3" for i in range(len(section.phrases))]
+        processed_texts = [
+            self._preprocessor.preprocess(phrase.text, section.section_type) for phrase in section.phrases
+        ]
+
+        # Synthesize all phrases in this section concurrently.
+        # EdgeTTSService._semaphore limits total concurrent requests globally.
+        await asyncio.gather(
+            *[
+                self._tts.synthesize(text, phrase.voice_id, phrase_files[i], rate=phrase.rate)
+                for i, (text, phrase) in enumerate(zip(processed_texts, section.phrases, strict=True))
+            ]
+        )
+
+        # Assemble in phrase order (order is preserved by the pre-allocated paths)
         seg = AudioSegment.empty()
-        for phrase_idx, phrase in enumerate(section.phrases):
-            processed = self._preprocessor.preprocess(phrase.text, section.section_type)
-            word_count = len(phrase.text.split())
-
-            phrase_file = tmp / f"s{section_idx}_p{phrase_idx}.mp3"
-            await self._tts.synthesize(
-                processed,
-                phrase.voice_id,
-                phrase_file,
-                rate=phrase.rate,
-            )
-
-            phrase_seg = AudioSegment.from_file(str(phrase_file))
+        for i, phrase in enumerate(section.phrases):
+            phrase_seg = AudioSegment.from_file(str(phrase_files[i]))
             audio_duration_s = len(phrase_seg) / 1000.0
             seg += phrase_seg
 
             pause_ms = self._calc.get_phrase_pause(
                 audio_duration_s=audio_duration_s,
-                word_count=word_count,
+                word_count=len(phrase.text.split()),
                 section_type=section.section_type,
             )
             if pause_ms > 0:
@@ -94,27 +100,36 @@ class LessonRenderer:
             section_paths: Optional list of paths for per-section output WAVs.
                            Must have same length as lesson.sections if provided.
         """
+        t_start = time.perf_counter()
         boundary_silence = AudioSegment.silent(duration=self._calc.get_section_boundary_pause())
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp = Path(tmp_dir)
 
             # Render lesson title (full WAV only — not in section files)
+            t0 = time.perf_counter()
             title_file = tmp / "title.mp3"
             await self._tts.synthesize(lesson.title, lesson.narrator_voice, title_file, rate="+0%")
+            logger.debug("TTS title → %.0f ms", (time.perf_counter() - t0) * 1000)
             title_seg = AudioSegment.from_file(str(title_file))
 
-            # Render each section to its own AudioSegment
-            section_segs: list[AudioSegment] = []
-            for section_idx, section in enumerate(lesson.sections):
-                sec_seg = await self._render_section(section, tmp, section_idx)
-                section_segs.append(sec_seg)
+            # Render all sections concurrently — phrases within each section are
+            # also parallelised; EdgeTTSService._semaphore caps total concurrency.
+            t0 = time.perf_counter()
+            section_segs: list[AudioSegment] = list(
+                await asyncio.gather(
+                    *[self._render_section(section, tmp, i) for i, section in enumerate(lesson.sections)]
+                )
+            )
+            logger.debug("All sections TTS → %.0f ms", (time.perf_counter() - t0) * 1000)
 
-                # Write per-section file if requested
-                if section_paths is not None:
+            if section_paths is not None:
+                for section_idx, sec_seg in enumerate(section_segs):
                     sp = section_paths[section_idx]
                     sp.parent.mkdir(parents=True, exist_ok=True)
+                    t0 = time.perf_counter()
                     sec_seg.export(str(sp), format="wav")
+                    logger.debug("Section %d export → %.0f ms", section_idx, (time.perf_counter() - t0) * 1000)
 
             # Assemble full lesson: title + bs + sec0 + bs + sec1 + ...
             combined = title_seg + boundary_silence
@@ -124,5 +139,13 @@ class LessonRenderer:
                 combined += sec_seg
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        t0 = time.perf_counter()
         combined.export(str(output_path), format="wav")
-        logger.info("Rendered lesson to %s (%d ms)", output_path, len(combined))
+        logger.debug("Full lesson export → %.0f ms", (time.perf_counter() - t0) * 1000)
+        total_ms = (time.perf_counter() - t_start) * 1000
+        logger.info(
+            "Rendered lesson to %s (audio: %d ms, wall: %.0f ms)",
+            output_path,
+            len(combined),
+            total_ms,
+        )

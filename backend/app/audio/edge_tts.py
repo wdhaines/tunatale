@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 # Rate limiting constants (ported from prototype)
 MIN_REQUEST_DELAY_S = 0.2
-MAX_CONCURRENT_REQUESTS = 3
+MAX_CONCURRENT_REQUESTS = 10
 MAX_RETRIES = 3
 
 

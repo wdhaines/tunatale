@@ -23,6 +23,9 @@ from app.models.language import Language  # noqa: E402
 from app.srs.database import SRSDatabase  # noqa: E402
 from app.storage.store import ContentStore  # noqa: E402
 
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("app.audio.renderer").setLevel(logging.DEBUG)
+
 logger = logging.getLogger(__name__)
 
 
