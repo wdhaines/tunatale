@@ -6,7 +6,7 @@ Supports ":memory:" for in-memory test databases.
 from __future__ import annotations
 
 import sqlite3
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import date
 from pathlib import Path
 
@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS collocations (
     lapses INTEGER NOT NULL DEFAULT 0,
     state TEXT NOT NULL DEFAULT 'new',
     last_review TEXT,
+    lemma TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
 )
@@ -84,6 +85,9 @@ class SRSDatabase:
         conn.execute(_CREATE_VIOLATIONS)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_collocations_due_date ON collocations(due_date)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_collocations_state ON collocations(state)")
+        with suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE collocations ADD COLUMN lemma TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_collocations_lemma ON collocations(lemma)")
         conn.commit()
 
     @contextmanager
@@ -113,8 +117,8 @@ class SRSDatabase:
                 """
                 INSERT OR IGNORE INTO collocations
                     (text, translation, language_code, word_count, unit_difficulty,
-                     source, corpus_frequency, due_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     source, corpus_frequency, due_date, lemma)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     unit.text,
@@ -125,6 +129,7 @@ class SRSDatabase:
                     unit.source,
                     unit.frequency,
                     date.today().isoformat(),
+                    unit.lemma,
                 ),
             )
             if not self._in_memory:
@@ -184,6 +189,14 @@ class SRSDatabase:
             return None
         return self._row_to_item(row)
 
+    def get_collocation_by_lemma(self, lemma: str) -> SRSItem | None:
+        """Retrieve an SRSItem by lemma (canonical word form)."""
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT * FROM collocations WHERE lemma = ? LIMIT 1", (lemma,)).fetchone()
+        if row is None:
+            return None
+        return self._row_to_item(row)
+
     def get_due_collocations(self, as_of: date) -> list[SRSItem]:
         """Return all collocations due for review on or before as_of."""
         with self._get_conn() as conn:
@@ -226,6 +239,7 @@ class SRSDatabase:
 
     @staticmethod
     def _row_to_item(row: sqlite3.Row) -> SRSItem:
+        keys = row.keys()
         unit = SyntacticUnit(
             text=row["text"],
             translation=row["translation"],
@@ -233,6 +247,7 @@ class SRSDatabase:
             difficulty=row["unit_difficulty"],
             source=row["source"],
             frequency=row["corpus_frequency"],
+            lemma=row["lemma"] if "lemma" in keys else None,
         )
         return SRSItem(
             syntactic_unit=unit,

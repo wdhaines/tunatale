@@ -9,11 +9,22 @@ from pydantic import BaseModel
 
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.feedback import ImplicitFeedbackAdapter
-from app.srs.fsrs import schedule
+from app.srs.fsrs import Rating, schedule
+from app.srs.lemmatizer import LowercaseLemmatizer
+from app.srs.tokenizer import tokenize
+from app.srs.transcript import extract_transcript
 
 router = APIRouter(prefix="/api/srs", tags=["srs"])
 
 _feedback_adapter = ImplicitFeedbackAdapter()
+_lemmatizer = LowercaseLemmatizer()
+
+_WORD_RATING_MAP: dict[str, Rating] = {
+    "again": Rating.AGAIN,
+    "hard": Rating.HARD,
+    "good": Rating.GOOD,
+    "easy": Rating.EASY,
+}
 
 
 class FeedbackRequest(BaseModel):
@@ -23,6 +34,7 @@ class FeedbackRequest(BaseModel):
 
 class ListenRequest(BaseModel):
     lesson_id: str
+    word_ratings: dict[str, str] = {}  # lemma → "hard"|"easy"|"again"
 
 
 @router.get("/due", status_code=200)
@@ -62,6 +74,41 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         raise HTTPException(status_code=404, detail="Lesson not found")
 
     db = request.app.state.srs_db
+
+    # ── Word-level tracking from NATURAL_SPEED section ──────────────────
+    from app.models.lesson import SectionType
+
+    natural_speed = next(
+        (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
+        None,
+    )
+
+    unique_lemmas: set[str] = set()
+    if natural_speed is not None:
+        for phrase in natural_speed.phrases:
+            if phrase.language_code != lesson.language_code:
+                continue
+            for surface in tokenize(phrase.text):
+                lemma = _lemmatizer.lemmatize(surface, lesson.language_code)
+                unique_lemmas.add(lemma)
+
+    for lemma in unique_lemmas:
+        unit = SyntacticUnit(
+            text=lemma,
+            translation="",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma=lemma,
+        )
+        db.add_collocation(unit, language_code=lesson.language_code)
+        item = db.get_collocation_by_lemma(lemma)
+        if item is not None:
+            rating = _WORD_RATING_MAP.get(body.word_ratings.get(lemma, "good"), Rating.GOOD)
+            updated = schedule(item, rating)
+            db.update_collocation(updated)
+
+    # ── Key phrase registration (preserves translations) ─────────────────
     for kp in lesson.key_phrases:
         unit = SyntacticUnit(
             text=kp.phrase,
@@ -72,7 +119,31 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         )
         db.add_collocation(unit, language_code=lesson.language_code)
 
-    return {"status": "ok", "registered": len(lesson.key_phrases)}
+    registered = len(unique_lemmas) + len(lesson.key_phrases)
+    return {"status": "ok", "registered": registered}
+
+
+@router.get("/lesson/{lesson_id}/transcript", status_code=200)
+async def get_lesson_transcript(lesson_id: str, request: Request):
+    store = request.app.state.content_store
+    lesson = store.get_lesson(lesson_id)
+    if lesson is None:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+
+    db = request.app.state.srs_db
+    transcript = extract_transcript(lesson, db, _lemmatizer)
+
+    return {
+        "lesson_id": lesson_id,
+        "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in transcript.key_phrases],
+        "dialogue_lines": [
+            {
+                "role": line.role,
+                "words": [{"surface": w.surface, "lemma": w.lemma, "srs_state": w.srs_state} for w in line.words],
+            }
+            for line in transcript.dialogue_lines
+        ],
+    }
 
 
 @router.get("/stats", status_code=200)

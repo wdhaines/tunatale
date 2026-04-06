@@ -211,7 +211,7 @@ describe('TunaTaleAPI', () => {
 			await expect(api.getSRSNew()).rejects.toThrow('Failed to get new collocations');
 		});
 
-		it('markAsListened calls POST /api/srs/listen with lesson_id', async () => {
+		it('markAsListened calls POST /api/srs/listen with lesson_id and empty word_ratings by default', async () => {
 			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ status: 'ok', registered: 3 })));
 
 			const result = await api.markAsListened('lesson-1');
@@ -220,11 +220,24 @@ describe('TunaTaleAPI', () => {
 				`${BASE}/api/srs/listen`,
 				expect.objectContaining({
 					method: 'POST',
-					body: JSON.stringify({ lesson_id: 'lesson-1' })
+					body: JSON.stringify({ lesson_id: 'lesson-1', word_ratings: {} })
 				})
 			);
 			expect(result.status).toBe('ok');
 			expect(result.registered).toBe(3);
+		});
+
+		it('markAsListened sends word_ratings when provided', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ status: 'ok', registered: 5 })));
+
+			await api.markAsListened('lesson-1', { banka: 'hard', zdravo: 'easy' });
+
+			expect(fetch).toHaveBeenCalledWith(
+				`${BASE}/api/srs/listen`,
+				expect.objectContaining({
+					body: JSON.stringify({ lesson_id: 'lesson-1', word_ratings: { banka: 'hard', zdravo: 'easy' } })
+				})
+			);
 		});
 
 		it('markAsListened throws on non-ok response', async () => {
@@ -232,6 +245,31 @@ describe('TunaTaleAPI', () => {
 
 			await expect(api.markAsListened('lesson-1')).rejects.toThrow(
 				'Failed to mark lesson as listened'
+			);
+		});
+
+		it('getLessonTranscript calls GET /api/srs/lesson/{id}/transcript', async () => {
+			const mockTranscript = {
+				lesson_id: 'lesson-1',
+				key_phrases: [{ phrase: 'Zdravo', translation: 'Hello' }],
+				dialogue_lines: [
+					{ role: 'female-1', words: [{ surface: 'Zdravo', lemma: 'zdravo', srs_state: 'unknown' }] }
+				]
+			};
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk(mockTranscript)));
+
+			const result = await api.getLessonTranscript('lesson-1');
+
+			expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/lesson/lesson-1/transcript`);
+			expect(result.lesson_id).toBe('lesson-1');
+			expect(result.dialogue_lines).toHaveLength(1);
+		});
+
+		it('getLessonTranscript throws on non-ok response', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail()));
+
+			await expect(api.getLessonTranscript('lesson-1')).rejects.toThrow(
+				'Failed to get transcript for lesson: lesson-1'
 			);
 		});
 	});

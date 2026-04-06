@@ -59,6 +59,25 @@ export interface LessonDetail {
 	key_phrases: KeyPhrase[];
 }
 
+export type WordRating = 'hard' | 'easy' | 'again';
+
+export interface WordToken {
+	surface: string;
+	lemma: string;
+	srs_state: string;
+}
+
+export interface DialogueLine {
+	role: string;
+	words: WordToken[];
+}
+
+export interface TranscriptData {
+	lesson_id: string;
+	key_phrases: KeyPhrase[];
+	dialogue_lines: DialogueLine[];
+}
+
 export interface ListenResponse {
 	status: string;
 	registered: number;
@@ -164,13 +183,22 @@ export class TunaTaleAPI {
 		return res.json();
 	}
 
-	async markAsListened(lessonId: string): Promise<ListenResponse> {
+	async markAsListened(
+		lessonId: string,
+		wordRatings: Record<string, WordRating> = {}
+	): Promise<ListenResponse> {
 		const res = await fetch(`${this.baseUrl}/api/srs/listen`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ lesson_id: lessonId })
+			body: JSON.stringify({ lesson_id: lessonId, word_ratings: wordRatings })
 		});
 		if (!res.ok) throw new Error('Failed to mark lesson as listened');
+		return res.json();
+	}
+
+	async getLessonTranscript(lessonId: string): Promise<TranscriptData> {
+		const res = await fetch(`${this.baseUrl}/api/srs/lesson/${lessonId}/transcript`);
+		if (!res.ok) throw new Error(`Failed to get transcript for lesson: ${lessonId}`);
 		return res.json();
 	}
 }

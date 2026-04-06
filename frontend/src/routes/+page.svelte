@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import type { CurriculumSummary, LessonSummary, LessonDetail } from '$lib/api';
+	import type { CurriculumSummary, LessonSummary, LessonDetail, TranscriptData, WordRating } from '$lib/api';
 	import { saveHomeState, loadHomeState, clearHomeState } from '$lib/storage';
+	import WordSpan from '$lib/WordSpan.svelte';
 
 
 	let topic = $state('');
@@ -21,6 +22,9 @@
 	let listenedLessonIds: string[] = $state([]);
 	let listenLoading = $state(false);
 	let listenResult: { registered: number } | null = $state(null);
+
+	let transcript: TranscriptData | null = $state(null);
+	let pendingRatings: Record<string, WordRating | null> = $state({});
 
 	let isListened = $derived(lessonDetail ? listenedLessonIds.includes(lessonDetail.id) : false);
 
@@ -75,6 +79,9 @@
 
 		if (saved.audioUrl) {
 			audioUrl = saved.audioUrl;
+			if (saved.lessonId) {
+				await loadTranscript(saved.lessonId);
+			}
 		}
 
 		if (saved.listenedLessonIds) {
@@ -105,11 +112,16 @@
 		listenLoading = true;
 		error = '';
 		try {
-			const result = await api.markAsListened(lessonDetail.id);
+			const activeRatings = Object.fromEntries(
+				Object.entries(pendingRatings).filter(([, v]) => v !== null)
+			) as Record<string, WordRating>;
+			const result = await api.markAsListened(lessonDetail.id, activeRatings);
 			listenResult = result;
 			if (!listenedLessonIds.includes(lessonDetail.id)) {
 				listenedLessonIds = [...listenedLessonIds, lessonDetail.id];
 			}
+			// Refresh transcript to show updated SRS states
+			transcript = await api.getLessonTranscript(lessonDetail.id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -123,6 +135,8 @@
 		error = '';
 		lessonDetail = null;
 		listenResult = null;
+		transcript = null;
+		pendingRatings = {};
 		try {
 			lesson = await api.generateStory(curriculum.id, day);
 			lessonDetail = await api.getLesson(lesson.id);
@@ -133,6 +147,19 @@
 		}
 	}
 
+	async function loadTranscript(lessonId: string) {
+		try {
+			transcript = await api.getLessonTranscript(lessonId);
+			pendingRatings = {};
+		} catch {
+			transcript = null;
+		}
+	}
+
+	function handleWordRatingChange(lemma: string, rating: WordRating | null) {
+		pendingRatings = { ...pendingRatings, [lemma]: rating };
+	}
+
 	async function handleRenderAudio() {
 		if (!lesson) return;
 		loading = true;
@@ -140,6 +167,7 @@
 		try {
 			const result = await api.renderAudio(lesson.id);
 			audioUrl = api.audioUrl(result.audio_id);
+			await loadTranscript(lesson.id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -234,44 +262,65 @@
 				Your browser does not support the audio element.
 			</audio>
 
-			{#if lessonDetail?.key_phrases?.length}
-				<div class="listen-action">
-					<button
-						class="listen-btn"
-						class:listened={isListened}
-						onclick={handleMarkAsListened}
-						disabled={listenLoading}
-					>
-						{#if listenLoading}
-							Registering…
-						{:else if isListened}
-							✓ Listened
-						{:else}
-							Mark as Listened
-						{/if}
-					</button>
+			<div class="listen-action">
+				<button
+					class="listen-btn"
+					class:listened={isListened}
+					onclick={handleMarkAsListened}
+					disabled={listenLoading}
+				>
+					{#if listenLoading}
+						Registering…
+					{:else if isListened}
+						✓ Listened
+					{:else}
+						Mark as Listened
+					{/if}
+				</button>
 
-					{#if listenResult && !error}
-						<p class="listen-confirmation">
-							{listenResult.registered}
-							{listenResult.registered === 1 ? 'phrase' : 'phrases'} added to SRS
-						</p>
+				{#if listenResult && !error}
+					<p class="listen-confirmation">
+						{listenResult.registered}
+						{listenResult.registered === 1 ? 'word' : 'words'} tracked in SRS
+					</p>
+				{/if}
+			</div>
+
+			{#if transcript}
+				<div class="transcript">
+					{#if transcript.key_phrases.length > 0}
+						<div class="transcript-section">
+							<h3>Key Phrases</h3>
+							<ul class="key-phrases-list">
+								{#each transcript.key_phrases as kp}
+									<li>
+										<span class="kp-phrase">{kp.phrase}</span>
+										<span class="kp-translation">{kp.translation}</span>
+									</li>
+								{/each}
+							</ul>
+						</div>
 					{/if}
 
-					<details class="key-phrases-detail">
-						<summary>
-							{lessonDetail.key_phrases.length}
-							{lessonDetail.key_phrases.length === 1 ? 'key phrase' : 'key phrases'} in this lesson
-						</summary>
-						<ul class="key-phrases-list">
-							{#each lessonDetail.key_phrases as kp}
-								<li>
-									<span class="kp-phrase">{kp.phrase}</span>
-									<span class="kp-translation">{kp.translation}</span>
-								</li>
+					{#if transcript.dialogue_lines.length > 0}
+						<div class="transcript-section">
+							<h3>Dialogue <span class="transcript-hint">(click a word: orange=hard, purple=easy)</span></h3>
+							{#each transcript.dialogue_lines as line}
+								<div class="dialogue-line">
+									<span class="dialogue-role">{line.role}</span>
+									<span class="dialogue-words">
+										{#each line.words as word}
+											<WordSpan
+												{word}
+												rating={pendingRatings[word.lemma] ?? null}
+												onRatingChange={handleWordRatingChange}
+											/>{' '}
+										{/each}
+									</span>
+								</div>
 							{/each}
-						</ul>
-					</details>
+						</div>
+					{/if}
 				</div>
 			{/if}
 		</section>
@@ -343,14 +392,6 @@
 		font-size: 0.85rem;
 		margin-top: 0.5rem;
 	}
-	.key-phrases-detail {
-		margin-top: 0.75rem;
-		font-size: 0.9rem;
-	}
-	.key-phrases-detail summary {
-		cursor: pointer;
-		color: var(--color-muted);
-	}
 	.key-phrases-list {
 		list-style: none;
 		padding: 0;
@@ -368,6 +409,42 @@
 	.kp-translation {
 		color: var(--color-muted);
 		font-style: italic;
+	}
+	.transcript {
+		margin-top: 1.25rem;
+	}
+	.transcript-section {
+		margin-bottom: 1.25rem;
+	}
+	.transcript-section h3 {
+		font-size: 0.8rem;
+		text-transform: uppercase;
+		color: var(--color-muted);
+		margin-bottom: 0.5rem;
+	}
+	.transcript-hint {
+		font-style: italic;
+		text-transform: none;
+		font-size: 0.75rem;
+	}
+	.dialogue-line {
+		display: flex;
+		gap: 0.75rem;
+		padding: 0.3rem 0;
+		border-bottom: 1px solid var(--color-border);
+		font-size: 0.95rem;
+		line-height: 1.5;
+	}
+	.dialogue-role {
+		color: var(--color-primary);
+		min-width: 6rem;
+		font-size: 0.85rem;
+		padding-top: 0.1rem;
+		flex-shrink: 0;
+	}
+	.dialogue-words {
+		flex: 1;
+		line-height: 1.6;
 	}
 	.script-block {
 		margin-bottom: 1rem;

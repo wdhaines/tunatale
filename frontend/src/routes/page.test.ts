@@ -18,7 +18,8 @@ vi.mock('$lib/api', () => ({
 		getSRSDue: vi.fn(),
 		getSRSStats: vi.fn(),
 		postSRSFeedback: vi.fn(),
-		markAsListened: vi.fn()
+		markAsListened: vi.fn(),
+		getLessonTranscript: vi.fn()
 	}
 }));
 
@@ -334,6 +335,12 @@ describe('+page.svelte', () => {
 	});
 
 	describe('mark as listened', () => {
+		const emptyTranscript = {
+			lesson_id: 'l1',
+			key_phrases: [],
+			dialogue_lines: []
+		};
+
 		function setupWithAudioAndPhrases(keyPhrases = [{ phrase: 'dober dan', translation: 'good day' }]) {
 			mockLoadHomeState.mockReturnValue({
 				topic: 'coffee',
@@ -356,33 +363,37 @@ describe('+page.svelte', () => {
 				key_phrases: keyPhrases,
 				sections: []
 			});
+			vi.mocked(api.getLessonTranscript).mockResolvedValue({
+				...emptyTranscript,
+				key_phrases: keyPhrases
+			});
 		}
 
-		it('shows "Mark as Listened" button when audio is rendered and key_phrases exist', async () => {
+		it('shows "Mark as Listened" button when audio is rendered', async () => {
 			setupWithAudioAndPhrases();
 			const { findByRole } = render(Page);
 			expect(await findByRole('button', { name: 'Mark as Listened' })).toBeTruthy();
 		});
 
-		it('does not show "Mark as Listened" when key_phrases is empty', async () => {
+		it('shows "Mark as Listened" even when key_phrases is empty', async () => {
 			setupWithAudioAndPhrases([]);
-			const { findByText, queryByRole } = render(Page);
-			await findByText('Audio Player');
-			expect(queryByRole('button', { name: 'Mark as Listened' })).toBeNull();
+			const { findByRole } = render(Page);
+			expect(await findByRole('button', { name: 'Mark as Listened' })).toBeTruthy();
 		});
 
-		it('calls markAsListened and shows confirmation', async () => {
+		it('calls markAsListened with lesson id and empty ratings, shows confirmation', async () => {
 			setupWithAudioAndPhrases([
 				{ phrase: 'dober dan', translation: 'good day' },
 				{ phrase: 'prosim', translation: 'please' }
 			]);
 			mockMarkAsListened.mockResolvedValue({ status: 'ok', registered: 2 });
+			vi.mocked(api.getLessonTranscript).mockResolvedValue(emptyTranscript);
 
 			const { findByRole, findByText } = render(Page);
 			await fireEvent.click(await findByRole('button', { name: 'Mark as Listened' }));
 
-			expect(mockMarkAsListened).toHaveBeenCalledWith('l1');
-			expect(await findByText('2 phrases added to SRS')).toBeTruthy();
+			expect(mockMarkAsListened).toHaveBeenCalledWith('l1', {});
+			expect(await findByText('2 words tracked in SRS')).toBeTruthy();
 		});
 
 		it('shows "✓ Listened" when lesson is in listenedLessonIds', async () => {
@@ -408,20 +419,40 @@ describe('+page.svelte', () => {
 				key_phrases: [{ phrase: 'dober dan', translation: 'good day' }],
 				sections: []
 			});
+			vi.mocked(api.getLessonTranscript).mockResolvedValue(emptyTranscript);
 
 			const { findByRole } = render(Page);
 			expect(await findByRole('button', { name: '✓ Listened' })).toBeTruthy();
 		});
 
-		it('shows key phrases summary in expandable details', async () => {
+		it('shows key phrases in transcript section', async () => {
 			setupWithAudioAndPhrases([{ phrase: 'dober dan', translation: 'good day' }]);
+			vi.mocked(api.getLessonTranscript).mockResolvedValue({
+				lesson_id: 'l1',
+				key_phrases: [{ phrase: 'dober dan', translation: 'good day' }],
+				dialogue_lines: []
+			});
 			const { findByText } = render(Page);
-			expect(await findByText('1 key phrase in this lesson')).toBeTruthy();
+			expect(await findByText('dober dan')).toBeTruthy();
+		});
+
+		it('shows dialogue words as clickable spans', async () => {
+			setupWithAudioAndPhrases([]);
+			vi.mocked(api.getLessonTranscript).mockResolvedValue({
+				lesson_id: 'l1',
+				key_phrases: [],
+				dialogue_lines: [
+					{ role: 'female-1', words: [{ surface: 'Zdravo', lemma: 'zdravo', srs_state: 'unknown' }] }
+				]
+			});
+			const { findByText } = render(Page);
+			expect(await findByText('Zdravo')).toBeTruthy();
 		});
 
 		it('shows error when markAsListened fails', async () => {
 			setupWithAudioAndPhrases();
 			mockMarkAsListened.mockRejectedValue(new Error('Network error'));
+			vi.mocked(api.getLessonTranscript).mockResolvedValue(emptyTranscript);
 
 			const { findByRole, findByText } = render(Page);
 			await fireEvent.click(await findByRole('button', { name: 'Mark as Listened' }));

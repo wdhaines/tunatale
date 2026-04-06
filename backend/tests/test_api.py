@@ -418,6 +418,305 @@ class TestSRSEndpoints:
 
         assert response.status_code == 404
 
+    async def test_listen_registers_all_l2_words(self):
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text="Kje je banka?", voice_id="female-1", language_code="sl", role="female-1"),
+                    ],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        # 3 unique words: kje, je, banka
+        assert data["registered"] == 3
+        assert db.get_collocation_by_lemma("kje") is not None
+        assert db.get_collocation_by_lemma("je") is not None
+        assert db.get_collocation_by_lemma("banka") is not None
+
+    async def test_listen_default_rating_is_good(self):
+        from app.models.srs_item import SRSState
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="banka", voice_id="female-1", language_code="sl", role="female-1")],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        item = db.get_collocation_by_lemma("banka")
+        assert item is not None
+        # After GOOD rating on a NEW item, state advances to LEARNING
+        assert item.state in (SRSState.LEARNING, SRSState.REVIEW)
+        assert item.reps == 1
+
+    async def test_listen_with_word_rating_override_hard(self):
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="banka", voice_id="female-1", language_code="sl", role="female-1")],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/listen",
+                json={"lesson_id": "lesson-1", "word_ratings": {"banka": "hard"}},
+            )
+
+        assert response.status_code == 200
+        item = db.get_collocation_by_lemma("banka")
+        assert item is not None
+        assert item.reps == 1
+
+    async def test_listen_deduplicates_lemmas(self):
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text="banka banka banka", voice_id="female-1", language_code="sl", role="female-1"),
+                    ],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        # Even though "banka" appears 3 times, it should only be scheduled once
+        assert db.count_collocations() == 1
+        item = db.get_collocation_by_lemma("banka")
+        assert item.reps == 1
+
+    async def test_listen_key_phrases_translation_preserved(self):
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[],
+            key_phrases=[KeyPhraseInfo(phrase="dober dan", translation="good day")],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        item = db.get_collocation("dober dan")
+        assert item is not None
+        assert item.syntactic_unit.translation == "good day"
+
+    async def test_listen_is_idempotent_with_word_tracking(self):
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="banka", voice_id="female-1", language_code="sl", role="female-1")],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        assert response.status_code == 200
+        assert db.count_collocations() == 1
+
+
+class TestTranscriptEndpoint:
+    """Tests for GET /api/srs/lesson/{lesson_id}/transcript."""
+
+    async def test_returns_200_with_correct_shape(self):
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="Zdravo.", voice_id="female-1", language_code="sl", role="female-1")],
+                )
+            ],
+            key_phrases=[KeyPhraseInfo(phrase="Zdravo", translation="Hello")],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/lesson/lesson-1/transcript")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["lesson_id"] == "lesson-1"
+        assert isinstance(data["key_phrases"], list)
+        assert isinstance(data["dialogue_lines"], list)
+
+    async def test_returns_404_for_missing_lesson(self):
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        app.state.srs_db = SRSDatabase(":memory:")
+        app.state.content_store = ContentStore(":memory:")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/lesson/nonexistent/transcript")
+
+        assert response.status_code == 404
+
+    async def test_l2_filter_excludes_english_narrator(self):
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text="Scene: At the market", voice_id="narrator", language_code="en", role="narrator"),
+                        Phrase(text="Zdravo.", voice_id="female-1", language_code="sl", role="female-1"),
+                    ],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/lesson/lesson-1/transcript")
+
+        data = response.json()
+        assert len(data["dialogue_lines"]) == 1
+        assert data["dialogue_lines"][0]["role"] == "female-1"
+
+    async def test_known_word_has_correct_srs_state(self):
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="banka", voice_id="female-1", language_code="sl", role="female-1")],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
+        db.add_collocation(unit, language_code="sl")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/lesson/lesson-1/transcript")
+
+        data = response.json()
+        word = data["dialogue_lines"][0]["words"][0]
+        assert word["srs_state"] == "new"
+        assert word["lemma"] == "banka"
+        assert word["surface"] == "banka"
+
 
 class TestAudioEndpoints:
     """Tests for audio render and retrieval endpoints."""

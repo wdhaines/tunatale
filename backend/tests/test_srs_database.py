@@ -106,3 +106,41 @@ class TestFileBased:
         unit = _unit()
         db.add_collocation(unit, language_code="sl")
         assert db.get_collocation("dober dan") is not None
+
+
+class TestLemmaSupport:
+    """Tests for lemma column and get_collocation_by_lemma."""
+
+    def test_add_with_lemma_and_retrieve_by_lemma(self, srs_db):
+        unit = SyntacticUnit(
+            text="zdravo", translation="hello", word_count=1, difficulty=1, source="llm", lemma="zdravo"
+        )
+        srs_db.add_collocation(unit, language_code="sl")
+        retrieved = srs_db.get_collocation_by_lemma("zdravo")
+        assert retrieved is not None
+        assert retrieved.syntactic_unit.text == "zdravo"
+        assert retrieved.syntactic_unit.lemma == "zdravo"
+
+    def test_get_by_lemma_returns_none_for_unknown(self, srs_db):
+        assert srs_db.get_collocation_by_lemma("unknown_lemma") is None
+
+    def test_add_without_lemma_not_found_by_lemma(self, srs_db):
+        unit = _unit("dober dan")  # no lemma set
+        srs_db.add_collocation(unit, language_code="sl")
+        # lemma is NULL → get_collocation_by_lemma should not return it
+        assert srs_db.get_collocation_by_lemma("dober dan") is None
+
+    def test_init_schema_is_idempotent(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        db1 = SRSDatabase(str(db_path))
+        unit = _unit()
+        db1.add_collocation(unit, language_code="sl")
+        # Re-opening triggers _init_schema again (runs ALTER TABLE again — should not error)
+        db2 = SRSDatabase(str(db_path))
+        assert db2.get_collocation("dober dan") is not None
+
+    def test_lemma_on_retrieved_item_without_lemma_is_none(self, srs_db):
+        unit = _unit("banka")
+        srs_db.add_collocation(unit, language_code="sl")
+        item = srs_db.get_collocation("banka")
+        assert item.syntactic_unit.lemma is None

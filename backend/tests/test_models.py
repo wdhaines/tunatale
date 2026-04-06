@@ -106,6 +106,14 @@ class TestSyntacticUnit:
         with pytest.raises(ValueError, match="difficulty"):
             SyntacticUnit(text="x", translation="y", word_count=1, difficulty=6, source="corpus")
 
+    def test_lemma_defaults_to_none(self):
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm")
+        assert unit.lemma is None
+
+    def test_lemma_stores_value(self):
+        unit = SyntacticUnit(text="Banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
+        assert unit.lemma == "banka"
+
 
 class TestLanguage:
     """Tests for Language factory methods and voice map structure."""
