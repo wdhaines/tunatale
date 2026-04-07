@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
@@ -10,6 +11,12 @@ from pydantic import BaseModel
 from app.models.strategy import ContentStrategy
 
 router = APIRouter(prefix="/api/story", tags=["generation"])
+
+
+def _slug(text: str) -> str:
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    return text[:50]
 
 
 class GenerateStoryRequest(BaseModel):
@@ -40,7 +47,7 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
         strategy=strategy,
     )
 
-    lesson_id = str(uuid.uuid4())
+    lesson_id = f"{_slug(lesson.title)}-{uuid.uuid4().hex[:8]}"
     store.save_lesson(lesson_id, body.curriculum_id, body.day, lesson)
 
     sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]

@@ -298,6 +298,7 @@ class TestStoryEndpoints:
         assert response.status_code == 201
         data = response.json()
         assert "id" in data
+        assert data["id"].startswith("day-1"), f"Expected slug prefix, got: {data['id']}"
         assert "sections" in data
         # Verify lesson was persisted
         assert store.get_lesson(data["id"]) is not None
