@@ -58,22 +58,39 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 	});
 
 	it('shows AudioPlayer when audio is pre-loaded', () => {
-		const { queryByText } = render(Page, {
+		const { queryByText, container } = render(Page, {
 			props: { data: { curriculum, lesson, audio, transcript: null } }
 		});
 		expect(queryByText('Render Audio')).toBeFalsy();
+		expect(queryByText('Audio Player')).toBeTruthy();
+		expect(container.querySelector('audio')).toBeTruthy();
 	});
 
 	it('renders audio on Render Audio click', async () => {
 		mockRenderAudio.mockResolvedValue(audio);
 		mockGetTranscript.mockResolvedValue(transcript);
 
-		const { getByText, findByText } = render(Page, {
+		const { getByText, findByText, container } = render(Page, {
 			props: { data: { curriculum, lesson, audio: null, transcript: null } }
 		});
 		await fireEvent.click(getByText('Render Audio'));
 
+		expect(await findByText('Audio Player')).toBeTruthy();
+		expect(container.querySelector('audio')).toBeTruthy();
 		expect(await findByText('a coffee please')).toBeTruthy();
+	});
+
+	it('still shows AudioPlayer if getLessonTranscript fails after render', async () => {
+		mockRenderAudio.mockResolvedValue(audio);
+		mockGetTranscript.mockRejectedValue(new Error('transcript unavailable'));
+
+		const { getByText, findByText, queryByText } = render(Page, {
+			props: { data: { curriculum, lesson, audio: null, transcript: null } }
+		});
+		await fireEvent.click(getByText('Render Audio'));
+
+		expect(await findByText('Audio Player')).toBeTruthy();
+		expect(queryByText('Render Audio')).toBeFalsy();
 	});
 
 	it('calls markAsListened and adds to listenedStore', async () => {

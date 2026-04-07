@@ -41,7 +41,7 @@ test('generate curriculum flow', async ({ page, request }) => {
 	await page.getByRole('button', { name: 'Generate' }).click();
 
 	// After curriculum generates, should navigate to /c/:id
-	await expect(page).toHaveURL(/\/c\/[a-f0-9-]+$/, { timeout: 30000 });
+	await expect(page).toHaveURL(/\/c\/[a-z0-9-]+$/, { timeout: 30000 });
 	// Day picker should be visible
 	await expect(page.getByText('Day 1')).toBeVisible();
 });
