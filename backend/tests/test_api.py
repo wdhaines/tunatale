@@ -99,6 +99,63 @@ class TestCurriculumEndpoints:
         assert response.status_code == 200
         assert isinstance(response.json(), list)
 
+    async def test_get_lesson_by_day_returns_full_lesson(self):
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        lesson = Lesson(
+            title="Day 1: Coffee",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.KEY_PHRASES,
+                    phrases=[
+                        Phrase(text="kavo prosim", role="female-1", voice_id="sl-SI-PetraNeural", language_code="sl"),
+                    ],
+                )
+            ],
+            key_phrases=[KeyPhraseInfo(phrase="kavo prosim", translation="a coffee please")],
+        )
+        store.save_lesson("lesson-day1", "curriculum-abc", 1, lesson)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/curriculum/curriculum-abc/days/1/lesson")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == "lesson-day1"
+        assert data["title"] == "Day 1: Coffee"
+        assert data["language_code"] == "sl"
+        assert len(data["sections"]) == 1
+        assert data["sections"][0]["phrases"][0]["text"] == "kavo prosim"
+        assert data["key_phrases"][0]["translation"] == "a coffee please"
+
+    async def test_get_lesson_by_day_returns_most_recent(self):
+        """When two lessons exist for the same day, the newer one is returned."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        old = Lesson(title="Old", language_code="sl", sections=[], key_phrases=[])
+        new = Lesson(title="New", language_code="sl", sections=[], key_phrases=[])
+        store.save_lesson("lesson-old", "curriculum-abc", 1, old)
+        store.save_lesson("lesson-new", "curriculum-abc", 1, new)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/curriculum/curriculum-abc/days/1/lesson")
+
+        assert response.status_code == 200
+        assert response.json()["id"] == "lesson-new"
+
+    async def test_get_lesson_by_day_returns_404_when_missing(self):
+        from app.storage.store import ContentStore
+
+        app.state.content_store = ContentStore(":memory:")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/curriculum/no-such-curriculum/days/1/lesson")
+        assert response.status_code == 404
+
 
 class TestStoryEndpoints:
     """Tests for story/lesson generation endpoints."""

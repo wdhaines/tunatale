@@ -46,7 +46,9 @@ describe('TunaTaleAPI', () => {
 		it('generateCurriculum throws on non-ok response', async () => {
 			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail()));
 
-			await expect(api.generateCurriculum('coffee')).rejects.toThrow('Failed to generate curriculum');
+			await expect(api.generateCurriculum('coffee')).rejects.toThrow(
+				'POST /api/curriculum/generate: Internal Server Error'
+			);
 		});
 
 		it('listCurricula calls GET /api/curriculum', async () => {
@@ -76,7 +78,33 @@ describe('TunaTaleAPI', () => {
 		it('getCurriculum throws on 404', async () => {
 			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail('Not Found')));
 
-			await expect(api.getCurriculum('missing')).rejects.toThrow('Curriculum not found');
+			await expect(api.getCurriculum('missing')).rejects.toThrow(
+				'GET /api/curriculum/missing: Not Found'
+			);
+		});
+
+		it('getLessonByDay calls GET /api/curriculum/:cid/days/:n/lesson', async () => {
+			const mockDetail = {
+				id: 'l1',
+				title: 'Day 1',
+				language_code: 'sl',
+				sections: [],
+				key_phrases: []
+			};
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk(mockDetail)));
+
+			const result = await api.getLessonByDay('cid-1', 1);
+
+			expect(fetch).toHaveBeenCalledWith(`${BASE}/api/curriculum/cid-1/days/1/lesson`);
+			expect(result.id).toBe('l1');
+		});
+
+		it('getLessonByDay throws on 404', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail('Not Found')));
+
+			await expect(api.getLessonByDay('cid-1', 1)).rejects.toThrow(
+				'GET /api/curriculum/cid-1/days/1/lesson: Not Found'
+			);
 		});
 	});
 
@@ -127,7 +155,9 @@ describe('TunaTaleAPI', () => {
 		it('getLesson throws on 404', async () => {
 			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail('Not Found')));
 
-			await expect(api.getLesson('missing')).rejects.toThrow('Lesson not found');
+			await expect(api.getLesson('missing')).rejects.toThrow(
+				'GET /api/story/missing: Not Found'
+			);
 		});
 	});
 
@@ -191,7 +221,7 @@ describe('TunaTaleAPI', () => {
 			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail()));
 
 			await expect(api.postSRSFeedback('dober dan', 'no_help')).rejects.toThrow(
-				'Failed to record feedback'
+				'POST /api/srs/feedback: Internal Server Error'
 			);
 		});
 
@@ -208,7 +238,9 @@ describe('TunaTaleAPI', () => {
 		it('getSRSNew throws on non-ok response', async () => {
 			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail()));
 
-			await expect(api.getSRSNew()).rejects.toThrow('Failed to get new collocations');
+			await expect(api.getSRSNew()).rejects.toThrow(
+				'GET /api/srs/new: Internal Server Error'
+			);
 		});
 
 		it('markAsListened calls POST /api/srs/listen with lesson_id and empty word_ratings by default', async () => {
@@ -244,7 +276,7 @@ describe('TunaTaleAPI', () => {
 			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail()));
 
 			await expect(api.markAsListened('lesson-1')).rejects.toThrow(
-				'Failed to mark lesson as listened'
+				'POST /api/srs/listen: Internal Server Error'
 			);
 		});
 
@@ -269,7 +301,7 @@ describe('TunaTaleAPI', () => {
 			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail()));
 
 			await expect(api.getLessonTranscript('lesson-1')).rejects.toThrow(
-				'Failed to get transcript for lesson: lesson-1'
+				'GET /api/srs/lesson/lesson-1/transcript: Internal Server Error'
 			);
 		});
 	});

@@ -1,40 +1,27 @@
-const STORAGE_KEY = 'tunatale:home';
+const PREFS_KEY = 'tunatale:prefs';
 
-export interface PersistedHomeState {
+export interface FormPreferences {
 	topic: string;
 	cefrLevel: string;
 	numDays: number;
-	curriculumId?: string;
-	lessonId?: string;
-	audioUrl?: string;
-	listenedLessonIds?: string[];
 }
 
-export function saveHomeState(state: PersistedHomeState): void {
+export function saveFormPreferences(prefs: FormPreferences): void {
 	if (typeof window === 'undefined') return;
 	try {
-		localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+		localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
 	} catch {
 		// quota exceeded or private mode — silently ignore
 	}
 }
 
-export function loadHomeState(): PersistedHomeState | null {
+export function loadFormPreferences(): FormPreferences | null {
 	if (typeof window === 'undefined') return null;
 	try {
-		const raw = localStorage.getItem(STORAGE_KEY);
+		const raw = localStorage.getItem(PREFS_KEY);
 		if (!raw) return null;
-		return JSON.parse(raw) as PersistedHomeState;
+		return JSON.parse(raw) as FormPreferences;
 	} catch {
 		return null;
-	}
-}
-
-export function clearHomeState(): void {
-	if (typeof window === 'undefined') return;
-	try {
-		localStorage.removeItem(STORAGE_KEY);
-	} catch {
-		// ignore
 	}
 }

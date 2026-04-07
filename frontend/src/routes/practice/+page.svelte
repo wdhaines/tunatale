@@ -15,17 +15,18 @@
 
 	onMount(async () => {
 		try {
-			const [newData, dueData] = await Promise.all([
+			const [newData, dueData, statsData] = await Promise.all([
 				api.getSRSNew(),
-				api.getSRSDue()
+				api.getSRSDue(),
+				api.getSRSStats().catch(() => null)
 			]);
 			cards = [...newData.new, ...dueData.due];
+			stats = statsData;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
 			loading = false;
 		}
-		api.getSRSStats().then((s) => { stats = s; }).catch(() => {});
 	});
 
 	function reveal() {
@@ -89,17 +90,21 @@
 		font-family: system-ui, sans-serif;
 		padding: 0 1rem;
 	}
+	h1 a {
+		color: inherit;
+		text-decoration: none;
+	}
 	section {
 		margin-top: 2rem;
-		border: 1px solid #ddd;
-		border-radius: 8px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
 		padding: 1rem;
 	}
 	.card-section {
 		text-align: center;
 	}
 	.progress {
-		color: #666;
+		color: var(--color-muted);
 		font-size: 0.9rem;
 	}
 	.card {
@@ -112,13 +117,13 @@
 	}
 	.translation {
 		font-size: 1.25rem;
-		color: #555;
+		color: var(--color-muted);
 		margin-bottom: 1.5rem;
 	}
 	button {
 		margin-top: 0.75rem;
 		padding: 0.5rem 1.25rem;
-		background: #2563eb;
+		background: var(--color-primary);
 		color: white;
 		border: none;
 		border-radius: 4px;
@@ -134,12 +139,12 @@
 	.ratings button {
 		margin-top: 0;
 	}
-	.btn-again { background: #dc2626; }
-	.btn-hard  { background: #ea580c; }
-	.btn-good  { background: #16a34a; }
-	.btn-easy  { background: #2563eb; }
+	.btn-again { background: var(--color-danger); }
+	.btn-hard  { background: var(--color-warning); }
+	.btn-good  { background: var(--color-success); }
+	.btn-easy  { background: var(--color-primary); }
 	.error {
-		color: #dc2626;
+		color: var(--color-danger);
 		margin-top: 0.5rem;
 	}
 	.stats {

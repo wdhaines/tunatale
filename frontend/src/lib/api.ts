@@ -116,52 +116,53 @@ export class TunaTaleAPI {
 		this.baseUrl = baseUrl;
 	}
 
+	private async request<T>(path: string, init?: RequestInit): Promise<T> {
+		const method = init?.method ?? 'GET';
+		const res = init
+			? await fetch(`${this.baseUrl}${path}`, init)
+			: await fetch(`${this.baseUrl}${path}`);
+		if (!res.ok) throw new Error(`${method} ${path}: ${res.statusText}`);
+		return res.json();
+	}
+
 	async generateCurriculum(topic: string, cefrLevel = 'A2', numDays = 7): Promise<CurriculumSummary> {
-		const res = await fetch(`${this.baseUrl}/api/curriculum/generate`, {
+		return this.request('/api/curriculum/generate', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ topic, cefr_level: cefrLevel, num_days: numDays })
 		});
-		if (!res.ok) throw new Error(`Failed to generate curriculum: ${res.statusText}`);
-		return res.json();
 	}
 
 	async listCurricula(): Promise<Array<{ id: string; topic: string }>> {
-		const res = await fetch(`${this.baseUrl}/api/curriculum`);
-		if (!res.ok) throw new Error(`Failed to list curricula: ${res.statusText}`);
-		return res.json();
+		return this.request('/api/curriculum');
 	}
 
 	async getCurriculum(id: string): Promise<CurriculumSummary> {
-		const res = await fetch(`${this.baseUrl}/api/curriculum/${id}`);
-		if (!res.ok) throw new Error(`Curriculum not found: ${id}`);
-		return res.json();
+		return this.request(`/api/curriculum/${id}`);
+	}
+
+	async getLessonByDay(curriculumId: string, day: number): Promise<LessonDetail> {
+		return this.request(`/api/curriculum/${curriculumId}/days/${day}/lesson`);
 	}
 
 	async generateStory(curriculumId: string, day: number, strategy: ContentStrategy = 'WIDER'): Promise<LessonSummary> {
-		const res = await fetch(`${this.baseUrl}/api/story/generate`, {
+		return this.request('/api/story/generate', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ curriculum_id: curriculumId, day, strategy })
 		});
-		if (!res.ok) throw new Error(`Failed to generate story: ${res.statusText}`);
-		return res.json();
 	}
 
 	async getLesson(lessonId: string): Promise<LessonDetail> {
-		const res = await fetch(`${this.baseUrl}/api/story/${lessonId}`);
-		if (!res.ok) throw new Error(`Lesson not found: ${lessonId}`);
-		return res.json();
+		return this.request(`/api/story/${lessonId}`);
 	}
 
 	async renderAudio(lessonId: string): Promise<LessonAudio> {
-		const res = await fetch(`${this.baseUrl}/api/audio/render`, {
+		return this.request('/api/audio/render', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ lesson_id: lessonId })
 		});
-		if (!res.ok) throw new Error(`Failed to render audio: ${res.statusText}`);
-		return res.json();
 	}
 
 	audioUrl(audioId: string): string {
@@ -169,56 +170,42 @@ export class TunaTaleAPI {
 	}
 
 	async getLessonAudio(lessonId: string): Promise<LessonAudio> {
-		const res = await fetch(`${this.baseUrl}/api/audio/lesson/${lessonId}`);
-		if (!res.ok) throw new Error(`No audio found for lesson: ${lessonId}`);
-		return res.json();
+		return this.request(`/api/audio/lesson/${lessonId}`);
 	}
 
 	async getSRSDue(): Promise<SRSDue> {
-		const res = await fetch(`${this.baseUrl}/api/srs/due`);
-		if (!res.ok) throw new Error('Failed to get due collocations');
-		return res.json();
+		return this.request('/api/srs/due');
 	}
 
 	async getSRSNew(): Promise<SRSNew> {
-		const res = await fetch(`${this.baseUrl}/api/srs/new`);
-		if (!res.ok) throw new Error('Failed to get new collocations');
-		return res.json();
+		return this.request('/api/srs/new');
 	}
 
 	async getSRSStats(): Promise<SRSStats> {
-		const res = await fetch(`${this.baseUrl}/api/srs/stats`);
-		if (!res.ok) throw new Error('Failed to get SRS stats');
-		return res.json();
+		return this.request('/api/srs/stats');
 	}
 
 	async postSRSFeedback(text: string, signal: FeedbackSignal): Promise<{ status: string; new_due_date?: string }> {
-		const res = await fetch(`${this.baseUrl}/api/srs/feedback`, {
+		return this.request('/api/srs/feedback', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ collocation_text: text, signal })
 		});
-		if (!res.ok) throw new Error('Failed to record feedback');
-		return res.json();
 	}
 
 	async markAsListened(
 		lessonId: string,
 		wordRatings: Record<string, WordRating> = {}
 	): Promise<ListenResponse> {
-		const res = await fetch(`${this.baseUrl}/api/srs/listen`, {
+		return this.request('/api/srs/listen', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ lesson_id: lessonId, word_ratings: wordRatings })
 		});
-		if (!res.ok) throw new Error('Failed to mark lesson as listened');
-		return res.json();
 	}
 
 	async getLessonTranscript(lessonId: string): Promise<TranscriptData> {
-		const res = await fetch(`${this.baseUrl}/api/srs/lesson/${lessonId}/transcript`);
-		if (!res.ok) throw new Error(`Failed to get transcript for lesson: ${lessonId}`);
-		return res.json();
+		return this.request(`/api/srs/lesson/${lessonId}/transcript`);
 	}
 }
 

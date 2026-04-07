@@ -157,6 +157,19 @@ class ContentStore:
             return None
         return Lesson.from_json(row["data_json"])
 
+    def get_latest_lesson_by_day(self, curriculum_id: str, day: int) -> tuple[str, Lesson] | None:
+        """Return the most recent (lesson_id, Lesson) for a given curriculum day, or None."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT id, data_json FROM lessons"
+                " WHERE curriculum_id = ? AND day = ?"
+                " ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                (curriculum_id, day),
+            ).fetchone()
+        if row is None:
+            return None
+        return row["id"], Lesson.from_json(row["data_json"])
+
     # ── Audio files ───────────────────────────────────────────────────────
 
     def save_audio_file(

@@ -58,3 +58,28 @@ async def get_curriculum(curriculum_id: str, request: Request):
         "language_code": curriculum.language_code,
         "days": len(curriculum.days),
     }
+
+
+@router.get("/{curriculum_id}/days/{day}/lesson", status_code=200)
+async def get_lesson_by_day(curriculum_id: str, day: int, request: Request):
+    store = request.app.state.content_store
+    result = store.get_latest_lesson_by_day(curriculum_id, day)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"No lesson found for day {day}")
+    lesson_id, lesson = result
+    return {
+        "id": lesson_id,
+        "title": lesson.title,
+        "language_code": lesson.language_code,
+        "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in lesson.key_phrases],
+        "sections": [
+            {
+                "type": s.section_type.value,
+                "phrases": [
+                    {"text": p.text, "role": p.role, "language_code": p.language_code, "voice_id": p.voice_id}
+                    for p in s.phrases
+                ],
+            }
+            for s in lesson.sections
+        ],
+    }

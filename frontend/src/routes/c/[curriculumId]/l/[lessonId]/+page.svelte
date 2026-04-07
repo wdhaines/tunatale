@@ -1,0 +1,161 @@
+<script lang="ts">
+	import { untrack } from 'svelte';
+	import { api } from '$lib/api';
+	import type { LessonAudio, TranscriptData, WordRating } from '$lib/api';
+	import { listenedStore } from '$lib/stores/listened.svelte';
+	import LessonScript from '$lib/components/LessonScript.svelte';
+	import AudioPlayer from '$lib/components/AudioPlayer.svelte';
+	import Transcript from '$lib/components/Transcript.svelte';
+	import type { PageData } from './$types';
+
+	let { data }: { data: PageData } = $props();
+
+	// untrack: intentionally snapshot load data as mutable local state
+	let audio: LessonAudio | null = $state(untrack(() => data.audio));
+	let transcript: TranscriptData | null = $state(untrack(() => data.transcript));
+	let pendingRatings: Record<string, WordRating | null> = $state({});
+	let listenLoading = $state(false);
+	let listenResult: { registered: number } | null = $state(null);
+	let audioLoading = $state(false);
+	let error = $state('');
+
+	let isListened = $derived(listenedStore.has(data.lesson.id));
+
+	async function handleRenderAudio() {
+		audioLoading = true;
+		error = '';
+		try {
+			audio = await api.renderAudio(data.lesson.id);
+			transcript = await api.getLessonTranscript(data.lesson.id);
+			pendingRatings = {};
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			audioLoading = false;
+		}
+	}
+
+	async function handleMarkListened() {
+		listenLoading = true;
+		error = '';
+		try {
+			const activeRatings = Object.fromEntries(
+				Object.entries(pendingRatings).filter(([, v]) => v !== null)
+			) as Record<string, WordRating>;
+			const result = await api.markAsListened(data.lesson.id, activeRatings);
+			listenResult = result;
+			listenedStore.add(data.lesson.id);
+			transcript = await api.getLessonTranscript(data.lesson.id);
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			listenLoading = false;
+		}
+	}
+
+	function handleRatingChange(lemma: string, rating: WordRating | null) {
+		pendingRatings = { ...pendingRatings, [lemma]: rating };
+	}
+</script>
+
+<main>
+	<h1><a href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a></h1>
+
+	<section class="lesson-header">
+		<h2>{data.lesson.title}</h2>
+		<ul>
+			{#each data.lesson.sections as section}
+				<li>{section.type} — {section.phrases.length} phrase{section.phrases.length === 1 ? '' : 's'}</li>
+			{/each}
+		</ul>
+
+		{#if !audio}
+			<button onclick={handleRenderAudio} disabled={audioLoading}>
+				{audioLoading ? 'Rendering…' : 'Render Audio'}
+			</button>
+		{/if}
+		{#if error}
+			<p class="error">{error}</p>
+		{/if}
+	</section>
+
+	<LessonScript lesson={data.lesson} />
+
+	{#if audio}
+		<AudioPlayer {audio} />
+
+		<section class="transcript-section">
+			{#if transcript}
+				<Transcript
+					{transcript}
+					{pendingRatings}
+					{isListened}
+					{listenLoading}
+					{listenResult}
+					{error}
+					onRatingChange={handleRatingChange}
+					onMarkListened={handleMarkListened}
+				/>
+			{:else}
+				<p class="muted">Transcript loading…</p>
+			{/if}
+		</section>
+	{/if}
+</main>
+
+<style>
+	main {
+		max-width: 700px;
+		margin: 2rem auto;
+		font-family: system-ui, sans-serif;
+		padding: 0 1rem;
+	}
+	h1 a {
+		color: inherit;
+		font-size: 1rem;
+		text-decoration: none;
+		opacity: 0.7;
+	}
+	h1 a:hover {
+		opacity: 1;
+	}
+	.lesson-header {
+		margin-top: 2rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		padding: 1rem;
+	}
+	.lesson-header ul {
+		padding-left: 1.25rem;
+		margin: 0.5rem 0;
+		font-size: 0.9rem;
+		color: var(--color-muted);
+	}
+	button {
+		margin-top: 0.75rem;
+		padding: 0.5rem 1.25rem;
+		background: var(--color-primary);
+		color: white;
+		border: none;
+		border-radius: 4px;
+		cursor: pointer;
+	}
+	button:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.error {
+		color: var(--color-danger);
+		margin-top: 0.5rem;
+	}
+	.transcript-section {
+		margin-top: 2rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		padding: 1rem;
+	}
+	.muted {
+		color: var(--color-muted);
+		font-size: 0.9rem;
+	}
+</style>
