@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/curriculum", tags=["curriculum"])
+
+
+def _slug(text: str) -> str:
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    return text[:50]
 
 
 class GenerateCurriculumRequest(BaseModel):
@@ -29,7 +36,7 @@ async def generate_curriculum(body: GenerateCurriculumRequest, request: Request)
         num_days=body.num_days,
     )
 
-    curriculum_id = str(uuid.uuid4())
+    curriculum_id = f"{_slug(body.topic)}-{uuid.uuid4().hex[:8]}"
     store.save_curriculum(curriculum_id, curriculum)
 
     return {

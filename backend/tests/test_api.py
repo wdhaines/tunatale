@@ -76,6 +76,7 @@ class TestCurriculumEndpoints:
         assert response.status_code == 201
         data = response.json()
         assert "id" in data
+        assert data["id"].startswith("ordering-coffee"), f"Expected slug prefix, got: {data['id']}"
         assert data["topic"] == "ordering coffee"
         # Verify persisted
         restored = app.state.content_store.get_curriculum(data["id"])
