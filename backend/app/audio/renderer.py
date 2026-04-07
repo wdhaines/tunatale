@@ -76,6 +76,7 @@ class LessonRenderer:
                 audio_duration_s=audio_duration_s,
                 word_count=len(phrase.text.split()),
                 section_type=section.section_type,
+                language_code=phrase.language_code,
             )
             if pause_ms > 0:
                 seg += AudioSegment.silent(duration=pause_ms)

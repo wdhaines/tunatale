@@ -11,25 +11,6 @@ def calc():
     return NaturalPauseCalculator()
 
 
-class TestWordCountMultipliers:
-    """Tests for word-count multipliers (exact from prototype CLAUDE.md)."""
-
-    @pytest.mark.parametrize(
-        "word_count, expected",
-        [
-            (1, 1.5),
-            (2, 1.8),
-            (3, 2.2),
-            (4, 2.6),
-            (5, 3.0),
-            (6, 3.5),
-            (10, 3.5),
-        ],
-    )
-    def test_word_count_multiplier(self, calc, word_count, expected):
-        assert calc._get_word_count_multiplier(word_count) == pytest.approx(expected), f"word_count={word_count}"
-
-
 class TestSectionBoundaryPauses:
     """Tests for fixed section boundary pauses."""
 
@@ -45,18 +26,85 @@ class TestSectionBoundaryPauses:
 
 
 class TestDynamicPauseCalculation:
-    """Tests for dynamic phrase pause calculation."""
+    """Tests for dynamic phrase pause calculation matching prototype rules."""
 
-    def test_slow_section_gets_1_2x_adjustment(self, calc):
-        normal = calc.get_phrase_pause(audio_duration_s=1.0, word_count=2, section_type=SectionType.NATURAL_SPEED)
-        slow = calc.get_phrase_pause(audio_duration_s=1.0, word_count=2, section_type=SectionType.SLOW_SPEED)
-        assert slow == pytest.approx(normal * 1.2, rel=0.01)
+    def test_natural_speed_uses_base_500ms(self, calc):
+        pause = calc.get_phrase_pause(
+            audio_duration_s=1.0,
+            word_count=3,
+            section_type=SectionType.NATURAL_SPEED,
+            language_code="sl",
+        )
+        assert pause == 500
 
-    def test_longer_audio_gets_longer_pause(self, calc):
-        short = calc.get_phrase_pause(audio_duration_s=0.5, word_count=3, section_type=SectionType.NATURAL_SPEED)
-        long_ = calc.get_phrase_pause(audio_duration_s=2.0, word_count=3, section_type=SectionType.NATURAL_SPEED)
-        assert long_ > short
+    def test_natural_speed_english_uses_base_500ms(self, calc):
+        pause = calc.get_phrase_pause(
+            audio_duration_s=1.0,
+            word_count=3,
+            section_type=SectionType.NATURAL_SPEED,
+            language_code="en",
+        )
+        assert pause == 500
+
+    def test_translated_uses_base_500ms(self, calc):
+        pause = calc.get_phrase_pause(
+            audio_duration_s=2.0,
+            word_count=5,
+            section_type=SectionType.TRANSLATED,
+            language_code="en",
+        )
+        assert pause == 500
+
+    def test_key_phrases_l2_uses_audio_duration(self, calc):
+        pause = calc.get_phrase_pause(
+            audio_duration_s=1.5,
+            word_count=2,
+            section_type=SectionType.KEY_PHRASES,
+            language_code="sl",
+        )
+        assert pause == 1500
+
+    def test_key_phrases_l2_has_500ms_floor(self, calc):
+        pause = calc.get_phrase_pause(
+            audio_duration_s=0.2,
+            word_count=1,
+            section_type=SectionType.KEY_PHRASES,
+            language_code="sl",
+        )
+        assert pause == 500
+
+    def test_key_phrases_english_uses_base_500ms(self, calc):
+        pause = calc.get_phrase_pause(
+            audio_duration_s=2.0,
+            word_count=3,
+            section_type=SectionType.KEY_PHRASES,
+            language_code="en",
+        )
+        assert pause == 500
+
+    def test_slow_speed_l2_applies_1_2x_factor(self, calc):
+        pause = calc.get_phrase_pause(
+            audio_duration_s=1.0,
+            word_count=2,
+            section_type=SectionType.SLOW_SPEED,
+            language_code="sl",
+        )
+        assert pause == 600
+
+    def test_slow_speed_english_no_factor(self, calc):
+        pause = calc.get_phrase_pause(
+            audio_duration_s=1.0,
+            word_count=2,
+            section_type=SectionType.SLOW_SPEED,
+            language_code="en",
+        )
+        assert pause == 500
 
     def test_pause_is_non_negative(self, calc):
-        pause = calc.get_phrase_pause(audio_duration_s=0.1, word_count=1, section_type=SectionType.NATURAL_SPEED)
+        pause = calc.get_phrase_pause(
+            audio_duration_s=0.0,
+            word_count=1,
+            section_type=SectionType.NATURAL_SPEED,
+            language_code="sl",
+        )
         assert pause >= 0

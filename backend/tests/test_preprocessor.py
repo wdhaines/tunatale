@@ -16,12 +16,10 @@ def test_preprocessor_returns_string(preprocessor):
     assert isinstance(result, str)
 
 
-def test_slow_speed_adds_pauses(preprocessor):
+def test_slow_speed_passes_through_unchanged(preprocessor):
     text = "dober dan"
-    slow = preprocessor.preprocess(text, SectionType.SLOW_SPEED)
-    # Slow speech may add ellipses or other pause markers — result should differ or be longer
-    assert isinstance(slow, str)
-    assert len(slow) >= len(text)
+    result = preprocessor.preprocess(text, SectionType.SLOW_SPEED)
+    assert result == text
 
 
 def test_natural_speed_passes_through_unchanged(preprocessor):
