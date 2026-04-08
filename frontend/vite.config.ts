@@ -2,7 +2,6 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-	// @ts-expect-error - vitest types conflict with vite types in this version
 	plugins: [sveltekit()],
 	server: {
 		proxy: {

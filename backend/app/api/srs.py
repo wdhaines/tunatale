@@ -7,6 +7,7 @@ import datetime
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from app.models.srs_item import SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.feedback import ImplicitFeedbackAdapter
 from app.srs.fsrs import Rating, schedule
@@ -25,6 +26,23 @@ _WORD_RATING_MAP: dict[str, Rating] = {
     "good": Rating.GOOD,
     "easy": Rating.EASY,
 }
+
+
+def _item_to_dict(row_id: int, item: SRSItem, language_code: str) -> dict:
+    """Serialize an SRSItem to a response dict for admin endpoints."""
+    return {
+        "id": row_id,
+        "text": item.syntactic_unit.text,
+        "translation": item.syntactic_unit.translation,
+        "state": item.state.value,
+        "due_date": item.due_date.isoformat(),
+        "stability": item.stability,
+        "difficulty": item.difficulty,
+        "reps": item.reps,
+        "lapses": item.lapses,
+        "last_review": item.last_review.isoformat() if item.last_review else None,
+        "language_code": language_code,
+    }
 
 
 class FeedbackRequest(BaseModel):
@@ -151,3 +169,94 @@ async def get_stats(request: Request):
     db = request.app.state.srs_db
     today = datetime.date.today()
     return {"total": db.count_collocations(), "due_today": db.count_due_collocations(today)}
+
+
+# ── Admin endpoints ────────────────────────────────────────────────────────────
+
+
+class UpdateItemRequest(BaseModel):
+    text: str
+    translation: str
+
+
+class BulkDeleteRequest(BaseModel):
+    ids: list[int]
+
+
+class SuspendRequest(BaseModel):
+    suspended: bool
+
+
+@router.get("/items", status_code=200)
+async def list_items(
+    request: Request,
+    search: str | None = None,
+    state: str | None = None,
+    sort: str = "text",
+    order: str = "asc",
+    limit: int = 50,
+    offset: int = 0,
+):
+    db = request.app.state.srs_db
+    state_enum = SRSState(state) if state else None
+    try:
+        rows, total = db.list_collocations(
+            limit=limit,
+            offset=offset,
+            search=search,
+            state=state_enum,
+            order_by=sort,
+            order_dir=order,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"items": [_item_to_dict(rid, item, lang) for rid, item, lang in rows], "total": total}
+
+
+@router.patch("/items/{item_id}", status_code=200)
+async def patch_item(item_id: int, body: UpdateItemRequest, request: Request):
+    db = request.app.state.srs_db
+    if db.get_collocation_by_id(item_id) is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    try:
+        db.update_collocation_fields(item_id, text=body.text, translation=body.translation)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    row_id, item, lang = db.get_collocation_by_id(item_id)
+    return _item_to_dict(row_id, item, lang)
+
+
+@router.delete("/items/{item_id}", status_code=200)
+async def delete_item(item_id: int, request: Request):
+    db = request.app.state.srs_db
+    if db.get_collocation_by_id(item_id) is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    db.delete_collocation(item_id)
+    return {"status": "deleted"}
+
+
+@router.post("/items/bulk-delete", status_code=200)
+async def bulk_delete_items(body: BulkDeleteRequest, request: Request):
+    db = request.app.state.srs_db
+    deleted = db.delete_collocations(body.ids)
+    return {"deleted": deleted}
+
+
+@router.post("/items/{item_id}/reset", status_code=200)
+async def reset_item(item_id: int, request: Request):
+    db = request.app.state.srs_db
+    if db.get_collocation_by_id(item_id) is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    db.reset_collocation(item_id)
+    row_id, item, lang = db.get_collocation_by_id(item_id)
+    return _item_to_dict(row_id, item, lang)
+
+
+@router.post("/items/{item_id}/suspend", status_code=200)
+async def suspend_item(item_id: int, body: SuspendRequest, request: Request):
+    db = request.app.state.srs_db
+    if db.get_collocation_by_id(item_id) is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    db.set_suspended(item_id, body.suspended)
+    row_id, item, lang = db.get_collocation_by_id(item_id)
+    return _item_to_dict(row_id, item, lang)

@@ -10,7 +10,10 @@
 
 <main>
 	<h1>TunaTale</h1>
-	<nav><a href="/practice">Practice (SRS)</a></nav>
+	<nav>
+		<a href="/practice">Practice (SRS)</a>
+		<a href="/admin/srs">SRS Admin</a>
+	</nav>
 	<p class="tagline">AI-powered language learning — Slovene</p>
 
 	<CurriculumForm onGenerate={handleGenerate} />

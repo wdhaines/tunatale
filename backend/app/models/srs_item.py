@@ -16,6 +16,7 @@ class SRSState(Enum):
     LEARNING = "learning"
     REVIEW = "review"
     RELEARNING = "relearning"
+    SUSPENDED = "suspended"
 
 
 class Rating(Enum):

@@ -96,6 +96,34 @@ export interface LessonAudio {
 	sections: SectionAudio[];
 }
 
+export interface SRSItemDetail {
+	id: number;
+	text: string;
+	translation: string;
+	state: 'new' | 'learning' | 'review' | 'relearning' | 'suspended';
+	due_date: string;
+	stability: number;
+	difficulty: number;
+	reps: number;
+	lapses: number;
+	last_review: string | null;
+	language_code: string;
+}
+
+export interface SRSItemsPage {
+	items: SRSItemDetail[];
+	total: number;
+}
+
+export interface SRSListParams {
+	search?: string;
+	state?: SRSItemDetail['state'];
+	sort?: 'text' | 'translation' | 'state' | 'due_date' | 'fsrs_difficulty' | 'reps' | 'lapses' | 'last_review';
+	order?: 'asc' | 'desc';
+	limit?: number;
+	offset?: number;
+}
+
 export interface SRSDue {
 	due: Array<{ text: string; translation: string }>;
 }
@@ -206,6 +234,47 @@ export class TunaTaleAPI {
 
 	async getLessonTranscript(lessonId: string): Promise<TranscriptData> {
 		return this.request(`/api/srs/lesson/${lessonId}/transcript`);
+	}
+
+	async listSRSItems(params: SRSListParams = {}): Promise<SRSItemsPage> {
+		const qs = new URLSearchParams();
+		for (const [k, v] of Object.entries(params)) {
+			if (v !== undefined) qs.set(k, String(v));
+		}
+		const query = qs.toString() ? `?${qs.toString()}` : '';
+		return this.request(`/api/srs/items${query}`);
+	}
+
+	async updateSRSItem(id: number, fields: { text: string; translation: string }): Promise<SRSItemDetail> {
+		return this.request(`/api/srs/items/${id}`, {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(fields)
+		});
+	}
+
+	async deleteSRSItem(id: number): Promise<{ status: string }> {
+		return this.request(`/api/srs/items/${id}`, { method: 'DELETE' });
+	}
+
+	async bulkDeleteSRSItems(ids: number[]): Promise<{ deleted: number }> {
+		return this.request('/api/srs/items/bulk-delete', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ ids })
+		});
+	}
+
+	async resetSRSItem(id: number): Promise<SRSItemDetail> {
+		return this.request(`/api/srs/items/${id}/reset`, { method: 'POST' });
+	}
+
+	async suspendSRSItem(id: number, suspended: boolean): Promise<SRSItemDetail> {
+		return this.request(`/api/srs/items/${id}/suspend`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ suspended })
+		});
 	}
 }
 

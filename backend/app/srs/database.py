@@ -201,7 +201,7 @@ class SRSDatabase:
         """Return all collocations due for review on or before as_of."""
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM collocations WHERE due_date <= ? AND state != 'new'",
+                "SELECT * FROM collocations WHERE due_date <= ? AND state NOT IN ('new', 'suspended')",
                 (as_of.isoformat(),),
             ).fetchall()
         return [self._row_to_item(r) for r in rows]
@@ -214,6 +214,137 @@ class SRSDatabase:
                 (limit,),
             ).fetchall()
         return [self._row_to_item(r) for r in rows]
+
+    def get_collocation_by_id(self, row_id: int) -> tuple[int, SRSItem, str] | None:
+        """Retrieve a collocation by primary key. Returns (id, SRSItem, language_code) or None."""
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT * FROM collocations WHERE id = ?", (row_id,)).fetchone()
+        if row is None:
+            return None
+        return (row["id"], self._row_to_item(row), row["language_code"])
+
+    def update_collocation_fields(self, row_id: int, *, text: str, translation: str) -> None:
+        """Update text and translation for a collocation by id.
+
+        Raises ValueError if the new text collides with an existing row.
+        """
+        try:
+            with self._get_conn() as conn:
+                conn.execute(
+                    "UPDATE collocations SET text = ?, translation = ?, updated_at = datetime('now') WHERE id = ?",
+                    (text, translation, row_id),
+                )
+                if self._in_memory:
+                    self._conn.commit()
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"text already exists: {text!r}") from exc
+
+    def delete_collocation(self, row_id: int) -> None:
+        """Delete a collocation and its associated violations."""
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT text FROM collocations WHERE id = ?", (row_id,)).fetchone()
+            if row is not None:
+                conn.execute("DELETE FROM violations WHERE collocation_text = ?", (row["text"],))
+                conn.execute("DELETE FROM collocations WHERE id = ?", (row_id,))
+                if self._in_memory:
+                    self._conn.commit()
+
+    def delete_collocations(self, row_ids: list[int]) -> int:
+        """Bulk delete collocations by id. Returns number of rows deleted."""
+        if not row_ids:
+            return 0
+        placeholders = ",".join("?" * len(row_ids))
+        with self._get_conn() as conn:
+            rows = conn.execute(f"SELECT text FROM collocations WHERE id IN ({placeholders})", row_ids).fetchall()
+            texts = [r["text"] for r in rows]
+            if texts:
+                text_ph = ",".join("?" * len(texts))
+                conn.execute(f"DELETE FROM violations WHERE collocation_text IN ({text_ph})", texts)
+            conn.execute(f"DELETE FROM collocations WHERE id IN ({placeholders})", row_ids)
+            if self._in_memory:
+                self._conn.commit()
+        return len(texts)
+
+    def reset_collocation(self, row_id: int) -> None:
+        """Reset FSRS scheduling fields to initial values."""
+        with self._get_conn() as conn:
+            conn.execute(
+                """
+                UPDATE collocations SET
+                    state = 'new', stability = 1.0, fsrs_difficulty = 5.0,
+                    reps = 0, lapses = 0, due_date = ?, last_review = NULL,
+                    updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (date.today().isoformat(), row_id),
+            )
+            if self._in_memory:
+                self._conn.commit()
+
+    def set_suspended(self, row_id: int, suspended: bool) -> None:
+        """Suspend or unsuspend a collocation. Unsuspending resets state to 'new'."""
+        new_state = "suspended" if suspended else "new"
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocations SET state = ?, updated_at = datetime('now') WHERE id = ?",
+                (new_state, row_id),
+            )
+            if self._in_memory:
+                self._conn.commit()
+
+    def list_collocations(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        search: str | None = None,
+        state: SRSState | None = None,
+        order_by: str = "text",
+        order_dir: str = "asc",
+    ) -> tuple[list[tuple[int, SRSItem, str]], int]:
+        """Paginated browse for the admin UI. Returns (rows, total_count).
+        Each row is (id, SRSItem, language_code).
+        """
+        _VALID_ORDER_BY = {
+            "text",
+            "translation",
+            "state",
+            "due_date",
+            "fsrs_difficulty",
+            "reps",
+            "lapses",
+            "last_review",
+        }
+        _VALID_ORDER_DIR = {"asc", "desc"}
+        if order_by not in _VALID_ORDER_BY:
+            raise ValueError(f"Invalid order_by: {order_by!r}")
+        if order_dir not in _VALID_ORDER_DIR:
+            raise ValueError(f"Invalid order_dir: {order_dir!r}")
+
+        conditions: list[str] = []
+        params: list = []
+
+        if search:
+            conditions.append("(text LIKE ? OR translation LIKE ?)")
+            params.extend([f"%{search}%", f"%{search}%"])
+        if state is not None:
+            conditions.append("state = ?")
+            params.append(state.value)
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        base_sql = f"FROM collocations {where}"
+
+        with self._get_conn() as conn:
+            total = conn.execute(f"SELECT COUNT(*) {base_sql}", params).fetchone()[0]
+            rows = conn.execute(
+                f"SELECT * {base_sql} ORDER BY {order_by} {order_dir} LIMIT ? OFFSET ?",
+                params + [limit, offset],
+            ).fetchall()
+
+        result = []
+        for row in rows:
+            item = self._row_to_item(row)
+            result.append((row["id"], item, row["language_code"]))
+        return result, total
 
     def get_violations(self, collocation_text: str) -> list[dict]:
         """Return all violations for a specific collocation."""
@@ -231,7 +362,7 @@ class SRSDatabase:
     def count_due_collocations(self, as_of: date) -> int:
         with self._get_conn() as conn:
             return conn.execute(
-                "SELECT COUNT(*) FROM collocations WHERE due_date <= ? AND state != 'new'",
+                "SELECT COUNT(*) FROM collocations WHERE due_date <= ? AND state NOT IN ('new', 'suspended')",
                 (as_of.isoformat(),),
             ).fetchone()[0]
 

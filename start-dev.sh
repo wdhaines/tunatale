@@ -42,7 +42,7 @@ trap cleanup INT TERM
 # Start backend in background
 echo "Starting backend API on http://localhost:8000..."
 cd backend
-uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 &
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --log-level warning &
 BACKEND_PID=$!
 cd ..
 
