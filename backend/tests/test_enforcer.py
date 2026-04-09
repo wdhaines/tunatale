@@ -68,6 +68,16 @@ class TestContentEnforcer:
         result = enforcer.enforce("")
         assert result == ""
 
+    def test_skips_item_with_empty_translation(self):
+        """Items with empty translation are excluded from the replacement dict (38->35 False branch)."""
+        with SRSDatabase(":memory:") as db:
+            unit = SyntacticUnit(text="nobena", translation="", word_count=1, difficulty=1, source="corpus")
+            db.add_collocation(unit, language_code="sl")
+            enforcer = ContentEnforcer(srs_db=db)
+            replacements = enforcer.get_replacement_dict()
+        assert "" not in replacements
+        assert "nobena" not in replacements.values()
+
     def test_no_replacements_when_db_empty(self):
         with SRSDatabase(":memory:") as db:
             enforcer = ContentEnforcer(srs_db=db)

@@ -172,6 +172,38 @@ class TestRateLimit:
             await client.complete("q")
         assert client._groq_call_delay == 0.0
 
+    async def test_429_excessive_retry_after_falls_back(self):
+        """retry_after > max_retry_after_s skips pacing update and raises (242->245 False branch)."""
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, max_retry_after_s=5.0)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(429, headers={"retry-after": "60"}, json={}))
+            respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("ok")))
+            result = await client.complete("q")
+        assert result == "ok"
+
+    async def test_groq_pacing_no_delay_for_zero_reset_requests(self):
+        """rem_req > 0 with rst_req_s == 0 → elif branch False → no pacing (318->321 False branch)."""
+        client = LLMClient(groq_api_key="test-key")
+        headers = {
+            "x-ratelimit-remaining-requests": "5",
+            "x-ratelimit-reset-requests": "0s",  # rst_req_s = 0 → elif condition False
+        }
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, headers=headers, json=_make_groq_response("ok")))
+            await client.complete("q")
+
+    async def test_groq_tpm_high_budget_no_token_pacing(self):
+        """Token budget >= 20% → elif token pacing branch False (330->336 False branch)."""
+        client = LLMClient(groq_api_key="test-key")
+        headers = {
+            "x-ratelimit-remaining-tokens": "5000",  # 50% of 10000 — above 20% threshold
+            "x-ratelimit-reset-tokens": "5s",
+            "x-ratelimit-limit-tokens": "10000",
+        }
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, headers=headers, json=_make_groq_response("ok")))
+            await client.complete("q")
+
     def test_parse_reset_duration_seconds(self):
         from app.llm.client import _parse_reset_duration
 
@@ -255,6 +287,18 @@ class TestExtraBodyParams:
             await client.complete("q")
         payload = json.loads(route.calls[0].request.content)
         assert payload.get("reasoning_effort") == "medium"
+
+    async def test_groq_extra_body_params_with_max_completion_tokens_explicit(self):
+        """When extra_body_params already contains max_completion_tokens, don't override (189->194 False branch)."""
+        client = LLMClient(
+            groq_api_key="test-key",
+            groq_extra_body_params={"max_completion_tokens": 512},
+        )
+        with respx.mock:
+            route = respx.post(GROQ_API_URL).mock(return_value=Response(200, json=_make_groq_response("ok")))
+            await client.complete("q")
+        payload = json.loads(route.calls[0].request.content)
+        assert payload["max_completion_tokens"] == 512
 
     async def test_groq_extra_body_params_uses_max_completion_tokens(self):
         client = LLMClient(
@@ -354,6 +398,16 @@ class TestCallbacks:
             await client.complete("q")
         assert calls[0].get("rate_limits") is not None
         assert calls[0]["rate_limits"]["tokens_remaining"] == 5000
+
+    async def test_on_call_fires_with_empty_prompt(self):
+        """_fire_callback with empty prompt skips prompt_preview (106->108 False branch)."""
+        calls = []
+        client = LLMClient(groq_api_key="test-key", on_call=calls.append)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, json=_make_groq_response("ok")))
+            await client.complete("")
+        assert len(calls) == 1
+        assert "prompt_preview" not in calls[0]
 
     async def test_on_call_fires_with_reasoning_effort(self):
         calls = []

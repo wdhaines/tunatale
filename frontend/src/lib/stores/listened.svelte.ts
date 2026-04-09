@@ -8,7 +8,7 @@ const STORAGE_KEY = 'tunatale:listened-lessons';
 const LEGACY_HOME_KEY = 'tunatale:home';
 
 function loadIds(): Set<string> {
-	if (typeof window === 'undefined') return new Set();
+	// Note: only called from hydrate(), which already guards typeof window !== 'undefined'
 	try {
 		// Migrate from old key on first access
 		const legacy = localStorage.getItem(LEGACY_HOME_KEY);

@@ -16,8 +16,8 @@ cd ../frontend
 echo "=== Svelte type check ==="
 npm run check
 
-echo "=== Frontend tests ==="
-npm test
+echo "=== Frontend tests (with coverage) ==="
+npm run test:coverage
 
 echo "=== E2E smoke tests ==="
 npm run test:e2e

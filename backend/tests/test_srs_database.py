@@ -320,3 +320,71 @@ class TestLemmaSupport:
         srs_db.add_collocation(unit, language_code="sl")
         item = srs_db.get_collocation("banka")
         assert item.syntactic_unit.lemma is None
+
+    def test_delete_collocations_returns_zero_for_empty_list(self, srs_db):
+        assert srs_db.delete_collocations([]) == 0
+
+    def test_list_collocations_raises_for_invalid_order_dir(self, srs_db):
+        import pytest
+
+        with pytest.raises(ValueError, match="Invalid order_dir"):
+            srs_db.list_collocations(order_dir="sideways")
+
+
+class TestDeleteEdgeCases:
+    """Tests for delete edge-case branches."""
+
+    def test_delete_nonexistent_collocation_is_noop(self, srs_db):
+        """delete_collocation with a nonexistent ID silently does nothing."""
+        srs_db.delete_collocation(99999)  # should not raise
+
+    def test_delete_collocations_with_all_nonexistent_ids(self, srs_db):
+        """delete_collocations with IDs that don't match any rows returns 0."""
+        deleted = srs_db.delete_collocations([99999, 88888])
+        assert deleted == 0
+
+
+class TestFileDatabaseWriteOperations:
+    """Exercise all write methods with a file-backed DB to cover if self._in_memory: False branches."""
+
+    def test_file_db_write_operations(self, tmp_path):
+        db = SRSDatabase(str(tmp_path / "test.db"))
+
+        # add_collocation (covers else: self._conn.commit() via False path already handled)
+        db.add_collocation(_unit("zdravo", "hello"), language_code="sl")
+
+        # update_collocation (167->exit False branch: file-DB skips self._conn.commit())
+        item = db.get_collocation("zdravo")
+        item.reps = 1
+        db.update_collocation(item)
+
+        # record_violation (179->exit False branch)
+        db.record_violation("zdravo", 1, "unused")
+
+        # update_collocation_fields (237->exit False branch)
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+        db.update_collocation_fields(row_id, text="zdravo!", translation="hello!")
+
+        # delete_collocation (249->exit False branch)
+        db.record_violation("zdravo!", 2, "unused")
+        db.delete_collocation(row_id)
+
+        # delete_collocations (264->266 False branch)
+        db.add_collocation(_unit("hvala", "thanks"), language_code="sl")
+        rows, _ = db.list_collocations()
+        ids = [r[0] for r in rows]
+        db.delete_collocations(ids)
+
+        # reset_collocation (281->exit False branch)
+        db.add_collocation(_unit("prosim", "please"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+        db.reset_collocation(row_id)
+
+        # set_suspended (292->exit False branch)
+        db.set_suspended(row_id, True)
+        db.set_suspended(row_id, False)
+
+        # Verify persistence works
+        assert db.get_collocation("prosim") is not None

@@ -124,4 +124,4 @@ def _onset_split(cluster: str, cluster_start: int) -> int:
         if len(candidate) == 1 or candidate in _VALID_ONSETS:
             return cluster_start + onset_start
     # Fallback (should not be reached): first consonant closes preceding syllable
-    return cluster_start + 1
+    return cluster_start + 1  # pragma: no cover

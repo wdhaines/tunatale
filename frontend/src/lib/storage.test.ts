@@ -44,4 +44,14 @@ describe('storage', () => {
 		saveFormPreferences(prefs);
 		expect(loadFormPreferences()).toEqual(prefs);
 	});
+
+	it('saveFormPreferences returns early when window is undefined (SSR guard)', () => {
+		vi.stubGlobal('window', undefined);
+		expect(() => saveFormPreferences({ topic: 'x', cefrLevel: 'A2', numDays: 7 })).not.toThrow();
+	});
+
+	it('loadFormPreferences returns null when window is undefined (SSR guard)', () => {
+		vi.stubGlobal('window', undefined);
+		expect(loadFormPreferences()).toBeNull();
+	});
 });

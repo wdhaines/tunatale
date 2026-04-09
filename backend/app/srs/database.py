@@ -134,7 +134,7 @@ class SRSDatabase:
             )
             if not self._in_memory:
                 conn.commit()
-            elif self._in_memory:
+            else:
                 self._conn.commit()
 
     def update_collocation(self, item: SRSItem) -> None:

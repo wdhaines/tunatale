@@ -61,7 +61,9 @@ class ContentEnforcer:
                 for l1, l2 in sorted(replacements.items(), key=lambda x: -len(x[0]))
             ]
 
-        if not self._cached_patterns:
+        if (
+            not self._cached_patterns
+        ):  # pragma: no cover — unreachable: non-empty replacements always yield non-empty patterns
             return text
 
         result = text

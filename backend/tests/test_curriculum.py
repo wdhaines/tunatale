@@ -153,3 +153,13 @@ class TestCurriculumGenerator:
             num_days=3,
         )
         assert "coffee" in curriculum.topic.lower()
+
+    async def test_parse_response_raises_when_days_missing(self, language):
+        import json
+
+        from app.generation.curriculum import CurriculumGenerationError, CurriculumGenerator
+
+        gen = CurriculumGenerator(llm_client=None)
+        raw = json.dumps({"days": []})
+        with pytest.raises(CurriculumGenerationError, match="missing"):
+            gen._parse_response(raw, topic="test", language=language, cefr_level="A2")

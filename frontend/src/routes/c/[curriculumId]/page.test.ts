@@ -74,6 +74,30 @@ describe('/c/[curriculumId] page', () => {
 
 		expect(await findByText('LLM offline')).toBeTruthy();
 	});
+
+	it('shows string error when non-Error is thrown', async () => {
+		mockGetLessonByDay.mockRejectedValue(new Error('first'));
+		mockGenerateStory.mockRejectedValue('string error value');
+
+		const { getByText, findByText } = render(Page, { props: { data: { curriculum } } });
+		await fireEvent.click(getByText('Day 1'));
+
+		expect(await findByText('string error value')).toBeTruthy();
+	});
+
+	it('blocks concurrent clicks (loadingDay guard)', async () => {
+		// DayPicker disables all buttons while one is loading
+		let resolveSelect!: (v: unknown) => void;
+		const slowSelect = new Promise((r) => { resolveSelect = r; });
+		const onSelectDay = vi.fn().mockReturnValue(slowSelect);
+
+		const { getAllByRole } = render(Page, { props: { data: { curriculum } } });
+		const buttons = getAllByRole('button');
+		// Both buttons get disabled while one is loading
+		await fireEvent.click(buttons[0]);
+		expect((buttons[1] as HTMLButtonElement).disabled).toBe(true);
+		resolveSelect(undefined);
+	});
 });
 
 describe('load function for /c/[curriculumId]', () => {

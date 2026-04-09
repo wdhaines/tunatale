@@ -148,4 +148,84 @@ describe('practice/+page.svelte', () => {
 		const { findByText } = render(PracticePage);
 		expect(await findByText('Network error on new')).toBeTruthy();
 	});
+
+	it('handles getSRSStats failure gracefully (stats .catch branch)', async () => {
+		mockGetSRSDue.mockResolvedValue({ due: [] });
+		mockGetSRSStats.mockRejectedValue(new Error('stats unavailable'));
+		const { findByText } = render(PracticePage);
+		// Should still show the empty state, not crash
+		expect(await findByText(/No cards due/)).toBeTruthy();
+	});
+
+	it('shows error when postSRSFeedback rejects', async () => {
+		mockGetSRSDue.mockResolvedValue({
+			due: [{ text: 'hvala', translation: 'thank you' }]
+		});
+		mockPostSRSFeedback.mockRejectedValue(new Error('Feedback failed'));
+
+		const { findByRole, findByText } = render(PracticePage);
+		await fireEvent.click(await findByRole('button', { name: 'Reveal' }));
+		await fireEvent.click(await findByRole('button', { name: 'Good' }));
+
+		expect(await findByText('Feedback failed')).toBeTruthy();
+	});
+
+	it('calls postSRSFeedback with translation_request when Again is clicked', async () => {
+		mockGetSRSDue.mockResolvedValue({
+			due: [{ text: 'hvala', translation: 'thank you' }]
+		});
+		mockPostSRSFeedback.mockResolvedValue({ status: 'ok' });
+
+		const { findByRole } = render(PracticePage);
+		await fireEvent.click(await findByRole('button', { name: 'Reveal' }));
+		await fireEvent.click(await findByRole('button', { name: 'Again' }));
+
+		expect(mockPostSRSFeedback).toHaveBeenCalledWith('hvala', 'translation_request');
+	});
+
+	it('calls postSRSFeedback with slowdown when Hard is clicked', async () => {
+		mockGetSRSDue.mockResolvedValue({
+			due: [{ text: 'hvala', translation: 'thank you' }]
+		});
+		mockPostSRSFeedback.mockResolvedValue({ status: 'ok' });
+
+		const { findByRole } = render(PracticePage);
+		await fireEvent.click(await findByRole('button', { name: 'Reveal' }));
+		await fireEvent.click(await findByRole('button', { name: 'Hard' }));
+
+		expect(mockPostSRSFeedback).toHaveBeenCalledWith('hvala', 'slowdown');
+	});
+
+	it('calls postSRSFeedback with fast_forward when Easy is clicked', async () => {
+		mockGetSRSDue.mockResolvedValue({
+			due: [{ text: 'hvala', translation: 'thank you' }]
+		});
+		mockPostSRSFeedback.mockResolvedValue({ status: 'ok' });
+
+		const { findByRole } = render(PracticePage);
+		await fireEvent.click(await findByRole('button', { name: 'Reveal' }));
+		await fireEvent.click(await findByRole('button', { name: 'Easy' }));
+
+		expect(mockPostSRSFeedback).toHaveBeenCalledWith('hvala', 'fast_forward');
+	});
+
+	it('shows stringified error when onMount catch receives a non-Error', async () => {
+		mockGetSRSDue.mockRejectedValue('raw string failure');
+
+		const { findByText } = render(PracticePage);
+		expect(await findByText('raw string failure')).toBeTruthy();
+	});
+
+	it('shows stringified error when postSRSFeedback throws a non-Error', async () => {
+		mockGetSRSDue.mockResolvedValue({
+			due: [{ text: 'hvala', translation: 'thank you' }]
+		});
+		mockPostSRSFeedback.mockRejectedValue('plain rate error');
+
+		const { findByRole, findByText } = render(PracticePage);
+		await fireEvent.click(await findByRole('button', { name: 'Reveal' }));
+		await fireEvent.click(await findByRole('button', { name: 'Good' }));
+
+		expect(await findByText('plain rate error')).toBeTruthy();
+	});
 });

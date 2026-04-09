@@ -209,6 +209,16 @@ class TestPersistence:
         assert restored is not None
         assert restored.topic == "ordering coffee"
 
+    def test_file_db_save_lesson(self, tmp_path):
+        """save_lesson with file-backed store covers if self._in_memory: False branch (150->exit)."""
+        db_file = str(tmp_path / "lessons.db")
+        lesson = _make_lesson()
+        with ContentStore(db_file) as s:
+            s.save_lesson("l1", "c1", 1, lesson)
+            restored = s.get_lesson("l1")
+        assert restored is not None
+        assert restored.title == "Day 1"
+
     def test_shared_db_with_srs_database(self, tmp_path):
         from app.srs.database import SRSDatabase
 

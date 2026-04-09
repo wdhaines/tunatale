@@ -127,3 +127,70 @@ async def test_patch_mode_replays_known_then_records_new(cassette_dir):
     r_new = await client.complete("brand new prompt")
     assert r_known == "known!"
     assert r_new == "new answer"
+
+
+async def test_replay_raises_when_entry_used_more_times_than_recorded(cassette_dir):
+    """Using the same prompt more times than recorded entries → RuntimeError."""
+    prompt = "used twice"
+    h = _hash_prompt(prompt)
+    cassette_path = cassette_dir / "once.json"
+    _write_cassette(
+        cassette_path,
+        [{"prompt_hash": h, "prompt_preview": prompt, "response": "once", "max_tokens": 256, "provider": "groq"}],
+    )
+
+    client = CassetteLLMClient(mode="mock", cassette_path=cassette_path)
+    await client.complete(prompt)  # first use — OK
+    with pytest.raises(RuntimeError, match="used"):
+        await client.complete(prompt)  # second use — exceeds the 1 recorded entry
+
+
+def test_save_is_noop_for_mock_mode(cassette_dir, tmp_path):
+    """Calling save() in mock mode does nothing (no file written)."""
+    cassette_path = cassette_dir / "mock.json"
+    _write_cassette(cassette_path, [])
+
+    client = CassetteLLMClient(mode="mock", cassette_path=cassette_path)
+    output = tmp_path / "should_not_exist.json"
+    client._cassette_path = output  # redirect to a path that doesn't exist yet
+    client.save()  # should be a no-op
+    assert not output.exists()
+
+
+async def test_live_mode_calls_real_client_without_saving(tmp_path):
+    """live mode calls real client and returns response without writing a cassette (73->84)."""
+
+    class FakeClient:
+        last_provider = "groq"
+
+        async def complete(self, prompt, system_prompt=None, temperature=None, max_tokens=256):
+            return "live answer"
+
+    cassette_path = tmp_path / "cassettes" / "live.json"
+    client = CassetteLLMClient(mode="live", cassette_path=cassette_path, real_client=FakeClient())
+    result = await client.complete("live prompt")
+    assert result == "live answer"
+    assert not cassette_path.exists()  # live mode never writes
+
+
+async def test_patch_mode_calls_real_when_entries_exhausted(cassette_dir):
+    """In patch mode, exhausting recorded entries falls through to real client (108->114)."""
+    prompt = "exhausted"
+    h = _hash_prompt(prompt)
+    cassette_path = cassette_dir / "exhausted.json"
+    _write_cassette(
+        cassette_path,
+        [{"prompt_hash": h, "prompt_preview": prompt, "response": "first", "max_tokens": 256, "provider": "groq"}],
+    )
+
+    class FakeClient:
+        last_provider = "groq"
+
+        async def complete(self, prompt, **kwargs):
+            return "real answer"
+
+    client = CassetteLLMClient(mode="patch", cassette_path=cassette_path, real_client=FakeClient())
+    r1 = await client.complete(prompt)  # first use — replays from cassette
+    r2 = await client.complete(prompt)  # second use — cassette exhausted → calls real client
+    assert r1 == "first"
+    assert r2 == "real answer"

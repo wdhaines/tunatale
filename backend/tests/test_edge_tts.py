@@ -82,6 +82,20 @@ async def test_list_voices_returns_list():
     assert len(voices) > 0
 
 
+async def test_list_voices_no_filter_returns_all():
+    """list_voices() with no language_code skips filtering (64->66 False branch)."""
+    svc = EdgeTTSService()
+    mock_voices = [
+        {"ShortName": "sl-SI-PetraNeural", "Locale": "sl-SI"},
+        {"ShortName": "en-US-JennyNeural", "Locale": "en-US"},
+    ]
+
+    with patch("app.audio.edge_tts.edge_tts.list_voices", return_value=mock_voices):
+        voices = await svc.list_voices()  # no language_code
+
+    assert len(voices) == 2
+
+
 async def test_list_voices_filters_by_language():
     svc = EdgeTTSService()
     mock_voices = [
@@ -119,3 +133,25 @@ async def test_synthesize_retries_on_transient_error(tmp_path):
 
     assert output.exists()
     assert attempt == 2
+
+
+async def test_synthesize_raises_after_max_retries(tmp_path):
+    """All retries exhausted → RuntimeError with retry count in message."""
+    from app.audio.edge_tts import MAX_RETRIES
+
+    svc = EdgeTTSService()
+    output = tmp_path / "out.mp3"
+
+    def always_fail(text, voice, rate):
+        mock = AsyncMock()
+        mock.save = AsyncMock(side_effect=ConnectionResetError("always fails"))
+        return mock
+
+    with (
+        patch("app.audio.edge_tts.edge_tts.Communicate", side_effect=always_fail),
+        patch("app.audio.edge_tts.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        import pytest
+
+        with pytest.raises(RuntimeError, match=str(MAX_RETRIES)):
+            await svc.synthesize("test", "sl-SI-PetraNeural", output)

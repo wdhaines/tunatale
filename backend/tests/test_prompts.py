@@ -36,3 +36,10 @@ def test_deeper_prompt_mentions_source_transcript():
 def test_get_strategy_prompt_returns_correct_template():
     assert get_strategy_prompt(ContentStrategy.WIDER) is STORY_PROMPT_WIDER_TEMPLATE
     assert get_strategy_prompt(ContentStrategy.DEEPER) is STORY_PROMPT_DEEPER_TEMPLATE
+
+
+def test_get_strategy_prompt_raises_for_unknown_strategy():
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown strategy"):
+        get_strategy_prompt(object())  # type: ignore[arg-type]

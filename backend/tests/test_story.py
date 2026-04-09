@@ -132,3 +132,13 @@ class TestStoryGeneration:
         phrases = {kp.phrase: kp.translation for kp in lesson.key_phrases}
         assert phrases["dober dan"] == "good day"
         assert phrases["prosim kavo"] == "a coffee please"
+
+    async def test_parse_response_raises_when_key_phrases_and_scenes_both_empty(self, language):
+        import json
+
+        from app.generation.story import StoryGenerationError
+
+        generator = StoryGenerator(llm_client=MagicMock())
+        raw = json.dumps({"title": "Empty", "key_phrases": [], "scenes": []})
+        with pytest.raises(StoryGenerationError, match="missing"):
+            generator._parse_response(raw, language=language)

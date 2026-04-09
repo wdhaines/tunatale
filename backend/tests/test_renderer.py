@@ -75,6 +75,10 @@ class TestAudioAssembler:
         result = asm.trim_silence(b"\x00" * 1000)
         assert isinstance(result, bytes)
 
+    def test_concatenate_empty_list_returns_empty_bytes(self):
+        asm = AudioAssembler()
+        assert asm.concatenate([]) == b""
+
 
 class TestLessonRenderer:
     """Tests for LessonRenderer end-to-end rendering behaviour."""
@@ -158,6 +162,33 @@ class TestLessonRenderer:
 
         assert synthesize_calls[0][0] == lesson.title
         assert synthesize_calls[0][1] == lesson.narrator_voice
+
+    async def test_render_section_skips_silence_when_pause_is_zero(self, tmp_path):
+        """_render_section skips adding silence when pause_ms == 0 (81->70 False branch)."""
+        from unittest.mock import MagicMock
+
+        lesson = _minimal_lesson()
+        fake_audio = _make_wav_bytes()
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        # Use a pause calculator that always returns 0
+        zero_calc = MagicMock()
+        zero_calc.get_phrase_pause.return_value = 0
+        zero_calc.get_section_boundary_pause.return_value = 0
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessor=SlovenePreprocessor(),
+            pause_calculator=zero_calc,
+        )
+        output = tmp_path / "nopause.wav"
+        await rdr.render(lesson, output)
+        assert output.exists()
 
     async def test_render_passes_phrase_rate_to_tts(self, tmp_path):
         """render() uses phrase.rate rather than hardcoding '+0%'."""

@@ -91,6 +91,38 @@ class TestCurriculumEndpoints:
             response = await client.get("/api/curriculum/nonexistent-id")
         assert response.status_code == 404
 
+    async def test_get_curriculum_returns_200_with_data(self):
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        curriculum = Curriculum(
+            id="test-c",
+            topic="coffee",
+            language_code="sl",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(
+                    day=1,
+                    title="Day 1",
+                    focus="greetings",
+                    learning_objective="greet",
+                    story_guidance="café",
+                    collocations=["zdravo"],
+                )
+            ],
+        )
+        store.save_curriculum("coffee-abc", curriculum)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/curriculum/coffee-abc")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == "coffee-abc"
+        assert data["topic"] == "coffee"
+        assert data["days"] == 1
+
     async def test_list_curricula_returns_200(self):
         from app.storage.store import ContentStore
 
@@ -248,6 +280,47 @@ class TestStoryEndpoints:
             response = await client.get("/api/story/nonexistent-lesson-id")
         assert response.status_code == 404
 
+    async def test_generate_story_returns_404_curriculum_not_found(self):
+        from app.storage.store import ContentStore
+
+        app.state.content_store = ContentStore(":memory:")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/story/generate",
+                json={"curriculum_id": "nonexistent", "day": 1, "strategy": "WIDER"},
+            )
+        assert response.status_code == 404
+
+    async def test_generate_story_returns_404_day_not_found(self):
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        curriculum = Curriculum(
+            id="c1",
+            topic="coffee",
+            language_code="sl",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(
+                    day=1,
+                    title="Day 1",
+                    focus="greetings",
+                    learning_objective="greet",
+                    story_guidance="café",
+                    collocations=["zdravo"],
+                )
+            ],
+        )
+        store.save_curriculum("c1", curriculum)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/story/generate",
+                json={"curriculum_id": "c1", "day": 99, "strategy": "WIDER"},
+            )
+        assert response.status_code == 404
+
     async def test_generate_story_returns_201(self, monkeypatch):
         from app.storage.store import ContentStore
 
@@ -334,6 +407,18 @@ class TestSRSEndpoints:
         data = response.json()
         assert "total" in data
 
+    async def test_srs_feedback_returns_not_found_for_unknown_collocation(self):
+        from app.srs.database import SRSDatabase
+
+        app.state.srs_db = SRSDatabase(":memory:")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/feedback",
+                json={"collocation_text": "nonexistent_word", "signal": "no_help"},
+            )
+        assert response.status_code == 200
+        assert response.json()["status"] == "not_found"
+
     async def test_srs_feedback_returns_ok(self):
         from app.models.syntactic_unit import SyntacticUnit
         from app.srs.database import SRSDatabase
@@ -399,6 +484,39 @@ class TestSRSEndpoints:
             response = await client.get("/api/srs/new")
 
         assert len(response.json()["new"]) == 10
+
+    async def test_listen_skips_phrases_with_wrong_language_code(self):
+        """NATURAL_SPEED phrases whose language_code != lesson language_code are skipped."""
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        # Lesson is Slovene but one NATURAL_SPEED phrase is English (narrator)
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text="At the café", voice_id="narrator", language_code="en", role="narrator"),
+                    ],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-foreign", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-foreign"})
+
+        assert response.status_code == 200
+        # The English phrase should contribute 0 lemmas (registered = 0 lemmas + 0 key phrases)
+        assert db.count_collocations() == 0
 
     async def test_listen_registers_collocations(self):
         from app.srs.database import SRSDatabase
@@ -663,6 +781,41 @@ class TestSRSEndpoints:
         assert response.status_code == 200
         assert db.count_collocations() == 1
 
+    async def test_listen_skips_rating_when_lemma_collides_without_lemma_field(self):
+        """If a pre-existing row has the same text as a lemma but lemma=NULL,
+        get_collocation_by_lemma returns None → if item is not None: False branch (124->113)."""
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="banka", voice_id="female-1", language_code="sl", role="female-1")],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        # Pre-insert with text="banka" but lemma=None (lemma column stays NULL)
+        db.add_collocation(SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus"))
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        assert response.status_code == 200
+        # Row still exists but was not rated (INSERT OR IGNORE left lemma=NULL)
+        assert db.count_collocations() == 1
+        assert db.get_collocation_by_lemma("banka") is None
+
 
 class TestTranscriptEndpoint:
     """Tests for GET /api/srs/lesson/{lesson_id}/transcript."""
@@ -804,6 +957,14 @@ def _fake_render(lesson, full_path, section_paths=None):
 
 class TestAudioEndpoints:
     """Tests for audio render and retrieval endpoints."""
+
+    async def test_render_audio_returns_404_for_missing_lesson(self):
+        from app.storage.store import ContentStore
+
+        app.state.content_store = ContentStore(":memory:")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/audio/render", json={"lesson_id": "nonexistent"})
+        assert response.status_code == 404
 
     async def test_audio_render_returns_202(self, tmp_path):
         from app.storage.store import ContentStore
@@ -958,3 +1119,52 @@ class TestAudioEndpoints:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/audio/nonexistent-id")
         assert response.status_code == 404
+
+    async def test_get_lesson_audio_returns_404_when_no_full_row(self):
+        """GET /audio/lesson/{id} returns 404 when only section rows exist (no full-lesson row)."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        # Save a section-only row (section_index=0, no full row)
+        store.save_audio_file("sec-1", "lesson-x", "/tmp/sec.wav", section_index=0, section_type="key_phrases")
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/lesson/lesson-x")
+
+        assert response.status_code == 404
+        assert "Full lesson audio" in response.json()["detail"]
+
+    async def test_get_lesson_audio_falls_back_for_unknown_section_type(self):
+        """GET /audio/lesson/{id} gracefully uses raw string when section_type is unrecognized."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        # Full row
+        store.save_audio_file("full-1", "lesson-y", "/tmp/full.wav")
+        # Section row with unknown section_type
+        store.save_audio_file("sec-2", "lesson-y", "/tmp/sec.wav", section_index=0, section_type="unknown_custom")
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/lesson/lesson-y")
+
+        assert response.status_code == 200
+        data = response.json()
+        # The title should fall back to the raw section_type string
+        assert data["sections"][0]["title"] == "unknown_custom"
+
+    async def test_get_audio_returns_404_when_file_missing_on_disk(self, tmp_path):
+        """GET /api/audio/{audio_id} returns 404 when DB row exists but file is absent."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        nonexistent_path = str(tmp_path / "does_not_exist.wav")
+        store.save_audio_file("audio-gone", "lesson-z", nonexistent_path)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/audio-gone")
+
+        assert response.status_code == 404
+        assert "missing" in response.json()["detail"]

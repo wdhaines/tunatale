@@ -305,3 +305,13 @@ class TestSRSItem:
         assert SRSState.LEARNING.value == "learning"
         assert SRSState.REVIEW.value == "review"
         assert SRSState.RELEARNING.value == "relearning"
+
+
+class TestPedagogicalScoringConfigWeights:
+    def test_weights_sum_to_one_for_default_config(self):
+        cfg = PedagogicalScoringConfig()
+        assert cfg.weights_sum_to_one() is True
+
+    def test_weights_sum_to_one_returns_false_when_weights_are_off(self):
+        cfg = PedagogicalScoringConfig(srs_readiness_weight=0.1)
+        assert cfg.weights_sum_to_one() is False

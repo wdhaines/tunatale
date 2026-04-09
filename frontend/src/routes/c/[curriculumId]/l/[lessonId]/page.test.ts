@@ -116,6 +116,129 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 		});
 		expect(getByText('✓ Listened')).toBeTruthy();
 	});
+
+	it('shows Transcript loading… when audio is loaded but transcript is null', () => {
+		const { getByText } = render(Page, {
+			props: { data: { curriculum, lesson, audio, transcript: null } }
+		});
+		expect(getByText('Transcript loading…')).toBeTruthy();
+	});
+
+	it('shows error when renderAudio fails with non-Error', async () => {
+		mockRenderAudio.mockRejectedValue('plain string error');
+
+		const { getByText, findByText } = render(Page, {
+			props: { data: { curriculum, lesson, audio: null, transcript: null } }
+		});
+		await fireEvent.click(getByText('Render Audio'));
+
+		expect(await findByText('plain string error')).toBeTruthy();
+	});
+
+	it('shows error when markAsListened fails', async () => {
+		mockMarkAsListened.mockRejectedValue(new Error('listen failed'));
+		mockGetTranscript.mockResolvedValue(transcript);
+
+		const { findByText } = render(Page, {
+			props: { data: { curriculum, lesson, audio, transcript } }
+		});
+		await fireEvent.click(await findByText('Mark as Listened'));
+
+		expect(await findByText('listen failed')).toBeTruthy();
+	});
+
+	it('shows stringified error when markAsListened throws a non-Error', async () => {
+		mockMarkAsListened.mockRejectedValue('plain listen error');
+		mockGetTranscript.mockResolvedValue(transcript);
+
+		const { findByText } = render(Page, {
+			props: { data: { curriculum, lesson, audio, transcript } }
+		});
+		await fireEvent.click(await findByText('Mark as Listened'));
+
+		expect(await findByText('plain listen error')).toBeTruthy();
+	});
+
+	it('shows plural phrases label when a section has more than one phrase', () => {
+		const lessonMultiPhrase = {
+			...lesson,
+			sections: [
+				{
+					type: 'key_phrases',
+					phrases: [
+						{ text: 'kavo prosim', role: 'female-1', language_code: 'sl', voice_id: 'v1' },
+						{ text: 'hvala', role: 'female-1', language_code: 'sl', voice_id: 'v1' }
+					]
+				}
+			]
+		};
+		const { getByText } = render(Page, {
+			props: { data: { curriculum, lesson: lessonMultiPhrase, audio: null, transcript: null } }
+		});
+		expect(getByText(/2 phrases/)).toBeTruthy();
+	});
+
+	it('handleRatingChange sets pending rating when word is clicked and filters nulls before markAsListened', async () => {
+		const transcriptWithWords = {
+			lesson_id: 'l1',
+			key_phrases: [{ phrase: 'kavo prosim', translation: 'a coffee please' }],
+			dialogue_lines: [
+				{
+					role: 'Petra',
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new' as const }]
+				}
+			]
+		};
+		mockMarkAsListened.mockResolvedValue({ status: 'ok', registered: 1 });
+		mockGetTranscript.mockResolvedValue(transcriptWithWords);
+
+		const { findByText, findByRole } = render(Page, {
+			props: { data: { curriculum, lesson, audio, transcript: transcriptWithWords } }
+		});
+
+		// Click the word span to cycle its rating: null → hard
+		const wordBtn = await findByRole('button', { name: 'zdravo' });
+		await fireEvent.click(wordBtn);
+
+		// Click Mark as Listened — word rating 'hard' should be sent, no nulls
+		await fireEvent.click(await findByText('Mark as Listened'));
+
+		await waitFor(() => {
+			expect(mockMarkAsListened).toHaveBeenCalledWith('l1', { zdravo: 'hard' });
+		});
+	});
+
+	it('null ratings are filtered out before sending to markAsListened', async () => {
+		const transcriptWithWords = {
+			lesson_id: 'l1',
+			key_phrases: [],
+			dialogue_lines: [
+				{
+					role: 'Petra',
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new' as const }]
+				}
+			]
+		};
+		mockMarkAsListened.mockResolvedValue({ status: 'ok', registered: 1 });
+		mockGetTranscript.mockResolvedValue(transcriptWithWords);
+
+		const { findByText, findByRole } = render(Page, {
+			props: { data: { curriculum, lesson, audio, transcript: transcriptWithWords } }
+		});
+
+		// Click the word 3 times: null → hard → easy → null
+		const wordBtn = await findByRole('button', { name: 'zdravo' });
+		await fireEvent.click(wordBtn); // → hard
+		await fireEvent.click(wordBtn); // → easy
+		await fireEvent.click(wordBtn); // → null
+
+		// Click Mark as Listened — null rating should be filtered out, sending empty {}
+		await fireEvent.click(await findByText('Mark as Listened'));
+
+		await waitFor(() => {
+			expect(mockMarkAsListened).toHaveBeenCalledWith('l1', {});
+		});
+	});
 });
 
 describe('load function for /c/[curriculumId]/l/[lessonId]', () => {

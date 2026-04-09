@@ -14,6 +14,20 @@ function mockFail(statusText = 'Internal Server Error'): Response {
 	return { ok: false, statusText } as Response;
 }
 
+describe('BASE_URL SSR branch', () => {
+	afterEach(async () => {
+		vi.unstubAllGlobals();
+		vi.resetModules();
+	});
+
+	it('BASE_URL is localhost:8000 when window is undefined (SSR)', async () => {
+		vi.stubGlobal('window', undefined);
+		vi.resetModules();
+		const { BASE_URL } = await import('./api');
+		expect(BASE_URL).toBe('http://localhost:8000');
+	});
+});
+
 describe('TunaTaleAPI', () => {
 	let api: TunaTaleAPI;
 
@@ -162,6 +176,18 @@ describe('TunaTaleAPI', () => {
 	});
 
 	describe('audio', () => {
+		it('getLessonAudio calls GET /api/audio/lesson/:id', async () => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockResolvedValue(mockOk({ audio_id: 'a1', lesson_id: 'l1', sections: [] }))
+			);
+
+			const result = await api.getLessonAudio('l1');
+
+			expect(fetch).toHaveBeenCalledWith(`${BASE}/api/audio/lesson/l1`);
+			expect(result.audio_id).toBe('a1');
+		});
+
 		it('renderAudio calls POST /api/audio/render', async () => {
 			vi.stubGlobal(
 				'fetch',
@@ -302,6 +328,105 @@ describe('TunaTaleAPI', () => {
 
 			await expect(api.getLessonTranscript('lesson-1')).rejects.toThrow(
 				'GET /api/srs/lesson/lesson-1/transcript: Internal Server Error'
+			);
+		});
+	});
+
+	describe('SRS admin', () => {
+		it('listSRSItems calls GET /api/srs/items with no params', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ items: [], total: 0 })));
+
+			const result = await api.listSRSItems();
+
+			expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/items`);
+			expect(result.total).toBe(0);
+		});
+
+		it('listSRSItems passes query params when provided', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ items: [], total: 0 })));
+
+			await api.listSRSItems({ search: 'dan', limit: 10, offset: 20 });
+
+			const url = (vi.mocked(fetch).mock.calls[0][0] as string);
+			expect(url).toContain('search=dan');
+			expect(url).toContain('limit=10');
+			expect(url).toContain('offset=20');
+		});
+
+		it('listSRSItems skips undefined params (242 branch)', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ items: [], total: 0 })));
+
+			// Pass params where some values are undefined
+			await api.listSRSItems({ search: undefined, limit: 10 });
+
+			const url = (vi.mocked(fetch).mock.calls[0][0] as string);
+			expect(url).not.toContain('search=');
+			expect(url).toContain('limit=10');
+		});
+
+		it('updateSRSItem calls PATCH /api/srs/items/:id', async () => {
+			const item = { id: 1, text: 'dober', translation: 'good', state: 'new' as const, due_date: '2026-04-01', stability: 1, difficulty: 5, reps: 0, lapses: 0, last_review: null, language_code: 'sl' };
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk(item)));
+
+			const result = await api.updateSRSItem(1, { text: 'dober', translation: 'good' });
+
+			expect(fetch).toHaveBeenCalledWith(
+				`${BASE}/api/srs/items/1`,
+				expect.objectContaining({ method: 'PATCH' })
+			);
+			expect(result.id).toBe(1);
+		});
+
+		it('deleteSRSItem calls DELETE /api/srs/items/:id', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ status: 'deleted' })));
+
+			await api.deleteSRSItem(42);
+
+			expect(fetch).toHaveBeenCalledWith(
+				`${BASE}/api/srs/items/42`,
+				expect.objectContaining({ method: 'DELETE' })
+			);
+		});
+
+		it('bulkDeleteSRSItems calls POST /api/srs/items/bulk-delete', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ deleted: 3 })));
+
+			const result = await api.bulkDeleteSRSItems([1, 2, 3]);
+
+			expect(fetch).toHaveBeenCalledWith(
+				`${BASE}/api/srs/items/bulk-delete`,
+				expect.objectContaining({
+					method: 'POST',
+					body: JSON.stringify({ ids: [1, 2, 3] })
+				})
+			);
+			expect(result.deleted).toBe(3);
+		});
+
+		it('resetSRSItem calls POST /api/srs/items/:id/reset', async () => {
+			const item = { id: 5, text: 'test', translation: '', state: 'new' as const, due_date: '2026-04-01', stability: 1, difficulty: 5, reps: 0, lapses: 0, last_review: null, language_code: 'sl' };
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk(item)));
+
+			await api.resetSRSItem(5);
+
+			expect(fetch).toHaveBeenCalledWith(
+				`${BASE}/api/srs/items/5/reset`,
+				expect.objectContaining({ method: 'POST' })
+			);
+		});
+
+		it('suspendSRSItem calls POST /api/srs/items/:id/suspend with suspended flag', async () => {
+			const item = { id: 7, text: 'test', translation: '', state: 'suspended' as const, due_date: '2026-04-01', stability: 1, difficulty: 5, reps: 0, lapses: 0, last_review: null, language_code: 'sl' };
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk(item)));
+
+			await api.suspendSRSItem(7, true);
+
+			expect(fetch).toHaveBeenCalledWith(
+				`${BASE}/api/srs/items/7/suspend`,
+				expect.objectContaining({
+					method: 'POST',
+					body: JSON.stringify({ suspended: true })
+				})
 			);
 		});
 	});

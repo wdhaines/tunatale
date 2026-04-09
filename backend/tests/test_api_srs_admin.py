@@ -59,6 +59,11 @@ class TestListItems:
         assert data["total"] == 1
         assert data["items"][0]["text"] == "zdravo"
 
+    async def test_list_items_invalid_order_dir_returns_422(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/items", params={"order": "sideways"})
+        assert response.status_code == 422
+
     async def test_list_items_state_filter(self):
         db = _db()
         db.add_collocation(_unit("a", "aa"), language_code="sl")
@@ -136,6 +141,11 @@ class TestDeleteItem:
         assert response.json()["status"] == "deleted"
         assert db.count_collocations() == 0
 
+    async def test_delete_item_returns_404_for_unknown_id(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.delete("/api/srs/items/99999")
+        assert response.status_code == 404
+
     async def test_bulk_delete_removes_all_listed(self):
         db = _db()
         for t in ["a", "b", "c"]:
@@ -153,6 +163,16 @@ class TestDeleteItem:
 
 class TestResetSuspend:
     """Tests for reset and suspend endpoints."""
+
+    async def test_reset_item_returns_404_for_unknown_id(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/items/99999/reset")
+        assert response.status_code == 404
+
+    async def test_suspend_item_returns_404_for_unknown_id(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/items/99999/suspend", json={"suspended": True})
+        assert response.status_code == 404
 
     async def test_reset_item_puts_it_back_in_new_state(self):
         db = _db()

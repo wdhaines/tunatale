@@ -173,4 +173,267 @@ describe('admin/srs/+page.svelte', () => {
 			expect(mockSuspend).toHaveBeenCalledWith(9, true);
 		});
 	});
+
+	it('clicking Reset with confirm stubbed calls resetSRSItem', async () => {
+		const item = makeItem(11, 'kava', 'review');
+		mockList.mockResolvedValue({ items: [item], total: 1 });
+		mockReset.mockResolvedValue({ ...item, state: 'new', reps: 0 });
+		vi.stubGlobal('confirm', () => true);
+
+		const { findByText } = render(AdminSRSPage);
+		await findByText('kava');
+
+		const resetBtn = await findByText('Reset');
+		await fireEvent.click(resetBtn);
+
+		await waitFor(() => {
+			expect(mockReset).toHaveBeenCalledWith(11);
+		});
+	});
+
+	it('shows error when resetSRSItem fails', async () => {
+		const item = makeItem(11, 'kava', 'review');
+		mockList.mockResolvedValue({ items: [item], total: 1 });
+		mockReset.mockRejectedValue(new Error('reset failed'));
+		vi.stubGlobal('confirm', () => true);
+
+		const { findByText } = render(AdminSRSPage);
+		await findByText('kava');
+
+		await fireEvent.click(await findByText('Reset'));
+
+		expect(await findByText('reset failed')).toBeTruthy();
+	});
+
+	it('shows error when toggleSuspend fails', async () => {
+		const item = makeItem(12, 'voda', 'review');
+		mockList.mockResolvedValue({ items: [item], total: 1 });
+		mockSuspend.mockRejectedValue(new Error('suspend failed'));
+
+		const { findByText } = render(AdminSRSPage);
+		await findByText('voda');
+
+		await fireEvent.click(await findByText('Suspend'));
+
+		expect(await findByText('suspend failed')).toBeTruthy();
+	});
+
+	it('clicking Cancel during edit closes the edit row without saving', async () => {
+		const item = makeItem(5, 'miza');
+		mockList.mockResolvedValue({ items: [item], total: 1 });
+
+		const { findByText } = render(AdminSRSPage);
+		await findByText('miza');
+
+		await fireEvent.click(await findByText('Edit'));
+		// Edit row should be open (Save/Cancel visible)
+		expect(await findByText('Cancel')).toBeTruthy();
+
+		await fireEvent.click(await findByText('Cancel'));
+
+		// Normal row should reappear
+		expect(await findByText('miza')).toBeTruthy();
+		expect(mockUpdate).not.toHaveBeenCalled();
+	});
+
+	it('clicking header checkbox when nothing is selected selects all items', async () => {
+		mockList.mockResolvedValue({
+			items: [makeItem(1, 'a'), makeItem(2, 'b')],
+			total: 2
+		});
+
+		const { findAllByRole, findByText } = render(AdminSRSPage);
+		await findByText('a');
+
+		// Header checkbox is the first checkbox in the list
+		const allCheckboxes = (await findAllByRole('checkbox')) as HTMLInputElement[];
+		const headerCheckbox = allCheckboxes[0];
+
+		await fireEvent.click(headerCheckbox);
+
+		// "Delete selected (2)" button should appear
+		expect(await findByText(/Delete selected \(2\)/)).toBeTruthy();
+	});
+
+	it('shows error when saveEdit fails with non-Error', async () => {
+		const item = makeItem(15, 'vino');
+		mockList.mockResolvedValue({ items: [item], total: 1 });
+		mockUpdate.mockRejectedValue('plain update error');
+
+		const { findByText } = render(AdminSRSPage);
+		await findByText('vino');
+
+		await fireEvent.click(await findByText('Edit'));
+		await fireEvent.click(await findByText('Save'));
+
+		expect(await findByText('plain update error')).toBeTruthy();
+	});
+
+	it('shows error when deleteItem fails with non-Error', async () => {
+		const item = makeItem(16, 'sir');
+		mockList.mockResolvedValue({ items: [item], total: 1 });
+		mockDelete.mockRejectedValue('plain delete error');
+		vi.stubGlobal('confirm', () => true);
+
+		const { findByText } = render(AdminSRSPage);
+		await findByText('sir');
+
+		await fireEvent.click(await findByText('Delete'));
+
+		expect(await findByText('plain delete error')).toBeTruthy();
+	});
+
+	it('shows Unsuspend button for a suspended item and calls suspendSRSItem(id, false)', async () => {
+		const item = makeItem(20, 'kava', 'suspended');
+		mockList.mockResolvedValue({ items: [item], total: 1 });
+		mockSuspend.mockResolvedValue({ ...item, state: 'new' });
+
+		const { findByText } = render(AdminSRSPage);
+		await findByText('kava');
+
+		const unsuspendBtn = await findByText('Unsuspend');
+		await fireEvent.click(unsuspendBtn);
+
+		await waitFor(() => {
+			expect(mockSuspend).toHaveBeenCalledWith(20, false);
+		});
+	});
+
+	it('clicking same sort column twice flips order from asc to desc then back to asc', async () => {
+		mockList.mockResolvedValue({ items: [makeItem(1, 'a')], total: 1 });
+
+		const { findByText } = render(AdminSRSPage);
+		await findByText('a');
+
+		const textHeader = await findByText(/^text/);
+
+		// First click: asc → desc
+		const callsBefore1 = mockList.mock.calls.length;
+		await fireEvent.click(textHeader);
+		await waitFor(() => {
+			expect(mockList.mock.calls.length).toBeGreaterThan(callsBefore1);
+		});
+
+		// Second click: desc → asc
+		const callsBefore2 = mockList.mock.calls.length;
+		await fireEvent.click(textHeader);
+		await waitFor(() => {
+			expect(mockList.mock.calls.length).toBeGreaterThan(callsBefore2);
+			const lastCall = mockList.mock.calls[mockList.mock.calls.length - 1][0];
+			expect(lastCall?.order).toBe('asc');
+		});
+	});
+
+	it('clicking a different sort column changes sort to that column', async () => {
+		mockList.mockResolvedValue({ items: [makeItem(1, 'a')], total: 1 });
+
+		const { findByText } = render(AdminSRSPage);
+		await findByText('a');
+
+		const callsBefore = mockList.mock.calls.length;
+		const translationHeader = await findByText(/^translation/);
+		await fireEvent.click(translationHeader);
+
+		await waitFor(() => {
+			expect(mockList.mock.calls.length).toBeGreaterThan(callsBefore);
+			const lastCall = mockList.mock.calls[mockList.mock.calls.length - 1][0];
+			expect(lastCall?.sort).toBe('translation');
+			expect(lastCall?.order).toBe('asc');
+		});
+	});
+
+	it('changing state filter triggers reload with state param', async () => {
+		mockList.mockResolvedValue({ items: [], total: 0 });
+
+		const { findByDisplayValue } = render(AdminSRSPage);
+		const select = await findByDisplayValue('All states');
+
+		await fireEvent.change(select, { target: { value: 'review' } });
+
+		await waitFor(() => {
+			const calls = mockList.mock.calls;
+			const lastCall = calls[calls.length - 1][0];
+			expect(lastCall?.state).toBe('review');
+		});
+	});
+
+	it('shows error when bulkDeleteSRSItems fails', async () => {
+		mockList.mockResolvedValue({ items: [makeItem(1, 'a'), makeItem(2, 'b')], total: 2 });
+		mockBulkDelete.mockRejectedValue(new Error('bulk delete failed'));
+		vi.stubGlobal('confirm', () => true);
+
+		const { findAllByRole, findByText } = render(AdminSRSPage);
+		await findByText('a');
+
+		const checkboxes = (await findAllByRole('checkbox')) as HTMLInputElement[];
+		await fireEvent.click(checkboxes[1]);
+		await fireEvent.click(checkboxes[2]);
+
+		await fireEvent.click(await findByText(/Delete selected/));
+
+		expect(await findByText('bulk delete failed')).toBeTruthy();
+	});
+
+	it('shows stringified error when listSRSItems throws a non-Error', async () => {
+		mockList.mockRejectedValue('network failure string');
+		const { findByText } = render(AdminSRSPage);
+		expect(await findByText('network failure string')).toBeTruthy();
+	});
+
+	it('clicking header checkbox when all items are selected deselects all', async () => {
+		mockList.mockResolvedValue({ items: [makeItem(1, 'a'), makeItem(2, 'b')], total: 2 });
+
+		const { findByText, findAllByRole, queryByText } = render(AdminSRSPage);
+		await findByText('a');
+
+		const checkboxes = (await findAllByRole('checkbox')) as HTMLInputElement[];
+		// Select both items individually
+		await fireEvent.click(checkboxes[1]);
+		await fireEvent.click(checkboxes[2]);
+
+		// Verify "Delete selected" is visible (all selected)
+		expect(await findByText(/Delete selected \(2\)/)).toBeTruthy();
+
+		// Click header checkbox to deselect all
+		await fireEvent.click(checkboxes[0]);
+
+		await waitFor(() => {
+			expect(queryByText(/Delete selected/)).toBeFalsy();
+		});
+	});
+
+	it('clicking next/prev pagination changes the page', async () => {
+		// total > PAGE_SIZE (50) to enable next button
+		mockList.mockResolvedValue({ items: [makeItem(1, 'a')], total: 100 });
+
+		const { findByText } = render(AdminSRSPage);
+		await findByText('page 1 / 2');
+
+		await fireEvent.click(await findByText('next ▶'));
+
+		await waitFor(async () => {
+			expect(await findByText('page 2 / 2')).toBeTruthy();
+		});
+
+		await fireEvent.click(await findByText('◀ prev'));
+
+		await waitFor(async () => {
+			expect(await findByText('page 1 / 2')).toBeTruthy();
+		});
+	});
+
+	it('clicking state, due, and reps sort columns each trigger a reload', async () => {
+		mockList.mockResolvedValue({ items: [makeItem(1, 'a')], total: 1 });
+
+		const { findByText } = render(AdminSRSPage);
+		await findByText('a');
+
+		for (const col of ['state', 'due', 'reps']) {
+			const callsBefore = mockList.mock.calls.length;
+			await fireEvent.click(await findByText(new RegExp(`^${col}`)));
+			await waitFor(() => {
+				expect(mockList.mock.calls.length).toBeGreaterThan(callsBefore);
+			});
+		}
+	});
 });

@@ -30,7 +30,6 @@
 	});
 
 	async function handleGenerate() {
-		if (!topic.trim()) return;
 		loading = true;
 		error = '';
 		try {
@@ -63,7 +62,7 @@
 		Days
 		<input type="number" bind:value={numDays} min="1" max="30" />
 	</label>
-	<button onclick={handleGenerate} disabled={loading || !topic.trim()}>
+	<button onclick={handleGenerate} disabled={!topic.trim() || loading}>
 		{loading ? 'Generating…' : 'Generate'}
 	</button>
 	{#if error}

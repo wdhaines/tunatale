@@ -73,3 +73,19 @@ class TestCollocationSelector:
         low = _make_item("low", SRSState.REVIEW, days_overdue=1, stability=0.5)
         high = _make_item("high", SRSState.REVIEW, days_overdue=1, stability=50.0)
         assert selector.score(low) >= selector.score(high)
+
+    def test_score_includes_frequency_bonus_for_frequent_item(self, selector):
+        """Item with frequency >= min_frequency_threshold gets a positive pv_score contribution."""
+        unit = SyntacticUnit(
+            text="frequent phrase", translation="x", word_count=2, difficulty=1, source="corpus", frequency=5
+        )
+        item = SRSItem(syntactic_unit=unit, due_date=date.today(), stability=1.0, state=SRSState.NEW)
+        score_frequent = selector.score(item)
+
+        unit_rare = SyntacticUnit(
+            text="rare phrase", translation="x", word_count=2, difficulty=1, source="corpus", frequency=0
+        )
+        item_rare = SRSItem(syntactic_unit=unit_rare, due_date=date.today(), stability=1.0, state=SRSState.NEW)
+        score_rare = selector.score(item_rare)
+
+        assert score_frequent > score_rare
