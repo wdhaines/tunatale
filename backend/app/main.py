@@ -18,6 +18,7 @@ from app.audio.renderer import LessonRenderer  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.generation.curriculum import CurriculumGenerator  # noqa: E402
 from app.generation.story import StoryGenerator  # noqa: E402
+from app.llm.cassette import CassetteLLMClient  # noqa: E402
 from app.llm.client import LLMClient  # noqa: E402
 from app.models.language import Language  # noqa: E402
 from app.srs.database import SRSDatabase  # noqa: E402
@@ -31,7 +32,14 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    llm = LLMClient(groq_api_key=settings.groq_api_key, groq_model=settings.llm_model)
+    real_client = LLMClient(groq_api_key=settings.groq_api_key, groq_model=settings.llm_model)
+    cassette_path = Path("tests/cassettes/e2e.json")
+
+    # Wrap with cassettes unless explicitly in live mode
+    if settings.llm_mode != "live":
+        llm = CassetteLLMClient(mode=settings.llm_mode, cassette_path=cassette_path, real_client=real_client)
+    else:
+        llm = real_client
 
     db_path = settings.database_url.removeprefix("sqlite:///")
     srs_db = SRSDatabase(db_path)

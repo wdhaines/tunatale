@@ -4,8 +4,11 @@ export default defineConfig({
 	webServer: {
 		command: 'cd .. && ./start-dev.sh',
 		url: 'http://localhost:5173',
-		reuseExistingServer: true,
-		timeout: 120000
+		reuseExistingServer: !process.env.CI,
+		timeout: 120000,
+		env: {
+			LLM_MODE: 'mock'
+		}
 	},
 	testDir: 'tests',
 	testMatch: /(.+\.)?(test|spec)\.[jt]s/,

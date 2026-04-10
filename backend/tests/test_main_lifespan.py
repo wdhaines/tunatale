@@ -6,12 +6,13 @@ from fastapi import FastAPI
 
 
 async def test_lifespan_populates_app_state(tmp_path, monkeypatch):
-    """Running through the lifespan context wires all app.state attributes."""
+    """Running through the lifespan context wires all app.state attributes (mock mode)."""
     from app.config import settings
+    from app.llm.cassette import CassetteLLMClient
     from app.main import lifespan
 
-    # Point the DB at a temp file so the lifespan doesn't touch the real DB on disk
     monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'test.db'}")
+    monkeypatch.setattr(settings, "llm_mode", "mock")
 
     test_app = FastAPI()
 
@@ -23,5 +24,22 @@ async def test_lifespan_populates_app_state(tmp_path, monkeypatch):
         assert test_app.state.story_generator is not None
         assert test_app.state.renderer is not None
         assert test_app.state.audio_dir is not None
+        # In mock mode, the LLM client should be wrapped with CassetteLLMClient
+        assert isinstance(test_app.state.curriculum_generator._llm, CassetteLLMClient)
 
     # After exiting the context the databases should be closed cleanly (no exception)
+
+
+async def test_lifespan_live_mode_uses_raw_client(tmp_path, monkeypatch):
+    """In live mode, lifespan uses an unwrapped LLMClient."""
+    from app.config import settings
+    from app.llm.cassette import CassetteLLMClient
+    from app.main import lifespan
+
+    monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'test.db'}")
+    monkeypatch.setattr(settings, "llm_mode", "live")
+
+    test_app = FastAPI()
+
+    async with lifespan(test_app):
+        assert not isinstance(test_app.state.curriculum_generator._llm, CassetteLLMClient)
