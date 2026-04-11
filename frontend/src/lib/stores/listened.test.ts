@@ -90,4 +90,5 @@ describe('listenedStore', () => {
 		expect(store.has('lesson-a')).toBe(true);
 		expect(store.has('lesson-b')).toBe(true);
 	});
+
 });

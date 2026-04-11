@@ -29,22 +29,13 @@ function loadIds(): Set<string> {
 }
 
 function createListenedStore() {
-	let ids = $state<Set<string>>(new Set());
-	let hydrated = false;
-
-	function hydrate() {
-		if (hydrated || typeof window === 'undefined') return;
-		ids = loadIds();
-		hydrated = true;
-	}
+	let ids = $state<Set<string>>(typeof window !== 'undefined' ? loadIds() : new Set());
 
 	return {
 		has(lessonId: string): boolean {
-			hydrate();
 			return ids.has(lessonId);
 		},
 		add(lessonId: string): void {
-			hydrate();
 			ids = new Set([...ids, lessonId]);
 			try {
 				localStorage.setItem(STORAGE_KEY, JSON.stringify([...ids]));

@@ -23,6 +23,7 @@ export default defineConfig({
 				'src/**/*.test.ts',
 				'src/**/*.d.ts',
 				'src/lib/index.ts',
+				'src/lib/stores/DerivedTest.svelte',
 				'src/routes/+layout.svelte',
 				'src/routes/+error.svelte',
 				'src/routes/admin/+layout.svelte'
