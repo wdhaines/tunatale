@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('backend health check', async ({ request }) => {
-	const res = await request.get('http://localhost:8000/api/health');
+	const res = await request.get('http://localhost:8001/api/health');
 	expect(res.ok()).toBe(true);
 	const body = await res.json();
 	expect(body.status).toBe('ok');
@@ -25,14 +25,14 @@ test('practice page loads', async ({ page }) => {
 
 test('frontend proxies /api to backend', async ({ request }) => {
 	// Hits backend via Vite proxy — catches the "Not Found" gap
-	const res = await request.get('http://localhost:5173/api/health');
+	const res = await request.get('http://localhost:5174/api/health');
 	expect(res.ok()).toBe(true);
 	const body = await res.json();
 	expect(body.status).toBe('ok');
 });
 
 test('generate curriculum flow', async ({ page, request }) => {
-	const health = await request.get('http://localhost:8000/api/health');
+	const health = await request.get('http://localhost:8001/api/health');
 	test.skip(!health.ok(), 'Backend not available');
 
 	await page.goto('/');
@@ -47,7 +47,7 @@ test('generate curriculum flow', async ({ page, request }) => {
 });
 
 test('practice page shows stats from backend', async ({ page, request }) => {
-	const health = await request.get('http://localhost:8000/api/health');
+	const health = await request.get('http://localhost:8001/api/health');
 	test.skip(!health.ok(), 'Backend not available');
 
 	await page.goto('/practice');

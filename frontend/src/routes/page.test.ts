@@ -12,7 +12,8 @@ vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => mockGoto(...ar
 // Mock $lib/api (used by CurriculumForm inside the page)
 vi.mock('$lib/api', () => ({
 	api: {
-		generateCurriculum: vi.fn()
+		generateCurriculum: vi.fn(),
+		listCurricula: vi.fn()
 	}
 }));
 
@@ -24,9 +25,11 @@ vi.mock('$lib/storage', () => ({
 
 import { api } from '$lib/api';
 const mockGenerate = vi.mocked(api.generateCurriculum);
+const mockListCurricula = vi.mocked(api.listCurricula);
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mockListCurricula.mockResolvedValue([{ id: 'x', topic: 'test', created_at: '2026-01-01 00:00:00' }]);
 });
 
 describe('Home page', () => {
@@ -80,5 +83,57 @@ describe('Home page', () => {
 		await fireEvent.click(getByRole('button', { name: 'Generate' }));
 
 		expect(await findByText('Network error')).toBeTruthy();
+	});
+});
+
+describe('Recent Curricula section', () => {
+	it('shows loading state initially', () => {
+		mockListCurricula.mockReturnValue(new Promise(() => {})); // never resolves
+		const { getByText } = render(Page);
+		expect(getByText('Loading…')).toBeTruthy();
+	});
+
+	it('renders curricula as links after load', async () => {
+		mockListCurricula.mockResolvedValue([
+			{ id: 'slug-abc123', topic: 'Ordering Coffee', created_at: '2026-04-10 12:00:00' },
+			{ id: 'slug-def456', topic: 'At the Airport', created_at: '2026-04-07 08:30:00' }
+		]);
+		const { findByText, getByRole } = render(Page);
+		expect(await findByText('Ordering Coffee')).toBeTruthy();
+		expect((getByRole('link', { name: 'Ordering Coffee' }) as HTMLAnchorElement).getAttribute('href')).toBe('/c/slug-abc123');
+		expect((getByRole('link', { name: 'At the Airport' }) as HTMLAnchorElement).getAttribute('href')).toBe('/c/slug-def456');
+		// Dates should be displayed
+		expect(await findByText(/4\/10\/2026|Apr(il)? 10/i)).toBeTruthy();
+	});
+
+	it('shows empty state when no curricula', async () => {
+		mockListCurricula.mockResolvedValue([]);
+		const { findByText, queryByText } = render(Page);
+		expect(await findByText(/no curricula yet/i)).toBeTruthy();
+	});
+
+	it('shows error when listCurricula fails', async () => {
+		mockListCurricula.mockRejectedValue(new Error('fetch failed'));
+		const { findByText } = render(Page);
+		expect(await findByText('fetch failed')).toBeTruthy();
+	});
+
+	it('prepends new curriculum to list after generate', async () => {
+		mockListCurricula.mockResolvedValue([{ id: 'old-id', topic: 'Old Topic', created_at: '2026-04-01 00:00:00' }]);
+		mockGenerate.mockResolvedValue({
+			id: 'new-id',
+			topic: 'New Topic',
+			language_code: 'sl',
+			days: 7
+		});
+		const { getByPlaceholderText, getByRole, findByText } = render(Page);
+		await findByText('Old Topic'); // wait for initial load
+		await fireEvent.input(getByPlaceholderText(/ordering coffee/i), {
+			target: { value: 'New Topic' }
+		});
+		await fireEvent.click(getByRole('button', { name: 'Generate' }));
+		await waitFor(() => {
+			expect((getByRole('link', { name: 'New Topic' }) as HTMLAnchorElement).getAttribute('href')).toBe('/c/new-id');
+		});
 	});
 });

@@ -126,11 +126,18 @@ class TestCurriculumEndpoints:
     async def test_list_curricula_returns_200(self):
         from app.storage.store import ContentStore
 
-        app.state.content_store = ContentStore(":memory:")
+        store = ContentStore(":memory:")
+        store.save_curriculum("c1", Curriculum(id="c1", topic="coffee", language_code="sl", cefr_level="A2"))
+        app.state.content_store = store
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/curriculum")
         assert response.status_code == 200
-        assert isinstance(response.json(), list)
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) == 1
+        assert data[0]["id"] == "c1"
+        assert data[0]["topic"] == "coffee"
+        assert "created_at" in data[0]
 
     async def test_get_lesson_by_day_returns_full_lesson(self):
         from app.storage.store import ContentStore

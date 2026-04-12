@@ -68,13 +68,16 @@ describe('TunaTaleAPI', () => {
 		it('listCurricula calls GET /api/curriculum', async () => {
 			vi.stubGlobal(
 				'fetch',
-				vi.fn().mockResolvedValue(mockOk([{ id: '1', topic: 'coffee' }]))
+				vi.fn().mockResolvedValue(
+					mockOk([{ id: '1', topic: 'coffee', created_at: '2026-04-10 12:00:00' }])
+				)
 			);
 
 			const result = await api.listCurricula();
 
 			expect(fetch).toHaveBeenCalledWith(`${BASE}/api/curriculum`);
 			expect(result).toHaveLength(1);
+			expect(result[0].created_at).toBe('2026-04-10 12:00:00');
 		});
 
 		it('getCurriculum calls GET /api/curriculum/:id', async () => {

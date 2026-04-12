@@ -161,7 +161,7 @@ export class TunaTaleAPI {
 		});
 	}
 
-	async listCurricula(): Promise<Array<{ id: string; topic: string }>> {
+	async listCurricula(): Promise<Array<{ id: string; topic: string; created_at: string }>> {
 		return this.request('/api/curriculum');
 	}
 

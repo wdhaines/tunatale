@@ -132,11 +132,11 @@ class ContentStore:
 
     def list_curricula(self) -> list[dict]:
         with self._get_conn() as conn:
-            rows = conn.execute("SELECT id, data_json FROM curricula ORDER BY created_at DESC").fetchall()
+            rows = conn.execute("SELECT id, data_json, created_at FROM curricula ORDER BY created_at DESC").fetchall()
         result = []
         for row in rows:
             c = Curriculum.from_json(row["data_json"])
-            result.append({"id": row["id"], "topic": c.topic})
+            result.append({"id": row["id"], "topic": c.topic, "created_at": row["created_at"]})
         return result
 
     # ── Lessons ───────────────────────────────────────────────────────────

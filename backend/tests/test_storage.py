@@ -72,6 +72,7 @@ class TestCurriculumStorage:
         assert len(result) == 2
         topics = {r["topic"] for r in result}
         assert topics == {"ordering coffee", "shopping"}
+        assert all("created_at" in r for r in result)
 
     def test_list_curricula_empty(self, store):
         assert store.list_curricula() == []
