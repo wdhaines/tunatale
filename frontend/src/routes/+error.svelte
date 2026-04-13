@@ -23,4 +23,10 @@
 	a {
 		color: var(--color-primary);
 	}
+
+	@media (max-width: 640px) {
+		h1 {
+			font-size: 2.5rem;
+		}
+	}
 </style>

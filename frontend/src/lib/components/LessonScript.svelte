@@ -60,4 +60,16 @@
 	.phrase-text {
 		flex: 1;
 	}
+
+	@media (max-width: 640px) {
+		.phrase {
+			flex-direction: column;
+			gap: 0.15rem;
+		}
+		.role {
+			min-width: unset;
+			font-size: 0.8rem;
+			font-weight: 600;
+		}
+	}
 </style>

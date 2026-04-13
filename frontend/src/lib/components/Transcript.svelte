@@ -165,4 +165,19 @@
 		flex: 1;
 		line-height: 1.6;
 	}
+
+	@media (max-width: 640px) {
+		.dialogue-line {
+			flex-direction: column;
+			gap: 0.15rem;
+		}
+		.dialogue-role {
+			min-width: unset;
+			font-weight: 600;
+		}
+		.key-phrases-list li {
+			flex-direction: column;
+			gap: 0.1rem;
+		}
+	}
 </style>

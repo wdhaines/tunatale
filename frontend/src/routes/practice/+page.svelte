@@ -154,4 +154,18 @@
 		font-size: 0.85rem;
 		margin-top: 0.25rem;
 	}
+
+	@media (max-width: 640px) {
+		.l2-text {
+			font-size: 1.5rem;
+		}
+		.ratings {
+			gap: 0.5rem;
+		}
+		.ratings button {
+			flex: 1 1 calc(50% - 0.5rem);
+			min-height: 44px;
+			font-size: 1rem;
+		}
+	}
 </style>

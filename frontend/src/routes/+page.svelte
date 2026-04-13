@@ -109,4 +109,15 @@
 		color: var(--color-danger);
 		margin: 0;
 	}
+
+	@media (max-width: 640px) {
+		.recent-section li {
+			display: flex;
+			flex-direction: column;
+			gap: 0.15rem;
+		}
+		.meta {
+			margin-left: 0;
+		}
+	}
 </style>

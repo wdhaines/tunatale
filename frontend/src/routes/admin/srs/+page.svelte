@@ -380,4 +380,74 @@
 		border-radius: 4px;
 		font-size: 0.85rem;
 	}
+
+	@media (max-width: 640px) {
+		main {
+			padding: 1rem;
+		}
+		h1 {
+			font-size: 1.2rem;
+		}
+		.toolbar {
+			flex-direction: column;
+			gap: 0.5rem;
+		}
+		.controls {
+			margin-left: 0;
+			width: 100%;
+		}
+		input[type='search'] {
+			min-width: unset;
+			flex: 1;
+		}
+
+		/* Hide column header row — not meaningful in card layout */
+		.row.header {
+			display: none;
+		}
+
+		/* Convert each data row from grid to vertical card */
+		.row {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+			padding: 0.75rem;
+			position: relative;
+		}
+
+		/* Checkbox pinned to top-right corner of card */
+		.col-check {
+			position: absolute;
+			top: 0.75rem;
+			right: 0.75rem;
+			justify-self: unset;
+		}
+
+		/* Allow full text to show (no truncation in card layout) */
+		.col-text,
+		.col-trans {
+			white-space: normal;
+			overflow: visible;
+			font-size: 0.95rem;
+		}
+		.col-trans {
+			color: var(--color-muted);
+			font-style: italic;
+		}
+
+		/* Action buttons: share the row, touch-friendly height */
+		.col-actions {
+			padding-top: 0.25rem;
+		}
+		.col-actions button {
+			min-height: 44px;
+			flex: 1;
+		}
+
+		/* Pagination: bigger tap targets */
+		.pagination button {
+			min-height: 44px;
+			padding: 0.5rem 1rem;
+		}
+	}
 </style>

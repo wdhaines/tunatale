@@ -49,6 +49,12 @@
 		font-weight: 600;
 	}
 
+	@media (max-width: 640px) {
+		.global-nav {
+			padding: 0.6rem 0.75rem;
+		}
+	}
+
 	:global(:root) {
 		--color-primary: #2563eb;
 		--color-secondary: #4b5563;
