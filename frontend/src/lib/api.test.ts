@@ -335,6 +335,30 @@ describe('TunaTaleAPI', () => {
 		});
 	});
 
+	describe('curriculum progress', () => {
+		it('getCurriculumProgress calls GET /api/curriculum/:id/progress', async () => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockResolvedValue(mockOk([{ day: 1, lesson_id: 'l1' }, { day: 3, lesson_id: 'l3' }]))
+			);
+
+			const result = await api.getCurriculumProgress('abc');
+
+			expect(fetch).toHaveBeenCalledWith(`${BASE}/api/curriculum/abc/progress`);
+			expect(result).toHaveLength(2);
+			expect(result[0].day).toBe(1);
+			expect(result[0].lesson_id).toBe('l1');
+		});
+
+		it('getCurriculumProgress throws on 404', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail('Not Found')));
+
+			await expect(api.getCurriculumProgress('missing')).rejects.toThrow(
+				'GET /api/curriculum/missing/progress: Not Found'
+			);
+		});
+	});
+
 	describe('SRS admin', () => {
 		it('listSRSItems calls GET /api/srs/items with no params', async () => {
 			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ items: [], total: 0 })));

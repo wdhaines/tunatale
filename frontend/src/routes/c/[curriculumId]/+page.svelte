@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
 	import DayPicker from '$lib/components/DayPicker.svelte';
@@ -7,6 +8,14 @@
 	let { data }: { data: PageData } = $props();
 
 	let error = $state('');
+	let progress: Map<number, string> = $state(new Map());
+
+	onMount(async () => {
+		try {
+			const days = await api.getCurriculumProgress(data.curriculum.id);
+			progress = new Map(days.map(d => [d.day, d.lesson_id]));
+		} catch { /* non-critical */ }
+	});
 
 	async function handleSelectDay(day: number) {
 		error = '';
@@ -27,13 +36,10 @@
 </script>
 
 <main>
-	<h1><a href="/">TunaTale</a></h1>
-	<nav><a href="/practice">Practice (SRS)</a></nav>
-
 	<section class="curriculum-section">
 		<h2>{data.curriculum.topic}</h2>
 		<p class="meta">{data.curriculum.days} days · {data.curriculum.language_code.toUpperCase()}</p>
-		<DayPicker curriculum={data.curriculum} onSelectDay={handleSelectDay} />
+		<DayPicker curriculum={data.curriculum} onSelectDay={handleSelectDay} {progress} />
 		{#if error}
 			<p class="error">{error}</p>
 		{/if}
@@ -46,10 +52,6 @@
 		margin: 2rem auto;
 		font-family: system-ui, sans-serif;
 		padding: 0 1rem;
-	}
-	h1 a {
-		color: inherit;
-		text-decoration: none;
 	}
 	.curriculum-section {
 		margin-top: 2rem;

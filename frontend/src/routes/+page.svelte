@@ -30,11 +30,6 @@
 </script>
 
 <main>
-	<h1>TunaTale</h1>
-	<nav>
-		<a href="/practice">Practice (SRS)</a>
-		<a href="/admin/srs">SRS Admin</a>
-	</nav>
 	<p class="tagline">AI-powered language learning — Slovene</p>
 
 	<CurriculumForm onGenerate={handleGenerate} />
@@ -70,9 +65,6 @@
 	.tagline {
 		color: var(--color-muted);
 		margin-top: 0.25rem;
-	}
-	nav {
-		margin-top: 0.5rem;
 	}
 	.recent-section {
 		margin-top: 2rem;

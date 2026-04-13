@@ -6,6 +6,10 @@ import { render, fireEvent } from '@testing-library/svelte';
 import DayPicker from './DayPicker.svelte';
 import type { CurriculumSummary } from '$lib/api';
 
+vi.mock('$lib/stores/listened.svelte', () => ({
+	listenedStore: { has: vi.fn().mockReturnValue(false) }
+}));
+
 const curriculum: CurriculumSummary = { id: 'c1', topic: 'Coffee', language_code: 'sl', days: 3 };
 
 describe('DayPicker', () => {
@@ -57,5 +61,35 @@ describe('DayPicker', () => {
 		await fireEvent.click(buttons[0]);
 		expect(buttons[0].textContent).toContain('…');
 		resolveClick();
+	});
+
+	it('renders empty state (outlined) for days with no progress', () => {
+		const { getAllByRole } = render(DayPicker, {
+			props: { curriculum, onSelectDay: vi.fn(), progress: new Map() }
+		});
+		const buttons = getAllByRole('button') as HTMLButtonElement[];
+		expect(buttons[0].classList.contains('state-empty')).toBe(true);
+	});
+
+	it('renders generated state (solid blue) for days in progress map', () => {
+		const progress = new Map([[1, 'lesson-1']]);
+		const { getAllByRole } = render(DayPicker, {
+			props: { curriculum, onSelectDay: vi.fn(), progress }
+		});
+		const buttons = getAllByRole('button') as HTMLButtonElement[];
+		expect(buttons[0].classList.contains('state-generated')).toBe(true);
+	});
+
+	it('renders listened state (green + checkmark) for listened lessons', async () => {
+		const { listenedStore } = await import('$lib/stores/listened.svelte');
+		vi.mocked(listenedStore.has).mockReturnValue(true);
+
+		const progress = new Map([[1, 'lesson-1']]);
+		const { getAllByRole } = render(DayPicker, {
+			props: { curriculum, onSelectDay: vi.fn(), progress }
+		});
+		const buttons = getAllByRole('button') as HTMLButtonElement[];
+		expect(buttons[0].classList.contains('state-listened')).toBe(true);
+		expect(buttons[0].textContent).toContain('✓');
 	});
 });

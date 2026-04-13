@@ -71,6 +71,11 @@ describe('CurriculumForm', () => {
 		expect(await findByText('plain string error')).toBeTruthy();
 	});
 
+	it('shows CEFR level descriptions below the select', () => {
+		const { getByText } = render(CurriculumForm, { props: { onGenerate: vi.fn() } });
+		expect(getByText(/Complete beginner/)).toBeTruthy();
+	});
+
 	it('restores saved prefs (topic, cefrLevel, numDays) from localStorage on mount', async () => {
 		mockLoadPrefs.mockReturnValue({ topic: 'camping', cefrLevel: 'B1', numDays: 5 });
 

@@ -33,10 +33,9 @@ beforeEach(() => {
 });
 
 describe('Home page', () => {
-	it('renders the heading and practice link', () => {
+	it('renders the Generate Curriculum heading', () => {
 		const { getByText } = render(Page);
-		expect(getByText('TunaTale')).toBeTruthy();
-		expect(getByText('Practice (SRS)')).toBeTruthy();
+		expect(getByText('Generate Curriculum')).toBeTruthy();
 	});
 
 	it('renders the Generate button disabled when topic is empty', () => {

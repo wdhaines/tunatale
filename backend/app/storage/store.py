@@ -170,6 +170,22 @@ class ContentStore:
             return None
         return row["id"], Lesson.from_json(row["data_json"])
 
+    def get_lesson_days(self, curriculum_id: str) -> list[dict]:
+        """Return [{day, lesson_id}, ...] for each day with a lesson (latest per day)."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT l.day, l.id AS lesson_id"
+                " FROM lessons l"
+                " INNER JOIN ("
+                "   SELECT day, MAX(rowid) AS max_rowid"
+                "   FROM lessons WHERE curriculum_id = ?"
+                "   GROUP BY day"
+                " ) latest ON l.rowid = latest.max_rowid"
+                " ORDER BY l.day ASC",
+                (curriculum_id,),
+            ).fetchall()
+        return [{"day": row["day"], "lesson_id": row["lesson_id"]} for row in rows]
+
     # ── Audio files ───────────────────────────────────────────────────────
 
     def save_audio_file(

@@ -57,13 +57,14 @@
 	}
 	.section-dl-btn {
 		padding: 0.4rem 0.9rem;
-		background: #4b5563;
+		background: var(--color-secondary);
 		color: white;
 		border-radius: 4px;
 		text-decoration: none;
 		font-size: 0.85rem;
 	}
 	.section-dl-btn:hover {
-		background: #374151;
+		background: var(--color-secondary);
+		filter: brightness(0.85);
 	}
 </style>

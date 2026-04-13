@@ -67,6 +67,14 @@ async def get_curriculum(curriculum_id: str, request: Request):
     }
 
 
+@router.get("/{curriculum_id}/progress")
+async def get_curriculum_progress(curriculum_id: str, request: Request):
+    store = request.app.state.content_store
+    if store.get_curriculum(curriculum_id) is None:
+        raise HTTPException(status_code=404, detail="Curriculum not found")
+    return store.get_lesson_days(curriculum_id)
+
+
 @router.get("/{curriculum_id}/days/{day}/lesson", status_code=200)
 async def get_lesson_by_day(curriculum_id: str, day: int, request: Request):
     store = request.app.state.content_store

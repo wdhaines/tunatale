@@ -196,6 +196,39 @@ class TestCurriculumEndpoints:
             response = await client.get("/api/curriculum/no-such-curriculum/days/1/lesson")
         assert response.status_code == 404
 
+    async def test_get_curriculum_progress_returns_lesson_days(self):
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        curriculum = Curriculum(
+            id="c1",
+            topic="coffee",
+            language_code="sl",
+            cefr_level="A2",
+        )
+        store.save_curriculum("c1", curriculum)
+        lesson = Lesson(title="Day 1", language_code="sl", sections=[], key_phrases=[])
+        store.save_lesson("l1", "c1", 1, lesson)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/curriculum/c1/progress")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) == 1
+        assert data[0]["day"] == 1
+        assert data[0]["lesson_id"] == "l1"
+
+    async def test_get_curriculum_progress_404_when_missing(self):
+        from app.storage.store import ContentStore
+
+        app.state.content_store = ContentStore(":memory:")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/curriculum/nonexistent/progress")
+        assert response.status_code == 404
+
 
 class TestStoryEndpoints:
     """Tests for story/lesson generation endpoints."""

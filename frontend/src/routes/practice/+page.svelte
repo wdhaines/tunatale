@@ -46,7 +46,7 @@
 </script>
 
 <main>
-	<h1><a href="/">TunaTale</a> — Practice</h1>
+	<h1>Practice</h1>
 	{#if stats}
 		<p class="stats">{stats.total} cards total · {stats.due_today} due today</p>
 	{/if}
@@ -69,6 +69,7 @@
 				<p class="l2-text">{cards[index].text}</p>
 				{#if revealed}
 					<p class="translation">{cards[index].translation}</p>
+					<p class="rating-hint">How well did you know this?</p>
 					<div class="ratings">
 						<button class="btn-again" onclick={() => rate('translation_request')}>Again</button>
 						<button class="btn-hard" onclick={() => rate('slowdown')}>Hard</button>
@@ -89,10 +90,6 @@
 		margin: 2rem auto;
 		font-family: system-ui, sans-serif;
 		padding: 0 1rem;
-	}
-	h1 a {
-		color: inherit;
-		text-decoration: none;
 	}
 	section {
 		margin-top: 2rem;
@@ -128,6 +125,11 @@
 		border: none;
 		border-radius: 4px;
 		cursor: pointer;
+	}
+	.rating-hint {
+		color: var(--color-muted);
+		font-size: 0.9rem;
+		margin-bottom: 0.5rem;
 	}
 	.ratings {
 		display: flex;

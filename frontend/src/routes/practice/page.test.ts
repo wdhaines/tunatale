@@ -106,11 +106,10 @@ describe('practice/+page.svelte', () => {
 		expect(await findByText('Failed to load')).toBeTruthy();
 	});
 
-	it('renders a link back to the home page', async () => {
+	it('renders the Practice heading', async () => {
 		mockGetSRSDue.mockResolvedValue({ due: [] });
 		const { findByRole } = render(PracticePage);
-		const link = (await findByRole('link', { name: /TunaTale/ })) as HTMLAnchorElement;
-		expect(link.href).toContain('/');
+		expect(await findByRole('heading', { name: 'Practice' })).toBeTruthy();
 	});
 
 	it('shows new cards before due cards', async () => {

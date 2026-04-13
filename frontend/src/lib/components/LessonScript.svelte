@@ -6,18 +6,24 @@
 	}
 
 	let { lesson }: Props = $props();
+
+	const SECTION_TITLES: Record<string, string> = {
+		key_phrases: 'Key Phrases',
+		natural_speed: 'Natural Speed',
+		slow_speed: 'Slow Speed',
+		translated: 'Translated'
+	};
 </script>
 
 <section class="script-section">
 	<h2>Lesson Script</h2>
 	{#each lesson.sections as section}
 		<div class="script-block">
-			<h3>{section.type}</h3>
+			<h3>{SECTION_TITLES[section.type] ?? section.type}</h3>
 			{#each section.phrases as phrase}
 				<div class="phrase">
 					<span class="role">{phrase.role}</span>
 					<span class="phrase-text">{phrase.text}</span>
-					<span class="lang">{phrase.language_code}</span>
 				</div>
 			{/each}
 		</div>
@@ -53,9 +59,5 @@
 	}
 	.phrase-text {
 		flex: 1;
-	}
-	.lang {
-		color: var(--color-muted);
-		font-size: 0.8rem;
 	}
 </style>

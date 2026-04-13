@@ -66,7 +66,7 @@
 
 	{#if transcript.dialogue_lines.length > 0}
 		<div class="transcript-section">
-			<h3>Dialogue <span class="transcript-hint">(click a word: orange=hard, purple=easy)</span></h3>
+			<h3>Dialogue <span class="transcript-hint">(click words to rate: orange = needs practice, purple = already know)</span></h3>
 			{#each transcript.dialogue_lines as line}
 				<div class="dialogue-line">
 					<span class="dialogue-role">{line.role}</span>

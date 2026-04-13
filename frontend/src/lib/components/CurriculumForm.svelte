@@ -57,6 +57,7 @@
 			<option>B1</option>
 			<option>B2</option>
 		</select>
+		<small class="cefr-hint">A1: Complete beginner · A2: Basic phrases · B1: Intermediate · B2: Complex topics</small>
 	</label>
 	<label>
 		Days
@@ -89,6 +90,12 @@
 		padding: 0.4rem;
 		border: 1px solid var(--color-border);
 		border-radius: 4px;
+	}
+	.cefr-hint {
+		display: block;
+		color: var(--color-muted);
+		font-size: 0.8rem;
+		margin-top: 0.25rem;
 	}
 	button {
 		margin-top: 0.75rem;

@@ -9,8 +9,8 @@ test('backend health check', async ({ request }) => {
 
 test('home page loads', async ({ page }) => {
 	await page.goto('/');
-	await expect(page.getByRole('heading', { name: 'TunaTale' })).toBeVisible();
-	await expect(page.getByRole('link', { name: 'Practice (SRS)' })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'TunaTale' })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Practice' })).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Generate' })).toBeDisabled();
 });
 

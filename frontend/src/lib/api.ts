@@ -59,6 +59,8 @@ export interface LessonDetail {
 	key_phrases: KeyPhrase[];
 }
 
+export interface DayProgress { day: number; lesson_id: string; }
+
 export type WordRating = 'hard' | 'easy' | 'again';
 
 export interface WordToken {
@@ -167,6 +169,10 @@ export class TunaTaleAPI {
 
 	async getCurriculum(id: string): Promise<CurriculumSummary> {
 		return this.request(`/api/curriculum/${id}`);
+	}
+
+	async getCurriculumProgress(id: string): Promise<DayProgress[]> {
+		return this.request(`/api/curriculum/${id}/progress`);
 	}
 
 	async getLessonByDay(curriculumId: string, day: number): Promise<LessonDetail> {

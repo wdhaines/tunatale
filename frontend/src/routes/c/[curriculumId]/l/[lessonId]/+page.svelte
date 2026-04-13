@@ -10,6 +10,13 @@
 
 	let { data }: { data: PageData } = $props();
 
+	const SECTION_TITLES: Record<string, string> = {
+		key_phrases: 'Key Phrases',
+		natural_speed: 'Natural Speed',
+		slow_speed: 'Slow Speed',
+		translated: 'Translated'
+	};
+
 	// untrack: intentionally snapshot load data as mutable local state
 	let audio: LessonAudio | null = $state(untrack(() => data.audio));
 	let transcript: TranscriptData | null = $state(untrack(() => data.transcript));
@@ -65,7 +72,7 @@
 		<h2>{data.lesson.title}</h2>
 		<ul>
 			{#each data.lesson.sections as section}
-				<li>{section.type} — {section.phrases.length} phrase{section.phrases.length === 1 ? '' : 's'}</li>
+				<li>{SECTION_TITLES[section.type] ?? section.type} — {section.phrases.length} phrase{section.phrases.length === 1 ? '' : 's'}</li>
 			{/each}
 		</ul>
 

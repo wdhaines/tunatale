@@ -194,6 +194,32 @@ class TestSectionAudioStorage:
             assert new_row["section_index"] == 0
 
 
+class TestLessonDays:
+    """Tests for get_lesson_days bulk query."""
+
+    def test_returns_all_days_with_lessons(self, store):
+        lesson = _make_lesson()
+        store.save_curriculum("c1", _make_curriculum("c1"))
+        store.save_lesson("l1", "c1", 1, lesson)
+        store.save_lesson("l3", "c1", 3, lesson)
+        result = store.get_lesson_days("c1")
+        days = [r["day"] for r in result]
+        assert days == [1, 3]
+        assert result[0]["lesson_id"] == "l1"
+        assert result[1]["lesson_id"] == "l3"
+
+    def test_returns_latest_lesson_per_day(self, store):
+        lesson = _make_lesson()
+        store.save_lesson("l1-old", "c1", 1, lesson)
+        store.save_lesson("l1-new", "c1", 1, lesson)
+        result = store.get_lesson_days("c1")
+        assert len(result) == 1
+        assert result[0]["lesson_id"] == "l1-new"
+
+    def test_empty_for_unknown_curriculum(self, store):
+        assert store.get_lesson_days("unknown") == []
+
+
 class TestPersistence:
     """Tests for file-backed store persistence and multi-database coexistence."""
 

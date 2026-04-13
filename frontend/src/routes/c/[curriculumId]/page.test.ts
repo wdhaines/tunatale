@@ -12,8 +12,13 @@ vi.mock('$lib/api', () => ({
 	api: {
 		getLessonByDay: vi.fn(),
 		generateStory: vi.fn(),
-		getLesson: vi.fn()
+		getLesson: vi.fn(),
+		getCurriculumProgress: vi.fn().mockResolvedValue([])
 	}
+}));
+
+vi.mock('$lib/stores/listened.svelte', () => ({
+	listenedStore: { has: vi.fn().mockReturnValue(false) }
 }));
 
 import { api } from '$lib/api';
@@ -97,6 +102,25 @@ describe('/c/[curriculumId] page', () => {
 		await fireEvent.click(buttons[0]);
 		expect((buttons[1] as HTMLButtonElement).disabled).toBe(true);
 		resolveSelect(undefined);
+	});
+
+	it('loads and maps getCurriculumProgress into progress state', async () => {
+		const { api: mockApi } = await import('$lib/api');
+		vi.mocked(mockApi.getCurriculumProgress).mockResolvedValueOnce([{ day: 1, lesson_id: 'l1' }]);
+
+		render(Page, { props: { data: { curriculum } } });
+		await waitFor(() => {
+			expect(mockApi.getCurriculumProgress).toHaveBeenCalledWith('cid-1');
+		});
+	});
+
+	it('silently ignores getCurriculumProgress failure', async () => {
+		const { api: mockApi } = await import('$lib/api');
+		vi.mocked(mockApi.getCurriculumProgress).mockRejectedValueOnce(new Error('Network error'));
+
+		const { getByText } = render(Page, { props: { data: { curriculum } } });
+		// Should not throw; page renders normally
+		await waitFor(() => expect(getByText('Coffee')).toBeTruthy());
 	});
 });
 
