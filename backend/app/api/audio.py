@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import re
 import uuid
+import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from app.generation.section_builder import SECTION_TITLES
@@ -21,6 +23,18 @@ def _sanitize_filename(name: str) -> str:
     name = re.sub(r'[/\\:*?"<>|]', "", name)
     name = re.sub(r"\s+", "_", name.strip())
     return name or "audio"
+
+
+def _build_section_filename(topic: str, day: int, section_index: int, section_type: str) -> str:
+    """Build a context-rich section WAV filename: {Topic}_Day{DD}_{NN}_{Title}.wav."""
+    safe_topic = _sanitize_filename(topic)
+    try:
+        st = SectionType(section_type)
+        title = SECTION_TITLES.get(st, section_type)
+    except ValueError:
+        title = section_type
+    safe_title = _sanitize_filename(title)
+    return f"{safe_topic}_Day{day:02d}_{section_index + 1:02d}_{safe_title}.wav"
 
 
 class RenderAudioRequest(BaseModel):
@@ -111,6 +125,56 @@ async def get_lesson_audio(lesson_id: str, request: Request):
     }
 
 
+@router.get("/lesson/{lesson_id}/zip", status_code=200)
+async def download_lesson_zip(lesson_id: str, request: Request):
+    """Return a ZIP of all section WAVs for a lesson with context-rich filenames."""
+    store = request.app.state.content_store
+    rows = store.list_audio_files_for_lesson(lesson_id)
+    full_row = next((r for r in rows if r["section_index"] is None), None)
+    section_rows = [r for r in rows if r["section_index"] is not None]
+
+    if not section_rows:
+        raise HTTPException(status_code=404, detail="No section audio files found for this lesson")
+
+    # Validate all files exist before building the ZIP
+    all_rows = ([full_row] if full_row else []) + section_rows
+    for r in all_rows:
+        if not Path(r["file_path"]).exists():
+            raise HTTPException(status_code=404, detail=f"Audio file missing: {r['file_path']}")
+
+    # Resolve topic and day for naming
+    topic = "audio"
+    day = 1
+    lesson_row = store.get_lesson_row(lesson_id)
+    if lesson_row is not None:
+        day = lesson_row["day"]
+        curriculum = store.get_curriculum(lesson_row["curriculum_id"])
+        if curriculum is not None:
+            topic = curriculum.topic
+        else:
+            lesson = store.get_lesson(lesson_id)
+            topic = lesson.title  # lesson_row exists → lesson exists
+
+    safe_topic = _sanitize_filename(topic)
+
+    # Build ZIP in memory: full lesson file first (sorts as _00_), then sections
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_STORED) as zf:
+        if full_row:
+            full_filename = f"{safe_topic}_Day{day:02d}_00_Full.wav"
+            zf.write(full_row["file_path"], arcname=full_filename)
+        for r in sorted(section_rows, key=lambda x: x["section_index"]):
+            filename = _build_section_filename(topic, day, r["section_index"], r["section_type"] or "")
+            zf.write(r["file_path"], arcname=filename)
+
+    zip_name = f"{_sanitize_filename(topic)}_Day{day:02d}.zip"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+    )
+
+
 @router.get("/{audio_id}", status_code=200)
 async def get_audio(audio_id: str, request: Request):
     store = request.app.state.content_store
@@ -122,17 +186,24 @@ async def get_audio(audio_id: str, request: Request):
     if not path.exists():
         raise HTTPException(status_code=404, detail="Audio file missing")
 
-    # Build a friendly download filename
-    lesson = store.get_lesson(row["lesson_id"])
-    lesson_title = lesson.title if lesson else "audio"
-    safe_title = _sanitize_filename(lesson_title)
+    # Build a friendly download filename with curriculum context
+    lesson_id = row["lesson_id"]
+    topic = "audio"
+    day = 1
+    lesson_row = store.get_lesson_row(lesson_id)
+    if lesson_row is not None:
+        day = lesson_row["day"]
+        curriculum = store.get_curriculum(lesson_row["curriculum_id"])
+        if curriculum is not None:
+            topic = curriculum.topic
+        else:
+            lesson = store.get_lesson(lesson_id)
+            topic = lesson.title  # lesson_row exists → lesson exists
 
     if row["section_index"] is not None:
-        section_type = row["section_type"] or "section"
-        idx = row["section_index"]
-        filename = f"{safe_title}_{idx:02d}_{section_type}.wav"
+        filename = _build_section_filename(topic, day, row["section_index"], row["section_type"] or "")
     else:
-        filename = f"{safe_title}.wav"
+        filename = f"{_sanitize_filename(topic)}_Day{day:02d}_full.wav"
 
     return FileResponse(
         str(path),

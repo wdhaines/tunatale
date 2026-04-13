@@ -210,6 +210,11 @@ describe('TunaTaleAPI', () => {
 			const url = api.audioUrl('audio-1');
 			expect(url).toBe(`${BASE}/api/audio/audio-1`);
 		});
+
+		it('audioZipUrl returns correct ZIP URL', () => {
+			const url = api.audioZipUrl('lesson-1');
+			expect(url).toBe(`${BASE}/api/audio/lesson/lesson-1/zip`);
+		});
 	});
 
 	describe('SRS', () => {

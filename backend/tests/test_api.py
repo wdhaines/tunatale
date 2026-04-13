@@ -1104,8 +1104,10 @@ class TestAudioEndpoints:
 
         mock_lesson = _make_mock_lesson_with_sections()
         store = ContentStore(":memory:")
+        curriculum = Curriculum(id="c-dl", topic="ordering coffee", language_code="sl", cefr_level="A2")
+        store.save_curriculum("c-dl", curriculum)
         lesson_id = "lesson-download-test"
-        store.save_lesson(lesson_id, "some-curriculum-id", 1, mock_lesson)
+        store.save_lesson(lesson_id, "c-dl", 1, mock_lesson)
 
         app.state.renderer = mock_renderer
         app.state.audio_dir = tmp_path
@@ -1123,11 +1125,10 @@ class TestAudioEndpoints:
         cd = response.headers.get("content-disposition", "")
         assert "attachment" in cd
         assert ".wav" in cd
-        # Lesson title should appear in sanitized form
-        assert "Day_1" in cd or "Day" in cd
+        assert "ordering_coffee" in cd.lower()
 
     async def test_get_audio_section_content_disposition(self, tmp_path):
-        """GET /api/audio/{section_audio_id} includes section type in filename."""
+        """GET /api/audio/{section_audio_id} includes topic, day, and section type in filename."""
         from app.storage.store import ContentStore
 
         mock_renderer = AsyncMock()
@@ -1135,8 +1136,10 @@ class TestAudioEndpoints:
 
         mock_lesson = _make_mock_lesson_with_sections()
         store = ContentStore(":memory:")
+        curriculum = Curriculum(id="c-sec-dl", topic="ordering coffee", language_code="sl", cefr_level="A2")
+        store.save_curriculum("c-sec-dl", curriculum)
         lesson_id = "lesson-sec-dl-test"
-        store.save_lesson(lesson_id, "some-curriculum-id", 1, mock_lesson)
+        store.save_lesson(lesson_id, "c-sec-dl", 1, mock_lesson)
 
         app.state.renderer = mock_renderer
         app.state.audio_dir = tmp_path
@@ -1150,7 +1153,9 @@ class TestAudioEndpoints:
         assert response.status_code == 200
         cd = response.headers.get("content-disposition", "")
         assert "attachment" in cd
-        assert "key_phrases" in cd
+        assert "Key_Phrases" in cd
+        assert "ordering_coffee" in cd.lower()
+        assert "Day01" in cd
 
     async def test_audio_get_returns_404_when_missing(self):
         from app.storage.store import ContentStore
@@ -1208,3 +1213,245 @@ class TestAudioEndpoints:
 
         assert response.status_code == 404
         assert "missing" in response.json()["detail"]
+
+    # ── ZIP download endpoint tests ───────────────────────────────────────
+
+    async def test_zip_download_returns_zip_with_sections(self, tmp_path):
+        """GET /api/audio/lesson/{id}/zip returns a ZIP containing all section WAVs."""
+        import io
+        import zipfile
+
+        from app.storage.store import ContentStore
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=_fake_render)
+
+        mock_lesson = _make_mock_lesson_with_sections()
+        store = ContentStore(":memory:")
+        curriculum = Curriculum(id="c1", topic="ordering coffee", language_code="sl", cefr_level="A2")
+        store.save_curriculum("c1", curriculum)
+        store.save_lesson("lesson-zip-1", "c1", 1, mock_lesson)
+
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/audio/render", json={"lesson_id": "lesson-zip-1"})
+            response = await client.get("/api/audio/lesson/lesson-zip-1/zip")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+        z = zipfile.ZipFile(io.BytesIO(response.content))
+        names = z.namelist()
+        # full lesson + one per section
+        assert len(names) == len(mock_lesson.sections) + 1
+
+    async def test_zip_download_filenames_include_topic_and_day(self, tmp_path):
+        """ZIP filenames include sanitized curriculum topic and zero-padded day."""
+        import io
+        import zipfile
+
+        from app.storage.store import ContentStore
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=_fake_render)
+
+        mock_lesson = _make_mock_lesson_with_sections()
+        store = ContentStore(":memory:")
+        curriculum = Curriculum(id="c2", topic="ordering coffee", language_code="sl", cefr_level="A2")
+        store.save_curriculum("c2", curriculum)
+        store.save_lesson("lesson-zip-2", "c2", 3, mock_lesson)
+
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/audio/render", json={"lesson_id": "lesson-zip-2"})
+            response = await client.get("/api/audio/lesson/lesson-zip-2/zip")
+
+        assert response.status_code == 200
+        z = zipfile.ZipFile(io.BytesIO(response.content))
+        names = z.namelist()
+        for name in names:
+            assert "ordering_coffee" in name.lower()
+            assert "Day03" in name
+        # full file sorts first (00), then sections (01, 02…)
+        assert names[0].endswith("_00_Full.wav")
+        assert names[1].endswith("_01_Key_Phrases.wav")
+        assert names[2].endswith("_02_Natural_Speed.wav")
+
+    async def test_zip_download_content_disposition_header(self, tmp_path):
+        """ZIP Content-Disposition includes topic and day in the filename."""
+        from app.storage.store import ContentStore
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=_fake_render)
+
+        mock_lesson = _make_mock_lesson_with_sections()
+        store = ContentStore(":memory:")
+        curriculum = Curriculum(id="c3", topic="ordering coffee", language_code="sl", cefr_level="A2")
+        store.save_curriculum("c3", curriculum)
+        store.save_lesson("lesson-zip-3", "c3", 2, mock_lesson)
+
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/audio/render", json={"lesson_id": "lesson-zip-3"})
+            response = await client.get("/api/audio/lesson/lesson-zip-3/zip")
+
+        assert response.status_code == 200
+        cd = response.headers.get("content-disposition", "")
+        assert "attachment" in cd
+        assert ".zip" in cd
+        assert "ordering_coffee" in cd.lower()
+        assert "Day02" in cd
+
+    async def test_zip_download_returns_404_when_no_audio(self):
+        """GET /api/audio/lesson/{id}/zip returns 404 when no audio exists."""
+        from app.storage.store import ContentStore
+
+        app.state.content_store = ContentStore(":memory:")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/lesson/no-audio/zip")
+        assert response.status_code == 404
+
+    async def test_zip_download_returns_404_when_no_sections(self):
+        """GET /api/audio/lesson/{id}/zip returns 404 when only a full-lesson row exists."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        store.save_audio_file("full-only", "lesson-no-sec", "/tmp/full.wav")
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/lesson/lesson-no-sec/zip")
+        assert response.status_code == 404
+        assert "section" in response.json()["detail"].lower()
+
+    async def test_zip_download_falls_back_when_curriculum_missing(self, tmp_path):
+        """ZIP endpoint uses lesson title as fallback when curriculum is not found."""
+        import io
+        import zipfile
+
+        from app.storage.store import ContentStore
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=_fake_render)
+
+        mock_lesson = _make_mock_lesson_with_sections()
+        store = ContentStore(":memory:")
+        # Save lesson with a curriculum_id that has no corresponding curriculum row
+        store.save_lesson("lesson-zip-fallback", "missing-c", 5, mock_lesson)
+
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/audio/render", json={"lesson_id": "lesson-zip-fallback"})
+            response = await client.get("/api/audio/lesson/lesson-zip-fallback/zip")
+
+        assert response.status_code == 200
+        z = zipfile.ZipFile(io.BytesIO(response.content))
+        names = z.namelist()
+        # full lesson + sections
+        assert len(names) == len(mock_lesson.sections) + 1
+
+    async def test_zip_download_returns_404_when_section_file_missing_on_disk(self, tmp_path):
+        """ZIP endpoint returns 404 when a section file is absent from disk."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        store.save_audio_file("full-x", "lesson-missing-file", str(tmp_path / "full.wav"))
+        store.save_audio_file(
+            "sec-x", "lesson-missing-file", str(tmp_path / "missing.wav"), section_index=0, section_type="key_phrases"
+        )
+        # Write the full file but NOT the section file
+        (tmp_path / "full.wav").write_bytes(b"audio")
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/lesson/lesson-missing-file/zip")
+        assert response.status_code == 404
+        assert "missing" in response.json()["detail"].lower()
+
+    async def test_zip_download_falls_back_to_defaults_when_lesson_row_missing(self, tmp_path):
+        """ZIP uses fallback topic/day when no lesson row exists in the DB."""
+        import io
+        import zipfile
+
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        # Save only audio rows — no lesson row in lessons table
+        sec_path = tmp_path / "sec.wav"
+        sec_path.write_bytes(b"audio")
+        store.save_audio_file(
+            "sec-no-lesson", "lesson-ghost", str(sec_path), section_index=0, section_type="key_phrases"
+        )
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/lesson/lesson-ghost/zip")
+
+        assert response.status_code == 200
+        z = zipfile.ZipFile(io.BytesIO(response.content))
+        assert len(z.namelist()) == 1
+
+    async def test_build_section_filename_falls_back_for_unknown_section_type(self, tmp_path):
+        """_build_section_filename uses the raw string for unrecognized section types."""
+        from app.api.audio import _build_section_filename
+
+        name = _build_section_filename("topic", 1, 0, "custom_unknown")
+        assert "custom_unknown" in name
+        assert name.endswith(".wav")
+
+    async def test_get_audio_falls_back_when_no_lesson_row(self, tmp_path):
+        """GET /api/audio/{id} uses fallback name when lesson row is absent."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        wav = tmp_path / "audio.wav"
+        wav.write_bytes(b"data")
+        # Save audio row but no lesson row
+        store.save_audio_file("audio-no-lesson", "ghost-lesson", str(wav))
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/audio-no-lesson")
+
+        assert response.status_code == 200
+        cd = response.headers.get("content-disposition", "")
+        assert "audio" in cd
+        assert ".wav" in cd
+
+    async def test_get_audio_uses_lesson_title_when_curriculum_missing(self, tmp_path):
+        """GET /api/audio/{id} falls back to lesson title when curriculum row is absent."""
+        from app.storage.store import ContentStore
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=_fake_render)
+
+        mock_lesson = _make_mock_lesson_with_sections()
+        store = ContentStore(":memory:")
+        # Save lesson with no matching curriculum
+        store.save_lesson("lesson-no-c", "nonexistent-curriculum", 2, mock_lesson)
+
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            render_resp = await client.post("/api/audio/render", json={"lesson_id": "lesson-no-c"})
+            sec_id = render_resp.json()["sections"][0]["audio_id"]
+            response = await client.get(f"/api/audio/{sec_id}")
+
+        assert response.status_code == 200
+        cd = response.headers.get("content-disposition", "")
+        assert ".wav" in cd
+        # Lesson title is "Day 1: Ordering Coffee" → sanitized
+        assert "Day_1" in cd or "Ordering_Coffee" in cd

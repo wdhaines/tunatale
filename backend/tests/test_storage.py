@@ -95,6 +95,21 @@ class TestLessonStorage:
     def test_get_lesson_returns_none_when_missing(self, store):
         assert store.get_lesson("nonexistent") is None
 
+    def test_get_lesson_row_returns_full_row(self, store):
+        """get_lesson_row returns dict with id, curriculum_id, day, and data_json."""
+        lesson = _make_lesson()
+        store.save_lesson("l1", "c1", 3, lesson)
+        row = store.get_lesson_row("l1")
+        assert row is not None
+        assert row["id"] == "l1"
+        assert row["curriculum_id"] == "c1"
+        assert row["day"] == 3
+        assert "data_json" in row
+
+    def test_get_lesson_row_returns_none_when_missing(self, store):
+        """get_lesson_row returns None for unknown lesson_id."""
+        assert store.get_lesson_row("nonexistent") is None
+
 
 class TestAudioFileStorage:
     """Tests for audio file path save/get operations."""

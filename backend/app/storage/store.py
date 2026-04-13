@@ -157,6 +157,17 @@ class ContentStore:
             return None
         return Lesson.from_json(row["data_json"])
 
+    def get_lesson_row(self, lesson_id: str) -> dict | None:
+        """Return the raw lesson row as a dict (id, curriculum_id, day, data_json), or None."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT id, curriculum_id, day, data_json FROM lessons WHERE id = ?",
+                (lesson_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
     def get_latest_lesson_by_day(self, curriculum_id: str, day: int) -> tuple[str, Lesson] | None:
         """Return the most recent (lesson_id, Lesson) for a given curriculum day, or None."""
         with self._get_conn() as conn:

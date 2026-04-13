@@ -203,6 +203,10 @@ export class TunaTaleAPI {
 		return `${this.baseUrl}/api/audio/${audioId}`;
 	}
 
+	audioZipUrl(lessonId: string): string {
+		return `${this.baseUrl}/api/audio/lesson/${lessonId}/zip`;
+	}
+
 	async getLessonAudio(lessonId: string): Promise<LessonAudio> {
 		return this.request(`/api/audio/lesson/${lessonId}`);
 	}

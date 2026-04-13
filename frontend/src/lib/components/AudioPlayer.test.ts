@@ -8,7 +8,8 @@ import type { LessonAudio } from '$lib/api';
 
 vi.mock('$lib/api', () => ({
 	api: {
-		audioUrl: vi.fn((id: string) => `/api/audio/${id}`)
+		audioUrl: vi.fn((id: string) => `/api/audio/${id}`),
+		audioZipUrl: vi.fn((lessonId: string) => `/api/audio/lesson/${lessonId}/zip`)
 	}
 }));
 
@@ -35,27 +36,38 @@ describe('AudioPlayer', () => {
 		expect(audioEl!.src).toContain('/api/audio/a1');
 	});
 
-	it('does not render Download Sections when sections is empty', () => {
+	it('does not render download controls when sections is empty', () => {
 		const { queryByText } = render(AudioPlayer, { props: { audio: audioWithNoSections } });
-		expect(queryByText('Download Sections')).toBeFalsy();
+		expect(queryByText('Download All Sections')).toBeFalsy();
+		expect(queryByText('Individual sections')).toBeFalsy();
 	});
 
-	it('renders Download Sections when sections are present', () => {
+	it('renders Download All Sections link when sections are present', () => {
 		const { getByText } = render(AudioPlayer, { props: { audio: audioWithSections } });
-		expect(getByText('Download Sections')).toBeTruthy();
+		expect(getByText('Download All Sections')).toBeTruthy();
 	});
 
-	it('renders one download link per section', () => {
-		const { getByText, getAllByRole } = render(AudioPlayer, { props: { audio: audioWithSections } });
+	it('Download All Sections link points to the ZIP endpoint', () => {
+		const { getByText } = render(AudioPlayer, { props: { audio: audioWithSections } });
+		const link = getByText('Download All Sections').closest('a') as HTMLAnchorElement;
+		expect(link).toBeTruthy();
+		expect(link.href).toContain('/api/audio/lesson/l1/zip');
+	});
+
+	it('renders individual section links inside a details element', () => {
+		const { container, getByText } = render(AudioPlayer, { props: { audio: audioWithSections } });
 		expect(getByText('Key Phrases')).toBeTruthy();
 		expect(getByText('Natural Speed')).toBeTruthy();
-		const links = getAllByRole('link');
+		const details = container.querySelector('details');
+		expect(details).toBeTruthy();
+		const links = details!.querySelectorAll('a');
 		expect(links.length).toBe(2);
 	});
 
 	it('section download links use the correct audioUrl', () => {
-		const { getAllByRole } = render(AudioPlayer, { props: { audio: audioWithSections } });
-		const links = getAllByRole('link') as HTMLAnchorElement[];
+		const { container } = render(AudioPlayer, { props: { audio: audioWithSections } });
+		const details = container.querySelector('details');
+		const links = Array.from(details!.querySelectorAll('a')) as HTMLAnchorElement[];
 		expect(links[0].href).toContain('/api/audio/s1');
 		expect(links[1].href).toContain('/api/audio/s2');
 	});

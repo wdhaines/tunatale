@@ -18,16 +18,24 @@
 
 	{#if audio.sections.length > 0}
 		<div class="download-sections">
-			<h3>Download Sections</h3>
-			<div class="section-links">
-				{#each audio.sections as sec}
-					<a
-						class="section-dl-btn"
-						href={api.audioUrl(sec.audio_id)}
-						download
-					>{sec.title}</a>
-				{/each}
-			</div>
+			<a
+				class="download-all-btn"
+				href={api.audioZipUrl(audio.lesson_id)}
+				download
+			>Download All Sections</a>
+
+			<details>
+				<summary>Individual sections</summary>
+				<div class="section-links">
+					{#each audio.sections as sec}
+						<a
+							class="section-dl-btn"
+							href={api.audioUrl(sec.audio_id)}
+							download
+						>{sec.title}</a>
+					{/each}
+				</div>
+			</details>
 		</div>
 	{/if}
 </section>
@@ -45,15 +53,32 @@
 	.download-sections {
 		margin-top: 1rem;
 	}
-	.download-sections h3 {
+	.download-all-btn {
+		display: inline-block;
+		padding: 0.5rem 1.25rem;
+		background: var(--color-primary);
+		color: white;
+		border-radius: 4px;
+		text-decoration: none;
 		font-size: 0.9rem;
+		font-weight: 600;
+	}
+	.download-all-btn:hover {
+		filter: brightness(0.9);
+	}
+	details {
+		margin-top: 0.75rem;
+	}
+	summary {
+		cursor: pointer;
+		font-size: 0.85rem;
 		color: var(--color-muted);
-		margin-bottom: 0.5rem;
 	}
 	.section-links {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.5rem;
+		margin-top: 0.5rem;
 	}
 	.section-dl-btn {
 		padding: 0.4rem 0.9rem;
@@ -64,7 +89,16 @@
 		font-size: 0.85rem;
 	}
 	.section-dl-btn:hover {
-		background: var(--color-secondary);
 		filter: brightness(0.85);
+	}
+
+	@media (max-width: 640px) {
+		.download-all-btn {
+			display: block;
+			text-align: center;
+			min-height: 44px;
+			line-height: 44px;
+			padding: 0 1.25rem;
+		}
 	}
 </style>
