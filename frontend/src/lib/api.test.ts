@@ -365,6 +365,18 @@ describe('TunaTaleAPI', () => {
 	});
 
 	describe('SRS admin', () => {
+		it('createSRSItem calls POST /api/srs/items', async () => {
+			const created = { id: 1, text: 'banka', translation: 'bank', state: 'new', due_date: '2026-04-14', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, language_code: 'sl' };
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk(created)));
+
+			const result = await api.createSRSItem({ text: 'banka', language_code: 'sl', word_count: 1, translation: 'bank' });
+
+			const call = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+			expect(call[0]).toBe(`${BASE}/api/srs/items`);
+			expect(JSON.parse(call[1].body)).toEqual({ text: 'banka', language_code: 'sl', word_count: 1, translation: 'bank' });
+			expect(result.text).toBe('banka');
+		});
+
 		it('listSRSItems calls GET /api/srs/items with no params', async () => {
 			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ items: [], total: 0 })));
 
@@ -460,6 +472,22 @@ describe('TunaTaleAPI', () => {
 					body: JSON.stringify({ suspended: true })
 				})
 			);
+		});
+
+		it('setSRSItemState calls POST /api/srs/items/:id/state with state', async () => {
+			const item = { id: 3, text: 'zdravo', translation: '', state: 'known' as const, due_date: '2026-04-14', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, language_code: 'sl' };
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk(item)));
+
+			const result = await api.setSRSItemState(3, 'known');
+
+			expect(fetch).toHaveBeenCalledWith(
+				`${BASE}/api/srs/items/3/state`,
+				expect.objectContaining({
+					method: 'POST',
+					body: JSON.stringify({ state: 'known' })
+				})
+			);
+			expect(result.state).toBe('known');
 		});
 	});
 });

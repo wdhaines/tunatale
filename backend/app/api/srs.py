@@ -157,7 +157,18 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
         "dialogue_lines": [
             {
                 "role": line.role,
-                "words": [{"surface": w.surface, "lemma": w.lemma, "srs_state": w.srs_state} for w in line.words],
+                "words": [
+                    {
+                        "surface": w.surface,
+                        "lemma": w.lemma,
+                        "srs_state": w.srs_state,
+                        "srs_item_id": w.srs_item_id,
+                        "translation": w.translation,
+                        "collocation_span_id": w.collocation_span_id,
+                        "collocation_start": w.collocation_start,
+                    }
+                    for w in line.words
+                ],
             }
             for line in transcript.dialogue_lines
         ],
@@ -174,6 +185,13 @@ async def get_stats(request: Request):
 # ── Admin endpoints ────────────────────────────────────────────────────────────
 
 
+class CreateItemRequest(BaseModel):
+    text: str
+    language_code: str
+    word_count: int
+    translation: str = ""
+
+
 class UpdateItemRequest(BaseModel):
     text: str
     translation: str
@@ -185,6 +203,45 @@ class BulkDeleteRequest(BaseModel):
 
 class SuspendRequest(BaseModel):
     suspended: bool
+
+
+class SetStateRequest(BaseModel):
+    state: str  # "new" | "learning" | "known" | "ignored"
+
+
+_VALID_USER_STATES = {"new", "learning", "known", "ignored"}
+_STATE_MAP = {
+    "new": SRSState.NEW,
+    "learning": SRSState.LEARNING,
+    "known": SRSState.KNOWN,
+    "ignored": SRSState.SUSPENDED,
+}
+
+
+@router.post("/items", status_code=201)
+async def create_item(body: CreateItemRequest, request: Request):
+    db = request.app.state.srs_db
+    if body.word_count < 1:
+        from fastapi import HTTPException as _HTTPException
+
+        raise _HTTPException(status_code=422, detail="word_count must be >= 1")
+    unit = SyntacticUnit(
+        text=body.text,
+        translation=body.translation,
+        word_count=body.word_count,
+        difficulty=1,
+        source="user",
+        lemma=body.text.lower() if body.word_count == 1 else None,
+    )
+    existing = db.get_collocation(body.text)
+    if existing is not None:
+        raise HTTPException(status_code=409, detail=f"Item already exists: {body.text!r}")
+    db.add_collocation(unit, language_code=body.language_code)
+    rows, _ = db.list_collocations(search=body.text, limit=1)
+    if not rows:
+        raise HTTPException(status_code=500, detail="Failed to retrieve created item")
+    row_id, item, lang = rows[0]
+    return _item_to_dict(row_id, item, lang)
 
 
 @router.get("/items", status_code=200)
@@ -248,6 +305,20 @@ async def reset_item(item_id: int, request: Request):
     if db.get_collocation_by_id(item_id) is None:
         raise HTTPException(status_code=404, detail="Item not found")
     db.reset_collocation(item_id)
+    row_id, item, lang = db.get_collocation_by_id(item_id)
+    return _item_to_dict(row_id, item, lang)
+
+
+@router.post("/items/{item_id}/state", status_code=200)
+async def set_item_state(item_id: int, body: SetStateRequest, request: Request):
+    if body.state not in _VALID_USER_STATES:
+        raise HTTPException(
+            status_code=422, detail=f"Invalid state: {body.state!r}. Must be one of {sorted(_VALID_USER_STATES)}"
+        )
+    db = request.app.state.srs_db
+    if db.get_collocation_by_id(item_id) is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    db.set_state_by_id(item_id, _STATE_MAP[body.state])
     row_id, item, lang = db.get_collocation_by_id(item_id)
     return _item_to_dict(row_id, item, lang)
 

@@ -386,5 +386,8 @@ class TestFileDatabaseWriteOperations:
         db.set_suspended(row_id, True)
         db.set_suspended(row_id, False)
 
+        # set_state_by_id (312->exit False branch)
+        db.set_state_by_id(row_id, SRSState.KNOWN)
+
         # Verify persistence works
         assert db.get_collocation("prosim") is not None

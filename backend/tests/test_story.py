@@ -22,25 +22,31 @@ def _make_curriculum_day() -> CurriculumDay:
     )
 
 
-def _mock_story_response() -> str:
-    return json.dumps(
-        {
-            "title": "Ordering Coffee",
-            "key_phrases": [
-                {"phrase": "dober dan", "translation": "good day"},
-                {"phrase": "prosim kavo", "translation": "a coffee please"},
-            ],
-            "scenes": [
-                {
-                    "label": "At the Riverside Café",
-                    "lines": [
-                        {"speaker": "female-1", "text": "Dober dan!", "translation": "Good day!"},
-                        {"speaker": "male-1", "text": "Prosim kavo.", "translation": "A coffee please."},
-                    ],
-                }
-            ],
-        }
-    )
+def _mock_story_response(include_glosses: bool = False) -> str:
+    data = {
+        "title": "Ordering Coffee",
+        "key_phrases": [
+            {"phrase": "dober dan", "translation": "good day"},
+            {"phrase": "prosim kavo", "translation": "a coffee please"},
+        ],
+        "scenes": [
+            {
+                "label": "At the Riverside Café",
+                "lines": [
+                    {"speaker": "female-1", "text": "Dober dan!", "translation": "Good day!"},
+                    {"speaker": "male-1", "text": "Prosim kavo.", "translation": "A coffee please."},
+                ],
+            }
+        ],
+    }
+    if include_glosses:
+        data["dialogue_glosses"] = [
+            {"lemma": "dober", "translation": "good"},
+            {"lemma": "dan", "translation": "day"},
+            {"lemma": "prosim", "translation": "please"},
+            {"lemma": "kavo", "translation": "coffee"},
+        ]
+    return json.dumps(data)
 
 
 @pytest.fixture
@@ -133,6 +139,27 @@ class TestStoryGeneration:
         assert phrases["dober dan"] == "good day"
         assert phrases["prosim kavo"] == "a coffee please"
 
+    async def test_dialogue_glosses_stored_in_generation_metadata(self, language):
+        client = MagicMock()
+        client.complete = AsyncMock(return_value=_mock_story_response(include_glosses=True))
+        gen = StoryGenerator(llm_client=client)
+        day = _make_curriculum_day()
+        lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        glosses = lesson.generation_metadata.get("token_glosses", {})
+        assert isinstance(glosses, dict)
+        assert glosses.get("dober") == "good"
+        assert glosses.get("dan") == "day"
+
+    async def test_dialogue_glosses_absent_gives_empty_dict(self, language):
+        # Response without dialogue_glosses should still produce valid lesson
+        client = MagicMock()
+        client.complete = AsyncMock(return_value=_mock_story_response(include_glosses=False))
+        gen = StoryGenerator(llm_client=client)
+        day = _make_curriculum_day()
+        lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        glosses = lesson.generation_metadata.get("token_glosses", {})
+        assert glosses == {}
+
     async def test_parse_response_raises_when_key_phrases_and_scenes_both_empty(self, language):
         import json
 
@@ -142,3 +169,25 @@ class TestStoryGeneration:
         raw = json.dumps({"title": "Empty", "key_phrases": [], "scenes": []})
         with pytest.raises(StoryGenerationError, match="missing"):
             generator._parse_response(raw, language=language)
+
+    async def test_generate_passes_cefr_level_in_user_prompt(self, generator, language, mock_llm):
+        day = _make_curriculum_day()
+        await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, cefr_level="B1")
+        call_kwargs = mock_llm.complete.call_args
+        user_prompt = call_kwargs.args[0] if call_kwargs.args else call_kwargs.kwargs.get("prompt", "")
+        assert "B1" in user_prompt
+
+    async def test_generate_default_cefr_level_is_a2(self, generator, language, mock_llm):
+        day = _make_curriculum_day()
+        await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        call_kwargs = mock_llm.complete.call_args
+        user_prompt = call_kwargs.args[0] if call_kwargs.args else call_kwargs.kwargs.get("prompt", "")
+        assert "A2" in user_prompt
+
+    async def test_generate_system_prompt_contains_slovene_style_notes(self, generator, language, mock_llm):
+        day = _make_curriculum_day()
+        await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        call_kwargs = mock_llm.complete.call_args
+        system_prompt = call_kwargs.kwargs.get("system_prompt", "")
+        # Style notes for Slovene must include the izvinite/oprostite guardrail
+        assert "oprostite" in system_prompt.lower()

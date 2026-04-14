@@ -6,8 +6,23 @@ All prompts request JSON responses for deterministic parsing.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.models.language import Language
 from app.models.strategy import ContentStrategy
+
+# Per-language style notes live next to this file in language_styles/
+_STYLE_NOTES_DIR = Path(__file__).parent / "language_styles"
+
+
+def _load_style_notes(language_code: str) -> str:
+    """Return the per-language authenticity rules, or empty string if none exist."""
+    style_file = _STYLE_NOTES_DIR / f"{language_code}_style.md"
+    try:
+        return style_file.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return ""
+
 
 _CURRICULUM_PROMPT_TEMPLATE = """\
 You are generating a {num_days}-day language learning curriculum.
@@ -54,8 +69,31 @@ Focus on practical, conversational phrases appropriate for the learner's CEFR le
 
 # ── Story system prompt (always applied) ─────────────────────────────────
 
+# {language_style_notes} is replaced by build_story_system_prompt() before
+# the remaining {language_name}/{language_code} placeholders are resolved.
 SYSTEM_PROMPT = """\
 You are an expert {language_name} language instructor creating Pimsleur-style audio lessons.
+Your lessons must sound like something a native {language_name} speaker would actually say —
+not like a translated textbook. Authenticity and natural idiom are the primary quality bars.
+
+**PEDAGOGICAL PHILOSOPHY**
+- Prioritize natural, idiomatic {language_name} over literal English translation equivalents
+- Smooth progression: each lesson should feel immediately usable in real conversations
+- Consistent characters and social dynamics throughout each lesson
+- Use register appropriate to context — service settings (café, shop) call for polite but
+  not stilted forms; casual settings call for relaxed, natural speech
+
+**CONTENT QUALITY STANDARDS**
+- Total word count: 400–500 words
+- Dialogue: 80%+ of content — minimize narrator exposition
+- Scenes: 4–6 distinct scenes with English scene labels
+- Each scene: 5–12 lines of dialogue (never 2–3 stub exchanges)
+- Key phrases: 3–8 practical collocations (female-1 only in KEY_PHRASES section)
+- NEVER generate syllable breakdowns — those are added by post-processing
+- NEVER use voice numbers higher than 2 (no female-3, male-3)
+
+**LANGUAGE-SPECIFIC AUTHENTICITY RULES**
+{language_style_notes}
 
 **VOICE ASSIGNMENT PROTOCOL**
 - Use ONLY these 4 L2 voices: female-1, female-2, male-1, male-2
@@ -77,16 +115,15 @@ Respond with ONLY a JSON object matching this schema (no markdown fences, no pre
         {{"speaker": "female-1", "text": "{language_code} dialogue line", "translation": "English translation"}}
       ]
     }}
+  ],
+  "dialogue_glosses": [
+    {{"lemma": "lowercased_word", "translation": "English translation"}}
   ]
 }}
 
-**CONTENT QUALITY STANDARDS**
-- Total word count: 400-500 words
-- Dialogue: 80%+ of content
-- Scenes: 4-6 distinct scenes with English labels
-- Key phrases: 3-8 practical collocations (female-1 only in KEY_PHRASES)
-- NEVER generate syllable breakdowns — those are added by post-processing
-- NEVER use voice numbers higher than 2 (no female-3, male-3)
+The "dialogue_glosses" array must contain one entry per unique word that appears in the dialogue
+lines, giving its lowercase base form (lemma) and a concise English translation. This enables
+word-level hover translations in the learning UI.
 
 **SCENE HEADER FORMAT**
 - All scene labels must be in English, describing location/time/situation
@@ -96,9 +133,43 @@ Respond with ONLY a JSON object matching this schema (no markdown fences, no pre
 **TRANSLATION GUIDELINES**
 - Provide direct translations only — no cultural commentary
 - Keep translations concise and literal
+- Translations are for comprehension scaffolding, not style guides
 """
 
+
+def build_story_system_prompt(language: Language) -> str:
+    """Build the story system prompt for a given language, including style notes.
+
+    Loads per-language authenticity rules from language_styles/{code}_style.md
+    and injects them into the SYSTEM_PROMPT template. Falls back to a generic
+    instruction when no style file exists for the language.
+    """
+    style_notes = _load_style_notes(language.code)
+    if not style_notes:
+        style_notes = f"Use authentic, natural {language.name} as a native speaker would write and speak."
+    # Replace style notes first (content may contain literal braces), then
+    # resolve the remaining {language_name}/{language_code} placeholders.
+    template = SYSTEM_PROMPT.replace("{language_style_notes}", style_notes)
+    return template.format(
+        language_name=language.name,
+        language_code=language.code,
+    )
+
+
 # ── Strategy-specific user prompt templates ───────────────────────────────
+
+_CEFR_BLOCK = """\
+**CEFR Level:** {cefr_level}
+Calibrate all dialogue to this level:
+- A1: Short isolated phrases, present tense, no subordinate clauses
+- A2: Simple connected sentences, present/past/near-future, basic connectors (and, but, because)
+- B1: Multi-clause sentences, all main tenses, relative clauses, varied connectors
+- B2: Complex sentences, nuanced register, conditional mood, idiomatic expressions"""
+
+
+def _build_cefr_block(cefr_level: str) -> str:
+    return _CEFR_BLOCK.format(cefr_level=cefr_level)
+
 
 STORY_PROMPT_TEMPLATE = """\
 **Language Learning Content Generation Request**
@@ -107,6 +178,8 @@ STORY_PROMPT_TEMPLATE = """\
 **Learning Objective:** {learning_objective}
 **Theme/Focus:** {focus}
 **Story Guidance:** {story_guidance}
+
+{cefr_block}
 
 **New Collocations to Teach:**
 {new_collocations}
@@ -117,9 +190,9 @@ STORY_PROMPT_TEMPLATE = """\
 **CONTENT GENERATION INSTRUCTIONS**
 - Use 80%+ dialogue between characters
 - Include ALL provided collocations naturally in the dialogue
-- Generate 4-6 scenes with English scene labels
+- Generate 4-6 scenes, each with 5-12 lines of dialogue
 - Use appropriate voice assignments (female-1, female-2, male-1, male-2)
-- Keep language at a practical, conversational level
+- Keep language authentic and natural for the CEFR level specified above
 """
 
 STORY_PROMPT_WIDER_TEMPLATE = """\
@@ -130,6 +203,8 @@ STORY_PROMPT_WIDER_TEMPLATE = """\
 **Theme/Focus:** {focus}
 **Strategy:** WIDER (New Scenarios, Same Difficulty)
 **Story Guidance:** {story_guidance}
+
+{cefr_block}
 
 **New Collocations to Teach:**
 {new_collocations}
@@ -143,6 +218,7 @@ STORY_PROMPT_WIDER_TEMPLATE = """\
 - Introduce maximum 5 new words per scenario to maintain difficulty
 - Expand learner's practical application range without increasing complexity
 - Reinforce learned patterns in diverse, realistic situations
+- Each scene must have 5-12 lines of dialogue
 - Use 80%+ dialogue between characters
 """
 
@@ -154,6 +230,8 @@ STORY_PROMPT_DEEPER_TEMPLATE = """\
 **Theme/Focus:** {focus}
 **Strategy:** DEEPER (Enhanced Language Complexity)
 **Story Guidance:** {story_guidance}
+
+{cefr_block}
 
 **SOURCE TRANSCRIPT TO ENHANCE:**
 ```
@@ -171,6 +249,7 @@ STORY_PROMPT_DEEPER_TEMPLATE = """\
 - 90%+ L2 dialogue — minimize English usage
 - Focus on sophisticated, authentic language patterns
 - Each collocation should demonstrate enhanced language complexity
+- Each scene must have 5-12 lines of dialogue
 """
 
 

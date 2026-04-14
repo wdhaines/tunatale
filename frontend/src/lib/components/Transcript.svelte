@@ -1,28 +1,49 @@
 <script lang="ts">
 	import WordSpan from '$lib/WordSpan.svelte';
-	import type { TranscriptData, WordRating } from '$lib/api';
+	import type { TranscriptData, WordToken } from '$lib/api';
 
 	interface Props {
 		transcript: TranscriptData;
-		pendingRatings: Record<string, WordRating | null>;
 		isListened: boolean;
 		listenLoading: boolean;
 		listenResult: { registered: number } | null;
 		error: string;
-		onRatingChange: (lemma: string, rating: WordRating | null) => void;
+		onStateChange?: (lemma: string, srs_item_id: number | null) => void;
 		onMarkListened: () => void;
 	}
 
 	let {
 		transcript,
-		pendingRatings,
 		isListened,
 		listenLoading,
 		listenResult,
 		error,
-		onRatingChange,
+		onStateChange,
 		onMarkListened
 	}: Props = $props();
+
+	type WordSegment = { type: 'word'; word: WordToken } | { type: 'collocation'; words: WordToken[]; span_id: number };
+
+	function groupIntoSegments(words: WordToken[]): WordSegment[] {
+		const segments: WordSegment[] = [];
+		let i = 0;
+		while (i < words.length) {
+			const w = words[i];
+			if (w.collocation_span_id !== null) {
+				const id = w.collocation_span_id;
+				const group: WordToken[] = [];
+				while (i < words.length && words[i].collocation_span_id === id) {
+					group.push(words[i]);
+					i++;
+				}
+				segments.push({ type: 'collocation', words: group, span_id: id });
+			} else {
+				segments.push({ type: 'word', word: w });
+				i++;
+			}
+		}
+		return segments;
+	}
 </script>
 
 <div class="transcript-wrapper">
@@ -66,17 +87,27 @@
 
 	{#if transcript.dialogue_lines.length > 0}
 		<div class="transcript-section">
-			<h3>Dialogue <span class="transcript-hint">(click words to rate: orange = needs practice, purple = already know)</span></h3>
+			<h3>Dialogue <span class="transcript-hint">(click words to change SRS state)</span></h3>
 			{#each transcript.dialogue_lines as line}
 				<div class="dialogue-line">
 					<span class="dialogue-role">{line.role}</span>
 					<span class="dialogue-words">
-						{#each line.words as word}
-							<WordSpan
-								{word}
-								rating={pendingRatings[word.lemma] ?? null}
-								onRatingChange={onRatingChange}
-							/>{' '}
+						{#each groupIntoSegments(line.words) as segment}
+							{#if segment.type === 'collocation'}
+								<span class="collocation-span">
+									{#each segment.words as cw}
+										<WordSpan
+											word={cw}
+											{onStateChange}
+										/>{' '}
+									{/each}
+								</span>
+							{:else}
+								<WordSpan
+									word={segment.word}
+									{onStateChange}
+								/>{' '}
+							{/if}
 						{/each}
 					</span>
 				</div>
@@ -164,6 +195,11 @@
 	.dialogue-words {
 		flex: 1;
 		line-height: 1.6;
+	}
+	.collocation-span {
+		display: inline;
+		border-bottom: 2px solid var(--color-primary, #2563eb);
+		padding-bottom: 1px;
 	}
 
 	@media (max-width: 640px) {

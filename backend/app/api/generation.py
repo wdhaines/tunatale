@@ -45,6 +45,7 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
         curriculum_day=curriculum_day,
         language=language,
         strategy=strategy,
+        cefr_level=curriculum.cefr_level,
     )
 
     lesson_id = f"{_slug(lesson.title)}-{uuid.uuid4().hex[:8]}"

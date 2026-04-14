@@ -197,11 +197,32 @@ class SRSDatabase:
             return None
         return self._row_to_item(row)
 
+    def get_collocation_by_lemma_with_id(self, lemma: str) -> tuple[int, SRSItem] | None:
+        """Retrieve an SRSItem and its database id by lemma."""
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT * FROM collocations WHERE lemma = ? LIMIT 1", (lemma,)).fetchone()
+        if row is None:
+            return None
+        return (row["id"], self._row_to_item(row))
+
+    def get_collocations_for_language(
+        self,
+        language_code: str,
+        min_word_count: int = 2,
+    ) -> list[tuple[int, str]]:
+        """Return (id, text) pairs for collocations with word_count >= min_word_count."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, text FROM collocations WHERE language_code = ? AND word_count >= ?",
+                (language_code, min_word_count),
+            ).fetchall()
+        return [(row["id"], row["text"]) for row in rows]
+
     def get_due_collocations(self, as_of: date) -> list[SRSItem]:
         """Return all collocations due for review on or before as_of."""
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM collocations WHERE due_date <= ? AND state NOT IN ('new', 'suspended')",
+                "SELECT * FROM collocations WHERE due_date <= ? AND state NOT IN ('new', 'suspended', 'known')",
                 (as_of.isoformat(),),
             ).fetchall()
         return [self._row_to_item(r) for r in rows]
@@ -277,6 +298,16 @@ class SRSDatabase:
                 WHERE id = ?
                 """,
                 (date.today().isoformat(), row_id),
+            )
+            if self._in_memory:
+                self._conn.commit()
+
+    def set_state_by_id(self, row_id: int, state: SRSState) -> None:
+        """Set the state of a collocation directly, bypassing FSRS scheduling."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocations SET state = ?, updated_at = datetime('now') WHERE id = ?",
+                (state.value, row_id),
             )
             if self._in_memory:
                 self._conn.commit()
@@ -362,7 +393,7 @@ class SRSDatabase:
     def count_due_collocations(self, as_of: date) -> int:
         with self._get_conn() as conn:
             return conn.execute(
-                "SELECT COUNT(*) FROM collocations WHERE due_date <= ? AND state NOT IN ('new', 'suspended')",
+                "SELECT COUNT(*) FROM collocations WHERE due_date <= ? AND state NOT IN ('new', 'suspended', 'known')",
                 (as_of.isoformat(),),
             ).fetchone()[0]
 

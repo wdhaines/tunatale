@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { api } from '$lib/api';
-	import type { LessonAudio, TranscriptData, WordRating } from '$lib/api';
+	import type { LessonAudio, TranscriptData } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import LessonScript from '$lib/components/LessonScript.svelte';
 	import AudioPlayer from '$lib/components/AudioPlayer.svelte';
@@ -17,10 +17,20 @@
 		translated: 'Translated'
 	};
 
+	const STATE_CYCLE: Record<string, string> = {
+		unknown: 'learning',
+		new: 'learning',
+		learning: 'known',
+		review: 'known',
+		relearning: 'known',
+		known: 'ignored',
+		ignored: 'new',
+		suspended: 'new'
+	};
+
 	// untrack: intentionally snapshot load data as mutable local state
 	let audio: LessonAudio | null = $state(untrack(() => data.audio));
 	let transcript: TranscriptData | null = $state(untrack(() => data.transcript));
-	let pendingRatings: Record<string, WordRating | null> = $state({});
 	let listenLoading = $state(false);
 	let listenResult: { registered: number } | null = $state(null);
 	let audioLoading = $state(false);
@@ -34,7 +44,6 @@
 		try {
 			audio = await api.renderAudio(data.lesson.id);
 			transcript = await api.getLessonTranscript(data.lesson.id);
-			pendingRatings = {};
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -46,10 +55,7 @@
 		listenLoading = true;
 		error = '';
 		try {
-			const activeRatings = Object.fromEntries(
-				Object.entries(pendingRatings).filter(([, v]) => v !== null)
-			) as Record<string, WordRating>;
-			const result = await api.markAsListened(data.lesson.id, activeRatings);
+			const result = await api.markAsListened(data.lesson.id, {});
 			listenResult = result;
 			listenedStore.add(data.lesson.id);
 			transcript = await api.getLessonTranscript(data.lesson.id);
@@ -60,8 +66,36 @@
 		}
 	}
 
-	function handleRatingChange(lemma: string, rating: WordRating | null) {
-		pendingRatings = { ...pendingRatings, [lemma]: rating };
+	async function handleStateChange(lemma: string, srs_item_id: number | null) {
+		error = '';
+		try {
+			let itemId = srs_item_id;
+			let currentState = 'new';
+
+			for (const line of transcript?.dialogue_lines ?? []) {
+				const word = line.words.find((w) => w.lemma === lemma);
+				if (word) {
+					currentState = word.srs_state;
+					break;
+				}
+			}
+
+			const nextState = STATE_CYCLE[currentState] ?? 'learning';
+
+			if (itemId === null) {
+				const created = await api.createSRSItem({
+					text: lemma,
+					language_code: data.lesson.language_code,
+					word_count: 1
+				});
+				itemId = created.id;
+			}
+
+			await api.setSRSItemState(itemId, nextState);
+			transcript = await api.getLessonTranscript(data.lesson.id);
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		}
 	}
 </script>
 
@@ -95,12 +129,11 @@
 			{#if transcript}
 				<Transcript
 					{transcript}
-					{pendingRatings}
 					{isListened}
 					{listenLoading}
 					{listenResult}
 					{error}
-					onRatingChange={handleRatingChange}
+					onStateChange={handleStateChange}
 					onMarkListened={handleMarkListened}
 				/>
 			{:else}

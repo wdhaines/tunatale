@@ -61,6 +61,7 @@ class Lesson:
     sections: list[Section] = field(default_factory=list)
     narrator_voice: str = "en-US-GuyNeural"
     key_phrases: list[KeyPhraseInfo] = field(default_factory=list)
+    generation_metadata: dict = field(default_factory=dict)
 
     def to_json(self) -> str:
         data = {
@@ -86,6 +87,7 @@ class Lesson:
                 }
                 for s in self.sections
             ],
+            "generation_metadata": self.generation_metadata,
         }
         return json.dumps(data, ensure_ascii=False)
 
@@ -106,4 +108,5 @@ class Lesson:
             sections=sections,
             narrator_voice=data.get("narrator_voice", "en-US-GuyNeural"),
             key_phrases=key_phrases,
+            generation_metadata=data.get("generation_metadata", {}),
         )

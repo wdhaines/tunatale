@@ -9,6 +9,8 @@ vi.mock('$lib/api', () => ({
 		renderAudio: vi.fn(),
 		getLessonTranscript: vi.fn(),
 		markAsListened: vi.fn(),
+		createSRSItem: vi.fn(),
+		setSRSItemState: vi.fn(),
 		audioUrl: vi.fn((id: string) => `/api/audio/${id}`)
 	}
 }));
@@ -27,6 +29,8 @@ import Page from './+page.svelte';
 const mockRenderAudio = vi.mocked(api.renderAudio);
 const mockGetTranscript = vi.mocked(api.getLessonTranscript);
 const mockMarkAsListened = vi.mocked(api.markAsListened);
+const mockCreateSRSItem = vi.mocked(api.createSRSItem);
+const mockSetSRSItemState = vi.mocked(api.setSRSItemState);
 
 const curriculum = { id: 'cid-1', topic: 'Coffee', language_code: 'sl', days: 3 };
 const lesson = {
@@ -178,65 +182,158 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 		expect(getByText(/2 phrases/)).toBeTruthy();
 	});
 
-	it('handleRatingChange sets pending rating when word is clicked and filters nulls before markAsListened', async () => {
-		const transcriptWithWords = {
-			lesson_id: 'l1',
-			key_phrases: [{ phrase: 'kavo prosim', translation: 'a coffee please' }],
-			dialogue_lines: [
-				{
-					role: 'Petra',
-					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new' as const }]
-				}
-			]
-		};
-		mockMarkAsListened.mockResolvedValue({ status: 'ok', registered: 1 });
-		mockGetTranscript.mockResolvedValue(transcriptWithWords);
-
-		const { findByText, findByRole } = render(Page, {
-			props: { data: { curriculum, lesson, audio, transcript: transcriptWithWords } }
-		});
-
-		// Click the word span to cycle its rating: null → hard
-		const wordBtn = await findByRole('button', { name: 'zdravo' });
-		await fireEvent.click(wordBtn);
-
-		// Click Mark as Listened — word rating 'hard' should be sent, no nulls
-		await fireEvent.click(await findByText('Mark as Listened'));
-
-		await waitFor(() => {
-			expect(mockMarkAsListened).toHaveBeenCalledWith('l1', { zdravo: 'hard' });
-		});
-	});
-
-	it('null ratings are filtered out before sending to markAsListened', async () => {
-		const transcriptWithWords = {
+	it('clicking a word with no SRS card creates the card and sets state to learning', async () => {
+		const transcriptWithWord = {
 			lesson_id: 'l1',
 			key_phrases: [],
 			dialogue_lines: [
 				{
 					role: 'Petra',
-					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new' as const }]
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false }]
 				}
 			]
 		};
-		mockMarkAsListened.mockResolvedValue({ status: 'ok', registered: 1 });
-		mockGetTranscript.mockResolvedValue(transcriptWithWords);
+		const createdItem = { id: 99, text: 'zdravo', translation: '', state: 'new' as const, due_date: '2026-04-14', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, language_code: 'sl' };
+		mockCreateSRSItem.mockResolvedValue(createdItem);
+		mockSetSRSItemState.mockResolvedValue({ ...createdItem, state: 'learning' as const });
+		mockGetTranscript.mockResolvedValue(transcriptWithWord);
 
-		const { findByText, findByRole } = render(Page, {
-			props: { data: { curriculum, lesson, audio, transcript: transcriptWithWords } }
+		const { findByRole } = render(Page, {
+			props: { data: { curriculum, lesson, audio, transcript: transcriptWithWord } }
 		});
 
-		// Click the word 3 times: null → hard → easy → null
 		const wordBtn = await findByRole('button', { name: 'zdravo' });
-		await fireEvent.click(wordBtn); // → hard
-		await fireEvent.click(wordBtn); // → easy
-		await fireEvent.click(wordBtn); // → null
-
-		// Click Mark as Listened — null rating should be filtered out, sending empty {}
-		await fireEvent.click(await findByText('Mark as Listened'));
+		await fireEvent.click(wordBtn);
 
 		await waitFor(() => {
-			expect(mockMarkAsListened).toHaveBeenCalledWith('l1', {});
+			expect(mockCreateSRSItem).toHaveBeenCalledWith({ text: 'zdravo', language_code: 'sl', word_count: 1 });
+			expect(mockSetSRSItemState).toHaveBeenCalledWith(99, 'learning');
+		});
+	});
+
+	it('clicking a word with an existing SRS card cycles to the next state', async () => {
+		const transcriptWithWord = {
+			lesson_id: 'l1',
+			key_phrases: [],
+			dialogue_lines: [
+				{
+					role: 'Petra',
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false }]
+				}
+			]
+		};
+		mockSetSRSItemState.mockResolvedValue({ id: 42, text: 'zdravo', translation: '', state: 'known' as const, due_date: '2026-04-14', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, language_code: 'sl' });
+		mockGetTranscript.mockResolvedValue(transcriptWithWord);
+
+		const { findByRole } = render(Page, {
+			props: { data: { curriculum, lesson, audio, transcript: transcriptWithWord } }
+		});
+
+		const wordBtn = await findByRole('button', { name: 'zdravo' });
+		await fireEvent.click(wordBtn);
+
+		await waitFor(() => {
+			expect(mockSetSRSItemState).toHaveBeenCalledWith(42, 'known');
+		});
+	});
+
+	it('shows error when setSRSItemState throws', async () => {
+		const transcriptWithWord = {
+			lesson_id: 'l1',
+			key_phrases: [],
+			dialogue_lines: [
+				{
+					role: 'Petra',
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false }]
+				}
+			]
+		};
+		mockSetSRSItemState.mockRejectedValue(new Error('state update failed'));
+		mockGetTranscript.mockResolvedValue(transcriptWithWord);
+
+		const { findByRole, findByText } = render(Page, {
+			props: { data: { curriculum, lesson, audio, transcript: transcriptWithWord } }
+		});
+
+		await fireEvent.click(await findByRole('button', { name: 'zdravo' }));
+
+		expect(await findByText('state update failed')).toBeTruthy();
+	});
+
+	it('shows stringified error when setSRSItemState throws a non-Error', async () => {
+		const transcriptWithWord = {
+			lesson_id: 'l1',
+			key_phrases: [],
+			dialogue_lines: [
+				{
+					role: 'Petra',
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false }]
+				}
+			]
+		};
+		mockSetSRSItemState.mockRejectedValue('plain state error');
+		mockGetTranscript.mockResolvedValue(transcriptWithWord);
+
+		const { findByRole, findByText } = render(Page, {
+			props: { data: { curriculum, lesson, audio, transcript: transcriptWithWord } }
+		});
+
+		await fireEvent.click(await findByRole('button', { name: 'zdravo' }));
+
+		expect(await findByText('plain state error')).toBeTruthy();
+	});
+
+	it('finds word state in a later dialogue line', async () => {
+		const transcriptMultiLine = {
+			lesson_id: 'l1',
+			key_phrases: [],
+			dialogue_lines: [
+				{
+					role: 'Petra',
+					words: [{ surface: 'dober', lemma: 'dober', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false }]
+				},
+				{
+					role: 'Ana',
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false }]
+				}
+			]
+		};
+		mockSetSRSItemState.mockResolvedValue({ id: 42, text: 'zdravo', translation: '', state: 'known' as const, due_date: '2026-04-14', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, language_code: 'sl' });
+		mockGetTranscript.mockResolvedValue(transcriptMultiLine);
+
+		const { findByRole } = render(Page, {
+			props: { data: { curriculum, lesson, audio, transcript: transcriptMultiLine } }
+		});
+
+		await fireEvent.click(await findByRole('button', { name: 'zdravo' }));
+
+		await waitFor(() => {
+			expect(mockSetSRSItemState).toHaveBeenCalledWith(42, 'known');
+		});
+	});
+
+	it('falls back to learning state for unrecognized srs_state', async () => {
+		const transcriptWithWord = {
+			lesson_id: 'l1',
+			key_phrases: [],
+			dialogue_lines: [
+				{
+					role: 'Petra',
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'exotic_state', srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false }]
+				}
+			]
+		};
+		mockSetSRSItemState.mockResolvedValue({ id: 42, text: 'zdravo', translation: '', state: 'learning' as const, due_date: '2026-04-14', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, language_code: 'sl' });
+		mockGetTranscript.mockResolvedValue(transcriptWithWord);
+
+		const { findByRole } = render(Page, {
+			props: { data: { curriculum, lesson, audio, transcript: transcriptWithWord } }
+		});
+
+		await fireEvent.click(await findByRole('button', { name: 'zdravo' }));
+
+		await waitFor(() => {
+			expect(mockSetSRSItemState).toHaveBeenCalledWith(42, 'learning');
 		});
 	});
 });

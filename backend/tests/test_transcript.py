@@ -113,3 +113,115 @@ class TestExtractTranscript:
         assert word.surface == "banka"
         assert word.lemma == "banka"
         assert word.srs_state == "unknown"
+
+
+class TestWordTokenEnrichment:
+    """Tests for new srs_item_id, translation, and collocation_span_id fields."""
+
+    def setup_method(self):
+        self.db = SRSDatabase(":memory:")
+        self.lemmatizer = LowercaseLemmatizer()
+
+    def test_unknown_word_has_null_srs_item_id(self):
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].srs_item_id is None
+
+    def test_known_word_has_srs_item_id(self):
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
+        self.db.add_collocation(unit, language_code="sl")
+        rows, _ = self.db.list_collocations()
+        expected_id = rows[0][0]
+
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].srs_item_id == expected_id
+
+    def test_translation_from_db_when_present(self):
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
+        self.db.add_collocation(unit, language_code="sl")
+
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].translation == "bank"
+
+    def test_translation_from_gloss_map_when_no_db_entry(self):
+        lesson = _make_lesson([("female-1", "banka")])
+        lesson.generation_metadata = {"token_glosses": {"banka": "bank"}}
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].translation == "bank"
+
+    def test_db_translation_wins_over_gloss_map(self):
+        unit = SyntacticUnit(
+            text="banka", translation="bank (db)", word_count=1, difficulty=1, source="llm", lemma="banka"
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        lesson = _make_lesson([("female-1", "banka")])
+        lesson.generation_metadata = {"token_glosses": {"banka": "bank (gloss)"}}
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].translation == "bank (db)"
+
+    def test_unknown_word_no_translation_is_none(self):
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].translation is None
+
+    def test_collocation_span_id_set_for_multi_word_srs_item(self):
+        unit = SyntacticUnit(
+            text="kje je banka",
+            translation="where is the bank",
+            word_count=3,
+            difficulty=2,
+            source="llm",
+            lemma=None,
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        rows, _ = self.db.list_collocations()
+        coll_id = rows[0][0]
+
+        lesson = _make_lesson([("female-1", "kje je banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        words = result.dialogue_lines[0].words
+        assert words[0].collocation_span_id == coll_id
+        assert words[1].collocation_span_id == coll_id
+        assert words[2].collocation_span_id == coll_id
+
+    def test_collocation_start_true_only_for_first_token(self):
+        unit = SyntacticUnit(
+            text="kje je banka",
+            translation="where is the bank",
+            word_count=3,
+            difficulty=2,
+            source="llm",
+            lemma=None,
+        )
+        self.db.add_collocation(unit, language_code="sl")
+
+        lesson = _make_lesson([("female-1", "kje je banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        words = result.dialogue_lines[0].words
+        assert words[0].collocation_start is True
+        assert words[1].collocation_start is False
+        assert words[2].collocation_start is False
+
+    def test_word_not_in_collocation_has_null_span_id(self):
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].collocation_span_id is None
+        assert result.dialogue_lines[0].words[0].collocation_start is False
+
+    def test_single_word_entry_in_collocations_table_not_matched_as_span(self):
+        # word_count=1 entries should not produce collocation spans
+        unit = SyntacticUnit(
+            text="banka",
+            translation="bank",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="banka",
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        # Should not get a span (word_count=1 entries are excluded from span matching)
+        assert result.dialogue_lines[0].words[0].collocation_span_id is None

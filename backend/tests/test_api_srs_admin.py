@@ -9,6 +9,7 @@ from app.main import app
 from app.models.srs_item import SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
+from app.storage.store import ContentStore
 
 
 def _unit(text: str, translation: str = "") -> SyntacticUnit:
@@ -18,10 +19,13 @@ def _unit(text: str, translation: str = "") -> SyntacticUnit:
 @pytest.fixture(autouse=True)
 def _clean_app_state():
     db = SRSDatabase(":memory:")
+    store = ContentStore(":memory:")
     app.state.srs_db = db
+    app.state.content_store = store
     yield
     db.close()
-    for attr in ("srs_db",):
+    store.close()
+    for attr in ("srs_db", "content_store"):
         if hasattr(app.state, attr):
             delattr(app.state, attr)
 
@@ -159,6 +163,252 @@ class TestDeleteItem:
         assert response.status_code == 200
         assert response.json()["deleted"] == 2
         assert db.count_collocations() == 1
+
+
+class TestCreateItem:
+    """Tests for POST /api/srs/items."""
+
+    async def test_create_item_returns_201_with_id(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/items",
+                json={"text": "banka", "language_code": "sl", "word_count": 1},
+            )
+        assert response.status_code == 201
+        data = response.json()
+        assert "id" in data
+        assert data["text"] == "banka"
+        assert data["state"] == "new"
+
+    async def test_create_item_with_translation(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/items",
+                json={"text": "banka", "language_code": "sl", "word_count": 1, "translation": "bank"},
+            )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["translation"] == "bank"
+
+    async def test_create_item_with_collocation(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/items",
+                json={"text": "prosim kavo", "language_code": "sl", "word_count": 2, "translation": "a coffee please"},
+            )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["text"] == "prosim kavo"
+
+    async def test_create_item_duplicate_text_returns_409(self):
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/items",
+                json={"text": "banka", "language_code": "sl", "word_count": 1},
+            )
+        assert response.status_code == 409
+
+    async def test_create_item_invalid_word_count_returns_422(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/items",
+                json={"text": "banka", "language_code": "sl", "word_count": 0},
+            )
+        assert response.status_code == 422
+
+    async def test_create_item_persists_in_db(self):
+        db = _db()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post(
+                "/api/srs/items",
+                json={"text": "hvala", "language_code": "sl", "word_count": 1, "translation": "thank you"},
+            )
+        assert db.count_collocations() == 1
+        item = db.get_collocation("hvala")
+        assert item is not None
+        assert item.syntactic_unit.translation == "thank you"
+
+    async def test_create_item_returns_500_when_db_list_fails(self, monkeypatch):
+        """Defensive guard: if list_collocations returns nothing after add, return 500."""
+        db = _db()
+        monkeypatch.setattr(db, "list_collocations", lambda **kwargs: ([], 0))
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/items",
+                json={"text": "hvala", "language_code": "sl", "word_count": 1},
+            )
+        assert response.status_code == 500
+
+
+class TestTranscriptEnrichment:
+    """Tests that GET /api/srs/lesson/{id}/transcript returns enriched WordToken fields."""
+
+    async def test_transcript_includes_srs_item_id_for_known_word(self):
+        db = _db()
+        db.add_collocation(
+            SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus", lemma="banka"),
+            language_code="sl",
+        )
+        rows, _ = db.list_collocations()
+        expected_id = rows[0][0]
+
+        from app.models.lesson import Lesson, Phrase, Section, SectionType
+
+        lesson = Lesson(title="Test", language_code="sl")
+        lesson.sections = [
+            Section(
+                section_type=SectionType.NATURAL_SPEED,
+                phrases=[Phrase(text="banka", voice_id="female-1", language_code="sl", role="female-1")],
+            )
+        ]
+        store = app.state.content_store
+        store.save_lesson("test-lesson", "curr-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/lesson/test-lesson/transcript")
+
+        assert response.status_code == 200
+        word = response.json()["dialogue_lines"][0]["words"][0]
+        assert word["srs_item_id"] == expected_id
+
+    async def test_transcript_includes_translation_for_known_word(self):
+        db = _db()
+        db.add_collocation(
+            SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus", lemma="banka"),
+            language_code="sl",
+        )
+
+        from app.models.lesson import Lesson, Phrase, Section, SectionType
+
+        lesson = Lesson(title="Test", language_code="sl")
+        lesson.sections = [
+            Section(
+                section_type=SectionType.NATURAL_SPEED,
+                phrases=[Phrase(text="banka", voice_id="female-1", language_code="sl", role="female-1")],
+            )
+        ]
+        store = app.state.content_store
+        store.save_lesson("test-lesson2", "curr-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/lesson/test-lesson2/transcript")
+
+        assert response.status_code == 200
+        word = response.json()["dialogue_lines"][0]["words"][0]
+        assert word["translation"] == "bank"
+
+    async def test_transcript_null_srs_item_id_for_unknown_word(self):
+        from app.models.lesson import Lesson, Phrase, Section, SectionType
+
+        lesson = Lesson(title="Test", language_code="sl")
+        lesson.sections = [
+            Section(
+                section_type=SectionType.NATURAL_SPEED,
+                phrases=[Phrase(text="banka", voice_id="female-1", language_code="sl", role="female-1")],
+            )
+        ]
+        store = app.state.content_store
+        store.save_lesson("test-lesson3", "curr-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/lesson/test-lesson3/transcript")
+
+        assert response.status_code == 200
+        word = response.json()["dialogue_lines"][0]["words"][0]
+        assert word["srs_item_id"] is None
+        assert word["translation"] is None
+
+
+class TestSetState:
+    """Tests for POST /api/srs/items/{id}/state."""
+
+    async def test_set_state_to_known(self):
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/api/srs/items/{row_id}/state", json={"state": "known"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["state"] == "known"
+
+    async def test_set_state_to_ignored_maps_to_suspended(self):
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/api/srs/items/{row_id}/state", json={"state": "ignored"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["state"] == "suspended"
+
+    async def test_set_state_to_learning(self):
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/api/srs/items/{row_id}/state", json={"state": "learning"})
+
+        assert response.status_code == 200
+        assert response.json()["state"] == "learning"
+
+    async def test_set_state_to_new(self):
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/api/srs/items/{row_id}/state", json={"state": "new"})
+
+        assert response.status_code == 200
+        assert response.json()["state"] == "new"
+
+    async def test_set_state_unknown_id_returns_404(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/items/9999/state", json={"state": "known"})
+        assert response.status_code == 404
+
+    async def test_set_state_invalid_state_returns_422(self):
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/api/srs/items/{row_id}/state", json={"state": "nonexistent"})
+        assert response.status_code == 422
+
+    async def test_known_state_excluded_from_due_queue(self):
+        from datetime import date, timedelta
+
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        item = db.get_collocation("banka")
+        item.due_date = date.today() - timedelta(days=1)
+        item.state = SRSState.REVIEW
+        db.update_collocation(item)
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post(f"/api/srs/items/{row_id}/state", json={"state": "known"})
+            due_resp = await client.get("/api/srs/due")
+
+        assert due_resp.status_code == 200
+        due_texts = [i["text"] for i in due_resp.json()["due"]]
+        assert "banka" not in due_texts
 
 
 class TestResetSuspend:

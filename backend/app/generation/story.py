@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 
-from app.generation.prompts import SYSTEM_PROMPT, get_strategy_prompt
+from app.generation.prompts import _build_cefr_block, build_story_system_prompt, get_strategy_prompt
 from app.generation.section_builder import (
     build_key_phrases_section,
     build_natural_speed_section,
@@ -35,6 +35,7 @@ class StoryGenerator:
         curriculum_day: CurriculumDay,
         language: Language,
         strategy: ContentStrategy,
+        cefr_level: str = "A2",
     ) -> Lesson:
         """Generate a Lesson for the given curriculum day.
 
@@ -42,14 +43,12 @@ class StoryGenerator:
             curriculum_day: Day specification including collocations and objectives.
             language: Target language configuration.
             strategy: WIDER or DEEPER content strategy.
+            cefr_level: CEFR level string (e.g. "A2") to calibrate dialogue complexity.
 
         Returns:
             Parsed Lesson with 4 Pimsleur sections built mechanically from LLM JSON.
         """
-        system_prompt = SYSTEM_PROMPT.format(
-            language_name=language.name,
-            language_code=language.code,
-        )
+        system_prompt = build_story_system_prompt(language)
 
         new_collocations = "\n".join(f"- {c}" for c in curriculum_day.collocations)
         user_prompt_template = get_strategy_prompt(strategy)
@@ -62,6 +61,7 @@ class StoryGenerator:
             new_collocations=new_collocations,
             review_collocations="(none yet)",
             source_day_transcript="(not available)",
+            cefr_block=_build_cefr_block(cefr_level),
         )
 
         logger.info("Generating story for day %d (%s)", curriculum_day.day, strategy.value)
@@ -92,10 +92,14 @@ class StoryGenerator:
 
         kp_infos = [KeyPhraseInfo(phrase=kp["phrase"], translation=kp["translation"]) for kp in key_phrases]
 
+        glosses = data.get("dialogue_glosses", [])
+        token_glosses = {g["lemma"]: g["translation"] for g in glosses if "lemma" in g and "translation" in g}
+
         return Lesson(
             title=title,
             language_code=language.code,
             sections=sections,
             narrator_voice=narrator_voice,
             key_phrases=kp_infos,
+            generation_metadata={"token_glosses": token_glosses},
         )

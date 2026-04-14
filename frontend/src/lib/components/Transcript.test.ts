@@ -28,7 +28,54 @@ const transcriptWithDialogue: TranscriptData = {
 		{
 			role: 'Petra',
 			words: [
-				{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new' }
+				{
+					surface: 'zdravo',
+					lemma: 'zdravo',
+					srs_state: 'new',
+					srs_item_id: null,
+					translation: null,
+					collocation_span_id: null,
+					collocation_start: false
+				}
+			]
+		}
+	]
+};
+
+const transcriptWithCollocation: TranscriptData = {
+	lesson_id: 'l1',
+	key_phrases: [],
+	dialogue_lines: [
+		{
+			role: 'Petra',
+			words: [
+				{
+					surface: 'dober',
+					lemma: 'dober',
+					srs_state: 'new',
+					srs_item_id: null,
+					translation: 'good',
+					collocation_span_id: 99,
+					collocation_start: true
+				},
+				{
+					surface: 'dan',
+					lemma: 'dan',
+					srs_state: 'new',
+					srs_item_id: null,
+					translation: 'day',
+					collocation_span_id: 99,
+					collocation_start: false
+				},
+				{
+					surface: 'hvala',
+					lemma: 'hvala',
+					srs_state: 'unknown',
+					srs_item_id: null,
+					translation: null,
+					collocation_span_id: null,
+					collocation_start: false
+				}
 			]
 		}
 	]
@@ -37,12 +84,11 @@ const transcriptWithDialogue: TranscriptData = {
 function defaultProps(overrides = {}) {
 	return {
 		transcript: baseTranscript,
-		pendingRatings: {},
 		isListened: false,
 		listenLoading: false,
 		listenResult: null,
 		error: '',
-		onRatingChange: vi.fn(),
+		onStateChange: vi.fn(),
 		onMarkListened: vi.fn(),
 		...overrides
 	};
@@ -140,5 +186,34 @@ describe('Transcript', () => {
 		await rerender(defaultProps({ listenResult: { registered: 1 }, error: '' }));
 
 		expect(await findByText(/1 word tracked/i)).toBeTruthy();
+	});
+
+	it('wraps collocation tokens in a collocation-span container', () => {
+		const { container } = render(Transcript, {
+			props: defaultProps({ transcript: transcriptWithCollocation })
+		});
+		const spans = container.querySelectorAll('.collocation-span');
+		expect(spans.length).toBe(1);
+	});
+
+	it('collocation-span contains both tokens', () => {
+		const { container } = render(Transcript, {
+			props: defaultProps({ transcript: transcriptWithCollocation })
+		});
+		const span = container.querySelector('.collocation-span');
+		expect(span).not.toBeNull();
+		expect(span!.textContent).toContain('dober');
+		expect(span!.textContent).toContain('dan');
+	});
+
+	it('word outside collocation is not inside a collocation-span', () => {
+		const { container } = render(Transcript, {
+			props: defaultProps({ transcript: transcriptWithCollocation })
+		});
+		// 'hvala' should not be inside .collocation-span
+		const spans = container.querySelectorAll('.collocation-span');
+		for (const span of spans) {
+			expect(span.textContent).not.toContain('hvala');
+		}
 	});
 });

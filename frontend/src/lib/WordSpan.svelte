@@ -1,20 +1,15 @@
 <script lang="ts">
-	import type { WordToken, WordRating } from './api';
+	import type { WordToken } from './api';
 
 	interface Props {
 		word: WordToken;
-		rating?: WordRating | null;
-		onRatingChange?: (lemma: string, rating: WordRating | null) => void;
+		onStateChange?: (lemma: string, srs_item_id: number | null) => void;
 	}
 
-	let { word, rating = null, onRatingChange }: Props = $props();
-
-	const CYCLE: (WordRating | null)[] = ['hard', 'easy', null];
+	let { word, onStateChange }: Props = $props();
 
 	function handleClick() {
-		const currentIndex = CYCLE.indexOf(rating ?? null);
-		const next = CYCLE[(currentIndex + 1) % CYCLE.length];
-		onRatingChange?.(word.lemma, next);
+		onStateChange?.(word.lemma, word.srs_item_id);
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -25,15 +20,15 @@
 	}
 
 	const colorClass = $derived(
-		rating === 'hard'
-			? 'word-hard'
-			: rating === 'easy'
-				? 'word-easy'
-				: word.srs_state === 'unknown' || word.srs_state === 'new'
-					? 'word-new'
-					: word.srs_state === 'learning' || word.srs_state === 'relearning'
-						? 'word-learning'
-						: 'word-review'
+		word.srs_state === 'known'
+			? 'word-known'
+			: word.srs_state === 'suspended'
+				? 'word-ignored'
+				: word.srs_state === 'learning' || word.srs_state === 'relearning'
+					? 'word-learning'
+					: word.srs_state === 'review'
+						? 'word-review'
+						: 'word-new'
 	);
 </script>
 
@@ -41,7 +36,7 @@
 	class="word {colorClass}"
 	role="button"
 	tabindex="0"
-	title={rating ? `Flagged: ${rating}` : word.srs_state}
+	title={word.srs_state}
 	onclick={handleClick}
 	onkeydown={handleKeydown}
 >{word.surface}</span>
@@ -65,12 +60,11 @@
 	.word-review {
 		color: #16a34a;
 	}
-	.word-hard {
-		color: #ea580c;
-		font-weight: 600;
+	.word-known {
+		color: #9ca3af;
 	}
-	.word-easy {
-		color: #7c3aed;
-		font-weight: 600;
+	.word-ignored {
+		color: #9ca3af;
+		text-decoration: line-through;
 	}
 </style>

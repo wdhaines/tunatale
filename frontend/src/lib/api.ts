@@ -67,6 +67,17 @@ export interface WordToken {
 	surface: string;
 	lemma: string;
 	srs_state: string;
+	srs_item_id: number | null;
+	translation: string | null;
+	collocation_span_id: number | null;
+	collocation_start: boolean;
+}
+
+export interface CreateSRSItemRequest {
+	text: string;
+	language_code: string;
+	word_count: number;
+	translation?: string;
 }
 
 export interface DialogueLine {
@@ -102,7 +113,7 @@ export interface SRSItemDetail {
 	id: number;
 	text: string;
 	translation: string;
-	state: 'new' | 'learning' | 'review' | 'relearning' | 'suspended';
+	state: 'new' | 'learning' | 'review' | 'relearning' | 'suspended' | 'known';
 	due_date: string;
 	stability: number;
 	difficulty: number;
@@ -246,6 +257,14 @@ export class TunaTaleAPI {
 		return this.request(`/api/srs/lesson/${lessonId}/transcript`);
 	}
 
+	async createSRSItem(payload: CreateSRSItemRequest): Promise<SRSItemDetail> {
+		return this.request('/api/srs/items', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(payload)
+		});
+	}
+
 	async listSRSItems(params: SRSListParams = {}): Promise<SRSItemsPage> {
 		const qs = new URLSearchParams();
 		for (const [k, v] of Object.entries(params)) {
@@ -284,6 +303,14 @@ export class TunaTaleAPI {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ suspended })
+		});
+	}
+
+	async setSRSItemState(id: number, state: string): Promise<SRSItemDetail> {
+		return this.request(`/api/srs/items/${id}/state`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ state })
 		});
 	}
 }
