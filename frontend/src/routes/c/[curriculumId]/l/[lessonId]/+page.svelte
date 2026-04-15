@@ -112,6 +112,27 @@
 			error = e instanceof Error ? e.message : String(e);
 		}
 	}
+
+	async function handleCreatePhrase({
+		text,
+		word_count,
+		translation
+	}: {
+		text: string;
+		word_count: number;
+		translation: string;
+		lineIndex: number;
+		startIdx: number;
+		endIdx: number;
+	}) {
+		error = '';
+		try {
+			await api.createSRSItem({ text, language_code: data.lesson.language_code, word_count, translation });
+			transcript = await api.getLessonTranscript(data.lesson.id);
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		}
+	}
 </script>
 
 <main>
@@ -151,6 +172,7 @@
 					onStateChange={handleStateChange}
 					onCollocationStateChange={handleCollocationStateChange}
 					onMarkListened={handleMarkListened}
+					onCreatePhrase={handleCreatePhrase}
 				/>
 			{:else}
 				<p class="muted">Transcript loading…</p>

@@ -1455,3 +1455,103 @@ class TestAudioEndpoints:
         assert ".wav" in cd
         # Lesson title is "Day 1: Ordering Coffee" → sanitized
         assert "Day_1" in cd or "Ordering_Coffee" in cd
+
+
+class TestCreatePhraseIntegration:
+    """Integration tests for multi-word phrase creation via POST /api/srs/items."""
+
+    async def test_create_multiword_item_returns_201(self):
+        """POST /api/srs/items with word_count=2 creates a SyntacticUnit with lemma=None."""
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(":memory:")
+        app.state.srs_db = db
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/items",
+                json={"text": "centru mesta", "language_code": "sl", "word_count": 2, "translation": ""},
+            )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["text"] == "centru mesta"
+        # Multi-word items have no lemma
+        assert data.get("translation") == ""
+
+    async def test_create_multiword_item_duplicate_returns_409(self):
+        """Second POST with same text returns 409 Conflict."""
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(":memory:")
+        app.state.srs_db = db
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post(
+                "/api/srs/items",
+                json={"text": "centru mesta", "language_code": "sl", "word_count": 2, "translation": ""},
+            )
+            response = await client.post(
+                "/api/srs/items",
+                json={"text": "centru mesta", "language_code": "sl", "word_count": 2, "translation": ""},
+            )
+
+        assert response.status_code == 409
+
+    async def test_create_phrase_then_transcript_shows_collocation_span(self):
+        """After creating 'centru mesta', transcript tokens for that phrase
+        share a collocation_span_id and collocation_lemma='centru mesta'."""
+        from app.models.lesson import Lesson, Phrase, Section, SectionType
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(
+                            text="v centru mesta",
+                            voice_id="female-1",
+                            language_code="sl",
+                            role="female-1",
+                        )
+                    ],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-phrase", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            # Create the phrase
+            create_resp = await client.post(
+                "/api/srs/items",
+                json={"text": "centru mesta", "language_code": "sl", "word_count": 2, "translation": "city centre"},
+            )
+            assert create_resp.status_code == 201
+
+            # Fetch transcript — match_spans should pick up the new collocation
+            transcript_resp = await client.get("/api/srs/lesson/lesson-phrase/transcript")
+            assert transcript_resp.status_code == 200
+
+        data = transcript_resp.json()
+        words = data["dialogue_lines"][0]["words"]
+
+        # Find centru and mesta tokens
+        centru = next((w for w in words if w["surface"] == "centru"), None)
+        mesta = next((w for w in words if w["surface"] == "mesta"), None)
+
+        assert centru is not None, "centru token not found"
+        assert mesta is not None, "mesta token not found"
+        assert centru["collocation_span_id"] is not None
+        assert mesta["collocation_span_id"] is not None
+        assert centru["collocation_span_id"] == mesta["collocation_span_id"]
+        assert centru["collocation_lemma"] == "centru mesta"

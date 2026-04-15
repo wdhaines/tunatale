@@ -211,4 +211,46 @@ describe('WordSpan', () => {
 			expect(parentHandler).toHaveBeenCalled();
 		});
 	});
+
+	describe('lineIndex / wordIndex props', () => {
+		it('renders data-line-index when lineIndex prop is provided', () => {
+			const { getByRole } = render(WordSpan, {
+				props: { word: makeWord(), lineIndex: 2, wordIndex: 3 }
+			});
+			expect(getByRole('button').getAttribute('data-line-index')).toBe('2');
+		});
+
+		it('renders data-word-index when wordIndex prop is provided', () => {
+			const { getByRole } = render(WordSpan, {
+				props: { word: makeWord(), lineIndex: 0, wordIndex: 5 }
+			});
+			expect(getByRole('button').getAttribute('data-word-index')).toBe('5');
+		});
+
+		it('does not render data-line-index when lineIndex is not provided', () => {
+			const { getByRole } = render(WordSpan, { props: { word: makeWord() } });
+			expect(getByRole('button').getAttribute('data-line-index')).toBeNull();
+		});
+	});
+
+	describe('selected prop', () => {
+		it('applies word-selected class when selected={true}', () => {
+			const { getByRole } = render(WordSpan, {
+				props: { word: makeWord(), selected: true }
+			});
+			expect(getByRole('button').className).toContain('word-selected');
+		});
+
+		it('does not apply word-selected class by default', () => {
+			const { getByRole } = render(WordSpan, { props: { word: makeWord() } });
+			expect(getByRole('button').className).not.toContain('word-selected');
+		});
+
+		it('does not apply word-selected class when selected={false}', () => {
+			const { getByRole } = render(WordSpan, {
+				props: { word: makeWord(), selected: false }
+			});
+			expect(getByRole('button').className).not.toContain('word-selected');
+		});
+	});
 });

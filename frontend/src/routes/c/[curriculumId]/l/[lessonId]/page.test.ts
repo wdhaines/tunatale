@@ -469,6 +469,93 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 			});
 		});
 	});
+
+	describe('handleCreatePhrase', () => {
+		const transcriptWithMultiWord = {
+			lesson_id: 'l1',
+			key_phrases: [],
+			dialogue_lines: [
+				{
+					role: 'Petra',
+					words: [
+						{ surface: 'centru', lemma: 'centru', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null },
+						{ surface: 'mesta', lemma: 'mesto', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }
+					]
+				}
+			]
+		};
+
+		it('calls createSRSItem and then getLessonTranscript on success', async () => {
+			const createdItem = { id: 55, text: 'centru mesta', translation: '', state: 'new' as const, due_date: '2026-04-15', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, language_code: 'sl' };
+			mockCreateSRSItem.mockResolvedValue(createdItem);
+			mockGetTranscript.mockResolvedValue(transcriptWithMultiWord);
+
+			const { container } = render(Page, {
+				props: { data: { curriculum, lesson, audio, transcript: transcriptWithMultiWord } }
+			});
+
+			// Trigger phrase creation via drag
+			const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+			const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+
+			await fireEvent.pointerDown(centruSpan);
+			await fireEvent.pointerMove(mestaSpan);
+			await fireEvent.pointerUp(mestaSpan);
+
+			const createBtn = container.querySelector('.phrase-confirm-bar button.confirm-create') as HTMLElement;
+			await fireEvent.click(createBtn);
+
+			await waitFor(() => {
+				expect(mockCreateSRSItem).toHaveBeenCalledWith({
+					text: 'centru mesta',
+					language_code: 'sl',
+					word_count: 2,
+					translation: ''
+				});
+				expect(mockGetTranscript).toHaveBeenCalled();
+			});
+		});
+
+		it('sets error when createSRSItem throws an Error', async () => {
+			mockCreateSRSItem.mockRejectedValue(new Error('phrase create failed'));
+			mockGetTranscript.mockResolvedValue(transcriptWithMultiWord);
+
+			const { container, findByText } = render(Page, {
+				props: { data: { curriculum, lesson, audio, transcript: transcriptWithMultiWord } }
+			});
+
+			const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+			const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+
+			await fireEvent.pointerDown(centruSpan);
+			await fireEvent.pointerMove(mestaSpan);
+			await fireEvent.pointerUp(mestaSpan);
+
+			await fireEvent.click(container.querySelector('.phrase-confirm-bar button.confirm-create') as HTMLElement);
+
+			expect(await findByText('phrase create failed')).toBeTruthy();
+		});
+
+		it('sets error to String(e) when createSRSItem throws a non-Error', async () => {
+			mockCreateSRSItem.mockRejectedValue('plain phrase error');
+			mockGetTranscript.mockResolvedValue(transcriptWithMultiWord);
+
+			const { container, findByText } = render(Page, {
+				props: { data: { curriculum, lesson, audio, transcript: transcriptWithMultiWord } }
+			});
+
+			const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+			const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+
+			await fireEvent.pointerDown(centruSpan);
+			await fireEvent.pointerMove(mestaSpan);
+			await fireEvent.pointerUp(mestaSpan);
+
+			await fireEvent.click(container.querySelector('.phrase-confirm-bar button.confirm-create') as HTMLElement);
+
+			expect(await findByText('plain phrase error')).toBeTruthy();
+		});
+	});
 });
 
 describe('load function for /c/[curriculumId]/l/[lessonId]', () => {

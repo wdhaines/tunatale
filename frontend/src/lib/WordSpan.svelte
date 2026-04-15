@@ -5,9 +5,12 @@
 		word: WordToken;
 		onStateChange?: (lemma: string, srs_item_id: number | null) => void;
 		requireModifier?: boolean;
+		lineIndex?: number;
+		wordIndex?: number;
+		selected?: boolean;
 	}
 
-	let { word, onStateChange, requireModifier = false }: Props = $props();
+	let { word, onStateChange, requireModifier = false, lineIndex, wordIndex, selected = false }: Props = $props();
 
 	function fire() {
 		onStateChange?.(word.lemma, word.srs_item_id);
@@ -47,9 +50,12 @@
 
 <span
 	class="word {colorClass}"
+	class:word-selected={selected}
 	role="button"
 	tabindex="0"
 	title={word.srs_state}
+	data-line-index={lineIndex}
+	data-word-index={wordIndex}
 	onclick={handleClick}
 	onkeydown={handleKeydown}
 >{word.surface}</span>
@@ -79,5 +85,8 @@
 	.word-ignored {
 		color: #9ca3af;
 		text-decoration: line-through;
+	}
+	.word-selected {
+		background-color: rgba(99, 102, 241, 0.2);
 	}
 </style>

@@ -387,4 +387,276 @@ describe('Transcript', () => {
 			expect(container.querySelector('.collocation-span')!.className).toContain('coll-bg-new');
 		});
 	});
+
+	describe('phrase creation — "+ New phrase" toggle and drag', () => {
+		const transcriptForDrag: TranscriptData = {
+			lesson_id: 'l1',
+			key_phrases: [],
+			dialogue_lines: [
+				{
+					role: 'Petra',
+					words: [
+						{ surface: 'centru', lemma: 'centru', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null },
+						{ surface: 'mesta', lemma: 'mesto', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null },
+						{ surface: 'hvala', lemma: 'hvala', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }
+					]
+				}
+			]
+		};
+
+		const transcriptTwoLines: TranscriptData = {
+			lesson_id: 'l1',
+			key_phrases: [],
+			dialogue_lines: [
+				{
+					role: 'Petra',
+					words: [
+						{ surface: 'centru', lemma: 'centru', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null },
+						{ surface: 'mesta', lemma: 'mesto', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }
+					]
+				},
+				{
+					role: 'Ana',
+					words: [
+						{ surface: 'hvala', lemma: 'hvala', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }
+					]
+				}
+			]
+		};
+
+		it('renders a "+ New phrase" button', () => {
+			const { getByText } = render(Transcript, { props: defaultProps({ transcript: transcriptForDrag }) });
+			expect(getByText('+ New phrase')).toBeTruthy();
+		});
+
+		it('clicking "+ New phrase" button enables selection mode', async () => {
+			const { getByText } = render(Transcript, { props: defaultProps({ transcript: transcriptForDrag }) });
+			const btn = getByText('+ New phrase');
+			await fireEvent.click(btn);
+			// Once in selection mode the button should show a cancel label or the button is active
+			expect(getByText('Cancel')).toBeTruthy();
+		});
+
+		it('pointerup without prior pointerdown does not show confirm bar', async () => {
+			const { container } = render(Transcript, { props: defaultProps({ transcript: transcriptForDrag }) });
+			const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+			// pointerUp fires without isDragging being set
+			await fireEvent.pointerUp(mestaSpan);
+			expect(container.querySelector('.phrase-confirm-bar')).toBeFalsy();
+		});
+
+		it('pointermove without prior pointerdown does not show confirm bar', async () => {
+			const { container } = render(Transcript, { props: defaultProps({ transcript: transcriptForDrag }) });
+			const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+			await fireEvent.pointerMove(mestaSpan);
+			expect(container.querySelector('.phrase-confirm-bar')).toBeFalsy();
+		});
+
+		it('pointerdown on container (not on a word) does not start drag', async () => {
+			const { container } = render(Transcript, { props: defaultProps({ transcript: transcriptForDrag }) });
+			const wordsContainer = container.querySelector('.dialogue-words') as HTMLElement;
+			// Fire directly on the container — resolveWordTarget returns null
+			await fireEvent.pointerDown(wordsContainer);
+			const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+			await fireEvent.pointerMove(mestaSpan);
+			await fireEvent.pointerUp(mestaSpan);
+			expect(container.querySelector('.phrase-confirm-bar')).toBeFalsy();
+		});
+
+		it('drag: pointerdown + pointermove + pointerup over 2 words shows confirm bar', async () => {
+			const { container } = render(Transcript, { props: defaultProps({ transcript: transcriptForDrag }) });
+			const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+			const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+
+			// Fire events directly on word spans so e.target resolves correctly
+			await fireEvent.pointerDown(centruSpan);
+			await fireEvent.pointerMove(mestaSpan);
+			await fireEvent.pointerUp(mestaSpan);
+
+			expect(container.querySelector('.phrase-confirm-bar')).toBeTruthy();
+			expect(container.querySelector('.phrase-confirm-bar')!.textContent).toContain('centru mesta');
+		});
+
+		it('drag with anchor == endpoint (single word) does not show confirm bar', async () => {
+			const { container } = render(Transcript, { props: defaultProps({ transcript: transcriptForDrag }) });
+			const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+
+			await fireEvent.pointerDown(centruSpan);
+			await fireEvent.pointerUp(centruSpan);
+
+			expect(container.querySelector('.phrase-confirm-bar')).toBeFalsy();
+		});
+
+		it('cross-line drag resets and shows no confirm bar', async () => {
+			const { container } = render(Transcript, { props: defaultProps({ transcript: transcriptTwoLines }) });
+			const centruSpan = container.querySelector('[data-line-index="0"][data-word-index="0"]') as HTMLElement;
+			const hvalaSpan = container.querySelector('[data-line-index="1"][data-word-index="0"]') as HTMLElement;
+
+			await fireEvent.pointerDown(centruSpan);
+			await fireEvent.pointerUp(hvalaSpan);
+
+			expect(container.querySelector('.phrase-confirm-bar')).toBeFalsy();
+		});
+
+		it('drag over a word with collocation_span_id aborts — no confirm bar', async () => {
+			const transcriptWithExistingColl: TranscriptData = {
+				lesson_id: 'l1',
+				key_phrases: [],
+				dialogue_lines: [
+					{
+						role: 'Petra',
+						words: [
+							{ surface: 'centru', lemma: 'centru', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: 5, collocation_start: true, collocation_srs_state: 'new', collocation_lemma: 'centru mesta' },
+							{ surface: 'mesta', lemma: 'mesto', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: 5, collocation_start: false, collocation_srs_state: 'new', collocation_lemma: 'centru mesta' },
+							{ surface: 'hvala', lemma: 'hvala', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }
+						]
+					}
+				]
+			};
+			const { container } = render(Transcript, { props: defaultProps({ transcript: transcriptWithExistingColl }) });
+			// words 0 and 1 are inside a collocation-span wrapper, words rendered inside collocation
+			// Try to drag from hvala (index 2) — but it can't overlap with collocation 5 unless we
+			// start from inside the collocation. Start at word 0 (collocation), end at word 2.
+			// Use the word-index data attributes on the inner WordSpan elements
+			const word0Span = container.querySelector('[data-word-index="0"]') as HTMLElement;
+			const hvalaSpan = container.querySelector('[data-word-index="2"]') as HTMLElement;
+
+			await fireEvent.pointerDown(word0Span);
+			await fireEvent.pointerMove(hvalaSpan);
+			await fireEvent.pointerUp(hvalaSpan);
+
+			expect(container.querySelector('.phrase-confirm-bar')).toBeFalsy();
+		});
+
+		it('clicking Create fires onCreatePhrase with correct args', async () => {
+			const onCreatePhrase = vi.fn();
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptForDrag, onCreatePhrase })
+			});
+			const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+			const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+
+			await fireEvent.pointerDown(centruSpan);
+			await fireEvent.pointerMove(mestaSpan);
+			await fireEvent.pointerUp(mestaSpan);
+
+			const createBtn = container.querySelector('.phrase-confirm-bar button.confirm-create') as HTMLElement;
+			await fireEvent.click(createBtn);
+
+			expect(onCreatePhrase).toHaveBeenCalledWith(
+				expect.objectContaining({
+					text: 'centru mesta',
+					word_count: 2,
+					translation: '',
+					lineIndex: 0,
+					startIdx: 0,
+					endIdx: 1
+				})
+			);
+		});
+
+		it('clicking Cancel clears selection and fires no callback', async () => {
+			const onCreatePhrase = vi.fn();
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptForDrag, onCreatePhrase })
+			});
+			const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+			const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+
+			await fireEvent.pointerDown(centruSpan);
+			await fireEvent.pointerMove(mestaSpan);
+			await fireEvent.pointerUp(mestaSpan);
+
+			const cancelBtn = container.querySelector('.phrase-confirm-bar button.confirm-cancel') as HTMLElement;
+			await fireEvent.click(cancelBtn);
+
+			expect(onCreatePhrase).not.toHaveBeenCalled();
+			expect(container.querySelector('.phrase-confirm-bar')).toBeFalsy();
+		});
+
+		it('selected words carry a word-selected highlight class during drag', async () => {
+			const { container } = render(Transcript, { props: defaultProps({ transcript: transcriptForDrag }) });
+			const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+			const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+
+			await fireEvent.pointerDown(centruSpan);
+			await fireEvent.pointerMove(mestaSpan);
+
+			// Both centru (0) and mesta (1) should have word-selected
+			expect(container.querySelector('[data-word-index="0"]')!.className).toContain('word-selected');
+			expect(container.querySelector('[data-word-index="1"]')!.className).toContain('word-selected');
+			// hvala (2) should not
+			expect(container.querySelector('[data-word-index="2"]')!.className).not.toContain('word-selected');
+		});
+
+		it('selectionMode: first tap sets anchor, second tap shows confirm bar', async () => {
+			const { container, getByText } = render(Transcript, { props: defaultProps({ transcript: transcriptForDrag }) });
+
+			await fireEvent.click(getByText('+ New phrase'));
+
+			// First tap: click word 0
+			const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+			await fireEvent.click(centruSpan);
+			// No confirm bar yet after first tap
+			expect(container.querySelector('.phrase-confirm-bar')).toBeFalsy();
+
+			// Second tap: click word 1
+			const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+			await fireEvent.click(mestaSpan);
+			// Now confirm bar should appear
+			expect(container.querySelector('.phrase-confirm-bar')).toBeTruthy();
+		});
+
+		it('selectionMode: cross-line second tap resets anchor to new line, no confirm bar', async () => {
+			const { container, getByText } = render(Transcript, { props: defaultProps({ transcript: transcriptTwoLines }) });
+
+			await fireEvent.click(getByText('+ New phrase'));
+
+			// First tap: line 0, word 0
+			const centruSpan = container.querySelector('[data-line-index="0"][data-word-index="0"]') as HTMLElement;
+			await fireEvent.click(centruSpan);
+			expect(container.querySelector('.phrase-confirm-bar')).toBeFalsy();
+
+			// Second tap: line 1, word 0 (different line) — anchor resets to this word
+			const hvalaSpan = container.querySelector('[data-line-index="1"][data-word-index="0"]') as HTMLElement;
+			await fireEvent.click(hvalaSpan);
+			// No confirm bar (anchor was reset, this is now the new first tap)
+			expect(container.querySelector('.phrase-confirm-bar')).toBeFalsy();
+		});
+
+		it('selectionMode: tapping same word twice (start===end) shows no confirm bar', async () => {
+			const { container, getByText } = render(Transcript, { props: defaultProps({ transcript: transcriptForDrag }) });
+
+			await fireEvent.click(getByText('+ New phrase'));
+
+			// First tap: word 0
+			const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+			await fireEvent.click(centruSpan);
+			// Second tap: same word 0
+			await fireEvent.click(centruSpan);
+			expect(container.querySelector('.phrase-confirm-bar')).toBeFalsy();
+		});
+
+		it('translation input can be updated and is included in onCreatePhrase call', async () => {
+			const onCreatePhrase = vi.fn();
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptForDrag, onCreatePhrase })
+			});
+			const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+			const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+
+			await fireEvent.pointerDown(centruSpan);
+			await fireEvent.pointerMove(mestaSpan);
+			await fireEvent.pointerUp(mestaSpan);
+
+			const translationInput = container.querySelector('.phrase-translation-input') as HTMLInputElement;
+			await fireEvent.input(translationInput, { target: { value: 'city centre' } });
+
+			await fireEvent.click(container.querySelector('.phrase-confirm-bar button.confirm-create') as HTMLElement);
+
+			expect(onCreatePhrase).toHaveBeenCalledWith(
+				expect.objectContaining({ translation: 'city centre' })
+			);
+		});
+	});
 });
