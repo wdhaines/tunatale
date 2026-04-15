@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from app.generation.prompts import _build_cefr_block, build_story_system_prompt, get_strategy_prompt
 from app.generation.section_builder import (
@@ -65,13 +66,23 @@ class StoryGenerator:
         )
 
         logger.info("Generating story for day %d (%s)", curriculum_day.day, strategy.value)
-        raw = await self._llm.complete(user_prompt, system_prompt=system_prompt, temperature=0.7, max_tokens=8192)
+        raw = await self._llm.complete(user_prompt, system_prompt=system_prompt, temperature=0.7, max_tokens=4096)
         return self._parse_response(raw, language=language)
 
     def _parse_response(self, raw: str, language: Language) -> Lesson:
+        # Strip markdown code fences (model sometimes wraps JSON in ```json...```)
+        if raw.startswith("```"):
+            raw = re.sub(r"^```(?:json)?\s*\n?", "", raw)
+            raw = re.sub(r"\n?```\s*$", "", raw)
+            raw = raw.strip()
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as e:
+            logger.error(
+                "LLM returned unparseable response (len=%d): %r",
+                len(raw),
+                raw[:500],
+            )
             raise StoryGenerationError(f"LLM returned invalid JSON: {e}") from e
 
         key_phrases = data.get("key_phrases", [])

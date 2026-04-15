@@ -160,6 +160,22 @@ class TestStoryGeneration:
         glosses = lesson.generation_metadata.get("token_glosses", {})
         assert glosses == {}
 
+    async def test_parse_response_strips_markdown_fences(self, language):
+        """Model sometimes wraps JSON in ```json...``` fences — parser should handle it."""
+        from app.generation.story import StoryGenerationError  # noqa: F401
+
+        generator = StoryGenerator(llm_client=MagicMock())
+        fenced = f"```json\n{_mock_story_response()}\n```"
+        lesson = generator._parse_response(fenced, language=language)
+        assert lesson.title == "Ordering Coffee"
+
+    async def test_parse_response_strips_bare_fences(self, language):
+        """Model sometimes uses ``` without a language tag."""
+        generator = StoryGenerator(llm_client=MagicMock())
+        fenced = f"```\n{_mock_story_response()}\n```"
+        lesson = generator._parse_response(fenced, language=language)
+        assert lesson.title == "Ordering Coffee"
+
     async def test_parse_response_raises_when_key_phrases_and_scenes_both_empty(self, language):
         import json
 
