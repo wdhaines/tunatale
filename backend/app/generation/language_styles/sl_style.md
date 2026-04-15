@@ -33,6 +33,18 @@ cross-contamination aggressively.
 - Default to vikanje for ALL service scenarios at A2 level
 - Never mix tikanje and vikanje for the same character in the same scene
 
+**When vikanje is REQUIRED (use vi/vas/vam, not ti/te/ti):**
+- Any service interaction: café, shop, hotel reception, information office, taxi
+- Asking a stranger for directions
+- Any scene where characters have not been introduced as friends/family
+- Default: if in doubt, use vikanje
+
+Vikanje verb forms for common verbs (A2):
+- iti: Greste (not Greš)      "Greste po glavni cesti."
+- biti: Ste (not si)           "Ste že bili v Ljubljani?"
+- imeti: Imate (not imaš)     "Imate rezervacijo?"
+- govoriti: Govorite (not govoriš)
+
 **Natural Slovene discourse markers (use these where natural):**
 - "saj" — "you know / after all / because" (e.g., "Saj vem, da je drago.")
 - "pa" — versatile connector/contrast: "and / but / well" (e.g., "Kaj pa vi?")
@@ -51,3 +63,12 @@ WRONG: "Izvinite, prosim." (Serbian word — use "Oprostite")
 WRONG: "Kavno brez mleka." (adjectival form — use "kavo brez mleka")
 WRONG: "Mi gremo." when referring to exactly two people (use "Midva greva")
 WRONG: "Što je to?" (Croatian — use "Kaj je to?")
+
+**BEFORE OUTPUTTING — scan every Slovene word for:**
+1. "izvinite" → replace with "oprostite"
+2. "što" → replace with "kaj"
+3. "nemoj" → replace with "ne" or "ne delaj"
+4. "doviđenja" → replace with "nasvidenje"
+5. "ć" or "đ" anywhere → these letters do not exist in Slovene
+6. Any service-scene pronoun "ti/te/tvoj" → replace with "vi/vas/vaš"
+7. Any "zanje/zanj" (for them/him) when addressing the listener → replace with "za vas"
