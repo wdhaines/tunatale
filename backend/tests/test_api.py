@@ -792,6 +792,35 @@ class TestSRSEndpoints:
         assert item is not None
         assert item.syntactic_unit.translation == "good day"
 
+    async def test_listen_word_translations_from_gloss_map(self):
+        """Word-level SRS items get their translation from generation_metadata['token_glosses']."""
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="banka", voice_id="sl-SI-PetraNeural", language_code="sl")],
+                )
+            ],
+            generation_metadata={"token_glosses": {"banka": "bank"}},
+        )
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        item = db.get_collocation_by_lemma("banka")
+        assert item is not None
+        assert item.syntactic_unit.translation == "bank"
+
     async def test_listen_is_idempotent_with_word_tracking(self):
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore

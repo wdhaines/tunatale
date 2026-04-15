@@ -96,6 +96,8 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # ── Word-level tracking from NATURAL_SPEED section ──────────────────
     from app.models.lesson import SectionType
 
+    token_glosses: dict[str, str] = lesson.generation_metadata.get("token_glosses", {})
+
     natural_speed = next(
         (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
         None,
@@ -113,7 +115,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     for lemma in unique_lemmas:
         unit = SyntacticUnit(
             text=lemma,
-            translation="",
+            translation=token_glosses.get(lemma, ""),
             word_count=1,
             difficulty=1,
             source="llm",
