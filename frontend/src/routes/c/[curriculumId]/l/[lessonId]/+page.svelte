@@ -97,6 +97,21 @@
 			error = e instanceof Error ? e.message : String(e);
 		}
 	}
+
+	async function handleCollocationStateChange(
+		_lemma: string,
+		span_id: number,
+		current_state: string
+	) {
+		error = '';
+		try {
+			const nextState = STATE_CYCLE[current_state] ?? 'learning';
+			await api.setSRSItemState(span_id, nextState);
+			transcript = await api.getLessonTranscript(data.lesson.id);
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		}
+	}
 </script>
 
 <main>
@@ -134,6 +149,7 @@
 					{listenResult}
 					{error}
 					onStateChange={handleStateChange}
+					onCollocationStateChange={handleCollocationStateChange}
 					onMarkListened={handleMarkListened}
 				/>
 			{:else}

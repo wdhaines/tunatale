@@ -4,19 +4,32 @@
 	interface Props {
 		word: WordToken;
 		onStateChange?: (lemma: string, srs_item_id: number | null) => void;
+		requireModifier?: boolean;
 	}
 
-	let { word, onStateChange }: Props = $props();
+	let { word, onStateChange, requireModifier = false }: Props = $props();
 
-	function handleClick() {
+	function fire() {
 		onStateChange?.(word.lemma, word.srs_item_id);
 	}
 
-	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter' || e.key === ' ') {
-			e.preventDefault();
-			handleClick();
+	function handleClick(e: MouseEvent) {
+		if (requireModifier) {
+			if (e.altKey || e.shiftKey) {
+				e.stopPropagation();
+				fire();
+			}
+			return;
 		}
+		fire();
+	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.key !== 'Enter' && e.key !== ' ') return;
+		if (requireModifier && !(e.altKey || e.shiftKey)) return;
+		e.preventDefault();
+		if (requireModifier) e.stopPropagation();
+		fire();
 	}
 
 	const colorClass = $derived(

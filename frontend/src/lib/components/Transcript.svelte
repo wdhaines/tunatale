@@ -9,6 +9,7 @@
 		listenResult: { registered: number } | null;
 		error: string;
 		onStateChange?: (lemma: string, srs_item_id: number | null) => void;
+		onCollocationStateChange?: (lemma: string, span_id: number, current_state: string) => void;
 		onMarkListened: () => void;
 	}
 
@@ -19,10 +20,37 @@
 		listenResult,
 		error,
 		onStateChange,
+		onCollocationStateChange,
 		onMarkListened
 	}: Props = $props();
 
 	type WordSegment = { type: 'word'; word: WordToken } | { type: 'collocation'; words: WordToken[]; span_id: number };
+
+	function collocationClassFor(state: string): string {
+		if (state === 'learning' || state === 'relearning') return 'coll-bg-learning';
+		if (state === 'review') return 'coll-bg-review';
+		if (state === 'known') return 'coll-bg-known';
+		if (state === 'suspended' || state === 'ignored') return 'coll-bg-ignored';
+		return 'coll-bg-new';
+	}
+
+	function handleCollocationClick(segment: { words: WordToken[]; span_id: number }) {
+		const first = segment.words[0];
+		onCollocationStateChange?.(
+			first.collocation_lemma!,
+			segment.span_id,
+			first.collocation_srs_state!
+		);
+	}
+
+	function handleCollocationKeydown(
+		e: KeyboardEvent,
+		segment: { words: WordToken[]; span_id: number }
+	) {
+		if (e.key !== 'Enter' && e.key !== ' ') return;
+		e.preventDefault();
+		handleCollocationClick(segment);
+	}
 
 	function groupIntoSegments(words: WordToken[]): WordSegment[] {
 		const segments: WordSegment[] = [];
@@ -87,18 +115,26 @@
 
 	{#if transcript.dialogue_lines.length > 0}
 		<div class="transcript-section">
-			<h3>Dialogue <span class="transcript-hint">(click words to change SRS state)</span></h3>
+			<h3>Dialogue <span class="transcript-hint">(click phrases/words to change SRS state; Alt+click a word inside a phrase for word-only)</span></h3>
 			{#each transcript.dialogue_lines as line}
 				<div class="dialogue-line">
 					<span class="dialogue-role">{line.role}</span>
 					<span class="dialogue-words">
 						{#each groupIntoSegments(line.words) as segment}
 							{#if segment.type === 'collocation'}
-								<span class="collocation-span">
+								<span
+									class="collocation-span {collocationClassFor(segment.words[0].collocation_srs_state!)}"
+									role="button"
+									tabindex="0"
+									title={segment.words[0].collocation_srs_state!}
+									onclick={() => handleCollocationClick(segment)}
+									onkeydown={(e) => handleCollocationKeydown(e, segment)}
+								>
 									{#each segment.words as cw}
 										<WordSpan
 											word={cw}
 											{onStateChange}
+											requireModifier={true}
 										/>{' '}
 									{/each}
 								</span>
@@ -200,6 +236,32 @@
 		display: inline;
 		border-bottom: 2px solid var(--color-primary, #2563eb);
 		padding-bottom: 1px;
+		cursor: pointer;
+		border-radius: 2px;
+		transition: background-color 0.1s;
+	}
+	.collocation-span:hover {
+		filter: brightness(0.95);
+	}
+	.collocation-span:focus-visible {
+		outline: 2px solid var(--color-primary, #2563eb);
+		outline-offset: 2px;
+	}
+	.coll-bg-new {
+		background-color: rgba(37, 99, 235, 0.1);
+	}
+	.coll-bg-learning {
+		background-color: rgba(202, 138, 4, 0.15);
+	}
+	.coll-bg-review {
+		background-color: rgba(22, 163, 74, 0.12);
+	}
+	.coll-bg-known {
+		background-color: rgba(156, 163, 175, 0.15);
+	}
+	.coll-bg-ignored {
+		background-color: rgba(156, 163, 175, 0.15);
+		text-decoration: line-through;
 	}
 
 	@media (max-width: 640px) {

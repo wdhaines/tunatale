@@ -35,7 +35,9 @@ const transcriptWithDialogue: TranscriptData = {
 					srs_item_id: null,
 					translation: null,
 					collocation_span_id: null,
-					collocation_start: false
+					collocation_start: false,
+					collocation_srs_state: null,
+					collocation_lemma: null
 				}
 			]
 		}
@@ -56,7 +58,9 @@ const transcriptWithCollocation: TranscriptData = {
 					srs_item_id: null,
 					translation: 'good',
 					collocation_span_id: 99,
-					collocation_start: true
+					collocation_start: true,
+					collocation_srs_state: 'learning',
+					collocation_lemma: 'dober dan'
 				},
 				{
 					surface: 'dan',
@@ -65,7 +69,9 @@ const transcriptWithCollocation: TranscriptData = {
 					srs_item_id: null,
 					translation: 'day',
 					collocation_span_id: 99,
-					collocation_start: false
+					collocation_start: false,
+					collocation_srs_state: 'learning',
+					collocation_lemma: 'dober dan'
 				},
 				{
 					surface: 'hvala',
@@ -74,7 +80,9 @@ const transcriptWithCollocation: TranscriptData = {
 					srs_item_id: null,
 					translation: null,
 					collocation_span_id: null,
-					collocation_start: false
+					collocation_start: false,
+					collocation_srs_state: null,
+					collocation_lemma: null
 				}
 			]
 		}
@@ -215,5 +223,168 @@ describe('Transcript', () => {
 		for (const span of spans) {
 			expect(span.textContent).not.toContain('hvala');
 		}
+	});
+
+	describe('collocation click behavior', () => {
+		it('plain click on collocation wrapper fires onCollocationStateChange', async () => {
+			const onCollocationStateChange = vi.fn();
+			const { container } = render(Transcript, {
+				props: defaultProps({
+					transcript: transcriptWithCollocation,
+					onCollocationStateChange
+				})
+			});
+			const span = container.querySelector('.collocation-span') as HTMLElement;
+			await fireEvent.click(span);
+			expect(onCollocationStateChange).toHaveBeenCalledWith('dober dan', 99, 'learning');
+		});
+
+		it('Enter key on collocation wrapper fires onCollocationStateChange', async () => {
+			const onCollocationStateChange = vi.fn();
+			const { container } = render(Transcript, {
+				props: defaultProps({
+					transcript: transcriptWithCollocation,
+					onCollocationStateChange
+				})
+			});
+			const span = container.querySelector('.collocation-span') as HTMLElement;
+			await fireEvent.keyDown(span, { key: 'Enter' });
+			expect(onCollocationStateChange).toHaveBeenCalledWith('dober dan', 99, 'learning');
+		});
+
+		it('plain click inside collocation does not fire word-level onStateChange', async () => {
+			const onStateChange = vi.fn();
+			const onCollocationStateChange = vi.fn();
+			const { getByText } = render(Transcript, {
+				props: defaultProps({
+					transcript: transcriptWithCollocation,
+					onStateChange,
+					onCollocationStateChange
+				})
+			});
+			await fireEvent.click(getByText('dober'));
+			expect(onStateChange).not.toHaveBeenCalled();
+			expect(onCollocationStateChange).toHaveBeenCalled();
+		});
+
+		it('Alt+click inside collocation fires word-level onStateChange', async () => {
+			const onStateChange = vi.fn();
+			const onCollocationStateChange = vi.fn();
+			const { getByText } = render(Transcript, {
+				props: defaultProps({
+					transcript: transcriptWithCollocation,
+					onStateChange,
+					onCollocationStateChange
+				})
+			});
+			await fireEvent.click(getByText('dober'), { altKey: true });
+			expect(onStateChange).toHaveBeenCalledWith('dober', null);
+		});
+
+		it('plain click on word outside collocation fires word-level onStateChange', async () => {
+			const onStateChange = vi.fn();
+			const onCollocationStateChange = vi.fn();
+			const { getByText } = render(Transcript, {
+				props: defaultProps({
+					transcript: transcriptWithCollocation,
+					onStateChange,
+					onCollocationStateChange
+				})
+			});
+			await fireEvent.click(getByText('hvala'));
+			expect(onStateChange).toHaveBeenCalledWith('hvala', null);
+			expect(onCollocationStateChange).not.toHaveBeenCalled();
+		});
+
+		it('collocation wrapper has state-based background class', () => {
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptWithCollocation })
+			});
+			const span = container.querySelector('.collocation-span') as HTMLElement;
+			expect(span.className).toContain('coll-bg-learning');
+		});
+
+		it('collocation wrapper has role=button and is keyboard-reachable', () => {
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptWithCollocation })
+			});
+			const span = container.querySelector('.collocation-span') as HTMLElement;
+			expect(span.getAttribute('role')).toBe('button');
+			expect(span.getAttribute('tabindex')).toBe('0');
+		});
+
+		it('Space key on collocation wrapper fires onCollocationStateChange', async () => {
+			const onCollocationStateChange = vi.fn();
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptWithCollocation, onCollocationStateChange })
+			});
+			await fireEvent.keyDown(container.querySelector('.collocation-span') as HTMLElement, { key: ' ' });
+			expect(onCollocationStateChange).toHaveBeenCalled();
+		});
+
+		it('other keys on collocation wrapper do not fire', async () => {
+			const onCollocationStateChange = vi.fn();
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptWithCollocation, onCollocationStateChange })
+			});
+			await fireEvent.keyDown(container.querySelector('.collocation-span') as HTMLElement, { key: 'Tab' });
+			expect(onCollocationStateChange).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('collocation background colors', () => {
+		function makeCollTranscript(state: string): TranscriptData {
+			return {
+				lesson_id: 'l1',
+				key_phrases: [],
+				dialogue_lines: [
+					{
+						role: 'Petra',
+						words: [
+							{
+								surface: 'dober', lemma: 'dober', srs_state: 'new', srs_item_id: null,
+								translation: null, collocation_span_id: 1, collocation_start: true,
+								collocation_srs_state: state, collocation_lemma: 'dober dan'
+							},
+							{
+								surface: 'dan', lemma: 'dan', srs_state: 'new', srs_item_id: null,
+								translation: null, collocation_span_id: 1, collocation_start: false,
+								collocation_srs_state: state, collocation_lemma: 'dober dan'
+							}
+						]
+					}
+				]
+			};
+		}
+
+		it('review state → coll-bg-review', () => {
+			const { container } = render(Transcript, { props: defaultProps({ transcript: makeCollTranscript('review') }) });
+			expect(container.querySelector('.collocation-span')!.className).toContain('coll-bg-review');
+		});
+
+		it('known state → coll-bg-known', () => {
+			const { container } = render(Transcript, { props: defaultProps({ transcript: makeCollTranscript('known') }) });
+			expect(container.querySelector('.collocation-span')!.className).toContain('coll-bg-known');
+		});
+
+		it('suspended state → coll-bg-ignored', () => {
+			const { container } = render(Transcript, { props: defaultProps({ transcript: makeCollTranscript('suspended') }) });
+			expect(container.querySelector('.collocation-span')!.className).toContain('coll-bg-ignored');
+		});
+
+		it('ignored state → coll-bg-ignored', () => {
+			const { container } = render(Transcript, { props: defaultProps({ transcript: makeCollTranscript('ignored') }) });
+			expect(container.querySelector('.collocation-span')!.className).toContain('coll-bg-ignored');
+		});
+
+		it('relearning state → coll-bg-learning', () => {
+			const { container } = render(Transcript, { props: defaultProps({ transcript: makeCollTranscript('relearning') }) });
+			expect(container.querySelector('.collocation-span')!.className).toContain('coll-bg-learning');
+		});
+
+		it('unknown state → coll-bg-new (default)', () => {
+			const { container } = render(Transcript, { props: defaultProps({ transcript: makeCollTranscript('exotic') }) });
+			expect(container.querySelector('.collocation-span')!.className).toContain('coll-bg-new');
+		});
 	});
 });

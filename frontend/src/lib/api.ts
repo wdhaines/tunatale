@@ -71,6 +71,8 @@ export interface WordToken {
 	translation: string | null;
 	collocation_span_id: number | null;
 	collocation_start: boolean;
+	collocation_srs_state: string | null;
+	collocation_lemma: string | null;
 }
 
 export interface CreateSRSItemRequest {

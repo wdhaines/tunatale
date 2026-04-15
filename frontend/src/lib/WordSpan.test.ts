@@ -15,6 +15,8 @@ function makeWord(overrides: Partial<WordToken> = {}): WordToken {
 		translation: null,
 		collocation_span_id: null,
 		collocation_start: false,
+		collocation_srs_state: null,
+		collocation_lemma: null,
 		...overrides
 	};
 }
@@ -144,6 +146,69 @@ describe('WordSpan', () => {
 
 		await waitFor(() => {
 			expect(getByRole('button').className).toContain('word-learning');
+		});
+	});
+
+	describe('requireModifier', () => {
+		it('plain click does not fire onStateChange when requireModifier is true', async () => {
+			const onStateChange = vi.fn();
+			const { getByRole } = render(WordSpan, {
+				props: { word: makeWord(), onStateChange, requireModifier: true }
+			});
+			await fireEvent.click(getByRole('button'));
+			expect(onStateChange).not.toHaveBeenCalled();
+		});
+
+		it('Alt+click fires onStateChange when requireModifier is true', async () => {
+			const onStateChange = vi.fn();
+			const { getByRole } = render(WordSpan, {
+				props: {
+					word: makeWord({ lemma: 'zdravo', srs_item_id: 7 }),
+					onStateChange,
+					requireModifier: true
+				}
+			});
+			await fireEvent.click(getByRole('button'), { altKey: true });
+			expect(onStateChange).toHaveBeenCalledWith('zdravo', 7);
+		});
+
+		it('Shift+click fires onStateChange when requireModifier is true', async () => {
+			const onStateChange = vi.fn();
+			const { getByRole } = render(WordSpan, {
+				props: { word: makeWord(), onStateChange, requireModifier: true }
+			});
+			await fireEvent.click(getByRole('button'), { shiftKey: true });
+			expect(onStateChange).toHaveBeenCalled();
+		});
+
+		it('plain Enter does not fire onStateChange when requireModifier is true', async () => {
+			const onStateChange = vi.fn();
+			const { getByRole } = render(WordSpan, {
+				props: { word: makeWord(), onStateChange, requireModifier: true }
+			});
+			await fireEvent.keyDown(getByRole('button'), { key: 'Enter' });
+			expect(onStateChange).not.toHaveBeenCalled();
+		});
+
+		it('Alt+Enter fires onStateChange when requireModifier is true', async () => {
+			const onStateChange = vi.fn();
+			const { getByRole } = render(WordSpan, {
+				props: { word: makeWord(), onStateChange, requireModifier: true }
+			});
+			await fireEvent.keyDown(getByRole('button'), { key: 'Enter', altKey: true });
+			expect(onStateChange).toHaveBeenCalled();
+		});
+
+		it('plain click bubbles to parent when requireModifier is true', async () => {
+			const onStateChange = vi.fn();
+			const parentHandler = vi.fn();
+			const { getByRole, container } = render(WordSpan, {
+				props: { word: makeWord(), onStateChange, requireModifier: true }
+			});
+			container.addEventListener('click', parentHandler);
+			await fireEvent.click(getByRole('button'));
+			expect(onStateChange).not.toHaveBeenCalled();
+			expect(parentHandler).toHaveBeenCalled();
 		});
 	});
 });

@@ -22,6 +22,8 @@ class WordToken:
     translation: str | None = None  # L1 translation: DB value wins over gloss map
     collocation_span_id: int | None = None  # DB id of multi-word collocation this token belongs to
     collocation_start: bool = False  # True if this is the first token in its collocation span
+    collocation_srs_state: str | None = None  # SRS state of the enclosing collocation
+    collocation_lemma: str | None = None  # canonical text of the enclosing collocation
 
 
 @dataclass
@@ -110,9 +112,18 @@ def extract_transcript(
 
             # Annotate collocation spans
             span_annotations = match_spans(lemmas, collocation_index)
+            span_cache: dict[int, tuple[str, str]] = {}
             for word, (span_id, is_start) in zip(words, span_annotations, strict=True):
                 word.collocation_span_id = span_id
                 word.collocation_start = is_start
+                if span_id is None:
+                    continue
+                cached = span_cache.get(span_id)
+                if cached is None:
+                    _, coll_item, _ = db.get_collocation_by_id(span_id)
+                    cached = (coll_item.state.value, coll_item.syntactic_unit.text)
+                    span_cache[span_id] = cached
+                word.collocation_srs_state, word.collocation_lemma = cached
 
             dialogue_lines.append(DialogueLine(role=phrase.role, words=words))
 

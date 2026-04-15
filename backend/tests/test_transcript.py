@@ -225,3 +225,30 @@ class TestWordTokenEnrichment:
         result = extract_transcript(lesson, self.db, self.lemmatizer)
         # Should not get a span (word_count=1 entries are excluded from span matching)
         assert result.dialogue_lines[0].words[0].collocation_span_id is None
+
+    def test_collocation_state_and_lemma_set_for_span_tokens(self):
+        unit = SyntacticUnit(
+            text="kje je banka",
+            translation="where is the bank",
+            word_count=3,
+            difficulty=2,
+            source="llm",
+            lemma=None,
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        item = self.db.get_collocation("kje je banka")
+        item.state = SRSState.REVIEW
+        self.db.update_collocation(item)
+
+        lesson = _make_lesson([("female-1", "kje je banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        words = result.dialogue_lines[0].words
+        assert [w.collocation_srs_state for w in words] == ["review", "review", "review"]
+        assert [w.collocation_lemma for w in words] == ["kje je banka", "kje je banka", "kje je banka"]
+
+    def test_word_not_in_collocation_has_null_collocation_state(self):
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        word = result.dialogue_lines[0].words[0]
+        assert word.collocation_srs_state is None
+        assert word.collocation_lemma is None

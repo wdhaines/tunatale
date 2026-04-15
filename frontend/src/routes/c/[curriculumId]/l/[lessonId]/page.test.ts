@@ -189,7 +189,7 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 			dialogue_lines: [
 				{
 					role: 'Petra',
-					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false }]
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }]
 				}
 			]
 		};
@@ -218,7 +218,7 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 			dialogue_lines: [
 				{
 					role: 'Petra',
-					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false }]
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }]
 				}
 			]
 		};
@@ -244,7 +244,7 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 			dialogue_lines: [
 				{
 					role: 'Petra',
-					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false }]
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }]
 				}
 			]
 		};
@@ -267,7 +267,7 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 			dialogue_lines: [
 				{
 					role: 'Petra',
-					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false }]
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }]
 				}
 			]
 		};
@@ -290,11 +290,11 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 			dialogue_lines: [
 				{
 					role: 'Petra',
-					words: [{ surface: 'dober', lemma: 'dober', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false }]
+					words: [{ surface: 'dober', lemma: 'dober', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }]
 				},
 				{
 					role: 'Ana',
-					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false }]
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }]
 				}
 			]
 		};
@@ -319,7 +319,7 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 			dialogue_lines: [
 				{
 					role: 'Petra',
-					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'exotic_state', srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false }]
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'exotic_state', srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }]
 				}
 			]
 		};
@@ -334,6 +334,139 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 
 		await waitFor(() => {
 			expect(mockSetSRSItemState).toHaveBeenCalledWith(42, 'learning');
+		});
+	});
+
+	describe('collocation click', () => {
+		const transcriptWithCollocation = {
+			lesson_id: 'l1',
+			key_phrases: [],
+			dialogue_lines: [
+				{
+					role: 'Petra',
+					words: [
+						{
+							surface: 'dober',
+							lemma: 'dober',
+							srs_state: 'new' as const,
+							srs_item_id: null,
+							translation: null,
+							collocation_span_id: 77,
+							collocation_start: true,
+							collocation_srs_state: 'learning',
+							collocation_lemma: 'dober dan'
+						},
+						{
+							surface: 'dan',
+							lemma: 'dan',
+							srs_state: 'new' as const,
+							srs_item_id: null,
+							translation: null,
+							collocation_span_id: 77,
+							collocation_start: false,
+							collocation_srs_state: 'learning',
+							collocation_lemma: 'dober dan'
+						}
+					]
+				}
+			]
+		};
+
+		it('clicking a collocation cycles its own SRS state without creating a new item', async () => {
+			mockSetSRSItemState.mockResolvedValue({ id: 77, text: 'dober dan', translation: '', state: 'known' as const, due_date: '2026-04-14', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, language_code: 'sl' });
+			mockGetTranscript.mockResolvedValue(transcriptWithCollocation);
+
+			const { container } = render(Page, {
+				props: { data: { curriculum, lesson, audio, transcript: transcriptWithCollocation } }
+			});
+
+			const span = container.querySelector('.collocation-span') as HTMLElement;
+			await fireEvent.click(span);
+
+			await waitFor(() => {
+				expect(mockSetSRSItemState).toHaveBeenCalledWith(77, 'known');
+			});
+			expect(mockCreateSRSItem).not.toHaveBeenCalled();
+		});
+
+		it('collocation cycle follows STATE_CYCLE from new', async () => {
+			const transcriptNewColl = {
+				...transcriptWithCollocation,
+				dialogue_lines: [
+					{
+						role: 'Petra',
+						words: transcriptWithCollocation.dialogue_lines[0].words.map((w) => ({
+							...w,
+							collocation_srs_state: 'new'
+						}))
+					}
+				]
+			};
+			mockSetSRSItemState.mockResolvedValue({ id: 77, text: 'dober dan', translation: '', state: 'learning' as const, due_date: '2026-04-14', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, language_code: 'sl' });
+			mockGetTranscript.mockResolvedValue(transcriptNewColl);
+
+			const { container } = render(Page, {
+				props: { data: { curriculum, lesson, audio, transcript: transcriptNewColl } }
+			});
+
+			await fireEvent.click(container.querySelector('.collocation-span') as HTMLElement);
+
+			await waitFor(() => {
+				expect(mockSetSRSItemState).toHaveBeenCalledWith(77, 'learning');
+			});
+		});
+
+		it('shows error when collocation state update fails', async () => {
+			mockSetSRSItemState.mockRejectedValue(new Error('coll state failed'));
+			mockGetTranscript.mockResolvedValue(transcriptWithCollocation);
+
+			const { container, findByText } = render(Page, {
+				props: { data: { curriculum, lesson, audio, transcript: transcriptWithCollocation } }
+			});
+
+			await fireEvent.click(container.querySelector('.collocation-span') as HTMLElement);
+
+			expect(await findByText('coll state failed')).toBeTruthy();
+		});
+
+		it('shows stringified error when collocation update throws a non-Error', async () => {
+			mockSetSRSItemState.mockRejectedValue('plain coll error');
+			mockGetTranscript.mockResolvedValue(transcriptWithCollocation);
+
+			const { container, findByText } = render(Page, {
+				props: { data: { curriculum, lesson, audio, transcript: transcriptWithCollocation } }
+			});
+
+			await fireEvent.click(container.querySelector('.collocation-span') as HTMLElement);
+
+			expect(await findByText('plain coll error')).toBeTruthy();
+		});
+
+		it('falls back to learning state for unrecognized collocation srs_state', async () => {
+			const transcriptExotic = {
+				...transcriptWithCollocation,
+				dialogue_lines: [
+					{
+						role: 'Petra',
+						words: transcriptWithCollocation.dialogue_lines[0].words.map((w) => ({
+							...w,
+							collocation_srs_state: 'exotic'
+						}))
+					}
+				]
+			};
+			mockSetSRSItemState.mockResolvedValue({ id: 77, text: 'dober dan', translation: '', state: 'learning' as const, due_date: '2026-04-14', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, language_code: 'sl' });
+			mockGetTranscript.mockResolvedValue(transcriptExotic);
+
+			const { container } = render(Page, {
+				props: { data: { curriculum, lesson, audio, transcript: transcriptExotic } }
+			});
+
+			await fireEvent.click(container.querySelector('.collocation-span') as HTMLElement);
+
+			await waitFor(() => {
+				expect(mockSetSRSItemState).toHaveBeenCalledWith(77, 'learning');
+			});
 		});
 	});
 });
