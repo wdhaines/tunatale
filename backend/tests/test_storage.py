@@ -110,6 +110,37 @@ class TestLessonStorage:
         """get_lesson_row returns None for unknown lesson_id."""
         assert store.get_lesson_row("nonexistent") is None
 
+    def test_get_all_token_glosses_merges_lessons(self, store):
+        """Merges token_glosses from all lessons; later rows win on duplicate lemmas."""
+        lesson1 = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[],
+            generation_metadata={"token_glosses": {"banka": "bank", "hiša": "house"}},
+        )
+        lesson2 = Lesson(
+            title="Day 2",
+            language_code="sl",
+            sections=[],
+            generation_metadata={"token_glosses": {"banka": "bank (updated)", "miza": "table"}},
+        )
+        store.save_lesson("l1", "c1", 1, lesson1)
+        store.save_lesson("l2", "c1", 2, lesson2)
+        glosses = store.get_all_token_glosses()
+        assert glosses["hiša"] == "house"
+        assert glosses["miza"] == "table"
+        assert glosses["banka"] == "bank (updated)"  # later lesson wins
+
+    def test_get_all_token_glosses_empty_store(self, store):
+        """Returns empty dict when no lessons exist."""
+        assert store.get_all_token_glosses() == {}
+
+    def test_get_all_token_glosses_skips_lessons_without_glosses(self, store):
+        """Lessons without token_glosses in generation_metadata are safely skipped."""
+        lesson = _make_lesson()  # no generation_metadata
+        store.save_lesson("l1", "c1", 1, lesson)
+        assert store.get_all_token_glosses() == {}
+
 
 class TestAudioFileStorage:
     """Tests for audio file path save/get operations."""

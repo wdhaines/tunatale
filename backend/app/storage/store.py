@@ -197,6 +197,19 @@ class ContentStore:
             ).fetchall()
         return [{"day": row["day"], "lesson_id": row["lesson_id"]} for row in rows]
 
+    def get_all_token_glosses(self) -> dict[str, str]:
+        """Merge token_glosses from all stored lessons into a single dict.
+
+        Later lessons (higher rowid) win on duplicate lemmas.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT data_json FROM lessons ORDER BY rowid ASC").fetchall()
+        glosses: dict[str, str] = {}
+        for row in rows:
+            lesson = Lesson.from_json(row["data_json"])
+            glosses.update(lesson.generation_metadata.get("token_glosses", {}))
+        return glosses
+
     # ── Audio files ───────────────────────────────────────────────────────
 
     def save_audio_file(

@@ -6,6 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
+from app.models.language import Language
 from app.models.srs_item import SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
@@ -22,10 +23,11 @@ def _clean_app_state():
     store = ContentStore(":memory:")
     app.state.srs_db = db
     app.state.content_store = store
+    app.state.language = Language.slovene()
     yield
     db.close()
     store.close()
-    for attr in ("srs_db", "content_store"):
+    for attr in ("srs_db", "content_store", "language", "llm"):
         if hasattr(app.state, attr):
             delattr(app.state, attr)
 
@@ -461,3 +463,116 @@ class TestResetSuspend:
             assert due_resp.status_code == 200
             due_texts = [i["text"] for i in due_resp.json()["due"]]
             assert "lep" not in due_texts
+
+
+class TestBackfillTranslations:
+    """Tests for POST /api/srs/backfill-translations."""
+
+    async def test_backfill_fills_empty_translations(self):
+        from app.models.lesson import Lesson
+
+        db = _db()
+        store = app.state.content_store
+        db.add_collocation(_unit("banka", ""), language_code="sl")
+        db.add_collocation(_unit("hiša", "house"), language_code="sl")
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[],
+            generation_metadata={"token_glosses": {"banka": "bank", "hiša": "dom"}},
+        )
+        store.save_lesson("l1", "c1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/backfill-translations")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["updated"] == 1  # only banka was empty
+        assert data["glosses_found"] == 2
+        assert db.get_collocation("banka").syntactic_unit.translation == "bank"
+        assert db.get_collocation("hiša").syntactic_unit.translation == "house"  # not overwritten
+
+    async def test_backfill_returns_zero_when_no_lessons(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/backfill-translations")
+
+        assert response.status_code == 200
+        assert response.json() == {"updated": 0, "glosses_found": 0}
+
+
+class TestTranslateMissing:
+    """Tests for POST /api/srs/translate-missing."""
+
+    async def test_translates_untranslated_cards(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        db = _db()
+        db.add_collocation(_unit("zdravo"), language_code="sl")
+        db.add_collocation(_unit("hvala", "thank you"), language_code="sl")
+
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value='{"zdravo": "hello"}')
+        app.state.llm = mock_llm
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/translate-missing")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["translated"] == 1
+        assert data["skipped"] == 0
+        assert db.get_collocation("zdravo").syntactic_unit.translation == "hello"
+        assert db.get_collocation("hvala").syntactic_unit.translation == "thank you"
+
+    async def test_returns_zero_when_all_translated(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        db = _db()
+        db.add_collocation(_unit("hvala", "thank you"), language_code="sl")
+
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value="{}")
+        app.state.llm = mock_llm
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/translate-missing")
+
+        assert response.status_code == 200
+        assert response.json() == {"translated": 0, "skipped": 0}
+        mock_llm.complete.assert_not_called()
+
+    async def test_skips_batch_on_invalid_json(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        db = _db()
+        db.add_collocation(_unit("zdravo"), language_code="sl")
+
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value="not json")
+        app.state.llm = mock_llm
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/translate-missing")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["translated"] == 0
+        assert data["skipped"] == 1
+
+    async def test_strips_markdown_code_fences(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        db = _db()
+        db.add_collocation(_unit("zdravo"), language_code="sl")
+
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value='```json\n{"zdravo": "hello"}\n```')
+        app.state.llm = mock_llm
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/translate-missing")
+
+        assert response.status_code == 200
+        assert db.get_collocation("zdravo").syntactic_unit.translation == "hello"

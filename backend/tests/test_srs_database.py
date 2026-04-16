@@ -26,6 +26,40 @@ class TestCRUD:
         srs_db.add_collocation(unit, language_code="sl")
         srs_db.add_collocation(unit, language_code="sl")  # should not raise
 
+    def test_add_collocation_backfills_empty_translation(self, srs_db):
+        """Re-adding a word with a real translation fills the previously empty one."""
+        srs_db.add_collocation(_unit("banka", ""), language_code="sl")
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        assert srs_db.get_collocation("banka").syntactic_unit.translation == "bank"
+
+    def test_add_collocation_preserves_existing_nonempty_translation(self, srs_db):
+        """Re-adding does NOT overwrite a translation the user already has."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        srs_db.add_collocation(_unit("banka", "financial institution"), language_code="sl")
+        assert srs_db.get_collocation("banka").syntactic_unit.translation == "bank"
+
+    def test_backfill_translations_updates_empty_rows(self, srs_db):
+        """backfill_translations fills in empty translations from a gloss map."""
+        srs_db.add_collocation(_unit("banka", ""), language_code="sl")
+        srs_db.add_collocation(_unit("hvala", "thank you"), language_code="sl")
+        srs_db.backfill_translations({"banka": "bank", "hvala": "danke"})
+        assert srs_db.get_collocation("banka").syntactic_unit.translation == "bank"
+        assert srs_db.get_collocation("hvala").syntactic_unit.translation == "thank you"  # not overwritten
+
+    def test_backfill_translations_returns_count(self, srs_db):
+        """backfill_translations returns the number of rows updated."""
+        srs_db.add_collocation(_unit("banka", ""), language_code="sl")
+        srs_db.add_collocation(_unit("hvala", "thank you"), language_code="sl")
+        n = srs_db.backfill_translations({"banka": "bank", "hvala": "danke"})
+        assert n == 1  # only banka was empty
+
+    def test_backfill_translations_skips_empty_string_values(self, srs_db):
+        """Glosses entries with empty-string translations are skipped."""
+        srs_db.add_collocation(_unit("banka", ""), language_code="sl")
+        n = srs_db.backfill_translations({"banka": ""})
+        assert n == 0
+        assert srs_db.get_collocation("banka").syntactic_unit.translation == ""
+
     def test_get_nonexistent_returns_none(self, srs_db):
         assert srs_db.get_collocation("nonexistent") is None
 
@@ -252,6 +286,27 @@ class TestListCollocations:
             srs_db.list_collocations(order_by="injected_column")
 
 
+class TestUntranslated:
+    """Tests for get_untranslated_collocations."""
+
+    def test_returns_items_with_empty_translation(self, srs_db):
+        srs_db.add_collocation(_unit("zdravo", ""), language_code="sl")
+        srs_db.add_collocation(_unit("hvala", "thank you"), language_code="sl")
+        rows = srs_db.get_untranslated_collocations()
+        texts = [r[0] for r in rows]
+        assert "zdravo" in texts
+        assert "hvala" not in texts
+
+    def test_returns_empty_when_all_translated(self, srs_db):
+        srs_db.add_collocation(_unit("hvala", "thank you"), language_code="sl")
+        assert srs_db.get_untranslated_collocations() == []
+
+    def test_includes_language_code(self, srs_db):
+        srs_db.add_collocation(_unit("zdravo", ""), language_code="sl")
+        rows = srs_db.get_untranslated_collocations()
+        assert rows[0] == ("zdravo", "sl")
+
+
 class TestSuspended:
     """Tests for SUSPENDED state filtering."""
 
@@ -388,6 +443,11 @@ class TestFileDatabaseWriteOperations:
 
         # set_state_by_id (312->exit False branch)
         db.set_state_by_id(row_id, SRSState.KNOWN)
+
+        # backfill_translations (file-backed DB path: covers 164->166 False branch)
+        db.add_collocation(_unit("hvala", ""), language_code="sl")
+        n = db.backfill_translations({"hvala": "thanks", "unknown": "x", "": ""})
+        assert n == 1
 
         # Verify persistence works
         assert db.get_collocation("prosim") is not None

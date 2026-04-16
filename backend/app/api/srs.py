@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import datetime
+import json
+import logging
+import re
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -178,6 +181,62 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
             for line in transcript.dialogue_lines
         ],
     }
+
+
+_TRANSLATE_BATCH_SIZE = 50
+_TRANSLATE_SYSTEM = "You are a translation assistant. Return ONLY valid JSON, no other text."
+_logger = logging.getLogger(__name__)
+
+
+def _build_translate_prompt(words: list[str], language_name: str) -> str:
+    word_list = "\n".join(f"- {w}" for w in words)
+    return (
+        f"Translate these {language_name} words/phrases to concise English.\n"
+        f'Return a JSON object mapping each to its translation: {{"word": "translation", ...}}\n\n'
+        f"Words:\n{word_list}"
+    )
+
+
+@router.post("/translate-missing", status_code=200)
+async def translate_missing(request: Request):
+    """Call the LLM to fill in translations for every card that has none."""
+    db = request.app.state.srs_db
+    llm = request.app.state.llm
+    language = request.app.state.language
+
+    untranslated = db.get_untranslated_collocations()
+    if not untranslated:
+        return {"translated": 0, "skipped": 0}
+
+    translated = 0
+    skipped = 0
+    words = [text for text, _ in untranslated]
+
+    for i in range(0, len(words), _TRANSLATE_BATCH_SIZE):
+        batch = words[i : i + _TRANSLATE_BATCH_SIZE]
+        try:
+            prompt = _build_translate_prompt(batch, language.name)
+            raw = await llm.complete(prompt, system_prompt=_TRANSLATE_SYSTEM, temperature=0.1, max_tokens=2048)
+            raw = re.sub(r"^```(?:json)?\s*\n?", "", raw.strip())
+            raw = re.sub(r"\n?```\s*$", "", raw)
+            glosses = json.loads(raw.strip())
+        except Exception:
+            _logger.warning("translate-missing: batch %d–%d failed", i, i + len(batch))
+            skipped += len(batch)
+            continue
+        translated += db.backfill_translations(glosses)
+
+    return {"translated": translated, "skipped": skipped}
+
+
+@router.post("/backfill-translations", status_code=200)
+async def backfill_translations(request: Request):
+    """One-time repair: fill empty translations from all stored lesson glosses."""
+    store = request.app.state.content_store
+    db = request.app.state.srs_db
+    glosses = store.get_all_token_glosses()
+    updated = db.backfill_translations(glosses)
+    return {"updated": updated, "glosses_found": len(glosses)}
 
 
 @router.get("/stats", status_code=200)

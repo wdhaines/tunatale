@@ -111,14 +111,20 @@ class SRSDatabase:
     # ── Write operations ───────────────────────────────────────────────
 
     def add_collocation(self, unit: SyntacticUnit, language_code: str = "sl") -> None:
-        """Insert a new collocation (ignore if already exists)."""
+        """Insert a new collocation; if it already exists, backfill an empty translation."""
         with self._get_conn() as conn:
             conn.execute(
                 """
-                INSERT OR IGNORE INTO collocations
+                INSERT INTO collocations
                     (text, translation, language_code, word_count, unit_difficulty,
                      source, corpus_frequency, due_date, lemma)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(text) DO UPDATE SET
+                    translation = CASE
+                        WHEN excluded.translation != '' AND collocations.translation = ''
+                        THEN excluded.translation
+                        ELSE collocations.translation
+                    END
                 """,
                 (
                     unit.text,
@@ -136,6 +142,36 @@ class SRSDatabase:
                 conn.commit()
             else:
                 self._conn.commit()
+
+    def get_untranslated_collocations(self) -> list[tuple[str, str]]:
+        """Return (text, language_code) for all rows with an empty translation."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT text, language_code FROM collocations WHERE translation = ''",
+            ).fetchall()
+        return [(row["text"], row["language_code"]) for row in rows]
+
+    def backfill_translations(self, glosses: dict[str, str]) -> int:
+        """Update rows with empty translations using the provided gloss map.
+
+        For each entry in glosses where the DB row has translation='', sets the
+        translation to the provided value. Returns the number of rows updated.
+        """
+        if not glosses:
+            return 0
+        updated = 0
+        with self._get_conn() as conn:
+            for text, translation in glosses.items():
+                if not translation:
+                    continue
+                cursor = conn.execute(
+                    "UPDATE collocations SET translation = ?, updated_at = datetime('now') WHERE text = ? AND translation = ''",
+                    (translation, text),
+                )
+                updated += cursor.rowcount
+            if self._in_memory:
+                self._conn.commit()
+        return updated
 
     def update_collocation(self, item: SRSItem) -> None:
         """Update FSRS scheduling fields for an existing collocation."""

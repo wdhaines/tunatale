@@ -50,6 +50,7 @@ async def lifespan(app: FastAPI):
     app.state.srs_db = srs_db
     app.state.content_store = content_store
     app.state.language = language
+    app.state.llm = llm
     app.state.curriculum_generator = CurriculumGenerator(llm)
     app.state.story_generator = StoryGenerator(llm)
     app.state.renderer = LessonRenderer(
