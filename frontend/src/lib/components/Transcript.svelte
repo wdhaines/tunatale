@@ -1,5 +1,6 @@
 <script lang="ts">
 	import WordSpan from '$lib/WordSpan.svelte';
+	import Tooltip from './Tooltip.svelte';
 	import type { LessonDetail, TranscriptData, WordToken } from '$lib/api';
 	import { buildScenes, fallbackScenes } from '$lib/transcriptScenes';
 
@@ -234,6 +235,17 @@
 		return idx + innerIdx;
 	}
 
+	// --- Alt-key state: hold Alt while hovering a collocation to see per-word tooltips ---
+	let altHeld = $state(false);
+
+	function handleAltKeyDown(e: KeyboardEvent) {
+		if (e.key === 'Alt') altHeld = true;
+	}
+	function handleAltKeyUp(e: KeyboardEvent) {
+		altHeld = false;
+	}
+
+
 	const scenes = $derived.by(() => {
 		if (lesson) {
 			const result = buildScenes(lesson, transcript.dialogue_lines);
@@ -242,6 +254,8 @@
 		return fallbackScenes(transcript.dialogue_lines);
 	});
 </script>
+
+<svelte:window onkeydown={handleAltKeyDown} onkeyup={handleAltKeyUp} />
 
 <div class="transcript-wrapper">
 	{#if transcript.key_phrases.length > 0}
@@ -304,26 +318,31 @@
 							>
 								{#each segments as segment, segIdx}
 									{#if segment.type === 'collocation'}
-										<span
-											class="collocation-span {collocationClassFor(segment.words[0].collocation_srs_state!)}"
-											role="button"
-											tabindex="0"
-											title={segment.words[0].collocation_srs_state!}
-											onclick={() => handleCollocationClick(segment)}
-											onkeydown={(e) => handleCollocationKeydown(e, segment)}
+										<Tooltip
+											translation={altHeld ? null : segment.words[0].collocation_translation}
+											state={altHeld ? null : segment.words[0].collocation_srs_state}
 										>
-											{#each segment.words as cw, innerIdx}
-												{@const wIdx = wordIndexInLine(segments, segIdx, innerIdx)}
-												<WordSpan
-													word={cw}
-													{onStateChange}
-													requireModifier={true}
-													lineIndex={lineIndex}
-													wordIndex={wIdx}
-													selected={wordIsSelected(lineIndex, wIdx)}
-												/>{' '}
-											{/each}
-										</span>
+											<span
+												class="collocation-span {collocationClassFor(segment.words[0].collocation_srs_state!)}"
+												role="button"
+												tabindex="0"
+												onclick={() => handleCollocationClick(segment)}
+												onkeydown={(e) => handleCollocationKeydown(e, segment)}
+											>
+												{#each segment.words as cw, innerIdx}
+													{@const wIdx = wordIndexInLine(segments, segIdx, innerIdx)}
+													<WordSpan
+														word={cw}
+														{onStateChange}
+														requireModifier={true}
+														altHover={altHeld}
+														lineIndex={lineIndex}
+														wordIndex={wIdx}
+														selected={wordIsSelected(lineIndex, wIdx)}
+													/>{' '}
+												{/each}
+											</span>
+										</Tooltip>
 									{:else}
 										{@const wIdx = wordIndexInLine(segments, segIdx, 0)}
 										<!-- svelte-ignore a11y_click_events_have_key_events -->

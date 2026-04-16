@@ -1,16 +1,26 @@
 <script lang="ts">
 	import type { WordToken } from './api';
+	import Tooltip from '$lib/components/Tooltip.svelte';
 
 	interface Props {
 		word: WordToken;
 		onStateChange?: (lemma: string, srs_item_id: number | null) => void;
 		requireModifier?: boolean;
+		altHover?: boolean;
 		lineIndex?: number;
 		wordIndex?: number;
 		selected?: boolean;
 	}
 
-	let { word, onStateChange, requireModifier = false, lineIndex, wordIndex, selected = false }: Props = $props();
+	let {
+		word,
+		onStateChange,
+		requireModifier = false,
+		altHover = false,
+		lineIndex,
+		wordIndex,
+		selected = false
+	}: Props = $props();
 
 	function fire() {
 		onStateChange?.(word.lemma, word.srs_item_id);
@@ -46,19 +56,36 @@
 						? 'word-review'
 						: 'word-new'
 	);
+
+	// Show tooltip when: not inside a collocation, OR alt-hover mode is active
+	const showTooltip = $derived(!requireModifier || altHover);
 </script>
 
-<span
-	class="word {colorClass}"
-	class:word-selected={selected}
-	role="button"
-	tabindex="0"
-	title={word.srs_state}
-	data-line-index={lineIndex}
-	data-word-index={wordIndex}
-	onclick={handleClick}
-	onkeydown={handleKeydown}
->{word.surface}</span>
+{#if showTooltip}
+	<Tooltip translation={word.translation} state={word.srs_state}>
+		<span
+			class="word {colorClass}"
+			class:word-selected={selected}
+			role="button"
+			tabindex="0"
+			data-line-index={lineIndex}
+			data-word-index={wordIndex}
+			onclick={handleClick}
+			onkeydown={handleKeydown}
+		>{word.surface}</span>
+	</Tooltip>
+{:else}
+	<span
+		class="word {colorClass}"
+		class:word-selected={selected}
+		role="button"
+		tabindex="0"
+		data-line-index={lineIndex}
+		data-word-index={wordIndex}
+		onclick={handleClick}
+		onkeydown={handleKeydown}
+	>{word.surface}</span>
+{/if}
 
 <style>
 	.word {

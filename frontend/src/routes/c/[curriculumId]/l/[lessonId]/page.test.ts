@@ -189,7 +189,7 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 			dialogue_lines: [
 				{
 					role: 'Petra',
-					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }]
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }]
 				}
 			]
 		};
@@ -218,7 +218,7 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 			dialogue_lines: [
 				{
 					role: 'Petra',
-					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }]
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }]
 				}
 			]
 		};
@@ -244,7 +244,7 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 			dialogue_lines: [
 				{
 					role: 'Petra',
-					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }]
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }]
 				}
 			]
 		};
@@ -267,7 +267,7 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 			dialogue_lines: [
 				{
 					role: 'Petra',
-					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }]
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }]
 				}
 			]
 		};
@@ -290,11 +290,11 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 			dialogue_lines: [
 				{
 					role: 'Petra',
-					words: [{ surface: 'dober', lemma: 'dober', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }]
+					words: [{ surface: 'dober', lemma: 'dober', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }]
 				},
 				{
 					role: 'Ana',
-					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }]
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'learning' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }]
 				}
 			]
 		};
@@ -319,7 +319,7 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 			dialogue_lines: [
 				{
 					role: 'Petra',
-					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'exotic_state', srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }]
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'exotic_state', srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }]
 				}
 			]
 		};
@@ -354,7 +354,8 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 							collocation_span_id: 77,
 							collocation_start: true,
 							collocation_srs_state: 'learning',
-							collocation_lemma: 'dober dan'
+							collocation_lemma: 'dober dan',
+							collocation_translation: null
 						},
 						{
 							surface: 'dan',
@@ -365,7 +366,8 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 							collocation_span_id: 77,
 							collocation_start: false,
 							collocation_srs_state: 'learning',
-							collocation_lemma: 'dober dan'
+							collocation_lemma: 'dober dan',
+							collocation_translation: null
 						}
 					]
 				}
@@ -478,8 +480,8 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 				{
 					role: 'Petra',
 					words: [
-						{ surface: 'centru', lemma: 'centru', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null },
-						{ surface: 'mesta', lemma: 'mesto', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }
+						{ surface: 'centru', lemma: 'centru', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null },
+						{ surface: 'mesta', lemma: 'mesto', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }
 					]
 				}
 			]

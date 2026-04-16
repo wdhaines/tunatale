@@ -170,6 +170,7 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
                         "collocation_start": w.collocation_start,
                         "collocation_srs_state": w.collocation_srs_state,
                         "collocation_lemma": w.collocation_lemma,
+                        "collocation_translation": w.collocation_translation,
                     }
                     for w in line.words
                 ],

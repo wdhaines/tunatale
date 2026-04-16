@@ -17,6 +17,7 @@ function makeWord(overrides: Partial<WordToken> = {}): WordToken {
 		collocation_start: false,
 		collocation_srs_state: null,
 		collocation_lemma: null,
+		collocation_translation: null,
 		...overrides
 	};
 }
@@ -128,11 +129,43 @@ describe('WordSpan', () => {
 		expect(getByRole('button').className).toContain('word-ignored');
 	});
 
-	it('shows srs_state as title', () => {
+	it('has no title attribute on the word span', () => {
 		const { getByRole } = render(WordSpan, {
 			props: { word: makeWord({ srs_state: 'learning' }) }
 		});
-		expect(getByRole('button').getAttribute('title')).toBe('learning');
+		expect(getByRole('button').getAttribute('title')).toBeNull();
+	});
+
+	it('shows translation text in tooltip element', () => {
+		const { container } = render(WordSpan, {
+			props: { word: makeWord({ translation: 'hello', srs_state: 'new' }) }
+		});
+		const tooltip = container.querySelector('[role="tooltip"]');
+		expect(tooltip).not.toBeNull();
+		expect(tooltip!.textContent).toContain('hello');
+	});
+
+	it('shows readable state label in tooltip element', () => {
+		const { container } = render(WordSpan, {
+			props: { word: makeWord({ translation: null, srs_state: 'learning' }) }
+		});
+		const tooltip = container.querySelector('[role="tooltip"]');
+		expect(tooltip).not.toBeNull();
+		expect(tooltip!.textContent).toContain('Learning');
+	});
+
+	it('does not render tooltip when requireModifier=true and altHover=false', () => {
+		const { container } = render(WordSpan, {
+			props: { word: makeWord({ translation: 'hello', srs_state: 'new' }), requireModifier: true, altHover: false }
+		});
+		expect(container.querySelector('[role="tooltip"]')).toBeNull();
+	});
+
+	it('renders tooltip when requireModifier=true and altHover=true', () => {
+		const { container } = render(WordSpan, {
+			props: { word: makeWord({ translation: 'hello', srs_state: 'new' }), requireModifier: true, altHover: true }
+		});
+		expect(container.querySelector('[role="tooltip"]')).not.toBeNull();
 	});
 
 	it('updates colorClass reactively when srs_state changes', async () => {
@@ -197,6 +230,13 @@ describe('WordSpan', () => {
 			});
 			await fireEvent.keyDown(getByRole('button'), { key: 'Enter', altKey: true });
 			expect(onStateChange).toHaveBeenCalled();
+		});
+
+		it('applies word-selected class when selected=true and requireModifier=true', () => {
+			const { getByRole } = render(WordSpan, {
+				props: { word: makeWord(), requireModifier: true, selected: true }
+			});
+			expect(getByRole('button').className).toContain('word-selected');
 		});
 
 		it('plain click bubbles to parent when requireModifier is true', async () => {

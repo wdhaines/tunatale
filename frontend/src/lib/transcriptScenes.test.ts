@@ -12,7 +12,8 @@ function word(surface: string) {
 		collocation_span_id: null,
 		collocation_start: false,
 		collocation_srs_state: null,
-		collocation_lemma: null
+		collocation_lemma: null,
+		collocation_translation: null
 	};
 }
 

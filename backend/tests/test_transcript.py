@@ -252,3 +252,29 @@ class TestWordTokenEnrichment:
         word = result.dialogue_lines[0].words[0]
         assert word.collocation_srs_state is None
         assert word.collocation_lemma is None
+
+    def test_collocation_translation_set_for_span_tokens(self):
+        unit = SyntacticUnit(
+            text="kje je banka",
+            translation="where is the bank",
+            word_count=3,
+            difficulty=2,
+            source="llm",
+            lemma=None,
+        )
+        self.db.add_collocation(unit, language_code="sl")
+
+        lesson = _make_lesson([("female-1", "kje je banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        words = result.dialogue_lines[0].words
+        assert [w.collocation_translation for w in words] == [
+            "where is the bank",
+            "where is the bank",
+            "where is the bank",
+        ]
+
+    def test_word_not_in_collocation_has_null_collocation_translation(self):
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        word = result.dialogue_lines[0].words[0]
+        assert word.collocation_translation is None

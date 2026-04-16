@@ -24,6 +24,7 @@ class WordToken:
     collocation_start: bool = False  # True if this is the first token in its collocation span
     collocation_srs_state: str | None = None  # SRS state of the enclosing collocation
     collocation_lemma: str | None = None  # canonical text of the enclosing collocation
+    collocation_translation: str | None = None  # L1 translation of the enclosing collocation
 
 
 @dataclass
@@ -112,7 +113,7 @@ def extract_transcript(
 
             # Annotate collocation spans
             span_annotations = match_spans(lemmas, collocation_index)
-            span_cache: dict[int, tuple[str, str]] = {}
+            span_cache: dict[int, tuple[str, str, str | None]] = {}
             for word, (span_id, is_start) in zip(words, span_annotations, strict=True):
                 word.collocation_span_id = span_id
                 word.collocation_start = is_start
@@ -121,9 +122,13 @@ def extract_transcript(
                 cached = span_cache.get(span_id)
                 if cached is None:
                     _, coll_item, _ = db.get_collocation_by_id(span_id)
-                    cached = (coll_item.state.value, coll_item.syntactic_unit.text)
+                    cached = (
+                        coll_item.state.value,
+                        coll_item.syntactic_unit.text,
+                        coll_item.syntactic_unit.translation or None,
+                    )
                     span_cache[span_id] = cached
-                word.collocation_srs_state, word.collocation_lemma = cached
+                word.collocation_srs_state, word.collocation_lemma, word.collocation_translation = cached
 
             dialogue_lines.append(DialogueLine(role=phrase.role, words=words))
 

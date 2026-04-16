@@ -37,7 +37,8 @@ const transcriptWithDialogue: TranscriptData = {
 					collocation_span_id: null,
 					collocation_start: false,
 					collocation_srs_state: null,
-					collocation_lemma: null
+					collocation_lemma: null,
+					collocation_translation: null
 				}
 			]
 		}
@@ -60,7 +61,8 @@ const transcriptWithCollocation: TranscriptData = {
 					collocation_span_id: 99,
 					collocation_start: true,
 					collocation_srs_state: 'learning',
-					collocation_lemma: 'dober dan'
+					collocation_lemma: 'dober dan',
+					collocation_translation: 'good day'
 				},
 				{
 					surface: 'dan',
@@ -71,7 +73,8 @@ const transcriptWithCollocation: TranscriptData = {
 					collocation_span_id: 99,
 					collocation_start: false,
 					collocation_srs_state: 'learning',
-					collocation_lemma: 'dober dan'
+					collocation_lemma: 'dober dan',
+					collocation_translation: 'good day'
 				},
 				{
 					surface: 'hvala',
@@ -82,7 +85,8 @@ const transcriptWithCollocation: TranscriptData = {
 					collocation_span_id: null,
 					collocation_start: false,
 					collocation_srs_state: null,
-					collocation_lemma: null
+					collocation_lemma: null,
+					collocation_translation: null
 				}
 			]
 		}
@@ -313,6 +317,43 @@ describe('Transcript', () => {
 			expect(span.getAttribute('tabindex')).toBe('0');
 		});
 
+		it('collocation wrapper has no title attribute', () => {
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptWithCollocation })
+			});
+			const span = container.querySelector('.collocation-span') as HTMLElement;
+			expect(span.getAttribute('title')).toBeNull();
+		});
+
+		it('collocation tooltip shows collocation_translation in DOM', () => {
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptWithCollocation })
+			});
+			const tooltip = container.querySelector('.collocation-span')!.closest('.tt-wrap')!.querySelector('[role="tooltip"]');
+			expect(tooltip).not.toBeNull();
+			expect(tooltip!.textContent).toContain('good day');
+		});
+
+		it('collocation tooltip shows state label when collocation_translation is null', () => {
+			const noTranslationColl: TranscriptData = {
+				lesson_id: 'l1',
+				key_phrases: [],
+				dialogue_lines: [{
+					role: 'Petra',
+					words: [
+						{ surface: 'dober', lemma: 'dober', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: 1, collocation_start: true, collocation_srs_state: 'learning', collocation_lemma: 'dober dan', collocation_translation: null },
+						{ surface: 'dan', lemma: 'dan', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: 1, collocation_start: false, collocation_srs_state: 'learning', collocation_lemma: 'dober dan', collocation_translation: null }
+					]
+				}]
+			};
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: noTranslationColl })
+			});
+			const tooltip = container.querySelector('.collocation-span')!.closest('.tt-wrap')!.querySelector('[role="tooltip"]');
+			expect(tooltip).not.toBeNull();
+			expect(tooltip!.textContent).toContain('Learning');
+		});
+
 		it('Space key on collocation wrapper fires onCollocationStateChange', async () => {
 			const onCollocationStateChange = vi.fn();
 			const { container } = render(Transcript, {
@@ -332,6 +373,51 @@ describe('Transcript', () => {
 		});
 	});
 
+	describe('collocation alt-key behavior (svelte:window listeners)', () => {
+		// When altHeld=false: collocation Tooltip shows "good day"; word-level Tooltips are hidden.
+		// When altHeld=true: collocation Tooltip is gone; word-level Tooltips appear inside the wrapper.
+		// So we check for the collocation tooltip by its specific content ("good day").
+		function hasCollocationTooltip(container: HTMLElement) {
+			return Array.from(container.querySelectorAll('[role="tooltip"]')).some((el) =>
+				el.textContent?.includes('good day')
+			);
+		}
+
+		it('alt keydown hides collocation tooltip', async () => {
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptWithCollocation })
+			});
+
+			expect(hasCollocationTooltip(container)).toBe(true);
+
+			await fireEvent.keyDown(window, { key: 'Alt', altKey: true });
+
+			expect(hasCollocationTooltip(container)).toBe(false);
+		});
+
+		it('non-alt keydown does not hide collocation tooltip', async () => {
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptWithCollocation })
+			});
+
+			await fireEvent.keyDown(window, { key: 'Control' });
+
+			expect(hasCollocationTooltip(container)).toBe(true);
+		});
+
+		it('alt keyup restores collocation tooltip', async () => {
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptWithCollocation })
+			});
+
+			await fireEvent.keyDown(window, { key: 'Alt', altKey: true });
+			expect(hasCollocationTooltip(container)).toBe(false);
+
+			await fireEvent.keyUp(window, { key: 'Alt' });
+			expect(hasCollocationTooltip(container)).toBe(true);
+		});
+	});
+
 	describe('collocation background colors', () => {
 		function makeCollTranscript(state: string): TranscriptData {
 			return {
@@ -344,12 +430,14 @@ describe('Transcript', () => {
 							{
 								surface: 'dober', lemma: 'dober', srs_state: 'new', srs_item_id: null,
 								translation: null, collocation_span_id: 1, collocation_start: true,
-								collocation_srs_state: state, collocation_lemma: 'dober dan'
+								collocation_srs_state: state, collocation_lemma: 'dober dan',
+								collocation_translation: null
 							},
 							{
 								surface: 'dan', lemma: 'dan', srs_state: 'new', srs_item_id: null,
 								translation: null, collocation_span_id: 1, collocation_start: false,
-								collocation_srs_state: state, collocation_lemma: 'dober dan'
+								collocation_srs_state: state, collocation_lemma: 'dober dan',
+								collocation_translation: null
 							}
 						]
 					}
@@ -396,9 +484,9 @@ describe('Transcript', () => {
 				{
 					role: 'Petra',
 					words: [
-						{ surface: 'centru', lemma: 'centru', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null },
-						{ surface: 'mesta', lemma: 'mesto', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null },
-						{ surface: 'hvala', lemma: 'hvala', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }
+						{ surface: 'centru', lemma: 'centru', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null },
+						{ surface: 'mesta', lemma: 'mesto', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null },
+						{ surface: 'hvala', lemma: 'hvala', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }
 					]
 				}
 			]
@@ -411,14 +499,14 @@ describe('Transcript', () => {
 				{
 					role: 'Petra',
 					words: [
-						{ surface: 'centru', lemma: 'centru', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null },
-						{ surface: 'mesta', lemma: 'mesto', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }
+						{ surface: 'centru', lemma: 'centru', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null },
+						{ surface: 'mesta', lemma: 'mesto', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }
 					]
 				},
 				{
 					role: 'Ana',
 					words: [
-						{ surface: 'hvala', lemma: 'hvala', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }
+						{ surface: 'hvala', lemma: 'hvala', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }
 					]
 				}
 			]
@@ -506,9 +594,9 @@ describe('Transcript', () => {
 					{
 						role: 'Petra',
 						words: [
-							{ surface: 'centru', lemma: 'centru', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: 5, collocation_start: true, collocation_srs_state: 'new', collocation_lemma: 'centru mesta' },
-							{ surface: 'mesta', lemma: 'mesto', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: 5, collocation_start: false, collocation_srs_state: 'new', collocation_lemma: 'centru mesta' },
-							{ surface: 'hvala', lemma: 'hvala', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }
+							{ surface: 'centru', lemma: 'centru', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: 5, collocation_start: true, collocation_srs_state: 'new', collocation_lemma: 'centru mesta', collocation_translation: null },
+							{ surface: 'mesta', lemma: 'mesto', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: 5, collocation_start: false, collocation_srs_state: 'new', collocation_lemma: 'centru mesta', collocation_translation: null },
+							{ surface: 'hvala', lemma: 'hvala', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }
 						]
 					}
 				]
@@ -663,7 +751,7 @@ describe('Transcript', () => {
 					{
 						role: 'female-1',
 						words: [
-							{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }
+							{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }
 						]
 					}
 				]
@@ -707,13 +795,13 @@ describe('Transcript', () => {
 					{
 						role: 'female-1',
 						words: [
-							{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }
+							{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }
 						]
 					},
 					{
 						role: 'female-1',
 						words: [
-							{ surface: 'hvala', lemma: 'hvala', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }
+							{ surface: 'hvala', lemma: 'hvala', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }
 						]
 					}
 				]
@@ -752,7 +840,7 @@ describe('Transcript', () => {
 					{
 						role: 'female-1',
 						words: [
-							{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }
+							{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }
 						]
 					}
 				]
@@ -793,7 +881,7 @@ describe('Transcript', () => {
 					{
 						role: 'female-1',
 						words: [
-							{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }
+							{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }
 						]
 					}
 				]
@@ -839,7 +927,7 @@ describe('Transcript', () => {
 					{
 						role: 'female-1',
 						words: [
-							{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null }
+							{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'new', srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }
 						]
 					}
 				]
