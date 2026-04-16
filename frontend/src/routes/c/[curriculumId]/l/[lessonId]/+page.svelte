@@ -3,7 +3,6 @@
 	import { api } from '$lib/api';
 	import type { LessonAudio, TranscriptData } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
-	import LessonScript from '$lib/components/LessonScript.svelte';
 	import AudioPlayer from '$lib/components/AudioPlayer.svelte';
 	import Transcript from '$lib/components/Transcript.svelte';
 	import type { PageData } from './$types';
@@ -156,8 +155,6 @@
 		{/if}
 	</section>
 
-	<LessonScript lesson={data.lesson} />
-
 	{#if audio}
 		<AudioPlayer {audio} />
 
@@ -165,6 +162,7 @@
 			{#if transcript}
 				<Transcript
 					{transcript}
+					lesson={data.lesson}
 					{isListened}
 					{listenLoading}
 					{listenResult}

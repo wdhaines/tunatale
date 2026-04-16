@@ -1,6 +1,7 @@
 <script lang="ts">
 	import WordSpan from '$lib/WordSpan.svelte';
-	import type { TranscriptData, WordToken } from '$lib/api';
+	import type { LessonDetail, TranscriptData, WordToken } from '$lib/api';
+	import { buildScenes, fallbackScenes } from '$lib/transcriptScenes';
 
 	interface CreatePhraseArgs {
 		text: string;
@@ -13,6 +14,7 @@
 
 	interface Props {
 		transcript: TranscriptData;
+		lesson?: LessonDetail;
 		isListened: boolean;
 		listenLoading: boolean;
 		listenResult: { registered: number } | null;
@@ -25,6 +27,7 @@
 
 	let {
 		transcript,
+		lesson,
 		isListened,
 		listenLoading,
 		listenResult,
@@ -43,6 +46,10 @@
 	let selection = $state<{ lineIndex: number; startIdx: number; endIdx: number } | null>(null);
 	let dragAnchor = $state<{ lineIndex: number; wordIdx: number } | null>(null);
 	let pendingTranslation = $state('');
+
+	// Progressive-disclosure toggles for variations
+	let showSlow = $state(false);
+	let showTranslation = $state(false);
 
 	function resetSelection() {
 		selection = null;
@@ -79,7 +86,6 @@
 		return { lineIndex: lineIdx, wordIdx };
 	}
 
-	// Pointer handlers for drag-select
 	function handlePointerDown(e: PointerEvent, lineIndex: number) {
 		const resolved = resolveWordTarget(e);
 		if (!resolved || resolved.lineIndex !== lineIndex) return;
@@ -96,10 +102,7 @@
 		const start = Math.min(dragAnchor.wordIdx, resolved.wordIdx);
 		const end = Math.max(dragAnchor.wordIdx, resolved.wordIdx);
 
-		if (hasOverlap(words, start, end)) {
-			// abort
-			return;
-		}
+		if (hasOverlap(words, start, end)) return;
 
 		selection = { lineIndex, startIdx: start, endIdx: end };
 	}
@@ -113,7 +116,6 @@
 		const resolved = resolveWordTarget(e);
 		isDragging = false;
 
-		// Cross-line: reset
 		if (!resolved || resolved.lineIndex !== dragAnchor.lineIndex || resolved.lineIndex !== lineIndex) {
 			dragAnchor = null;
 			selection = null;
@@ -124,7 +126,6 @@
 		const end = Math.max(dragAnchor.wordIdx, resolved.wordIdx);
 		dragAnchor = null;
 
-		// Single word or overlap: no bar
 		if (start === end || hasOverlap(words, start, end)) {
 			selection = null;
 			return;
@@ -133,16 +134,12 @@
 		selection = { lineIndex, startIdx: start, endIdx: end };
 	}
 
-	// Mode-toggle tap handler (click on individual words) — only called when selectionMode=true
 	function handleWordTapInSelectionMode(lineIndex: number, wordIdx: number, words: WordToken[]) {
 		if (!dragAnchor) {
-			// First tap: set anchor
 			dragAnchor = { lineIndex, wordIdx };
 			selection = null;
 		} else {
-			// Second tap
 			if (dragAnchor.lineIndex !== lineIndex) {
-				// Cross-line: reset anchor
 				dragAnchor = { lineIndex, wordIdx };
 				selection = null;
 				return;
@@ -161,7 +158,6 @@
 		}
 	}
 
-	// Only called when selection is non-null (Create button is only rendered in that case)
 	function confirmPhrase(lineIndex: number, words: WordToken[]) {
 		const { startIdx, endIdx } = selection!;
 		const text = words.slice(startIdx, endIdx + 1).map((w) => w.surface).join(' ');
@@ -229,7 +225,6 @@
 		return segments;
 	}
 
-	// Compute flat word index from segment + inner index
 	function wordIndexInLine(segments: WordSegment[], segIdx: number, innerIdx: number): number {
 		let idx = 0;
 		for (let s = 0; s < segIdx; s++) {
@@ -238,10 +233,145 @@
 		}
 		return idx + innerIdx;
 	}
+
+	const scenes = $derived.by(() => {
+		if (lesson) {
+			const result = buildScenes(lesson, transcript.dialogue_lines);
+			if (result.length > 0) return result;
+		}
+		return fallbackScenes(transcript.dialogue_lines);
+	});
 </script>
 
 <div class="transcript-wrapper">
-	<div class="listen-action">
+	{#if transcript.key_phrases.length > 0}
+		<div class="transcript-section">
+			<h3>Key Phrases</h3>
+			<ul class="key-phrases-list">
+				{#each transcript.key_phrases as kp}
+					<li>
+						<span class="kp-phrase">{kp.phrase}</span>
+						<span class="kp-translation">{kp.translation}</span>
+					</li>
+				{/each}
+			</ul>
+		</div>
+	{/if}
+
+	{#if transcript.dialogue_lines.length > 0}
+		<div class="transcript-section">
+			<div class="dialogue-head">
+				<h3>Dialogue <span class="transcript-hint">{selectionMode ? 'Tap first word, then last word to set phrase range.' : 'Drag to create a phrase, or tap \'+ New phrase\' on mobile. Click phrases/words to change SRS state; Alt+click a word inside a phrase for word-only.'}</span></h3>
+
+				<div class="disclosure-toggles" role="group" aria-label="Show variations">
+					<button
+						type="button"
+						class="toggle-pill"
+						class:active={showSlow}
+						aria-pressed={showSlow}
+						onclick={() => (showSlow = !showSlow)}
+					>Slow</button>
+					<button
+						type="button"
+						class="toggle-pill"
+						class:active={showTranslation}
+						aria-pressed={showTranslation}
+						onclick={() => (showTranslation = !showTranslation)}
+					>Translation</button>
+				</div>
+			</div>
+
+			<button class="new-phrase-btn" onclick={toggleSelectionMode}>
+				{selectionMode ? 'Cancel' : '+ New phrase'}
+			</button>
+
+			{#each scenes as scene}
+				{#if scene.title}
+					<h4 class="scene-header">{scene.title}</h4>
+				{/if}
+				{#each scene.lines as line (line.transcriptIndex)}
+					{@const lineIndex = line.transcriptIndex}
+					{@const segments = groupIntoSegments(line.words)}
+					<div class="dialogue-line">
+						<span class="dialogue-role">{line.role}</span>
+						<div class="dialogue-line-body">
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<span
+								class="dialogue-words"
+								onpointerdown={(e) => handlePointerDown(e, lineIndex)}
+								onpointermove={(e) => handlePointerMove(e, lineIndex, line.words)}
+								onpointerup={(e) => handlePointerUp(e, lineIndex, line.words)}
+							>
+								{#each segments as segment, segIdx}
+									{#if segment.type === 'collocation'}
+										<span
+											class="collocation-span {collocationClassFor(segment.words[0].collocation_srs_state!)}"
+											role="button"
+											tabindex="0"
+											title={segment.words[0].collocation_srs_state!}
+											onclick={() => handleCollocationClick(segment)}
+											onkeydown={(e) => handleCollocationKeydown(e, segment)}
+										>
+											{#each segment.words as cw, innerIdx}
+												{@const wIdx = wordIndexInLine(segments, segIdx, innerIdx)}
+												<WordSpan
+													word={cw}
+													{onStateChange}
+													requireModifier={true}
+													lineIndex={lineIndex}
+													wordIndex={wIdx}
+													selected={wordIsSelected(lineIndex, wIdx)}
+												/>{' '}
+											{/each}
+										</span>
+									{:else}
+										{@const wIdx = wordIndexInLine(segments, segIdx, 0)}
+										<!-- svelte-ignore a11y_click_events_have_key_events -->
+										<!-- svelte-ignore a11y_no_static_element_interactions -->
+										<span
+											onclick={selectionMode ? () => handleWordTapInSelectionMode(lineIndex, wIdx, line.words) : undefined}
+										>
+											<WordSpan
+												word={segment.word}
+												{onStateChange}
+												lineIndex={lineIndex}
+												wordIndex={wIdx}
+												selected={wordIsSelected(lineIndex, wIdx)}
+											/>{' '}
+										</span>
+									{/if}
+								{/each}
+							</span>
+							{#if showSlow && line.slowText}
+								<div class="line-slow">{line.slowText}</div>
+							{/if}
+							{#if showTranslation && line.translatedText}
+								<div class="line-translation">{line.translatedText}</div>
+							{/if}
+						</div>
+					</div>
+
+					{#if selection && selection.lineIndex === lineIndex}
+						<div class="phrase-confirm-bar">
+							<span class="phrase-preview">
+								{line.words.slice(selection.startIdx, selection.endIdx + 1).map((w) => w.surface).join(' ')}
+							</span>
+							<input
+								class="phrase-translation-input"
+								type="text"
+								placeholder="translation (optional)"
+								bind:value={pendingTranslation}
+							/>
+							<button class="confirm-create" onclick={() => confirmPhrase(lineIndex, line.words)}>Create</button>
+							<button class="confirm-cancel" onclick={cancelPhrase}>Cancel</button>
+						</div>
+					{/if}
+				{/each}
+			{/each}
+		</div>
+	{/if}
+
+	<div class="listen-footer">
 		<button
 			class="listen-btn"
 			class:listened={isListened}
@@ -264,110 +394,26 @@
 			</p>
 		{/if}
 	</div>
-
-	{#if transcript.key_phrases.length > 0}
-		<div class="transcript-section">
-			<h3>Key Phrases</h3>
-			<ul class="key-phrases-list">
-				{#each transcript.key_phrases as kp}
-					<li>
-						<span class="kp-phrase">{kp.phrase}</span>
-						<span class="kp-translation">{kp.translation}</span>
-					</li>
-				{/each}
-			</ul>
-		</div>
-	{/if}
-
-	{#if transcript.dialogue_lines.length > 0}
-		<div class="transcript-section">
-			<h3>Dialogue <span class="transcript-hint">{selectionMode ? 'Tap first word, then last word to set phrase range.' : 'Drag to create a phrase, or tap \'+ New phrase\' on mobile. Click phrases/words to change SRS state; Alt+click a word inside a phrase for word-only.'}</span></h3>
-
-			<button class="new-phrase-btn" onclick={toggleSelectionMode}>
-				{selectionMode ? 'Cancel' : '+ New phrase'}
-			</button>
-
-			{#each transcript.dialogue_lines as line, lineIndex}
-				{@const segments = groupIntoSegments(line.words)}
-				<div class="dialogue-line">
-					<span class="dialogue-role">{line.role}</span>
-					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<span
-						class="dialogue-words"
-						onpointerdown={(e) => handlePointerDown(e, lineIndex)}
-						onpointermove={(e) => handlePointerMove(e, lineIndex, line.words)}
-						onpointerup={(e) => handlePointerUp(e, lineIndex, line.words)}
-					>
-						{#each segments as segment, segIdx}
-							{#if segment.type === 'collocation'}
-								<span
-									class="collocation-span {collocationClassFor(segment.words[0].collocation_srs_state!)}"
-									role="button"
-									tabindex="0"
-									title={segment.words[0].collocation_srs_state!}
-									onclick={() => handleCollocationClick(segment)}
-									onkeydown={(e) => handleCollocationKeydown(e, segment)}
-								>
-									{#each segment.words as cw, innerIdx}
-										{@const wIdx = wordIndexInLine(segments, segIdx, innerIdx)}
-										<WordSpan
-											word={cw}
-											{onStateChange}
-											requireModifier={true}
-											lineIndex={lineIndex}
-											wordIndex={wIdx}
-											selected={wordIsSelected(lineIndex, wIdx)}
-										/>{' '}
-									{/each}
-								</span>
-							{:else}
-								{@const wIdx = wordIndexInLine(segments, segIdx, 0)}
-								<!-- svelte-ignore a11y_click_events_have_key_events -->
-								<!-- svelte-ignore a11y_no_static_element_interactions -->
-								<span
-									onclick={selectionMode ? () => handleWordTapInSelectionMode(lineIndex, wIdx, line.words) : undefined}
-								>
-									<WordSpan
-										word={segment.word}
-										{onStateChange}
-										lineIndex={lineIndex}
-										wordIndex={wIdx}
-										selected={wordIsSelected(lineIndex, wIdx)}
-									/>{' '}
-								</span>
-							{/if}
-						{/each}
-					</span>
-				</div>
-
-				{#if selection && selection.lineIndex === lineIndex}
-					<div class="phrase-confirm-bar">
-						<span class="phrase-preview">
-							{line.words.slice(selection.startIdx, selection.endIdx + 1).map((w) => w.surface).join(' ')}
-						</span>
-						<input
-							class="phrase-translation-input"
-							type="text"
-							placeholder="translation (optional)"
-							bind:value={pendingTranslation}
-						/>
-						<button class="confirm-create" onclick={() => confirmPhrase(lineIndex, line.words)}>Create</button>
-						<button class="confirm-cancel" onclick={cancelPhrase}>Cancel</button>
-					</div>
-				{/if}
-			{/each}
-		</div>
-	{/if}
 </div>
 
 <style>
 	.transcript-wrapper {
 		margin-top: 1.25rem;
+		position: relative;
 	}
-	.listen-action {
-		padding-bottom: 1rem;
-		border-bottom: 1px solid var(--color-border);
-		margin-bottom: 1.25rem;
+	.listen-footer {
+		position: sticky;
+		bottom: 0;
+		margin-top: 1.25rem;
+		padding: 0.75rem 1rem;
+		background: var(--color-bg, #fff);
+		border-top: 1px solid var(--color-border);
+		z-index: 5;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.75rem;
+		box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.03);
 	}
 	.listen-btn {
 		padding: 0.5rem 1.25rem;
@@ -387,7 +433,7 @@
 	.listen-confirmation {
 		color: var(--color-success);
 		font-size: 0.85rem;
-		margin-top: 0.5rem;
+		margin: 0;
 	}
 	.transcript-section {
 		margin-bottom: 1.25rem;
@@ -397,6 +443,35 @@
 		text-transform: uppercase;
 		color: var(--color-muted);
 		margin-bottom: 0.5rem;
+	}
+	.dialogue-head {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+	.disclosure-toggles {
+		display: flex;
+		gap: 0.35rem;
+	}
+	.toggle-pill {
+		font-size: 0.75rem;
+		padding: 0.2rem 0.7rem;
+		background: transparent;
+		color: var(--color-muted, #6b7280);
+		border: 1px solid var(--color-border, #e5e7eb);
+		border-radius: 999px;
+		cursor: pointer;
+		transition: background-color 0.1s, color 0.1s, border-color 0.1s;
+	}
+	.toggle-pill:hover {
+		border-color: var(--color-primary, #2563eb);
+	}
+	.toggle-pill.active {
+		background: var(--color-primary, #2563eb);
+		color: white;
+		border-color: var(--color-primary, #2563eb);
 	}
 	.transcript-hint {
 		font-style: italic;
@@ -434,6 +509,21 @@
 		color: var(--color-muted);
 		font-style: italic;
 	}
+	.scene-header {
+		margin: 1.25rem 0 0.5rem;
+		padding: 0.45rem 0.75rem;
+		font-size: 0.82rem;
+		font-weight: 600;
+		letter-spacing: 0.02em;
+		color: var(--color-primary, #2563eb);
+		background: rgba(37, 99, 235, 0.08);
+		border-left: 3px solid var(--color-primary, #2563eb);
+		border-radius: 0 4px 4px 0;
+		text-transform: uppercase;
+	}
+	.scene-header:first-of-type {
+		margin-top: 0.5rem;
+	}
 	.dialogue-line {
 		display: flex;
 		gap: 0.75rem;
@@ -441,6 +531,10 @@
 		border-bottom: 1px solid var(--color-border);
 		font-size: 0.95rem;
 		line-height: 1.5;
+	}
+	.dialogue-line-body {
+		flex: 1;
+		min-width: 0;
 	}
 	.dialogue-role {
 		color: var(--color-primary);
@@ -450,9 +544,20 @@
 		flex-shrink: 0;
 	}
 	.dialogue-words {
-		flex: 1;
+		display: block;
 		line-height: 1.6;
 		user-select: none;
+	}
+	.line-slow {
+		margin-top: 0.15rem;
+		color: var(--color-muted, #6b7280);
+		font-size: 0.85rem;
+		font-style: italic;
+	}
+	.line-translation {
+		margin-top: 0.15rem;
+		color: var(--color-muted, #6b7280);
+		font-size: 0.85rem;
 	}
 	.collocation-span {
 		display: inline;
