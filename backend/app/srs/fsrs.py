@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 from datetime import date, timedelta
 
-from app.models.srs_item import Rating, SRSItem, SRSState
+from app.models.srs_item import Direction, Rating, SRSItem, SRSState
 
 # FSRS-5 default parameters (w vector, 19 values)
 W = [
@@ -78,45 +78,56 @@ def _next_stability_lapse(d: float, s: float, r: float) -> float:
     return W[11] * d ** (-W[12]) * ((s + 1) ** W[13] - 1) * math.exp((1 - r) * W[14])
 
 
-def schedule(item: SRSItem, rating: Rating, review_date: date | None = None) -> SRSItem:
-    """Apply a review rating to an SRSItem and return the updated item (copy).
+def schedule(
+    item: SRSItem,
+    rating: Rating,
+    review_date: date | None = None,
+    direction: Direction = Direction.RECOGNITION,
+) -> SRSItem:
+    """Apply a review rating to the given direction of an SRSItem.
+
+    Updates only the specified direction; the other is left untouched.
+    Marks `dirty_fsrs=True` on the updated direction so the Anki-sync layer
+    can later push the change.
 
     Args:
         item: The SRSItem to schedule.
         rating: Learner's rating for this review.
         review_date: The date of the review (defaults to today).
+        direction: Which direction was reviewed (default: recognition).
 
     Returns:
-        A new SRSItem with updated scheduling fields.
+        A new SRSItem with the updated direction state.
     """
     if review_date is None:
         review_date = date.today()
 
     from dataclasses import replace
 
-    if item.state == SRSState.NEW:
+    prev = item.directions[direction]
+
+    if prev.state == SRSState.NEW:
         new_stability = _init_stability(rating)
         new_difficulty = _init_difficulty(rating)
         new_reps = 1
-        new_lapses = item.lapses
+        new_lapses = prev.lapses
         new_state = SRSState.LEARNING if rating == Rating.AGAIN else SRSState.REVIEW
     else:
-        # Calculate elapsed days and retrievability
-        last = item.last_review or review_date
+        last = prev.last_review or review_date
         elapsed = max(0, (review_date - last).days)
-        r = _forgetting_curve(elapsed, item.stability)
+        r = _forgetting_curve(elapsed, prev.stability)
 
         if rating == Rating.AGAIN:
-            new_stability = _next_stability_lapse(item.difficulty, item.stability, r)
-            new_difficulty = _next_difficulty(item.difficulty, rating)
-            new_reps = item.reps + 1
-            new_lapses = item.lapses + 1
+            new_stability = _next_stability_lapse(prev.difficulty, prev.stability, r)
+            new_difficulty = _next_difficulty(prev.difficulty, rating)
+            new_reps = prev.reps + 1
+            new_lapses = prev.lapses + 1
             new_state = SRSState.RELEARNING
         else:
-            new_stability = _next_stability_recall(item.difficulty, item.stability, r, rating)
-            new_difficulty = _next_difficulty(item.difficulty, rating)
-            new_reps = item.reps + 1
-            new_lapses = item.lapses
+            new_stability = _next_stability_recall(prev.difficulty, prev.stability, r, rating)
+            new_difficulty = _next_difficulty(prev.difficulty, rating)
+            new_reps = prev.reps + 1
+            new_lapses = prev.lapses
             new_state = SRSState.REVIEW
 
     new_stability = max(0.1, new_stability)
@@ -124,8 +135,8 @@ def schedule(item: SRSItem, rating: Rating, review_date: date | None = None) -> 
     interval = _next_interval(new_stability)
     new_due = review_date + timedelta(days=interval)
 
-    return replace(
-        item,
+    new_dir = replace(
+        prev,
         stability=new_stability,
         difficulty=new_difficulty,
         due_date=new_due,
@@ -133,4 +144,13 @@ def schedule(item: SRSItem, rating: Rating, review_date: date | None = None) -> 
         lapses=new_lapses,
         state=new_state,
         last_review=review_date,
+        dirty_fsrs=True,
+    )
+    new_directions = dict(item.directions)
+    new_directions[direction] = new_dir
+    return SRSItem(
+        syntactic_unit=item.syntactic_unit,
+        directions=new_directions,
+        guid=item.guid,
+        anki_note_id=item.anki_note_id,
     )

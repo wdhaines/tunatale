@@ -1,19 +1,32 @@
 """SQLite repository for SRS collocations and violations.
 
+Schema is managed by `app.srs.migrations`. Fresh DBs bootstrap the v0 base
+tables (matching the pre-migration shape) and then `migrate()` runs every
+pending step up to `CURRENT_VERSION`.
+
 Supports ":memory:" for in-memory test databases.
 """
 
 from __future__ import annotations
 
 import sqlite3
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
-from app.models.srs_item import SRSItem, SRSState
+from app.common.guid import compute_guid
+from app.models.srs_item import (
+    Direction,
+    DirectionState,
+    SRSItem,
+    SRSState,
+)
 from app.models.syntactic_unit import SyntacticUnit
+from app.srs.migrations import migrate
 
-_CREATE_COLLOCATIONS = """
+# v0 base schema. Fresh DBs go through v0 → v1 → v2 via migrations so every
+# deployment converges on the same path.
+_CREATE_COLLOCATIONS_V0 = """
 CREATE TABLE IF NOT EXISTS collocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     text TEXT UNIQUE NOT NULL,
@@ -30,7 +43,6 @@ CREATE TABLE IF NOT EXISTS collocations (
     lapses INTEGER NOT NULL DEFAULT 0,
     state TEXT NOT NULL DEFAULT 'new',
     last_review TEXT,
-    lemma TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
 )
@@ -46,6 +58,23 @@ CREATE TABLE IF NOT EXISTS violations (
     created_at TEXT DEFAULT (datetime('now'))
 )
 """
+
+# Columns on `collocation_directions` mapped onto a DirectionState.
+_DIR_COLUMNS = (
+    "stability",
+    "fsrs_difficulty",
+    "due_date",
+    "reps",
+    "lapses",
+    "state",
+    "last_review",
+    "anki_card_id",
+    "dirty_fsrs",
+    "last_synced_at",
+)
+
+# States that should never surface in the due queue regardless of due_date.
+_NON_REVIEWABLE_STATES = ("new", "suspended", "known")
 
 
 class SRSDatabase:
@@ -71,6 +100,7 @@ class SRSDatabase:
         if self._in_memory:
             self._conn = sqlite3.connect(":memory:", check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA foreign_keys = ON")
             self._init_schema(self._conn)
         else:
             path = Path(db_path)
@@ -81,19 +111,16 @@ class SRSDatabase:
                 self._init_schema(conn)
 
     def _init_schema(self, conn: sqlite3.Connection) -> None:
-        conn.execute(_CREATE_COLLOCATIONS)
+        conn.execute(_CREATE_COLLOCATIONS_V0)
         conn.execute(_CREATE_VIOLATIONS)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_collocations_due_date ON collocations(due_date)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_collocations_state ON collocations(state)")
-        with suppress(sqlite3.OperationalError):
-            conn.execute("ALTER TABLE collocations ADD COLUMN lemma TEXT")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_collocations_lemma ON collocations(lemma)")
         conn.commit()
+        migrate(conn)
 
     @contextmanager
     def _file_conn(self):
         conn = sqlite3.connect(self._path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         try:
             yield conn
             conn.commit()
@@ -108,16 +135,26 @@ class SRSDatabase:
             with self._file_conn() as conn:
                 yield conn
 
+    def _commit(self, conn: sqlite3.Connection) -> None:
+        if self._in_memory:
+            conn.commit()
+        # file-backed contexts commit on exit
+
     # ── Write operations ───────────────────────────────────────────────
 
     def add_collocation(self, unit: SyntacticUnit, language_code: str = "sl") -> None:
-        """Insert a new collocation; if it already exists, backfill an empty translation."""
+        """Insert a new collocation; if it already exists, backfill an empty translation.
+
+        New rows get both recognition and production direction rows (defaults).
+        """
+        guid = compute_guid(unit.text, language_code)
+        today = date.today().isoformat()
         with self._get_conn() as conn:
             conn.execute(
                 """
                 INSERT INTO collocations
                     (text, translation, language_code, word_count, unit_difficulty,
-                     source, corpus_frequency, due_date, lemma)
+                     source, corpus_frequency, lemma, guid)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(text) DO UPDATE SET
                     translation = CASE
@@ -134,14 +171,22 @@ class SRSDatabase:
                     unit.difficulty,
                     unit.source,
                     unit.frequency,
-                    date.today().isoformat(),
                     unit.lemma,
+                    guid,
                 ),
             )
-            if not self._in_memory:
-                conn.commit()
-            else:
-                self._conn.commit()
+            row = conn.execute("SELECT id FROM collocations WHERE text = ?", (unit.text,)).fetchone()
+            coll_id = row["id"]
+            for direction in (Direction.RECOGNITION, Direction.PRODUCTION):
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO collocation_directions
+                        (collocation_id, direction, due_date)
+                    VALUES (?, ?, ?)
+                    """,
+                    (coll_id, direction.value, today),
+                )
+            self._commit(conn)
 
     def get_untranslated_collocations(self) -> list[tuple[str, str]]:
         """Return (text, language_code) for all rows with an empty translation."""
@@ -152,11 +197,7 @@ class SRSDatabase:
         return [(row["text"], row["language_code"]) for row in rows]
 
     def backfill_translations(self, glosses: dict[str, str]) -> int:
-        """Update rows with empty translations using the provided gloss map.
-
-        For each entry in glosses where the DB row has translation='', sets the
-        translation to the provided value. Returns the number of rows updated.
-        """
+        """Update rows with empty translations using the provided gloss map."""
         if not glosses:
             return 0
         updated = 0
@@ -165,20 +206,28 @@ class SRSDatabase:
                 if not translation:
                     continue
                 cursor = conn.execute(
-                    "UPDATE collocations SET translation = ?, updated_at = datetime('now') WHERE text = ? AND translation = ''",
+                    "UPDATE collocations SET translation = ?, updated_at = datetime('now') "
+                    "WHERE text = ? AND translation = ''",
                     (translation, text),
                 )
                 updated += cursor.rowcount
-            if self._in_memory:
-                self._conn.commit()
+            self._commit(conn)
         return updated
 
-    def update_collocation(self, item: SRSItem) -> None:
-        """Update FSRS scheduling fields for an existing collocation."""
+    def update_direction(
+        self,
+        guid: str,
+        direction: Direction,
+        state: DirectionState,
+    ) -> None:
+        """Persist the FSRS state for one direction of a collocation."""
         with self._get_conn() as conn:
+            row = conn.execute("SELECT id FROM collocations WHERE guid = ?", (guid,)).fetchone()
+            if row is None:
+                return
             conn.execute(
                 """
-                UPDATE collocations SET
+                UPDATE collocation_directions SET
                     stability = ?,
                     fsrs_difficulty = ?,
                     due_date = ?,
@@ -186,67 +235,135 @@ class SRSDatabase:
                     lapses = ?,
                     state = ?,
                     last_review = ?,
-                    updated_at = datetime('now')
-                WHERE text = ?
+                    anki_card_id = ?,
+                    dirty_fsrs = ?,
+                    last_synced_at = ?
+                WHERE collocation_id = ? AND direction = ?
                 """,
                 (
-                    item.stability,
-                    item.difficulty,
-                    item.due_date.isoformat(),
-                    item.reps,
-                    item.lapses,
-                    item.state.value,
-                    item.last_review.isoformat() if item.last_review else None,
-                    item.syntactic_unit.text,
+                    state.stability,
+                    state.difficulty,
+                    state.due_date.isoformat(),
+                    state.reps,
+                    state.lapses,
+                    state.state.value,
+                    state.last_review.isoformat() if state.last_review else None,
+                    state.anki_card_id,
+                    1 if state.dirty_fsrs else 0,
+                    state.last_synced_at,
+                    row["id"],
+                    direction.value,
                 ),
             )
-            if self._in_memory:
-                self._conn.commit()
+            self._commit(conn)
+
+    def update_collocation(self, item: SRSItem) -> None:
+        """Back-compat shim: persist the recognition direction of `item`.
+
+        Callers still constructing flat SRSItems (via property shims) go
+        through this path. Stage 3.5 removes it.
+        """
+        if item.guid is None:
+            # Fall back to looking up the guid by text for legacy flows.
+            with self._get_conn() as conn:
+                row = conn.execute(
+                    "SELECT guid FROM collocations WHERE text = ?",
+                    (item.syntactic_unit.text,),
+                ).fetchone()
+                if row is None:
+                    return
+                guid = row["guid"]
+        else:
+            guid = item.guid
+        self.update_direction(guid, Direction.RECOGNITION, item.directions[Direction.RECOGNITION])
 
     def record_violation(
         self, collocation_text: str, day_number: int, violation_type: str, details: str | None = None
     ) -> None:
-        """Record an SRS enforcement violation."""
         with self._get_conn() as conn:
             conn.execute(
                 "INSERT INTO violations (collocation_text, day_number, violation_type, details) VALUES (?, ?, ?, ?)",
                 (collocation_text, day_number, violation_type, details),
             )
-            if self._in_memory:
-                self._conn.commit()
+            self._commit(conn)
 
     # ── Read operations ────────────────────────────────────────────────
 
+    def _load_directions(self, conn: sqlite3.Connection, collocation_id: int) -> dict[Direction, DirectionState]:
+        rows = conn.execute(
+            f"SELECT direction, {', '.join(_DIR_COLUMNS)} FROM collocation_directions WHERE collocation_id = ?",
+            (collocation_id,),
+        ).fetchall()
+        directions: dict[Direction, DirectionState] = {}
+        for row in rows:
+            d = Direction(row["direction"])
+            directions[d] = DirectionState(
+                direction=d,
+                due_date=date.fromisoformat(row["due_date"]),
+                stability=row["stability"],
+                difficulty=row["fsrs_difficulty"],
+                reps=row["reps"],
+                lapses=row["lapses"],
+                state=SRSState(row["state"]),
+                last_review=date.fromisoformat(row["last_review"]) if row["last_review"] else None,
+                anki_card_id=row["anki_card_id"],
+                dirty_fsrs=bool(row["dirty_fsrs"]),
+                last_synced_at=row["last_synced_at"],
+            )
+        return directions
+
+    def _row_to_item(self, conn: sqlite3.Connection, row: sqlite3.Row) -> SRSItem:
+        unit = SyntacticUnit(
+            text=row["text"],
+            translation=row["translation"],
+            word_count=row["word_count"],
+            difficulty=row["unit_difficulty"],
+            source=row["source"],
+            frequency=row["corpus_frequency"],
+            lemma=row["lemma"],
+            guid=row["guid"],
+        )
+        directions = self._load_directions(conn, row["id"])
+        return SRSItem(
+            syntactic_unit=unit,
+            directions=directions,
+            guid=row["guid"],
+            anki_note_id=row["anki_note_id"],
+        )
+
     def get_collocation(self, text: str) -> SRSItem | None:
-        """Retrieve an SRSItem by collocation text."""
         with self._get_conn() as conn:
             row = conn.execute("SELECT * FROM collocations WHERE text = ?", (text,)).fetchone()
-        if row is None:
-            return None
-        return self._row_to_item(row)
+            if row is None:
+                return None
+            return self._row_to_item(conn, row)
+
+    def get_collocation_by_guid(self, guid: str) -> SRSItem | None:
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT * FROM collocations WHERE guid = ?", (guid,)).fetchone()
+            if row is None:
+                return None
+            return self._row_to_item(conn, row)
 
     def get_collocation_by_lemma(self, lemma: str) -> SRSItem | None:
-        """Retrieve an SRSItem by lemma (canonical word form)."""
         with self._get_conn() as conn:
             row = conn.execute("SELECT * FROM collocations WHERE lemma = ? LIMIT 1", (lemma,)).fetchone()
-        if row is None:
-            return None
-        return self._row_to_item(row)
+            if row is None:
+                return None
+            return self._row_to_item(conn, row)
 
     def get_collocation_by_lemma_with_id(self, lemma: str) -> tuple[int, SRSItem] | None:
-        """Retrieve an SRSItem and its database id by lemma."""
         with self._get_conn() as conn:
             row = conn.execute("SELECT * FROM collocations WHERE lemma = ? LIMIT 1", (lemma,)).fetchone()
-        if row is None:
-            return None
-        return (row["id"], self._row_to_item(row))
+            if row is None:
+                return None
+            return (row["id"], self._row_to_item(conn, row))
 
     def get_collocations_for_language(
         self,
         language_code: str,
         min_word_count: int = 2,
     ) -> list[tuple[int, str]]:
-        """Return (id, text) pairs for collocations with word_count >= min_word_count."""
         with self._get_conn() as conn:
             rows = conn.execute(
                 "SELECT id, text FROM collocations WHERE language_code = ? AND word_count >= ?",
@@ -254,60 +371,80 @@ class SRSDatabase:
             ).fetchall()
         return [(row["id"], row["text"]) for row in rows]
 
-    def get_due_collocations(self, as_of: date) -> list[SRSItem]:
-        """Return all collocations due for review on or before as_of."""
+    def get_due_collocations(
+        self,
+        as_of: date,
+        direction: Direction = Direction.RECOGNITION,
+    ) -> list[SRSItem]:
+        """Return all collocations whose `direction` is due on or before `as_of`."""
+        placeholders = ",".join("?" * len(_NON_REVIEWABLE_STATES))
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM collocations WHERE due_date <= ? AND state NOT IN ('new', 'suspended', 'known')",
-                (as_of.isoformat(),),
+                f"""
+                SELECT c.* FROM collocations c
+                JOIN collocation_directions d ON d.collocation_id = c.id
+                WHERE d.direction = ?
+                  AND d.due_date <= ?
+                  AND d.state NOT IN ({placeholders})
+                """,
+                (direction.value, as_of.isoformat(), *_NON_REVIEWABLE_STATES),
             ).fetchall()
-        return [self._row_to_item(r) for r in rows]
+            return [self._row_to_item(conn, r) for r in rows]
 
-    def get_new_collocations(self, limit: int = 10) -> list[SRSItem]:
-        """Return collocations not yet introduced to the learner."""
+    def get_new_collocations(
+        self,
+        limit: int = 10,
+        direction: Direction = Direction.RECOGNITION,
+    ) -> list[SRSItem]:
+        """Return collocations whose `direction` state is NEW."""
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM collocations WHERE state = 'new' LIMIT ?",
-                (limit,),
+                """
+                SELECT c.* FROM collocations c
+                JOIN collocation_directions d ON d.collocation_id = c.id
+                WHERE d.direction = ? AND d.state = 'new'
+                LIMIT ?
+                """,
+                (direction.value, limit),
             ).fetchall()
-        return [self._row_to_item(r) for r in rows]
+            return [self._row_to_item(conn, r) for r in rows]
 
     def get_collocation_by_id(self, row_id: int) -> tuple[int, SRSItem, str] | None:
-        """Retrieve a collocation by primary key. Returns (id, SRSItem, language_code) or None."""
         with self._get_conn() as conn:
             row = conn.execute("SELECT * FROM collocations WHERE id = ?", (row_id,)).fetchone()
-        if row is None:
-            return None
-        return (row["id"], self._row_to_item(row), row["language_code"])
+            if row is None:
+                return None
+            return (row["id"], self._row_to_item(conn, row), row["language_code"])
 
     def update_collocation_fields(self, row_id: int, *, text: str, translation: str) -> None:
         """Update text and translation for a collocation by id.
 
-        Raises ValueError if the new text collides with an existing row.
+        When `text` changes, the computed guid updates accordingly.
         """
         try:
             with self._get_conn() as conn:
+                cur = conn.execute("SELECT language_code FROM collocations WHERE id = ?", (row_id,)).fetchone()
+                if cur is None:
+                    return
+                new_guid = compute_guid(text, cur["language_code"])
                 conn.execute(
-                    "UPDATE collocations SET text = ?, translation = ?, updated_at = datetime('now') WHERE id = ?",
-                    (text, translation, row_id),
+                    "UPDATE collocations SET text = ?, translation = ?, guid = ?, "
+                    "updated_at = datetime('now') WHERE id = ?",
+                    (text, translation, new_guid, row_id),
                 )
-                if self._in_memory:
-                    self._conn.commit()
+                self._commit(conn)
         except sqlite3.IntegrityError as exc:
             raise ValueError(f"text already exists: {text!r}") from exc
 
     def delete_collocation(self, row_id: int) -> None:
-        """Delete a collocation and its associated violations."""
         with self._get_conn() as conn:
             row = conn.execute("SELECT text FROM collocations WHERE id = ?", (row_id,)).fetchone()
             if row is not None:
                 conn.execute("DELETE FROM violations WHERE collocation_text = ?", (row["text"],))
                 conn.execute("DELETE FROM collocations WHERE id = ?", (row_id,))
-                if self._in_memory:
-                    self._conn.commit()
+                self._commit(conn)
 
     def delete_collocations(self, row_ids: list[int]) -> int:
-        """Bulk delete collocations by id. Returns number of rows deleted."""
         if not row_ids:
             return 0
         placeholders = ",".join("?" * len(row_ids))
@@ -318,46 +455,72 @@ class SRSDatabase:
                 text_ph = ",".join("?" * len(texts))
                 conn.execute(f"DELETE FROM violations WHERE collocation_text IN ({text_ph})", texts)
             conn.execute(f"DELETE FROM collocations WHERE id IN ({placeholders})", row_ids)
-            if self._in_memory:
-                self._conn.commit()
+            self._commit(conn)
         return len(texts)
 
-    def reset_collocation(self, row_id: int) -> None:
-        """Reset FSRS scheduling fields to initial values."""
-        with self._get_conn() as conn:
-            conn.execute(
-                """
-                UPDATE collocations SET
-                    state = 'new', stability = 1.0, fsrs_difficulty = 5.0,
-                    reps = 0, lapses = 0, due_date = ?, last_review = NULL,
-                    updated_at = datetime('now')
-                WHERE id = ?
-                """,
-                (date.today().isoformat(), row_id),
+    def reset_collocation(self, row_id: int, direction: Direction | None = None) -> None:
+        """Reset FSRS scheduling for one or both directions of a collocation."""
+        today = date.today().isoformat()
+        params: tuple
+        if direction is None:
+            sql = (
+                "UPDATE collocation_directions SET "
+                "state = 'new', stability = 1.0, fsrs_difficulty = 5.0, "
+                "reps = 0, lapses = 0, due_date = ?, last_review = NULL, "
+                "dirty_fsrs = 0 "
+                "WHERE collocation_id = ?"
             )
-            if self._in_memory:
-                self._conn.commit()
+            params = (today, row_id)
+        else:
+            sql = (
+                "UPDATE collocation_directions SET "
+                "state = 'new', stability = 1.0, fsrs_difficulty = 5.0, "
+                "reps = 0, lapses = 0, due_date = ?, last_review = NULL, "
+                "dirty_fsrs = 0 "
+                "WHERE collocation_id = ? AND direction = ?"
+            )
+            params = (today, row_id, direction.value)
+        with self._get_conn() as conn:
+            conn.execute(sql, params)
+            conn.execute(
+                "UPDATE collocations SET updated_at = datetime('now') WHERE id = ?",
+                (row_id,),
+            )
+            self._commit(conn)
 
-    def set_state_by_id(self, row_id: int, state: SRSState) -> None:
+    def set_state_by_id(
+        self,
+        row_id: int,
+        state: SRSState,
+        direction: Direction | None = None,
+    ) -> None:
         """Set the state of a collocation directly, bypassing FSRS scheduling."""
         with self._get_conn() as conn:
+            if direction is None:
+                conn.execute(
+                    "UPDATE collocation_directions SET state = ? WHERE collocation_id = ?",
+                    (state.value, row_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE collocation_directions SET state = ? WHERE collocation_id = ? AND direction = ?",
+                    (state.value, row_id, direction.value),
+                )
             conn.execute(
-                "UPDATE collocations SET state = ?, updated_at = datetime('now') WHERE id = ?",
-                (state.value, row_id),
+                "UPDATE collocations SET updated_at = datetime('now') WHERE id = ?",
+                (row_id,),
             )
-            if self._in_memory:
-                self._conn.commit()
+            self._commit(conn)
 
-    def set_suspended(self, row_id: int, suspended: bool) -> None:
+    def set_suspended(
+        self,
+        row_id: int,
+        suspended: bool,
+        direction: Direction | None = None,
+    ) -> None:
         """Suspend or unsuspend a collocation. Unsuspending resets state to 'new'."""
-        new_state = "suspended" if suspended else "new"
-        with self._get_conn() as conn:
-            conn.execute(
-                "UPDATE collocations SET state = ?, updated_at = datetime('now') WHERE id = ?",
-                (new_state, row_id),
-            )
-            if self._in_memory:
-                self._conn.commit()
+        new_state = SRSState.SUSPENDED if suspended else SRSState.NEW
+        self.set_state_by_id(row_id, new_state, direction=direction)
 
     def list_collocations(
         self,
@@ -367,22 +530,21 @@ class SRSDatabase:
         state: SRSState | None = None,
         order_by: str = "text",
         order_dir: str = "asc",
+        order_direction: Direction = Direction.RECOGNITION,
     ) -> tuple[list[tuple[int, SRSItem, str]], int]:
-        """Paginated browse for the admin UI. Returns (rows, total_count).
-        Each row is (id, SRSItem, language_code).
-        """
-        _VALID_ORDER_BY = {
-            "text",
-            "translation",
-            "state",
-            "due_date",
-            "fsrs_difficulty",
-            "reps",
-            "lapses",
-            "last_review",
+        """Paginated browse for the admin UI. Returns (rows, total_count)."""
+        parent_columns = {"text", "translation"}
+        direction_columns = {
+            "state": "state",
+            "due_date": "due_date",
+            "fsrs_difficulty": "fsrs_difficulty",
+            "reps": "reps",
+            "lapses": "lapses",
+            "last_review": "last_review",
         }
         _VALID_ORDER_DIR = {"asc", "desc"}
-        if order_by not in _VALID_ORDER_BY:
+
+        if order_by not in parent_columns and order_by not in direction_columns:
             raise ValueError(f"Invalid order_by: {order_by!r}")
         if order_dir not in _VALID_ORDER_DIR:
             raise ValueError(f"Invalid order_dir: {order_dir!r}")
@@ -391,30 +553,31 @@ class SRSDatabase:
         params: list = []
 
         if search:
-            conditions.append("(text LIKE ? OR translation LIKE ?)")
+            conditions.append("(c.text LIKE ? OR c.translation LIKE ?)")
             params.extend([f"%{search}%", f"%{search}%"])
         if state is not None:
-            conditions.append("state = ?")
+            conditions.append("d_filter.state = ?")
             params.append(state.value)
 
+        # d_filter is a direction row used for state filter + ordering by direction columns.
+        # It is always joined on the requested order_direction.
+        join = "JOIN collocation_directions d_filter ON d_filter.collocation_id = c.id AND d_filter.direction = ?"
+        join_params = [order_direction.value]
+
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-        base_sql = f"FROM collocations {where}"
+
+        order_expr = f"c.{order_by}" if order_by in parent_columns else f"d_filter.{direction_columns[order_by]}"
+
+        count_sql = f"SELECT COUNT(*) FROM collocations c {join} {where}"
+        rows_sql = f"SELECT c.* FROM collocations c {join} {where} ORDER BY {order_expr} {order_dir} LIMIT ? OFFSET ?"
 
         with self._get_conn() as conn:
-            total = conn.execute(f"SELECT COUNT(*) {base_sql}", params).fetchone()[0]
-            rows = conn.execute(
-                f"SELECT * {base_sql} ORDER BY {order_by} {order_dir} LIMIT ? OFFSET ?",
-                params + [limit, offset],
-            ).fetchall()
-
-        result = []
-        for row in rows:
-            item = self._row_to_item(row)
-            result.append((row["id"], item, row["language_code"]))
+            total = conn.execute(count_sql, join_params + params).fetchone()[0]
+            rows = conn.execute(rows_sql, join_params + params + [limit, offset]).fetchall()
+            result = [(r["id"], self._row_to_item(conn, r), r["language_code"]) for r in rows]
         return result, total
 
     def get_violations(self, collocation_text: str) -> list[dict]:
-        """Return all violations for a specific collocation."""
         with self._get_conn() as conn:
             rows = conn.execute(
                 "SELECT * FROM violations WHERE collocation_text = ?",
@@ -426,34 +589,20 @@ class SRSDatabase:
         with self._get_conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
 
-    def count_due_collocations(self, as_of: date) -> int:
+    def count_due_collocations(
+        self,
+        as_of: date,
+        direction: Direction = Direction.RECOGNITION,
+    ) -> int:
+        placeholders = ",".join("?" * len(_NON_REVIEWABLE_STATES))
         with self._get_conn() as conn:
             return conn.execute(
-                "SELECT COUNT(*) FROM collocations WHERE due_date <= ? AND state NOT IN ('new', 'suspended', 'known')",
-                (as_of.isoformat(),),
+                f"""
+                SELECT COUNT(DISTINCT c.id) FROM collocations c
+                JOIN collocation_directions d ON d.collocation_id = c.id
+                WHERE d.direction = ?
+                  AND d.due_date <= ?
+                  AND d.state NOT IN ({placeholders})
+                """,
+                (direction.value, as_of.isoformat(), *_NON_REVIEWABLE_STATES),
             ).fetchone()[0]
-
-    # ── Helpers ────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _row_to_item(row: sqlite3.Row) -> SRSItem:
-        keys = row.keys()
-        unit = SyntacticUnit(
-            text=row["text"],
-            translation=row["translation"],
-            word_count=row["word_count"],
-            difficulty=row["unit_difficulty"],
-            source=row["source"],
-            frequency=row["corpus_frequency"],
-            lemma=row["lemma"] if "lemma" in keys else None,
-        )
-        return SRSItem(
-            syntactic_unit=unit,
-            due_date=date.fromisoformat(row["due_date"]),
-            stability=row["stability"],
-            difficulty=row["fsrs_difficulty"],
-            reps=row["reps"],
-            lapses=row["lapses"],
-            state=SRSState(row["state"]),
-            last_review=date.fromisoformat(row["last_review"]) if row["last_review"] else None,
-        )
