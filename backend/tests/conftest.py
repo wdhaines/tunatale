@@ -1,6 +1,8 @@
 """Pytest configuration for TunaTale test suite."""
 
+import json
 import os
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -21,6 +23,355 @@ def srs_db():
 
     with SRSDatabase(":memory:") as db:
         yield db
+
+
+def build_minimal_anki_db(
+    tmp_path: Path,
+    deck_name: str = "0. Slovene",
+    deck_id: int = 12345,
+    use_decks_table: bool = False,
+    col_crt: int | None = None,
+) -> Path:
+    """Create a minimal collection.anki2 for testing.
+
+    Contains 5 notes with 2 cards each (recognition ord=0, production ord=1).
+    Note 5 (knjiga) has empty cards.data to trigger the fallback log.
+    Production card of note 3 (miza) is suspended (queue=-1).
+    col_crt defaults to 1704067200 (2024-01-01 UTC) so tests can compute expected due_dates.
+    """
+    if col_crt is None:
+        col_crt = 1704067200  # 2024-01-01 00:00:00 UTC
+    db_path = tmp_path / "collection.anki2"
+    conn = sqlite3.connect(str(db_path))
+
+    conn.execute("""CREATE TABLE col (
+        id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER,
+        dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT,
+        decks TEXT, dconf TEXT, tags TEXT)""")
+    conn.execute("""CREATE TABLE notes (
+        id INTEGER, guid TEXT, mid INTEGER, mod INTEGER, usn INTEGER,
+        tags TEXT, flds TEXT, sfld TEXT, csum INTEGER, flags INTEGER, data TEXT)""")
+    conn.execute("""CREATE TABLE cards (
+        id INTEGER, nid INTEGER, did INTEGER, ord INTEGER, mod INTEGER,
+        usn INTEGER, type INTEGER, queue INTEGER, due INTEGER, ivl INTEGER,
+        factor INTEGER, reps INTEGER, lapses INTEGER, left INTEGER,
+        odue INTEGER, odid INTEGER, flags INTEGER, data TEXT)""")
+    conn.execute("""CREATE TABLE revlog (
+        id INTEGER, cid INTEGER, usn INTEGER, ease INTEGER, ivl INTEGER,
+        lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)""")
+
+    if use_decks_table:
+        conn.execute("CREATE TABLE decks (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, common TEXT)")
+        conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, '{}')", (deck_id, deck_name))
+        decks_json = json.dumps({})
+    else:
+        decks_json = json.dumps(
+            {
+                "1": {"id": 1, "name": "Default"},
+                str(deck_id): {"id": deck_id, "name": deck_name},
+            }
+        )
+
+    conn.execute(
+        "INSERT INTO col VALUES (1,?,0,0,11,0,0,0,'{}','{}',?,'{}','{}')",
+        (col_crt, decks_json),
+    )
+
+    # 5 notes: plain text, HTML class="slovene", plain, plain, plain
+    notes = [
+        (1001, "anki_guid_1", 1000001, 0, 0, "", "banka\x1fbank", "banka", 0, 0, ""),
+        (1002, "anki_guid_2", 1000001, 0, 0, "", '<span class="slovene">hiša</span>\x1fhouse', "hiša", 0, 0, ""),
+        (1003, "anki_guid_3", 1000001, 0, 0, "", "miza\x1ftable", "miza", 0, 0, ""),
+        (1004, "anki_guid_4", 1000001, 0, 0, "", "stol\x1fchair", "stol", 0, 0, ""),
+        (1005, "anki_guid_5", 1000001, 0, 0, "", "knjiga\x1fbook", "knjiga", 0, 0, ""),
+    ]
+    conn.executemany("INSERT INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?)", notes)
+
+    # 10 cards (2 per note). Note 1005 has empty data. Note 1003 production is suspended.
+    cards = []
+    for note_id, _, _, _, _, _, _, _, _, _, _ in notes:
+        if note_id == 1005:
+            rec_data = ""
+            prod_data = ""
+        else:
+            rec_data = json.dumps({"s": 10.5, "d": 4.8})
+            prod_data = json.dumps({"s": 5.2, "d": 5.1})
+        prod_queue = -1 if note_id == 1003 else 2
+        cards.append((note_id * 10, note_id, deck_id, 0, 0, 0, 2, 2, 10, 21, 2500, 5, 0, 0, 0, 0, 0, rec_data))
+        cards.append(
+            (note_id * 10 + 1, note_id, deck_id, 1, 0, 0, 2, prod_queue, 20, 14, 2500, 3, 0, 0, 0, 0, 0, prod_data)
+        )
+
+    conn.executemany("INSERT INTO cards VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", cards)
+    conn.commit()
+    conn.close()
+    return db_path
+
+
+@pytest.fixture
+def fake_anki_db(tmp_path):
+    """Minimal collection.anki2 with 5 notes (deck '0. Slovene'), legacy format."""
+    return build_minimal_anki_db(tmp_path)
+
+
+@pytest.fixture
+def fake_anki_db_modern(tmp_path):
+    """Minimal collection.anki2 with separate decks table (modern Anki format)."""
+    return build_minimal_anki_db(tmp_path, use_decks_table=True)
+
+
+# Basic notetype id the real user's collection uses (kept for tests that need a
+# matching pre-migration mid).
+BASIC_NOTETYPE_MID = 1519651961633
+
+# ``fake_anki_db_slovene_pairs`` note ids, exposed so assertions can reference them
+# without repeating magic numbers. 2001/2002 are the ``jabolko`` pair, 2007..2010
+# are the four homonym ``barva`` notes, etc. See ``build_slovene_pairs_anki_db``.
+SLOVENE_PAIRS_IDS = {
+    "jabolko_recognition": 2001,
+    "jabolko_production": 2002,
+    "pes_recognition": 2003,
+    "pes_production": 2004,
+    "macka_recognition": 2005,
+    "macka_production": 2006,
+    "barva_color_recognition": 2007,
+    "barva_color_production": 2008,
+    "barva_paint_recognition": 2009,
+    "barva_paint_production": 2010,
+    "hisa_recognition_only": 2011,
+    "okno_production_only": 2012,
+    "zmeda_unknown": 2013,
+}
+
+
+def _recognition_fields(
+    slovene: str, english: str, audio_base: str, image: str, grammar: str = "", note: str = ""
+) -> str:
+    front = f'[sound:{audio_base}.mp3]<div class="slovene">{slovene}</div>'
+    back = f'<img src="{image}"><div class="english">{english}</div>'
+    if grammar:
+        back += f'<div class="gram">{grammar}</div>'
+    if note:
+        back += f'<div class="note">{note}</div>'
+    return front + "\x1f" + back
+
+
+def _production_fields(
+    slovene: str, english: str, audio_base: str, image: str, grammar: str = "", note: str = ""
+) -> str:
+    front = f'<div class="img"><img src="{image}"></div>'
+    back = f'[sound:{audio_base}.mp3]<div class="slovene">{slovene}</div><div class="english">{english}</div>'
+    if grammar:
+        back += f'<div class="gram">{grammar}</div>'
+    if note:
+        back += f'<div class="note">{note}</div>'
+    return front + "\x1f" + back
+
+
+def _unknown_fields(slovene: str, english: str) -> str:
+    # Bare text in fields[0] with no [sound:] prefix and no <div class="img">
+    # wrapper — gives ``parse_notes`` no direction hint.
+    return f'<div class="slovene">{slovene}</div>' + "\x1f" + f'<div class="english">{english}</div>'
+
+
+def build_slovene_pairs_anki_db(tmp_path: Path) -> Path:
+    """Build a modern-format Anki DB with 13 notes modeling the real user's 0. Slovene deck.
+
+    Layout:
+      - 3 paired words (jabolko, pes, mačka)                 — 6 notes, 6 cards
+      - 1 homonym "barva" (2 meanings × 2 directions)         — 4 notes, 4 cards
+      - 1 recognition-only singleton (hiša)                   — 1 note,  1 card
+      - 1 production-only singleton (okno)                    — 1 note,  1 card
+      - 1 unknown-direction note (zmeda)                      — 1 note,  1 card
+
+    Cards from each pair-partner get distinct ``revlog`` rows so the merge-apply
+    tests can assert that reparenting a card does not drop review history.
+    """
+    import sqlite3
+
+    db_path = tmp_path / "collection.anki2"
+    deck_id = 12345
+    basic_mid = BASIC_NOTETYPE_MID
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("""CREATE TABLE col (
+        id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER,
+        dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT,
+        decks TEXT, dconf TEXT, tags TEXT)""")
+    conn.execute("""CREATE TABLE notes (
+        id INTEGER PRIMARY KEY, guid TEXT, mid INTEGER, mod INTEGER, usn INTEGER,
+        tags TEXT, flds TEXT, sfld TEXT, csum INTEGER, flags INTEGER, data TEXT)""")
+    conn.execute("""CREATE TABLE cards (
+        id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER, ord INTEGER, mod INTEGER,
+        usn INTEGER, type INTEGER, queue INTEGER, due INTEGER, ivl INTEGER,
+        factor INTEGER, reps INTEGER, lapses INTEGER, left INTEGER,
+        odue INTEGER, odid INTEGER, flags INTEGER, data TEXT)""")
+    conn.execute("""CREATE TABLE revlog (
+        id INTEGER PRIMARY KEY, cid INTEGER, usn INTEGER, ease INTEGER, ivl INTEGER,
+        lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)""")
+    conn.execute("""CREATE TABLE decks (
+        id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, common BLOB, kind BLOB)""")
+    conn.execute("""CREATE TABLE notetypes (
+        id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)""")
+    conn.execute("""CREATE TABLE fields (
+        ntid INTEGER, ord INTEGER, name TEXT, config BLOB, PRIMARY KEY (ntid, ord))""")
+    conn.execute("""CREATE TABLE templates (
+        ntid INTEGER, ord INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB, PRIMARY KEY (ntid, ord))""")
+
+    col_crt = 1704067200  # 2024-01-01 UTC
+    conn.execute(
+        "INSERT INTO col VALUES (1,?,0,0,18,0,0,0,'{}','{}','{}','{}','{}')",
+        (col_crt,),
+    )
+    conn.executemany(
+        "INSERT INTO decks VALUES (?, ?, 0, 0, x'', x'')",
+        [(1, "Default"), (deck_id, "0. Slovene")],
+    )
+
+    # Pre-migration Basic notetype (1 template). Minimal configs — tests don't
+    # exercise Anki's renderer so opaque bytes are fine.
+    conn.execute("INSERT INTO notetypes VALUES (?, 'Basic', 0, 0, x'')", (basic_mid,))
+    conn.executemany(
+        "INSERT INTO fields VALUES (?, ?, ?, x'')",
+        [(basic_mid, 0, "Front"), (basic_mid, 1, "Back")],
+    )
+    conn.execute(
+        "INSERT INTO templates VALUES (?, 0, 'Card 1', 0, 0, x'')",
+        (basic_mid,),
+    )
+
+    notes = [
+        # id, guid, fields, sfld
+        (2001, "guid_jab_rec", _recognition_fields("jabolko", "apple", "sl_jabolko", "jabolko.jpg", "n."), "jabolko"),
+        (2002, "guid_jab_pro", _production_fields("jabolko", "apple", "sl_jabolko", "jabolko.jpg", "n."), "jabolko"),
+        (2003, "guid_pes_rec", _recognition_fields("pes", "dog", "sl_pes", "dog.jpg"), "pes"),
+        (2004, "guid_pes_pro", _production_fields("pes", "dog", "sl_pes", "dog.jpg"), "pes"),
+        (2005, "guid_mac_rec", _recognition_fields("mačka", "cat", "sl_macka", "cat.jpg"), "mačka"),
+        (2006, "guid_mac_pro", _production_fields("mačka", "cat", "sl_macka", "cat.jpg"), "mačka"),
+        # Homonym: same slovene "barva" maps to two distinct english meanings.
+        # User flags these in the note field.
+        (
+            2007,
+            "guid_barva_col_rec",
+            _recognition_fields("barva", "color", "sl_barva_color", "color.jpg", note="⚠ same word as paint"),
+            "barva",
+        ),
+        (
+            2008,
+            "guid_barva_col_pro",
+            _production_fields("barva", "color", "sl_barva_color", "color.jpg", note="⚠ same word as paint"),
+            "barva",
+        ),
+        (
+            2009,
+            "guid_barva_pai_rec",
+            _recognition_fields("barva", "paint", "sl_barva_paint", "paint.jpg", note="⚠ same word as color"),
+            "barva",
+        ),
+        (
+            2010,
+            "guid_barva_pai_pro",
+            _production_fields("barva", "paint", "sl_barva_paint", "paint.jpg", note="⚠ same word as color"),
+            "barva",
+        ),
+        # Singletons
+        (2011, "guid_hisa_rec", _recognition_fields("hiša", "house", "sl_hisa", "house.jpg"), "hiša"),
+        (2012, "guid_okno_pro", _production_fields("okno", "window", "sl_okno", "window.jpg"), "okno"),
+        # Unknown-direction: no [sound:] in field[0], no <div class="img"> wrapper
+        (2013, "guid_zmeda_unk", _unknown_fields("zmeda", "confusion"), "zmeda"),
+    ]
+    conn.executemany(
+        "INSERT INTO notes VALUES (?, ?, ?, 0, 0, '', ?, ?, 0, 0, '')",
+        [(nid, guid, basic_mid, fields, sfld) for (nid, guid, fields, sfld) in notes],
+    )
+
+    # Each note gets exactly 1 card (ord=0, Basic has 1 template). Recognition
+    # cards have reps=5 so tests can verify FSRS state preservation. Production
+    # partner cards have reps=1 where present — real data shows production cards
+    # are almost entirely new but a few have received review.
+    card_rows: list[tuple] = []
+    # card_id = note_id * 10 keeps the correspondence readable in failures.
+    reviewed_reps = {
+        2001: 5,
+        2003: 5,
+        2005: 5,
+        2007: 5,
+        2009: 5,
+        2011: 5,  # recognition
+        2002: 1,
+        2004: 1,
+        2006: 1,
+        2008: 1,
+        2010: 1,  # production w/ reps
+        2012: 0,
+        2013: 0,
+    }
+    due_by_note = {
+        2001: 10,
+        2002: 20,
+        2003: 11,
+        2004: 21,
+        2005: 12,
+        2006: 22,
+        2007: 13,
+        2008: 23,
+        2009: 14,
+        2010: 24,
+        2011: 15,
+        2012: 25,
+        2013: 0,
+    }
+    for nid, _guid, _flds, _sfld in notes:
+        reps = reviewed_reps[nid]
+        queue = 0 if reps == 0 else 2
+        data = json.dumps({"s": 7.5, "d": 4.8}) if reps > 0 else ""
+        card_rows.append(
+            (
+                nid * 10,
+                nid,
+                deck_id,
+                0,
+                0,
+                0,
+                2 if reps > 0 else 0,
+                queue,
+                due_by_note[nid],
+                21 if reps > 0 else 0,
+                2500 if reps > 0 else 0,
+                reps,
+                0,
+                0,
+                0,
+                0,
+                0,
+                data,
+            )
+        )
+    conn.executemany(
+        "INSERT INTO cards VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        card_rows,
+    )
+
+    # Revlog: pair partners each get one entry; homonym partners get one; singletons
+    # and unknown-direction notes have none. Gives us 10 revlog rows.
+    revlog_rows: list[tuple] = []
+    revlog_id = 1_700_000_000_000
+    for nid in (2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010):
+        revlog_rows.append((revlog_id, nid * 10, 0, 3, 21, 10, 2500, 1200, 1))
+        revlog_id += 1
+    conn.executemany(
+        "INSERT INTO revlog VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        revlog_rows,
+    )
+    conn.commit()
+    conn.close()
+    return db_path
+
+
+@pytest.fixture
+def fake_anki_db_slovene_pairs(tmp_path):
+    """Realistic Slovene-deck fixture with pairs, homonyms, singletons, unknowns."""
+    return build_slovene_pairs_anki_db(tmp_path)
 
 
 _CASSETTES_DIR = Path(__file__).parent / "cassettes"

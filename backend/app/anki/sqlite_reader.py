@@ -1,0 +1,244 @@
+"""Read-only helpers for querying a collection.anki2 SQLite database."""
+
+from __future__ import annotations
+
+import json
+import re
+import sqlite3
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+from app.models.srs_item import Direction, DirectionState, SRSState
+
+
+@dataclass
+class AnkiNote:
+    id: int
+    anki_guid: str
+    mid: int
+    mod: int
+    tags: list[str]
+    fields: list[str]  # split on \x1f
+
+
+@dataclass
+class AnkiCard:
+    id: int
+    note_id: int
+    deck_id: int
+    ord: int
+    queue: int
+    reps: int
+    lapses: int
+    direction: Direction
+    fsrs_state: DirectionState
+
+
+def compute_due_date(queue: int, due_raw: int, col_crt: int) -> date:
+    """Convert Anki's queue-dependent due field to a Python date.
+
+    queue 2/3 (review/day-learn): due_raw is days since col.crt epoch.
+    queue 1 (learning): due_raw is an absolute unix timestamp (seconds).
+    queue 0 (new) or -1 (suspended): due_raw is a queue position — fall back to today.
+    """
+    if queue in (2, 3):
+        return date.fromtimestamp(col_crt) + timedelta(days=due_raw)
+    if queue == 1:
+        return datetime.fromtimestamp(due_raw).date()
+    return date.today()
+
+
+def find_deck_id(conn: sqlite3.Connection, deck_name: str) -> int | None:
+    """Find deck id by name. Tries col.decks JSON (legacy) then decks table (modern)."""
+    row = conn.execute("SELECT decks FROM col").fetchone()
+    if row:
+        try:
+            deck_data = json.loads(row[0])
+            for did, info in deck_data.items():
+                if isinstance(info, dict) and info.get("name") == deck_name:
+                    return int(did)
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+            pass
+
+    try:
+        rows = conn.execute("SELECT id, name FROM decks").fetchall()
+        for r in rows:
+            if r[1] == deck_name:
+                return r[0]
+    except sqlite3.OperationalError:
+        pass
+
+    return None
+
+
+def fetch_notes_for_deck(conn: sqlite3.Connection, deck_id: int) -> list[AnkiNote]:
+    """Fetch all notes that have at least one card in the given deck."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT n.id, n.guid, n.mid, n.mod, n.tags, n.flds
+        FROM notes n
+        JOIN cards c ON c.nid = n.id
+        WHERE c.did = ?
+        """,
+        (deck_id,),
+    ).fetchall()
+    notes = []
+    for r in rows:
+        fields = r[5].split("\x1f")
+        tags = [t for t in r[4].strip().split() if t]
+        notes.append(AnkiNote(id=r[0], anki_guid=r[1], mid=r[2], mod=r[3], tags=tags, fields=fields))
+    return notes
+
+
+def fetch_cards_for_notes(
+    conn: sqlite3.Connection,
+    note_ids: list[int],
+    fallback_log_path: Path | None = None,
+) -> list[AnkiCard]:
+    """Fetch all cards for the given note IDs, parsing FSRS state from cards.data."""
+    if not note_ids:
+        return []
+
+    col_row = conn.execute("SELECT crt FROM col LIMIT 1").fetchone()
+    col_crt: int = int(col_row[0]) if col_row else 0
+
+    placeholders = ",".join("?" * len(note_ids))
+    rows = conn.execute(
+        f"SELECT id, nid, did, ord, queue, reps, lapses, data, due FROM cards WHERE nid IN ({placeholders})",
+        note_ids,
+    ).fetchall()
+    cards = []
+    for r in rows:
+        card_id, note_id, deck_id, ord_, queue, reps, lapses, data_str, due_raw = (
+            r[0],
+            r[1],
+            r[2],
+            r[3],
+            r[4],
+            r[5],
+            r[6],
+            r[7] or "",
+            r[8] or 0,
+        )
+        fsrs = parse_fsrs_data(
+            card_id=card_id,
+            ord=ord_,
+            data_str=data_str,
+            queue=queue,
+            reps=reps,
+            lapses=lapses,
+            fallback_log_path=fallback_log_path,
+            col_crt=col_crt,
+            due_raw=due_raw,
+        )
+        direction = Direction.RECOGNITION if ord_ == 0 else Direction.PRODUCTION
+        cards.append(
+            AnkiCard(
+                id=card_id,
+                note_id=note_id,
+                deck_id=deck_id,
+                ord=ord_,
+                queue=queue,
+                reps=reps,
+                lapses=lapses,
+                direction=direction,
+                fsrs_state=fsrs,
+            )
+        )
+    return cards
+
+
+def parse_fsrs_data(
+    card_id: int,
+    ord: int,
+    data_str: str,
+    queue: int,
+    reps: int,
+    lapses: int,
+    fallback_log_path: Path | None = None,
+    col_crt: int = 0,
+    due_raw: int = 0,
+) -> DirectionState:
+    """Parse FSRS state from cards.data JSON. Falls back to NEW on missing/malformed data."""
+    direction = Direction.RECOGNITION if ord == 0 else Direction.PRODUCTION
+    due_date = compute_due_date(queue, due_raw, col_crt)
+
+    if queue == -1:
+        state = SRSState.SUSPENDED
+    elif reps == 0:
+        state = SRSState.NEW
+    else:
+        state = SRSState.REVIEW
+
+    try:
+        if data_str and data_str.strip():
+            data = json.loads(data_str)
+            stability = float(data["s"])
+            difficulty = float(data["d"])
+            return DirectionState(
+                direction=direction,
+                due_date=due_date,
+                stability=stability,
+                difficulty=difficulty,
+                reps=reps,
+                lapses=lapses,
+                state=state,
+                anki_card_id=card_id,
+            )
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        pass
+
+    # Fallback
+    if fallback_log_path is not None:
+        fallback_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(fallback_log_path, "a") as f:
+            f.write(f"{card_id}\n")
+
+    return DirectionState(
+        direction=direction,
+        due_date=due_date,
+        stability=1.0,
+        difficulty=5.0,
+        reps=reps,
+        lapses=lapses,
+        state=state,
+        anki_card_id=card_id,
+    )
+
+
+def list_media_refs(fields: list[str]) -> list[str]:
+    """Extract media filenames referenced in field HTML."""
+    refs: list[str] = []
+    for field in fields:
+        refs.extend(re.findall(r"\[sound:([^\]]+)\]", field))
+        refs.extend(re.findall(r'<img[^>]+src="([^"]+)"', field))
+    return refs
+
+
+def extract_translation(field_html: str) -> str:
+    """Strip HTML from a translation field, returning plain text."""
+    return re.sub(r"<[^>]+>", "", field_html).strip()
+
+
+def extract_l2(field_html: str) -> str:
+    """Extract L2 text from a field, preferring elements with class="slovene"."""
+    m = re.search(r'class="slovene"[^>]*>\s*([^<]+?)\s*<', field_html)
+    if m:
+        return m.group(1).strip()
+    clean = re.sub(r"<[^>]+>", "", field_html)
+    return clean.strip()
+
+
+def extract_l2_from_fields(fields: list[str]) -> str:
+    """Return the first non-empty ``extract_l2`` across fields.
+
+    Anki notes with inverse card layouts put the image in ``fields[0]`` and the
+    target-language word in ``fields[1]``; callers should pass the whole list so
+    we find the L2 text regardless of which slot it lives in.
+    """
+    for field in fields:
+        l2 = extract_l2(field)
+        if l2:
+            return l2
+    return ""

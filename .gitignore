@@ -49,9 +49,13 @@ frontend/build/
 # Runtime data / DB
 *.db
 *.db-journal
+*.db.bak_*
 
 # TTS / audio cache
 backend/cache/
+
+# Imported Anki media (per-user, large)
+backend/media/
 
 # Generated outputs and ad-hoc scripts
 backend/output/
