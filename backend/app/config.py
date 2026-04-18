@@ -1,5 +1,7 @@
 """Application configuration via Pydantic Settings."""
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,6 +12,13 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./tunatale.db"
     llm_mode: str = "mock"  # mock | live | record | patch
     llm_model: str = "llama-3.3-70b-versatile"
+
+    anki_collection_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.anki2").expanduser()
+    anki_media_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.media").expanduser()
+    anki_deck_name: str = "0. Slovene"
+    anki_backup_dir: Path = Path("~/.tunatale/anki-backups").expanduser()
+    media_dir: Path = Path("./media")
+    anki_fallback_log: Path = Path("~/.tunatale/logs/anki-fallback.log").expanduser()
 
 
 settings = Settings()

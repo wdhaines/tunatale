@@ -13,6 +13,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 from app.common.guid import compute_guid
 from app.models.srs_item import (
@@ -129,16 +130,56 @@ class SRSDatabase:
 
     @contextmanager
     def _get_conn(self):
-        if self._in_memory:
+        txn = getattr(self, "_txn_conn", None)
+        if txn is not None:
+            yield txn
+        elif self._in_memory:
             yield self._conn
         else:
             with self._file_conn() as conn:
                 yield conn
 
     def _commit(self, conn: sqlite3.Connection) -> None:
+        if getattr(self, "_txn_conn", None) is not None:
+            return  # transaction context handles commits
         if self._in_memory:
             conn.commit()
         # file-backed contexts commit on exit
+
+    @contextmanager
+    def begin_transaction(self, dry_run: bool = False):
+        """Wrap subsequent DB calls in a single transaction.
+
+        COMMIT on success unless dry_run=True; ROLLBACK on any exception.
+        """
+        assert not hasattr(self, "_txn_conn"), "Nested transactions not supported"
+        if self._in_memory:
+            conn = self._conn
+            prev_iso = conn.isolation_level
+            conn.isolation_level = None
+            conn.execute("BEGIN")
+        else:
+            conn = sqlite3.connect(self._path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.isolation_level = None
+            conn.execute("BEGIN")
+        self._txn_conn = conn
+        try:
+            yield self
+            if dry_run:
+                conn.execute("ROLLBACK")
+            else:
+                conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        finally:
+            del self._txn_conn
+            if self._in_memory:
+                conn.isolation_level = prev_iso
+            else:
+                conn.close()
 
     # ── Write operations ───────────────────────────────────────────────
 
@@ -588,6 +629,199 @@ class SRSDatabase:
     def count_collocations(self) -> int:
         with self._get_conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
+
+    # ── Anki-surface methods ───────────────────────────────────────────
+
+    def upsert_by_guid(
+        self,
+        unit: SyntacticUnit,
+        language_code: str,
+        directions: dict[Direction, DirectionState],
+        anki_note_id: int | None = None,
+    ) -> int:
+        """Insert parent row if new, else update parent scalar fields.
+
+        Per-direction idempotency: if an existing direction has reps > 0,
+        only update anki_card_id (preserve TunaTale-local review progress).
+        If reps == 0, refresh all FSRS fields from the supplied state.
+        Returns the collocation id.
+        """
+        guid = compute_guid(unit.text, language_code)
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT id FROM collocations WHERE guid = ?", (guid,)).fetchone()
+            if row is None:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO collocations
+                        (text, translation, language_code, word_count, unit_difficulty,
+                         source, corpus_frequency, lemma, guid, anki_note_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        unit.text,
+                        unit.translation,
+                        language_code,
+                        unit.word_count,
+                        unit.difficulty,
+                        unit.source,
+                        unit.frequency,
+                        unit.lemma,
+                        guid,
+                        anki_note_id,
+                    ),
+                )
+                coll_id = cursor.lastrowid
+                for direction, state in directions.items():
+                    conn.execute(
+                        """
+                        INSERT INTO collocation_directions
+                            (collocation_id, direction, stability, fsrs_difficulty, due_date,
+                             reps, lapses, state, last_review, anki_card_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            coll_id,
+                            direction.value,
+                            state.stability,
+                            state.difficulty,
+                            state.due_date.isoformat(),
+                            state.reps,
+                            state.lapses,
+                            state.state.value,
+                            state.last_review.isoformat() if state.last_review else None,
+                            state.anki_card_id,
+                        ),
+                    )
+            else:
+                coll_id = row["id"]
+                conn.execute(
+                    """
+                    UPDATE collocations SET
+                        translation = ?, word_count = ?, unit_difficulty = ?,
+                        source = ?, corpus_frequency = ?, lemma = ?,
+                        anki_note_id = COALESCE(?, anki_note_id),
+                        updated_at = datetime('now')
+                    WHERE id = ?
+                    """,
+                    (
+                        unit.translation,
+                        unit.word_count,
+                        unit.difficulty,
+                        unit.source,
+                        unit.frequency,
+                        unit.lemma,
+                        anki_note_id,
+                        coll_id,
+                    ),
+                )
+                for direction, state in directions.items():
+                    dir_row = conn.execute(
+                        "SELECT reps FROM collocation_directions WHERE collocation_id = ? AND direction = ?",
+                        (coll_id, direction.value),
+                    ).fetchone()
+                    if dir_row is None:
+                        conn.execute(
+                            """
+                            INSERT INTO collocation_directions
+                                (collocation_id, direction, stability, fsrs_difficulty, due_date,
+                                 reps, lapses, state, last_review, anki_card_id)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                coll_id,
+                                direction.value,
+                                state.stability,
+                                state.difficulty,
+                                state.due_date.isoformat(),
+                                state.reps,
+                                state.lapses,
+                                state.state.value,
+                                state.last_review.isoformat() if state.last_review else None,
+                                state.anki_card_id,
+                            ),
+                        )
+                    elif dir_row["reps"] > 0:
+                        conn.execute(
+                            "UPDATE collocation_directions SET anki_card_id = ? WHERE collocation_id = ? AND direction = ?",
+                            (state.anki_card_id, coll_id, direction.value),
+                        )
+                    else:
+                        conn.execute(
+                            """
+                            UPDATE collocation_directions SET
+                                stability = ?, fsrs_difficulty = ?, due_date = ?,
+                                reps = ?, lapses = ?, state = ?, last_review = ?, anki_card_id = ?
+                            WHERE collocation_id = ? AND direction = ?
+                            """,
+                            (
+                                state.stability,
+                                state.difficulty,
+                                state.due_date.isoformat(),
+                                state.reps,
+                                state.lapses,
+                                state.state.value,
+                                state.last_review.isoformat() if state.last_review else None,
+                                state.anki_card_id,
+                                coll_id,
+                                direction.value,
+                            ),
+                        )
+            self._commit(conn)
+        return coll_id
+
+    def set_anki_ids(
+        self,
+        guid: str,
+        note_id: int,
+        card_ids: dict[Direction, int],
+    ) -> None:
+        """Set anki_note_id on the parent and anki_card_id on each direction row."""
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT id FROM collocations WHERE guid = ?", (guid,)).fetchone()
+            if row is None:
+                return
+            coll_id = row["id"]
+            conn.execute(
+                "UPDATE collocations SET anki_note_id = ? WHERE id = ?",
+                (note_id, coll_id),
+            )
+            for direction, card_id in card_ids.items():
+                conn.execute(
+                    "UPDATE collocation_directions SET anki_card_id = ? WHERE collocation_id = ? AND direction = ?",
+                    (card_id, coll_id, direction.value),
+                )
+            self._commit(conn)
+
+    def add_media(
+        self,
+        collocation_id: int,
+        kind: str,
+        filename: str,
+        path: str,
+        anki_filename: str,
+        sha256: str,
+        size_bytes: int,
+    ) -> int:
+        """Insert a media row. Returns the new media id."""
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO media (collocation_id, kind, filename, path, anki_filename, sha256, bytes)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (collocation_id, kind, filename, path, anki_filename, sha256, size_bytes),
+            )
+            self._commit(conn)
+            return cursor.lastrowid
+
+    def find_media_by_anki_filename(self, anki_filename: str) -> dict[str, Any] | None:
+        """Return the media row for the given Anki filename, or None."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM media WHERE anki_filename = ?",
+                (anki_filename,),
+            ).fetchone()
+        return dict(row) if row is not None else None
 
     def count_due_collocations(
         self,
