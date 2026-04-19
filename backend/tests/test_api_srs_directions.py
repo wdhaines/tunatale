@@ -221,6 +221,20 @@ class TestItemDictShape:
         item = r.json()["due"][0]
         assert item["word_count"] == 2
 
+    async def test_due_item_has_guid_and_anki_note_id(self):
+        db = _db()
+        db.add_collocation(_unit("hiša"), language_code="sl")
+        _advance_recognition_due(db, "hiša")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/api/srs/due", params={"direction": "recognition"})
+        item = r.json()["due"][0]
+        assert "guid" in item
+        assert item["guid"] is not None
+        assert len(item["guid"]) == 16
+        assert "anki_note_id" in item
+        assert item["anki_note_id"] is None  # not set by add_collocation
+
 
 class TestDrillEndpoint:
     """POST /api/srs/items/{id}/direction/{direction}/feedback"""

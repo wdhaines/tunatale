@@ -67,6 +67,8 @@ def _item_to_dict(
         "lapses": item.lapses,
         "last_review": item.last_review.isoformat() if item.last_review else None,
         "language_code": language_code,
+        "guid": item.guid,
+        "anki_note_id": item.anki_note_id,
         "directions": {
             "recognition": _direction_to_dict(item.directions[Direction.RECOGNITION]),
             "production": _direction_to_dict(item.directions[Direction.PRODUCTION]),

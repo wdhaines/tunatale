@@ -136,6 +136,8 @@ export interface SRSItemDetail {
 	lapses: number;
 	last_review: string | null;
 	language_code: string;
+	guid?: string | null;
+	anki_note_id?: number | null;
 	directions?: {
 		recognition: DirectionState;
 		production: DirectionState;

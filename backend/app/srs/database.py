@@ -516,17 +516,28 @@ class SRSDatabase:
         """Update text and translation for a collocation by id.
 
         When `text` changes, the computed guid updates accordingly.
+        Changed fields are appended to dirty_fields for sync tracking.
         """
         try:
             with self._get_conn() as conn:
-                cur = conn.execute("SELECT language_code FROM collocations WHERE id = ?", (row_id,)).fetchone()
+                cur = conn.execute(
+                    "SELECT language_code, text, translation, dirty_fields FROM collocations WHERE id = ?",
+                    (row_id,),
+                ).fetchone()
                 if cur is None:
                     return
                 new_guid = compute_guid(text, cur["language_code"])
+                changed: set[str] = set()
+                if text != cur["text"]:
+                    changed.add("text")
+                if translation != cur["translation"]:
+                    changed.add("translation")
+                existing = {f for f in (cur["dirty_fields"] or "").split(",") if f}
+                merged = ",".join(sorted(existing | changed))
                 conn.execute(
                     "UPDATE collocations SET text = ?, translation = ?, guid = ?, "
-                    "updated_at = datetime('now') WHERE id = ?",
-                    (text, translation, new_guid, row_id),
+                    "dirty_fields = ?, updated_at = datetime('now') WHERE id = ?",
+                    (text, translation, new_guid, merged, row_id),
                 )
                 self._commit(conn)
         except sqlite3.IntegrityError as exc:
@@ -877,6 +888,71 @@ class SRSDatabase:
                 (anki_filename,),
             ).fetchone()
         return dict(row) if row is not None else None
+
+    def list_dirty(
+        self,
+        direction: Direction | None = None,
+    ) -> list[tuple[str, Direction, DirectionState]]:
+        """Return (guid, direction, DirectionState) tuples for dirty FSRS rows.
+
+        A row is dirty when dirty_fsrs=1 (set by schedule() after a review).
+        Pass direction to restrict to one direction; omit for both.
+        """
+        with self._get_conn() as conn:
+            if direction is None:
+                rows = conn.execute(
+                    f"""
+                    SELECT c.guid, d.direction, {", ".join(f"d.{col}" for col in _DIR_COLUMNS)}
+                    FROM collocations c
+                    JOIN collocation_directions d ON d.collocation_id = c.id
+                    WHERE d.dirty_fsrs = 1
+                    """,
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"""
+                    SELECT c.guid, d.direction, {", ".join(f"d.{col}" for col in _DIR_COLUMNS)}
+                    FROM collocations c
+                    JOIN collocation_directions d ON d.collocation_id = c.id
+                    WHERE d.dirty_fsrs = 1 AND d.direction = ?
+                    """,
+                    (direction.value,),
+                ).fetchall()
+            result = []
+            for row in rows:
+                d = Direction(row["direction"])
+                ds = DirectionState(
+                    direction=d,
+                    due_date=date.fromisoformat(row["due_date"]),
+                    stability=row["stability"],
+                    difficulty=row["fsrs_difficulty"],
+                    reps=row["reps"],
+                    lapses=row["lapses"],
+                    state=SRSState(row["state"]),
+                    last_review=date.fromisoformat(row["last_review"]) if row["last_review"] else None,
+                    anki_card_id=row["anki_card_id"],
+                    dirty_fsrs=bool(row["dirty_fsrs"]),
+                    last_synced_at=row["last_synced_at"],
+                )
+                result.append((row["guid"], d, ds))
+        return result
+
+    def mark_direction_clean(self, guid: str, direction: Direction) -> None:
+        """Clear dirty_fsrs and set last_synced_at to now for one direction."""
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT id FROM collocations WHERE guid = ?", (guid,)).fetchone()
+            if row is None:
+                return
+            conn.execute(
+                """
+                UPDATE collocation_directions SET
+                    dirty_fsrs = 0,
+                    last_synced_at = datetime('now')
+                WHERE collocation_id = ? AND direction = ?
+                """,
+                (row["id"], direction.value),
+            )
+            self._commit(conn)
 
     def count_due_collocations(
         self,
