@@ -112,10 +112,22 @@ export interface LessonAudio {
 	sections: SectionAudio[];
 }
 
+export interface DirectionState {
+	state: string;
+	due_date: string;
+	stability: number;
+	difficulty: number;
+	reps: number;
+	lapses: number;
+	last_review: string | null;
+	anki_card_id: number | null;
+}
+
 export interface SRSItemDetail {
 	id: number;
 	text: string;
 	translation: string;
+	word_count?: number;
 	state: 'new' | 'learning' | 'review' | 'relearning' | 'suspended' | 'known';
 	due_date: string;
 	stability: number;
@@ -124,6 +136,11 @@ export interface SRSItemDetail {
 	lapses: number;
 	last_review: string | null;
 	language_code: string;
+	directions?: {
+		recognition: DirectionState;
+		production: DirectionState;
+	};
+	image_url?: string | null;
 }
 
 export interface SRSItemsPage {
@@ -231,6 +248,23 @@ export class TunaTaleAPI {
 
 	async getSRSNew(): Promise<SRSNew> {
 		return this.request('/api/srs/new');
+	}
+
+	async fetchDue(direction: 'recognition' | 'production' | 'any'): Promise<SRSItemDetail[]> {
+		const data = await this.request<{ due: SRSItemDetail[] }>(`/api/srs/due?direction=${direction}`);
+		return data.due;
+	}
+
+	async submitDrill(
+		itemId: number,
+		direction: 'recognition' | 'production',
+		rating: 'again' | 'hard' | 'good' | 'easy'
+	): Promise<{ new_due_date: string; new_state: string }> {
+		return this.request(`/api/srs/items/${itemId}/direction/${direction}/feedback`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ rating })
+		});
 	}
 
 	async getSRSStats(): Promise<SRSStats> {

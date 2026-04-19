@@ -85,6 +85,20 @@ describe('Home page', () => {
 	});
 });
 
+describe('Review links', () => {
+	it('renders a link to /review/recognition', async () => {
+		const { findByRole } = render(Page);
+		const link = await findByRole('link', { name: /recognition/i });
+		expect((link as HTMLAnchorElement).getAttribute('href')).toBe('/review/recognition');
+	});
+
+	it('renders a link to /review/production', async () => {
+		const { findByRole } = render(Page);
+		const link = await findByRole('link', { name: /production/i });
+		expect((link as HTMLAnchorElement).getAttribute('href')).toBe('/review/production');
+	});
+});
+
 describe('Recent Curricula section', () => {
 	it('shows loading state initially', () => {
 		mockListCurricula.mockReturnValue(new Promise(() => {})); // never resolves

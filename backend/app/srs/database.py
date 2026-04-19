@@ -450,6 +450,61 @@ class SRSDatabase:
             ).fetchall()
             return [self._row_to_item(conn, r) for r in rows]
 
+    def get_due_items(
+        self,
+        as_of: date,
+        direction: Direction = Direction.RECOGNITION,
+    ) -> list[tuple[int, SRSItem, str]]:
+        """Like get_due_collocations but returns (id, SRSItem, language_code) tuples."""
+        placeholders = ",".join("?" * len(_NON_REVIEWABLE_STATES))
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT c.* FROM collocations c
+                JOIN collocation_directions d ON d.collocation_id = c.id
+                WHERE d.direction = ?
+                  AND d.due_date <= ?
+                  AND d.state NOT IN ({placeholders})
+                """,
+                (direction.value, as_of.isoformat(), *_NON_REVIEWABLE_STATES),
+            ).fetchall()
+            return [(r["id"], self._row_to_item(conn, r), r["language_code"]) for r in rows]
+
+    def get_new_items(
+        self,
+        limit: int = 10,
+        direction: Direction = Direction.RECOGNITION,
+    ) -> list[tuple[int, SRSItem, str]]:
+        """Like get_new_collocations but returns (id, SRSItem, language_code) tuples."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT c.* FROM collocations c
+                JOIN collocation_directions d ON d.collocation_id = c.id
+                WHERE d.direction = ? AND d.state = 'new'
+                LIMIT ?
+                """,
+                (direction.value, limit),
+            ).fetchall()
+            return [(r["id"], self._row_to_item(conn, r), r["language_code"]) for r in rows]
+
+    def update_direction_by_id(self, row_id: int, direction: Direction, state: DirectionState) -> None:
+        """Persist direction state for a collocation identified by row id."""
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT guid FROM collocations WHERE id = ?", (row_id,)).fetchone()
+            if row is None:
+                return
+        self.update_direction(row["guid"], direction, state)
+
+    def get_image_filename(self, collocation_id: int) -> str | None:
+        """Return the filename of the first image media row for a collocation, or None."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT filename FROM media WHERE collocation_id = ? AND kind = 'image' LIMIT 1",
+                (collocation_id,),
+            ).fetchone()
+        return row["filename"] if row is not None else None
+
     def get_collocation_by_id(self, row_id: int) -> tuple[int, SRSItem, str] | None:
         with self._get_conn() as conn:
             row = conn.execute("SELECT * FROM collocations WHERE id = ?", (row_id,)).fetchone()

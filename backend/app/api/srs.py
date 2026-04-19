@@ -6,13 +6,15 @@ import datetime
 import json
 import logging
 import re
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from app.models.srs_item import SRSItem, SRSState
+from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
-from app.srs.feedback import ImplicitFeedbackAdapter
+from app.srs.feedback import ImplicitFeedbackAdapter, rating_from_input
 from app.srs.fsrs import Rating, schedule
 from app.srs.lemmatizer import LowercaseLemmatizer
 from app.srs.tokenizer import tokenize
@@ -31,12 +33,32 @@ _WORD_RATING_MAP: dict[str, Rating] = {
 }
 
 
-def _item_to_dict(row_id: int, item: SRSItem, language_code: str) -> dict:
-    """Serialize an SRSItem to a response dict for admin endpoints."""
+def _direction_to_dict(ds: DirectionState) -> dict:
+    return {
+        "state": ds.state.value,
+        "due_date": ds.due_date.isoformat(),
+        "stability": ds.stability,
+        "difficulty": ds.difficulty,
+        "reps": ds.reps,
+        "lapses": ds.lapses,
+        "last_review": ds.last_review.isoformat() if ds.last_review else None,
+        "anki_card_id": ds.anki_card_id,
+    }
+
+
+def _item_to_dict(
+    row_id: int,
+    item: SRSItem,
+    language_code: str,
+    image_url: str | None = None,
+) -> dict:
+    """Serialize an SRSItem to a response dict."""
     return {
         "id": row_id,
         "text": item.syntactic_unit.text,
         "translation": item.syntactic_unit.translation,
+        "word_count": item.syntactic_unit.word_count,
+        # Flat recognition shims (back-compat)
         "state": item.state.value,
         "due_date": item.due_date.isoformat(),
         "stability": item.stability,
@@ -45,6 +67,11 @@ def _item_to_dict(row_id: int, item: SRSItem, language_code: str) -> dict:
         "lapses": item.lapses,
         "last_review": item.last_review.isoformat() if item.last_review else None,
         "language_code": language_code,
+        "directions": {
+            "recognition": _direction_to_dict(item.directions[Direction.RECOGNITION]),
+            "production": _direction_to_dict(item.directions[Direction.PRODUCTION]),
+        },
+        "image_url": image_url,
     }
 
 
@@ -58,19 +85,91 @@ class ListenRequest(BaseModel):
     word_ratings: dict[str, str] = {}  # lemma → "hard"|"easy"|"again"
 
 
+def _triples_to_dicts(db, triples: list[tuple[int, SRSItem, str]]) -> list[dict]:
+    result = []
+    seen_ids: set[int] = set()
+    for row_id, item, lang in triples:
+        if row_id in seen_ids:
+            continue
+        seen_ids.add(row_id)
+        img = db.get_image_filename(row_id)
+        image_url = f"/api/media/{img}" if img else None
+        result.append(_item_to_dict(row_id, item, lang, image_url))
+    return result
+
+
 @router.get("/due", status_code=200)
-async def get_due_collocations(request: Request):
+async def get_due_collocations(request: Request, direction: str = "recognition"):
     db = request.app.state.srs_db
     today = datetime.date.today()
-    items = db.get_due_collocations(today)
-    return {"due": [{"text": i.syntactic_unit.text, "translation": i.syntactic_unit.translation} for i in items]}
+    if direction == "any":
+        rec = db.get_due_items(today, Direction.RECOGNITION)
+        prod = db.get_due_items(today, Direction.PRODUCTION)
+        triples = rec + prod
+    else:
+        try:
+            dir_enum = Direction(direction)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid direction: {direction!r}") from exc
+        triples = db.get_due_items(today, dir_enum)
+    return {"due": _triples_to_dicts(db, triples)}
 
 
 @router.get("/new", status_code=200)
-async def get_new_collocations(request: Request, limit: int = 10):
+async def get_new_collocations(request: Request, limit: int = 10, direction: str = "recognition"):
     db = request.app.state.srs_db
-    items = db.get_new_collocations(limit=limit)
-    return {"new": [{"text": i.syntactic_unit.text, "translation": i.syntactic_unit.translation} for i in items]}
+    try:
+        dir_enum = Direction(direction)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid direction: {direction!r}") from exc
+    triples = db.get_new_items(limit=limit, direction=dir_enum)
+    return {"new": _triples_to_dicts(db, triples)}
+
+
+class DrillRequest(BaseModel):
+    rating: str | None = None
+    signal: str | None = None
+
+
+@router.post("/items/{item_id}/direction/{direction}/feedback", status_code=200)
+async def drill_feedback(item_id: int, direction: str, body: DrillRequest, request: Request):
+    try:
+        dir_enum = Direction(direction)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid direction: {direction!r}") from exc
+
+    try:
+        rating = rating_from_input(rating=body.rating, signal=body.signal)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    db = request.app.state.srs_db
+    result = db.get_collocation_by_id(item_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    _, item, _ = result
+
+    updated = schedule(item, rating, direction=dir_enum)
+    db.update_direction_by_id(item_id, dir_enum, updated.directions[dir_enum])
+
+    new_dir = updated.directions[dir_enum]
+    return {
+        "status": "ok",
+        "direction": dir_enum.value,
+        "new_due_date": new_dir.due_date.isoformat(),
+        "new_state": new_dir.state.value,
+    }
+
+
+@router.get("/media/{filename}", status_code=200)
+async def serve_media(filename: str, request: Request):
+    media_dir = Path(__file__).parent.parent.parent / "media"
+    file_path = (media_dir / filename).resolve()
+    if not str(file_path).startswith(str(media_dir.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Media file not found")
+    return FileResponse(file_path)
 
 
 @router.post("/feedback", status_code=200)

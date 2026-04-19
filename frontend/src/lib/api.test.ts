@@ -338,6 +338,64 @@ describe('TunaTaleAPI', () => {
 				'GET /api/srs/lesson/lesson-1/transcript: Internal Server Error'
 			);
 		});
+
+		it('fetchDue calls GET /api/srs/due?direction=recognition', async () => {
+			const mockItem = {
+				id: 1, text: 'banka', translation: 'bank', word_count: 1,
+				state: 'review', due_date: '2026-04-18', stability: 5.0,
+				difficulty: 4.0, reps: 3, lapses: 0, last_review: '2026-04-10',
+				language_code: 'sl', image_url: null,
+				directions: {
+					recognition: { state: 'review', due_date: '2026-04-18', stability: 5.0, difficulty: 4.0, reps: 3, lapses: 0, last_review: '2026-04-10', anki_card_id: null },
+					production: { state: 'new', due_date: '2026-04-18', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, anki_card_id: null }
+				}
+			};
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ due: [mockItem] })));
+
+			const result = await api.fetchDue('recognition');
+
+			expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/due?direction=recognition`);
+			expect(result).toHaveLength(1);
+			expect(result[0].id).toBe(1);
+			expect(result[0].directions?.recognition.state).toBe('review');
+		});
+
+		it('fetchDue supports any direction', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ due: [] })));
+
+			await api.fetchDue('any');
+
+			expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/due?direction=any`);
+		});
+
+		it('submitDrill calls POST /api/srs/items/:id/direction/:dir/feedback', async () => {
+			const mockResp = { status: 'ok', direction: 'recognition', new_due_date: '2026-04-25', new_state: 'review' };
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk(mockResp)));
+
+			const result = await api.submitDrill(42, 'recognition', 'good');
+
+			expect(fetch).toHaveBeenCalledWith(
+				`${BASE}/api/srs/items/42/direction/recognition/feedback`,
+				expect.objectContaining({
+					method: 'POST',
+					body: JSON.stringify({ rating: 'good' })
+				})
+			);
+			expect(result.new_due_date).toBe('2026-04-25');
+			expect(result.new_state).toBe('review');
+		});
+
+		it('submitDrill works for production direction', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ status: 'ok', direction: 'production', new_due_date: '2026-04-30', new_state: 'review' })));
+
+			const result = await api.submitDrill(7, 'production', 'easy');
+
+			expect(fetch).toHaveBeenCalledWith(
+				`${BASE}/api/srs/items/7/direction/production/feedback`,
+				expect.objectContaining({ method: 'POST', body: JSON.stringify({ rating: 'easy' }) })
+			);
+			expect(result.new_due_date).toBe('2026-04-30');
+		});
 	});
 
 	describe('curriculum progress', () => {

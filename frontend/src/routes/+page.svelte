@@ -34,6 +34,14 @@
 
 	<CurriculumForm onGenerate={handleGenerate} />
 
+	<section class="review-section">
+		<h2>Review</h2>
+		<div class="review-links">
+			<a href="/review/recognition" class="review-btn">Review (recognition)</a>
+			<a href="/review/production" class="review-btn">Review (production)</a>
+		</div>
+	</section>
+
 	<section class="recent-section">
 		<h2>Recent Curricula</h2>
 		{#if listLoading}
@@ -65,6 +73,33 @@
 	.tagline {
 		color: var(--color-muted);
 		margin-top: 0.25rem;
+	}
+	.review-section {
+		margin-top: 2rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		padding: 1rem;
+	}
+	.review-section h2 {
+		margin: 0 0 0.5rem;
+		font-size: 1rem;
+	}
+	.review-links {
+		display: flex;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+	}
+	.review-btn {
+		display: inline-block;
+		padding: 0.5rem 1rem;
+		background: var(--color-primary);
+		color: white;
+		text-decoration: none;
+		border-radius: 4px;
+		font-size: 0.9rem;
+	}
+	.review-btn:hover {
+		opacity: 0.85;
 	}
 	.recent-section {
 		margin-top: 2rem;
