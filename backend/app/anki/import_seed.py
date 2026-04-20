@@ -17,6 +17,7 @@ from typing import Any
 from app.anki.safety import safe_open
 from app.anki.sqlite_reader import (
     AnkiCard,
+    extract_disambig_from_fields,
     extract_l2,
     extract_l2_from_fields,
     extract_translation,
@@ -124,6 +125,7 @@ def import_seed(
                 )
                 results["skipped_non_vocab"] += 1
                 continue
+            disambig = extract_disambig_from_fields(note.fields)
             # Translation lives in the field that isn't the L2 field. For inverse-layout
             # notes the L2 text is in fields[1], so read translation from fields[0].
             l2_idx = next(
@@ -132,17 +134,31 @@ def import_seed(
             )
             other_idx = 1 - l2_idx if len(note.fields) > 1 else 0
             translation = extract_translation(note.fields[other_idx]) if len(note.fields) > 1 else ""
-            guid = compute_guid(l2_text, "sl")
+            guid = compute_guid(l2_text, "sl", disambig)
 
-            # GUID collision check: if existing row has different text, skip
+            # GUID collision check: if existing row has different (text, disambig_key), skip
             existing = db.get_collocation_by_guid(guid)
-            if existing is not None and existing.syntactic_unit.text != l2_text:
+            if existing is not None and (
+                existing.syntactic_unit.text != l2_text or existing.syntactic_unit.disambig_key != disambig
+            ):
                 print(
                     f"SKIP guid collision: guid={guid} existing={existing.syntactic_unit.text!r} incoming={l2_text!r}",
                     flush=True,
                 )
                 results["skipped_guid_collisions"] += 1
                 continue
+
+            # Fallback: if guid lookup misses, check by anki_note_id to prevent creating a
+            # duplicate when DisambigKey was cleared or the Slovene field was edited after import.
+            if existing is None:
+                existing = db.get_collocation_by_anki_note_id(note.id)
+                if existing is not None:
+                    print(
+                        f"SKIP anki_note_id match: nid={note.id} existing guid={existing.guid!r} incoming guid={guid!r}",
+                        flush=True,
+                    )
+                    results["skipped_guid_collisions"] += 1
+                    continue
 
             unit = SyntacticUnit(
                 text=l2_text,
@@ -151,6 +167,7 @@ def import_seed(
                 difficulty=1,
                 source="anki",
                 frequency=0,
+                disambig_key=disambig,
             )
             note_cards = card_map.get(note.id, [])
             directions = _build_directions(note_cards, note.id)

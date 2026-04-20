@@ -7,15 +7,14 @@ collapsed into a single note under a two-template notetype.
 
 This module:
   1. Creates a new ``Slovene Vocabulary`` notetype with fields
-     ``Slovene / English / Audio / Image / Grammar / Note`` and two templates
-     (Recognition, Production).
+     ``Slovene / English / Audio / Image / Grammar / Note / DisambigKey`` and
+     two templates (Recognition, Production).
   2. Rewrites every Basic-notetype note in the target deck into the new schema.
   3. Reparents any ``Production`` partner cards to their ``Recognition`` keeper
      and flips their ``ord`` so FSRS history is preserved byte-for-byte.
   4. Deletes the now-empty non-keeper notes.
-  5. Disambiguates homonyms (same Slovene word, different English meaning) by
-     appending ``" (english)"`` to the Slovene field so ``compute_guid`` yields
-     distinct values.
+  5. Disambiguates homonyms by writing the English meaning into the hidden
+     ``DisambigKey`` field (field index 6); the Slovene display field stays bare.
 
 Usage:
     uv run python -m app.anki.merge_dupes [--deck "0. Slovene"] [--dry-run] [--yes]
@@ -52,7 +51,6 @@ _SOUND_RE = re.compile(r"\[sound:[^\]]+\]")
 _IMG_RE = re.compile(r"<img[^>]*>")
 _DIV_IMG_RE = re.compile(r'<div\s+class="img"[^>]*>')
 _DIV_CLASS_RE = re.compile(r'<div\s+class="([^"]+)"[^>]*>(.*?)</div>', re.DOTALL)
-_ALREADY_DISAMBIGUATED_RE = re.compile(r"^\S.*\s\([^()]+\)$")
 
 
 @dataclass
@@ -78,9 +76,12 @@ class UnifiedFields:
     image: str
     grammar: str
     note: str
+    disambig_key: str = ""
 
     def to_flds(self) -> str:
-        return "\x1f".join([self.slovene, self.english, self.audio, self.image, self.grammar, self.note])
+        return "\x1f".join(
+            [self.slovene, self.english, self.audio, self.image, self.grammar, self.note, self.disambig_key]
+        )
 
 
 @dataclass
@@ -196,16 +197,6 @@ def group_by_meaning(parsed: list[ParsedNote]) -> list[MergeGroup]:
     return list(buckets.values())
 
 
-def _disambiguate_slovene(existing: str, english: str) -> str:
-    """Return a Slovene string unique across homonyms.
-
-    Idempotent: if ``existing`` already looks like ``"X (Y)"`` leave it alone.
-    """
-    if _ALREADY_DISAMBIGUATED_RE.match(existing):
-        return existing
-    return f"{existing} ({english})"
-
-
 def _unified_from_group(
     group: MergeGroup, disambiguate: bool
 ) -> tuple[int, UnifiedFields, list[tuple[int, tuple[int, int]]], list[int]]:
@@ -228,16 +219,22 @@ def _unified_from_group(
 
     slovene = (r.slovene if r else p.slovene) if (r or p) else ""
     english = (r.english if r else p.english) if (r or p) else ""
-
-    if disambiguate:
-        slovene = _disambiguate_slovene(slovene, english)
+    disambig_key = english if disambiguate else ""
 
     audio = _first_nonempty(r.audio if r else "", p.audio if p else "")
     image = _first_nonempty(r.image if r else "", p.image if p else "")
     grammar = _first_nonempty(r.grammar if r else "", p.grammar if p else "")
     note_text = _first_nonempty(r.note if r else "", p.note if p else "")
 
-    unified = UnifiedFields(slovene=slovene, english=english, audio=audio, image=image, grammar=grammar, note=note_text)
+    unified = UnifiedFields(
+        slovene=slovene,
+        english=english,
+        audio=audio,
+        image=image,
+        grammar=grammar,
+        note=note_text,
+        disambig_key=disambig_key,
+    )
 
     if r is not None and p is not None:
         # Recognition keeper; production's card moves to keeper with ord=1

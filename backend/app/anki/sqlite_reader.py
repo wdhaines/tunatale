@@ -242,3 +242,8 @@ def extract_l2_from_fields(fields: list[str]) -> str:
         if l2:
             return l2
     return ""
+
+
+def extract_disambig_from_fields(fields: list[str]) -> str:
+    """Return field index 6 (DisambigKey), stripped, or '' if absent."""
+    return fields[6].strip() if len(fields) > 6 else ""

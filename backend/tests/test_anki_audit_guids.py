@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
+import unicodedata
 from datetime import date
 from pathlib import Path
 
 import pytest
 
 from app.anki.audit_guids import run_audit
-from app.common.guid import compute_guid
 
 DECK_ID = 12345
 DECK_NAME = "0. Slovene"
 NOTETYPE_MID = 999_000_001
+
+
+def _legacy_guid(text: str, lang: str) -> str:
+    """Pre-H2 guid formula: sha1(lang + NFC(casefold(text)))[:16]."""
+    normalized = unicodedata.normalize("NFC", text.casefold())
+    return hashlib.sha1((lang + normalized).encode()).hexdigest()[:16]
 
 
 def _build_post_edit_anki_db(tmp_path: Path) -> Path:
@@ -61,22 +68,22 @@ def _build_post_edit_anki_db(tmp_path: Path) -> Path:
     conn.execute("INSERT INTO templates VALUES (?, 1, 'Production', 0, 0, x'')", (NOTETYPE_MID,))
 
     # Note 1: user edited "barva (color)" → "barva" in Anki desktop.
-    # The stored guid was set by backfill from the original suffixed text.
-    guid1 = compute_guid("barva (color)", "sl")
+    # The stored guid was written by legacy backfill (pre-H2 formula) from the original text.
+    guid1 = _legacy_guid("barva (color)", "sl")
     conn.execute(
         "INSERT INTO notes VALUES (1, ?, ?, 0, 0, '', ?, 'barva', 0, 0, '')",
         (guid1, NOTETYPE_MID, "barva\x1fcolor\x1f\x1f\x1f\x1f"),
     )
 
-    # Note 2: clean homonym — suffix is still intact; stored guid matches current field.
-    guid2 = compute_guid("barva (paint)", "sl")
+    # Note 2: clean homonym — suffix still intact; stored guid matches current field (legacy formula).
+    guid2 = _legacy_guid("barva (paint)", "sl")
     conn.execute(
         "INSERT INTO notes VALUES (2, ?, ?, 0, 0, '', ?, 'barva (paint)', 0, 0, '')",
         (guid2, NOTETYPE_MID, "barva (paint)\x1fpaint\x1f\x1f\x1f\x1f"),
     )
 
-    # Note 3: clean non-homonym — no suffix; stored guid matches current field.
-    guid3 = compute_guid("pes", "sl")
+    # Note 3: clean non-homonym — no suffix; stored guid matches current field (legacy formula).
+    guid3 = _legacy_guid("pes", "sl")
     conn.execute(
         "INSERT INTO notes VALUES (3, ?, ?, 0, 0, '', ?, 'pes', 0, 0, '')",
         (guid3, NOTETYPE_MID, "pes\x1fdog\x1f\x1f\x1f\x1f"),
@@ -96,24 +103,59 @@ def _build_post_edit_anki_db(tmp_path: Path) -> Path:
 
 
 def _init_tt_db(db_path: str) -> None:
-    """Set up a TunaTale DB schema and insert rows for the audit test.
+    """Set up a v2-schema TunaTale DB with legacy (pre-H2) guids.
 
-    Rows correspond to the original (pre-user-edit) state of the Anki notes.
-    Guids are computed from the ORIGINAL Slovene texts (some have suffixes).
+    Simulates the pre-H3-migration state: text still has ' (X)' suffixes,
+    guids were computed with the old formula (no '\\x1f' separator).
+    The H1 audit must run in this state before H3 migration changes anything.
     """
-    from app.srs.database import SRSDatabase
-
-    SRSDatabase(db_path)  # run migrations → schema ready
-
     today = date.today().isoformat()
     conn = sqlite3.connect(db_path)
+
+    # Create v2 schema directly (no SRSDatabase — that would run v2→v3 and
+    # rewrite guids/text, breaking the pre-migration assumptions H1 depends on).
+    conn.executescript("""
+        CREATE TABLE collocations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            text TEXT UNIQUE NOT NULL,
+            translation TEXT NOT NULL DEFAULT '',
+            language_code TEXT NOT NULL DEFAULT 'sl',
+            word_count INTEGER NOT NULL DEFAULT 1,
+            unit_difficulty INTEGER NOT NULL DEFAULT 1,
+            source TEXT NOT NULL DEFAULT 'corpus',
+            corpus_frequency INTEGER NOT NULL DEFAULT 0,
+            lemma TEXT,
+            guid TEXT UNIQUE,
+            anki_note_id INTEGER,
+            dirty_fields TEXT NOT NULL DEFAULT '',
+            last_synced_at TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE TABLE collocation_directions (
+            collocation_id INTEGER NOT NULL REFERENCES collocations(id),
+            direction TEXT NOT NULL,
+            stability REAL NOT NULL DEFAULT 1.0,
+            fsrs_difficulty REAL NOT NULL DEFAULT 5.0,
+            due_date TEXT NOT NULL,
+            reps INTEGER NOT NULL DEFAULT 0,
+            lapses INTEGER NOT NULL DEFAULT 0,
+            state TEXT NOT NULL DEFAULT 'new',
+            last_review TEXT,
+            anki_card_id INTEGER,
+            dirty_fsrs INTEGER NOT NULL DEFAULT 0,
+            last_synced_at TEXT,
+            PRIMARY KEY (collocation_id, direction)
+        );
+        PRAGMA user_version = 2;
+    """)
 
     for text, note_id in [
         ("barva (color)", 1),  # note 1 — user later edited back to bare
         ("barva (paint)", 2),  # note 2 — clean, untouched
         ("pes", 3),  # note 3 — non-homonym
     ]:
-        g = compute_guid(text, "sl")
+        g = _legacy_guid(text, "sl")
         conn.execute(
             """INSERT INTO collocations
                (text, translation, language_code, word_count, unit_difficulty, source, guid, anki_note_id)
@@ -129,7 +171,7 @@ def _init_tt_db(db_path: str) -> None:
 
     # Orphan: has " (X)" suffix pattern, anki_note_id IS NULL.
     orphan_text = "hiša (window)"
-    orphan_guid = compute_guid(orphan_text, "sl")
+    orphan_guid = _legacy_guid(orphan_text, "sl")
     conn.execute(
         """INSERT INTO collocations
            (text, translation, language_code, word_count, unit_difficulty, source, guid, anki_note_id)
@@ -222,8 +264,10 @@ class TestAuditGuids:
             tunatale_db_path=tt_path,
         )
         note = result.divergent[0]
-        assert note.stored_guid == compute_guid("barva (color)", "sl")
-        assert note.expected_guid == compute_guid("barva", "sl")
+        # stored_guid was written by pre-H2 backfill (legacy formula)
+        assert note.stored_guid == _legacy_guid("barva (color)", "sl")
+        # expected_guid is what the audit now computes (also legacy formula)
+        assert note.expected_guid == _legacy_guid("barva", "sl")
 
     def test_both_orphans_classification(self, audit_setup, tmp_path):
         """Note whose stored guid resolves to nothing in TunaTale → both_orphans."""
@@ -231,7 +275,7 @@ class TestAuditGuids:
         # Plant a note with a stored guid that has NO matching TunaTale row.
         conn = sqlite3.connect(str(anki_path))
         conn.execute("DELETE FROM notes WHERE id = 1")
-        orphan_guid = compute_guid("ghost (none)", "sl")  # not in TunaTale
+        orphan_guid = _legacy_guid("ghost (none)", "sl")  # not in TunaTale
         conn.execute(
             "INSERT INTO notes VALUES (1, ?, ?, 0, 0, '', ?, 'ghost', 0, 0, '')",
             (orphan_guid, NOTETYPE_MID, "ghost\x1fnone\x1f\x1f\x1f\x1f"),
@@ -253,7 +297,7 @@ class TestAuditGuids:
         # Replace note 3 (pes) so stored guid points to TunaTale row "pes" but Anki field now
         # says "kuža" — not a suffix edit, just a different word.
         conn = sqlite3.connect(str(anki_path))
-        stored_guid_pes = compute_guid("pes", "sl")  # still points to TunaTale "pes" row
+        stored_guid_pes = _legacy_guid("pes", "sl")  # still points to TunaTale "pes" row (legacy guid)
         conn.execute("DELETE FROM notes WHERE id = 3")
         conn.execute(
             "INSERT INTO notes VALUES (3, ?, ?, 0, 0, '', ?, 'kuža', 0, 0, '')",
@@ -330,7 +374,7 @@ class TestAuditGuidsMisc:
         _init_tt_db(tt_path)
         # Add an orphan without a suffix pattern
         conn = sqlite3.connect(tt_path)
-        g = compute_guid("brez-suffiksa", "sl")
+        g = _legacy_guid("brez-suffiksa", "sl")
         conn.execute(
             "INSERT INTO collocations"
             " (text, translation, language_code, word_count, unit_difficulty, source, guid, anki_note_id)"

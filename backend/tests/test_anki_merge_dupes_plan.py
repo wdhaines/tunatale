@@ -12,7 +12,6 @@ import pytest
 
 from app.anki.merge_dupes import (
     MergePlan,
-    _disambiguate_slovene,
     build_plan,
     group_by_meaning,
     parse_notes,
@@ -172,7 +171,8 @@ class TestBuildPlan:
         assert len(plan.singletons_unknown_direction) == 1
         assert plan.singletons_unknown_direction[0].note_id == 9
 
-    def test_homonym_disambiguation_appends_suffix(self):
+    def test_homonym_disambiguation_populates_disambig_key(self):
+        """Homonym notes must have bare Slovene + DisambigKey, not a suffixed Slovene."""
         notes = [
             _recognition_note(1, "barva", "color"),
             _production_note(2, "barva", "color"),
@@ -181,7 +181,9 @@ class TestBuildPlan:
         ]
         plan = self._plan(notes)
         slovene_texts = {fields.slovene for fields in plan.notes_to_update.values()}
-        assert slovene_texts == {"barva (color)", "barva (paint)"}
+        disambig_keys = {fields.disambig_key for fields in plan.notes_to_update.values()}
+        assert slovene_texts == {"barva"}
+        assert disambig_keys == {"color", "paint"}
 
     def test_homonym_produces_distinct_guids(self):
         notes = [
@@ -191,7 +193,7 @@ class TestBuildPlan:
             _production_note(4, "barva", "paint"),
         ]
         plan = self._plan(notes)
-        guids = {compute_guid(fields.slovene, "sl") for fields in plan.notes_to_update.values()}
+        guids = {compute_guid(fields.slovene, "sl", fields.disambig_key) for fields in plan.notes_to_update.values()}
         assert len(guids) == 2
 
     def test_homonym_preserves_note_annotation(self):
@@ -205,21 +207,11 @@ class TestBuildPlan:
         annotations = {fields.note for fields in plan.notes_to_update.values()}
         assert annotations == {"⚠ same word as paint", "⚠ same word as color"}
 
-    def test_idempotent_disambiguation(self):
-        """A keeper whose slovene already contains '(english)' must not double-suffix."""
-        already_disambiguated = AnkiNote(
-            id=50,
-            anki_guid="g50",
-            mid=1,
-            mod=0,
-            tags=[],
-            fields=[
-                '[sound:sl_barva1.mp3]<div class="slovene">barva (color)</div>',
-                '<img src="c.jpg"><div class="english">color</div>',
-            ],
-        )
-        plan = self._plan([already_disambiguated])
-        assert plan.notes_to_update[50].slovene == "barva (color)"
+    def test_singleton_keeps_empty_disambig_key(self):
+        """A non-homonym singleton has disambig_key='' and bare slovene."""
+        plan = self._plan([_recognition_note(1, "pes", "dog")])
+        assert plan.notes_to_update[1].slovene == "pes"
+        assert plan.notes_to_update[1].disambig_key == ""
 
     def test_homonyms_requiring_disambiguation_reported(self):
         notes = [
@@ -237,13 +229,28 @@ class TestBuildPlan:
         assert plan.new_notetype_mid == 999_000_001
 
 
-class TestDisambiguateSlovene:
-    def test_adds_suffix_when_missing(self):
-        assert _disambiguate_slovene("barva", "color") == "barva (color)"
+class TestUnifiedFieldsFlds:
+    def test_to_flds_emits_seven_fields(self):
+        from app.anki.merge_dupes import UnifiedFields
 
-    def test_idempotent_when_already_suffixed(self):
-        assert _disambiguate_slovene("barva (color)", "color") == "barva (color)"
+        u = UnifiedFields(
+            slovene="barva",
+            english="color",
+            audio="[sound:x.mp3]",
+            image="<img>",
+            grammar="n.",
+            note="",
+            disambig_key="color",
+        )
+        parts = u.to_flds().split("\x1f")
+        assert len(parts) == 7
+        assert parts[0] == "barva"
+        assert parts[6] == "color"
 
-    def test_idempotent_shape_not_content(self):
-        # Idempotency checks shape, not whether the suffix matches the english text.
-        assert _disambiguate_slovene("barva (foo)", "color") == "barva (foo)"
+    def test_to_flds_empty_disambig_key(self):
+        from app.anki.merge_dupes import UnifiedFields
+
+        u = UnifiedFields(slovene="pes", english="dog", audio="", image="", grammar="", note="")
+        parts = u.to_flds().split("\x1f")
+        assert len(parts) == 7
+        assert parts[6] == ""

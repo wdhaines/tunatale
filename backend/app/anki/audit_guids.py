@@ -10,19 +10,32 @@ No writes to any database.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sqlite3
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 from app.anki.safety import safe_open
 from app.anki.sqlite_reader import extract_l2_from_fields, fetch_notes_for_deck, find_deck_id
-from app.common.guid import compute_guid
 from app.config import settings
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\([^()]+\)$")
+
+
+def _compute_guid_legacy(text: str, lang: str) -> str:
+    """Pre-H2 guid formula: sha1(lang + NFC(casefold(text)))[:16].
+
+    Used so the audit compares against the formula that backfill_guids used when
+    the user's real Anki collection was last written — not the new H2 formula.
+    Without this, every note on the deck would appear divergent simply because
+    the formula changed, making the audit useless as a "which notes did I edit" tool.
+    """
+    normalized = unicodedata.normalize("NFC", text.casefold())
+    return hashlib.sha1((lang + normalized).encode()).hexdigest()[:16]
 
 
 @dataclass
@@ -94,7 +107,7 @@ def run_audit(
 
     for note in notes:
         current_slovene = extract_l2_from_fields(note.fields)
-        expected_guid = compute_guid(current_slovene, language_code)
+        expected_guid = _compute_guid_legacy(current_slovene, language_code)
         stored_guid = note.anki_guid
         if stored_guid == expected_guid:
             continue

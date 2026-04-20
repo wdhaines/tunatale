@@ -47,7 +47,7 @@ def _varint_field(field_number: int, value: int) -> bytes:
 
 SLOVENE_VOCAB_NOTETYPE_NAME = "Slovene Vocabulary"
 
-SLOVENE_VOCAB_FIELD_NAMES = ["Slovene", "English", "Audio", "Image", "Grammar", "Note"]
+SLOVENE_VOCAB_FIELD_NAMES = ["Slovene", "English", "Audio", "Image", "Grammar", "Note", "DisambigKey"]
 
 SLOVENE_VOCAB_CSS = """.card {
  font-family: arial;

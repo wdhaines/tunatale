@@ -188,16 +188,17 @@ class SRSDatabase:
 
         New rows get both recognition and production direction rows (defaults).
         """
-        guid = compute_guid(unit.text, language_code)
+        disambig = unit.disambig_key
+        guid = compute_guid(unit.text, language_code, disambig)
         today = date.today().isoformat()
         with self._get_conn() as conn:
             conn.execute(
                 """
                 INSERT INTO collocations
                     (text, translation, language_code, word_count, unit_difficulty,
-                     source, corpus_frequency, lemma, guid)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(text) DO UPDATE SET
+                     source, corpus_frequency, lemma, guid, disambig_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(text, disambig_key) DO UPDATE SET
                     translation = CASE
                         WHEN excluded.translation != '' AND collocations.translation = ''
                         THEN excluded.translation
@@ -214,9 +215,13 @@ class SRSDatabase:
                     unit.frequency,
                     unit.lemma,
                     guid,
+                    disambig,
                 ),
             )
-            row = conn.execute("SELECT id FROM collocations WHERE text = ?", (unit.text,)).fetchone()
+            row = conn.execute(
+                "SELECT id FROM collocations WHERE text = ? AND disambig_key = ?",
+                (unit.text, disambig),
+            ).fetchone()
             coll_id = row["id"]
             for direction in (Direction.RECOGNITION, Direction.PRODUCTION):
                 conn.execute(
@@ -363,6 +368,7 @@ class SRSDatabase:
             frequency=row["corpus_frequency"],
             lemma=row["lemma"],
             guid=row["guid"],
+            disambig_key=row["disambig_key"],
         )
         directions = self._load_directions(conn, row["id"])
         return SRSItem(
@@ -382,6 +388,13 @@ class SRSDatabase:
     def get_collocation_by_guid(self, guid: str) -> SRSItem | None:
         with self._get_conn() as conn:
             row = conn.execute("SELECT * FROM collocations WHERE guid = ?", (guid,)).fetchone()
+            if row is None:
+                return None
+            return self._row_to_item(conn, row)
+
+    def get_collocation_by_anki_note_id(self, anki_note_id: int) -> SRSItem | None:
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT * FROM collocations WHERE anki_note_id = ? LIMIT 1", (anki_note_id,)).fetchone()
             if row is None:
                 return None
             return self._row_to_item(conn, row)
@@ -521,12 +534,13 @@ class SRSDatabase:
         try:
             with self._get_conn() as conn:
                 cur = conn.execute(
-                    "SELECT language_code, text, translation, dirty_fields FROM collocations WHERE id = ?",
+                    "SELECT language_code, text, translation, dirty_fields, disambig_key FROM collocations WHERE id = ?",
                     (row_id,),
                 ).fetchone()
                 if cur is None:
                     return
-                new_guid = compute_guid(text, cur["language_code"])
+                disambig = cur["disambig_key"] if cur["disambig_key"] is not None else ""
+                new_guid = compute_guid(text, cur["language_code"], disambig)
                 changed: set[str] = set()
                 if text != cur["text"]:
                     changed.add("text")
@@ -712,7 +726,7 @@ class SRSDatabase:
         If reps == 0, refresh all FSRS fields from the supplied state.
         Returns the collocation id.
         """
-        guid = compute_guid(unit.text, language_code)
+        guid = compute_guid(unit.text, language_code, unit.disambig_key)
         with self._get_conn() as conn:
             row = conn.execute("SELECT id FROM collocations WHERE guid = ?", (guid,)).fetchone()
             if row is None:
@@ -720,8 +734,8 @@ class SRSDatabase:
                     """
                     INSERT INTO collocations
                         (text, translation, language_code, word_count, unit_difficulty,
-                         source, corpus_frequency, lemma, guid, anki_note_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         source, corpus_frequency, lemma, guid, anki_note_id, disambig_key)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         unit.text,
@@ -734,6 +748,7 @@ class SRSDatabase:
                         unit.lemma,
                         guid,
                         anki_note_id,
+                        unit.disambig_key,
                     ),
                 )
                 coll_id = cursor.lastrowid

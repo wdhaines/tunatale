@@ -112,6 +112,7 @@ class TestSloveneVocabConstants:
             "Image",
             "Grammar",
             "Note",
+            "DisambigKey",
         ]
 
     def test_notetype_name_matches_plan(self):
@@ -173,4 +174,12 @@ class TestIntegrityAfterInsert:
                 (mid, field.ord, field.name, build_field_config(field.name)),
             )
         rows = conn.execute("SELECT ord, name FROM fields WHERE ntid=? ORDER BY ord", (mid,)).fetchall()
-        assert rows == [(0, "Slovene"), (1, "English"), (2, "Audio"), (3, "Image"), (4, "Grammar"), (5, "Note")]
+        assert rows == [
+            (0, "Slovene"),
+            (1, "English"),
+            (2, "Audio"),
+            (3, "Image"),
+            (4, "Grammar"),
+            (5, "Note"),
+            (6, "DisambigKey"),
+        ]

@@ -72,13 +72,16 @@ def _insert(
 
 
 class TestMigrations:
-    def test_current_version_is_2(self):
-        assert CURRENT_VERSION == 2
+    def test_current_version_is_3(self):
+        assert CURRENT_VERSION == 3
 
     def test_migrates_from_v1_to_v2(self):
+        from app.srs.migrations import migrate_v1_to_v2
+
         conn = _make_v1_conn()
         _insert(conn, "banka")
-        migrate(conn)
+        migrate_v1_to_v2(conn)
+        conn.commit()
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
 
     def test_two_direction_rows_per_collocation(self):
@@ -243,3 +246,58 @@ class TestMigrations:
         monkeypatch.setattr(migrations, "_MIGRATIONS", {})
         with pytest.raises(RuntimeError, match="No migration registered for version 1"):
             migrate(conn)
+
+    def test_v2_to_v3_short_circuits_if_disambig_key_already_present(self):
+        """Idempotency guard: if disambig_key exists, just bump version."""
+        from app.srs.migrations import migrate_v2_to_v3
+
+        conn = _make_v1_conn()
+        _insert(conn, "banka")
+        # Run v1→v2 first to get the v2 schema
+        from app.srs.migrations import migrate_v1_to_v2
+
+        migrate_v1_to_v2(conn)
+        conn.commit()
+        # Manually add disambig_key to simulate an already-migrated state
+        conn.execute("ALTER TABLE collocations ADD COLUMN disambig_key TEXT NOT NULL DEFAULT ''")
+        conn.execute("PRAGMA user_version = 2")
+        conn.commit()
+        migrate_v2_to_v3(conn)
+        conn.commit()
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+
+    def test_v2_to_v3_strips_suffix_from_homonym_text(self):
+        """Rows with 'word (disambig)' text get bare text + disambig_key populated."""
+        from app.srs.migrations import migrate_v1_to_v2, migrate_v2_to_v3
+
+        conn = _make_v1_conn()
+        _insert(conn, "barva (color)")
+        migrate_v1_to_v2(conn)
+        conn.commit()
+        migrate_v2_to_v3(conn)
+        conn.commit()
+        row = conn.execute("SELECT text, disambig_key FROM collocations").fetchone()
+        assert row["text"] == "barva"
+        assert row["disambig_key"] == "color"
+
+    def test_v2_to_v3_two_homonym_rows_produce_distinct_pairs(self):
+        """Two rows sharing bare text but different disambig survive with distinct (text, disambig_key)."""
+        from app.common.guid import compute_guid
+        from app.srs.migrations import migrate_v1_to_v2, migrate_v2_to_v3
+
+        conn = _make_v1_conn()
+        _insert(conn, "barva (color)", language_code="sl")
+        _insert(conn, "barva (paint)", language_code="sl")
+        migrate_v1_to_v2(conn)
+        conn.commit()
+        migrate_v2_to_v3(conn)
+        conn.commit()
+        rows = conn.execute("SELECT text, disambig_key, guid FROM collocations ORDER BY disambig_key").fetchall()
+        assert len(rows) == 2
+        assert rows[0]["text"] == "barva"
+        assert rows[0]["disambig_key"] == "color"
+        assert rows[1]["text"] == "barva"
+        assert rows[1]["disambig_key"] == "paint"
+        assert rows[0]["guid"] != rows[1]["guid"]
+        assert rows[0]["guid"] == compute_guid("barva", "sl", "color")
+        assert rows[1]["guid"] == compute_guid("barva", "sl", "paint")

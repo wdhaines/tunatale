@@ -125,16 +125,16 @@ class TestBootstrapE2E:
             assert dir_count == 2, f"collocation id={row_id} has {dir_count} direction rows (expected 2)"
 
     def test_guid_matches_compute_guid(self, pipeline_result):
-        """Every TunaTale GUID equals compute_guid(text, language_code)."""
+        """Every TunaTale GUID equals compute_guid(text, language_code, disambig_key)."""
         _, tt_db_path, _ = pipeline_result
         conn = sqlite3.connect(tt_db_path)
         try:
-            rows = conn.execute("SELECT text, language_code, guid FROM collocations").fetchall()
+            rows = conn.execute("SELECT text, language_code, disambig_key, guid FROM collocations").fetchall()
         finally:
             conn.close()
         assert len(rows) > 0
-        for text, lang, guid in rows:
-            expected = compute_guid(text, lang)
+        for text, lang, disambig_key, guid in rows:
+            expected = compute_guid(text, lang, disambig_key or "")
             assert guid == expected, f"GUID mismatch for {text!r}: stored={guid!r} computed={expected!r}"
 
     def test_anki_note_ids_populated(self, pipeline_result):
@@ -186,3 +186,72 @@ class TestBootstrapE2E:
             dry_run=False,
         )
         assert second_results["new_parents"] == 0
+
+    def test_hand_edit_then_reimport_does_not_duplicate(self, pipeline_result, tmp_path):
+        """Clearing DisambigKey on an Anki note then reimporting must not create a dup row.
+
+        This is the regression for the pre-H2 bug: a user clears or loses the
+        DisambigKey field (field 6), so the guid computed from the current note
+        no longer matches the stored TunaTale guid.  import_seed must fall back
+        to the anki_note_id lookup and skip rather than creating a duplicate row.
+        """
+        anki_path, tt_db_path, _ = pipeline_result
+        backup_dir = tmp_path / "bak_edit"
+        backup_dir.mkdir(exist_ok=True)
+
+        # Find the anki_note_id for the barva/color collocation in TunaTale.
+        tt_conn = sqlite3.connect(tt_db_path)
+        try:
+            row = tt_conn.execute(
+                "SELECT id, anki_note_id FROM collocations WHERE text = 'barva' AND disambig_key = 'color'"
+            ).fetchone()
+        finally:
+            tt_conn.close()
+        assert row is not None, "barva/color collocation not found after pipeline"
+        original_coll_id, anki_note_id = row[0], row[1]
+
+        parent_count_before = sqlite3.connect(tt_db_path).execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
+
+        # Simulate user clearing DisambigKey (field 6) — the dangerous edit that loses
+        # the homonym disambiguation.
+        anki_conn = sqlite3.connect(str(anki_path))
+        try:
+            flds_row = anki_conn.execute("SELECT flds FROM notes WHERE id = ?", (anki_note_id,)).fetchone()
+            assert flds_row is not None
+            fields = flds_row[0].split("\x1f")
+            fields[6] = ""  # clear DisambigKey
+            anki_conn.execute(
+                "UPDATE notes SET flds = ? WHERE id = ?",
+                ("\x1f".join(fields), anki_note_id),
+            )
+            anki_conn.commit()
+        finally:
+            anki_conn.close()
+
+        # Reimport — with G3 fix this falls back to anki_note_id and skips creation.
+        second_results = import_seed(
+            deck_name="0. Slovene",
+            anki_collection_path=anki_path,
+            anki_media_path=tmp_path / "anki_media",
+            anki_backup_dir=backup_dir,
+            tunatale_db_path=tt_db_path,
+            media_dir=tmp_path / "media",
+            fallback_log_path=tmp_path / "fallback_edit.log",
+            dry_run=False,
+        )
+
+        assert second_results["new_parents"] == 0, "reimport must not create a duplicate parent row"
+
+        parent_count_after = sqlite3.connect(tt_db_path).execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
+        assert parent_count_after == parent_count_before
+
+        # Original row still carries the anki_note_id link.
+        tt_conn = sqlite3.connect(tt_db_path)
+        try:
+            surviving = tt_conn.execute(
+                "SELECT id FROM collocations WHERE anki_note_id = ?", (anki_note_id,)
+            ).fetchall()
+        finally:
+            tt_conn.close()
+        assert len(surviving) == 1
+        assert surviving[0][0] == original_coll_id

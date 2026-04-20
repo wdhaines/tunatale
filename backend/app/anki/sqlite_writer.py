@@ -20,7 +20,7 @@ import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from app.anki.sqlite_reader import extract_l2_from_fields, fetch_notes_for_deck
+from app.anki.sqlite_reader import extract_disambig_from_fields, extract_l2_from_fields, fetch_notes_for_deck
 from app.common.guid import compute_guid
 
 
@@ -65,7 +65,8 @@ def plan_guid_backfill(
     current_by_note: dict[int, str] = {}
     for note in notes:
         l2_text = extract_l2_from_fields(note.fields)
-        expected_by_note[note.id] = compute_guid(l2_text, language_code)
+        disambig = extract_disambig_from_fields(note.fields)
+        expected_by_note[note.id] = compute_guid(l2_text, language_code, disambig)
         current_by_note[note.id] = note.anki_guid
 
     # Find duplicates: multiple notes computing to the same expected guid.

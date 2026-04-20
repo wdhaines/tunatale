@@ -7,12 +7,15 @@ a single transaction. Migrations must be idempotent (safe to re-run).
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
 from datetime import date, timedelta
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 2
+CURRENT_VERSION = 3
+
+_SUFFIX_RE = re.compile(r"^(.+?)\s\(([^()]+)\)$")
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -193,9 +196,97 @@ def migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     _set_version(conn, 2)
 
 
+def migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
+    """Add disambig_key; change UNIQUE(text) → UNIQUE(text, disambig_key); recompute all guids."""
+    if _column_exists(conn, "collocations", "disambig_key"):
+        _set_version(conn, 3)
+        return
+
+    # SQLite 3.26+ rewrites FK references on RENAME TABLE. Renaming "collocations"
+    # to a temp name would corrupt FKs in collocation_directions/media/collocation_tags.
+    # Workaround: create a new table, copy data, DROP the old table (no FK rewrite on
+    # DROP), then RENAME the new table back to "collocations" (no FK rewrite since no
+    # child table references the temp name).
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        for idx in ("idx_collocations_lemma", "idx_collocations_guid"):
+            conn.execute(f"DROP INDEX IF EXISTS {idx}")
+
+        conn.execute("""
+            CREATE TABLE _collocations_v3 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT NOT NULL,
+                translation TEXT NOT NULL DEFAULT '',
+                language_code TEXT NOT NULL DEFAULT 'sl',
+                word_count INTEGER NOT NULL DEFAULT 1,
+                unit_difficulty INTEGER NOT NULL DEFAULT 1,
+                source TEXT NOT NULL DEFAULT 'corpus',
+                corpus_frequency INTEGER NOT NULL DEFAULT 0,
+                lemma TEXT,
+                guid TEXT UNIQUE,
+                disambig_key TEXT NOT NULL DEFAULT '',
+                anki_note_id INTEGER,
+                dirty_fields TEXT NOT NULL DEFAULT '',
+                last_synced_at TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(text, disambig_key)
+            )
+        """)
+
+        old_rows = conn.execute("SELECT * FROM collocations").fetchall()
+        for row in old_rows:
+            row_d = dict(row)
+            m = _SUFFIX_RE.match(row_d["text"])
+            if m:
+                bare_text = m.group(1)
+                disambig = m.group(2)
+            else:
+                bare_text = row_d["text"]
+                disambig = ""
+            new_guid = compute_guid(bare_text, row_d["language_code"], disambig)
+            conn.execute(
+                """
+                INSERT INTO _collocations_v3
+                    (id, text, translation, language_code, word_count, unit_difficulty,
+                     source, corpus_frequency, lemma, guid, disambig_key, anki_note_id,
+                     dirty_fields, last_synced_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row_d["id"],
+                    bare_text,
+                    row_d["translation"],
+                    row_d["language_code"],
+                    row_d["word_count"],
+                    row_d["unit_difficulty"],
+                    row_d["source"],
+                    row_d["corpus_frequency"],
+                    row_d.get("lemma"),
+                    new_guid,
+                    disambig,
+                    row_d.get("anki_note_id"),
+                    row_d.get("dirty_fields", ""),
+                    row_d.get("last_synced_at"),
+                    row_d.get("created_at"),
+                    row_d.get("updated_at"),
+                ),
+            )
+
+        conn.execute("DROP TABLE collocations")
+        conn.execute("ALTER TABLE _collocations_v3 RENAME TO collocations")
+        conn.execute("CREATE INDEX idx_collocations_lemma ON collocations(lemma)")
+        conn.execute("CREATE INDEX idx_collocations_guid ON collocations(guid)")
+
+        _set_version(conn, 3)
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
+    2: migrate_v2_to_v3,
 }
 
 

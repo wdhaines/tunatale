@@ -186,19 +186,19 @@ class TestApplyMerge:
             dry_run=False,
             yes=True,
         )
-        # After merge, the two homonym keepers share ``barva`` but their Slovene
-        # fields carry "(color)" / "(paint)" suffixes → their computed guids differ.
+        # After merge, both homonym keepers have Slovene="barva" (bare) and
+        # distinct DisambigKey values at field index 6.
         rows = _rows(
             fake_anki_db_slovene_pairs,
             "SELECT id, sfld, flds FROM notes WHERE id IN (?, ?)",
             (2007, 2009),
         )
-        slovene_texts = set()
+        guids = set()
         for _id, _sfld, flds in rows:
             fields = flds.split("\x1f")
-            slovene_texts.add(fields[0])  # new notetype has Slovene at ord=0
-        assert slovene_texts == {"barva (color)", "barva (paint)"}
-        guids = {compute_guid(s, "sl") for s in slovene_texts}
+            assert fields[0] == "barva", f"Slovene field should be bare, got {fields[0]!r}"
+            disambig = fields[6] if len(fields) > 6 else ""
+            guids.add(compute_guid("barva", "sl", disambig))
         assert len(guids) == 2
 
     def test_col_mod_bumped_and_usn_neg_one(self, fake_anki_db_slovene_pairs, tmp_path):
