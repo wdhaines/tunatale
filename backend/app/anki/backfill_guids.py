@@ -17,10 +17,13 @@ Safety:
 from __future__ import annotations
 
 import argparse
+import re
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any
 
+from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
 from app.anki.safety import safe_open
 from app.anki.sqlite_reader import find_deck_id
 from app.anki.sqlite_writer import (
@@ -29,6 +32,29 @@ from app.anki.sqlite_writer import (
     plan_guid_backfill,
 )
 from app.config import settings
+
+_SUFFIX_RE = re.compile(r"^(.+?)\s\(([^()]+)\)$")
+
+
+def _check_suffix_preflight(conn: sqlite3.Connection, deck_id: int) -> None:
+    """Raise if Slovene Vocabulary notes still carry disambiguation suffix in field 0."""
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "notetypes" not in tables:
+        return
+    mid_row = conn.execute("SELECT id FROM notetypes WHERE name = ?", (SLOVENE_VOCAB_NOTETYPE_NAME,)).fetchone()
+    if mid_row is None:
+        return
+    mid = mid_row["id"]
+    rows = conn.execute(
+        "SELECT DISTINCT n.flds FROM notes n JOIN cards c ON c.nid = n.id WHERE n.mid = ? AND c.did = ?",
+        (mid, deck_id),
+    ).fetchall()
+    suffix_count = sum(1 for row in rows if _SUFFIX_RE.match(row["flds"].split("\x1f")[0]))
+    if suffix_count > 0:
+        raise RuntimeError(
+            f"Preflight failed: {suffix_count} note(s) still have disambiguation suffix in the "
+            f"Slovene field. Run migrate_homonyms before backfill_guids --force."
+        )
 
 _ANKI_WEB_PROMPT = (
     "\nThis collection is linked to AnkiWeb. Backfilling GUIDs will mark every\n"
@@ -77,6 +103,9 @@ def backfill_guids(
         deck_id = find_deck_id(ctx.conn, deck_name)
         if deck_id is None:
             raise RuntimeError(f"Deck '{deck_name}' not found in {anki_collection_path}")
+
+        if force:
+            _check_suffix_preflight(ctx.conn, deck_id)
 
         plan = plan_guid_backfill(ctx.conn, deck_id, force=force)
         summary["planned_updates"] = len(plan.updates)

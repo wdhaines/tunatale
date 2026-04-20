@@ -11,12 +11,67 @@ separately in test_anki_syncKey_preflight.py.
 from __future__ import annotations
 
 import sqlite3
+import time
 from pathlib import Path
 
 import pytest
 
 from app.anki.backfill_guids import backfill_guids
+from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
 from app.common.guid import compute_guid
+
+_SVNT_MID = 999_000_099
+_SVNT_DECK_ID = 54321
+
+
+def _build_svnt_db(tmp_path: Path, notes: list[tuple[int, str, str]]) -> Path:
+    """Minimal Anki DB with Slovene Vocabulary notetype.
+
+    notes: [(note_id, slovene_field, english_field), ...]
+    """
+    db_path = tmp_path / "svnt.anki2"
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript("""
+        CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER,
+            ver INTEGER, dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT,
+            models TEXT, decks TEXT, dconf TEXT, tags TEXT);
+        CREATE TABLE notes (id INTEGER PRIMARY KEY, guid TEXT, mid INTEGER,
+            mod INTEGER, usn INTEGER, tags TEXT, flds TEXT, sfld TEXT,
+            csum INTEGER, flags INTEGER, data TEXT);
+        CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER,
+            ord INTEGER, mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER,
+            due INTEGER, ivl INTEGER, factor INTEGER, reps INTEGER,
+            lapses INTEGER, left INTEGER, odue INTEGER, odid INTEGER,
+            flags INTEGER, data TEXT);
+        CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT,
+            mtime_secs INTEGER, usn INTEGER, common BLOB, kind BLOB);
+        CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT,
+            mtime_secs INTEGER, usn INTEGER, config BLOB);
+        CREATE TABLE fields (ntid INTEGER, ord INTEGER, name TEXT, config BLOB,
+            PRIMARY KEY (ntid, ord));
+    """)
+    conn.execute("INSERT INTO col VALUES (1,0,0,0,18,0,0,0,'{}','{}','{}','{}','{}')")
+    conn.execute("INSERT INTO decks VALUES (?, '0. Slovene', 0, 0, x'', x'')", (_SVNT_DECK_ID,))
+    conn.execute("INSERT INTO notetypes VALUES (?, ?, 0, 0, x'')", (_SVNT_MID, SLOVENE_VOCAB_NOTETYPE_NAME))
+    field_names = ["Slovene", "English", "Audio", "Image", "Grammar", "Note", "DisambigKey"]
+    conn.executemany(
+        "INSERT INTO fields VALUES (?, ?, ?, x'')",
+        [(_SVNT_MID, i, name) for i, name in enumerate(field_names)],
+    )
+    now_ts = int(time.time())
+    for card_id, (nid, slovene, english) in enumerate(notes, start=5000):
+        flds = "\x1f".join([slovene, english, "", "", "", "", ""])
+        conn.execute(
+            "INSERT INTO notes VALUES (?, ?, ?, ?, -1, '', ?, ?, 0, 0, '')",
+            (nid, f"guid_{nid}", _SVNT_MID, now_ts, flds, slovene),
+        )
+        conn.execute(
+            "INSERT INTO cards VALUES (?, ?, ?, 0, ?, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+            (card_id, nid, _SVNT_DECK_ID, now_ts),
+        )
+    conn.commit()
+    conn.close()
+    return db_path
 
 
 def _set_note_guid(db_path: Path, note_id: int, guid: str) -> None:
@@ -290,3 +345,60 @@ class TestCLIEntrypoint:
         assert captured["dry_run"] is True
         assert captured["force"] is True
         assert captured["deck_name"] is None
+
+
+class TestBackfillGuidsSuffixPreflight:
+    """Preflight: refuse --force when Slovene Vocabulary notes still carry suffix."""
+
+    def test_force_raises_when_suffix_notes_present(self, tmp_path):
+        db_path = _build_svnt_db(tmp_path, [(300, "barva (color)", "color")])
+        with pytest.raises(RuntimeError, match="migrate_homonyms"):
+            backfill_guids(
+                deck_name="0. Slovene",
+                anki_collection_path=db_path,
+                anki_backup_dir=tmp_path / "bak",
+                force=True,
+                dry_run=False,
+            )
+
+    def test_force_raises_on_dry_run_too(self, tmp_path):
+        """--force --dry-run also blocked: prevents previewing wrong-GUID plan."""
+        db_path = _build_svnt_db(tmp_path, [(301, "pes (stray)", "stray dog")])
+        with pytest.raises(RuntimeError, match="migrate_homonyms"):
+            backfill_guids(
+                deck_name="0. Slovene",
+                anki_collection_path=db_path,
+                anki_backup_dir=tmp_path / "bak",
+                force=True,
+                dry_run=True,
+            )
+
+    def test_no_suffix_notes_force_proceeds(self, tmp_path):
+        """No suffix in Slovene field → preflight passes, backfill runs."""
+        db_path = _build_svnt_db(tmp_path, [(302, "barva", "color")])
+        result = backfill_guids(
+            deck_name="0. Slovene",
+            anki_collection_path=db_path,
+            anki_backup_dir=tmp_path / "bak",
+            force=True,
+            dry_run=False,
+        )
+        assert result["updated"] >= 1
+
+    def test_no_svnt_notetype_force_proceeds(self, tmp_path):
+        """notetypes table present but SVNT entry absent → preflight is a no-op."""
+        db_path = _build_svnt_db(tmp_path, [])
+        # Remove the SVNT notetype entry so the notetype is unknown
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("DELETE FROM notetypes WHERE name = ?", (SLOVENE_VOCAB_NOTETYPE_NAME,))
+        conn.commit()
+        conn.close()
+
+        result = backfill_guids(
+            deck_name="0. Slovene",
+            anki_collection_path=db_path,
+            anki_backup_dir=tmp_path / "bak",
+            force=True,
+            dry_run=True,
+        )
+        assert result["planned_updates"] == 0
