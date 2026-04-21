@@ -1077,3 +1077,37 @@ class SRSDatabase:
             conn.execute("DELETE FROM pending_revlog")
             self._commit(conn)
             return result
+
+    def set_dirty_fields(self, guid: str, fields_str: str) -> None:
+        """Set dirty_fields for the collocation identified by guid."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocations SET dirty_fields = ? WHERE guid = ?",
+                (fields_str, guid),
+            )
+            self._commit(conn)
+
+    def get_dirty_fields(self, guid: str) -> str:
+        """Return dirty_fields for the collocation identified by guid, or ''."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT dirty_fields FROM collocations WHERE guid = ?",
+                (guid,),
+            ).fetchone()
+        return (row["dirty_fields"] or "") if row else ""
+
+    def update_collocation_for_sync(
+        self,
+        guid: str,
+        *,
+        translation: str,
+        dirty_fields_str: str,
+    ) -> None:
+        """Update translation and dirty_fields after a sync pull."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocations SET translation = ?, dirty_fields = ?, "
+                "last_synced_at = datetime('now'), updated_at = datetime('now') WHERE guid = ?",
+                (translation, dirty_fields_str, guid),
+            )
+            self._commit(conn)
