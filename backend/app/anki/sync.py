@@ -1,11 +1,13 @@
 """Bidirectional sync between TunaTale and Anki.
 
 S3.4: sync_pull (Anki → TunaTale).
+S3.5: sync_push (TunaTale → Anki).
 """
 
 from __future__ import annotations
 
 import sqlite3
+import time as _time
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -62,6 +64,12 @@ class PullReport:
     directions_updated: int = 0
     conflicts: list[SyncConflict] = field(default_factory=list)
     skipped_unknown_guid: int = 0
+
+
+@dataclass
+class PushReport:
+    notes_pushed: int = 0
+    directions_pushed: int = 0
 
 
 class OfflineReader:
@@ -179,6 +187,67 @@ class OnlineReader:
         return records
 
 
+class OnlineWriter:
+    """Write changes back to Anki via AnkiConnect."""
+
+    def __init__(self, client: AnkiConnectClient, db: SRSDatabase) -> None:
+        self._client = client
+        self._db = db
+
+    def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
+        self._client.update_note_fields(note_id, fields)
+
+    def suspend(self, card_ids: list[int]) -> None:
+        self._client.suspend(card_ids)
+
+    def unsuspend(self, card_ids: list[int]) -> None:
+        self._client.unsuspend(card_ids)
+
+    def set_due_date(self, card_ids: list[int], days: str) -> None:
+        self._client.set_due_date(card_ids, days)
+
+    def write_revlog(
+        self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_: int
+    ) -> None:
+        self._db.enqueue_pending_revlog(
+            cid=cid, ease=ease, ivl=ivl, last_ivl=last_ivl, factor=factor, time_ms=time_ms, type_=type_
+        )
+
+
+class OfflineWriter:
+    """Write changes directly into a raw sqlite3.Connection to collection.anki2.
+
+    S3.5: only write_revlog() is implemented. Card-state operations (suspend,
+    unsuspend, set_due_date, update_note_fields) are deferred to S3.7.
+    """
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
+        pass  # deferred to S3.7
+
+    def suspend(self, card_ids: list[int]) -> None:
+        pass  # deferred to S3.7
+
+    def unsuspend(self, card_ids: list[int]) -> None:
+        pass  # deferred to S3.7
+
+    def set_due_date(self, card_ids: list[int], days: str) -> None:
+        pass  # deferred to S3.7
+
+    def write_revlog(
+        self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_: int
+    ) -> None:
+        ts = int(_time.time() * 1000)
+        self._conn.execute(
+            "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (ts, cid, -1, ease, ivl, last_ivl, factor, time_ms, type_),
+        )
+        self._conn.commit()
+
+
 class AnkiSync:
     """Orchestrate bidirectional sync between TunaTale and Anki."""
 
@@ -190,6 +259,7 @@ class AnkiSync:
         client: AnkiConnectClient | None = None,
         deck_name: str | None = None,
         _reader=None,
+        _writer=None,
     ) -> None:
         self._db = db
         if _reader is not None:
@@ -200,6 +270,13 @@ class AnkiSync:
             self._reader = OnlineReader(client, deck_name)
         else:
             raise NotImplementedError(f"mode={mode!r} not yet implemented")
+
+        if _writer is not None:
+            self._writer = _writer
+        elif mode == "online" and client is not None:
+            self._writer = OnlineWriter(client, db)
+        else:
+            self._writer = None
 
     def sync_pull(self, dry_run: bool = False) -> PullReport:
         """Pull Anki → TunaTale. Returns a PullReport summarising changes."""
@@ -306,5 +383,49 @@ class AnkiSync:
                 if not dry_run:
                     self._db.update_direction(guid, direction, new_dir_state)
                 report.directions_updated += 1
+
+        return report
+
+    def sync_push(self, dry_run: bool = False) -> PushReport:
+        """Push TunaTale → Anki. Returns a PushReport summarising changes."""
+        report = PushReport()
+
+        for guid, anki_note_id, dirty_fields_str, item in self._db.list_dirty_field_edits():
+            if anki_note_id is None:
+                continue
+            dirty_set = {f for f in dirty_fields_str.split(",") if f}
+            fields: dict[str, str] = {}
+            if "translation" in dirty_set:
+                fields["Back"] = item.syntactic_unit.translation
+            if not fields:
+                continue
+            if not dry_run:
+                self._writer.update_note_fields(anki_note_id, fields)
+                self._db.set_dirty_fields(guid, "")
+            report.notes_pushed += 1
+
+        for guid, direction, ds in self._db.list_dirty():
+            if ds.anki_card_id is None:
+                continue
+            days_str = str(max(0, (ds.due_date - date.today()).days))
+            if not dry_run:
+                if ds.state == SRSState.SUSPENDED:
+                    self._writer.suspend([ds.anki_card_id])
+                else:
+                    self._writer.unsuspend([ds.anki_card_id])
+                self._writer.set_due_date([ds.anki_card_id], days_str)
+                if ds.reps > 0:
+                    ivl = max(1, round(ds.stability))
+                    self._writer.write_revlog(
+                        cid=ds.anki_card_id,
+                        ease=3,
+                        ivl=ivl,
+                        last_ivl=ivl,
+                        factor=2500,
+                        time_ms=0,
+                        type_=2,
+                    )
+                self._db.mark_direction_clean(guid, direction)
+            report.directions_pushed += 1
 
         return report

@@ -1111,3 +1111,13 @@ class SRSDatabase:
                 (translation, dirty_fields_str, guid),
             )
             self._commit(conn)
+
+    def list_dirty_field_edits(self) -> list[tuple[str, int | None, str, SRSItem]]:
+        """Return (guid, anki_note_id, dirty_fields_str, SRSItem) for rows with non-empty dirty_fields."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM collocations WHERE dirty_fields IS NOT NULL AND dirty_fields != ''"
+            ).fetchall()
+            return [
+                (row["guid"], row["anki_note_id"], row["dirty_fields"], self._row_to_item(conn, row)) for row in rows
+            ]
