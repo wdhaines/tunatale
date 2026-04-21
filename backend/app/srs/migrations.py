@@ -13,9 +13,9 @@ from datetime import date, timedelta
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 3
+CURRENT_VERSION = 4
 
-_SUFFIX_RE = re.compile(r"^(.+?)\s\(([^()]+)\)$")
+_SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -283,10 +283,110 @@ def migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA foreign_keys = ON")
 
 
+def migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
+    """Repair child-table FK references corrupted by the pre-H2 v2→v3 migration.
+
+    An earlier version of migrate_v2_to_v3 did ALTER TABLE collocations RENAME TO
+    _collocations_v2 as its first step. SQLite 3.26+ auto-rewrites FK references in
+    child tables on RENAME, leaving them pointing to the now-dropped _collocations_v2.
+    Fresh DBs migrated with the fixed code are unaffected; only the live DB needs repair.
+    """
+    broken = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND sql LIKE '%_collocations_v2%'"
+    ).fetchone()
+    if broken is None:
+        _set_version(conn, 4)
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("""
+            CREATE TABLE _cd_fix (
+                collocation_id INTEGER NOT NULL REFERENCES collocations(id) ON DELETE CASCADE,
+                direction TEXT NOT NULL CHECK(direction IN ('recognition','production')),
+                stability REAL NOT NULL DEFAULT 1.0,
+                fsrs_difficulty REAL NOT NULL DEFAULT 5.0,
+                due_date TEXT NOT NULL,
+                reps INTEGER NOT NULL DEFAULT 0,
+                lapses INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL DEFAULT 'new',
+                last_review TEXT,
+                anki_card_id INTEGER,
+                dirty_fsrs INTEGER NOT NULL DEFAULT 0,
+                last_synced_at TEXT,
+                PRIMARY KEY (collocation_id, direction)
+            )
+        """)
+        conn.execute("""
+            INSERT INTO _cd_fix
+                (collocation_id, direction, stability, fsrs_difficulty, due_date,
+                 reps, lapses, state, last_review, anki_card_id, dirty_fsrs, last_synced_at)
+            SELECT collocation_id, direction, stability, fsrs_difficulty, due_date,
+                   reps, lapses, state, last_review, anki_card_id, dirty_fsrs, last_synced_at
+            FROM collocation_directions
+        """)
+        for idx in ("idx_directions_due_date", "idx_directions_state", "idx_directions_anki_card_id"):
+            conn.execute(f"DROP INDEX IF EXISTS {idx}")
+        conn.execute("DROP TABLE collocation_directions")
+        conn.execute("ALTER TABLE _cd_fix RENAME TO collocation_directions")
+        conn.execute("CREATE INDEX idx_directions_due_date ON collocation_directions(due_date)")
+        conn.execute("CREATE INDEX idx_directions_state ON collocation_directions(state)")
+        conn.execute("CREATE INDEX idx_directions_anki_card_id ON collocation_directions(anki_card_id)")
+
+        conn.execute("""
+            CREATE TABLE _media_fix (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                collocation_id INTEGER REFERENCES collocations(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL CHECK(kind IN ('image','audio_forvo','audio_tts')),
+                filename TEXT NOT NULL,
+                path TEXT,
+                anki_filename TEXT,
+                sha256 TEXT,
+                bytes INTEGER,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            INSERT INTO _media_fix
+                (id, collocation_id, kind, filename, path, anki_filename, sha256, bytes, created_at)
+            SELECT id, collocation_id, kind, filename, path, anki_filename, sha256, bytes, created_at
+            FROM media
+        """)
+        for idx in ("idx_media_collocation", "idx_media_anki_filename"):
+            conn.execute(f"DROP INDEX IF EXISTS {idx}")
+        conn.execute("DROP TABLE media")
+        conn.execute("ALTER TABLE _media_fix RENAME TO media")
+        conn.execute("CREATE INDEX idx_media_collocation ON media(collocation_id)")
+        conn.execute("CREATE INDEX idx_media_anki_filename ON media(anki_filename)")
+
+        conn.execute("""
+            CREATE TABLE _ct_fix (
+                collocation_id INTEGER NOT NULL REFERENCES collocations(id) ON DELETE CASCADE,
+                tag TEXT NOT NULL,
+                PRIMARY KEY (collocation_id, tag)
+            )
+        """)
+        conn.execute("""
+            INSERT INTO _ct_fix (collocation_id, tag)
+            SELECT collocation_id, tag FROM collocation_tags
+        """)
+        conn.execute("DROP TABLE collocation_tags")
+        conn.execute("ALTER TABLE _ct_fix RENAME TO collocation_tags")
+
+        fk_issues = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if fk_issues:
+            raise RuntimeError(f"FK check failed after v3→v4 repair: {fk_issues}")
+
+        _set_version(conn, 4)
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
     2: migrate_v2_to_v3,
+    3: migrate_v3_to_v4,
 }
 
 
