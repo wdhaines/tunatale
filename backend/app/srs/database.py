@@ -60,6 +60,37 @@ CREATE TABLE IF NOT EXISTS violations (
 )
 """
 
+_CREATE_SYNC_CONFLICTS = """
+CREATE TABLE IF NOT EXISTS sync_conflicts (
+    id INTEGER PRIMARY KEY,
+    guid TEXT NOT NULL,
+    direction TEXT,
+    field TEXT NOT NULL,
+    local_value TEXT,
+    remote_value TEXT,
+    resolution TEXT NOT NULL,
+    resolved_at TEXT NOT NULL
+)
+"""
+
+_CREATE_PENDING_REVLOG = """
+CREATE TABLE IF NOT EXISTS pending_revlog (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cid INTEGER NOT NULL,
+    ease INTEGER NOT NULL,
+    ivl INTEGER NOT NULL,
+    last_ivl INTEGER NOT NULL,
+    factor INTEGER NOT NULL,
+    time_ms INTEGER NOT NULL,
+    type INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+)
+"""
+
+_CREATE_PENDING_REVLOG_IDX = """
+CREATE INDEX IF NOT EXISTS idx_pending_revlog_cid ON pending_revlog(cid)
+"""
+
 # Columns on `collocation_directions` mapped onto a DirectionState.
 _DIR_COLUMNS = (
     "stability",
@@ -116,6 +147,10 @@ class SRSDatabase:
         conn.execute(_CREATE_VIOLATIONS)
         conn.commit()
         migrate(conn)
+        conn.execute(_CREATE_SYNC_CONFLICTS)
+        conn.execute(_CREATE_PENDING_REVLOG)
+        conn.execute(_CREATE_PENDING_REVLOG_IDX)
+        conn.commit()
 
     @contextmanager
     def _file_conn(self):
@@ -986,3 +1021,59 @@ class SRSDatabase:
                 """,
                 (direction.value, as_of.isoformat(), *_NON_REVIEWABLE_STATES),
             ).fetchone()[0]
+
+    def record_sync_conflict(
+        self,
+        *,
+        guid: str,
+        direction: str | None,
+        field: str,
+        local: str | None,
+        remote: str | None,
+        resolution: str,
+    ) -> None:
+        with self._get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO sync_conflicts
+                    (guid, direction, field, local_value, remote_value, resolution, resolved_at)
+                VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                """,
+                (guid, direction, field, local, remote, resolution),
+            )
+            self._commit(conn)
+
+    def list_sync_conflicts(self) -> list[dict]:
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT * FROM sync_conflicts ORDER BY id").fetchall()
+            return [dict(r) for r in rows]
+
+    def enqueue_pending_revlog(
+        self,
+        *,
+        cid: int,
+        ease: int,
+        ivl: int,
+        last_ivl: int,
+        factor: int,
+        time_ms: int,
+        type_: int,
+    ) -> None:
+        with self._get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO pending_revlog
+                    (cid, ease, ivl, last_ivl, factor, time_ms, type, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                """,
+                (cid, ease, ivl, last_ivl, factor, time_ms, type_),
+            )
+            self._commit(conn)
+
+    def drain_pending_revlog(self) -> list[dict]:
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT * FROM pending_revlog ORDER BY id").fetchall()
+            result = [dict(r) for r in rows]
+            conn.execute("DELETE FROM pending_revlog")
+            self._commit(conn)
+            return result
