@@ -20,5 +20,10 @@ class Settings(BaseSettings):
     media_dir: Path = Path("./media")
     anki_fallback_log: Path = Path("~/.tunatale/logs/anki-fallback.log").expanduser()
 
+    anki_connect_url: str = "http://127.0.0.1:8765"
+    anki_model_name: str = ""
+    forvo_api_key: str = ""
+    pixabay_api_key: str = ""
+
 
 settings = Settings()

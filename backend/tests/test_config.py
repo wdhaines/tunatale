@@ -47,3 +47,33 @@ def test_anki_settings_defaults(monkeypatch, tmp_path):
     assert s.anki_backup_dir == Path("~/.tunatale/anki-backups").expanduser()
     assert s.media_dir == Path("./media")
     assert s.anki_fallback_log == Path("~/.tunatale/logs/anki-fallback.log").expanduser()
+
+
+def test_anki_connect_settings_defaults(monkeypatch, tmp_path):
+    """AnkiConnect and media pipeline settings have expected defaults."""
+    for var in (
+        "ANKI_CONNECT_URL",
+        "ANKI_MODEL_NAME",
+        "FORVO_API_KEY",
+        "PIXABAY_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.chdir(tmp_path)
+    s = Settings(_env_file=None)
+    assert s.anki_connect_url == "http://127.0.0.1:8765"
+    assert s.anki_model_name == ""
+    assert s.forvo_api_key == ""
+    assert s.pixabay_api_key == ""
+
+
+def test_anki_connect_settings_from_env(monkeypatch):
+    """AnkiConnect and media pipeline settings load from env vars."""
+    monkeypatch.setenv("ANKI_CONNECT_URL", "http://localhost:9999")
+    monkeypatch.setenv("ANKI_MODEL_NAME", "Slovene Vocabulary")
+    monkeypatch.setenv("FORVO_API_KEY", "forvo-key-abc")
+    monkeypatch.setenv("PIXABAY_API_KEY", "pixabay-key-xyz")
+    s = Settings()
+    assert s.anki_connect_url == "http://localhost:9999"
+    assert s.anki_model_name == "Slovene Vocabulary"
+    assert s.forvo_api_key == "forvo-key-abc"
+    assert s.pixabay_api_key == "pixabay-key-xyz"
