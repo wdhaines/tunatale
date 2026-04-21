@@ -104,11 +104,9 @@ def apply_guid_backfill(
 ) -> None:
     """Apply ``plan.updates`` in a single transaction. Bumps col.mod / col.usn only when non-empty.
 
-    Layout:
-        BEGIN
-        UPDATE notes SET guid=?, mod=? WHERE id=?   (executemany over plan.updates)
-        UPDATE col SET mod=?, usn=-1                (only if there are updates)
-        COMMIT
+    Each updated note gets usn=-1 so Anki sync treats the row as dirty. Without this,
+    Anki's integrity check on next open re-detects the bumped mod and rewrites usn
+    itself, which bumps col.scm and forces a full AnkiWeb resync.
 
     Any SQL exception triggers ROLLBACK and re-raises.
     """
@@ -120,7 +118,7 @@ def apply_guid_backfill(
     try:
         conn.execute("BEGIN")
         conn.executemany(
-            "UPDATE notes SET guid=?, mod=? WHERE id=?",
+            "UPDATE notes SET guid=?, mod=?, usn=-1 WHERE id=?",
             update_rows,
         )
         conn.execute("UPDATE col SET mod=?, usn=-1", (now_ts,))

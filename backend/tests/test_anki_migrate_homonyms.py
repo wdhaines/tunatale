@@ -164,7 +164,7 @@ class TestMigrateHomonyms:
             anki_backup_dir=tmp_path / "bak",
             dry_run=False,
         )
-        assert results == {"stripped": 0, "skipped": 0, "recovered": 0}
+        assert results == {"stripped": 0, "skipped": 0, "recovered": 0, "padded": 0}
 
     def test_raises_when_deck_not_found(self, tmp_path):
         db_path = _build_db(tmp_path, [])
@@ -203,6 +203,39 @@ class TestMigrateHomonyms:
         fields = _read_fields(db_path, 300)
         assert fields[0] == "barva"
         assert fields[6] == "color"
+
+    def test_six_field_note_without_suffix_is_padded_in_db(self, tmp_path):
+        """Regression: a 6-field non-homonym note must be written back with 7 fields.
+
+        Without this, notetype has 7 fields but 4000+ notes stay at 6 flds, and on
+        next open Anki raises 'note has 6 fields, expected 7'.
+        """
+        db_path = _build_db(tmp_path, [])
+        conn = sqlite3.connect(str(db_path))
+        now_ts = int(time.time())
+        six_field_flds = "\x1f".join(["pes", "dog", "", "", "", ""])
+        conn.execute(
+            "INSERT INTO notes VALUES (?, ?, ?, ?, -1, '', ?, ?, 0, 0, '')",
+            (301, "guid_301", _SVNT_MID, now_ts, six_field_flds, "pes"),
+        )
+        conn.execute(
+            "INSERT INTO cards VALUES (?, ?, ?, 0, ?, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+            (3001, 301, _DECK_ID, now_ts),
+        )
+        conn.commit()
+        conn.close()
+        results = migrate_homonyms(
+            deck_name=_DECK_NAME,
+            anki_collection_path=db_path,
+            anki_backup_dir=tmp_path / "bak",
+            dry_run=False,
+        )
+        assert results["stripped"] == 0
+        assert results["padded"] == 1
+        fields = _read_fields(db_path, 301)
+        assert len(fields) == 7
+        assert fields[0] == "pes"
+        assert fields[6] == ""
 
     def test_uses_settings_defaults_when_args_are_none(self, tmp_path, monkeypatch):
         """deck_name=None, anki_collection_path=None, anki_backup_dir=None fall back to settings."""
@@ -267,6 +300,71 @@ class TestMigrateHomonyms:
         assert field_count == 7
         assert disambig_row is not None
         assert disambig_row[0] == "DisambigKey"
+
+    def test_adding_field_bumps_notetype_and_scm(self, tmp_path):
+        """Regression: inserting DisambigKey must bump notetypes.mtime_secs/usn and col.scm.
+
+        Without this, Anki's 'Check Database' on next open detects the field-count
+        mismatch, patches it itself, and that patch bumps col.scm — which forces
+        a full AnkiWeb resync of every card in the deck.
+        """
+        db_path = _build_db(tmp_path, [(501, "barva (color)", "color")])
+        # Remove DisambigKey to simulate a pre-H3 6-field notetype, and pin known
+        # pre-run metadata values so the test can detect that they were updated.
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("DELETE FROM fields WHERE ntid = ? AND ord = 6", (_SVNT_MID,))
+        conn.execute("UPDATE notetypes SET mtime_secs=1000, usn=0 WHERE id=?", (_SVNT_MID,))
+        conn.execute("UPDATE col SET scm=1000")
+        conn.commit()
+        conn.close()
+
+        migrate_homonyms(
+            deck_name=_DECK_NAME,
+            anki_collection_path=db_path,
+            anki_backup_dir=tmp_path / "bak",
+            dry_run=False,
+        )
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            nt_mtime, nt_usn = conn.execute("SELECT mtime_secs, usn FROM notetypes WHERE id=?", (_SVNT_MID,)).fetchone()
+            col_scm = conn.execute("SELECT scm FROM col").fetchone()[0]
+        finally:
+            conn.close()
+        assert nt_mtime > 1000, "notetypes.mtime_secs must be bumped when a field is added"
+        assert nt_usn == -1, "notetypes.usn must be -1 (dirty) when a field is added"
+        assert col_scm > 1000, "col.scm must be bumped when the schema changes (field added)"
+
+    def test_no_field_added_does_not_bump_scm(self, tmp_path):
+        """Idempotency: when all 7 fields already exist, col.scm stays put.
+
+        Ensures the schema bump only fires on actual schema change, so reruns
+        don't each trigger a new full AnkiWeb sync.
+        """
+        db_path = _build_db(tmp_path, [(502, "barva (color)", "color")])
+        # 7 fields are already present via _build_db; pin the pre-run scm.
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("UPDATE col SET scm=777")
+        conn.execute("UPDATE notetypes SET mtime_secs=777, usn=0 WHERE id=?", (_SVNT_MID,))
+        conn.commit()
+        conn.close()
+
+        migrate_homonyms(
+            deck_name=_DECK_NAME,
+            anki_collection_path=db_path,
+            anki_backup_dir=tmp_path / "bak",
+            dry_run=False,
+        )
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            nt_mtime, nt_usn = conn.execute("SELECT mtime_secs, usn FROM notetypes WHERE id=?", (_SVNT_MID,)).fetchone()
+            col_scm = conn.execute("SELECT scm FROM col").fetchone()[0]
+        finally:
+            conn.close()
+        assert col_scm == 777, "col.scm must not be bumped when no field is added"
+        assert nt_mtime == 777, "notetypes.mtime_secs must not be bumped when no field is added"
+        assert nt_usn == 0, "notetypes.usn must be left clean when no field is added"
 
 
 class TestMigrateHomonymsAuditJson:
@@ -428,3 +526,50 @@ class TestMigrateHomonymsAuditJson:
         )
         assert results["recovered"] == 0
         assert results["skipped"] == 1
+
+
+class TestNestedParenRegex:
+    """Regression: suffix containing nested parens (e.g. 'old (≠new)') must be split."""
+
+    def test_strips_nested_paren_suffix(self, tmp_path):
+        """'star (old (≠young))' → bare='star', disambig='old (≠young)'."""
+        db_path = _build_db(tmp_path, [(1001, "star (old (≠young))", "old (≠young)")])
+        results = migrate_homonyms(
+            deck_name=_DECK_NAME,
+            anki_collection_path=db_path,
+            anki_backup_dir=tmp_path / "bak",
+            dry_run=False,
+        )
+        assert results["stripped"] == 1
+        fields = _read_fields(db_path, 1001)
+        assert fields[0] == "star"
+        assert fields[6] == "old (≠young)"
+
+    def test_audit_json_recovery_with_nested_paren_tt_text(self, tmp_path):
+        """Recovery path works when tt_stored_text has nested parens."""
+        db_path = _build_db(tmp_path, [(1002, "nizek", "short (≠tall)")])
+        audit_data = {
+            "divergent": [
+                {
+                    "note_id": 1002,
+                    "stored_guid": "x",
+                    "expected_guid": "y",
+                    "current_slovene": "nizek",
+                    "classification": "edited_away_from_suffix",
+                    "tt_stored_text": "nizek (short (≠tall))",
+                }
+            ]
+        }
+        audit_json_path = tmp_path / "audit.json"
+        audit_json_path.write_text(json.dumps(audit_data))
+        results = migrate_homonyms(
+            deck_name=_DECK_NAME,
+            anki_collection_path=db_path,
+            anki_backup_dir=tmp_path / "bak",
+            audit_json=audit_json_path,
+            dry_run=False,
+        )
+        assert results["recovered"] == 1
+        fields = _read_fields(db_path, 1002)
+        assert fields[0] == "nizek"
+        assert fields[6] == "short (≠tall)"

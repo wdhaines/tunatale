@@ -33,7 +33,7 @@ from app.anki.sqlite_writer import (
 )
 from app.config import settings
 
-_SUFFIX_RE = re.compile(r"^(.+?)\s\(([^()]+)\)$")
+_SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
 
 def _check_suffix_preflight(conn: sqlite3.Connection, deck_id: int) -> None:
@@ -55,6 +55,7 @@ def _check_suffix_preflight(conn: sqlite3.Connection, deck_id: int) -> None:
             f"Preflight failed: {suffix_count} note(s) still have disambiguation suffix in the "
             f"Slovene field. Run migrate_homonyms before backfill_guids --force."
         )
+
 
 _ANKI_WEB_PROMPT = (
     "\nThis collection is linked to AnkiWeb. Backfilling GUIDs will mark every\n"

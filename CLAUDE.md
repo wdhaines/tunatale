@@ -42,6 +42,7 @@ See `.claude/rules/` for detailed guidance:
 - `testing.md` — test types, mocking strategy, cassette system
 - `tdd.md` — red-green-refactor workflow, step ordering
 - `environment.md` — secrets, venv, Groq setup
+- `anki-sync.md` — USN/sync protocol; required reading before touching `backend/app/anki/`
 
 ## Key Design Decisions
 

@@ -186,6 +186,39 @@ class TestBackfillGuidsCLI:
         for nid in (1002, 1003, 1004, 1005):
             assert mods[nid] != 111_111, f"updated row {nid} must have mod bumped"
 
+    def test_force_sets_notes_usn_minus_one_on_updated_rows(self, fake_anki_db, tmp_path):
+        """Regression: apply_guid_backfill must mark updated rows as dirty (usn=-1).
+
+        Without this, Anki's integrity checks re-detect the bumped mod and flip usn
+        itself on next open, bumping col.scm and forcing a full AnkiWeb resync.
+        """
+        # Pre-seed: note 1001 already has matching guid (= noop); all rows usn=0.
+        _set_note_guid(fake_anki_db, 1001, compute_guid("banka", "sl"))
+        conn = sqlite3.connect(str(fake_anki_db))
+        try:
+            for nid in (1001, 1002, 1003, 1004, 1005):
+                conn.execute("UPDATE notes SET usn=0 WHERE id=?", (nid,))
+            conn.commit()
+        finally:
+            conn.close()
+
+        backfill_guids(
+            deck_name="0. Slovene",
+            anki_collection_path=fake_anki_db,
+            anki_backup_dir=tmp_path / "bak",
+            dry_run=False,
+            force=True,
+        )
+
+        conn = sqlite3.connect(str(fake_anki_db))
+        try:
+            usn_by_id = dict(conn.execute("SELECT id, usn FROM notes").fetchall())
+        finally:
+            conn.close()
+        assert usn_by_id[1001] == 0, "noop row must not have usn touched"
+        for nid in (1002, 1003, 1004, 1005):
+            assert usn_by_id[nid] == -1, f"updated row {nid} must have usn=-1 (dirty)"
+
     def test_dry_run_does_not_modify_source(self, fake_anki_db, tmp_path):
         from app.anki.safety import _sha256_file
 

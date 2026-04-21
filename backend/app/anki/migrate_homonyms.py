@@ -9,6 +9,10 @@ For each note on the 'Slovene Vocabulary' notetype:
 After running, backfill_guids with --force will rewrite notes.guid to match the new
 compute_guid(bare_text, lang, disambig_key) formula.
 
+This migration bumps ``col.scm`` (adds the DisambigKey field), so AnkiWeb will
+demand a full upload on next sync. See ``.claude/rules/anki-sync.md`` for the
+required 3-step post-migration workflow (full upload → normalize_usns).
+
 Usage:
     uv run python -m app.anki.migrate_homonyms [--deck "0. Slovene"] [--dry-run]
     uv run python -m app.anki.migrate_homonyms --audit-json ~/.tunatale/logs/guid-divergence-*.json
@@ -27,7 +31,7 @@ from app.anki.safety import safe_open
 from app.anki.sqlite_reader import find_deck_id
 from app.config import settings
 
-_SUFFIX_RE = re.compile(r"^(.+?)\s\(([^()]+)\)$")
+_SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
 
 def migrate_homonyms(
@@ -63,7 +67,7 @@ def migrate_homonyms(
                 if m:
                     recovery_map[entry["note_id"]] = m.group(2)
 
-    results = {"stripped": 0, "skipped": 0, "recovered": 0}
+    results = {"stripped": 0, "skipped": 0, "recovered": 0, "padded": 0}
 
     with safe_open(anki_collection_path, backup_dir=anki_backup_dir, mode="rw") as ctx:
         conn = ctx.conn
@@ -81,12 +85,25 @@ def migrate_homonyms(
 
         # Ensure DisambigKey field (ord=6) exists in the notetype's fields table.
         # Without this, Anki would truncate the 7th flds value on next open.
+        #
+        # Adding a field is a schema change. Anki's consistency model requires
+        # notetypes.mtime_secs and notetypes.usn to reflect the change, plus
+        # col.scm bumped to force AnkiWeb to re-evaluate. Skip these bumps and
+        # Anki's "Check Database" on next open does them itself, which triggers
+        # a surprise full collection resync.
+        now_secs = int(time.time())
+        now_ms = now_secs * 1000
         field_count = conn.execute("SELECT COUNT(*) FROM fields WHERE ntid = ?", (mid,)).fetchone()[0]
         if field_count < 7:
             conn.execute(
                 "INSERT OR IGNORE INTO fields (ntid, ord, name, config) VALUES (?, 6, 'DisambigKey', ?)",
                 (mid, build_field_config("DisambigKey")),
             )
+            conn.execute(
+                "UPDATE notetypes SET mtime_secs = ?, usn = -1 WHERE id = ?",
+                (now_secs, mid),
+            )
+            conn.execute("UPDATE col SET scm = ?", (now_ms,))
             print(f"  Added DisambigKey field (ord=6) to notetype id={mid}", flush=True)
 
         # Load notes on the Slovene Vocabulary notetype that are in the target deck
@@ -99,14 +116,14 @@ def migrate_homonyms(
             (mid, deck_id),
         ).fetchall()
 
-        now_ts = int(time.time())
+        now_ts = now_secs
         updates: list[tuple[str, int, int]] = []
 
         for note in notes:
             nid = note["id"]
             fields = note["flds"].split("\x1f")
-            if len(fields) < 7:
-                # Pad to 7 fields if the note pre-dates the DisambigKey addition
+            was_padded = len(fields) < 7
+            if was_padded:
                 fields += [""] * (7 - len(fields))
 
             slovene = fields[0]
@@ -140,11 +157,18 @@ def migrate_homonyms(
                 )
                 updates.append((new_flds, now_ts, nid))
                 results["recovered"] += 1
+            elif was_padded:
+                # Persist the pad even when there's no suffix to strip — otherwise the
+                # notetype has 7 fields but this row's flds has 6, and Anki raises
+                # 'note has N fields, expected 7' on next open.
+                new_flds = "\x1f".join(fields)
+                updates.append((new_flds, now_ts, nid))
+                results["padded"] += 1
             else:
                 results["skipped"] += 1
 
         if dry_run:
-            print(f"[DRY RUN] would strip {results['stripped']} notes, skip {results['skipped']}")
+            print(f"[DRY RUN] would strip {results['stripped']} padded {results['padded']} skip {results['skipped']}")
             return results
 
         if updates:
@@ -155,7 +179,10 @@ def migrate_homonyms(
             conn.execute("UPDATE col SET mod = ?, usn = -1", (now_ts,))
             conn.commit()
 
-        print(f"[DONE] stripped={results['stripped']} skipped={results['skipped']}", flush=True)
+        print(
+            f"[DONE] stripped={results['stripped']} padded={results['padded']} skipped={results['skipped']}",
+            flush=True,
+        )
 
     return results
 

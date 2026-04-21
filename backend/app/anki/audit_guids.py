@@ -23,7 +23,7 @@ from app.anki.safety import safe_open
 from app.anki.sqlite_reader import extract_l2_from_fields, fetch_notes_for_deck, find_deck_id
 from app.config import settings
 
-_SUFFIX_RE = re.compile(r"^(.+?)\s\([^()]+\)$")
+_SUFFIX_RE = re.compile(r"^(.+?)\s\(.+\)$")
 
 
 def _compute_guid_legacy(text: str, lang: str) -> str:
