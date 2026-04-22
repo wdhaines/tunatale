@@ -1112,6 +1112,12 @@ class SRSDatabase:
             )
             self._commit(conn)
 
+    def list_items_without_anki_note(self) -> list[tuple[str, SRSItem]]:
+        """Return (guid, SRSItem) for collocations with no anki_note_id set."""
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT * FROM collocations WHERE anki_note_id IS NULL").fetchall()
+            return [(row["guid"], self._row_to_item(conn, row)) for row in rows]
+
     def list_dirty_field_edits(self) -> list[tuple[str, int | None, str, SRSItem]]:
         """Return (guid, anki_note_id, dirty_fields_str, SRSItem) for rows with non-empty dirty_fields."""
         with self._get_conn() as conn:

@@ -7,7 +7,9 @@ S3.6: --force-fsrs gate + setSpecificValueOfCard.
 
 from __future__ import annotations
 
+import base64
 import json as _json
+import re
 import sqlite3
 import time as _time
 from dataclasses import dataclass, field
@@ -28,6 +30,12 @@ from app.models.srs_item import Direction, DirectionState, SRSState
 from app.srs.database import SRSDatabase
 
 KNOWN_ANKI_SCHEMA_VER = 18
+
+
+def _safe_stem(word: str, prefix: str) -> str:
+    """Sanitize word for use as a media filename stem: keep letters/digits/underscores."""
+    sanitized = re.sub(r"[^\w\s]", "", word).replace(" ", "_")
+    return f"{prefix}_{sanitized}"
 
 
 class ForceFsrsNotAcknowledgedError(Exception):
@@ -265,6 +273,22 @@ class OnlineWriter:
     def set_specific_value_of_card(self, card_id: int, keys: list[str], new_values: list[str]) -> None:
         self._client.set_specific_value_of_card(card_id, keys=keys, newValues=new_values)
 
+    def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list) -> int:
+        return self._client.add_note({"deckName": deck_name, "modelName": model_name, "fields": fields, "tags": tags})
+
+    def store_media_file(self, filename: str, data: bytes) -> None:
+        self._client.store_media_file(filename, base64.b64encode(data).decode("ascii"))
+
+    def get_cards_for_note(self, note_id: int) -> dict[int, int]:
+        notes_info = self._client.notes_info([note_id])
+        if not notes_info:
+            return {}
+        card_ids = notes_info[0].get("cards", [])
+        if not card_ids:
+            return {}
+        cards_info = self._client.cards_info(card_ids)
+        return {c["ord"]: c["cardId"] for c in cards_info}
+
 
 class OfflineWriter:
     """Write changes directly into a raw sqlite3.Connection to collection.anki2.
@@ -301,6 +325,15 @@ class OfflineWriter:
 
     def set_specific_value_of_card(self, card_id: int, keys: list[str], new_values: list[str]) -> None:
         pass  # deferred to S3.7
+
+    def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list) -> int:
+        return 0
+
+    def store_media_file(self, filename: str, data: bytes) -> None:
+        pass
+
+    def get_cards_for_note(self, note_id: int) -> dict[int, int]:
+        return {}
 
 
 class AnkiSync:
@@ -496,6 +529,63 @@ class AnkiSync:
             report.directions_pushed += 1
 
         return report
+
+    async def sync_create_new(
+        self,
+        *,
+        deck_name: str,
+        model_name: str,
+        dry_run: bool = False,
+        _media_fn=None,
+    ) -> int:
+        """Create Anki notes for SRS items that have no anki_note_id yet.
+
+        Returns the count of items processed (or that would be processed in dry_run).
+        """
+        items = self._db.list_items_without_anki_note()
+        count = len(items)
+        if dry_run:
+            return count
+
+        used_image_urls: set[str] = set()
+
+        for guid, item in items:
+            word = item.syntactic_unit.text
+            english = item.syntactic_unit.translation
+            audio_tag = ""
+            image_tag = ""
+
+            if _media_fn is not None:
+                media = await _media_fn(word, english, used_image_urls=used_image_urls)
+                if media is not None and media.audio_bytes is not None:
+                    prefix = "sl" if media.audio_source == "forvo" else "tts"
+                    audio_filename = f"{_safe_stem(word, prefix)}.mp3"
+                    self._writer.store_media_file(audio_filename, media.audio_bytes)
+                    audio_tag = f"[sound:{audio_filename}]"
+                if media is not None and media.image_bytes is not None:
+                    ext = media.image_ext or "jpg"
+                    img_filename = f"{_safe_stem(english, 'img')}.{ext}"
+                    self._writer.store_media_file(img_filename, media.image_bytes)
+                    image_tag = f'<img src="{img_filename}">'
+
+            fields = {
+                "Slovene": word,
+                "English": english,
+                "Audio": audio_tag,
+                "Image": image_tag,
+                "Grammar": "",
+                "Note": "",
+                "DisambigKey": item.syntactic_unit.disambig_key or "",
+            }
+
+            note_id = self._writer.create_note(deck_name, model_name, fields, ["tunatale"])
+            cards_by_ord = self._writer.get_cards_for_note(note_id)
+
+            _ORD_TO_DIR = {0: Direction.RECOGNITION, 1: Direction.PRODUCTION}
+            card_ids = {_ORD_TO_DIR[ord_]: cid for ord_, cid in cards_by_ord.items() if ord_ in _ORD_TO_DIR}
+            self._db.set_anki_ids(guid, note_id, card_ids)
+
+        return count
 
 
 # ── S3.7: mode detection + CLI ────────────────────────────────────────────────

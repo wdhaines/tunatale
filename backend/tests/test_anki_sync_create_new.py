@@ -1,0 +1,529 @@
+"""Tests for S3.9: sync_create_new (addNote + media)."""
+
+from __future__ import annotations
+
+import base64
+import json
+
+import httpx
+
+from app.anki.anki_connect import AnkiConnectClient
+from app.anki.media.pipeline import MediaResult
+from app.anki.sync import (
+    AnkiSync,
+    OfflineWriter,
+    OnlineWriter,
+    _safe_stem,
+)
+from app.models.srs_item import Direction
+from app.models.syntactic_unit import SyntacticUnit
+from app.srs.database import SRSDatabase
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _make_db() -> SRSDatabase:
+    return SRSDatabase(":memory:")
+
+
+def _add_item(db: SRSDatabase, text: str, translation: str) -> str:
+    """Add a collocation with no Anki IDs. Returns guid."""
+    unit = SyntacticUnit(text=text, translation=translation, word_count=1, difficulty=1, source="corpus")
+    db.add_collocation(unit)
+    return db.get_collocation(text).guid
+
+
+def _add_item_with_anki_ids(db: SRSDatabase, text: str, translation: str, note_id: int = 9001) -> str:
+    """Add a collocation WITH an Anki note_id already set."""
+    guid = _add_item(db, text, translation)
+    db.set_anki_ids(guid, note_id, {Direction.RECOGNITION: note_id * 10})
+    return guid
+
+
+class FakeReader:
+    def get_note_records(self):
+        return []
+
+
+class FakeCreateWriter:
+    """Tracks calls for sync_create_new assertions."""
+
+    def __init__(self, new_note_id: int = 5001, cards_by_ord: dict[int, int] | None = None) -> None:
+        self.calls: list[tuple] = []
+        self._new_note_id = new_note_id
+        self._cards_by_ord = cards_by_ord if cards_by_ord is not None else {0: 50010, 1: 50011}
+
+    def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list) -> int:
+        self.calls.append(("create_note", deck_name, model_name, dict(fields), list(tags)))
+        return self._new_note_id
+
+    def store_media_file(self, filename: str, data: bytes) -> None:
+        self.calls.append(("store_media_file", filename, len(data)))
+
+    def get_cards_for_note(self, note_id: int) -> dict[int, int]:
+        self.calls.append(("get_cards_for_note", note_id))
+        return self._cards_by_ord
+
+    # Stubs for the push path (not used in create_new tests)
+    def update_note_fields(self, note_id, fields):
+        pass
+
+    def suspend(self, card_ids):
+        pass
+
+    def unsuspend(self, card_ids):
+        pass
+
+    def set_due_date(self, card_ids, days):
+        pass
+
+    def write_revlog(self, **kw):
+        pass
+
+    def set_specific_value_of_card(self, card_id, keys, new_values):
+        pass
+
+    def action_names(self) -> list[str]:
+        return [c[0] for c in self.calls]
+
+
+async def _no_media(word: str, english: str, *, used_image_urls: set[str]) -> MediaResult | None:
+    return None
+
+
+async def _forvo_media(word: str, english: str, *, used_image_urls: set[str]) -> MediaResult | None:
+    return MediaResult(audio_bytes=b"mp3_data", audio_source="forvo")
+
+
+async def _tts_media(word: str, english: str, *, used_image_urls: set[str]) -> MediaResult | None:
+    return MediaResult(audio_bytes=b"tts_data", audio_source="tts")
+
+
+async def _full_media(word: str, english: str, *, used_image_urls: set[str]) -> MediaResult | None:
+    url = f"https://cdn.pixabay.com/{english}.jpg"
+    used_image_urls.add(url)
+    return MediaResult(
+        audio_bytes=b"mp3_data",
+        audio_source="forvo",
+        image_bytes=b"img_data",
+        image_ext="jpg",
+        image_url=url,
+    )
+
+
+class FlexTransport(httpx.BaseTransport):
+    """Returns per-action results."""
+
+    def __init__(self, results: dict) -> None:
+        self.calls: list[tuple[str, dict]] = []
+        self._results = results
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        action = body["action"]
+        params = body.get("params", {})
+        self.calls.append((action, params))
+        result = self._results.get(action, None)
+        return httpx.Response(200, json={"result": result, "error": None})
+
+
+def _flex_client(results: dict) -> tuple[AnkiConnectClient, FlexTransport]:
+    transport = FlexTransport(results)
+    client = AnkiConnectClient(http_client=httpx.Client(transport=transport))
+    return client, transport
+
+
+# ── TestListItemsWithoutAnkiNote ──────────────────────────────────────────────
+
+
+class TestListItemsWithoutAnkiNote:
+    def test_returns_item_without_anki_note(self):
+        db = _make_db()
+        guid = _add_item(db, "voda", "water")
+        rows = db.list_items_without_anki_note()
+        assert len(rows) == 1
+        assert rows[0][0] == guid
+        assert rows[0][1].syntactic_unit.text == "voda"
+
+    def test_excludes_item_with_anki_note(self):
+        db = _make_db()
+        _add_item_with_anki_ids(db, "voda", "water")
+        assert db.list_items_without_anki_note() == []
+
+    def test_returns_empty_when_db_empty(self):
+        db = _make_db()
+        assert db.list_items_without_anki_note() == []
+
+    def test_returns_only_items_without_note(self):
+        db = _make_db()
+        _add_item_with_anki_ids(db, "voda", "water")
+        guid2 = _add_item(db, "miza", "table")
+        rows = db.list_items_without_anki_note()
+        assert len(rows) == 1
+        assert rows[0][0] == guid2
+
+
+# ── TestSafeStem ──────────────────────────────────────────────────────────────
+
+
+class TestSafeStem:
+    def test_basic_ascii(self):
+        assert _safe_stem("voda", "sl") == "sl_voda"
+
+    def test_spaces_become_underscores(self):
+        assert _safe_stem("letni čas", "sl") == "sl_letni_čas"
+
+    def test_strips_special_chars(self):
+        assert _safe_stem("hello!", "tts") == "tts_hello"
+
+    def test_prefix_applied(self):
+        assert _safe_stem("table", "img").startswith("img_")
+
+
+# ── TestOnlineWriterCreateNote ────────────────────────────────────────────────
+
+
+class TestOnlineWriterCreateNote:
+    def test_sends_add_note_action(self):
+        client, transport = _flex_client({"addNote": 5001})
+        writer = OnlineWriter(client, _make_db())
+        note_id = writer.create_note("0. Slovene", "Slovene Vocabulary", {"Slovene": "voda"}, ["tunatale"])
+        assert note_id == 5001
+        assert transport.calls[0][0] == "addNote"
+
+    def test_add_note_payload_has_deck_and_model(self):
+        client, transport = _flex_client({"addNote": 5001})
+        writer = OnlineWriter(client, _make_db())
+        writer.create_note("0. Slovene", "Slovene Vocabulary", {"Slovene": "voda"}, [])
+        note_param = transport.calls[0][1]["note"]
+        assert note_param["deckName"] == "0. Slovene"
+        assert note_param["modelName"] == "Slovene Vocabulary"
+
+    def test_add_note_payload_has_fields(self):
+        client, transport = _flex_client({"addNote": 5001})
+        writer = OnlineWriter(client, _make_db())
+        writer.create_note("deck", "model", {"Slovene": "voda", "English": "water"}, [])
+        note_param = transport.calls[0][1]["note"]
+        assert note_param["fields"]["Slovene"] == "voda"
+        assert note_param["fields"]["English"] == "water"
+
+    def test_add_note_payload_includes_tags(self):
+        client, transport = _flex_client({"addNote": 5001})
+        writer = OnlineWriter(client, _make_db())
+        writer.create_note("deck", "model", {}, ["tunatale", "sl"])
+        note_param = transport.calls[0][1]["note"]
+        assert "tunatale" in note_param["tags"]
+
+
+# ── TestOnlineWriterStoreMediaFile ────────────────────────────────────────────
+
+
+class TestOnlineWriterStoreMediaFile:
+    def test_sends_store_media_file_action(self):
+        client, transport = _flex_client({"storeMediaFile": "test.mp3"})
+        writer = OnlineWriter(client, _make_db())
+        writer.store_media_file("test.mp3", b"audio_data")
+        assert transport.calls[0][0] == "storeMediaFile"
+
+    def test_base64_encodes_data(self):
+        client, transport = _flex_client({"storeMediaFile": "test.mp3"})
+        writer = OnlineWriter(client, _make_db())
+        raw = b"\xff\xfbfake_mp3"
+        writer.store_media_file("test.mp3", raw)
+        sent_data = transport.calls[0][1]["data"]
+        assert base64.b64decode(sent_data) == raw
+
+    def test_filename_in_payload(self):
+        client, transport = _flex_client({"storeMediaFile": "voda.mp3"})
+        writer = OnlineWriter(client, _make_db())
+        writer.store_media_file("voda.mp3", b"x")
+        assert transport.calls[0][1]["filename"] == "voda.mp3"
+
+
+# ── TestOnlineWriterGetCardsForNote ───────────────────────────────────────────
+
+
+class TestOnlineWriterGetCardsForNote:
+    def test_returns_ord_to_card_id_mapping(self):
+        client, _ = _flex_client(
+            {
+                "notesInfo": [{"noteId": 5001, "cards": [50010, 50011], "fields": {}, "tags": []}],
+                "cardsInfo": [
+                    {"cardId": 50010, "ord": 0},
+                    {"cardId": 50011, "ord": 1},
+                ],
+            }
+        )
+        writer = OnlineWriter(client, _make_db())
+        result = writer.get_cards_for_note(5001)
+        assert result == {0: 50010, 1: 50011}
+
+    def test_returns_empty_when_note_not_found(self):
+        client, _ = _flex_client({"notesInfo": []})
+        writer = OnlineWriter(client, _make_db())
+        result = writer.get_cards_for_note(9999)
+        assert result == {}
+
+    def test_returns_empty_when_no_cards(self):
+        client, _ = _flex_client({"notesInfo": [{"noteId": 5001, "cards": [], "fields": {}, "tags": []}]})
+        writer = OnlineWriter(client, _make_db())
+        result = writer.get_cards_for_note(5001)
+        assert result == {}
+
+
+# ── TestOfflineWriterNewMethods ───────────────────────────────────────────────
+
+
+class TestOfflineWriterNewMethods:
+    def _conn(self):
+        import sqlite3
+
+        c = sqlite3.connect(":memory:")
+        c.execute(
+            "CREATE TABLE revlog (id INTEGER PRIMARY KEY, cid INTEGER, usn INTEGER, "
+            "ease INTEGER, ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)"
+        )
+        return c
+
+    def test_create_note_returns_zero(self):
+        writer = OfflineWriter(self._conn())
+        assert writer.create_note("deck", "model", {}, []) == 0
+
+    def test_store_media_file_does_not_raise(self):
+        writer = OfflineWriter(self._conn())
+        writer.store_media_file("test.mp3", b"data")  # should not raise
+
+    def test_get_cards_for_note_returns_empty_dict(self):
+        writer = OfflineWriter(self._conn())
+        assert writer.get_cards_for_note(9001) == {}
+
+
+# ── TestSyncCreateNew ─────────────────────────────────────────────────────────
+
+
+class TestSyncCreateNew:
+    async def test_creates_note_for_item_without_anki_id(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter()
+        count = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        assert count == 1
+        assert "create_note" in writer.action_names()
+
+    async def test_skips_item_with_existing_anki_id(self):
+        db = _make_db()
+        _add_item_with_anki_ids(db, "voda", "water")
+        writer = FakeCreateWriter()
+        count = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        assert count == 0
+        assert "create_note" not in writer.action_names()
+
+    async def test_returns_zero_when_no_new_items(self):
+        db = _make_db()
+        writer = FakeCreateWriter()
+        count = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        assert count == 0
+
+    async def test_dry_run_counts_but_does_not_write(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter()
+        count = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", dry_run=True
+        )
+        assert count == 1
+        assert "create_note" not in writer.action_names()
+        # DB not updated
+        assert db.list_items_without_anki_note()[0][0] is not None
+
+    async def test_no_media_fn_creates_note_with_empty_media_fields(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", _media_fn=None
+        )
+        call = next(c for c in writer.calls if c[0] == "create_note")
+        fields = call[3]
+        assert fields["Audio"] == ""
+        assert fields["Image"] == ""
+
+    async def test_forvo_audio_uses_sl_prefix(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", _media_fn=_forvo_media
+        )
+        stored = [c for c in writer.calls if c[0] == "store_media_file"]
+        assert len(stored) == 1
+        assert stored[0][1].startswith("sl_")
+
+    async def test_tts_audio_uses_tts_prefix(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", _media_fn=_tts_media
+        )
+        stored = [c for c in writer.calls if c[0] == "store_media_file"]
+        assert len(stored) == 1
+        assert stored[0][1].startswith("tts_")
+
+    async def test_audio_field_contains_sound_tag(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", _media_fn=_forvo_media
+        )
+        call = next(c for c in writer.calls if c[0] == "create_note")
+        assert "[sound:" in call[3]["Audio"]
+
+    async def test_image_field_contains_img_tag(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", _media_fn=_full_media
+        )
+        call = next(c for c in writer.calls if c[0] == "create_note")
+        assert '<img src="' in call[3]["Image"]
+
+    async def test_image_stored_with_img_prefix(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", _media_fn=_full_media
+        )
+        stored = [c for c in writer.calls if c[0] == "store_media_file"]
+        filenames = [c[1] for c in stored]
+        assert any(f.startswith("img_") for f in filenames)
+
+    async def test_media_fn_returning_none_stores_no_media(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", _media_fn=_no_media
+        )
+        assert "store_media_file" not in writer.action_names()
+
+    async def test_updates_db_with_note_id(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter(new_note_id=5001)
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        item = db.get_collocation("voda")
+        assert item.anki_note_id == 5001
+
+    async def test_updates_db_with_card_ids(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter(new_note_id=5001, cards_by_ord={0: 50010, 1: 50011})
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        item = db.get_collocation("voda")
+        rec = item.directions.get(Direction.RECOGNITION)
+        prod = item.directions.get(Direction.PRODUCTION)
+        assert rec is not None and rec.anki_card_id == 50010
+        assert prod is not None and prod.anki_card_id == 50011
+
+    async def test_handles_note_with_only_one_card(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter(new_note_id=5001, cards_by_ord={0: 50010})
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        item = db.get_collocation("voda")
+        assert item.anki_note_id == 5001
+        assert item.directions[Direction.RECOGNITION].anki_card_id == 50010
+
+    async def test_handles_note_with_no_cards(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter(new_note_id=5001, cards_by_ord={})
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        # note_id still stored even if no cards
+        item = db.get_collocation("voda")
+        assert item.anki_note_id == 5001
+
+    async def test_creates_multiple_notes(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        _add_item(db, "miza", "table")
+        writer = FakeCreateWriter()
+        count = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        assert count == 2
+        assert len([c for c in writer.calls if c[0] == "create_note"]) == 2
+
+    async def test_deduplicates_images_via_used_image_urls(self):
+        """used_image_urls accumulates across items so second item sees first URL."""
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        _add_item(db, "miza", "table")
+
+        received_used_urls: list[frozenset] = []
+
+        async def tracking_media(word, english, *, used_image_urls):
+            received_used_urls.append(frozenset(used_image_urls))
+            url = f"https://cdn.pixabay.com/{english}.jpg"
+            used_image_urls.add(url)
+            return MediaResult(audio_bytes=b"x", audio_source="forvo")
+
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene",
+            model_name="Slovene Vocabulary",
+            _media_fn=tracking_media,
+        )
+        # First item saw empty set; second item saw first URL
+        assert received_used_urls[0] == frozenset()
+        assert len(received_used_urls[1]) == 1
+
+    async def test_note_fields_include_slovene_and_english(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        call = next(c for c in writer.calls if c[0] == "create_note")
+        fields = call[3]
+        assert fields["Slovene"] == "voda"
+        assert fields["English"] == "water"
+
+    async def test_note_has_tunatale_tag(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        call = next(c for c in writer.calls if c[0] == "create_note")
+        assert "tunatale" in call[4]  # tags
+
+    async def test_dry_run_does_not_update_db(self):
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", dry_run=True
+        )
+        item = db.get_collocation("voda")
+        assert item.anki_note_id is None
