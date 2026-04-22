@@ -2,14 +2,17 @@
 
 S3.4: sync_pull (Anki → TunaTale).
 S3.5: sync_push (TunaTale → Anki).
+S3.6: --force-fsrs gate + setSpecificValueOfCard.
 """
 
 from __future__ import annotations
 
+import json as _json
 import sqlite3
 import time as _time
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 
 from app.anki.anki_connect import AnkiConnectClient
 from app.anki.sqlite_reader import (
@@ -23,6 +26,52 @@ from app.anki.sqlite_reader import (
 from app.common.guid import compute_guid
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.srs.database import SRSDatabase
+
+KNOWN_ANKI_SCHEMA_VER = 18
+
+
+class ForceFsrsNotAcknowledgedError(Exception):
+    """--force-fsrs requires a one-time acknowledgement file."""
+
+
+class SetSpecificValueMissingError(Exception):
+    """AnkiConnect does not expose setSpecificValueOfCard."""
+
+
+def ensure_force_fsrs_ack(ack_path: Path, interactive: bool = True) -> None:
+    """Verify the user has acknowledged the force-fsrs risk.
+
+    Reads ack_path; if absent or empty, either raises (non-interactive) or
+    prompts the user and writes the file on 'y'.
+    """
+    if ack_path.exists() and ack_path.read_text().strip():
+        return
+    if not interactive:
+        raise ForceFsrsNotAcknowledgedError(
+            f"--force-fsrs requires acknowledgement. Run interactively first to create: {ack_path}"
+        )
+    print(
+        "--force-fsrs will overwrite raw FSRS stability/difficulty in Anki's "
+        "cards.data JSON. This is officially dangerous (Anki may reject on schema drift). "
+        "Acknowledge? [y/N] ",
+        end="",
+        flush=True,
+    )
+    answer = input().strip().lower()
+    if answer != "y":
+        raise ForceFsrsNotAcknowledgedError("User declined force-fsrs acknowledgement.")
+    ack_path.parent.mkdir(parents=True, exist_ok=True)
+    ack_path.write_text(f"acknowledged at {_time.strftime('%Y-%m-%dT%H:%M:%S')}\n")
+
+
+def preflight_set_specific_value_of_card(client: AnkiConnectClient) -> None:
+    """Raise SetSpecificValueMissingError if AnkiConnect lacks setSpecificValueOfCard."""
+    actions = client.api_reflect()
+    if "setSpecificValueOfCard" not in actions:
+        raise SetSpecificValueMissingError(
+            "AnkiConnect does not expose setSpecificValueOfCard. "
+            "Add 'setSpecificValueOfCard' to the allowedActions list in your AnkiConnect config."
+        )
 
 
 @dataclass
@@ -213,6 +262,9 @@ class OnlineWriter:
             cid=cid, ease=ease, ivl=ivl, last_ivl=last_ivl, factor=factor, time_ms=time_ms, type_=type_
         )
 
+    def set_specific_value_of_card(self, card_id: int, keys: list[str], new_values: list[str]) -> None:
+        self._client.set_specific_value_of_card(card_id, keys=keys, newValues=new_values)
+
 
 class OfflineWriter:
     """Write changes directly into a raw sqlite3.Connection to collection.anki2.
@@ -247,6 +299,9 @@ class OfflineWriter:
         )
         self._conn.commit()
 
+    def set_specific_value_of_card(self, card_id: int, keys: list[str], new_values: list[str]) -> None:
+        pass  # deferred to S3.7
+
 
 class AnkiSync:
     """Orchestrate bidirectional sync between TunaTale and Anki."""
@@ -260,8 +315,10 @@ class AnkiSync:
         deck_name: str | None = None,
         _reader=None,
         _writer=None,
+        _anki_col_ver: int | None = None,
     ) -> None:
         self._db = db
+        self._anki_col_ver = _anki_col_ver
         if _reader is not None:
             self._reader = _reader
         elif mode == "online":
@@ -386,7 +443,7 @@ class AnkiSync:
 
         return report
 
-    def sync_push(self, dry_run: bool = False) -> PushReport:
+    def sync_push(self, dry_run: bool = False, force_fsrs: bool = False) -> PushReport:
         """Push TunaTale → Anki. Returns a PushReport summarising changes."""
         report = PushReport()
 
@@ -425,6 +482,16 @@ class AnkiSync:
                         time_ms=0,
                         type_=2,
                     )
+                if force_fsrs:
+                    schema_ok = self._anki_col_ver is None or self._anki_col_ver <= KNOWN_ANKI_SCHEMA_VER
+                    if schema_ok:
+                        ivl_val = max(1, round(ds.stability))
+                        data_json = _json.dumps({"s": ds.stability, "d": ds.difficulty})
+                        self._writer.set_specific_value_of_card(
+                            ds.anki_card_id,
+                            keys=["data", "ivl", "factor"],
+                            new_values=[data_json, str(ivl_val), "2500"],
+                        )
                 self._db.mark_direction_clean(guid, direction)
             report.directions_pushed += 1
 
