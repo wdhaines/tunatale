@@ -18,6 +18,7 @@ class MediaResult:
     audio_source: str | None = None
     image_bytes: bytes | None = None
     image_ext: str | None = None
+    image_url: str | None = None
 
 
 async def fetch_card_media(
@@ -28,6 +29,7 @@ async def fetch_card_media(
     http_client: Any = None,
     tts_voice: str = DEFAULT_VOICE,
     normalize: bool = True,
+    used_image_urls: set[str] | None = None,
     _forvo_fn: Callable[..., bytes | None] | None = None,
     _tts_fn: Callable[..., Awaitable[bytes | None]] | None = None,
     _pixabay_fn: Callable[..., Any] | None = None,
@@ -36,6 +38,7 @@ async def fetch_card_media(
     """Fetch audio and image for a vocabulary card.
 
     Tries Forvo first, falls back to edge-tts. Image from Pixabay.
+    Pass used_image_urls (a shared set) across cards to prevent duplicate images.
     """
     forvo_fn = _forvo_fn or fetch_forvo_audio
     tts_fn = _tts_fn or generate_tts_audio
@@ -57,8 +60,15 @@ async def fetch_card_media(
     if result.audio_bytes is not None and normalize:
         result.audio_bytes = norm_fn(result.audio_bytes)
 
-    img = pixabay_fn(english, api_key=pixabay_key, http_client=http_client)
+    img = pixabay_fn(
+        english,
+        api_key=pixabay_key,
+        http_client=http_client,
+        used_urls=frozenset(used_image_urls) if used_image_urls is not None else frozenset(),
+    )
     if img is not None:
-        result.image_bytes, result.image_ext = img
+        result.image_bytes, result.image_ext, result.image_url = img
+        if used_image_urls is not None:
+            used_image_urls.add(result.image_url)
 
     return result

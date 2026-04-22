@@ -418,9 +418,16 @@ def best_hit(hits: list[dict], query: str) -> dict | None:
 
 
 def fetch_pixabay_image(
-    english: str, *, api_key: str, http_client: httpx.Client | None = None
-) -> tuple[bytes, str] | None:
-    """Fetch best-ranked Pixabay image. Returns (image_bytes, ext) or None."""
+    english: str,
+    *,
+    api_key: str,
+    http_client: httpx.Client | None = None,
+    used_urls: frozenset[str] = frozenset(),
+) -> tuple[bytes, str, str] | None:
+    """Fetch best-ranked Pixabay image. Returns (image_bytes, ext, url) or None.
+
+    Hits whose webformatURL is in used_urls are excluded before ranking.
+    """
     query = build_query(english)
     owned = http_client is None
     client = http_client or httpx.Client()
@@ -439,7 +446,8 @@ def fetch_pixabay_image(
         )
         resp.raise_for_status()
         hits = resp.json().get("hits", [])
-        hit = best_hit(hits, query)
+        available = [h for h in hits if h.get("webformatURL", "") not in used_urls]
+        hit = best_hit(available, query)
         if hit is None:
             return None
         img_url = hit.get("webformatURL", "")
@@ -448,7 +456,7 @@ def fetch_pixabay_image(
         r = client.get(img_url, timeout=15)
         r.raise_for_status()
         ext = "jpg" if "jpg" in img_url.lower() else "png"
-        return r.content, ext
+        return r.content, ext, img_url
     except Exception:
         return None
     finally:

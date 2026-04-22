@@ -135,9 +135,10 @@ class TestFetchPixabayImage:
         client = self._client(hits, b"fake_jpg_bytes")
         result = fetch_pixabay_image("tree", api_key="key123", http_client=client)
         assert result is not None
-        data, ext = result
+        data, ext, url = result
         assert data == b"fake_jpg_bytes"
         assert ext == "jpg"
+        assert url == "https://cdn.pixabay.com/photo/tree.jpg"
 
     def test_returns_png_ext_for_png_url(self):
         hits = [
@@ -152,7 +153,7 @@ class TestFetchPixabayImage:
         client = self._client(hits, b"fake_png")
         result = fetch_pixabay_image("tree", api_key="key123", http_client=client)
         assert result is not None
-        _, ext = result
+        _, ext, _ = result
         assert ext == "png"
 
     def test_returns_none_when_no_hits(self):
@@ -190,3 +191,50 @@ class TestFetchPixabayImage:
         result = fetch_pixabay_image("tree", api_key="key")
         assert result is None
         assert "close" in calls
+
+    def test_skips_hit_whose_url_is_in_used_urls(self):
+        hits = [
+            {
+                "likes": 9999,
+                "views": 9999,
+                "tags": "tree",
+                "imageType": "photo",
+                "webformatURL": "https://cdn.pixabay.com/already_used.jpg",
+            },
+            {
+                "likes": 1,
+                "views": 0,
+                "tags": "",
+                "imageType": "photo",
+                "webformatURL": "https://cdn.pixabay.com/fresh.jpg",
+            },
+        ]
+        client = self._client(hits, b"fresh_image")
+        result = fetch_pixabay_image(
+            "tree",
+            api_key="key123",
+            http_client=client,
+            used_urls=frozenset({"https://cdn.pixabay.com/already_used.jpg"}),
+        )
+        assert result is not None
+        _, _, url = result
+        assert url == "https://cdn.pixabay.com/fresh.jpg"
+
+    def test_returns_none_when_all_hits_in_used_urls(self):
+        hits = [
+            {
+                "likes": 10,
+                "views": 0,
+                "tags": "tree",
+                "imageType": "photo",
+                "webformatURL": "https://cdn.pixabay.com/used.jpg",
+            }
+        ]
+        client = self._client(hits)
+        result = fetch_pixabay_image(
+            "tree",
+            api_key="key123",
+            http_client=client,
+            used_urls=frozenset({"https://cdn.pixabay.com/used.jpg"}),
+        )
+        assert result is None
