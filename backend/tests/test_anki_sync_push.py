@@ -13,6 +13,7 @@ from app.anki.sync import (
     AnkiSync,
     OfflineWriter,
     OnlineWriter,
+    drain_pending_revlog_to_writer,
 )
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -148,9 +149,10 @@ class TestOnlineWriter:
     def test_update_note_fields_sends_correct_payload(self):
         client, transport = _recording_client()
         writer = OnlineWriter(client, _make_tt_db())
-        writer.update_note_fields(1001, {"Back": "bank"})
+        writer.update_note_fields(1001, {"English": "bank"})
         assert transport.calls[0][0] == "updateNoteFields"
         assert transport.calls[0][1]["note"]["id"] == 1001
+        assert transport.calls[0][1]["note"]["fields"] == {"English": "bank"}
 
     def test_suspend_sends_correct_payload(self):
         client, transport = _recording_client()
@@ -199,6 +201,78 @@ def _make_anki_revlog_db() -> sqlite3.Connection:
     return conn
 
 
+def _make_anki_full_db(col_crt: int | None = None) -> sqlite3.Connection:
+    """Minimal collection.anki2 shape: col, notes, cards, revlog — enough for writer tests."""
+    from datetime import UTC, datetime, timedelta
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE col (
+            id INTEGER PRIMARY KEY, crt INTEGER, mod INTEGER, scm INTEGER,
+            ver INTEGER, dty INTEGER, usn INTEGER, ls INTEGER
+        );
+        CREATE TABLE notes (
+            id INTEGER PRIMARY KEY, guid TEXT, mid INTEGER, mod INTEGER,
+            usn INTEGER, tags TEXT, flds TEXT, sfld TEXT, csum INTEGER,
+            flags INTEGER, data TEXT
+        );
+        CREATE TABLE cards (
+            id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER, ord INTEGER,
+            mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER, due INTEGER,
+            ivl INTEGER, factor INTEGER, reps INTEGER, lapses INTEGER,
+            left INTEGER, odue INTEGER, odid INTEGER, flags INTEGER, data TEXT
+        );
+        CREATE TABLE revlog (
+            id INTEGER PRIMARY KEY, cid INTEGER, usn INTEGER, ease INTEGER, ivl INTEGER,
+            lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER
+        );
+        """
+    )
+    if col_crt is None:
+        # One year ago at midnight UTC — matches a typical Anki collection epoch.
+        col_crt = int(
+            (datetime.now(tz=UTC) - timedelta(days=365)).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        )
+    conn.execute(
+        "INSERT INTO col (id, crt, mod, scm, ver, dty, usn, ls) VALUES (1, ?, 0, 0, 18, 0, 0, 0)",
+        (col_crt,),
+    )
+    conn.commit()
+    return conn
+
+
+def _seed_note_and_cards(
+    conn: sqlite3.Connection,
+    *,
+    note_id: int = 9001,
+    guid: str = "banka-guid",
+    mid: int = 1,
+    rec_cid: int = 90010,
+    prod_cid: int = 90011,
+    flds: tuple[str, ...] = ("banka", "bank", "", "", "", "", ""),
+    queue: int = 2,
+    card_type: int = 2,
+    due: int = 0,
+    ivl: int = 1,
+) -> None:
+    flds_str = "\x1f".join(flds)
+    conn.execute(
+        "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+        "VALUES (?, ?, ?, 100, 0, '', ?, ?, 0, 0, '')",
+        (note_id, guid, mid, flds_str, flds[0]),
+    )
+    for cid, ord_ in ((rec_cid, 0), (prod_cid, 1)):
+        conn.execute(
+            "INSERT INTO cards "
+            "(id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, lapses, left, odue, odid, flags, data) "
+            "VALUES (?, ?, 1, ?, 100, 0, ?, ?, ?, ?, 2500, 0, 0, 0, 0, 0, 0, '')",
+            (cid, note_id, ord_, card_type, queue, due, ivl),
+        )
+    conn.commit()
+
+
 class TestOfflineWriter:
     def test_write_revlog_inserts_row(self):
         conn = _make_anki_revlog_db()
@@ -212,15 +286,91 @@ class TestOfflineWriter:
         assert row["factor"] == 2500
         assert row["type"] == 2
 
-    def test_noop_methods_do_not_raise(self):
-        """S3.5 deferred stubs must not raise."""
-        conn = _make_anki_revlog_db()
+    def test_update_note_fields_replaces_named_field_and_bumps_usn(self):
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn)
         writer = OfflineWriter(conn)
-        writer.update_note_fields(1, {"Back": "bank"})
-        writer.suspend([1, 2])
-        writer.unsuspend([1, 2])
-        writer.set_due_date([1], "7")
-        assert conn.execute("SELECT COUNT(*) FROM revlog").fetchone()[0] == 0
+        writer.update_note_fields(9001, {"English": "bank (financial)"})
+
+        row = conn.execute("SELECT flds, usn, mod FROM notes WHERE id=9001").fetchone()
+        parts = row["flds"].split("\x1f")
+        assert parts[0] == "banka"  # Slovene untouched
+        assert parts[1] == "bank (financial)"  # English replaced
+        assert row["usn"] == -1
+        assert row["mod"] > 100  # bumped past seed value
+        col = conn.execute("SELECT usn FROM col").fetchone()
+        assert col["usn"] == -1
+
+    def test_suspend_sets_queue_minus_one_and_usn_minus_one(self):
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn)
+        writer = OfflineWriter(conn)
+        writer.suspend([90010])
+
+        row = conn.execute("SELECT queue, usn, mod FROM cards WHERE id=90010").fetchone()
+        assert row["queue"] == -1
+        assert row["usn"] == -1
+        assert row["mod"] > 100
+        # other card untouched
+        other = conn.execute("SELECT queue FROM cards WHERE id=90011").fetchone()
+        assert other["queue"] == 2
+
+    def test_unsuspend_restores_queue_from_type(self):
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, queue=-1, card_type=2)  # suspended review card
+        writer = OfflineWriter(conn)
+        writer.unsuspend([90010])
+
+        row = conn.execute("SELECT queue, usn FROM cards WHERE id=90010").fetchone()
+        assert row["queue"] == 2  # restored to review
+        assert row["usn"] == -1
+
+    def test_set_due_date_shifts_due_relative_to_today(self):
+        from datetime import date, timedelta
+
+        col_crt = int((date.today() - timedelta(days=200)).strftime("%s"))
+        conn = _make_anki_full_db(col_crt=col_crt)
+        _seed_note_and_cards(conn, queue=2, card_type=2, due=0, ivl=1)
+        writer = OfflineWriter(conn)
+        writer.set_due_date([90010], "7")
+
+        row = conn.execute("SELECT due, ivl, usn, mod FROM cards WHERE id=90010").fetchone()
+        # due-days-since-crt today is 200; +7 = 207
+        assert row["due"] == 207
+        assert row["ivl"] == 7
+        assert row["usn"] == -1
+        assert row["mod"] > 100
+
+    def test_update_note_fields_unknown_note_id_is_noop(self):
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn)
+        writer = OfflineWriter(conn)
+        writer.update_note_fields(99999, {"English": "nope"})
+        row = conn.execute("SELECT flds FROM notes WHERE id=9001").fetchone()
+        # Original note untouched.
+        assert row["flds"].split("\x1f")[1] == "bank"
+
+    def test_update_note_fields_unknown_field_name_raises(self):
+        import pytest
+
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn)
+        writer = OfflineWriter(conn)
+        with pytest.raises(ValueError, match="Unknown field"):
+            writer.update_note_fields(9001, {"Back": "bank"})
+
+    def test_set_due_date_preserves_suspension(self):
+        from datetime import date, timedelta
+
+        col_crt = int((date.today() - timedelta(days=200)).strftime("%s"))
+        conn = _make_anki_full_db(col_crt=col_crt)
+        _seed_note_and_cards(conn, queue=-1, card_type=2, due=0)
+        writer = OfflineWriter(conn)
+        writer.set_due_date([90010], "5")
+
+        row = conn.execute("SELECT queue, due FROM cards WHERE id=90010").fetchone()
+        assert row["queue"] == -1  # still suspended
+        assert row["due"] == 205
 
 
 # ── TestSyncPush ──────────────────────────────────────────────────────────────
@@ -243,8 +393,9 @@ class TestSyncPush:
         assert "update_note_fields" in writer.action_names()
         call = next(c for c in writer.calls if c[0] == "update_note_fields")
         assert call[1] == note_id
-        assert "Back" in call[2]
-        assert call[2]["Back"] == "bank"
+        assert "English" in call[2]
+        assert call[2]["English"] == "bank"
+        assert "Back" not in call[2]
 
     def test_dirty_translation_clears_dirty_fields_after_push(self):
         db = _make_tt_db()
@@ -341,7 +492,8 @@ class TestSyncPush:
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         _mark_direction_dirty(db, guid, reps=3, stability=10.5)
 
-        anki_conn = _make_anki_revlog_db()
+        anki_conn = _make_anki_full_db()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid)
         writer = OfflineWriter(anki_conn)
         AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
 
@@ -445,3 +597,30 @@ class TestSyncPush:
         assert db.get_dirty_fields(guid) == "translation"
         dirty = db.list_dirty()
         assert len(dirty) == 1
+
+
+# ── TestDrainPendingRevlog ────────────────────────────────────────────────────
+
+
+class TestDrainPendingRevlog:
+    def test_drains_into_offline_writer_and_empties_queue(self):
+        """drain_pending_revlog_to_writer moves queued rows into the writer and clears the queue."""
+        db = _make_tt_db()
+        db.enqueue_pending_revlog(cid=11, ease=3, ivl=7, last_ivl=7, factor=2500, time_ms=1000, type_=2)
+        db.enqueue_pending_revlog(cid=22, ease=1, ivl=1, last_ivl=1, factor=2500, time_ms=500, type_=2)
+
+        conn = _make_anki_revlog_db()
+        writer = OfflineWriter(conn)
+        n = drain_pending_revlog_to_writer(db, writer)
+
+        assert n == 2
+        assert db.drain_pending_revlog() == []  # queue empty
+        rows = conn.execute("SELECT cid, ease, ivl, time, type FROM revlog ORDER BY cid").fetchall()
+        assert [tuple(r) for r in rows] == [(11, 3, 7, 1000, 2), (22, 1, 1, 500, 2)]
+
+    def test_empty_queue_is_noop(self):
+        db = _make_tt_db()
+        conn = _make_anki_revlog_db()
+        writer = OfflineWriter(conn)
+        assert drain_pending_revlog_to_writer(db, writer) == 0
+        assert conn.execute("SELECT COUNT(*) FROM revlog").fetchone()[0] == 0

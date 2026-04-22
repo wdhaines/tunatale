@@ -92,6 +92,10 @@ class CardRecord:
     stability: float
     difficulty: float
     due_date: date
+    # False when the source (e.g. AnkiConnect cardsInfo) does not reliably expose
+    # FSRS stability/difficulty/due_date — sync_pull then preserves local FSRS
+    # state instead of overwriting it with the placeholder values above.
+    fsrs_known: bool = True
 
 
 @dataclass
@@ -216,7 +220,6 @@ class OnlineReader:
                 if cid not in cards_by_id:
                     continue
                 c = cards_by_id[cid]
-                ivl = c.get("ivl", 0)
                 card_records.append(
                     CardRecord(
                         anki_card_id=cid,
@@ -224,9 +227,14 @@ class OnlineReader:
                         queue=c["queue"],
                         reps=c.get("reps", 0),
                         lapses=c.get("lapses", 0),
-                        stability=float(ivl) if ivl > 0 else 1.0,
-                        difficulty=5.0,
+                        # Placeholders: cardsInfo does not expose reliable FSRS
+                        # state (cards.data JSON). sync_pull ignores these when
+                        # fsrs_known=False; authoritative FSRS pull requires
+                        # offline mode with Anki closed.
+                        stability=0.0,
+                        difficulty=0.0,
                         due_date=date.today(),
+                        fsrs_known=False,
                     )
                 )
 
@@ -293,33 +301,110 @@ class OnlineWriter:
 class OfflineWriter:
     """Write changes directly into a raw sqlite3.Connection to collection.anki2.
 
-    S3.5: only write_revlog() is implemented. Card-state operations (suspend,
-    unsuspend, set_due_date, update_note_fields) are deferred to S3.7.
+    Every mutation sets ``usn = -1`` and bumps ``mod`` on the touched row plus
+    ``col`` so AnkiWeb's next sync sees the change as local-dirty. See
+    ``.claude/rules/anki-sync.md`` for the full contract.
     """
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
 
+    def _bump_col(self, ts: int) -> None:
+        self._conn.execute("UPDATE col SET mod = ?, usn = -1", (ts,))
+
     def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
-        pass  # deferred to S3.7
+        from app.anki.notetype import SLOVENE_VOCAB_FIELD_NAMES
+
+        row = self._conn.execute("SELECT flds FROM notes WHERE id = ?", (note_id,)).fetchone()
+        if row is None:
+            return
+        parts = row["flds"].split("\x1f")
+        name_to_idx = {name: i for i, name in enumerate(SLOVENE_VOCAB_FIELD_NAMES)}
+        for name, value in fields.items():
+            idx = name_to_idx.get(name)
+            if idx is None:
+                raise ValueError(f"Unknown field name for Slovene Vocabulary notetype: {name!r}")
+            parts[idx] = value
+        new_flds = "\x1f".join(parts)
+        ts = int(_time.time())
+        self._conn.execute(
+            "UPDATE notes SET flds = ?, mod = ?, usn = -1 WHERE id = ?",
+            (new_flds, ts, note_id),
+        )
+        self._bump_col(ts)
+        self._conn.commit()
 
     def suspend(self, card_ids: list[int]) -> None:
-        pass  # deferred to S3.7
+        ts = int(_time.time())
+        placeholders = ",".join("?" * len(card_ids))
+        self._conn.execute(
+            f"UPDATE cards SET queue = -1, mod = ?, usn = -1 WHERE id IN ({placeholders})",
+            (ts, *card_ids),
+        )
+        self._bump_col(ts)
+        self._conn.commit()
 
     def unsuspend(self, card_ids: list[int]) -> None:
-        pass  # deferred to S3.7
+        ts = int(_time.time())
+        placeholders = ",".join("?" * len(card_ids))
+        # Restore queue from type: new→0, learning/relearning→1, review→2.
+        self._conn.execute(
+            f"""
+            UPDATE cards
+            SET queue = CASE
+                WHEN type = 0 THEN 0
+                WHEN type = 1 THEN 1
+                WHEN type = 3 THEN 1
+                ELSE 2
+            END,
+            mod = ?, usn = -1
+            WHERE id IN ({placeholders}) AND queue = -1
+            """,
+            (ts, *card_ids),
+        )
+        self._bump_col(ts)
+        self._conn.commit()
 
     def set_due_date(self, card_ids: list[int], days: str) -> None:
-        pass  # deferred to S3.7
+        days_int = int(days)
+        col_row = self._conn.execute("SELECT crt FROM col LIMIT 1").fetchone()
+        col_crt = int(col_row["crt"] or 0)
+        from datetime import date as _date
+
+        days_since_crt = (_date.today() - _date.fromtimestamp(col_crt)).days
+        new_due = days_since_crt + days_int
+        new_ivl = max(1, days_int)
+        ts = int(_time.time())
+        placeholders = ",".join("?" * len(card_ids))
+        # Preserve suspension (queue=-1): only update due/ivl/mod/usn.
+        # For other states, promote to review (queue=2, type=2).
+        self._conn.execute(
+            f"""
+            UPDATE cards
+            SET due = ?,
+                ivl = ?,
+                queue = CASE WHEN queue = -1 THEN queue ELSE 2 END,
+                type  = CASE WHEN queue = -1 THEN type  ELSE 2 END,
+                mod = ?,
+                usn = -1
+            WHERE id IN ({placeholders})
+            """,
+            (new_due, new_ivl, ts, *card_ids),
+        )
+        self._bump_col(ts)
+        self._conn.commit()
 
     def write_revlog(
         self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_: int
     ) -> None:
         ts = int(_time.time() * 1000)
+        max_row = self._conn.execute("SELECT MAX(id) FROM revlog").fetchone()
+        max_id = (max_row[0] or 0) if max_row else 0
+        rid = max(ts, max_id + 1)
         self._conn.execute(
             "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (ts, cid, -1, ease, ivl, last_ivl, factor, time_ms, type_),
+            (rid, cid, -1, ease, ivl, last_ivl, factor, time_ms, type_),
         )
         self._conn.commit()
 
@@ -436,35 +521,51 @@ class AnkiSync:
                     else SRSState.REVIEW
                 )
 
-                new_dirty_fsrs = local_dir.dirty_fsrs
-                if local_dir.dirty_fsrs:
-                    conflict = SyncConflict(
-                        guid=guid,
-                        direction=direction.value,
-                        field="fsrs",
-                        local_value=None,
-                        remote_value=None,
-                        resolution="anki_wins",
-                    )
-                    report.conflicts.append(conflict)
-                    if not dry_run:
-                        self._db.record_sync_conflict(
+                if card_rec.fsrs_known:
+                    stability = card_rec.stability
+                    difficulty = card_rec.difficulty
+                    due_date_val = card_rec.due_date
+                    reps = card_rec.reps
+                    lapses = card_rec.lapses
+                    new_dirty_fsrs = local_dir.dirty_fsrs
+                    if local_dir.dirty_fsrs:
+                        conflict = SyncConflict(
                             guid=guid,
                             direction=direction.value,
                             field="fsrs",
-                            local=None,
-                            remote=None,
+                            local_value=None,
+                            remote_value=None,
                             resolution="anki_wins",
                         )
-                    new_dirty_fsrs = False
+                        report.conflicts.append(conflict)
+                        if not dry_run:
+                            self._db.record_sync_conflict(
+                                guid=guid,
+                                direction=direction.value,
+                                field="fsrs",
+                                local=None,
+                                remote=None,
+                                resolution="anki_wins",
+                            )
+                        new_dirty_fsrs = False
+                else:
+                    # Online pull: FSRS state not available via cardsInfo. Keep
+                    # local stability/difficulty/due_date/reps/lapses and the
+                    # existing dirty_fsrs so the next push can still flush.
+                    stability = local_dir.stability
+                    difficulty = local_dir.difficulty
+                    due_date_val = local_dir.due_date
+                    reps = local_dir.reps
+                    lapses = local_dir.lapses
+                    new_dirty_fsrs = local_dir.dirty_fsrs
 
                 new_dir_state = DirectionState(
                     direction=direction,
-                    due_date=card_rec.due_date,
-                    stability=card_rec.stability,
-                    difficulty=card_rec.difficulty,
-                    reps=card_rec.reps,
-                    lapses=card_rec.lapses,
+                    due_date=due_date_val,
+                    stability=stability,
+                    difficulty=difficulty,
+                    reps=reps,
+                    lapses=lapses,
                     state=new_state,
                     dirty_fsrs=new_dirty_fsrs,
                     anki_card_id=card_rec.anki_card_id,
@@ -486,7 +587,7 @@ class AnkiSync:
             dirty_set = {f for f in dirty_fields_str.split(",") if f}
             fields: dict[str, str] = {}
             if "translation" in dirty_set:
-                fields["Back"] = item.syntactic_unit.translation
+                fields["English"] = item.syntactic_unit.translation
             if not fields:
                 continue
             if not dry_run:
@@ -586,6 +687,27 @@ class AnkiSync:
             self._db.set_anki_ids(guid, note_id, card_ids)
 
         return count
+
+
+def drain_pending_revlog_to_writer(db: SRSDatabase, writer) -> int:
+    """Drain queued revlog rows from TT's pending_revlog into ``writer``.
+
+    Called at the start of an offline push: online sessions enqueue revlog rows
+    to TT while Anki is running; the next offline run flushes them into Anki's
+    revlog via ``writer.write_revlog``.
+    """
+    rows = db.drain_pending_revlog()
+    for r in rows:
+        writer.write_revlog(
+            cid=r["cid"],
+            ease=r["ease"],
+            ivl=r["ivl"],
+            last_ivl=r["last_ivl"],
+            factor=r["factor"],
+            time_ms=r["time_ms"],
+            type_=r["type"],
+        )
+    return len(rows)
 
 
 # ── S3.7: mode detection + CLI ────────────────────────────────────────────────
@@ -699,6 +821,8 @@ def main(
                 writer = OfflineWriter(ctx.conn)
                 sync = AnkiSync(db=db, _reader=reader, _writer=writer, _anki_col_ver=col_ver)
                 pull = sync.sync_pull(dry_run=args.dry_run)
+                if not args.dry_run:
+                    drain_pending_revlog_to_writer(db, writer)
                 push = sync.sync_push(dry_run=args.dry_run, force_fsrs=args.force_fsrs)
                 _print_report(pull, push)
                 return 0

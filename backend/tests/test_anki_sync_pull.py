@@ -182,8 +182,11 @@ class TestOnlineReader:
         assert rec.l2_text == "banka"
         assert rec.translation == "bank"
         assert len(rec.cards) == 1
-        assert rec.cards[0].stability == 21.0  # ivl used as stability proxy
-        assert rec.cards[0].difficulty == 5.0
+        # Online reader does not expose FSRS state; sentinel flag is False.
+        assert rec.cards[0].fsrs_known is False
+        # reps/lapses/queue still carried from cardsInfo
+        assert rec.cards[0].reps == 5
+        assert rec.cards[0].queue == 2
 
     def test_empty_deck_returns_empty(self):
         client = _online_client({"findNotes": lambda p: []})
@@ -283,7 +286,7 @@ class TestOnlineReader:
             }
         )
         records = OnlineReader(client, "0. Slovene").get_note_records()
-        assert records[0].cards[0].stability == 1.0
+        assert records[0].cards[0].fsrs_known is False
 
 
 # ── AnkiSync constructor ──────────────────────────────────────────────────────
@@ -676,3 +679,88 @@ class TestSyncPull:
         ]
         report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
         assert report.directions_updated == 0
+
+    def test_fsrs_known_false_preserves_local_fsrs_state(self):
+        """CardRecord.fsrs_known=False (online reader): sync_pull must not overwrite
+        local stability/difficulty/due_date or record a conflict."""
+        from datetime import timedelta
+
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        local_due = date.today() + timedelta(days=42)
+        ds_local = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=local_due,
+            stability=12.0,
+            difficulty=4.5,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=True,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds_local)
+
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=2,
+                        reps=3,
+                        lapses=0,
+                        stability=0.0,  # placeholder — fsrs_known=False
+                        difficulty=0.0,
+                        due_date=date.today(),
+                        fsrs_known=False,
+                    ),
+                ],
+            )
+        ]
+        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+
+        assert report.conflicts == []
+        updated = db.get_collocation_by_guid(guid)
+        rec = updated.directions[Direction.RECOGNITION]
+        assert rec.stability == 12.0
+        assert rec.difficulty == 4.5
+        assert rec.due_date == local_due
+        assert rec.dirty_fsrs is True  # still dirty — push can flush
+
+    def test_fsrs_known_false_still_applies_suspension(self):
+        """fsrs_known=False must still pick up queue-based state changes (e.g. suspension)."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=-1,
+                        reps=3,
+                        lapses=0,
+                        stability=0.0,
+                        difficulty=0.0,
+                        due_date=date.today(),
+                        fsrs_known=False,
+                    ),
+                ],
+            )
+        ]
+        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        updated = db.get_collocation_by_guid(guid)
+        assert updated.directions[Direction.RECOGNITION].state == SRSState.SUSPENDED

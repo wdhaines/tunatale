@@ -43,6 +43,9 @@ class _FakeWriter:
 
 class TestSyncCreateNewEndpoint:
     async def test_returns_count(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
         monkeypatch.setattr("app.api.anki.AnkiConnectClient", _PingOkClient)
         monkeypatch.setattr("app.api.anki.OnlineWriter", _FakeWriter)
 
@@ -58,6 +61,9 @@ class TestSyncCreateNewEndpoint:
         assert response.json() == {"count": 3, "dry_run": False}
 
     async def test_dry_run_forwarded(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
         monkeypatch.setattr("app.api.anki.AnkiConnectClient", _PingOkClient)
         monkeypatch.setattr("app.api.anki.OnlineWriter", _FakeWriter)
 
@@ -84,3 +90,47 @@ class TestSyncCreateNewEndpoint:
 
         assert response.status_code == 503
         assert "AnkiConnect" in response.json()["detail"]
+
+    async def test_empty_model_name_discovers_via_anki_connect(self, monkeypatch):
+        """When settings.anki_model_name is '', endpoint must discover it first."""
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "anki_model_name", "")
+        monkeypatch.setattr("app.api.anki.AnkiConnectClient", _PingOkClient)
+        monkeypatch.setattr("app.api.anki.OnlineWriter", _FakeWriter)
+        monkeypatch.setattr(
+            "app.anki.model_discovery.get_or_discover_model_name",
+            lambda client: "Slovene Vocabulary",
+        )
+
+        received: list[str] = []
+
+        async def fake_create_new(self, *, deck_name, model_name, dry_run=False, _media_fn=None):
+            received.append(model_name)
+            return 0
+
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_create_new", fake_create_new)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post("/api/anki/sync-create-new")
+
+        assert response.status_code == 200
+        assert received == ["Slovene Vocabulary"]
+
+    async def test_empty_model_name_and_discovery_fails_returns_409(self, monkeypatch):
+        """Settings empty + discovery empty → 409 Conflict (cannot proceed)."""
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "anki_model_name", "")
+        monkeypatch.setattr("app.api.anki.AnkiConnectClient", _PingOkClient)
+        monkeypatch.setattr("app.api.anki.OnlineWriter", _FakeWriter)
+        monkeypatch.setattr(
+            "app.anki.model_discovery.get_or_discover_model_name",
+            lambda client: "",
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post("/api/anki/sync-create-new")
+
+        assert response.status_code == 409
+        assert "model" in response.json()["detail"].lower()

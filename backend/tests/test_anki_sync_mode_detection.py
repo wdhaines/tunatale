@@ -183,6 +183,17 @@ class TestMainOfflineMode:
         )
         assert result == 0
 
+    def test_mode_offline_dry_run_skips_drain(self):
+        """--mode offline --dry-run must skip the pending_revlog drain."""
+        client = FakeAnkiConnectClient()
+        result = main(
+            ["--mode", "offline", "--dry-run"],
+            _settings=FakeSettings(),
+            _client=client,
+            _safe_open_fn=_fake_safe_open,
+        )
+        assert result == 0
+
     def test_mode_offline_exits_nonzero_when_collection_locked(self):
         @contextlib.contextmanager
         def locked_open(path, backup_dir=None, mode="ro"):
