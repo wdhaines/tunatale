@@ -496,3 +496,128 @@ class AnkiSync:
             report.directions_pushed += 1
 
         return report
+
+
+# ── S3.7: mode detection + CLI ────────────────────────────────────────────────
+
+_FORCE_FSRS_ACK_PATH = Path("~/.tunatale/force_fsrs_ack.txt").expanduser()
+
+
+class AnkiUnavailableError(Exception):
+    """Both AnkiConnect and the offline collection are unavailable."""
+
+
+def detect_mode(
+    client: AnkiConnectClient,
+    collection_path: Path,
+    *,
+    _probe_lock=None,
+) -> str:
+    """Return 'online' or 'offline'. Raise AnkiUnavailableError if both unavailable."""
+    from app.anki.anki_connect import AnkiConnectUnavailable
+    from app.anki.safety import _probe_exclusive_lock
+
+    probe = _probe_lock if _probe_lock is not None else _probe_exclusive_lock
+    try:
+        client.ping()
+        return "online"
+    except AnkiConnectUnavailable:
+        try:
+            probe(collection_path)
+            return "offline"
+        except RuntimeError as exc:
+            raise AnkiUnavailableError(
+                "AnkiConnect is unreachable and the Anki collection is locked.\n"
+                "Close Anki and install AnkiConnect, or close Anki to run in offline mode."
+            ) from exc
+
+
+def _print_report(pull: PullReport, push: PushReport) -> None:
+    print(
+        f"Pull: {pull.notes_updated} notes updated, "
+        f"{pull.directions_updated} directions, "
+        f"{len(pull.conflicts)} conflicts"
+    )
+    print(f"Push: {push.notes_pushed} notes, {push.directions_pushed} directions")
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    _settings=None,
+    _safe_open_fn=None,
+    _client: AnkiConnectClient | None = None,
+    _force_fsrs_ack_path: Path | None = None,
+    _probe_lock=None,
+) -> int:
+    import argparse
+    import sys
+
+    from app.anki.anki_connect import AnkiConnectUnavailable
+    from app.anki.safety import safe_open
+    from app.config import settings as _default_settings
+
+    _s = _settings if _settings is not None else _default_settings
+    _so = _safe_open_fn if _safe_open_fn is not None else safe_open
+    _ack_path = _force_fsrs_ack_path if _force_fsrs_ack_path is not None else _FORCE_FSRS_ACK_PATH
+
+    parser = argparse.ArgumentParser(description="TunaTale ↔ Anki bidirectional sync")
+    parser.add_argument("--mode", choices=["auto", "online", "offline"], default="auto")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--force-fsrs", action="store_true", dest="force_fsrs")
+    args = parser.parse_args(argv)
+
+    client = _client if _client is not None else AnkiConnectClient(url=_s.anki_connect_url)
+    db_path = _s.database_url.removeprefix("sqlite:///")
+    db = SRSDatabase(db_path)
+
+    if args.force_fsrs:
+        interactive = sys.stdin.isatty()
+        try:
+            ensure_force_fsrs_ack(_ack_path, interactive=interactive)
+        except ForceFsrsNotAcknowledgedError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    if args.mode == "online":
+        try:
+            client.ping()
+        except AnkiConnectUnavailable:
+            print("AnkiConnect is not reachable. Is Anki running with AnkiConnect installed?", file=sys.stderr)
+            return 1
+        mode = "online"
+    elif args.mode == "offline":
+        mode = "offline"
+    else:  # auto
+        try:
+            mode = detect_mode(client, _s.anki_collection_path, _probe_lock=_probe_lock)
+        except AnkiUnavailableError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    if mode == "online":
+        sync = AnkiSync(db=db, mode="online", client=client, deck_name=_s.anki_deck_name)
+        pull = sync.sync_pull(dry_run=args.dry_run)
+        push = sync.sync_push(dry_run=args.dry_run, force_fsrs=args.force_fsrs)
+        _print_report(pull, push)
+        return 0
+    else:  # offline
+        try:
+            with _so(_s.anki_collection_path, mode="rw") as ctx:
+                col_ver = ctx.conn.execute("SELECT ver FROM col").fetchone()[0]
+                reader = OfflineReader(ctx.conn, _s.anki_deck_name)
+                writer = OfflineWriter(ctx.conn)
+                sync = AnkiSync(db=db, _reader=reader, _writer=writer, _anki_col_ver=col_ver)
+                pull = sync.sync_pull(dry_run=args.dry_run)
+                push = sync.sync_push(dry_run=args.dry_run, force_fsrs=args.force_fsrs)
+                _print_report(pull, push)
+                return 0
+        except RuntimeError as e:
+            print(f"Error opening collection: {e}", file=sys.stderr)
+            return 1
+
+
+if __name__ == "__main__":  # pragma: no cover
+    import sys
+
+    sys.exit(main())
