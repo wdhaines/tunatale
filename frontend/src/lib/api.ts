@@ -352,6 +352,10 @@ export class TunaTaleAPI {
 			body: JSON.stringify({ state })
 		});
 	}
+
+	async syncCreateNew(dryRun = false): Promise<{ count: number; dry_run: boolean }> {
+		return this.request(`/api/anki/sync-create-new?dry_run=${dryRun}`, { method: 'POST' });
+	}
 }
 
 export const api = new TunaTaleAPI();

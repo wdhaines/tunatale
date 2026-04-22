@@ -18,6 +18,7 @@
 	let editTranslation = $state('');
 	let loading = $state(false);
 	let error = $state<string | null>(null);
+	let syncStatus = $state<string | null>(null);
 
 	let debounceTimer: ReturnType<typeof setTimeout>;
 	let lastSearch = $state('');
@@ -41,6 +42,16 @@
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function syncToAnki() {
+		syncStatus = null;
+		try {
+			const result = await api.syncCreateNew(false);
+			syncStatus = `Synced ${result.count} notes to Anki`;
+		} catch (e) {
+			syncStatus = e instanceof Error ? e.message : String(e);
 		}
 	}
 
@@ -183,8 +194,13 @@
 				<button class="danger" onclick={bulkDelete}>Delete selected ({selected.size})</button>
 			{/if}
 			<button onclick={loadItems} title="Refresh">⟳</button>
+			<button onclick={syncToAnki}>Sync to Anki</button>
 		</div>
 	</div>
+
+	{#if syncStatus}
+		<p class="sync-status">{syncStatus}</p>
+	{/if}
 
 	{#if error}
 		<p class="error">{error}</p>

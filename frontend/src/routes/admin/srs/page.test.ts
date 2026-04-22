@@ -12,7 +12,8 @@ vi.mock('$lib/api', () => ({
 		deleteSRSItem: vi.fn(),
 		bulkDeleteSRSItems: vi.fn(),
 		resetSRSItem: vi.fn(),
-		suspendSRSItem: vi.fn()
+		suspendSRSItem: vi.fn(),
+		syncCreateNew: vi.fn()
 	}
 }));
 
@@ -24,6 +25,7 @@ const mockDelete = vi.mocked(api.deleteSRSItem);
 const mockBulkDelete = vi.mocked(api.bulkDeleteSRSItems);
 const mockReset = vi.mocked(api.resetSRSItem);
 const mockSuspend = vi.mocked(api.suspendSRSItem);
+const mockSync = vi.mocked(api.syncCreateNew);
 
 function makeItem(id: number, text: string, state: SRSItemDetail['state'] = 'new'): SRSItemDetail {
 	return {
@@ -435,5 +437,35 @@ describe('admin/srs/+page.svelte', () => {
 				expect(mockList.mock.calls.length).toBeGreaterThan(callsBefore);
 			});
 		}
+	});
+
+	// ── Sync to Anki ──────────────────────────────────────────────────────────
+
+	it('renders Sync to Anki button', async () => {
+		const { findByText } = render(AdminSRSPage);
+		expect(await findByText('Sync to Anki')).toBeTruthy();
+	});
+
+	it('clicking Sync to Anki calls syncCreateNew(false)', async () => {
+		mockSync.mockResolvedValue({ count: 5, dry_run: false });
+		const { findByText } = render(AdminSRSPage);
+		await fireEvent.click(await findByText('Sync to Anki'));
+		await waitFor(() => {
+			expect(mockSync).toHaveBeenCalledWith(false);
+		});
+	});
+
+	it('shows synced count after successful sync', async () => {
+		mockSync.mockResolvedValue({ count: 7, dry_run: false });
+		const { findByText } = render(AdminSRSPage);
+		await fireEvent.click(await findByText('Sync to Anki'));
+		expect(await findByText(/Synced 7/)).toBeTruthy();
+	});
+
+	it('shows error message when sync fails', async () => {
+		mockSync.mockRejectedValue(new Error('AnkiConnect unavailable'));
+		const { findByText } = render(AdminSRSPage);
+		await fireEvent.click(await findByText('Sync to Anki'));
+		expect(await findByText(/AnkiConnect unavailable/)).toBeTruthy();
 	});
 });
