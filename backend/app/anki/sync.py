@@ -820,10 +820,10 @@ def main(
                 reader = OfflineReader(ctx.conn, _s.anki_deck_name)
                 writer = OfflineWriter(ctx.conn)
                 sync = AnkiSync(db=db, _reader=reader, _writer=writer, _anki_col_ver=col_ver)
-                pull = sync.sync_pull(dry_run=args.dry_run)
+                push = sync.sync_push(dry_run=args.dry_run, force_fsrs=args.force_fsrs)
                 if not args.dry_run:
                     drain_pending_revlog_to_writer(db, writer)
-                push = sync.sync_push(dry_run=args.dry_run, force_fsrs=args.force_fsrs)
+                pull = sync.sync_pull(dry_run=args.dry_run)
                 _print_report(pull, push)
                 return 0
         except RuntimeError as e:
