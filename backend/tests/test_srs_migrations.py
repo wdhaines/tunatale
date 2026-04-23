@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version_is_3(self):
-        assert CURRENT_VERSION == 4
+        assert CURRENT_VERSION == 5
 
     def test_migrates_from_v1_to_v2(self):
         from app.srs.migrations import migrate_v1_to_v2
@@ -583,3 +583,99 @@ class TestMigrateV3ToV4:
         conn.commit()
         with pytest.raises(RuntimeError, match="FK check failed"):
             migrate_v3_to_v4(conn)
+
+    def _make_v4_conn(self) -> sqlite3.Connection:
+        """In-memory DB at schema version 4 (collocation_directions without last_rating)."""
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript("""
+            CREATE TABLE collocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT UNIQUE NOT NULL,
+                translation TEXT NOT NULL DEFAULT '',
+                language_code TEXT NOT NULL DEFAULT 'sl',
+                word_count INTEGER NOT NULL DEFAULT 1,
+                unit_difficulty INTEGER NOT NULL DEFAULT 1,
+                source TEXT NOT NULL DEFAULT 'corpus',
+                corpus_frequency INTEGER NOT NULL DEFAULT 0,
+                lemma TEXT,
+                guid TEXT UNIQUE,
+                disambig_key TEXT NOT NULL DEFAULT '',
+                anki_note_id INTEGER,
+                dirty_fields TEXT NOT NULL DEFAULT '',
+                last_synced_at TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(text, disambig_key)
+            );
+            CREATE TABLE collocation_directions (
+                collocation_id INTEGER NOT NULL REFERENCES collocations(id) ON DELETE CASCADE,
+                direction TEXT NOT NULL CHECK(direction IN ('recognition','production')),
+                stability REAL NOT NULL DEFAULT 1.0,
+                fsrs_difficulty REAL NOT NULL DEFAULT 5.0,
+                due_date TEXT NOT NULL DEFAULT (date('now')),
+                reps INTEGER NOT NULL DEFAULT 0,
+                lapses INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL DEFAULT 'new',
+                last_review TEXT,
+                anki_card_id INTEGER,
+                dirty_fsrs INTEGER NOT NULL DEFAULT 0,
+                last_synced_at TEXT,
+                PRIMARY KEY (collocation_id, direction)
+            );
+            PRAGMA user_version = 4;
+        """)
+        conn.execute(
+            "INSERT INTO collocations (text, translation, guid, disambig_key) VALUES ('banka','bank','abc','');"
+        )
+        conn.execute(
+            "INSERT INTO collocation_directions (collocation_id, direction, due_date) VALUES (1,'recognition',date('now'));"
+        )
+        conn.execute(
+            "INSERT INTO collocation_directions (collocation_id, direction, due_date) VALUES (1,'production',date('now'));"
+        )
+        conn.commit()
+        return conn
+
+    def test_v4_to_v5_adds_last_rating_column(self):
+        """migrate_v4_to_v5 adds last_rating INTEGER to collocation_directions."""
+        from app.srs.migrations import migrate_v4_to_v5
+
+        conn = self._make_v4_conn()
+        migrate_v4_to_v5(conn)
+        conn.commit()
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
+        assert "last_rating" in cols
+
+    def test_v4_to_v5_existing_rows_have_null_last_rating(self):
+        """After v4→v5 migration, existing rows have NULL last_rating (nullable column)."""
+        from app.srs.migrations import migrate_v4_to_v5
+
+        conn = self._make_v4_conn()
+        migrate_v4_to_v5(conn)
+        conn.commit()
+
+        rows = conn.execute("SELECT last_rating FROM collocation_directions").fetchall()
+        assert len(rows) == 2
+        assert all(r["last_rating"] is None for r in rows)
+
+    def test_v4_to_v5_idempotent(self):
+        """Running migrate_v4_to_v5 twice does not raise or duplicate data."""
+        from app.srs.migrations import migrate_v4_to_v5
+
+        conn = self._make_v4_conn()
+        migrate_v4_to_v5(conn)
+        conn.commit()
+        migrate_v4_to_v5(conn)  # second call — must not raise
+        conn.commit()
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+
+    def test_full_migrate_includes_v5(self):
+        """migrate() runs all migrations including v4→v5 and ends at CURRENT_VERSION=5."""
+        conn = _make_v1_conn()
+        _insert(conn, "banka")
+        migrate(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
+        assert "last_rating" in cols

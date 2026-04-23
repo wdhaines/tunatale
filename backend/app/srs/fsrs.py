@@ -145,6 +145,7 @@ def schedule(
         state=new_state,
         last_review=review_date,
         dirty_fsrs=True,
+        last_rating=rating.value,
     )
     new_directions = dict(item.directions)
     new_directions[direction] = new_dir

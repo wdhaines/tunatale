@@ -113,3 +113,24 @@ class TestDifficultyAdjustment:
         for rating in Rating:
             result = schedule(item, rating)
             assert 1.0 <= result.difficulty <= 10.0
+
+
+class TestLastRating:
+    """B5: schedule() must persist the learner's rating for sync_push."""
+
+    def test_schedule_sets_last_rating_to_rating_value(self):
+        """schedule() stores rating.value on the updated DirectionState."""
+        from app.models.srs_item import Direction
+
+        item = _review_item()
+        for rating in Rating:
+            result = schedule(item, rating)
+            assert result.directions[Direction.RECOGNITION].last_rating == rating.value
+
+    def test_schedule_does_not_touch_other_direction_last_rating(self):
+        """Scheduling recognition leaves production.last_rating unchanged."""
+        from app.models.srs_item import Direction
+
+        item = _new_item()
+        result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
+        assert result.directions[Direction.PRODUCTION].last_rating is None

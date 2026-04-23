@@ -421,6 +421,24 @@ class OfflineWriter:
         return {}
 
 
+def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool:
+    """Return True only if a sync-relevant field changed between local and candidate.
+
+    Excludes last_synced_at, last_review, and last_rating from the comparison
+    so benign timestamp updates don't trigger a spurious write.
+    """
+    return (
+        local.state != candidate.state
+        or local.stability != candidate.stability
+        or local.difficulty != candidate.difficulty
+        or local.due_date != candidate.due_date
+        or local.reps != candidate.reps
+        or local.lapses != candidate.lapses
+        or local.dirty_fsrs != candidate.dirty_fsrs
+        or local.anki_card_id != candidate.anki_card_id
+    )
+
+
 class AnkiSync:
     """Orchestrate bidirectional sync between TunaTale and Anki."""
 
@@ -571,9 +589,10 @@ class AnkiSync:
                     anki_card_id=card_rec.anki_card_id,
                 )
 
-                if not dry_run:
-                    self._db.update_direction(guid, direction, new_dir_state)
-                report.directions_updated += 1
+                if _direction_differs(local_dir, new_dir_state):
+                    if not dry_run:
+                        self._db.update_direction(guid, direction, new_dir_state)
+                    report.directions_updated += 1
 
         return report
 
@@ -607,9 +626,10 @@ class AnkiSync:
                 self._writer.set_due_date([ds.anki_card_id], days_str)
                 if ds.reps > 0:
                     ivl = max(1, round(ds.stability))
+                    ease = ds.last_rating if ds.last_rating is not None else 3
                     self._writer.write_revlog(
                         cid=ds.anki_card_id,
-                        ease=3,
+                        ease=ease,
                         ivl=ivl,
                         last_ivl=ivl,
                         factor=2500,

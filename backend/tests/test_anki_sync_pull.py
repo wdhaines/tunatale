@@ -764,3 +764,120 @@ class TestSyncPull:
         AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
         updated = db.get_collocation_by_guid(guid)
         assert updated.directions[Direction.RECOGNITION].state == SRSState.SUSPENDED
+
+
+# ── B15: diff-before-write in sync_pull ───────────────────────────────────────
+
+
+class TestSyncPullNoOp:
+    """B15: pull with no state change must not update DB or inflate report counters."""
+
+    def test_unchanged_directions_not_counted_as_updated(self):
+        """When Anki returns identical state to TT, directions_updated must be 0."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        today = date.today()
+
+        # Pre-seed TT to match exactly what Anki will return
+        for direction, card_id, _ord in [
+            (Direction.RECOGNITION, 90010, 0),
+            (Direction.PRODUCTION, 90011, 1),
+        ]:
+            ds = DirectionState(
+                direction=direction,
+                due_date=today,
+                stability=5.0,
+                difficulty=4.5,
+                reps=3,
+                lapses=0,
+                state=SRSState.REVIEW,
+                dirty_fsrs=False,
+                anki_card_id=card_id,
+            )
+            db.update_direction(guid, direction, ds)
+
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=2,
+                        reps=3,
+                        lapses=0,
+                        stability=5.0,
+                        difficulty=4.5,
+                        due_date=today,
+                        fsrs_known=True,
+                    ),
+                    CardRecord(
+                        anki_card_id=90011,
+                        ord=1,
+                        queue=2,
+                        reps=3,
+                        lapses=0,
+                        stability=5.0,
+                        difficulty=4.5,
+                        due_date=today,
+                        fsrs_known=True,
+                    ),
+                ],
+            )
+        ]
+
+        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+
+        assert report.directions_updated == 0
+
+    def test_changed_direction_is_counted(self):
+        """When Anki returns a different stability, that direction IS counted."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        today = date.today()
+
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=today,
+            stability=5.0,
+            difficulty=4.5,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=False,
+            anki_card_id=90010,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=2,
+                        reps=3,
+                        lapses=0,
+                        stability=8.0,  # changed from 5.0
+                        difficulty=4.5,
+                        due_date=today,
+                        fsrs_known=True,
+                    ),
+                ],
+            )
+        ]
+
+        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+
+        assert report.directions_updated == 1

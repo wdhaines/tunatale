@@ -103,6 +103,7 @@ _DIR_COLUMNS = (
     "anki_card_id",
     "dirty_fsrs",
     "last_synced_at",
+    "last_rating",
 )
 
 # States that should never surface in the due queue regardless of due_date.
@@ -318,7 +319,8 @@ class SRSDatabase:
                     last_review = ?,
                     anki_card_id = ?,
                     dirty_fsrs = ?,
-                    last_synced_at = ?
+                    last_synced_at = ?,
+                    last_rating = ?
                 WHERE collocation_id = ? AND direction = ?
                 """,
                 (
@@ -332,6 +334,7 @@ class SRSDatabase:
                     state.anki_card_id,
                     1 if state.dirty_fsrs else 0,
                     state.last_synced_at,
+                    state.last_rating,
                     row["id"],
                     direction.value,
                 ),
@@ -390,6 +393,7 @@ class SRSDatabase:
                 anki_card_id=row["anki_card_id"],
                 dirty_fsrs=bool(row["dirty_fsrs"]),
                 last_synced_at=row["last_synced_at"],
+                last_rating=row["last_rating"],
             )
         return directions
 
@@ -983,6 +987,7 @@ class SRSDatabase:
                     anki_card_id=row["anki_card_id"],
                     dirty_fsrs=bool(row["dirty_fsrs"]),
                     last_synced_at=row["last_synced_at"],
+                    last_rating=row["last_rating"],
                 )
                 result.append((row["guid"], d, ds))
         return result

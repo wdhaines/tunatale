@@ -13,7 +13,7 @@ from datetime import date, timedelta
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 4
+CURRENT_VERSION = 5
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -382,11 +382,19 @@ def migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA foreign_keys = ON")
 
 
+def migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
+    """Add last_rating INTEGER to collocation_directions (nullable, default NULL)."""
+    if not _column_exists(conn, "collocation_directions", "last_rating"):
+        conn.execute("ALTER TABLE collocation_directions ADD COLUMN last_rating INTEGER")
+    _set_version(conn, 5)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
     2: migrate_v2_to_v3,
     3: migrate_v3_to_v4,
+    4: migrate_v4_to_v5,
 }
 
 

@@ -624,3 +624,202 @@ class TestDrainPendingRevlog:
         writer = OfflineWriter(conn)
         assert drain_pending_revlog_to_writer(db, writer) == 0
         assert conn.execute("SELECT COUNT(*) FROM revlog").fetchone()[0] == 0
+
+
+# ── B5: real ease emitted from last_rating ────────────────────────────────────
+
+
+class TestSyncPushEase:
+    """B5: sync_push must emit the learner's actual rating, not a hardcoded ease=3."""
+
+    def test_sync_push_emits_real_ease_from_last_rating(self):
+        """When last_rating=2 (Hard), write_revlog must receive ease=2."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=10),
+            stability=10.5,
+            difficulty=4.8,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=2,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        revlog_calls = [c for c in writer.calls if c[0] == "write_revlog"]
+        assert len(revlog_calls) == 1
+        _, cid, ease, *_ = revlog_calls[0]
+        assert ease == 2
+
+    def test_schedule_to_push_chain_emits_real_ease(self):
+        """Full B5 chain: schedule() → update_direction → sync_push → ease matches rating."""
+        from app.models.srs_item import Rating
+        from app.srs.fsrs import schedule as fsrs_schedule
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        db.set_anki_ids(guid, 9001, {Direction.RECOGNITION: rec_cid, Direction.PRODUCTION: 90011})
+
+        # Get item with reps so schedule produces a review (not a new)
+        item = db.get_collocation_by_guid(guid)
+        # Seed reps so it's not a new card
+        from dataclasses import replace as dc_replace
+
+        old_rec = item.directions[Direction.RECOGNITION]
+        seeded = dc_replace(old_rec, reps=3, stability=5.0, state=SRSState.REVIEW)
+        item.directions[Direction.RECOGNITION] = seeded
+        db.update_direction(guid, Direction.RECOGNITION, seeded)
+
+        # Schedule with AGAIN (ease=1)
+        item = db.get_collocation_by_guid(guid)
+        updated_item = fsrs_schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION)
+        rec_dir = updated_item.directions[Direction.RECOGNITION]
+        db.update_direction(guid, Direction.RECOGNITION, rec_dir)
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        revlog_calls = [c for c in writer.calls if c[0] == "write_revlog"]
+        assert len(revlog_calls) == 1
+        _, _cid, ease, *_ = revlog_calls[0]
+        assert ease == Rating.AGAIN.value  # 1
+
+    def test_sync_push_falls_back_ease_3_when_last_rating_null(self):
+        """When last_rating is None (pre-migration row), write_revlog uses ease=3."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=10),
+            stability=10.5,
+            difficulty=4.8,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=None,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        revlog_calls = [c for c in writer.calls if c[0] == "write_revlog"]
+        assert len(revlog_calls) == 1
+        _, cid, ease, *_ = revlog_calls[0]
+        assert ease == 3
+
+
+# ── B14: offline ordering regression ─────────────────────────────────────────
+
+
+class TestOfflineOrdering:
+    """B14 regression: push must run before pull in offline mode.
+
+    If pull runs first, it detects dirty_fsrs=True + fsrs_known=True → anki_wins
+    → clears dirty_fsrs before push sees it → push emits nothing.
+    """
+
+    def test_push_before_pull_dirty_direction_gets_revlog(self):
+        """Push-then-pull sequence fires write_revlog even when pull would anki_wins."""
+        from app.anki.sync import CardRecord, NoteRecord
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        _mark_direction_dirty(db, guid, reps=3, stability=10.5, anki_card_id=rec_cid)
+
+        # Reader returns fsrs_known=True — in pull-first order this clears dirty_fsrs
+        class OrderedFakeReader:
+            def get_note_records(self):
+                return [
+                    NoteRecord(
+                        anki_note_id=9001,
+                        anki_guid=guid,
+                        l2_text="banka",
+                        translation="bank",
+                        disambig_key="",
+                        mod=0,
+                        cards=[
+                            CardRecord(
+                                anki_card_id=rec_cid,
+                                ord=0,
+                                queue=2,
+                                reps=5,
+                                lapses=0,
+                                stability=15.0,
+                                difficulty=4.5,
+                                due_date=date.today() + timedelta(days=15),
+                                fsrs_known=True,
+                            )
+                        ],
+                    )
+                ]
+
+        writer = FakeWriter()
+        sync = AnkiSync(db=db, _reader=OrderedFakeReader(), _writer=writer)
+
+        # NEW correct order: push then pull
+        sync.sync_push()
+        sync.sync_pull()
+
+        # Push must have fired write_revlog before pull cleared dirty_fsrs
+        assert "write_revlog" in writer.action_names()
+        # After push+pull, direction is clean
+        assert db.list_dirty() == []
+
+    def test_pull_before_push_would_miss_revlog(self):
+        """Pull-then-push (OLD order) leaves dirty_fsrs cleared before push can fire.
+
+        This test documents the failure mode that B14 was introduced to fix.
+        With pull first: anki_wins clears dirty_fsrs, then list_dirty() is empty,
+        so write_revlog is never called.
+        """
+        from app.anki.sync import CardRecord, NoteRecord
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        _mark_direction_dirty(db, guid, reps=3, stability=10.5, anki_card_id=rec_cid)
+
+        class OrderedFakeReader:
+            def get_note_records(self):
+                return [
+                    NoteRecord(
+                        anki_note_id=9001,
+                        anki_guid=guid,
+                        l2_text="banka",
+                        translation="bank",
+                        disambig_key="",
+                        mod=0,
+                        cards=[
+                            CardRecord(
+                                anki_card_id=rec_cid,
+                                ord=0,
+                                queue=2,
+                                reps=5,
+                                lapses=0,
+                                stability=15.0,
+                                difficulty=4.5,
+                                due_date=date.today() + timedelta(days=15),
+                                fsrs_known=True,
+                            )
+                        ],
+                    )
+                ]
+
+        writer = FakeWriter()
+        sync = AnkiSync(db=db, _reader=OrderedFakeReader(), _writer=writer)
+
+        # OLD incorrect order: pull first wipes dirty_fsrs, then push finds nothing
+        sync.sync_pull()
+        sync.sync_push()
+
+        # write_revlog is NOT called because dirty_fsrs was cleared by pull
+        assert "write_revlog" not in writer.action_names()

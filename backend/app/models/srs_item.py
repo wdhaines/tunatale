@@ -61,6 +61,7 @@ class DirectionState:
     anki_card_id: int | None = None
     dirty_fsrs: bool = False
     last_synced_at: str | None = None
+    last_rating: int | None = None
 
 
 class SRSItem:

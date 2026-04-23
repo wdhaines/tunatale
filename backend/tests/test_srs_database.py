@@ -2,7 +2,7 @@
 
 from datetime import date, timedelta
 
-from app.models.srs_item import SRSState
+from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 
@@ -451,3 +451,61 @@ class TestFileDatabaseWriteOperations:
 
         # Verify persistence works
         assert db.get_collocation("prosim") is not None
+
+
+# ── B5: last_rating round-trip ────────────────────────────────────────────────
+
+
+def _add_banka(db: SRSDatabase) -> str:
+    unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus")
+    db.add_collocation(unit)
+    return db.get_collocation("banka").guid
+
+
+class TestLastRatingPersistence:
+    """B5: update_direction/list_dirty must round-trip last_rating through the DB."""
+
+    def test_update_direction_persists_last_rating(self):
+        db = SRSDatabase(":memory:")
+        guid = _add_banka(db)
+
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=5.0,
+            difficulty=4.5,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=True,
+            last_rating=2,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        dirty = db.list_dirty()
+        assert len(dirty) == 1
+        _, _, fetched = dirty[0]
+        assert fetched.last_rating == 2
+
+    def test_list_dirty_returns_null_last_rating_for_old_rows(self):
+        """Rows without last_rating (pre-migration) come back as None."""
+        db = SRSDatabase(":memory:")
+        guid = _add_banka(db)
+
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=5.0,
+            difficulty=4.5,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=True,
+            last_rating=None,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        dirty = db.list_dirty()
+        assert len(dirty) == 1
+        _, _, fetched = dirty[0]
+        assert fetched.last_rating is None
