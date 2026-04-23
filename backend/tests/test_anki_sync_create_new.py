@@ -48,14 +48,31 @@ class FakeReader:
 class FakeCreateWriter:
     """Tracks calls for sync_create_new assertions."""
 
-    def __init__(self, new_note_id: int = 5001, cards_by_ord: dict[int, int] | None = None) -> None:
+    def __init__(
+        self,
+        new_note_id: int = 5001,
+        cards_by_ord: dict[int, int] | None = None,
+        duplicate_on: set[str] | None = None,
+        find_notes_result: list[int] | None = None,
+    ) -> None:
         self.calls: list[tuple] = []
         self._new_note_id = new_note_id
         self._cards_by_ord = cards_by_ord if cards_by_ord is not None else {0: 50010, 1: 50011}
+        self._duplicate_on: set[str] = duplicate_on or set()
+        self._find_notes_result: list[int] = find_notes_result if find_notes_result is not None else []
 
     def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list) -> int:
+        word = fields.get("Slovene", "")
+        if word in self._duplicate_on:
+            from app.anki.anki_connect import AnkiConnectError
+
+            raise AnkiConnectError("cannot create note because it is a duplicate")
         self.calls.append(("create_note", deck_name, model_name, dict(fields), list(tags)))
         return self._new_note_id
+
+    def find_notes(self, query: str) -> list[int]:
+        self.calls.append(("find_notes", query))
+        return self._find_notes_result
 
     def store_media_file(self, filename: str, data: bytes) -> None:
         self.calls.append(("store_media_file", filename, len(data)))
@@ -271,6 +288,19 @@ class TestOnlineWriterGetCardsForNote:
         assert result == {}
 
 
+# ── TestOnlineWriterFindNotes ─────────────────────────────────────────────────
+
+
+class TestOnlineWriterFindNotes:
+    def test_delegates_to_client_find_notes(self):
+        client, transport = _flex_client({"findNotes": [7001, 7002]})
+        writer = OnlineWriter(client, _make_db())
+        result = writer.find_notes('deck:"0. Slovene" "Slovene:voda"')
+        assert result == [7001, 7002]
+        assert transport.calls[0][0] == "findNotes"
+        assert transport.calls[0][1]["query"] == 'deck:"0. Slovene" "Slovene:voda"'
+
+
 # ── TestOfflineWriterNewMethods ───────────────────────────────────────────────
 
 
@@ -297,6 +327,10 @@ class TestOfflineWriterNewMethods:
         writer = OfflineWriter(self._conn())
         assert writer.get_cards_for_note(9001) == {}
 
+    def test_find_notes_returns_empty_list(self):
+        writer = OfflineWriter(self._conn())
+        assert writer.find_notes('deck:"0. Slovene" "Slovene:voda"') == []
+
 
 # ── TestSyncCreateNew ─────────────────────────────────────────────────────────
 
@@ -306,38 +340,38 @@ class TestSyncCreateNew:
         db = _make_db()
         _add_item(db, "voda", "water")
         writer = FakeCreateWriter()
-        count = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
             deck_name="0. Slovene", model_name="Slovene Vocabulary"
         )
-        assert count == 1
+        assert report.count == 1
         assert "create_note" in writer.action_names()
 
     async def test_skips_item_with_existing_anki_id(self):
         db = _make_db()
         _add_item_with_anki_ids(db, "voda", "water")
         writer = FakeCreateWriter()
-        count = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
             deck_name="0. Slovene", model_name="Slovene Vocabulary"
         )
-        assert count == 0
+        assert report.count == 0
         assert "create_note" not in writer.action_names()
 
     async def test_returns_zero_when_no_new_items(self):
         db = _make_db()
         writer = FakeCreateWriter()
-        count = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
             deck_name="0. Slovene", model_name="Slovene Vocabulary"
         )
-        assert count == 0
+        assert report.count == 0
 
     async def test_dry_run_counts_but_does_not_write(self):
         db = _make_db()
         _add_item(db, "voda", "water")
         writer = FakeCreateWriter()
-        count = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
             deck_name="0. Slovene", model_name="Slovene Vocabulary", dry_run=True
         )
-        assert count == 1
+        assert report.count == 1
         assert "create_note" not in writer.action_names()
         # DB not updated
         assert db.list_items_without_anki_note()[0][0] is not None
@@ -466,10 +500,10 @@ class TestSyncCreateNew:
         _add_item(db, "voda", "water")
         _add_item(db, "miza", "table")
         writer = FakeCreateWriter()
-        count = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
             deck_name="0. Slovene", model_name="Slovene Vocabulary"
         )
-        assert count == 2
+        assert report.count == 2
         assert len([c for c in writer.calls if c[0] == "create_note"]) == 2
 
     async def test_deduplicates_images_via_used_image_urls(self):
@@ -527,3 +561,71 @@ class TestSyncCreateNew:
         )
         item = db.get_collocation("voda")
         assert item.anki_note_id is None
+
+    # ── B16: duplicate detection ───────────────────────────────────────────────
+
+    async def test_duplicate_links_existing_note(self):
+        """B16: on duplicate error, find existing note and link it; continue loop."""
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        _add_item(db, "miza", "table")
+        # voda raises duplicate; find_notes returns one existing id
+        writer = FakeCreateWriter(
+            new_note_id=5002,
+            duplicate_on={"voda"},
+            find_notes_result=[7777],
+        )
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        # voda linked, miza created
+        assert report.linked == 1
+        assert report.created == 1
+        assert report.skipped == 0
+        assert report.count == 2
+        # voda must be linked to the found id
+        assert db.get_collocation("voda").anki_note_id == 7777
+        # miza must be created normally
+        assert db.get_collocation("miza").anki_note_id == 5002
+        # find_notes was called for the duplicate
+        assert any(c[0] == "find_notes" for c in writer.calls)
+
+    async def test_duplicate_with_no_match_skips_and_continues(self):
+        """B16: duplicate with no existing note → skip; subsequent items still processed."""
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        _add_item(db, "miza", "table")
+        writer = FakeCreateWriter(
+            new_note_id=5002,
+            duplicate_on={"voda"},
+            find_notes_result=[],  # no match
+        )
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        assert report.skipped == 1
+        assert report.created == 1
+        assert report.count == 2
+        # voda should remain unlinked
+        assert db.get_collocation("voda").anki_note_id is None
+        # miza should be created
+        assert db.get_collocation("miza").anki_note_id == 5002
+
+    async def test_non_duplicate_error_propagates(self):
+        """B16: non-duplicate AnkiConnectError must still be raised."""
+        import pytest
+
+        from app.anki.anki_connect import AnkiConnectError
+
+        db = _make_db()
+        _add_item(db, "voda", "water")
+
+        class BrokenWriter(FakeCreateWriter):
+            def create_note(self, deck, model, fields, tags):
+                raise AnkiConnectError("some other error")
+
+        writer = BrokenWriter()
+        with pytest.raises(AnkiConnectError, match="some other error"):
+            await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+                deck_name="0. Slovene", model_name="Slovene Vocabulary"
+            )

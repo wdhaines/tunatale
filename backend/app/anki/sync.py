@@ -133,6 +133,14 @@ class PushReport:
     directions_pushed: int = 0
 
 
+@dataclass
+class CreateNewReport:
+    count: int = 0
+    created: int = 0
+    linked: int = 0
+    skipped: int = 0
+
+
 class OfflineReader:
     """Read NoteRecords from a raw sqlite3.Connection to collection.anki2."""
 
@@ -297,6 +305,9 @@ class OnlineWriter:
         cards_info = self._client.cards_info(card_ids)
         return {c["ord"]: c["cardId"] for c in cards_info}
 
+    def find_notes(self, query: str) -> list[int]:
+        return self._client.find_notes(query)
+
 
 class OfflineWriter:
     """Write changes directly into a raw sqlite3.Connection to collection.anki2.
@@ -419,6 +430,9 @@ class OfflineWriter:
 
     def get_cards_for_note(self, note_id: int) -> dict[int, int]:
         return {}
+
+    def find_notes(self, query: str) -> list[int]:
+        return []
 
 
 def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool:
@@ -658,17 +672,21 @@ class AnkiSync:
         model_name: str,
         dry_run: bool = False,
         _media_fn=None,
-    ) -> int:
+    ) -> CreateNewReport:
         """Create Anki notes for SRS items that have no anki_note_id yet.
 
-        Returns the count of items processed (or that would be processed in dry_run).
+        Returns a CreateNewReport with created/linked/skipped counters.
         """
+        from app.anki.anki_connect import AnkiConnectError
+
         items = self._db.list_items_without_anki_note()
-        count = len(items)
         if dry_run:
-            return count
+            return CreateNewReport(count=len(items))
 
         used_image_urls: set[str] = set()
+        created = 0
+        linked = 0
+        skipped = 0
 
         for guid, item in items:
             word = item.syntactic_unit.text
@@ -699,14 +717,26 @@ class AnkiSync:
                 "DisambigKey": item.syntactic_unit.disambig_key or "",
             }
 
-            note_id = self._writer.create_note(deck_name, model_name, fields, ["tunatale"])
-            cards_by_ord = self._writer.get_cards_for_note(note_id)
+            try:
+                note_id = self._writer.create_note(deck_name, model_name, fields, ["tunatale"])
+                created += 1
+            except AnkiConnectError as exc:
+                if "duplicate" not in str(exc).lower():
+                    raise
+                existing_ids = self._writer.find_notes(f'deck:"{deck_name}" "Slovene:{word}"')
+                if len(existing_ids) != 1:
+                    skipped += 1
+                    continue
+                note_id = existing_ids[0]
+                linked += 1
 
+            cards_by_ord = self._writer.get_cards_for_note(note_id)
             _ORD_TO_DIR = {0: Direction.RECOGNITION, 1: Direction.PRODUCTION}
             card_ids = {_ORD_TO_DIR[ord_]: cid for ord_, cid in cards_by_ord.items() if ord_ in _ORD_TO_DIR}
             self._db.set_anki_ids(guid, note_id, card_ids)
 
-        return count
+        count = created + linked + skipped
+        return CreateNewReport(count=count, created=created, linked=linked, skipped=skipped)
 
 
 def drain_pending_revlog_to_writer(db: SRSDatabase, writer) -> int:

@@ -12,7 +12,7 @@ _CACHE_PATH = Path("~/.tunatale/anki_model_name.txt").expanduser()
 
 def discover_model_name(client: AnkiConnectClient, deck_name: str) -> str:
     """Return the modelName of any note in deck_name, or '' if the deck is empty."""
-    note_ids = client.find_notes(f"deck:{deck_name}")
+    note_ids = client.find_notes(f'deck:"{deck_name}"')
     if not note_ids:
         return ""
     info = client.notes_info([note_ids[0]])

@@ -47,6 +47,24 @@ def test_discover_model_name_returns_model_from_notesinfo():
     assert "notesInfo" in transport.calls
 
 
+def test_discover_model_name_query_is_quoted():
+    """deck name with spaces/dots must be quoted in the findNotes query."""
+    captured: dict = {}
+
+    def find_notes_handler(p):
+        captured["query"] = p.get("query", "")
+        return [1001]
+
+    client, _ = _client(
+        {
+            "findNotes": find_notes_handler,
+            "notesInfo": lambda p: [{"noteId": 1001, "modelName": "Slovene Vocabulary", "fields": {}}],
+        }
+    )
+    discover_model_name(client, "0. Slovene")
+    assert captured["query"] == 'deck:"0. Slovene"'
+
+
 def test_discover_model_name_only_fetches_one_note():
     """notesInfo is called with only one note id, not the whole deck."""
     client, transport = _client(

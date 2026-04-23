@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from app.anki.anki_connect import AnkiConnectClient, AnkiConnectUnavailable
+from app.anki.media.pipeline import fetch_card_media
 from app.anki.sync import AnkiSync, OnlineWriter
 
 router = APIRouter(prefix="/api/anki", tags=["anki"])
@@ -40,9 +41,24 @@ async def trigger_sync_create_new(request: Request, dry_run: bool = False):
     writer = OnlineWriter(client, db)
     sync = AnkiSync(db=db, _reader=object(), _writer=writer)
 
-    count = await sync.sync_create_new(
+    async def _media_fn(word, english, *, used_image_urls):
+        return await fetch_card_media(
+            word,
+            english,
+            pixabay_key=settings.pixabay_api_key,
+            used_image_urls=used_image_urls,
+        )
+
+    report = await sync.sync_create_new(
         deck_name=settings.anki_deck_name,
         model_name=model_name,
         dry_run=dry_run,
+        _media_fn=_media_fn,
     )
-    return {"count": count, "dry_run": dry_run}
+    return {
+        "count": report.count,
+        "created": report.created,
+        "linked": report.linked,
+        "skipped": report.skipped,
+        "dry_run": dry_run,
+    }

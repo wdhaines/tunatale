@@ -6,7 +6,10 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.anki.anki_connect import AnkiConnectUnavailable
+from app.anki.media.pipeline import MediaResult
+from app.anki.sync import CreateNewReport
 from app.main import app
+from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 
 
@@ -50,7 +53,7 @@ class TestSyncCreateNewEndpoint:
         monkeypatch.setattr("app.api.anki.OnlineWriter", _FakeWriter)
 
         async def fake_create_new(self, *, deck_name, model_name, dry_run=False, _media_fn=None):
-            return 3
+            return CreateNewReport(count=3, created=3)
 
         monkeypatch.setattr("app.anki.sync.AnkiSync.sync_create_new", fake_create_new)
 
@@ -58,7 +61,7 @@ class TestSyncCreateNewEndpoint:
             response = await c.post("/api/anki/sync-create-new")
 
         assert response.status_code == 200
-        assert response.json() == {"count": 3, "dry_run": False}
+        assert response.json() == {"count": 3, "created": 3, "linked": 0, "skipped": 0, "dry_run": False}
 
     async def test_dry_run_forwarded(self, monkeypatch):
         from app.config import settings
@@ -71,7 +74,7 @@ class TestSyncCreateNewEndpoint:
 
         async def fake_create_new(self, *, deck_name, model_name, dry_run=False, _media_fn=None):
             received.append(dry_run)
-            return 0
+            return CreateNewReport()
 
         monkeypatch.setattr("app.anki.sync.AnkiSync.sync_create_new", fake_create_new)
 
@@ -107,7 +110,7 @@ class TestSyncCreateNewEndpoint:
 
         async def fake_create_new(self, *, deck_name, model_name, dry_run=False, _media_fn=None):
             received.append(model_name)
-            return 0
+            return CreateNewReport()
 
         monkeypatch.setattr("app.anki.sync.AnkiSync.sync_create_new", fake_create_new)
 
@@ -134,3 +137,54 @@ class TestSyncCreateNewEndpoint:
 
         assert response.status_code == 409
         assert "model" in response.json()["detail"].lower()
+
+    async def test_endpoint_passes_media_fn(self, monkeypatch):
+        """B17: endpoint must wire _media_fn so fetch_card_media is actually called."""
+        from app.config import settings
+
+        db = app.state.srs_db
+        unit = SyntacticUnit(text="voda", translation="water", word_count=1, difficulty=1, source="corpus")
+        db.add_collocation(unit)
+
+        monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
+        monkeypatch.setattr(settings, "pixabay_api_key", "test-key")
+        monkeypatch.setattr("app.api.anki.AnkiConnectClient", _PingOkClient)
+
+        media_calls: list[tuple] = []
+
+        async def fake_fetch_card_media(word, english, *, pixabay_key, used_image_urls, **kw):
+            media_calls.append((word, english))
+            return MediaResult(
+                audio_bytes=b"audio",
+                audio_source="tts",
+                image_bytes=b"img",
+                image_ext="jpg",
+                image_url="http://x.com/x.jpg",
+            )
+
+        monkeypatch.setattr("app.api.anki.fetch_card_media", fake_fetch_card_media)
+
+        store_calls: list[str] = []
+
+        class CapturingWriter:
+            def __init__(self, client, db):
+                pass
+
+            def create_note(self, deck, model, fields, tags):
+                return 9001
+
+            def get_cards_for_note(self, note_id):
+                return {0: 90010, 1: 90011}
+
+            def store_media_file(self, filename, data):
+                store_calls.append(filename)
+
+        monkeypatch.setattr("app.api.anki.OnlineWriter", CapturingWriter)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post("/api/anki/sync-create-new")
+
+        assert response.status_code == 200
+        assert len(media_calls) == 1
+        assert media_calls[0] == ("voda", "water")
+        assert len(store_calls) >= 2  # audio + image
