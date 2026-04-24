@@ -21,6 +21,7 @@ from app.srs.tokenizer import tokenize
 from app.srs.transcript import extract_transcript
 
 router = APIRouter(prefix="/api/srs", tags=["srs"])
+_MEDIA_DIR = Path(__file__).parent.parent.parent / "media"
 
 _feedback_adapter = ImplicitFeedbackAdapter()
 _lemmatizer = LowercaseLemmatizer()
@@ -165,7 +166,7 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
 
 @router.get("/media/{filename}", status_code=200)
 async def serve_media(filename: str, request: Request):
-    media_dir = Path(__file__).parent.parent.parent / "media"
+    media_dir = _MEDIA_DIR
     file_path = (media_dir / filename).resolve()
     if not str(file_path).startswith(str(media_dir.resolve())):
         raise HTTPException(status_code=400, detail="Invalid filename")

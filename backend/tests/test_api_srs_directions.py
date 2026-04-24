@@ -361,16 +361,15 @@ class TestMediaEndpoint:
             await serve_media("..", _FakeReq())  # type: ignore[arg-type]
         assert exc_info.value.status_code == 400
 
-    async def test_existing_file_returns_200(self):
-        from pathlib import Path
+    async def test_existing_file_returns_200(self, tmp_path, monkeypatch):
+        import app.api.srs as srs_mod
 
-        media_dir = Path(__file__).parent.parent / "media"
-        files = [f for f in media_dir.iterdir() if f.is_file()]
-        if not files:
-            pytest.skip("no media files present")
-        filename = files[0].name
+        test_file = tmp_path / "test_audio.mp3"
+        test_file.write_bytes(b"fake audio")
+        monkeypatch.setattr(srs_mod, "_MEDIA_DIR", tmp_path)
+
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            r = await c.get(f"/api/srs/media/{filename}")
+            r = await c.get("/api/srs/media/test_audio.mp3")
         assert r.status_code == 200
 
 
