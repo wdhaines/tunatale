@@ -490,16 +490,26 @@ class AnkiSync:
         report = PullReport()
 
         for rec in self._reader.get_note_records():
-            expected_guid = compute_guid(rec.l2_text, "sl", rec.disambig_key)
-            if rec.anki_guid != expected_guid:
-                report.skipped_unknown_guid += 1
-                continue
-
-            local_item = self._db.get_collocation_by_guid(rec.anki_guid)
+            # Primary: stable pointer set by sync_create_new. Handles duplicate
+            # computed-guid homonyms by ignoring the un-linked orphan Anki notes.
+            local_item = self._db.get_collocation_by_anki_note_id(rec.anki_note_id)
             if local_item is None:
-                continue
-
-            guid = rec.anki_guid
+                # Fallback: row was never linked (e.g., imported before anki_note_id
+                # column was populated). Validate guid before trusting it.
+                expected_guid = compute_guid(rec.l2_text, "sl", rec.disambig_key)
+                if rec.anki_guid != expected_guid:
+                    report.skipped_unknown_guid += 1
+                    continue
+                local_item = self._db.get_collocation_by_guid(rec.anki_guid)
+                if local_item is None:
+                    continue
+                # If the row is already linked to a different Anki note, this
+                # record is an orphan — skip it.
+                if local_item.anki_note_id is not None and local_item.anki_note_id != rec.anki_note_id:
+                    continue
+                guid = rec.anki_guid
+            else:
+                guid = local_item.guid
             local_dirty_fields = self._db.get_dirty_fields(guid)
             dirty_set = {f for f in local_dirty_fields.split(",") if f}
 

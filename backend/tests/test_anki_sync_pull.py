@@ -881,3 +881,74 @@ class TestSyncPullNoOp:
         report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
 
         assert report.directions_updated == 1
+
+
+class TestSyncPullIdFirstLookup:
+    """B19: primary lookup by anki_note_id prevents duplicate-guid collision."""
+
+    def test_duplicate_anki_notes_only_linked_one_updates_tt(self):
+        """Two Anki notes share the same computed guid but have different note IDs and
+        translations. Only the one whose anki_note_id is stored in TT should win."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        NID_A = 7001
+        NID_B = 7002
+
+        # Link TT row to NID_A (the "carry" note — not the default "bank").
+        db.set_anki_ids(guid, note_id=NID_A, card_ids={})
+
+        records = [
+            NoteRecord(
+                anki_note_id=NID_A,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="carry",
+                disambig_key="",
+                mod=0,
+                cards=[],
+            ),
+            NoteRecord(
+                anki_note_id=NID_B,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="wear",
+                disambig_key="",
+                mod=0,
+                cards=[],
+            ),
+        ]
+
+        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+
+        # NID_A's translation wins; NID_B is ignored.
+        item = db.get_collocation("banka")
+        assert item.syntactic_unit.translation == "carry"
+
+        # Second run: TT already matches NID_A → idempotent (NID_B still ignored).
+        report2 = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        assert report2.notes_updated == 0
+
+    def test_unlinked_tt_row_still_falls_back_to_guid_lookup(self):
+        """TT row with anki_note_id=NULL is still matched via guid fallback."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        # Do NOT call set_anki_ids — row stays unlinked (anki_note_id IS NULL).
+
+        records = [
+            NoteRecord(
+                anki_note_id=8001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="savings bank",
+                disambig_key="",
+                mod=0,
+                cards=[],
+            )
+        ]
+
+        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+
+        assert report.notes_updated == 1
+        item = db.get_collocation("banka")
+        assert item.syntactic_unit.translation == "savings bank"
