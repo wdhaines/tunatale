@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
-from app.srs.feedback import ImplicitFeedbackAdapter, rating_from_input
+from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, schedule
 from app.srs.lemmatizer import LowercaseLemmatizer
 from app.srs.tokenizer import tokenize
@@ -23,7 +23,6 @@ from app.srs.transcript import extract_transcript
 router = APIRouter(prefix="/api/srs", tags=["srs"])
 _MEDIA_DIR = Path(__file__).parent.parent.parent / "media"
 
-_feedback_adapter = ImplicitFeedbackAdapter()
 _lemmatizer = LowercaseLemmatizer()
 
 _WORD_RATING_MAP: dict[str, Rating] = {
@@ -76,11 +75,6 @@ def _item_to_dict(
         },
         "image_url": image_url,
     }
-
-
-class FeedbackRequest(BaseModel):
-    collocation_text: str
-    signal: str  # no_help | slowdown | translation_request | fast_forward
 
 
 class ListenRequest(BaseModel):
@@ -173,20 +167,6 @@ async def serve_media(filename: str, request: Request):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Media file not found")
     return FileResponse(file_path)
-
-
-@router.post("/feedback", status_code=200)
-async def record_feedback(body: FeedbackRequest, request: Request):
-    db = request.app.state.srs_db
-
-    item = db.get_collocation(body.collocation_text)
-    if item is None:
-        return {"status": "not_found"}
-
-    rating = _feedback_adapter.signal_to_rating(body.signal)
-    updated = schedule(item, rating)
-    db.update_collocation(updated)
-    return {"status": "ok", "new_due_date": str(updated.due_date)}
 
 
 @router.post("/listen", status_code=200)
@@ -369,6 +349,7 @@ class BulkDeleteRequest(BaseModel):
 
 class SuspendRequest(BaseModel):
     suspended: bool
+    direction: str | None = None
 
 
 class SetStateRequest(BaseModel):
@@ -494,6 +475,12 @@ async def suspend_item(item_id: int, body: SuspendRequest, request: Request):
     db = request.app.state.srs_db
     if db.get_collocation_by_id(item_id) is None:
         raise HTTPException(status_code=404, detail="Item not found")
-    db.set_suspended(item_id, body.suspended)
+    dir_enum: Direction | None = None
+    if body.direction is not None:
+        try:
+            dir_enum = Direction(body.direction)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid direction: {body.direction!r}") from exc
+    db.set_suspended(item_id, body.suspended, direction=dir_enum)
     row_id, item, lang = db.get_collocation_by_id(item_id)
     return _item_to_dict(row_id, item, lang)

@@ -32,7 +32,7 @@ export interface LessonSummary {
 }
 
 export type ContentStrategy = 'WIDER' | 'DEEPER';
-export type FeedbackSignal = 'no_help' | 'slowdown' | 'translation_request' | 'fast_forward';
+export type Direction = 'recognition' | 'production';
 
 export interface PhraseDetail {
 	text: string;
@@ -257,6 +257,13 @@ export class TunaTaleAPI {
 		return data.due;
 	}
 
+	async fetchNew(direction: Direction, limit = 20): Promise<SRSItemDetail[]> {
+		const data = await this.request<{ new: SRSItemDetail[] }>(
+			`/api/srs/new?direction=${direction}&limit=${limit}`
+		);
+		return data.new;
+	}
+
 	async submitDrill(
 		itemId: number,
 		direction: 'recognition' | 'production',
@@ -271,14 +278,6 @@ export class TunaTaleAPI {
 
 	async getSRSStats(): Promise<SRSStats> {
 		return this.request('/api/srs/stats');
-	}
-
-	async postSRSFeedback(text: string, signal: FeedbackSignal): Promise<{ status: string; new_due_date?: string }> {
-		return this.request('/api/srs/feedback', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ collocation_text: text, signal })
-		});
 	}
 
 	async markAsListened(
@@ -337,11 +336,11 @@ export class TunaTaleAPI {
 		return this.request(`/api/srs/items/${id}/reset`, { method: 'POST' });
 	}
 
-	async suspendSRSItem(id: number, suspended: boolean): Promise<SRSItemDetail> {
+	async suspendSRSItem(id: number, suspended: boolean, direction?: Direction): Promise<SRSItemDetail> {
 		return this.request(`/api/srs/items/${id}/suspend`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ suspended })
+			body: JSON.stringify({ suspended, ...(direction ? { direction } : {}) })
 		});
 	}
 

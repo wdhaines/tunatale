@@ -10,16 +10,16 @@ test('backend health check', async ({ request }) => {
 test('home page loads', async ({ page }) => {
 	await page.goto('/');
 	await expect(page.getByRole('link', { name: 'TunaTale' })).toBeVisible();
-	await expect(page.getByRole('link', { name: 'Practice' })).toBeVisible();
+	await expect(page.locator('nav').getByRole('link', { name: 'Review' })).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Generate' })).toBeDisabled();
 });
 
-test('practice page loads', async ({ page }) => {
-	await page.goto('/practice');
+test('review page loads', async ({ page }) => {
+	await page.goto('/review');
 	await expect(page.getByRole('link', { name: /TunaTale/ })).toBeVisible();
-	// Either shows loading → empty state, or cards if any are due
+	// Either shows loading → done state when no cards
 	await expect(
-		page.getByText(/No cards due|Loading cards…/)
+		page.getByText(/Done for today|Loading/)
 	).toBeVisible({ timeout: 5000 });
 });
 
@@ -46,14 +46,13 @@ test('generate curriculum flow', async ({ page, request }) => {
 	await expect(page.getByText('Day 1')).toBeVisible();
 });
 
-test('practice page shows stats from backend', async ({ page, request }) => {
+test('review page shows done state when no cards due', async ({ page, request }) => {
 	const health = await request.get('http://localhost:8001/api/health');
 	test.skip(!health.ok(), 'Backend not available');
 
-	await page.goto('/practice');
-	// Stats section is populated once backend responds
+	await page.goto('/review');
 	await expect(
-		page.getByText(/cards total/)
+		page.getByText(/Done for today/)
 	).toBeVisible({ timeout: 5000 });
 });
 

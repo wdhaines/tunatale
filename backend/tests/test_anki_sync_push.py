@@ -823,3 +823,49 @@ class TestOfflineOrdering:
 
         # write_revlog is NOT called because dirty_fsrs was cleared by pull
         assert "write_revlog" not in writer.action_names()
+
+
+# ── TestRevlogFactor ─────────────────────────────────────────────────────────
+
+
+class TestRevlogFactor:
+    """revlog.factor must be derived from difficulty, not hardcoded 2500."""
+
+    def _push_with_difficulty(self, difficulty: float) -> list[tuple]:
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=10),
+            stability=10.5,
+            difficulty=difficulty,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+        return writer.calls
+
+    def test_difficulty_3_maps_to_factor_3000(self):
+        calls = self._push_with_difficulty(3.0)
+        revlog_call = next(c for c in calls if c[0] == "write_revlog")
+        assert revlog_call[5] == 3000
+
+    def test_difficulty_8_maps_to_factor_8000(self):
+        calls = self._push_with_difficulty(8.0)
+        revlog_call = next(c for c in calls if c[0] == "write_revlog")
+        assert revlog_call[5] == 8000
+
+    def test_difficulty_0_5_clamped_to_1300(self):
+        calls = self._push_with_difficulty(0.5)
+        revlog_call = next(c for c in calls if c[0] == "write_revlog")
+        assert revlog_call[5] == 1300
+
+    def test_difficulty_15_clamped_to_13000(self):
+        calls = self._push_with_difficulty(15.0)
+        revlog_call = next(c for c in calls if c[0] == "write_revlog")
+        assert revlog_call[5] == 13000

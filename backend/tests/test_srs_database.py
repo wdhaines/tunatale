@@ -110,6 +110,13 @@ class TestDueQueries:
         new = srs_db.get_new_collocations(limit=10)
         assert len(new) == 2
 
+    def test_get_new_items_returns_stable_order(self, srs_db):
+        for t in ["word0", "word1", "word2", "word3", "word4"]:
+            srs_db.add_collocation(_unit(t, f"trans_{t}"), language_code="sl")
+        first = [item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(limit=5)]
+        second = [item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(limit=5)]
+        assert first == second
+
     def test_count_collocations(self, srs_db):
         assert srs_db.count_collocations() == 0
         srs_db.add_collocation(_unit("dober dan"), language_code="sl")
@@ -227,6 +234,78 @@ class TestAdminMutations:
         srs_db.set_suspended(row_id, False)
         item = srs_db.get_collocation("lep")
         assert item.state == SRSState.NEW
+
+
+class TestUnsuspendRestoresState:
+    """Fix 2: unsuspend must restore REVIEW for mature cards, not always NEW."""
+
+    def _add_with_reps(self, db: SRSDatabase, text: str, reps: int, stability: float = 15.0) -> int:
+        db.add_collocation(_unit(text, "trans"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+        guid = db.get_collocation(text).guid
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=stability,
+            difficulty=4.5,
+            reps=reps,
+            lapses=0,
+            state=SRSState.REVIEW if reps > 0 else SRSState.NEW,
+            dirty_fsrs=False,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+        return row_id
+
+    def test_unsuspend_mature_direction_restores_review(self):
+        db = SRSDatabase(":memory:")
+        row_id = self._add_with_reps(db, "banka", reps=5, stability=15.0)
+        db.set_suspended(row_id, True, direction=Direction.RECOGNITION)
+        db.set_suspended(row_id, False, direction=Direction.RECOGNITION)
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.REVIEW
+
+    def test_unsuspend_fresh_direction_stays_new(self):
+        db = SRSDatabase(":memory:")
+        row_id = self._add_with_reps(db, "banka", reps=0)
+        db.set_suspended(row_id, True, direction=Direction.RECOGNITION)
+        db.set_suspended(row_id, False, direction=Direction.RECOGNITION)
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.NEW
+
+    def test_unsuspend_recognition_only_leaves_production_unchanged(self):
+        db = SRSDatabase(":memory:")
+        row_id = self._add_with_reps(db, "banka", reps=5)
+        # Suspend only recognition
+        db.set_suspended(row_id, True, direction=Direction.RECOGNITION)
+        prod_before = db.get_collocation("banka").directions[Direction.PRODUCTION].state
+        # Unsuspend only recognition
+        db.set_suspended(row_id, False, direction=Direction.RECOGNITION)
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.REVIEW
+        assert item.directions[Direction.PRODUCTION].state == prod_before
+
+    def test_unsuspend_marks_direction_dirty_fsrs(self):
+        db = SRSDatabase(":memory:")
+        row_id = self._add_with_reps(db, "banka", reps=5)
+        db.set_suspended(row_id, True, direction=Direction.RECOGNITION)
+        db.set_suspended(row_id, False, direction=Direction.RECOGNITION)
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
+
+    def test_reps_and_stability_unchanged_after_unsuspend(self):
+        db = SRSDatabase(":memory:")
+        row_id = self._add_with_reps(db, "banka", reps=5, stability=15.0)
+        db.set_suspended(row_id, True, direction=Direction.RECOGNITION)
+        db.set_suspended(row_id, False, direction=Direction.RECOGNITION)
+        item = db.get_collocation("banka")
+        ds = item.directions[Direction.RECOGNITION]
+        assert ds.reps == 5
+        assert ds.stability == 15.0
+
+    def test_unsuspend_nonexistent_direction_is_noop(self):
+        db = SRSDatabase(":memory:")
+        db.set_suspended(9999, False, direction=Direction.RECOGNITION)  # should not raise
 
 
 class TestListCollocations:

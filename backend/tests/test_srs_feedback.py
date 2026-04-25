@@ -1,31 +1,6 @@
 """SRS feedback tests."""
 
-import pytest
-
-from app.models.srs_item import Rating
-from app.srs.feedback import ImplicitFeedbackAdapter, PostGenerationFeedback
-
-
-class TestImplicitFeedbackAdapter:
-    """Tests for ImplicitFeedbackAdapter signal-to-rating mappings."""
-
-    @pytest.mark.parametrize(
-        "signal, expected_rating",
-        [
-            ("no_help", Rating.GOOD),
-            ("slowdown", Rating.HARD),
-            ("translation_request", Rating.AGAIN),
-            ("fast_forward", Rating.EASY),
-        ],
-    )
-    def test_signal_to_rating(self, signal, expected_rating):
-        adapter = ImplicitFeedbackAdapter()
-        assert adapter.signal_to_rating(signal) == expected_rating, f"signal={signal!r}"
-
-    def test_unknown_signal_raises(self):
-        adapter = ImplicitFeedbackAdapter()
-        with pytest.raises((ValueError, KeyError)):
-            adapter.signal_to_rating("unknown_signal")
+from app.srs.feedback import PostGenerationFeedback
 
 
 class TestPostGenerationFeedback:

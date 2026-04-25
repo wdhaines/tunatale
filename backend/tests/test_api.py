@@ -447,35 +447,6 @@ class TestSRSEndpoints:
         data = response.json()
         assert "total" in data
 
-    async def test_srs_feedback_returns_not_found_for_unknown_collocation(self):
-        from app.srs.database import SRSDatabase
-
-        app.state.srs_db = SRSDatabase(":memory:")
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post(
-                "/api/srs/feedback",
-                json={"collocation_text": "nonexistent_word", "signal": "no_help"},
-            )
-        assert response.status_code == 200
-        assert response.json()["status"] == "not_found"
-
-    async def test_srs_feedback_returns_ok(self):
-        from app.models.syntactic_unit import SyntacticUnit
-        from app.srs.database import SRSDatabase
-
-        db = SRSDatabase(":memory:")
-        unit = SyntacticUnit(text="dober dan", translation="good day", word_count=2, difficulty=1, source="llm")
-        db.add_collocation(unit)
-        app.state.srs_db = db
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post(
-                "/api/srs/feedback",
-                json={"collocation_text": "dober dan", "signal": "no_help"},
-            )
-        assert response.status_code == 200
-        assert response.json()["status"] == "ok"
-
     async def test_srs_new_returns_200(self):
         from app.models.syntactic_unit import SyntacticUnit
         from app.srs.database import SRSDatabase

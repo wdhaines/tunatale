@@ -86,16 +86,10 @@ describe('Home page', () => {
 });
 
 describe('Review links', () => {
-	it('renders a link to /review/recognition', async () => {
+	it('renders a single Review link to /review', async () => {
 		const { findByRole } = render(Page);
-		const link = await findByRole('link', { name: /recognition/i });
-		expect((link as HTMLAnchorElement).getAttribute('href')).toBe('/review/recognition');
-	});
-
-	it('renders a link to /review/production', async () => {
-		const { findByRole } = render(Page);
-		const link = await findByRole('link', { name: /production/i });
-		expect((link as HTMLAnchorElement).getAttribute('href')).toBe('/review/production');
+		const link = await findByRole('link', { name: /^Review$/i });
+		expect((link as HTMLAnchorElement).getAttribute('href')).toBe('/review');
 	});
 });
 

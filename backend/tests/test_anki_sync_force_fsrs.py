@@ -330,3 +330,16 @@ class TestSyncPushForceFsrs:
         sync = AnkiSync(db=db, _reader=FakeReader(), _writer=writer, _anki_col_ver=None)
         sync.sync_push(force_fsrs=True)
         assert "set_specific_value_of_card" in writer.action_names()
+
+    def test_force_fsrs_factor_derived_from_difficulty(self):
+        """set_specific_value_of_card must write difficulty-derived factor, not 2500."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        _mark_direction_dirty(db, guid, Direction.RECOGNITION, stability=10.5, difficulty=6.0, anki_card_id=rec_cid)
+        writer = FakeWriter()
+        sync = AnkiSync(db=db, _reader=FakeReader(), _writer=writer)
+        sync.sync_push(force_fsrs=True)
+        fsrs_call = next(c for c in writer.calls if c[0] == "set_specific_value_of_card")
+        _, _, keys, new_values = fsrs_call
+        factor_idx = keys.index("factor")
+        assert new_values[factor_idx] == "6000"

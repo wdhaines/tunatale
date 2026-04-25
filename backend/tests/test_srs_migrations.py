@@ -1,7 +1,7 @@
 """Tests for versioned SRS database migrations."""
 
 import sqlite3
-from datetime import date, timedelta
+from datetime import date
 
 import pytest
 
@@ -141,17 +141,16 @@ class TestMigrations:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         assert "collocation_tags" in tables
 
-    def test_production_due_dates_spread_within_30_days(self):
+    def test_production_due_dates_seeded_to_today(self):
         conn = _make_v1_conn()
-        for i in range(10):
+        for i in range(3):
             _insert(conn, f"word{i}", due_date="2026-01-01")
         migrate(conn)
         today = date.today()
         rows = conn.execute("SELECT due_date FROM collocation_directions WHERE direction = 'production'").fetchall()
-        assert len(rows) == 10
+        assert len(rows) == 3
         for row in rows:
-            d = date.fromisoformat(row["due_date"])
-            assert today <= d <= today + timedelta(days=30), f"production due_date {d} out of spread window"
+            assert row["due_date"] == today.isoformat(), f"production due_date should be today, got {row['due_date']}"
 
     def test_idempotent_on_rerun(self):
         conn = _make_v1_conn()

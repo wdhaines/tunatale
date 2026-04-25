@@ -6,10 +6,9 @@ a single transaction. Migrations must be idempotent (safe to re-run).
 
 from __future__ import annotations
 
-import hashlib
 import re
 import sqlite3
-from datetime import date, timedelta
+from datetime import date
 
 from app.common.guid import compute_guid
 
@@ -45,12 +44,6 @@ def migrate_v0_to_v1(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE collocations ADD COLUMN lemma TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_collocations_lemma ON collocations(lemma)")
     _set_version(conn, 1)
-
-
-def _spread_production_due_date(text: str, today: date) -> date:
-    """Deterministic spread across the next 30 days based on text hash."""
-    h = int(hashlib.sha1(text.encode("utf-8")).hexdigest(), 16)
-    return today + timedelta(days=h % 30)
 
 
 def migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -180,8 +173,6 @@ def migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
             ),
         )
 
-        # Production direction: seeded new, due date spread across 30 days.
-        prod_due = _spread_production_due_date(row_d["text"], today).isoformat()
         conn.execute(
             """
             INSERT INTO collocation_directions
@@ -189,7 +180,7 @@ def migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
                  reps, lapses, state, last_review)
             VALUES (?, 'production', 1.0, 5.0, ?, 0, 0, 'new', NULL)
             """,
-            (new_id, prod_due),
+            (new_id, today.isoformat()),
         )
 
     conn.execute("DROP TABLE _collocations_v1")

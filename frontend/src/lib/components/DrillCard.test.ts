@@ -88,6 +88,14 @@ describe('DrillCard', () => {
 			await fireEvent.click(await findByRole('button', { name: 'Hard' }));
 			expect(onRate).toHaveBeenCalledWith('hard');
 		});
+
+		it('calls onRate with "easy" when Easy clicked', async () => {
+			const onRate = vi.fn().mockResolvedValue(undefined);
+			const { findByRole } = render(DrillCard, { item: makeItem(), promptSide: 'L2', onRate });
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			await fireEvent.click(await findByRole('button', { name: 'Easy' }));
+			expect(onRate).toHaveBeenCalledWith('easy');
+		});
 	});
 
 	describe('production mode (promptSide=image)', () => {

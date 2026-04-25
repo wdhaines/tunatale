@@ -37,8 +37,7 @@
 	<section class="review-section">
 		<h2>Review</h2>
 		<div class="review-links">
-			<a href="/review/recognition" class="review-btn">Review (recognition)</a>
-			<a href="/review/production" class="review-btn">Review (production)</a>
+			<a href="/review" class="review-btn">Review</a>
 		</div>
 	</section>
 

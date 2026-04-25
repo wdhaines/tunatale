@@ -444,6 +444,47 @@ class TestResetSuspend:
         assert data["state"] == "new"
         assert data["reps"] == 0
 
+    async def test_suspend_item_invalid_direction_returns_422(self):
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                f"/api/srs/items/{row_id}/suspend",
+                json={"suspended": False, "direction": "baddir"},
+            )
+        assert response.status_code == 422
+
+    async def test_suspend_item_with_direction_param(self):
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+        guid = db.get_collocation("banka").guid
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=15.0,
+            difficulty=4.5,
+            reps=5,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=False,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            suspend_resp = await client.post(
+                f"/api/srs/items/{row_id}/suspend",
+                json={"suspended": False, "direction": "recognition"},
+            )
+        assert suspend_resp.status_code == 200
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.REVIEW
+
     async def test_suspend_item_then_excluded_from_due_queue(self):
         db = _db()
         db.add_collocation(_unit("lep", "nice"), language_code="sl")

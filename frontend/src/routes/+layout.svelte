@@ -12,7 +12,7 @@
 <nav class="global-nav">
 	<a href="/" class="brand">TunaTale</a>
 	<div class="nav-links">
-		<a href="/practice" class:active={$page.url.pathname === '/practice'}>Practice</a>
+		<a href="/review" class:active={$page.url.pathname === '/review'}>Review</a>
 		<a href="/admin/srs" class:active={$page.url.pathname.startsWith('/admin')}>Admin</a>
 	</div>
 </nav>

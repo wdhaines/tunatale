@@ -236,29 +236,6 @@ describe('TunaTaleAPI', () => {
 			expect(result.due_today).toBe(3);
 		});
 
-		it('postSRSFeedback calls POST /api/srs/feedback with correct body', async () => {
-			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ status: 'ok' })));
-
-			const result = await api.postSRSFeedback('dober dan', 'no_help');
-
-			expect(fetch).toHaveBeenCalledWith(
-				`${BASE}/api/srs/feedback`,
-				expect.objectContaining({
-					method: 'POST',
-					body: JSON.stringify({ collocation_text: 'dober dan', signal: 'no_help' })
-				})
-			);
-			expect(result.status).toBe('ok');
-		});
-
-		it('postSRSFeedback throws on non-ok response', async () => {
-			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail()));
-
-			await expect(api.postSRSFeedback('dober dan', 'no_help')).rejects.toThrow(
-				'POST /api/srs/feedback: Internal Server Error'
-			);
-		});
-
 		it('getSRSNew calls GET /api/srs/new', async () => {
 			const mockResponse = { new: [{ text: 'dober dan', translation: 'good day' }] };
 			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk(mockResponse)));
@@ -275,6 +252,24 @@ describe('TunaTaleAPI', () => {
 			await expect(api.getSRSNew()).rejects.toThrow(
 				'GET /api/srs/new: Internal Server Error'
 			);
+		});
+
+		it('fetchNew calls GET /api/srs/new?direction=recognition&limit=20 by default', async () => {
+			const mockItems = [{ id: 1, text: 'banka', translation: 'bank' }];
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ new: mockItems })));
+
+			const result = await api.fetchNew('recognition');
+
+			expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/new?direction=recognition&limit=20`);
+			expect(result).toEqual(mockItems);
+		});
+
+		it('fetchNew accepts custom limit', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ new: [] })));
+
+			await api.fetchNew('production', 5);
+
+			expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/new?direction=production&limit=5`);
 		});
 
 		it('markAsListened calls POST /api/srs/listen with lesson_id and empty word_ratings by default', async () => {

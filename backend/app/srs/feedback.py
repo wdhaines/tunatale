@@ -1,7 +1,7 @@
-"""SRS feedback adapters.
+"""SRS feedback utilities.
 
-ImplicitFeedbackAdapter: maps learner signals → FSRS ratings.
 PostGenerationFeedback: identifies which collocations appear in a generated story.
+rating_from_input: maps explicit rating strings or implicit signal strings to FSRS ratings.
 """
 
 from __future__ import annotations
@@ -40,23 +40,6 @@ def rating_from_input(rating: str | None = None, signal: str | None = None) -> R
     if signal not in _SIGNAL_MAP:
         raise ValueError(f"Unknown signal {signal!r}. Valid: {list(_SIGNAL_MAP)}")
     return _SIGNAL_MAP[signal]
-
-
-class ImplicitFeedbackAdapter:
-    """Maps implicit learner signals to FSRS ratings."""
-
-    def signal_to_rating(self, signal: str) -> Rating:
-        """Convert a learner signal string to an FSRS Rating.
-
-        Signals:
-            no_help: Learner did not request help → Good
-            slowdown: Learner slowed playback → Hard
-            translation_request: Learner requested translation → Again
-            fast_forward: Learner fast-forwarded → Easy
-        """
-        if signal not in _SIGNAL_MAP:
-            raise ValueError(f"Unknown signal {signal!r}. Valid: {list(_SIGNAL_MAP)}")
-        return _SIGNAL_MAP[signal]
 
 
 class PostGenerationFeedback:

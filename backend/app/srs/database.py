@@ -534,6 +534,7 @@ class SRSDatabase:
                 SELECT c.* FROM collocations c
                 JOIN collocation_directions d ON d.collocation_id = c.id
                 WHERE d.direction = ? AND d.state = 'new'
+                ORDER BY c.created_at ASC, c.id ASC
                 LIMIT ?
                 """,
                 (direction.value, limit),
@@ -678,9 +679,35 @@ class SRSDatabase:
         suspended: bool,
         direction: Direction | None = None,
     ) -> None:
-        """Suspend or unsuspend a collocation. Unsuspending resets state to 'new'."""
-        new_state = SRSState.SUSPENDED if suspended else SRSState.NEW
-        self.set_state_by_id(row_id, new_state, direction=direction)
+        """Suspend or unsuspend a collocation.
+
+        Suspending sets SUSPENDED. Unsuspending restores REVIEW for directions
+        with reps>0 and marks dirty_fsrs=1 so the next push syncs to Anki.
+        """
+        if suspended:
+            self.set_state_by_id(row_id, SRSState.SUSPENDED, direction=direction)
+            return
+
+        dirs_to_restore = [direction] if direction is not None else list(Direction)
+        with self._get_conn() as conn:
+            for d in dirs_to_restore:
+                row = conn.execute(
+                    "SELECT reps FROM collocation_directions WHERE collocation_id = ? AND direction = ?",
+                    (row_id, d.value),
+                ).fetchone()
+                if row is None:
+                    continue
+                restored = SRSState.REVIEW if row["reps"] > 0 else SRSState.NEW
+                conn.execute(
+                    "UPDATE collocation_directions SET state = ?, dirty_fsrs = 1"
+                    " WHERE collocation_id = ? AND direction = ?",
+                    (restored.value, row_id, d.value),
+                )
+            conn.execute(
+                "UPDATE collocations SET updated_at = datetime('now') WHERE id = ?",
+                (row_id,),
+            )
+            self._commit(conn)
 
     def list_collocations(
         self,

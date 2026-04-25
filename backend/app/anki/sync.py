@@ -651,12 +651,13 @@ class AnkiSync:
                 if ds.reps > 0:
                     ivl = max(1, round(ds.stability))
                     ease = ds.last_rating if ds.last_rating is not None else 3
+                    factor = max(1300, min(13000, round(ds.difficulty * 1000)))
                     self._writer.write_revlog(
                         cid=ds.anki_card_id,
                         ease=ease,
                         ivl=ivl,
                         last_ivl=ivl,
-                        factor=2500,
+                        factor=factor,
                         time_ms=0,
                         type_=2,
                     )
@@ -665,10 +666,11 @@ class AnkiSync:
                     if schema_ok:
                         ivl_val = max(1, round(ds.stability))
                         data_json = _json.dumps({"s": ds.stability, "d": ds.difficulty})
+                        factor_val = max(1300, min(13000, round(ds.difficulty * 1000)))
                         self._writer.set_specific_value_of_card(
                             ds.anki_card_id,
                             keys=["data", "ivl", "factor"],
-                            new_values=[data_json, str(ivl_val), "2500"],
+                            new_values=[data_json, str(ivl_val), str(factor_val)],
                         )
                 self._db.mark_direction_clean(guid, direction)
             report.directions_pushed += 1
