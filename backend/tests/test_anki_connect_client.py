@@ -243,3 +243,20 @@ def test_set_specific_value_of_card_sends_correct_envelope():
     assert body["params"]["card"] == 77
     assert body["params"]["keys"] == ["due", "ivl"]
     assert body["params"]["newValues"] == ["3", "10"]
+
+
+def test_get_deck_config_sends_correct_action_and_returns_config():
+    config = {"id": 1, "name": "Default", "new": {"perDay": 30}, "rev": {"perDay": 200}}
+    transport = success_transport(config)
+    client = AnkiConnectClient(http_client=httpx.Client(transport=transport))
+    result = client.get_deck_config("0. Slovene")
+    body = _body(transport)
+    assert body["action"] == "getDeckConfig"
+    assert body["params"]["deck"] == "0. Slovene"
+    assert result["new"]["perDay"] == 30
+
+
+def test_get_deck_config_raises_unavailable_when_refused():
+    client = AnkiConnectClient(http_client=httpx.Client(transport=RefusedTransport()))
+    with pytest.raises(AnkiConnectUnavailable):
+        client.get_deck_config("0. Slovene")

@@ -2,12 +2,17 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import CurriculumForm from '$lib/components/CurriculumForm.svelte';
-	import type { CurriculumSummary } from '$lib/api';
+	import type { CurriculumSummary, QueueStats } from '$lib/api';
 	import { api } from '$lib/api';
 
 	let curricula: Array<{ id: string; topic: string; created_at: string }> = $state([]);
 	let listLoading = $state(true);
 	let listError = $state('');
+	let queueStats = $state<QueueStats | null>(null);
+
+	let reviewLabel = $derived(
+		queueStats ? `Review · New ${queueStats.new} · Due ${queueStats.due}` : 'Review'
+	);
 
 	onMount(async () => {
 		try {
@@ -16,6 +21,12 @@
 			listError = e instanceof Error ? e.message : String(e);
 		} finally {
 			listLoading = false;
+		}
+		// Load queue stats independently — don't block the page on failure
+		try {
+			queueStats = await api.fetchQueueStats();
+		} catch {
+			// silently ignore — button shows plain "Review"
 		}
 	});
 
@@ -37,7 +48,7 @@
 	<section class="review-section">
 		<h2>Review</h2>
 		<div class="review-links">
-			<a href="/review" class="review-btn">Review</a>
+			<a href="/review" class="review-btn">{reviewLabel}</a>
 		</div>
 	</section>
 

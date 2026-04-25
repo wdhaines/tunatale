@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import type { SRSItemDetail, SRSListParams } from '$lib/api';
+	import type { SRSItemDetail, SRSListParams, QueueStats } from '$lib/api';
 
 	const PAGE_SIZE = 50;
 
@@ -19,6 +19,7 @@
 	let loading = $state(false);
 	let error = $state<string | null>(null);
 	let syncStatus = $state<string | null>(null);
+	let queueStats = $state<QueueStats | null>(null);
 
 	let debounceTimer: ReturnType<typeof setTimeout>;
 	let lastSearch = $state('');
@@ -35,9 +36,13 @@
 			};
 			if (lastSearch) params.search = lastSearch;
 			if (stateFilter) params.state = stateFilter;
-			const data = await api.listSRSItems(params);
+			const [data, stats] = await Promise.all([
+				api.listSRSItems(params),
+				api.fetchQueueStats().catch(() => null),
+			]);
 			items = data.items;
 			total = data.total;
+			if (stats) queueStats = stats;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -174,7 +179,7 @@
 
 <main>
 	<div class="toolbar">
-		<h1>SRS Admin <span class="muted">· {total} total</span></h1>
+		<h1>SRS Admin <span class="muted">· {total} total{#if queueStats} · {queueStats.new} new · {queueStats.due} due today{/if}</span></h1>
 		<div class="controls">
 			<input
 				type="search"

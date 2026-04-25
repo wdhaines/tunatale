@@ -1,19 +1,18 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import type { SRSItemDetail } from '$lib/api';
+	import type { SRSItemDetail, QueueStats } from '$lib/api';
 	import DrillCard from '$lib/components/DrillCard.svelte';
 
 	type Direction = 'recognition' | 'production';
 	type QueueItem = { item: SRSItemDetail; direction: Direction };
-
-	const NEW_CAP = 20;
 
 	let queue: QueueItem[] = $state([]);
 	let index = $state(0);
 	let loading = $state(true);
 	let error = $state('');
 	let reviewed = $state(0);
+	let stats = $state<QueueStats | null>(null);
 
 	let current = $derived(queue[index]);
 	let done = $derived(!loading && !error && index >= queue.length);
@@ -36,12 +35,20 @@
 
 	onMount(async () => {
 		try {
-			const [dueRec, dueProd, newRec, newProd] = await Promise.all([
+			const queueStats = await api.fetchQueueStats();
+			stats = queueStats;
+			const recCap = Math.ceil(queueStats.daily_new_cap / 2);
+			const prodCap = Math.floor(queueStats.daily_new_cap / 2);
+
+			const fetches: Promise<SRSItemDetail[]>[] = [
 				api.fetchDue('recognition'),
 				api.fetchDue('production'),
-				api.fetchNew('recognition', NEW_CAP),
-				api.fetchNew('production', NEW_CAP)
-			]);
+				api.fetchNew('recognition', recCap),
+			];
+			if (prodCap > 0) {
+				fetches.push(api.fetchNew('production', prodCap));
+			}
+			const [dueRec, dueProd, newRec, newProd = []] = await Promise.all(fetches);
 			queue = interleave([...dueRec, ...newRec], [...dueProd, ...newProd]);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -65,6 +72,10 @@
 
 <main>
 	<h1>Review</h1>
+
+	{#if stats}
+		<p class="stats">New {stats.new} · Due {stats.due}{stats.cap_source !== 'anki' ? ` (${stats.cap_source})` : ''}</p>
+	{/if}
 
 	{#if loading}
 		<p>Loading…</p>
@@ -120,5 +131,10 @@
 	}
 	.error {
 		color: var(--color-danger);
+	}
+	.stats {
+		color: var(--color-muted);
+		font-size: 0.9rem;
+		margin-bottom: 0.5rem;
 	}
 </style>

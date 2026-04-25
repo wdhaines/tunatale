@@ -97,3 +97,6 @@ class AnkiConnectClient:
 
     def set_specific_value_of_card(self, card_id: int, keys: list[str], newValues: list[str]) -> list[bool]:
         return self.invoke("setSpecificValueOfCard", card=card_id, keys=keys, newValues=newValues)
+
+    def get_deck_config(self, deck: str) -> dict:
+        return self.invoke("getDeckConfig", deck=deck)

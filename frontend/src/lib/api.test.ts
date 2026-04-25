@@ -568,4 +568,24 @@ describe('TunaTaleAPI', () => {
 			expect(result.dry_run).toBe(true);
 		});
 	});
+
+	describe('fetchQueueStats', () => {
+		it('calls GET /api/srs/queue-stats and returns parsed shape', async () => {
+			const payload = { new: 5, due: 12, daily_new_cap: 30, cap_source: 'anki' };
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk(payload)));
+
+			const result = await api.fetchQueueStats();
+
+			expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/queue-stats`);
+			expect(result.new).toBe(5);
+			expect(result.due).toBe(12);
+			expect(result.daily_new_cap).toBe(30);
+			expect(result.cap_source).toBe('anki');
+		});
+
+		it('throws on non-ok response', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail('Service Unavailable')));
+			await expect(api.fetchQueueStats()).rejects.toThrow('Service Unavailable');
+		});
+	});
 });

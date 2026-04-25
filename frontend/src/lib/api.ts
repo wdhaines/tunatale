@@ -172,6 +172,13 @@ export interface SRSStats {
 	due_today: number;
 }
 
+export interface QueueStats {
+	new: number;
+	due: number;
+	daily_new_cap: number;
+	cap_source: 'anki' | 'config' | 'default';
+}
+
 export class TunaTaleAPI {
 	private baseUrl: string;
 
@@ -278,6 +285,10 @@ export class TunaTaleAPI {
 
 	async getSRSStats(): Promise<SRSStats> {
 		return this.request('/api/srs/stats');
+	}
+
+	async fetchQueueStats(): Promise<QueueStats> {
+		return this.request('/api/srs/queue-stats');
 	}
 
 	async markAsListened(

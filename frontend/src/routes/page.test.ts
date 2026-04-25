@@ -13,7 +13,8 @@ vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => mockGoto(...ar
 vi.mock('$lib/api', () => ({
 	api: {
 		generateCurriculum: vi.fn(),
-		listCurricula: vi.fn()
+		listCurricula: vi.fn(),
+		fetchQueueStats: vi.fn()
 	}
 }));
 
@@ -26,10 +27,12 @@ vi.mock('$lib/storage', () => ({
 import { api } from '$lib/api';
 const mockGenerate = vi.mocked(api.generateCurriculum);
 const mockListCurricula = vi.mocked(api.listCurricula);
+const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	mockListCurricula.mockResolvedValue([{ id: 'x', topic: 'test', created_at: '2026-01-01 00:00:00' }]);
+	mockFetchQueueStats.mockResolvedValue({ new: 0, due: 0, daily_new_cap: 20, cap_source: 'default' });
 });
 
 describe('Home page', () => {
@@ -90,6 +93,26 @@ describe('Review links', () => {
 		const { findByRole } = render(Page);
 		const link = await findByRole('link', { name: /^Review$/i });
 		expect((link as HTMLAnchorElement).getAttribute('href')).toBe('/review');
+	});
+
+	it('shows plain Review link before stats load', () => {
+		mockFetchQueueStats.mockReturnValue(new Promise(() => {})); // never resolves
+		const { getByRole } = render(Page);
+		const link = getByRole('link', { name: /^Review$/i });
+		expect(link).toBeTruthy();
+	});
+
+	it('updates Review button label with New/Due counts after stats load', async () => {
+		mockFetchQueueStats.mockResolvedValue({ new: 8, due: 23, daily_new_cap: 30, cap_source: 'anki' });
+		const { findByText } = render(Page);
+		expect(await findByText(/Review.*New 8.*Due 23/)).toBeTruthy();
+	});
+
+	it('shows plain Review when fetchQueueStats rejects', async () => {
+		mockFetchQueueStats.mockRejectedValue(new Error('offline'));
+		const { findByRole } = render(Page);
+		const link = await findByRole('link', { name: /^Review$/i });
+		expect(link).toBeTruthy();
 	});
 });
 

@@ -1036,6 +1036,24 @@ class SRSDatabase:
             )
             self._commit(conn)
 
+    def count_new_available(self) -> int:
+        """Count all collocation_directions rows in the NEW state (both directions)."""
+        with self._get_conn() as conn:
+            return conn.execute("SELECT COUNT(*) FROM collocation_directions WHERE state = 'new'").fetchone()[0]
+
+    def count_due_today_total(self, today: date) -> int:
+        """Count all collocation_directions rows due on or before today, excluding non-reviewable states."""
+        placeholders = ",".join("?" * len(_NON_REVIEWABLE_STATES))
+        with self._get_conn() as conn:
+            return conn.execute(
+                f"""
+                SELECT COUNT(*) FROM collocation_directions
+                WHERE due_date <= ?
+                  AND state NOT IN ({placeholders})
+                """,
+                (today.isoformat(), *_NON_REVIEWABLE_STATES),
+            ).fetchone()[0]
+
     def count_due_collocations(
         self,
         as_of: date,

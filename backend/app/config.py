@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     anki_model_name: str = ""
     forvo_api_key: str = ""
     pixabay_api_key: str = ""
+    anki_new_per_day_default: int = 20
 
 
 settings = Settings()

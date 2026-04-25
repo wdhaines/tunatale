@@ -17,6 +17,7 @@ from app.models.syntactic_unit import SyntacticUnit
 from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, schedule
 from app.srs.lemmatizer import LowercaseLemmatizer
+from app.srs.queue_stats import resolve_daily_new_cap
 from app.srs.tokenizer import tokenize
 from app.srs.transcript import extract_transcript
 
@@ -326,6 +327,19 @@ async def get_stats(request: Request):
     db = request.app.state.srs_db
     today = datetime.date.today()
     return {"total": db.count_collocations(), "due_today": db.count_due_collocations(today)}
+
+
+@router.get("/queue-stats", status_code=200)
+async def get_queue_stats(request: Request):
+    db = request.app.state.srs_db
+    today = datetime.date.today()
+    cap, source = resolve_daily_new_cap()
+    return {
+        "new": min(cap, db.count_new_available()),
+        "due": db.count_due_today_total(today),
+        "daily_new_cap": cap,
+        "cap_source": source,
+    }
 
 
 # ── Admin endpoints ────────────────────────────────────────────────────────────

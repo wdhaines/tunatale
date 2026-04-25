@@ -13,7 +13,8 @@ vi.mock('$lib/api', () => ({
 		bulkDeleteSRSItems: vi.fn(),
 		resetSRSItem: vi.fn(),
 		suspendSRSItem: vi.fn(),
-		syncCreateNew: vi.fn()
+		syncCreateNew: vi.fn(),
+		fetchQueueStats: vi.fn()
 	}
 }));
 
@@ -26,6 +27,7 @@ const mockBulkDelete = vi.mocked(api.bulkDeleteSRSItems);
 const mockReset = vi.mocked(api.resetSRSItem);
 const mockSuspend = vi.mocked(api.suspendSRSItem);
 const mockSync = vi.mocked(api.syncCreateNew);
+const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 
 function makeItem(id: number, text: string, state: SRSItemDetail['state'] = 'new'): SRSItemDetail {
 	return {
@@ -47,6 +49,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	vi.useFakeTimers();
 	mockList.mockResolvedValue({ items: [], total: 0 });
+	mockFetchQueueStats.mockResolvedValue({ new: 0, due: 0, daily_new_cap: 20, cap_source: 'default' });
 });
 
 describe('admin/srs/+page.svelte', () => {
@@ -467,5 +470,23 @@ describe('admin/srs/+page.svelte', () => {
 		const { findByText } = render(AdminSRSPage);
 		await fireEvent.click(await findByText('Sync to Anki'));
 		expect(await findByText(/AnkiConnect unavailable/)).toBeTruthy();
+	});
+
+	// ── queue-stats toolbar line ──────────────────────────────────────────────
+
+	it('shows new and due counts in toolbar after stats load', async () => {
+		mockFetchQueueStats.mockResolvedValue({ new: 12, due: 47, daily_new_cap: 30, cap_source: 'anki' });
+		const { findByText } = render(AdminSRSPage);
+		expect(await findByText(/12 new/)).toBeTruthy();
+		expect(await findByText(/47 due today/)).toBeTruthy();
+	});
+
+	it('renders without stats line when fetchQueueStats rejects', async () => {
+		mockFetchQueueStats.mockRejectedValue(new Error('AnkiConnect down'));
+		const { findByText, queryByText } = render(AdminSRSPage);
+		// Page still loads items fine
+		await findByText(/0 total/);
+		// No "X new · Y due today" stats line should appear
+		expect(queryByText(/\d+ new · \d+ due today/)).toBeFalsy();
 	});
 });

@@ -10,7 +10,8 @@ vi.mock('$lib/api', () => ({
 	api: {
 		fetchDue: vi.fn(),
 		fetchNew: vi.fn(),
-		submitDrill: vi.fn()
+		submitDrill: vi.fn(),
+		fetchQueueStats: vi.fn()
 	}
 }));
 
@@ -18,6 +19,7 @@ import { api } from '$lib/api';
 const mockFetchDue = vi.mocked(api.fetchDue);
 const mockFetchNew = vi.mocked(api.fetchNew);
 const mockSubmitDrill = vi.mocked(api.submitDrill);
+const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 
 const makeItem = (
 	id: number,
@@ -49,6 +51,7 @@ beforeEach(() => {
 	mockFetchDue.mockResolvedValue([]);
 	mockFetchNew.mockResolvedValue([]);
 	mockSubmitDrill.mockResolvedValue({ new_due_date: '2026-04-25', new_state: 'review' });
+	mockFetchQueueStats.mockResolvedValue({ new: 0, due: 0, daily_new_cap: 20, cap_source: 'default' });
 });
 
 describe('review/+page.svelte', () => {
@@ -236,5 +239,59 @@ describe('review/+page.svelte', () => {
 		);
 		const { findByText } = render(ReviewPage);
 		expect(await findByText('water')).toBeTruthy();
+	});
+
+	// ── queue-stats breakdown display ──────────────────────────────────────────
+
+	it('shows New · Due breakdown from queue-stats', async () => {
+		mockFetchQueueStats.mockResolvedValue({ new: 7, due: 15, daily_new_cap: 30, cap_source: 'anki' });
+		const { findByText } = render(ReviewPage);
+		expect(await findByText(/New 7/)).toBeTruthy();
+		expect(await findByText(/Due 15/)).toBeTruthy();
+	});
+
+	it('shows source label when cap_source is not anki', async () => {
+		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 20, cap_source: 'default' });
+		const { findByText } = render(ReviewPage);
+		expect(await findByText(/\(default\)/)).toBeTruthy();
+	});
+
+	it('does not show source label when cap_source is anki', async () => {
+		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 30, cap_source: 'anki' });
+		const { queryByText, findByText } = render(ReviewPage);
+		// Wait for load to complete
+		await findByText(/New 5/);
+		expect(queryByText(/\(anki\)/)).toBeFalsy();
+	});
+
+	// ── cap-driven fetchNew calls ──────────────────────────────────────────────
+
+	it('uses daily_new_cap=30 to call fetchNew with 15 for each direction', async () => {
+		mockFetchQueueStats.mockResolvedValue({ new: 15, due: 0, daily_new_cap: 30, cap_source: 'anki' });
+		render(ReviewPage);
+		await waitFor(() => {
+			expect(mockFetchNew).toHaveBeenCalledWith('recognition', 15);
+			expect(mockFetchNew).toHaveBeenCalledWith('production', 15);
+		});
+	});
+
+	it('uses daily_new_cap=20 to call fetchNew with 10 for each direction', async () => {
+		mockFetchQueueStats.mockResolvedValue({ new: 10, due: 0, daily_new_cap: 20, cap_source: 'config' });
+		render(ReviewPage);
+		await waitFor(() => {
+			expect(mockFetchNew).toHaveBeenCalledWith('recognition', 10);
+			expect(mockFetchNew).toHaveBeenCalledWith('production', 10);
+		});
+	});
+
+	it('daily_new_cap=1 calls fetchNew with 1 for recognition and skips production', async () => {
+		mockFetchQueueStats.mockResolvedValue({ new: 1, due: 0, daily_new_cap: 1, cap_source: 'anki' });
+		render(ReviewPage);
+		await waitFor(() => {
+			expect(mockFetchNew).toHaveBeenCalledWith('recognition', 1);
+		});
+		// production cap is 0 → fetchNew for production should NOT be called
+		const prodCalls = mockFetchNew.mock.calls.filter(([dir]) => dir === 'production');
+		expect(prodCalls).toHaveLength(0);
 	});
 });

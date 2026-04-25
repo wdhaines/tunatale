@@ -588,3 +588,83 @@ class TestLastRatingPersistence:
         assert len(dirty) == 1
         _, _, fetched = dirty[0]
         assert fetched.last_rating is None
+
+
+class TestQueueStatHelpers:
+    """Tests for count_new_available and count_due_today_total."""
+
+    def _seed(self, db: SRSDatabase, text: str, rec_state: SRSState, prod_state: SRSState, due_offset_days: int = 0):
+        """Add one collocation and set both directions' states and due_date."""
+        unit = SyntacticUnit(text=text, translation="t", word_count=2, difficulty=1, source="corpus")
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation(text)
+        assert item is not None
+        today = date.today()
+        due = today + timedelta(days=due_offset_days)
+        for direction, state in [(Direction.RECOGNITION, rec_state), (Direction.PRODUCTION, prod_state)]:
+            ds = DirectionState(
+                direction=direction,
+                due_date=due,
+                stability=1.0,
+                difficulty=5.0,
+                reps=0 if state == SRSState.NEW else 1,
+                lapses=0,
+                state=state,
+            )
+            db.update_direction(item.guid, direction, ds)
+
+    def test_count_new_available_counts_both_direction_rows(self):
+        db = SRSDatabase(":memory:")
+        self._seed(db, "hvala", SRSState.NEW, SRSState.NEW)
+        assert db.count_new_available() == 2
+
+    def test_count_new_available_counts_across_multiple_collocations(self):
+        db = SRSDatabase(":memory:")
+        self._seed(db, "hvala", SRSState.NEW, SRSState.NEW)
+        self._seed(db, "banka", SRSState.NEW, SRSState.REVIEW)
+        assert db.count_new_available() == 3
+
+    def test_count_new_available_excludes_suspended(self):
+        db = SRSDatabase(":memory:")
+        self._seed(db, "hvala", SRSState.SUSPENDED, SRSState.NEW)
+        assert db.count_new_available() == 1
+
+    def test_count_new_available_returns_zero_when_empty(self):
+        db = SRSDatabase(":memory:")
+        assert db.count_new_available() == 0
+
+    def test_count_due_today_total_counts_due_review_rows(self):
+        db = SRSDatabase(":memory:")
+        self._seed(db, "hvala", SRSState.REVIEW, SRSState.REVIEW, due_offset_days=0)
+        assert db.count_due_today_total(date.today()) == 2
+
+    def test_count_due_today_total_excludes_future_due(self):
+        db = SRSDatabase(":memory:")
+        self._seed(db, "hvala", SRSState.REVIEW, SRSState.REVIEW, due_offset_days=1)
+        assert db.count_due_today_total(date.today()) == 0
+
+    def test_count_due_today_total_excludes_new_state(self):
+        db = SRSDatabase(":memory:")
+        self._seed(db, "hvala", SRSState.NEW, SRSState.NEW, due_offset_days=0)
+        assert db.count_due_today_total(date.today()) == 0
+
+    def test_count_due_today_total_excludes_suspended(self):
+        db = SRSDatabase(":memory:")
+        self._seed(db, "hvala", SRSState.SUSPENDED, SRSState.SUSPENDED, due_offset_days=0)
+        assert db.count_due_today_total(date.today()) == 0
+
+    def test_count_due_today_total_excludes_known(self):
+        db = SRSDatabase(":memory:")
+        self._seed(db, "hvala", SRSState.KNOWN, SRSState.KNOWN, due_offset_days=0)
+        assert db.count_due_today_total(date.today()) == 0
+
+    def test_count_due_today_total_includes_mixed_directions(self):
+        db = SRSDatabase(":memory:")
+        self._seed(db, "hvala", SRSState.REVIEW, SRSState.NEW, due_offset_days=0)
+        assert db.count_due_today_total(date.today()) == 1
+
+    def test_count_due_today_total_counts_multiple_collocations(self):
+        db = SRSDatabase(":memory:")
+        self._seed(db, "hvala", SRSState.REVIEW, SRSState.REVIEW, due_offset_days=0)
+        self._seed(db, "banka", SRSState.REVIEW, SRSState.SUSPENDED, due_offset_days=0)
+        assert db.count_due_today_total(date.today()) == 3
