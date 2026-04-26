@@ -543,6 +543,42 @@ describe('TunaTaleAPI', () => {
 			expect(result.state).toBe('known');
 		});
 
+		it('syncWithAnki calls POST /api/anki/sync?dry_run=false by default', async () => {
+			const payload = {
+				created: 2,
+				linked: 1,
+				skipped: 0,
+				notes_pulled: 10,
+				directions_pulled: 20,
+				conflicts: 0,
+				notes_pushed: 1,
+				directions_pushed: 3,
+				dry_run: false
+			};
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk(payload)));
+
+			const result = await api.syncWithAnki();
+
+			expect(fetch).toHaveBeenCalledWith(
+				`${BASE}/api/anki/sync?dry_run=false`,
+				expect.objectContaining({ method: 'POST' })
+			);
+			expect(result.created).toBe(2);
+			expect(result.directions_pulled).toBe(20);
+			expect(result.dry_run).toBe(false);
+		});
+
+		it('syncWithAnki forwards dryRun=true', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ dry_run: true })));
+
+			await api.syncWithAnki(true);
+
+			expect(fetch).toHaveBeenCalledWith(
+				`${BASE}/api/anki/sync?dry_run=true`,
+				expect.objectContaining({ method: 'POST' })
+			);
+		});
+
 		it('syncCreateNew calls POST /api/anki/sync-create-new?dry_run=false by default', async () => {
 			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ count: 5, dry_run: false })));
 

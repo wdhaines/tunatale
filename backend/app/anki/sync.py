@@ -13,7 +13,7 @@ import re
 import sqlite3
 import time as _time
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from app.anki.anki_connect import AnkiConnectClient
@@ -36,6 +36,14 @@ def _safe_stem(word: str, prefix: str) -> str:
     """Sanitize word for use as a media filename stem: keep letters/digits/underscores."""
     sanitized = re.sub(r"[^\w\s]", "", word).replace(" ", "_")
     return f"{prefix}_{sanitized}"
+
+
+def _factor_to_fsrs_difficulty(factor: int) -> float:
+    """Map Anki ease factor (1300 hardest .. 3500+ easiest) to FSRS difficulty (10 .. 1).
+
+    Linear approximation: factor=1300→10.0; factor=2500 (neutral)→4.5; factor=3500→1.0.
+    """
+    return max(1.0, min(10.0, (3500 - factor) / 220))
 
 
 class ForceFsrsNotAcknowledgedError(Exception):
@@ -196,11 +204,29 @@ class OfflineReader:
 
 
 class OnlineReader:
-    """Read NoteRecords via AnkiConnect."""
+    """Read NoteRecords via AnkiConnect.
+
+    stability and difficulty are reconstructed from ivl/factor for review-queue cards
+    (lossy — authoritative FSRS state requires offline mode with Anki closed).
+    """
 
     def __init__(self, client: AnkiConnectClient, deck_name: str) -> None:
         self._client = client
         self._deck_name = deck_name
+
+    def _discover_today_anki_day(self) -> int | None:
+        """Return today's Anki day-number (days since collection creation).
+
+        Finds any review card with prop:due=<offset> and derives the absolute
+        day from its `due` field.  Returns None if no review card is found.
+        """
+        for offset in (0, 1, -1, 2, -2, 7, -7):
+            ids = self._client.find_cards(f'deck:"{self._deck_name}" prop:due={offset}')
+            if ids:
+                info = self._client.cards_info(ids[:1])
+                if info and info[0].get("queue") == 2:
+                    return info[0]["due"] - offset
+        return None
 
     def get_note_records(self) -> list[NoteRecord]:
         note_ids = self._client.find_notes(f'deck:"{self._deck_name}"')
@@ -215,6 +241,8 @@ class OnlineReader:
         else:
             cards_by_id = {}
 
+        today_anki_day = self._discover_today_anki_day()
+
         records = []
         for ni in notes_info:
             fields_list = [v["value"] for v in sorted(ni["fields"].values(), key=lambda x: x["order"])]
@@ -228,21 +256,29 @@ class OnlineReader:
                 if cid not in cards_by_id:
                     continue
                 c = cards_by_id[cid]
+                q = c["queue"]
+                if q == 2 and today_anki_day is not None:
+                    due_offset = c["due"] - today_anki_day
+                    due_date_val = date.today() + timedelta(days=due_offset)
+                    stability_val = max(1.0, float(c.get("ivl", 1)))
+                    difficulty_val = _factor_to_fsrs_difficulty(c.get("factor", 2500))
+                    fsrs_known_val = True
+                else:
+                    due_date_val = date.today()
+                    stability_val = 0.0
+                    difficulty_val = 0.0
+                    fsrs_known_val = False
                 card_records.append(
                     CardRecord(
                         anki_card_id=cid,
                         ord=c["ord"],
-                        queue=c["queue"],
+                        queue=q,
                         reps=c.get("reps", 0),
                         lapses=c.get("lapses", 0),
-                        # Placeholders: cardsInfo does not expose reliable FSRS
-                        # state (cards.data JSON). sync_pull ignores these when
-                        # fsrs_known=False; authoritative FSRS pull requires
-                        # offline mode with Anki closed.
-                        stability=0.0,
-                        difficulty=0.0,
-                        due_date=date.today(),
-                        fsrs_known=False,
+                        stability=stability_val,
+                        difficulty=difficulty_val,
+                        due_date=due_date_val,
+                        fsrs_known=fsrs_known_val,
                     )
                 )
 
@@ -611,6 +647,7 @@ class AnkiSync:
                     state=new_state,
                     dirty_fsrs=new_dirty_fsrs,
                     anki_card_id=card_rec.anki_card_id,
+                    last_synced_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
                 )
 
                 if _direction_differs(local_dir, new_dir_state):

@@ -1,4 +1,4 @@
-"""Tests for S3.10: POST /api/anki/sync-create-new endpoint."""
+"""Tests for S3.10: POST /api/anki/sync-create-new and POST /api/anki/sync endpoints."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.anki.anki_connect import AnkiConnectUnavailable
 from app.anki.media.pipeline import MediaResult
-from app.anki.sync import CreateNewReport
+from app.anki.sync import CreateNewReport, PullReport, PushReport
 from app.main import app
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
@@ -188,3 +188,156 @@ class TestSyncCreateNewEndpoint:
         assert len(media_calls) == 1
         assert media_calls[0] == ("voda", "water")
         assert len(store_calls) >= 2  # audio + image
+
+
+# ── POST /api/anki/sync (unified) ─────────────────────────────────────────────
+
+
+class TestSyncUnifiedEndpoint:
+    async def test_returns_all_counts(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
+        monkeypatch.setattr("app.api.anki.AnkiConnectClient", _PingOkClient)
+        monkeypatch.setattr("app.api.anki.OnlineWriter", _FakeWriter)
+
+        async def fake_create_new(self, *, deck_name, model_name, dry_run=False, _media_fn=None):
+            return CreateNewReport(count=3, created=2, linked=1, skipped=0)
+
+        def fake_sync_pull(self, dry_run=False):
+            return PullReport(notes_updated=5, directions_updated=10, conflicts=[])
+
+        def fake_sync_push(self, dry_run=False, force_fsrs=False):
+            return PushReport(notes_pushed=1, directions_pushed=3)
+
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_create_new", fake_create_new)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_pull", fake_sync_pull)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_push", fake_sync_push)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post("/api/anki/sync")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["created"] == 2
+        assert data["linked"] == 1
+        assert data["skipped"] == 0
+        assert data["notes_pulled"] == 5
+        assert data["directions_pulled"] == 10
+        assert data["conflicts"] == 0
+        assert data["notes_pushed"] == 1
+        assert data["directions_pushed"] == 3
+        assert data["dry_run"] is False
+
+    async def test_503_when_anki_connect_unavailable(self, monkeypatch):
+        monkeypatch.setattr("app.api.anki.AnkiConnectClient", _PingFailClient)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post("/api/anki/sync")
+
+        assert response.status_code == 503
+        assert "AnkiConnect" in response.json()["detail"]
+
+    async def test_409_when_model_undiscoverable(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "anki_model_name", "")
+        monkeypatch.setattr("app.api.anki.AnkiConnectClient", _PingOkClient)
+        monkeypatch.setattr("app.api.anki.OnlineWriter", _FakeWriter)
+        monkeypatch.setattr(
+            "app.anki.model_discovery.get_or_discover_model_name",
+            lambda client: "",
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post("/api/anki/sync")
+
+        assert response.status_code == 409
+
+    async def test_media_fn_wired_for_create_new(self, monkeypatch):
+        """_media_fn is called for new notes created during unified sync."""
+        from app.config import settings
+
+        db = app.state.srs_db
+        unit = SyntacticUnit(text="voda", translation="water", word_count=1, difficulty=1, source="corpus")
+        db.add_collocation(unit)
+
+        monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
+        monkeypatch.setattr(settings, "pixabay_api_key", "test-key")
+        monkeypatch.setattr("app.api.anki.AnkiConnectClient", _PingOkClient)
+
+        media_calls: list[tuple] = []
+
+        async def fake_fetch_card_media(word, english, *, pixabay_key, used_image_urls, **kw):
+            media_calls.append((word, english))
+            return MediaResult(
+                audio_bytes=b"audio",
+                audio_source="tts",
+                image_bytes=b"img",
+                image_ext="jpg",
+                image_url="http://x.com/x.jpg",
+            )
+
+        monkeypatch.setattr("app.api.anki.fetch_card_media", fake_fetch_card_media)
+
+        class CapturingWriter:
+            def __init__(self, client, db):
+                pass
+
+            def create_note(self, deck, model, fields, tags):
+                return 9001
+
+            def get_cards_for_note(self, note_id):
+                return {0: 90010, 1: 90011}
+
+            def store_media_file(self, filename, data):
+                pass
+
+        monkeypatch.setattr("app.api.anki.OnlineWriter", CapturingWriter)
+
+        def fake_sync_pull(self, dry_run=False):
+            return PullReport()
+
+        def fake_sync_push(self, dry_run=False, force_fsrs=False):
+            return PushReport()
+
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_pull", fake_sync_pull)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_push", fake_sync_push)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post("/api/anki/sync")
+
+        assert response.status_code == 200
+        assert len(media_calls) == 1
+        assert media_calls[0] == ("voda", "water")
+
+    async def test_dry_run_propagates_to_all_three(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
+        monkeypatch.setattr("app.api.anki.AnkiConnectClient", _PingOkClient)
+        monkeypatch.setattr("app.api.anki.OnlineWriter", _FakeWriter)
+
+        dry_runs_seen: list[bool] = []
+
+        async def fake_create_new(self, *, deck_name, model_name, dry_run=False, _media_fn=None):
+            dry_runs_seen.append(dry_run)
+            return CreateNewReport()
+
+        def fake_sync_pull(self, dry_run=False):
+            dry_runs_seen.append(dry_run)
+            return PullReport()
+
+        def fake_sync_push(self, dry_run=False, force_fsrs=False):
+            dry_runs_seen.append(dry_run)
+            return PushReport()
+
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_create_new", fake_create_new)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_pull", fake_sync_pull)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_push", fake_sync_push)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post("/api/anki/sync?dry_run=true")
+
+        assert response.status_code == 200
+        assert dry_runs_seen == [True, True, True]

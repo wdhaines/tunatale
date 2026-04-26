@@ -14,6 +14,7 @@ vi.mock('$lib/api', () => ({
 		resetSRSItem: vi.fn(),
 		suspendSRSItem: vi.fn(),
 		syncCreateNew: vi.fn(),
+		syncWithAnki: vi.fn(),
 		fetchQueueStats: vi.fn()
 	}
 }));
@@ -27,6 +28,7 @@ const mockBulkDelete = vi.mocked(api.bulkDeleteSRSItems);
 const mockReset = vi.mocked(api.resetSRSItem);
 const mockSuspend = vi.mocked(api.suspendSRSItem);
 const mockSync = vi.mocked(api.syncCreateNew);
+const mockSyncWithAnki = vi.mocked(api.syncWithAnki);
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 
 function makeItem(id: number, text: string, state: SRSItemDetail['state'] = 'new'): SRSItemDetail {
@@ -442,34 +444,74 @@ describe('admin/srs/+page.svelte', () => {
 		}
 	});
 
-	// ── Sync to Anki ──────────────────────────────────────────────────────────
+	// ── Sync with Anki ────────────────────────────────────────────────────────
 
-	it('renders Sync to Anki button', async () => {
+	it('renders Sync with Anki button', async () => {
 		const { findByText } = render(AdminSRSPage);
-		expect(await findByText('Sync to Anki')).toBeTruthy();
+		expect(await findByText('Sync with Anki')).toBeTruthy();
 	});
 
-	it('clicking Sync to Anki calls syncCreateNew(false)', async () => {
-		mockSync.mockResolvedValue({ count: 5, dry_run: false });
+	it('clicking Sync with Anki calls syncWithAnki(false)', async () => {
+		mockSyncWithAnki.mockResolvedValue({
+			created: 0, linked: 0, skipped: 0,
+			notes_pulled: 5, directions_pulled: 10, conflicts: 0,
+			notes_pushed: 0, directions_pushed: 0, dry_run: false
+		});
 		const { findByText } = render(AdminSRSPage);
-		await fireEvent.click(await findByText('Sync to Anki'));
+		await fireEvent.click(await findByText('Sync with Anki'));
 		await waitFor(() => {
-			expect(mockSync).toHaveBeenCalledWith(false);
+			expect(mockSyncWithAnki).toHaveBeenCalledWith(false);
 		});
 	});
 
-	it('shows synced count after successful sync', async () => {
-		mockSync.mockResolvedValue({ count: 7, dry_run: false });
+	it('shows counts in status after successful sync', async () => {
+		mockSyncWithAnki.mockResolvedValue({
+			created: 2, linked: 1, skipped: 0,
+			notes_pulled: 7, directions_pulled: 14, conflicts: 0,
+			notes_pushed: 0, directions_pushed: 0, dry_run: false
+		});
 		const { findByText } = render(AdminSRSPage);
-		await fireEvent.click(await findByText('Sync to Anki'));
-		expect(await findByText(/Synced 7/)).toBeTruthy();
+		await fireEvent.click(await findByText('Sync with Anki'));
+		expect(await findByText(/Created 2/)).toBeTruthy();
+		expect(await findByText(/Pulled 14/)).toBeTruthy();
+	});
+
+	it('shows conflict count when conflicts > 0', async () => {
+		mockSyncWithAnki.mockResolvedValue({
+			created: 0, linked: 0, skipped: 0,
+			notes_pulled: 3, directions_pulled: 6, conflicts: 2,
+			notes_pushed: 0, directions_pushed: 0, dry_run: false
+		});
+		const { findByText } = render(AdminSRSPage);
+		await fireEvent.click(await findByText('Sync with Anki'));
+		expect(await findByText(/Conflicts 2/)).toBeTruthy();
 	});
 
 	it('shows error message when sync fails', async () => {
-		mockSync.mockRejectedValue(new Error('AnkiConnect unavailable'));
+		mockSyncWithAnki.mockRejectedValue(new Error('AnkiConnect unavailable'));
 		const { findByText } = render(AdminSRSPage);
-		await fireEvent.click(await findByText('Sync to Anki'));
+		await fireEvent.click(await findByText('Sync with Anki'));
 		expect(await findByText(/AnkiConnect unavailable/)).toBeTruthy();
+	});
+
+	it('re-fetches queueStats after successful sync', async () => {
+		mockSyncWithAnki.mockResolvedValue({
+			created: 0, linked: 0, skipped: 0,
+			notes_pulled: 3, directions_pulled: 6, conflicts: 0,
+			notes_pushed: 0, directions_pushed: 0, dry_run: false
+		});
+		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 10, daily_new_cap: 30, cap_source: 'anki' });
+
+		const { findByText } = render(AdminSRSPage);
+		// Wait for initial load
+		await findByText(/0 total/);
+		const callsBefore = mockFetchQueueStats.mock.calls.length;
+
+		await fireEvent.click(await findByText('Sync with Anki'));
+
+		await waitFor(() => {
+			expect(mockFetchQueueStats.mock.calls.length).toBeGreaterThan(callsBefore);
+		});
 	});
 
 	// ── queue-stats toolbar line ──────────────────────────────────────────────

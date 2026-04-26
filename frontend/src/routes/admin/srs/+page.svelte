@@ -50,11 +50,14 @@
 		}
 	}
 
-	async function syncToAnki() {
-		syncStatus = null;
+	async function syncWithAnki() {
+		syncStatus = 'Syncing…';
 		try {
-			const result = await api.syncCreateNew(false);
-			syncStatus = `Synced ${result.count} notes to Anki`;
+			const r = await api.syncWithAnki(false);
+			syncStatus =
+				`Created ${r.created} · Linked ${r.linked} · Pulled ${r.directions_pulled} · Pushed ${r.directions_pushed}` +
+				(r.conflicts > 0 ? ` · Conflicts ${r.conflicts}` : '');
+			await loadItems();
 		} catch (e) {
 			syncStatus = e instanceof Error ? e.message : String(e);
 		}
@@ -199,7 +202,7 @@
 				<button class="danger" onclick={bulkDelete}>Delete selected ({selected.size})</button>
 			{/if}
 			<button onclick={loadItems} title="Refresh">⟳</button>
-			<button onclick={syncToAnki}>Sync to Anki</button>
+			<button onclick={syncWithAnki}>Sync with Anki</button>
 		</div>
 	</div>
 
