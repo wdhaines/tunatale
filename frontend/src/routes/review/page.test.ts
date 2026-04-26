@@ -132,6 +132,21 @@ describe('review/+page.svelte', () => {
 		expect(await findByText('hiša')).toBeTruthy();
 	});
 
+	it('answer is hidden on the next card after rating (no answer leak)', async () => {
+		mockFetchDue.mockImplementation((dir) =>
+			dir === 'recognition'
+				? Promise.resolve([makeItem(1, 'okno', 'window'), makeItem(3, 'hiša', 'house')])
+				: Promise.resolve([])
+		);
+		const { findByRole, queryByRole } = render(ReviewPage);
+		// Reveal and rate the first card
+		await fireEvent.click(await findByRole('button', { name: 'Show' }));
+		await fireEvent.click(await findByRole('button', { name: 'Good' }));
+		// Second card should show Show button (not rating buttons) — answer not yet revealed
+		expect(await findByRole('button', { name: 'Show' })).toBeTruthy();
+		expect(queryByRole('button', { name: 'Good' })).toBeNull();
+	});
+
 	it('shows done after last card rated', async () => {
 		mockFetchDue.mockImplementation((dir) =>
 			Promise.resolve(dir === 'recognition' ? [makeItem(1, 'okno', 'window')] : [])

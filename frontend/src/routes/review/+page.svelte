@@ -91,7 +91,9 @@
 		<p class="progress">{index + 1} / {queue.length}</p>
 		<p class="badge">{current.direction === 'recognition' ? 'Recognition' : 'Production'}</p>
 		<section class="card-section">
-			<DrillCard item={current.item} promptSide={getPromptSide(current.item, current.direction)} onRate={rate} />
+			{#key index}
+				<DrillCard item={current.item} promptSide={getPromptSide(current.item, current.direction)} onRate={rate} />
+			{/key}
 		</section>
 	{/if}
 </main>
