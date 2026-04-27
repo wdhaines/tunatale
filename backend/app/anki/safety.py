@@ -132,15 +132,28 @@ def _validate_backup(backup_path: Path, source_note_count: int) -> None:
         raise
 
 
+class AnkiRunningError(RuntimeError):
+    """Raised when the Anki collection is exclusively locked (Anki is running)."""
+
+
+def probe_lock(path: Path) -> bool:
+    """Return True if the collection is locked (Anki is running), False if acquirable."""
+    try:
+        _probe_exclusive_lock(path)
+        return False
+    except AnkiRunningError:
+        return True
+
+
 def _probe_exclusive_lock(path: Path) -> None:
-    """Raise RuntimeError if the database cannot be exclusively locked (Anki running)."""
+    """Raise AnkiRunningError if the database cannot be exclusively locked (Anki running)."""
     probe = sqlite3.connect(str(path), timeout=0.1)
     try:
         probe.execute("BEGIN EXCLUSIVE")
         probe.execute("ROLLBACK")
     except (sqlite3.OperationalError, sqlite3.DatabaseError) as exc:
         probe.close()
-        raise RuntimeError(
+        raise AnkiRunningError(
             f"Anki collection is locked (Anki may be running): {path}\n"
             f"Close Anki before running import. Original error: {exc}"
         ) from exc

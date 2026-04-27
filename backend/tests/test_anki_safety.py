@@ -204,3 +204,33 @@ class TestSafeOpen:
         with safe_open(db_path, backup_dir=tmp_path / "bak") as ctx:
             count = ctx.conn.execute("SELECT COUNT(*) FROM decks WHERE name='default'").fetchone()[0]
         assert count == 1  # case-insensitive match proves the collation is active
+
+
+# ── probe_lock + AnkiRunningError ─────────────────────────────────────────────
+
+
+class TestProbeLock:
+    def test_returns_false_when_lock_acquirable(self, fake_anki_db):
+        from app.anki.safety import probe_lock
+
+        assert probe_lock(fake_anki_db) is False
+
+    def test_returns_true_when_db_locked(self, fake_anki_db):
+        import sqlite3
+
+        from app.anki.safety import probe_lock
+
+        lock_conn = sqlite3.connect(str(fake_anki_db), timeout=0)
+        lock_conn.execute("BEGIN EXCLUSIVE")
+        try:
+            assert probe_lock(fake_anki_db) is True
+        finally:
+            lock_conn.rollback()
+            lock_conn.close()
+
+
+def test_anki_running_error_is_runtime_error():
+    from app.anki.safety import AnkiRunningError
+
+    err = AnkiRunningError("test")
+    assert isinstance(err, RuntimeError)
