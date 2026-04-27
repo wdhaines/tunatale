@@ -61,6 +61,8 @@
 	}
 
 	async function syncWithAnki() {
+		await refreshAnkiStatus();
+		if (ankiRunning) return;
 		syncStatus = 'Syncing…';
 		try {
 			const r = await api.syncWithAnki(false);
@@ -70,6 +72,7 @@
 			await loadItems();
 		} catch (e) {
 			syncStatus = e instanceof Error ? e.message : String(e);
+			await refreshAnkiStatus();
 		}
 	}
 
@@ -189,8 +192,13 @@
 		loadItems();
 		refreshAnkiStatus();
 		const onVisibility = () => refreshAnkiStatus();
+		const onFocus = () => refreshAnkiStatus();
 		document.addEventListener('visibilitychange', onVisibility);
-		return () => document.removeEventListener('visibilitychange', onVisibility);
+		window.addEventListener('focus', onFocus);
+		return () => {
+			document.removeEventListener('visibilitychange', onVisibility);
+			window.removeEventListener('focus', onFocus);
+		};
 	});
 </script>
 

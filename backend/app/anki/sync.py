@@ -500,6 +500,7 @@ class OfflineWriter:
         if did is None:
             raise ValueError(f"Deck {deck_name!r} not found")
 
+        # "Slovene" is SLOVENE_VOCAB_FIELD_NAMES[0] — the sort field for this single-language project
         sfld = re.sub(r"<[^>]+>", "", fields.get("Slovene", "")).strip()
         disambig = fields.get("DisambigKey", "")
         anki_guid = compute_guid(sfld, "sl", disambig)
@@ -548,7 +549,12 @@ class OfflineWriter:
             return
         (self._media_dir / filename).write_bytes(data)
 
-        media_db = self._media_db_path or (self._media_dir.parent / "collection.media.db")
+        if self._media_db_path:
+            media_db = self._media_db_path
+        else:
+            # Modern Anki (≥2.1.55) renamed the media DB to collection.media.db2
+            media_db2 = self._media_dir.parent / "collection.media.db2"
+            media_db = media_db2 if media_db2.exists() else (self._media_dir.parent / "collection.media.db")
         if not media_db.exists():
             return
         import hashlib
@@ -816,8 +822,6 @@ class AnkiSync:
 
         Returns a CreateNewReport with created/linked/skipped counters.
         """
-        from app.anki.anki_connect import AnkiConnectError
-
         items = self._db.list_items_without_anki_note()
         if dry_run:
             return CreateNewReport(count=len(items))
@@ -861,15 +865,6 @@ class AnkiSync:
                 created += 1
             except DuplicateNoteError as exc:
                 note_id = exc.note_id
-                linked += 1
-            except AnkiConnectError as exc:
-                if "duplicate" not in str(exc).lower():
-                    raise
-                existing_ids = self._writer.find_notes(f'deck:"{deck_name}" "Slovene:{word}"')
-                if len(existing_ids) != 1:
-                    skipped += 1
-                    continue
-                note_id = existing_ids[0]
                 linked += 1
 
             cards_by_ord = self._writer.get_cards_for_note(note_id)

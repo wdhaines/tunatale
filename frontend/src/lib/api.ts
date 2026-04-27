@@ -382,10 +382,6 @@ export class TunaTaleAPI {
 		});
 	}
 
-	async syncCreateNew(dryRun = false): Promise<{ count: number; dry_run: boolean }> {
-		return this.request(`/api/anki/sync-create-new?dry_run=${dryRun}`, { method: 'POST' });
-	}
-
 	async syncWithAnki(dryRun = false): Promise<AnkiSyncResult> {
 		return this.request(`/api/anki/sync?dry_run=${dryRun}`, { method: 'POST' });
 	}

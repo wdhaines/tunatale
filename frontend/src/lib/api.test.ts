@@ -579,30 +579,6 @@ describe('TunaTaleAPI', () => {
 			);
 		});
 
-		it('syncCreateNew calls POST /api/anki/sync-create-new?dry_run=false by default', async () => {
-			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ count: 5, dry_run: false })));
-
-			const result = await api.syncCreateNew();
-
-			expect(fetch).toHaveBeenCalledWith(
-				`${BASE}/api/anki/sync-create-new?dry_run=false`,
-				expect.objectContaining({ method: 'POST' })
-			);
-			expect(result.count).toBe(5);
-			expect(result.dry_run).toBe(false);
-		});
-
-		it('syncCreateNew forwards dryRun=true in query string', async () => {
-			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ count: 0, dry_run: true })));
-
-			const result = await api.syncCreateNew(true);
-
-			expect(fetch).toHaveBeenCalledWith(
-				`${BASE}/api/anki/sync-create-new?dry_run=true`,
-				expect.objectContaining({ method: 'POST' })
-			);
-			expect(result.dry_run).toBe(true);
-		});
 	});
 
 	describe('fetchQueueStats', () => {

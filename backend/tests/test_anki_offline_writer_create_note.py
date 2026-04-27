@@ -312,3 +312,66 @@ class TestOfflineWriterStoreMediaFile:
         writer.store_media_file("test.mp3", b"audio_data")  # must not raise
 
         assert (media_dir / "test.mp3").read_bytes() == b"audio_data"
+
+    def test_probes_db2_before_db_when_no_explicit_path(self, tmp_path):
+        """Modern Anki uses collection.media.db2; writer must prefer it over .db."""
+        media_dir = tmp_path / "collection.media"
+        media_dir.mkdir()
+        # Only db2 exists — no db1
+        media_db2 = tmp_path / "collection.media.db2"
+        mconn = sqlite3.connect(str(media_db2))
+        mconn.execute("CREATE TABLE media (fname TEXT PRIMARY KEY, csum TEXT, mtime INTEGER, dirty INTEGER)")
+        mconn.commit()
+        mconn.close()
+
+        conn = _make_collection_conn()
+        writer = OfflineWriter(conn, media_dir=media_dir)  # no explicit media_db_path
+        writer.store_media_file("sl_test.mp3", b"data")
+
+        row = sqlite3.connect(str(media_db2)).execute("SELECT dirty FROM media WHERE fname='sl_test.mp3'").fetchone()
+        assert row is not None and row[0] == 1
+
+    def test_falls_back_to_db1_when_db2_absent(self, tmp_path):
+        """Falls back to collection.media.db when db2 doesn't exist."""
+        media_dir = tmp_path / "collection.media"
+        media_dir.mkdir()
+        # Only db1 exists
+        media_db1 = tmp_path / "collection.media.db"
+        mconn = sqlite3.connect(str(media_db1))
+        mconn.execute("CREATE TABLE media (fname TEXT PRIMARY KEY, csum TEXT, mtime INTEGER, dirty INTEGER)")
+        mconn.commit()
+        mconn.close()
+
+        conn = _make_collection_conn()
+        writer = OfflineWriter(conn, media_dir=media_dir)  # no explicit media_db_path
+        writer.store_media_file("sl_test.mp3", b"data")
+
+        row = sqlite3.connect(str(media_db1)).execute("SELECT dirty FROM media WHERE fname='sl_test.mp3'").fetchone()
+        assert row is not None and row[0] == 1
+
+    def test_db2_wins_when_both_exist(self, tmp_path):
+        """When both db1 and db2 exist, db2 wins."""
+        media_dir = tmp_path / "collection.media"
+        media_dir.mkdir()
+        for suffix in ("collection.media.db", "collection.media.db2"):
+            mconn = sqlite3.connect(str(tmp_path / suffix))
+            mconn.execute("CREATE TABLE media (fname TEXT PRIMARY KEY, csum TEXT, mtime INTEGER, dirty INTEGER)")
+            mconn.commit()
+            mconn.close()
+
+        conn = _make_collection_conn()
+        writer = OfflineWriter(conn, media_dir=media_dir)
+        writer.store_media_file("sl_test.mp3", b"data")
+
+        row2 = (
+            sqlite3.connect(str(tmp_path / "collection.media.db2"))
+            .execute("SELECT dirty FROM media WHERE fname='sl_test.mp3'")
+            .fetchone()
+        )
+        row1 = (
+            sqlite3.connect(str(tmp_path / "collection.media.db"))
+            .execute("SELECT dirty FROM media WHERE fname='sl_test.mp3'")
+            .fetchone()
+        )
+        assert row2 is not None and row2[0] == 1  # db2 was written
+        assert row1 is None  # db1 was NOT written

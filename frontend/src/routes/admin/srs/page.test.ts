@@ -13,7 +13,6 @@ vi.mock('$lib/api', () => ({
 		bulkDeleteSRSItems: vi.fn(),
 		resetSRSItem: vi.fn(),
 		suspendSRSItem: vi.fn(),
-		syncCreateNew: vi.fn(),
 		syncWithAnki: vi.fn(),
 		fetchQueueStats: vi.fn(),
 		fetchAnkiStatus: vi.fn()
@@ -28,7 +27,6 @@ const mockDelete = vi.mocked(api.deleteSRSItem);
 const mockBulkDelete = vi.mocked(api.bulkDeleteSRSItems);
 const mockReset = vi.mocked(api.resetSRSItem);
 const mockSuspend = vi.mocked(api.suspendSRSItem);
-const mockSync = vi.mocked(api.syncCreateNew);
 const mockSyncWithAnki = vi.mocked(api.syncWithAnki);
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 const mockFetchAnkiStatus = vi.mocked(api.fetchAnkiStatus);
@@ -595,6 +593,54 @@ describe('admin/srs/+page.svelte', () => {
 		const btn = (await findByText('Sync with Anki')) as HTMLButtonElement;
 		await waitFor(() => {
 			expect(btn.disabled).toBe(false);
+		});
+	});
+
+	it('window.focus event triggers a re-fetch of Anki status', async () => {
+		const { findByText } = render(AdminSRSPage);
+		await findByText(/0 total/);
+		const callsBefore = mockFetchAnkiStatus.mock.calls.length;
+
+		window.dispatchEvent(new Event('focus'));
+
+		await waitFor(() => {
+			expect(mockFetchAnkiStatus.mock.calls.length).toBeGreaterThan(callsBefore);
+		});
+	});
+
+	it('clicking Sync re-polls status before calling syncWithAnki', async () => {
+		mockSyncWithAnki.mockResolvedValue({
+			created: 0, linked: 0, skipped: 0,
+			notes_pulled: 0, directions_pulled: 0, conflicts: 0,
+			mode: 'offline', notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
+		});
+		const { findByText } = render(AdminSRSPage);
+		await findByText(/0 total/);
+		const callsBefore = mockFetchAnkiStatus.mock.calls.length;
+
+		await fireEvent.click(await findByText('Sync with Anki'));
+
+		await waitFor(() => {
+			// fetchAnkiStatus must be called again before (or during) the sync
+			expect(mockFetchAnkiStatus.mock.calls.length).toBeGreaterThan(callsBefore);
+		});
+	});
+
+	it('re-polls Anki status after sync error so button state reflects reality', async () => {
+		mockSyncWithAnki.mockRejectedValue(new Error('Close Anki to sync'));
+		mockFetchAnkiStatus
+			.mockResolvedValueOnce({ anki_running: false, lock_acquirable: true }) // initial mount
+			.mockResolvedValueOnce({ anki_running: false, lock_acquirable: true }) // pre-click
+			.mockResolvedValueOnce({ anki_running: true, lock_acquirable: false }); // post-error re-poll
+		const { findByText } = render(AdminSRSPage);
+		await findByText(/0 total/);
+
+		await fireEvent.click(await findByText('Sync with Anki'));
+
+		// After the 409-like error, status is re-polled and button must become disabled
+		const btn = (await findByText('Sync with Anki')) as HTMLButtonElement;
+		await waitFor(() => {
+			expect(btn.disabled).toBe(true);
 		});
 	});
 });
