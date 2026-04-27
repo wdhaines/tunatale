@@ -775,12 +775,11 @@ class TestOfflineOrdering:
         # After push+pull, direction is clean
         assert db.list_dirty() == []
 
-    def test_pull_before_push_would_miss_revlog(self):
-        """Pull-then-push (OLD order) leaves dirty_fsrs cleared before push can fire.
+    def test_pull_before_push_still_flushes_revlog(self):
+        """Pull-then-push correctly preserves dirty_fsrs so push can still fire.
 
-        This test documents the failure mode that B14 was introduced to fix.
-        With pull first: anki_wins clears dirty_fsrs, then list_dirty() is empty,
-        so write_revlog is never called.
+        Previously pull cleared dirty_fsrs (anki_wins), causing push to skip
+        the row. Now pull preserves dirty rows, so pull-before-push also works.
         """
         from app.anki.sync import CardRecord, NoteRecord
 
@@ -817,12 +816,11 @@ class TestOfflineOrdering:
         writer = FakeWriter()
         sync = AnkiSync(db=db, _reader=OrderedFakeReader(), _writer=writer)
 
-        # OLD incorrect order: pull first wipes dirty_fsrs, then push finds nothing
+        # Pull preserves dirty_fsrs; push sees the dirty row and flushes it
         sync.sync_pull()
         sync.sync_push()
 
-        # write_revlog is NOT called because dirty_fsrs was cleared by pull
-        assert "write_revlog" not in writer.action_names()
+        assert "write_revlog" in writer.action_names()
 
 
 # ── TestRevlogFactor ─────────────────────────────────────────────────────────

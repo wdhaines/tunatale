@@ -12,7 +12,7 @@ import json as _json
 import re
 import sqlite3
 import time as _time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -591,64 +591,51 @@ class AnkiSync:
                 if local_dir is None:
                     continue
 
-                new_state = (
-                    SRSState.SUSPENDED
-                    if card_rec.queue == -1
-                    else SRSState.NEW
-                    if card_rec.reps == 0
-                    else SRSState.REVIEW
-                )
-
-                if card_rec.fsrs_known:
-                    stability = card_rec.stability
-                    difficulty = card_rec.difficulty
-                    due_date_val = card_rec.due_date
-                    reps = card_rec.reps
-                    lapses = card_rec.lapses
-                    new_dirty_fsrs = local_dir.dirty_fsrs
-                    if local_dir.dirty_fsrs:
-                        conflict = SyncConflict(
-                            guid=guid,
-                            direction=direction.value,
-                            field="fsrs",
-                            local_value=None,
-                            remote_value=None,
-                            resolution="anki_wins",
-                        )
-                        report.conflicts.append(conflict)
-                        if not dry_run:
-                            self._db.record_sync_conflict(
-                                guid=guid,
-                                direction=direction.value,
-                                field="fsrs",
-                                local=None,
-                                remote=None,
-                                resolution="anki_wins",
-                            )
-                        new_dirty_fsrs = False
+                if local_dir.dirty_fsrs:
+                    # Local has unpushed grades — preserve all FSRS state; sync_push
+                    # will flush. Not a conflict: this is queued local work.
+                    new_dir_state = replace(
+                        local_dir,
+                        anki_card_id=card_rec.anki_card_id,
+                        last_synced_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                    )
+                elif card_rec.fsrs_known:
+                    new_state = (
+                        SRSState.SUSPENDED
+                        if card_rec.queue == -1
+                        else SRSState.NEW
+                        if card_rec.reps == 0
+                        else SRSState.REVIEW
+                    )
+                    new_dir_state = DirectionState(
+                        direction=direction,
+                        due_date=card_rec.due_date,
+                        stability=card_rec.stability,
+                        difficulty=card_rec.difficulty,
+                        reps=card_rec.reps,
+                        lapses=card_rec.lapses,
+                        state=new_state,
+                        dirty_fsrs=False,
+                        anki_card_id=card_rec.anki_card_id,
+                        last_synced_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                    )
                 else:
                     # Online pull: FSRS state not available via cardsInfo. Keep
                     # local stability/difficulty/due_date/reps/lapses and the
                     # existing dirty_fsrs so the next push can still flush.
-                    stability = local_dir.stability
-                    difficulty = local_dir.difficulty
-                    due_date_val = local_dir.due_date
-                    reps = local_dir.reps
-                    lapses = local_dir.lapses
-                    new_dirty_fsrs = local_dir.dirty_fsrs
-
-                new_dir_state = DirectionState(
-                    direction=direction,
-                    due_date=due_date_val,
-                    stability=stability,
-                    difficulty=difficulty,
-                    reps=reps,
-                    lapses=lapses,
-                    state=new_state,
-                    dirty_fsrs=new_dirty_fsrs,
-                    anki_card_id=card_rec.anki_card_id,
-                    last_synced_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-                )
+                    new_state = (
+                        SRSState.SUSPENDED
+                        if card_rec.queue == -1
+                        else SRSState.NEW
+                        if card_rec.reps == 0
+                        else SRSState.REVIEW
+                    )
+                    new_dir_state = replace(
+                        local_dir,
+                        state=new_state,
+                        anki_card_id=card_rec.anki_card_id,
+                        last_synced_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                    )
 
                 if _direction_differs(local_dir, new_dir_state):
                     if not dry_run:

@@ -488,8 +488,8 @@ class TestSyncPull:
         assert report.skipped_unknown_guid == 1
         assert report.notes_updated == 0
 
-    def test_fsrs_conflict_anki_wins_clears_dirty_bit(self):
-        """local dirty_fsrs + Anki has different FSRS → conflict, Anki wins, dirty cleared."""
+    def test_dirty_fsrs_local_wins_pull_does_not_overwrite(self):
+        """local dirty_fsrs + Anki has FSRS data → local wins, no conflict, dirty preserved."""
         db = _make_tt_db()
         guid = _add_banka(db)
 
@@ -531,14 +531,14 @@ class TestSyncPull:
         ]
         report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
 
-        assert len(report.conflicts) == 1
-        assert report.conflicts[0].direction == "recognition"
-        assert report.conflicts[0].field == "fsrs"
-        assert report.conflicts[0].resolution == "anki_wins"
-        # Anki wins: reps updated
+        # No conflict — dirty local data is queued work, not a real divergence
+        assert report.conflicts == []
+        assert db.list_sync_conflicts() == []
+        # Local FSRS state preserved
         updated = db.get_collocation_by_guid(guid)
-        assert updated.directions[Direction.RECOGNITION].reps == 7
-        assert updated.directions[Direction.RECOGNITION].dirty_fsrs is False
+        assert updated.directions[Direction.RECOGNITION].reps == 3
+        assert updated.directions[Direction.RECOGNITION].stability == 5.0
+        assert updated.directions[Direction.RECOGNITION].dirty_fsrs is True
 
     def test_no_change_reports_zero_updates(self):
         """When Anki and TT have identical data, nothing is reported as updated."""
@@ -608,8 +608,8 @@ class TestSyncPull:
         # DB conflict table untouched
         assert db.list_sync_conflicts() == []
 
-    def test_dry_run_fsrs_conflict_not_written_to_db(self):
-        """dry_run=True with FSRS conflict → conflict in report, nothing written to DB."""
+    def test_dry_run_dirty_fsrs_no_conflict_no_db_write(self):
+        """dry_run=True with dirty_fsrs → no conflict in report, nothing written to DB."""
         db = _make_tt_db()
         guid = _add_banka(db)
         item = db.get_collocation_by_guid(guid)
@@ -649,12 +649,13 @@ class TestSyncPull:
         ]
         report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull(dry_run=True)
 
-        assert len(report.conflicts) == 1
-        assert report.directions_updated == 1
+        # No conflict — dirty local data is queued work
+        assert report.conflicts == []
         assert db.list_sync_conflicts() == []
-        # DB not updated
+        # DB not updated (dry_run)
         after = db.get_collocation_by_guid(guid)
         assert after.directions[Direction.RECOGNITION].reps == 3  # unchanged
+        assert after.directions[Direction.RECOGNITION].dirty_fsrs is True
 
     def test_direction_not_in_local_is_skipped(self):
         """Card for a direction absent from local DB is silently skipped."""
