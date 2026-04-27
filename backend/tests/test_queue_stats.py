@@ -1,51 +1,38 @@
-"""Tests for the resolve_daily_new_cap() resolver chain."""
+"""Tests for resolve_daily_new_cap() — cache-driven resolver chain."""
 
-from unittest.mock import MagicMock, patch
+from __future__ import annotations
 
-from app.anki.anki_connect import AnkiConnectUnavailable
+from app.srs.database import SRSDatabase
 from app.srs.queue_stats import resolve_daily_new_cap
 
 
-def _patch_anki(config_result=None, raises=None):
-    """Return a context-manager patch for AnkiConnectClient."""
-    mock_client = MagicMock()
-    if raises:
-        mock_client.get_deck_config.side_effect = raises
-    else:
-        mock_client.get_deck_config.return_value = config_result
-
-    return patch("app.srs.queue_stats.AnkiConnectClient", return_value=mock_client)
+def _make_db() -> SRSDatabase:
+    return SRSDatabase(":memory:")
 
 
-def test_returns_anki_source_when_available():
-    config = {"new": {"perDay": 30}}
-    with _patch_anki(config_result=config):
-        cap, source = resolve_daily_new_cap()
+def test_returns_cache_source_when_cache_present():
+    db = _make_db()
+    db.set_anki_state_cache("daily_new_cap", "30")
+    cap, source = resolve_daily_new_cap(db)
     assert cap == 30
-    assert source == "anki"
+    assert source == "cache"
 
 
-def test_falls_back_to_config_on_unavailable():
-    with _patch_anki(raises=AnkiConnectUnavailable("refused")), patch("app.srs.queue_stats.settings") as mock_settings:
-        mock_settings.anki_connect_url = "http://127.0.0.1:8765"
-        mock_settings.anki_deck_name = "0. Slovene"
-        mock_settings.anki_new_per_day_default = 25
-        cap, source = resolve_daily_new_cap()
+def test_falls_back_to_config_when_no_cache(monkeypatch):
+    from app.srs import queue_stats
+
+    db = _make_db()
+    monkeypatch.setattr(queue_stats.settings, "anki_new_per_day_default", 25)
+    cap, source = resolve_daily_new_cap(db)
     assert cap == 25
     assert source == "config"
 
 
-def test_falls_back_to_default_when_config_key_missing():
-    config = {"new": {}}  # missing perDay
-    with _patch_anki(config_result=config):
-        cap, source = resolve_daily_new_cap()
-    assert cap == 20
-    assert source == "default"
+def test_falls_back_to_default_when_config_zero(monkeypatch):
+    from app.srs import queue_stats
 
-
-def test_falls_back_to_default_on_key_error_in_top_level():
-    config = {}  # missing "new" key entirely
-    with _patch_anki(config_result=config):
-        cap, source = resolve_daily_new_cap()
+    db = _make_db()
+    monkeypatch.setattr(queue_stats.settings, "anki_new_per_day_default", 0)
+    cap, source = resolve_daily_new_cap(db)
     assert cap == 20
     assert source == "default"

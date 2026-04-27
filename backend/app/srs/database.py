@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import date
+from datetime import UTC, date
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +91,14 @@ _CREATE_PENDING_REVLOG_IDX = """
 CREATE INDEX IF NOT EXISTS idx_pending_revlog_cid ON pending_revlog(cid)
 """
 
+_CREATE_ANKI_STATE_CACHE = """
+CREATE TABLE IF NOT EXISTS anki_state_cache (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)
+"""
+
 # Columns on `collocation_directions` mapped onto a DirectionState.
 _DIR_COLUMNS = (
     "stability",
@@ -151,6 +159,7 @@ class SRSDatabase:
         conn.execute(_CREATE_SYNC_CONFLICTS)
         conn.execute(_CREATE_PENDING_REVLOG)
         conn.execute(_CREATE_PENDING_REVLOG_IDX)
+        conn.execute(_CREATE_ANKI_STATE_CACHE)
         conn.commit()
 
     @contextmanager
@@ -1127,6 +1136,29 @@ class SRSDatabase:
             conn.execute("DELETE FROM pending_revlog")
             self._commit(conn)
             return result
+
+    def set_anki_state_cache(self, key: str, value: str) -> None:
+        """Upsert a key/value pair in the Anki state cache with the current UTC timestamp."""
+        from datetime import datetime
+
+        updated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO anki_state_cache (key, value, updated_at) VALUES (?, ?, ?)",
+                (key, value, updated_at),
+            )
+            self._commit(conn)
+
+    def get_anki_state_cache(self, key: str) -> tuple[str, str] | None:
+        """Return (value, updated_at) for the given key, or None if absent."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT value, updated_at FROM anki_state_cache WHERE key = ?",
+                (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return (row["value"], row["updated_at"])
 
     def set_dirty_fields(self, guid: str, fields_str: str) -> None:
         """Set dirty_fields for the collocation identified by guid."""

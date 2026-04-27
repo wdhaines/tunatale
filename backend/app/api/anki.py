@@ -122,6 +122,11 @@ async def trigger_sync(request: Request, dry_run: bool = False):
             drained = 0 if dry_run else drain_pending_revlog_to_writer(db, writer)
             pull_report = sync.sync_pull(dry_run=dry_run)
 
+            if not dry_run:
+                from app.srs.queue_stats import _refresh_daily_new_cap
+
+                _refresh_daily_new_cap(db, ctx.conn, settings.anki_deck_name)
+
     except AnkiRunningError as exc:
         raise HTTPException(
             status_code=409,

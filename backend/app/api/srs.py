@@ -333,7 +333,7 @@ async def get_stats(request: Request):
 async def get_queue_stats(request: Request):
     db = request.app.state.srs_db
     today = datetime.date.today()
-    cap, source = resolve_daily_new_cap()
+    cap, source = resolve_daily_new_cap(db)
     return {
         "new": min(cap, db.count_new_available()),
         "due": db.count_due_today_total(today),
