@@ -46,6 +46,14 @@ def _factor_to_fsrs_difficulty(factor: int) -> float:
     return max(1.0, min(10.0, (3500 - factor) / 220))
 
 
+class DuplicateNoteError(Exception):
+    """Raised by OfflineWriter.create_note when the note guid already exists."""
+
+    def __init__(self, note_id: int) -> None:
+        super().__init__(f"duplicate note: note_id={note_id}")
+        self.note_id = note_id
+
+
 class ForceFsrsNotAcknowledgedError(Exception):
     """--force-fsrs requires a one-time acknowledgement file."""
 
@@ -351,10 +359,22 @@ class OfflineWriter:
     Every mutation sets ``usn = -1`` and bumps ``mod`` on the touched row plus
     ``col`` so AnkiWeb's next sync sees the change as local-dirty. See
     ``.claude/rules/anki-sync.md`` for the full contract.
+
+    ``media_dir``: path to ``collection.media/`` directory on disk (optional).
+        Required for ``store_media_file`` to actually write files.
+    ``media_db_path``: explicit path to ``collection.media.db`` (optional).
+        Defaults to ``media_dir/../collection.media.db`` when media_dir is set.
     """
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        media_dir: Path | None = None,
+        media_db_path: Path | None = None,
+    ) -> None:
         self._conn = conn
+        self._media_dir = media_dir
+        self._media_db_path = media_db_path
 
     def _bump_col(self, ts: int) -> None:
         self._conn.execute("UPDATE col SET mod = ?, usn = -1", (ts,))
@@ -459,13 +479,96 @@ class OfflineWriter:
         pass  # deferred to S3.7
 
     def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list) -> int:
-        return 0
+        """Insert a new note + cards into the collection.
+
+        Raises DuplicateNoteError if the computed GUID already exists.
+        No col.scm change — data-only insert against an existing notetype.
+        """
+        import hashlib
+        import re
+
+        from app.anki.notetype import SLOVENE_VOCAB_FIELD_NAMES
+        from app.anki.sqlite_reader import find_deck_id
+        from app.common.guid import compute_guid
+
+        mid_row = self._conn.execute("SELECT id FROM notetypes WHERE name = ?", (model_name,)).fetchone()
+        if mid_row is None:
+            raise ValueError(f"Notetype {model_name!r} not found in notetypes table")
+        mid = mid_row[0]
+
+        did = find_deck_id(self._conn, deck_name)
+        if did is None:
+            raise ValueError(f"Deck {deck_name!r} not found")
+
+        sfld = re.sub(r"<[^>]+>", "", fields.get("Slovene", "")).strip()
+        disambig = fields.get("DisambigKey", "")
+        anki_guid = compute_guid(sfld, "sl", disambig)
+
+        existing = self._conn.execute("SELECT id FROM notes WHERE guid = ?", (anki_guid,)).fetchone()
+        if existing:
+            raise DuplicateNoteError(existing[0])
+
+        ts_ms = int(_time.time() * 1000)
+        max_row = self._conn.execute("SELECT MAX(id) FROM notes").fetchone()
+        note_id = max(ts_ms, (max_row[0] or 0) + 1)
+
+        flds = "\x1f".join(fields.get(name, "") for name in SLOVENE_VOCAB_FIELD_NAMES)
+        csum = int(hashlib.sha1(sfld.encode()).hexdigest()[:8], 16)
+        ts = int(_time.time())
+        tags_str = f" {' '.join(tags)} " if tags else ""
+
+        self._conn.execute(
+            "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+            "VALUES (?, ?, ?, ?, -1, ?, ?, ?, ?, 0, '')",
+            (note_id, anki_guid, mid, ts, tags_str, flds, sfld, csum),
+        )
+
+        tmpl_rows = self._conn.execute("SELECT ord FROM templates WHERE ntid = ? ORDER BY ord", (mid,)).fetchall()
+        due_row = self._conn.execute("SELECT MAX(due) + 1 FROM cards WHERE type = 0").fetchone()
+        next_due = due_row[0] if due_row and due_row[0] else 1
+
+        for (ord_,) in tmpl_rows:
+            card_id = note_id + ord_
+            while self._conn.execute("SELECT 1 FROM cards WHERE id = ?", (card_id,)).fetchone():
+                card_id += 1
+            self._conn.execute(
+                "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, "
+                "factor, reps, lapses, left, odue, odid, flags, data) "
+                "VALUES (?, ?, ?, ?, ?, -1, 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+                (card_id, note_id, did, ord_, ts, next_due + ord_),
+            )
+
+        self._bump_col(ts)
+        self._conn.commit()
+        return note_id
 
     def store_media_file(self, filename: str, data: bytes) -> None:
-        pass
+        """Write media file to collection.media dir and register in collection.media.db."""
+        if self._media_dir is None:
+            return
+        (self._media_dir / filename).write_bytes(data)
+
+        media_db = self._media_db_path or (self._media_dir.parent / "collection.media.db")
+        if not media_db.exists():
+            return
+        import hashlib
+
+        csum = hashlib.sha1(data).hexdigest()
+        mtime = int(_time.time())
+        try:
+            mconn = sqlite3.connect(str(media_db))
+            mconn.execute(
+                "INSERT OR REPLACE INTO media (fname, csum, mtime, dirty) VALUES (?, ?, ?, 1)",
+                (filename, csum, mtime),
+            )
+            mconn.commit()
+            mconn.close()
+        except sqlite3.Error:
+            pass  # non-fatal: Anki's Check Media will register the file on next open
 
     def get_cards_for_note(self, note_id: int) -> dict[int, int]:
-        return {}
+        rows = self._conn.execute("SELECT ord, id FROM cards WHERE nid = ? ORDER BY ord", (note_id,)).fetchall()
+        return {row[0]: row[1] for row in rows}
 
     def find_notes(self, query: str) -> list[int]:
         return []
@@ -756,6 +859,9 @@ class AnkiSync:
             try:
                 note_id = self._writer.create_note(deck_name, model_name, fields, ["tunatale"])
                 created += 1
+            except DuplicateNoteError as exc:
+                note_id = exc.note_id
+                linked += 1
             except AnkiConnectError as exc:
                 if "duplicate" not in str(exc).lower():
                     raise

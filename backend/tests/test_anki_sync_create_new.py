@@ -309,21 +309,24 @@ class TestOfflineWriterNewMethods:
         import sqlite3
 
         c = sqlite3.connect(":memory:")
+        c.row_factory = sqlite3.Row
+        c.execute(
+            "CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER, "
+            "ord INTEGER, mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER, "
+            "due INTEGER, ivl INTEGER, factor INTEGER, reps INTEGER, lapses INTEGER, "
+            "left INTEGER, odue INTEGER, odid INTEGER, flags INTEGER, data TEXT)"
+        )
         c.execute(
             "CREATE TABLE revlog (id INTEGER PRIMARY KEY, cid INTEGER, usn INTEGER, "
             "ease INTEGER, ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)"
         )
         return c
 
-    def test_create_note_returns_zero(self):
-        writer = OfflineWriter(self._conn())
-        assert writer.create_note("deck", "model", {}, []) == 0
-
     def test_store_media_file_does_not_raise(self):
         writer = OfflineWriter(self._conn())
         writer.store_media_file("test.mp3", b"data")  # should not raise
 
-    def test_get_cards_for_note_returns_empty_dict(self):
+    def test_get_cards_for_note_returns_empty_dict_for_missing_note(self):
         writer = OfflineWriter(self._conn())
         assert writer.get_cards_for_note(9001) == {}
 
@@ -629,3 +632,24 @@ class TestSyncCreateNew:
             await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
                 deck_name="0. Slovene", model_name="Slovene Vocabulary"
             )
+
+    async def test_duplicate_note_error_links_offline(self):
+        """DuplicateNoteError from OfflineWriter links without calling find_notes."""
+        from app.anki.sync import DuplicateNoteError
+
+        db = _make_db()
+        _add_item(db, "voda", "water")
+
+        class OfflineDupWriter(FakeCreateWriter):
+            def create_note(self, deck, model, fields, tags):
+                raise DuplicateNoteError(note_id=8888)
+
+        writer = OfflineDupWriter()
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        assert report.linked == 1
+        assert report.created == 0
+        assert db.get_collocation("voda").anki_note_id == 8888
+        # find_notes must NOT be called (offline path knows the ID from the exception)
+        assert not any(c[0] == "find_notes" for c in writer.calls)
