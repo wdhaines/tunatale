@@ -176,10 +176,11 @@ export interface QueueStats {
 	new: number;
 	due: number;
 	daily_new_cap: number;
-	cap_source: 'anki' | 'config' | 'default';
+	cap_source: 'cache' | 'config' | 'default';
 }
 
 export interface AnkiSyncResult {
+	mode: string;
 	created: number;
 	linked: number;
 	skipped: number;
@@ -188,7 +189,13 @@ export interface AnkiSyncResult {
 	conflicts: number;
 	notes_pushed: number;
 	directions_pushed: number;
+	revlog_drained: number;
 	dry_run: boolean;
+}
+
+export interface AnkiStatusResult {
+	anki_running: boolean;
+	lock_acquirable: boolean;
 }
 
 export class TunaTaleAPI {
@@ -381,6 +388,10 @@ export class TunaTaleAPI {
 
 	async syncWithAnki(dryRun = false): Promise<AnkiSyncResult> {
 		return this.request(`/api/anki/sync?dry_run=${dryRun}`, { method: 'POST' });
+	}
+
+	async fetchAnkiStatus(): Promise<AnkiStatusResult> {
+		return this.request('/api/anki/status');
 	}
 }
 

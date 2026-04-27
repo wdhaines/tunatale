@@ -74,7 +74,7 @@
 	<h1>Review</h1>
 
 	{#if stats}
-		<p class="stats">New {stats.new} · Due {stats.due}{stats.cap_source !== 'anki' ? ` (${stats.cap_source})` : ''}</p>
+		<p class="stats">New {stats.new} · Due {stats.due}{stats.cap_source !== 'cache' ? ` (${stats.cap_source})` : ''}</p>
 	{/if}
 
 	{#if loading}

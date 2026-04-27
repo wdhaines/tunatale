@@ -15,7 +15,8 @@ vi.mock('$lib/api', () => ({
 		suspendSRSItem: vi.fn(),
 		syncCreateNew: vi.fn(),
 		syncWithAnki: vi.fn(),
-		fetchQueueStats: vi.fn()
+		fetchQueueStats: vi.fn(),
+		fetchAnkiStatus: vi.fn()
 	}
 }));
 
@@ -30,6 +31,7 @@ const mockSuspend = vi.mocked(api.suspendSRSItem);
 const mockSync = vi.mocked(api.syncCreateNew);
 const mockSyncWithAnki = vi.mocked(api.syncWithAnki);
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
+const mockFetchAnkiStatus = vi.mocked(api.fetchAnkiStatus);
 
 function makeItem(id: number, text: string, state: SRSItemDetail['state'] = 'new'): SRSItemDetail {
 	return {
@@ -52,6 +54,7 @@ beforeEach(() => {
 	vi.useFakeTimers();
 	mockList.mockResolvedValue({ items: [], total: 0 });
 	mockFetchQueueStats.mockResolvedValue({ new: 0, due: 0, daily_new_cap: 20, cap_source: 'default' });
+	mockFetchAnkiStatus.mockResolvedValue({ anki_running: false, lock_acquirable: true });
 });
 
 describe('admin/srs/+page.svelte', () => {
@@ -387,6 +390,60 @@ describe('admin/srs/+page.svelte', () => {
 		expect(await findByText('network failure string')).toBeTruthy();
 	});
 
+	// ── Anki status button gating ─────────────────────────────────────────────
+
+	it('mounts and calls fetchAnkiStatus', async () => {
+		const { findByText } = render(AdminSRSPage);
+		await findByText(/0 total/);
+		await waitFor(() => {
+			expect(mockFetchAnkiStatus).toHaveBeenCalled();
+		});
+	});
+
+	it('Sync button is enabled when anki_running is false', async () => {
+		mockFetchAnkiStatus.mockResolvedValue({ anki_running: false, lock_acquirable: true });
+		const { findByText } = render(AdminSRSPage);
+		const btn = (await findByText('Sync with Anki')) as HTMLButtonElement;
+		await waitFor(() => {
+			expect(btn.disabled).toBe(false);
+		});
+	});
+
+	it('Sync button is disabled when anki_running is true', async () => {
+		mockFetchAnkiStatus.mockResolvedValue({ anki_running: true, lock_acquirable: false });
+		const { findByText } = render(AdminSRSPage);
+		const btn = (await findByText('Sync with Anki')) as HTMLButtonElement;
+		await waitFor(() => {
+			expect(btn.disabled).toBe(true);
+		});
+	});
+
+	it('shows "Close Anki to sync" when Anki is running', async () => {
+		mockFetchAnkiStatus.mockResolvedValue({ anki_running: true, lock_acquirable: false });
+		const { findByText } = render(AdminSRSPage);
+		expect(await findByText(/Close Anki to sync/)).toBeTruthy();
+	});
+
+	it('visibilitychange event triggers a re-fetch of Anki status', async () => {
+		const { findByText } = render(AdminSRSPage);
+		await findByText(/0 total/);
+		const callsBefore = mockFetchAnkiStatus.mock.calls.length;
+
+		document.dispatchEvent(new Event('visibilitychange'));
+
+		await waitFor(() => {
+			expect(mockFetchAnkiStatus.mock.calls.length).toBeGreaterThan(callsBefore);
+		});
+	});
+
+	it('shows 409 Close Anki error in syncStatus when sync rejects with that message', async () => {
+		mockFetchAnkiStatus.mockResolvedValue({ anki_running: false, lock_acquirable: true });
+		mockSyncWithAnki.mockRejectedValue(new Error('Close Anki to sync — TunaTale needs exclusive access to collection.anki2.'));
+		const { findByText } = render(AdminSRSPage);
+		await fireEvent.click(await findByText('Sync with Anki'));
+		expect(await findByText(/Close Anki to sync/)).toBeTruthy();
+	});
+
 	it('clicking header checkbox when all items are selected deselects all', async () => {
 		mockList.mockResolvedValue({ items: [makeItem(1, 'a'), makeItem(2, 'b')], total: 2 });
 
@@ -455,7 +512,7 @@ describe('admin/srs/+page.svelte', () => {
 		mockSyncWithAnki.mockResolvedValue({
 			created: 0, linked: 0, skipped: 0,
 			notes_pulled: 5, directions_pulled: 10, conflicts: 0,
-			notes_pushed: 0, directions_pushed: 0, dry_run: false
+			mode: 'offline', notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
 		});
 		const { findByText } = render(AdminSRSPage);
 		await fireEvent.click(await findByText('Sync with Anki'));
@@ -468,7 +525,7 @@ describe('admin/srs/+page.svelte', () => {
 		mockSyncWithAnki.mockResolvedValue({
 			created: 2, linked: 1, skipped: 0,
 			notes_pulled: 7, directions_pulled: 14, conflicts: 0,
-			notes_pushed: 0, directions_pushed: 0, dry_run: false
+			mode: 'offline', notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
 		});
 		const { findByText } = render(AdminSRSPage);
 		await fireEvent.click(await findByText('Sync with Anki'));
@@ -480,7 +537,7 @@ describe('admin/srs/+page.svelte', () => {
 		mockSyncWithAnki.mockResolvedValue({
 			created: 0, linked: 0, skipped: 0,
 			notes_pulled: 3, directions_pulled: 6, conflicts: 2,
-			notes_pushed: 0, directions_pushed: 0, dry_run: false
+			mode: 'offline', notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
 		});
 		const { findByText } = render(AdminSRSPage);
 		await fireEvent.click(await findByText('Sync with Anki'));
@@ -498,9 +555,9 @@ describe('admin/srs/+page.svelte', () => {
 		mockSyncWithAnki.mockResolvedValue({
 			created: 0, linked: 0, skipped: 0,
 			notes_pulled: 3, directions_pulled: 6, conflicts: 0,
-			notes_pushed: 0, directions_pushed: 0, dry_run: false
+			mode: 'offline', notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
 		});
-		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 10, daily_new_cap: 30, cap_source: 'anki' });
+		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 10, daily_new_cap: 30, cap_source: 'cache' });
 
 		const { findByText } = render(AdminSRSPage);
 		// Wait for initial load
@@ -517,7 +574,7 @@ describe('admin/srs/+page.svelte', () => {
 	// ── queue-stats toolbar line ──────────────────────────────────────────────
 
 	it('shows new and due counts in toolbar after stats load', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 12, due: 47, daily_new_cap: 30, cap_source: 'anki' });
+		mockFetchQueueStats.mockResolvedValue({ new: 12, due: 47, daily_new_cap: 30, cap_source: 'cache' });
 		const { findByText } = render(AdminSRSPage);
 		expect(await findByText(/12 new/)).toBeTruthy();
 		expect(await findByText(/47 due today/)).toBeTruthy();
@@ -530,5 +587,14 @@ describe('admin/srs/+page.svelte', () => {
 		await findByText(/0 total/);
 		// No "X new · Y due today" stats line should appear
 		expect(queryByText(/\d+ new · \d+ due today/)).toBeFalsy();
+	});
+
+	it('leaves button enabled when fetchAnkiStatus throws (non-fatal)', async () => {
+		mockFetchAnkiStatus.mockRejectedValue(new Error('status unavailable'));
+		const { findByText } = render(AdminSRSPage);
+		const btn = (await findByText('Sync with Anki')) as HTMLButtonElement;
+		await waitFor(() => {
+			expect(btn.disabled).toBe(false);
+		});
 	});
 });

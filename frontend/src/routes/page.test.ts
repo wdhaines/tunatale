@@ -103,7 +103,7 @@ describe('Review links', () => {
 	});
 
 	it('updates Review button label with New/Due counts after stats load', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 8, due: 23, daily_new_cap: 30, cap_source: 'anki' });
+		mockFetchQueueStats.mockResolvedValue({ new: 8, due: 23, daily_new_cap: 30, cap_source: 'cache' });
 		const { findByText } = render(Page);
 		expect(await findByText(/Review.*New 8.*Due 23/)).toBeTruthy();
 	});

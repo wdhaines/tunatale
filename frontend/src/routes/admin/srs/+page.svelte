@@ -20,6 +20,7 @@
 	let error = $state<string | null>(null);
 	let syncStatus = $state<string | null>(null);
 	let queueStats = $state<QueueStats | null>(null);
+	let ankiRunning = $state(false);
 
 	let debounceTimer: ReturnType<typeof setTimeout>;
 	let lastSearch = $state('');
@@ -47,6 +48,15 @@
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function refreshAnkiStatus() {
+		try {
+			const s = await api.fetchAnkiStatus();
+			ankiRunning = s.anki_running;
+		} catch {
+			// non-fatal: if status endpoint is unavailable, leave button enabled
 		}
 	}
 
@@ -177,6 +187,10 @@
 
 	onMount(() => {
 		loadItems();
+		refreshAnkiStatus();
+		const onVisibility = () => refreshAnkiStatus();
+		document.addEventListener('visibilitychange', onVisibility);
+		return () => document.removeEventListener('visibilitychange', onVisibility);
 	});
 </script>
 
@@ -202,7 +216,14 @@
 				<button class="danger" onclick={bulkDelete}>Delete selected ({selected.size})</button>
 			{/if}
 			<button onclick={loadItems} title="Refresh">⟳</button>
-			<button onclick={syncWithAnki}>Sync with Anki</button>
+			<button
+				onclick={syncWithAnki}
+				disabled={ankiRunning}
+				title={ankiRunning ? 'Close Anki to sync — TunaTale needs exclusive access to collection.anki2.' : 'Sync with Anki (Anki must stay closed during sync).'}
+			>Sync with Anki</button>
+			{#if ankiRunning}
+				<span class="anki-warning">Close Anki to sync.</span>
+			{/if}
 		</div>
 	</div>
 
@@ -346,6 +367,10 @@
 		border: 1px solid var(--color-danger);
 		border-radius: var(--radius);
 		margin-bottom: 1rem;
+	}
+	.anki-warning {
+		font-size: 0.85rem;
+		color: var(--color-muted);
 	}
 	.table-wrap {
 		border: 1px solid var(--color-border);

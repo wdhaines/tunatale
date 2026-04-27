@@ -607,7 +607,7 @@ describe('TunaTaleAPI', () => {
 
 	describe('fetchQueueStats', () => {
 		it('calls GET /api/srs/queue-stats and returns parsed shape', async () => {
-			const payload = { new: 5, due: 12, daily_new_cap: 30, cap_source: 'anki' };
+			const payload = { new: 5, due: 12, daily_new_cap: 30, cap_source: 'cache' };
 			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk(payload)));
 
 			const result = await api.fetchQueueStats();
@@ -616,12 +616,30 @@ describe('TunaTaleAPI', () => {
 			expect(result.new).toBe(5);
 			expect(result.due).toBe(12);
 			expect(result.daily_new_cap).toBe(30);
-			expect(result.cap_source).toBe('anki');
+			expect(result.cap_source).toBe('cache');
 		});
 
 		it('throws on non-ok response', async () => {
 			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail('Service Unavailable')));
 			await expect(api.fetchQueueStats()).rejects.toThrow('Service Unavailable');
+		});
+	});
+
+	describe('fetchAnkiStatus', () => {
+		it('calls GET /api/anki/status and returns {anki_running, lock_acquirable}', async () => {
+			const payload = { anki_running: false, lock_acquirable: true };
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk(payload)));
+
+			const result = await api.fetchAnkiStatus();
+
+			expect(fetch).toHaveBeenCalledWith(`${BASE}/api/anki/status`);
+			expect(result.anki_running).toBe(false);
+			expect(result.lock_acquirable).toBe(true);
+		});
+
+		it('throws on non-ok response', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail('Service Unavailable')));
+			await expect(api.fetchAnkiStatus()).rejects.toThrow('Service Unavailable');
 		});
 	});
 });

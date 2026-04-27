@@ -259,7 +259,7 @@ describe('review/+page.svelte', () => {
 	// ── queue-stats breakdown display ──────────────────────────────────────────
 
 	it('shows New · Due breakdown from queue-stats', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 7, due: 15, daily_new_cap: 30, cap_source: 'anki' });
+		mockFetchQueueStats.mockResolvedValue({ new: 7, due: 15, daily_new_cap: 30, cap_source: 'cache' });
 		const { findByText } = render(ReviewPage);
 		expect(await findByText(/New 7/)).toBeTruthy();
 		expect(await findByText(/Due 15/)).toBeTruthy();
@@ -271,18 +271,23 @@ describe('review/+page.svelte', () => {
 		expect(await findByText(/\(default\)/)).toBeTruthy();
 	});
 
-	it('does not show source label when cap_source is anki', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 30, cap_source: 'anki' });
+	it('does not show source label when cap_source is cache (freshly synced from Anki)', async () => {
+		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 30, cap_source: 'cache' });
 		const { queryByText, findByText } = render(ReviewPage);
-		// Wait for load to complete
 		await findByText(/New 5/);
-		expect(queryByText(/\(anki\)/)).toBeFalsy();
+		expect(queryByText(/\(cache\)/)).toBeFalsy();
+	});
+
+	it('shows source label when cap_source is config', async () => {
+		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 20, cap_source: 'config' });
+		const { findByText } = render(ReviewPage);
+		expect(await findByText(/\(config\)/)).toBeTruthy();
 	});
 
 	// ── cap-driven fetchNew calls ──────────────────────────────────────────────
 
 	it('uses daily_new_cap=30 to call fetchNew with 15 for each direction', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 15, due: 0, daily_new_cap: 30, cap_source: 'anki' });
+		mockFetchQueueStats.mockResolvedValue({ new: 15, due: 0, daily_new_cap: 30, cap_source: 'cache' });
 		render(ReviewPage);
 		await waitFor(() => {
 			expect(mockFetchNew).toHaveBeenCalledWith('recognition', 15);
@@ -300,7 +305,7 @@ describe('review/+page.svelte', () => {
 	});
 
 	it('daily_new_cap=1 calls fetchNew with 1 for recognition and skips production', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 1, due: 0, daily_new_cap: 1, cap_source: 'anki' });
+		mockFetchQueueStats.mockResolvedValue({ new: 1, due: 0, daily_new_cap: 1, cap_source: 'cache' });
 		render(ReviewPage);
 		await waitFor(() => {
 			expect(mockFetchNew).toHaveBeenCalledWith('recognition', 1);
