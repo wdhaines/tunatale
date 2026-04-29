@@ -275,7 +275,7 @@ def _seed_note_and_cards(
 
 class TestOfflineWriter:
     def test_write_revlog_inserts_row(self):
-        conn = _make_anki_revlog_db()
+        conn = _make_anki_full_db()
         writer = OfflineWriter(conn)
         writer.write_revlog(cid=12345, ease=3, ivl=7, last_ivl=7, factor=2500, time_ms=1000, type_=2)
         row = conn.execute("SELECT * FROM revlog").fetchone()
@@ -285,6 +285,14 @@ class TestOfflineWriter:
         assert row["ivl"] == 7
         assert row["factor"] == 2500
         assert row["type"] == 2
+
+    def test_write_revlog_bumps_col_mod_and_usn(self):
+        conn = _make_anki_full_db()
+        writer = OfflineWriter(conn)
+        writer.write_revlog(cid=12345, ease=3, ivl=7, last_ivl=7, factor=2500, time_ms=1000, type_=2)
+        col = conn.execute("SELECT mod, usn FROM col").fetchone()
+        assert col["usn"] == -1
+        assert col["mod"] > 0
 
     def test_update_note_fields_replaces_named_field_and_bumps_usn(self):
         conn = _make_anki_full_db()
@@ -609,7 +617,7 @@ class TestDrainPendingRevlog:
         db.enqueue_pending_revlog(cid=11, ease=3, ivl=7, last_ivl=7, factor=2500, time_ms=1000, type_=2)
         db.enqueue_pending_revlog(cid=22, ease=1, ivl=1, last_ivl=1, factor=2500, time_ms=500, type_=2)
 
-        conn = _make_anki_revlog_db()
+        conn = _make_anki_full_db()
         writer = OfflineWriter(conn)
         n = drain_pending_revlog_to_writer(db, writer)
 
@@ -620,7 +628,7 @@ class TestDrainPendingRevlog:
 
     def test_empty_queue_is_noop(self):
         db = _make_tt_db()
-        conn = _make_anki_revlog_db()
+        conn = _make_anki_full_db()
         writer = OfflineWriter(conn)
         assert drain_pending_revlog_to_writer(db, writer) == 0
         assert conn.execute("SELECT COUNT(*) FROM revlog").fetchone()[0] == 0

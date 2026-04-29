@@ -473,6 +473,7 @@ class OfflineWriter:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (rid, cid, -1, ease, ivl, last_ivl, factor, time_ms, type_),
         )
+        self._bump_col(int(_time.time()))
         self._conn.commit()
 
     def set_specific_value_of_card(self, card_id: int, keys: list[str], new_values: list[str]) -> None:
