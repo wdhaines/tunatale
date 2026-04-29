@@ -526,6 +526,7 @@ class SRSDatabase:
                 WHERE d.direction = ?
                   AND d.due_date <= ?
                   AND d.state NOT IN ({placeholders})
+                ORDER BY d.due_date ASC, d.anki_card_id ASC NULLS LAST, c.id ASC
                 """,
                 (direction.value, as_of.isoformat(), *_NON_REVIEWABLE_STATES),
             ).fetchall()

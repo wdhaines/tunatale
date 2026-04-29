@@ -51,7 +51,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	vi.useFakeTimers();
 	mockList.mockResolvedValue({ items: [], total: 0 });
-	mockFetchQueueStats.mockResolvedValue({ new: 0, due: 0, daily_new_cap: 20, cap_source: 'default' });
+	mockFetchQueueStats.mockResolvedValue({ new: 0, due: 0, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' });
 	mockFetchAnkiStatus.mockResolvedValue({ anki_running: false, lock_acquirable: true });
 });
 
@@ -555,7 +555,7 @@ describe('admin/srs/+page.svelte', () => {
 			notes_pulled: 3, directions_pulled: 6, conflicts: 0,
 			mode: 'offline', notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
 		});
-		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 10, daily_new_cap: 30, cap_source: 'cache' });
+		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 10, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'cache' });
 
 		const { findByText } = render(AdminSRSPage);
 		// Wait for initial load
@@ -572,7 +572,7 @@ describe('admin/srs/+page.svelte', () => {
 	// ── queue-stats toolbar line ──────────────────────────────────────────────
 
 	it('shows new and due counts in toolbar after stats load', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 12, due: 47, daily_new_cap: 30, cap_source: 'cache' });
+		mockFetchQueueStats.mockResolvedValue({ new: 12, due: 47, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'cache' });
 		const { findByText } = render(AdminSRSPage);
 		expect(await findByText(/12 new/)).toBeTruthy();
 		expect(await findByText(/47 due today/)).toBeTruthy();

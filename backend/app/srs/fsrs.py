@@ -6,12 +6,13 @@ Reference: https://github.com/open-spaced-repetition/fsrs5
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from datetime import date, timedelta
 
 from app.models.srs_item import Direction, Rating, SRSItem, SRSState
 
 # FSRS-5 default parameters (w vector, 19 values)
-W = [
+_DEFAULT_WEIGHTS: tuple[float, ...] = (
     0.4072,  # w0: initial stability for Again
     1.1829,  # w1: initial stability for Hard
     3.1262,  # w2: initial stability for Good
@@ -31,11 +32,25 @@ W = [
     2.9898,  # w16: easy bonus
     0.5100,  # w17: (unused in v5)
     0.4350,  # w18: (unused in v5)
-]
+)
 
-REQUESTED_RETENTION = 0.9
 DECAY = -0.5
 FACTOR = 19 / 81  # = 0.234...
+
+
+@dataclass(frozen=True)
+class FSRSParams:
+    """FSRS scheduling parameters (weights + desired retention)."""
+
+    weights: tuple[float, ...]  # 19 floats for FSRS-5
+    desired_retention: float = 0.9
+
+    def __post_init__(self) -> None:
+        if len(self.weights) != 19:
+            raise ValueError(f"FSRSParams requires exactly 19 weights, got {len(self.weights)}")
+
+
+DEFAULT_FSRS5_PARAMS = FSRSParams(weights=_DEFAULT_WEIGHTS)
 
 
 def _forgetting_curve(elapsed_days: float, stability: float) -> float:
@@ -43,39 +58,38 @@ def _forgetting_curve(elapsed_days: float, stability: float) -> float:
     return (1 + FACTOR * elapsed_days / stability) ** DECAY
 
 
-def _next_interval(stability: float) -> int:
-    """Days until next review at REQUESTED_RETENTION."""
-    interval = stability / FACTOR * (REQUESTED_RETENTION ** (1 / DECAY) - 1)
+def _next_interval(stability: float, desired_retention: float) -> int:
+    """Days until next review at the given desired_retention."""
+    interval = stability / FACTOR * (desired_retention ** (1 / DECAY) - 1)
     return max(1, min(round(interval), 36500))
 
 
-def _init_stability(rating: Rating) -> float:
-    return W[rating.value - 1]
+def _init_stability(rating: Rating, w: tuple[float, ...]) -> float:
+    return w[rating.value - 1]
 
 
-def _init_difficulty(rating: Rating) -> float:
-    d = W[4] - math.exp(W[5] * (rating.value - 1)) + 1
+def _init_difficulty(rating: Rating, w: tuple[float, ...]) -> float:
+    d = w[4] - math.exp(w[5] * (rating.value - 1)) + 1
     return max(1.0, min(10.0, d))
 
 
-def _next_difficulty(d: float, rating: Rating) -> float:
-    # W[6]=1.0651 is the delta multiplier; W[7]=0.0589 is the mean-reversion weight
-    next_d = d - W[6] * (rating.value - 3)
-    # Mean-reversion toward W[4]=7.21 (the initial difficulty for a "normal" item)
-    next_d = W[7] * W[4] + (1 - W[7]) * next_d
+def _next_difficulty(d: float, rating: Rating, w: tuple[float, ...]) -> float:
+    next_d = d - w[6] * (rating.value - 3)
+    # Mean-reversion toward w[4] (the initial difficulty for a "normal" item)
+    next_d = w[7] * w[4] + (1 - w[7]) * next_d
     return max(1.0, min(10.0, next_d))
 
 
-def _next_stability_recall(d: float, s: float, r: float, rating: Rating) -> float:
-    hard_penalty = W[15] if rating == Rating.HARD else 1.0
-    easy_bonus = W[16] if rating == Rating.EASY else 1.0
+def _next_stability_recall(d: float, s: float, r: float, rating: Rating, w: tuple[float, ...]) -> float:
+    hard_penalty = w[15] if rating == Rating.HARD else 1.0
+    easy_bonus = w[16] if rating == Rating.EASY else 1.0
     return s * (
-        math.exp(W[8]) * (11 - d) * s ** (-W[9]) * (math.exp((1 - r) * W[10]) - 1) * hard_penalty * easy_bonus + 1
+        math.exp(w[8]) * (11 - d) * s ** (-w[9]) * (math.exp((1 - r) * w[10]) - 1) * hard_penalty * easy_bonus + 1
     )
 
 
-def _next_stability_lapse(d: float, s: float, r: float) -> float:
-    return W[11] * d ** (-W[12]) * ((s + 1) ** W[13] - 1) * math.exp((1 - r) * W[14])
+def _next_stability_lapse(d: float, s: float, r: float, w: tuple[float, ...]) -> float:
+    return w[11] * d ** (-w[12]) * ((s + 1) ** w[13] - 1) * math.exp((1 - r) * w[14])
 
 
 def schedule(
@@ -83,32 +97,25 @@ def schedule(
     rating: Rating,
     review_date: date | None = None,
     direction: Direction = Direction.RECOGNITION,
+    params: FSRSParams = DEFAULT_FSRS5_PARAMS,
 ) -> SRSItem:
     """Apply a review rating to the given direction of an SRSItem.
 
     Updates only the specified direction; the other is left untouched.
     Marks `dirty_fsrs=True` on the updated direction so the Anki-sync layer
     can later push the change.
-
-    Args:
-        item: The SRSItem to schedule.
-        rating: Learner's rating for this review.
-        review_date: The date of the review (defaults to today).
-        direction: Which direction was reviewed (default: recognition).
-
-    Returns:
-        A new SRSItem with the updated direction state.
     """
     if review_date is None:
         review_date = date.today()
 
     from dataclasses import replace
 
+    w = params.weights
     prev = item.directions[direction]
 
     if prev.state == SRSState.NEW:
-        new_stability = _init_stability(rating)
-        new_difficulty = _init_difficulty(rating)
+        new_stability = _init_stability(rating, w)
+        new_difficulty = _init_difficulty(rating, w)
         new_reps = 1
         new_lapses = prev.lapses
         new_state = SRSState.LEARNING if rating == Rating.AGAIN else SRSState.REVIEW
@@ -118,21 +125,21 @@ def schedule(
         r = _forgetting_curve(elapsed, prev.stability)
 
         if rating == Rating.AGAIN:
-            new_stability = _next_stability_lapse(prev.difficulty, prev.stability, r)
-            new_difficulty = _next_difficulty(prev.difficulty, rating)
+            new_stability = _next_stability_lapse(prev.difficulty, prev.stability, r, w)
+            new_difficulty = _next_difficulty(prev.difficulty, rating, w)
             new_reps = prev.reps + 1
             new_lapses = prev.lapses + 1
             new_state = SRSState.RELEARNING
         else:
-            new_stability = _next_stability_recall(prev.difficulty, prev.stability, r, rating)
-            new_difficulty = _next_difficulty(prev.difficulty, rating)
+            new_stability = _next_stability_recall(prev.difficulty, prev.stability, r, rating, w)
+            new_difficulty = _next_difficulty(prev.difficulty, rating, w)
             new_reps = prev.reps + 1
             new_lapses = prev.lapses
             new_state = SRSState.REVIEW
 
     new_stability = max(0.1, new_stability)
     new_difficulty = max(1.0, min(10.0, new_difficulty))
-    interval = _next_interval(new_stability)
+    interval = _next_interval(new_stability, params.desired_retention)
     new_due = review_date + timedelta(days=interval)
 
     new_dir = replace(

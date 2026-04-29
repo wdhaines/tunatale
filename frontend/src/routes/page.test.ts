@@ -32,7 +32,7 @@ const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 beforeEach(() => {
 	vi.clearAllMocks();
 	mockListCurricula.mockResolvedValue([{ id: 'x', topic: 'test', created_at: '2026-01-01 00:00:00' }]);
-	mockFetchQueueStats.mockResolvedValue({ new: 0, due: 0, daily_new_cap: 20, cap_source: 'default' });
+	mockFetchQueueStats.mockResolvedValue({ new: 0, due: 0, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' });
 });
 
 describe('Home page', () => {
@@ -103,7 +103,7 @@ describe('Review links', () => {
 	});
 
 	it('updates Review button label with New/Due counts after stats load', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 8, due: 23, daily_new_cap: 30, cap_source: 'cache' });
+		mockFetchQueueStats.mockResolvedValue({ new: 8, due: 23, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'cache' });
 		const { findByText } = render(Page);
 		expect(await findByText(/Review.*New 8.*Due 23/)).toBeTruthy();
 	});

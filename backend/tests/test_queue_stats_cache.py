@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import struct
 from datetime import UTC, datetime, timedelta
 
 from app.srs.database import SRSDatabase
-from app.srs.queue_stats import refresh_daily_new_cap, resolve_daily_new_cap
+from app.srs.fsrs import DEFAULT_FSRS5_PARAMS
+from app.srs.queue_stats import refresh_daily_new_cap, refresh_fsrs_params, resolve_daily_new_cap, resolve_fsrs_params
 
 
 def _make_db() -> SRSDatabase:
@@ -582,4 +584,317 @@ class TestPbParsing:
         conn.commit()
 
         result = _read_new_per_day_from_deck_config_table(conn, "0. Slovene")
+        assert result is None
+
+
+# ── FSRSParams helpers ────────────────────────────────────────────────────────
+
+# Field numbers in DeckConfig.Config protobuf (Anki ≥24.04)
+_FSRS5_WEIGHTS_FIELD = 5
+_DESIRED_RETENTION_FIELD = 40
+
+_KNOWN_WEIGHTS: tuple[float, ...] = (
+    0.1279,
+    1.5785,
+    16.497,
+    100.0,
+    6.9609,
+    0.7344,
+    1.8881,
+    0.0010,
+    1.2985,
+    0.4768,
+    0.8233,
+    1.8872,
+    0.1347,
+    0.2200,
+    2.3026,
+    0.1944,
+    2.4299,
+    0.5872,
+    0.8019,
+)
+
+
+def _make_fsrs_deck_config_blob(
+    weights: tuple[float, ...] = _KNOWN_WEIGHTS,
+    retention: float = 0.85,
+    new_per_day: int = 20,
+) -> bytes:
+    """Build a DeckConfig.Config protobuf blob with FSRS weights and desired_retention."""
+    # Field 9 (VARINT): new_per_day
+    blob = _pb_varint_field(9, new_per_day)
+    # Field 5 (LEN-delimited, packed f32): FSRS-5 weights
+    payload = struct.pack(f"<{len(weights)}f", *weights)
+    tag5 = _encode_varint((_FSRS5_WEIGHTS_FIELD << 3) | 2)
+    blob += tag5 + _encode_varint(len(payload)) + payload
+    # Field 40 (FIXED32): desired_retention as little-endian f32
+    tag40 = _encode_varint((_DESIRED_RETENTION_FIELD << 3) | 5)
+    blob += tag40 + struct.pack("<f", retention)
+    return blob
+
+
+def _make_modern_anki_conn_with_fsrs(
+    weights: tuple[float, ...] = _KNOWN_WEIGHTS,
+    retention: float = 0.85,
+) -> sqlite3.Connection:
+    """Build a modern Anki connection with FSRS params in deck_config."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    config_id = 1774580286260
+    deck_id = 12345
+    conn.execute(
+        "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+        "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+        "decks TEXT, dconf TEXT, tags TEXT)"
+    )
+    conn.execute("INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', '', '', '{}')")
+    conn.execute(
+        "CREATE TABLE deck_config (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)"
+    )
+    conn.execute(
+        "INSERT INTO deck_config VALUES (?, 'Slovene', 0, -1, ?)",
+        (config_id, _make_fsrs_deck_config_blob(weights, retention)),
+    )
+    conn.execute(
+        "CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, "
+        "usn INTEGER, common BLOB, kind BLOB)"
+    )
+    conn.execute(
+        "INSERT INTO decks VALUES (?, '0. Slovene', 0, -1, NULL, ?)",
+        (deck_id, _make_deck_kind_blob(config_id)),
+    )
+    conn.commit()
+    return conn
+
+
+class TestRefreshFSRSParams:
+    """Tests for reading and caching FSRS params from Anki's deck_config protobuf."""
+
+    def test_reads_fsrs_weights_from_deck_config(self):
+        """refresh_fsrs_params extracts FSRS-5 weights and stores them in the cache."""
+        db = _make_db()
+        conn = _make_modern_anki_conn_with_fsrs(weights=_KNOWN_WEIGHTS, retention=0.85)
+        refresh_fsrs_params(db, conn, "0. Slovene")
+
+        row = db.get_anki_state_cache("fsrs_params")
+        assert row is not None
+        import json
+
+        cached = json.loads(row[0])
+        assert len(cached["weights"]) == 19
+        assert abs(cached["weights"][3] - 100.0) < 0.01  # w3 dominates easy interval
+
+    def test_reads_desired_retention_from_deck_config(self):
+        db = _make_db()
+        conn = _make_modern_anki_conn_with_fsrs(weights=_KNOWN_WEIGHTS, retention=0.85)
+        refresh_fsrs_params(db, conn, "0. Slovene")
+
+        import json
+
+        row = db.get_anki_state_cache("fsrs_params")
+        assert row is not None
+        cached = json.loads(row[0])
+        assert abs(cached["desired_retention"] - 0.85) < 0.001
+
+    def test_no_error_when_fsrs_weights_absent(self):
+        """If deck_config has no field 5, no cache entry is written (no raise)."""
+        db = _make_db()
+        conn = _make_modern_anki_conn(new_per_day=20)  # blob has no FSRS weights
+        refresh_fsrs_params(db, conn, "0. Slovene")
+        assert db.get_anki_state_cache("fsrs_params") is None
+
+    def test_no_error_when_deck_not_found(self):
+        db = _make_db()
+        conn = _make_modern_anki_conn_with_fsrs()
+        refresh_fsrs_params(db, conn, "No Such Deck")  # must not raise
+
+    def test_logs_warning_when_blob_present_but_read_returns_none(self, caplog):
+        """deck_config blob exists but has no FSRS weights → warning logged."""
+        import logging
+
+        db = _make_db()
+        conn = _make_modern_anki_conn(new_per_day=20)  # blob has no FSRS weights
+        with caplog.at_level(logging.WARNING, logger="app.srs.queue_stats"):
+            refresh_fsrs_params(db, conn, "0. Slovene")
+        assert any("FSRS" in r.message and "0. Slovene" in r.message for r in caplog.records)
+
+    def test_no_warning_when_deck_missing(self, caplog):
+        """Deck not in decks table → no warning (misconfigured deck name is expected)."""
+        import logging
+
+        db = _make_db()
+        conn = _make_modern_anki_conn_with_fsrs()
+        with caplog.at_level(logging.WARNING, logger="app.srs.queue_stats"):
+            refresh_fsrs_params(db, conn, "No Such Deck")
+        assert not any("FSRS" in r.message for r in caplog.records)
+
+
+class TestResolveFSRSParams:
+    """Tests for resolve_fsrs_params() priority chain."""
+
+    def test_returns_default_when_no_cache(self):
+        db = _make_db()
+        params, source = resolve_fsrs_params(db)
+        assert params == DEFAULT_FSRS5_PARAMS
+        assert source == "default"
+
+    def test_returns_cached_params_when_fresh(self):
+        import json
+
+        db = _make_db()
+        cached_data = {"weights": list(_KNOWN_WEIGHTS), "desired_retention": 0.85}
+        db.set_anki_state_cache("fsrs_params", json.dumps(cached_data))
+        params, source = resolve_fsrs_params(db)
+        assert len(params.weights) == 19
+        assert abs(params.weights[3] - 100.0) < 0.01
+        assert abs(params.desired_retention - 0.85) < 0.001
+        assert source == "cache"
+
+    def test_returns_default_when_cache_stale(self):
+        import json
+
+        db = _make_db()
+        cached_data = {"weights": list(_KNOWN_WEIGHTS), "desired_retention": 0.85}
+        old_ts = (datetime.now(UTC) - timedelta(days=31)).strftime("%Y-%m-%d %H:%M:%S")
+        db._conn.execute(
+            "INSERT INTO anki_state_cache (key, value, updated_at) VALUES (?, ?, ?)",
+            ("fsrs_params", json.dumps(cached_data), old_ts),
+        )
+        db._conn.commit()
+        params, source = resolve_fsrs_params(db)
+        assert params == DEFAULT_FSRS5_PARAMS
+        assert source == "default"
+
+    def test_returns_default_when_cache_has_invalid_json(self):
+        db = _make_db()
+        db._conn.execute(
+            "INSERT INTO anki_state_cache (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+            ("fsrs_params", "not-json"),
+        )
+        db._conn.commit()
+        params, source = resolve_fsrs_params(db)
+        assert params == DEFAULT_FSRS5_PARAMS
+
+    def test_returns_default_when_db_creation_fails(self, monkeypatch):
+        from app.srs import queue_stats
+
+        monkeypatch.setattr(queue_stats.settings, "database_url", "sqlite:////__invalid/path/db.sqlite")
+        params, source = resolve_fsrs_params()
+        assert params == DEFAULT_FSRS5_PARAMS
+        assert source == "default"
+
+
+class TestPbFSRSHelpersExtra:
+    """Coverage for edge paths in the new FSRS protobuf helpers."""
+
+    def test_pb_find_packed_float_accepts_memoryview(self):
+        from app.srs.queue_stats import _pb_find_packed_float_field
+
+        payload = struct.pack("<19f", *_KNOWN_WEIGHTS)
+        tag = _encode_varint((_FSRS5_WEIGHTS_FIELD << 3) | 2)
+        blob = tag + _encode_varint(len(payload)) + payload
+        result = _pb_find_packed_float_field(memoryview(blob), _FSRS5_WEIGHTS_FIELD)
+        assert result is not None and len(result) == 19
+
+    def test_pb_find_packed_float_returns_none_for_non_divisible_by_4_length(self):
+        from app.srs.queue_stats import _pb_find_packed_float_field
+
+        # Build a LEN field at target with 3-byte payload (3 % 4 != 0)
+        tag = _encode_varint((_FSRS5_WEIGHTS_FIELD << 3) | 2)
+        blob = tag + _encode_varint(3) + b"\x00\x01\x02"
+        result = _pb_find_packed_float_field(blob, _FSRS5_WEIGHTS_FIELD)
+        assert result is None
+
+    def test_pb_find_fixed32_accepts_memoryview(self):
+        from app.srs.queue_stats import _pb_find_fixed32_float_field
+
+        tag = _encode_varint((_DESIRED_RETENTION_FIELD << 3) | 5)
+        blob = tag + struct.pack("<f", 0.9)
+        result = _pb_find_fixed32_float_field(memoryview(blob), _DESIRED_RETENTION_FIELD)
+        assert result is not None
+        assert abs(result - 0.9) < 0.001
+
+    def test_pb_find_fixed32_returns_none_when_field_absent(self):
+        from app.srs.queue_stats import _pb_find_fixed32_float_field
+
+        # Blob with no field 40 at all
+        blob = _pb_varint_field(9, 20)
+        result = _pb_find_fixed32_float_field(blob, _DESIRED_RETENTION_FIELD)
+        assert result is None
+
+
+class TestReadFSRSParamsEdgeCases:
+    """Edge-case coverage for _read_fsrs_params_from_deck_config_table."""
+
+    def _base_conn(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+            "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+            "decks TEXT, dconf TEXT, tags TEXT)"
+        )
+        conn.execute("INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', '', '', '{}')")
+        conn.execute(
+            "CREATE TABLE deck_config (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)"
+        )
+        conn.execute(
+            "CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, "
+            "usn INTEGER, common BLOB, kind BLOB)"
+        )
+        return conn
+
+    def test_returns_none_when_deck_config_table_missing(self):
+        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        result = _read_fsrs_params_from_deck_config_table(conn, "0. Slovene")
+        assert result is None
+
+    def test_returns_none_when_kind_blob_has_no_normal_kind(self):
+        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+
+        conn = self._base_conn()
+        conn.execute("INSERT INTO deck_config VALUES (1, 'Slovene', 0, -1, ?)", (_make_fsrs_deck_config_blob(),))
+        # kind blob with no field 1 (LEN) — just a varint field
+        bad_kind = _pb_varint_field(2, 99)
+        conn.execute("INSERT INTO decks VALUES (1, '0. Slovene', 0, -1, NULL, ?)", (bad_kind,))
+        conn.commit()
+        result = _read_fsrs_params_from_deck_config_table(conn, "0. Slovene")
+        assert result is None
+
+    def test_returns_none_when_conf_id_not_in_kind(self):
+        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+
+        conn = self._base_conn()
+        conn.execute("INSERT INTO deck_config VALUES (1, 'Slovene', 0, -1, ?)", (_make_fsrs_deck_config_blob(),))
+        # kind's inner sub-message has no field 1 (VARINT), so conf_id is None
+        inner = _pb_len_field(2, _encode_varint(9))  # field 2, not 1
+        kind_blob = _pb_len_field(1, inner)
+        conn.execute("INSERT INTO decks VALUES (1, '0. Slovene', 0, -1, NULL, ?)", (kind_blob,))
+        conn.commit()
+        result = _read_fsrs_params_from_deck_config_table(conn, "0. Slovene")
+        assert result is None
+
+    def test_returns_none_when_conf_id_not_in_deck_config(self):
+        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+
+        conn = self._base_conn()
+        conn.execute("INSERT INTO deck_config VALUES (999, 'Slovene', 0, -1, ?)", (_make_fsrs_deck_config_blob(),))
+        # kind points to conf_id=1 which doesn't exist
+        conn.execute("INSERT INTO decks VALUES (1, '0. Slovene', 0, -1, NULL, ?)", (_make_deck_kind_blob(1),))
+        conn.commit()
+        result = _read_fsrs_params_from_deck_config_table(conn, "0. Slovene")
+        assert result is None
+
+    def test_returns_none_when_kind_blob_is_null(self):
+        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+
+        conn = self._base_conn()
+        conn.execute("INSERT INTO deck_config VALUES (1, 'Slovene', 0, -1, ?)", (_make_fsrs_deck_config_blob(),))
+        conn.execute("INSERT INTO decks VALUES (1, '0. Slovene', 0, -1, NULL, NULL)")  # NULL kind
+        conn.commit()
+        result = _read_fsrs_params_from_deck_config_table(conn, "0. Slovene")
         assert result is None

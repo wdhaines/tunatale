@@ -51,7 +51,7 @@ beforeEach(() => {
 	mockFetchDue.mockResolvedValue([]);
 	mockFetchNew.mockResolvedValue([]);
 	mockSubmitDrill.mockResolvedValue({ new_due_date: '2026-04-25', new_state: 'review' });
-	mockFetchQueueStats.mockResolvedValue({ new: 0, due: 0, daily_new_cap: 20, cap_source: 'default' });
+	mockFetchQueueStats.mockResolvedValue({ new: 0, due: 0, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' });
 });
 
 describe('review/+page.svelte', () => {
@@ -259,27 +259,27 @@ describe('review/+page.svelte', () => {
 	// ── queue-stats breakdown display ──────────────────────────────────────────
 
 	it('shows New · Due breakdown from queue-stats', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 7, due: 15, daily_new_cap: 30, cap_source: 'cache' });
+		mockFetchQueueStats.mockResolvedValue({ new: 7, due: 15, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'cache' });
 		const { findByText } = render(ReviewPage);
 		expect(await findByText(/New 7/)).toBeTruthy();
 		expect(await findByText(/Due 15/)).toBeTruthy();
 	});
 
 	it('shows source label when cap_source is not anki', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 20, cap_source: 'default' });
+		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' });
 		const { findByText } = render(ReviewPage);
 		expect(await findByText(/\(default\)/)).toBeTruthy();
 	});
 
 	it('does not show source label when cap_source is cache (freshly synced from Anki)', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 30, cap_source: 'cache' });
+		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'cache' });
 		const { queryByText, findByText } = render(ReviewPage);
 		await findByText(/New 5/);
 		expect(queryByText(/\(cache\)/)).toBeFalsy();
 	});
 
 	it('shows source label when cap_source is config', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 20, cap_source: 'config' });
+		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 20, cap_source: 'config', fsrs_source: 'default' });
 		const { findByText } = render(ReviewPage);
 		expect(await findByText(/\(config\)/)).toBeTruthy();
 	});
@@ -287,7 +287,7 @@ describe('review/+page.svelte', () => {
 	// ── cap-driven fetchNew calls ──────────────────────────────────────────────
 
 	it('uses daily_new_cap=30 to call fetchNew with 15 for each direction', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 15, due: 0, daily_new_cap: 30, cap_source: 'cache' });
+		mockFetchQueueStats.mockResolvedValue({ new: 15, due: 0, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'cache' });
 		render(ReviewPage);
 		await waitFor(() => {
 			expect(mockFetchNew).toHaveBeenCalledWith('recognition', 15);
@@ -296,7 +296,7 @@ describe('review/+page.svelte', () => {
 	});
 
 	it('uses daily_new_cap=20 to call fetchNew with 10 for each direction', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 10, due: 0, daily_new_cap: 20, cap_source: 'config' });
+		mockFetchQueueStats.mockResolvedValue({ new: 10, due: 0, daily_new_cap: 20, cap_source: 'config', fsrs_source: 'default' });
 		render(ReviewPage);
 		await waitFor(() => {
 			expect(mockFetchNew).toHaveBeenCalledWith('recognition', 10);
@@ -305,7 +305,7 @@ describe('review/+page.svelte', () => {
 	});
 
 	it('daily_new_cap=1 calls fetchNew with 1 for recognition and skips production', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 1, due: 0, daily_new_cap: 1, cap_source: 'cache' });
+		mockFetchQueueStats.mockResolvedValue({ new: 1, due: 0, daily_new_cap: 1, cap_source: 'cache', fsrs_source: 'cache' });
 		render(ReviewPage);
 		await waitFor(() => {
 			expect(mockFetchNew).toHaveBeenCalledWith('recognition', 1);
@@ -313,5 +313,20 @@ describe('review/+page.svelte', () => {
 		// production cap is 0 → fetchNew for production should NOT be called
 		const prodCalls = mockFetchNew.mock.calls.filter(([dir]) => dir === 'production');
 		expect(prodCalls).toHaveLength(0);
+	});
+
+	// ── FSRS source indicator ─────────────────────────────────────────────────
+
+	it('shows FSRS: defaults when fsrs_source is not cache', async () => {
+		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'default' });
+		const { findByText } = render(ReviewPage);
+		expect(await findByText(/FSRS: defaults/)).toBeTruthy();
+	});
+
+	it('does not show FSRS marker when fsrs_source is cache', async () => {
+		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'cache' });
+		const { queryByText, findByText } = render(ReviewPage);
+		await findByText(/New 5/);
+		expect(queryByText(/FSRS:/)).toBeFalsy();
 	});
 });

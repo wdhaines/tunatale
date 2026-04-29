@@ -117,6 +117,51 @@ class TestDueQueries:
         second = [item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(limit=5)]
         assert first == second
 
+    def test_get_due_items_returns_due_date_then_id_order(self, srs_db):
+        today = date.today()
+        # Insert in order word_a(id=1), word_b(id=2), word_c(id=3); none have anki_card_id
+        for text in ["word_a", "word_b", "word_c"]:
+            srs_db.add_collocation(_unit(text, f"trans_{text}"), language_code="sl")
+        # word_a and word_c share the same due_date — no anki_card_id, so falls back to c.id ASC
+        for text, days_ago in [("word_a", 5), ("word_b", 1), ("word_c", 5)]:
+            item = srs_db.get_collocation(text)
+            item.due_date = today - timedelta(days=days_ago)
+            item.state = SRSState.REVIEW
+            srs_db.update_collocation(item)
+        result = srs_db.get_due_items(today)
+        texts = [item.syntactic_unit.text for _, item, _ in result]
+        # NULL anki_card_id falls back to c.id ASC:
+        #   word_a (5d ago, id=1), word_c (5d ago, id=3), word_b (1d ago, id=2)
+        assert texts == ["word_a", "word_c", "word_b"]
+
+    def test_get_due_items_uses_anki_card_id_as_tiebreak(self, srs_db):
+        today = date.today()
+        for text in ["word_a", "word_b", "word_c"]:
+            srs_db.add_collocation(_unit(text, f"trans_{text}"), language_code="sl")
+        # word_a gets c.id=1 but anki_card_id=300; word_c gets c.id=3 but anki_card_id=100
+        # Expected: word_c before word_a (anki_card_id 100 < 300), not word_a (c.id 1 < 3)
+        anki_ids = {"word_a": 300, "word_b": 200, "word_c": 100}
+        for text, days_ago in [("word_a", 5), ("word_b", 1), ("word_c", 5)]:
+            rows, _ = srs_db.list_collocations(search=text, limit=1)
+            row_id, item, _ = rows[0]
+            orig = item.directions[Direction.RECOGNITION]
+            new_dir = DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.REVIEW,
+                due_date=today - timedelta(days=days_ago),
+                stability=orig.stability,
+                difficulty=orig.difficulty,
+                reps=orig.reps,
+                lapses=orig.lapses,
+                anki_card_id=anki_ids[text],
+            )
+            srs_db.update_direction_by_id(row_id, Direction.RECOGNITION, new_dir)
+        result = srs_db.get_due_items(today)
+        texts = [item.syntactic_unit.text for _, item, _ in result]
+        # ORDER BY due_date ASC, anki_card_id ASC:
+        #   word_c (5d ago, anki_id=100), word_a (5d ago, anki_id=300), word_b (1d ago, anki_id=200)
+        assert texts == ["word_c", "word_a", "word_b"]
+
     def test_count_collocations(self, srs_db):
         assert srs_db.count_collocations() == 0
         srs_db.add_collocation(_unit("dober dan"), language_code="sl")

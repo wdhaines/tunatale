@@ -177,6 +177,7 @@ export interface QueueStats {
 	due: number;
 	daily_new_cap: number;
 	cap_source: 'cache' | 'config' | 'default';
+	fsrs_source: 'cache' | 'default';
 }
 
 export interface AnkiSyncResult {

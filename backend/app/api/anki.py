@@ -68,9 +68,10 @@ async def trigger_sync(request: Request, dry_run: bool = False):
             pull_report = sync.sync_pull(dry_run=dry_run)
 
             if not dry_run:
-                from app.srs.queue_stats import refresh_daily_new_cap
+                from app.srs.queue_stats import refresh_daily_new_cap, refresh_fsrs_params
 
                 refresh_daily_new_cap(db, ctx.conn, settings.anki_deck_name)
+                refresh_fsrs_params(db, ctx.conn, settings.anki_deck_name)
 
     except AnkiRunningError as exc:
         raise HTTPException(

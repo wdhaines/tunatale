@@ -4,7 +4,7 @@ from datetime import date, timedelta
 
 from app.models.srs_item import Rating, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
-from app.srs.fsrs import schedule
+from app.srs.fsrs import DEFAULT_FSRS5_PARAMS, FSRSParams, schedule
 
 
 def _new_item() -> SRSItem:
@@ -134,3 +134,54 @@ class TestLastRating:
         item = _new_item()
         result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
         assert result.directions[Direction.PRODUCTION].last_rating is None
+
+
+class TestFSRSParams:
+    """Tests for parameterised FSRS scheduling via FSRSParams."""
+
+    # User's Anki-optimised FSRS-5 weights (from deck_config, field 5)
+    _ANKI_WEIGHTS = (
+        0.12787972390651703,
+        1.5785421133041382,
+        16.496992111206055,
+        100.0,
+        6.960937976837158,
+        0.7343991994857788,
+        1.8881254196166992,
+        0.0010000000474974513,
+        1.2984633445739746,
+        0.4768359363079071,
+        0.8232685327529907,
+        1.8871877193450928,
+        0.13465967774391174,
+        0.21997599303722382,
+        2.3025882244110107,
+        0.19444920122623444,
+        2.4298620223999023,
+        0.5871865749359131,
+        0.801949679851532,
+    )
+
+    def test_default_params_preserved_without_argument(self):
+        """schedule() without params arg gives same result as DEFAULT_FSRS5_PARAMS."""
+        today = date.today()
+        item = _new_item()
+        without_arg = schedule(item, Rating.EASY, today)
+        with_default = schedule(item, Rating.EASY, today, params=DEFAULT_FSRS5_PARAMS)
+        assert without_arg.stability == with_default.stability
+        assert without_arg.due_date == with_default.due_date
+
+    def test_non_default_weights_change_interval(self):
+        """Custom weights produce a different due_date than defaults (w3: 100 vs 15.47)."""
+        today = date.today()
+        anki_params = FSRSParams(weights=self._ANKI_WEIGHTS)
+        result_default = schedule(_new_item(), Rating.EASY, today)
+        result_anki = schedule(_new_item(), Rating.EASY, today, params=anki_params)
+        assert result_anki.due_date != result_default.due_date
+
+    def test_fsrs_params_has_19_weights(self):
+        """FSRSParams rejects weights that aren't 19 floats."""
+        import pytest
+
+        with pytest.raises((ValueError, TypeError, AssertionError)):
+            FSRSParams(weights=(1.0,) * 18)

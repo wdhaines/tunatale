@@ -1,18 +1,27 @@
-"""Resolve the daily new-card cap from the Anki state cache or config fallbacks."""
+"""Resolve the daily new-card cap and FSRS params from the Anki state cache or config fallbacks."""
 
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
+import struct
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from app.config import settings
+from app.srs.fsrs import DEFAULT_FSRS5_PARAMS, FSRSParams
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from app.srs.database import SRSDatabase
 
 _CACHE_MAX_AGE_DAYS = 30
+
+# Field numbers in DeckConfig.Config protobuf (Anki ≥24.04)
+_FSRS5_WEIGHTS_FIELD = 5  # LEN-delimited packed f32; 19 floats for FSRS-5
+_DESIRED_RETENTION_FIELD = 40  # FIXED32 float
 
 
 def _pb_read_varint(data: bytes, pos: int) -> tuple[int, int]:
@@ -90,6 +99,99 @@ def _pb_find_len_field(data: bytes, target_field: int) -> bytes | None:
         except Exception:  # pragma: no cover
             return None  # pragma: no cover
     return None
+
+
+def _pb_find_packed_float_field(data: bytes, target_field: int) -> list[float] | None:
+    """Scan protobuf bytes for a LEN-delimited packed-float field."""
+    if isinstance(data, memoryview):
+        data = bytes(data)
+    pos = 0
+    while pos < len(data):
+        try:
+            tag, pos = _pb_read_varint(data, pos)
+        except Exception:  # pragma: no cover
+            return None  # pragma: no cover
+        field_num = tag >> 3
+        wire_type = tag & 0x7
+        if field_num == target_field and wire_type == 2:
+            try:
+                length, pos = _pb_read_varint(data, pos)
+                if length % 4 != 0:
+                    return None
+                return list(struct.unpack(f"<{length // 4}f", data[pos : pos + length]))
+            except Exception:  # pragma: no cover
+                return None  # pragma: no cover
+        try:
+            pos = _pb_skip_field(data, pos, wire_type)
+        except Exception:  # pragma: no cover
+            return None  # pragma: no cover
+    return None
+
+
+def _pb_find_fixed32_float_field(data: bytes, target_field: int) -> float | None:
+    """Scan protobuf bytes for a FIXED32 field and return its value as a float."""
+    if isinstance(data, memoryview):
+        data = bytes(data)
+    pos = 0
+    while pos < len(data):
+        try:
+            tag, pos = _pb_read_varint(data, pos)
+        except Exception:  # pragma: no cover
+            return None  # pragma: no cover
+        field_num = tag >> 3
+        wire_type = tag & 0x7
+        if field_num == target_field and wire_type == 5:
+            if pos + 4 > len(data):  # pragma: no cover
+                return None  # pragma: no cover
+            return struct.unpack("<f", data[pos : pos + 4])[0]
+        try:
+            pos = _pb_skip_field(data, pos, wire_type)
+        except Exception:  # pragma: no cover
+            return None  # pragma: no cover
+    return None
+
+
+def _read_fsrs_params_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> FSRSParams | None:
+    """Return FSRSParams from Anki's deck_config protobuf, or None if absent."""
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    except sqlite3.Error:  # pragma: no cover
+        return None  # pragma: no cover
+
+    if "deck_config" not in tables or "decks" not in tables:
+        return None
+
+    deck_row = conn.execute("SELECT kind FROM decks WHERE name = ?", (deck_name,)).fetchone()
+    if deck_row is None or not deck_row[0]:
+        return None
+
+    kind_blob = deck_row[0]
+    normal_kind_bytes = _pb_find_len_field(kind_blob if isinstance(kind_blob, bytes) else bytes(kind_blob), 1)
+    if normal_kind_bytes is None:
+        return None
+
+    conf_id = _pb_find_varint_field(normal_kind_bytes, 1)
+    if conf_id is None:
+        return None
+
+    config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
+    if config_row is None or not config_row[0]:
+        return None
+
+    config_blob = config_row[0]
+    config_blob = bytes(config_blob) if isinstance(config_blob, memoryview) else config_blob
+
+    weights = _pb_find_packed_float_field(config_blob, _FSRS5_WEIGHTS_FIELD)
+    if weights is None or len(weights) != 19:
+        return None
+
+    retention_raw = _pb_find_fixed32_float_field(config_blob, _DESIRED_RETENTION_FIELD)
+    retention = float(retention_raw) if retention_raw is not None else 0.9
+
+    try:
+        return FSRSParams(weights=tuple(weights), desired_retention=retention)
+    except (ValueError, TypeError):  # pragma: no cover
+        return None  # pragma: no cover
 
 
 def _read_new_per_day_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> int | None:
@@ -205,3 +307,63 @@ def resolve_daily_new_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
         return (config_default, "config")
 
     return (20, "default")
+
+
+def refresh_fsrs_params(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
+    """Read FSRS params from collection.anki2 and write them to the cache."""
+    # Check if decks table exists (modern Anki format)
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    except sqlite3.Error:  # pragma: no cover
+        return  # pragma: no cover
+
+    if "decks" in tables:
+        deck_row = conn.execute("SELECT 1 FROM decks WHERE name = ?", (deck_name,)).fetchone()
+        if deck_row is None:
+            return  # deck missing; expected for misconfigured deck name — no warning
+
+    params = _read_fsrs_params_from_deck_config_table(conn, deck_name)
+    if params is None:
+        if "decks" in tables:
+            _log.warning(
+                "refresh_fsrs_params: deck %r has a deck_config blob but no readable FSRS params "
+                "(likely FSRS-6 21-weight or unexpected field numbers); TunaTale will use FSRS defaults",
+                deck_name,
+            )
+        return
+
+    db.set_anki_state_cache(
+        "fsrs_params",
+        json.dumps({"weights": list(params.weights), "desired_retention": params.desired_retention}),
+    )
+
+
+def resolve_fsrs_params(db: SRSDatabase | None = None) -> tuple[FSRSParams, str]:
+    """Return (params, source) where source is 'cache' or 'default'."""
+    if db is None:
+        try:
+            from app.srs.database import SRSDatabase as _SRSDatabase
+
+            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        except Exception:
+            db = None
+
+    if db is not None:
+        row = db.get_anki_state_cache("fsrs_params")
+        if row is not None:
+            value_str, updated_at = row
+            try:
+                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                    cached = json.loads(value_str)
+                    return (
+                        FSRSParams(
+                            weights=tuple(cached["weights"]),
+                            desired_retention=float(cached["desired_retention"]),
+                        ),
+                        "cache",
+                    )
+            except (ValueError, TypeError, KeyError):
+                pass
+
+    return (DEFAULT_FSRS5_PARAMS, "default")

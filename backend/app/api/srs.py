@@ -17,7 +17,7 @@ from app.models.syntactic_unit import SyntacticUnit
 from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, schedule
 from app.srs.lemmatizer import LowercaseLemmatizer
-from app.srs.queue_stats import resolve_daily_new_cap
+from app.srs.queue_stats import resolve_daily_new_cap, resolve_fsrs_params
 from app.srs.tokenizer import tokenize
 from app.srs.transcript import extract_transcript
 
@@ -147,7 +147,8 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
         raise HTTPException(status_code=404, detail="Item not found")
     _, item, _ = result
 
-    updated = schedule(item, rating, direction=dir_enum)
+    fsrs_params, _ = resolve_fsrs_params(db)
+    updated = schedule(item, rating, direction=dir_enum, params=fsrs_params)
     db.update_direction_by_id(item_id, dir_enum, updated.directions[dir_enum])
 
     new_dir = updated.directions[dir_enum]
@@ -211,7 +212,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         item = db.get_collocation_by_lemma(lemma)
         if item is not None:
             rating = _WORD_RATING_MAP.get(body.word_ratings.get(lemma, "good"), Rating.GOOD)
-            updated = schedule(item, rating)
+            updated = schedule(item, rating, params=resolve_fsrs_params(db)[0])
             db.update_collocation(updated)
 
     # ── Key phrase registration (preserves translations) ─────────────────
@@ -334,11 +335,13 @@ async def get_queue_stats(request: Request):
     db = request.app.state.srs_db
     today = datetime.date.today()
     cap, source = resolve_daily_new_cap(db)
+    _, fsrs_source = resolve_fsrs_params(db)
     return {
         "new": min(cap, db.count_new_available()),
         "due": db.count_due_today_total(today),
         "daily_new_cap": cap,
         "cap_source": source,
+        "fsrs_source": fsrs_source,
     }
 
 
