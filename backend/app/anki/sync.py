@@ -349,9 +349,6 @@ class OnlineWriter:
         cards_info = self._client.cards_info(card_ids)
         return {c["ord"]: c["cardId"] for c in cards_info}
 
-    def find_notes(self, query: str) -> list[int]:
-        return self._client.find_notes(query)
-
 
 class OfflineWriter:
     """Write changes directly into a raw sqlite3.Connection to collection.anki2.
@@ -510,6 +507,7 @@ class OfflineWriter:
         if existing:
             raise DuplicateNoteError(existing[0])
 
+        # Anki convention: ms-epoch IDs; bump past existing max in case the clock hasn't caught up
         ts_ms = int(_time.time() * 1000)
         max_row = self._conn.execute("SELECT MAX(id) FROM notes").fetchone()
         note_id = max(ts_ms, (max_row[0] or 0) + 1)
@@ -576,9 +574,6 @@ class OfflineWriter:
     def get_cards_for_note(self, note_id: int) -> dict[int, int]:
         rows = self._conn.execute("SELECT ord, id FROM cards WHERE nid = ? ORDER BY ord", (note_id,)).fetchall()
         return {row[0]: row[1] for row in rows}
-
-    def find_notes(self, query: str) -> list[int]:
-        return []
 
 
 def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool:

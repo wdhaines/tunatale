@@ -61,10 +61,6 @@ class FakeCreateWriter:
         self.calls.append(("create_note", deck_name, model_name, dict(fields), list(tags)))
         return self._new_note_id
 
-    def find_notes(self, query: str) -> list[int]:
-        self.calls.append(("find_notes", query))
-        return []
-
     def store_media_file(self, filename: str, data: bytes) -> None:
         self.calls.append(("store_media_file", filename, len(data)))
 
@@ -279,19 +275,6 @@ class TestOnlineWriterGetCardsForNote:
         assert result == {}
 
 
-# ── TestOnlineWriterFindNotes ─────────────────────────────────────────────────
-
-
-class TestOnlineWriterFindNotes:
-    def test_delegates_to_client_find_notes(self):
-        client, transport = _flex_client({"findNotes": [7001, 7002]})
-        writer = OnlineWriter(client, _make_db())
-        result = writer.find_notes('deck:"0. Slovene" "Slovene:voda"')
-        assert result == [7001, 7002]
-        assert transport.calls[0][0] == "findNotes"
-        assert transport.calls[0][1]["query"] == 'deck:"0. Slovene" "Slovene:voda"'
-
-
 # ── TestOfflineWriterNewMethods ───────────────────────────────────────────────
 
 
@@ -320,10 +303,6 @@ class TestOfflineWriterNewMethods:
     def test_get_cards_for_note_returns_empty_dict_for_missing_note(self):
         writer = OfflineWriter(self._conn())
         assert writer.get_cards_for_note(9001) == {}
-
-    def test_find_notes_returns_empty_list(self):
-        writer = OfflineWriter(self._conn())
-        assert writer.find_notes('deck:"0. Slovene" "Slovene:voda"') == []
 
 
 # ── TestSyncCreateNew ─────────────────────────────────────────────────────────
