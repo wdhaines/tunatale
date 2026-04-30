@@ -117,6 +117,34 @@ class TestDueQueries:
         second = [item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(limit=5)]
         assert first == second
 
+    def test_get_new_items_orders_by_anki_card_id(self, srs_db):
+        """anki_card_id asc (NULLS LAST) then c.id asc."""
+        for t in ["word_a", "word_b", "word_c"]:
+            srs_db.add_collocation(_unit(t, f"trans_{t}"), language_code="sl")
+
+        # Assign anki_card_ids: word_b=100, word_c=200, word_a=None
+        anki_ids = {"word_a": None, "word_b": 100, "word_c": 200}
+        for text in ["word_a", "word_b", "word_c"]:
+            rows, _ = srs_db.list_collocations(search=text, limit=1)
+            row_id, item, _ = rows[0]
+            orig = item.directions[Direction.RECOGNITION]
+            new_dir = DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.NEW,
+                due_date=orig.due_date,
+                stability=orig.stability,
+                difficulty=orig.difficulty,
+                reps=orig.reps,
+                lapses=orig.lapses,
+                anki_card_id=anki_ids[text],
+            )
+            srs_db.update_direction_by_id(row_id, Direction.RECOGNITION, new_dir)
+
+        result = srs_db.get_new_items(limit=10)
+        texts = [item.syntactic_unit.text for _, item, _ in result]
+        # word_b (anki=100), word_c (anki=200), word_a (anki=None → NULLS LAST)
+        assert texts == ["word_b", "word_c", "word_a"]
+
     def test_get_due_items_returns_due_date_then_id_order(self, srs_db):
         today = date.today()
         # Insert in order word_a(id=1), word_b(id=2), word_c(id=3); none have anki_card_id
@@ -161,6 +189,69 @@ class TestDueQueries:
         # ORDER BY due_date ASC, anki_card_id ASC:
         #   word_c (5d ago, anki_id=100), word_a (5d ago, anki_id=300), word_b (1d ago, anki_id=200)
         assert texts == ["word_c", "word_a", "word_b"]
+
+
+class TestReviewedToday:
+    """Tests for list_collocations_reviewed_today."""
+
+    def test_returns_collocation_when_recognition_reviewed_today(self, srs_db):
+        from datetime import date
+
+        srs_db.add_collocation(_unit("word_a"), language_code="sl")
+        rows, _ = srs_db.list_collocations(search="word_a", limit=1)
+        row_id, item, _ = rows[0]
+
+        # Update recognition direction to have last_review = today
+        orig = item.directions[Direction.RECOGNITION]
+        today = date.today()
+        new_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=today,
+            stability=orig.stability,
+            difficulty=orig.difficulty,
+            reps=orig.reps,
+            lapses=orig.lapses,
+            last_review=today,
+        )
+        srs_db.update_direction_by_id(row_id, Direction.RECOGNITION, new_dir)
+
+        result = srs_db.list_collocations_reviewed_today(today)
+        assert row_id in result
+
+    def test_returns_empty_when_nothing_reviewed(self, srs_db):
+        from datetime import date
+
+        srs_db.add_collocation(_unit("word_b"), language_code="sl")
+        result = srs_db.list_collocations_reviewed_today(date.today())
+        assert len(result) == 0
+
+    def test_returns_one_id_when_both_directions_reviewed(self, srs_db):
+        from datetime import date
+
+        srs_db.add_collocation(_unit("word_c"), language_code="sl")
+        rows, _ = srs_db.list_collocations(search="word_c", limit=1)
+        row_id, item, _ = rows[0]
+        today = date.today()
+
+        # Update both directions to have last_review = today
+        for dir in [Direction.RECOGNITION, Direction.PRODUCTION]:
+            orig = item.directions[dir]
+            new_dir = DirectionState(
+                direction=dir,
+                state=SRSState.REVIEW,
+                due_date=today,
+                stability=orig.stability,
+                difficulty=orig.difficulty,
+                reps=orig.reps,
+                lapses=orig.lapses,
+                last_review=today,
+            )
+            srs_db.update_direction_by_id(row_id, dir, new_dir)
+
+        result = srs_db.list_collocations_reviewed_today(today)
+        assert len(result) == 1
+        assert row_id in result
 
     def test_count_collocations(self, srs_db):
         assert srs_db.count_collocations() == 0

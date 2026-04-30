@@ -544,8 +544,8 @@ class SRSDatabase:
                 SELECT c.* FROM collocations c
                 JOIN collocation_directions d ON d.collocation_id = c.id
                 WHERE d.direction = ? AND d.state = 'new'
-                ORDER BY c.created_at ASC, c.id ASC
-                LIMIT ?
+                 ORDER BY d.anki_card_id ASC NULLS LAST, c.id ASC
+                 LIMIT ?
                 """,
                 (direction.value, limit),
             ).fetchall()
@@ -558,6 +558,15 @@ class SRSDatabase:
             if row is None:
                 return
         self.update_direction(row["guid"], direction, state)
+
+    def list_collocations_reviewed_today(self, today: date) -> set[int]:
+        """Return set of collocation IDs whose recognition OR production direction was reviewed today."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT collocation_id FROM collocation_directions WHERE last_review = ?",
+                (today.isoformat(),),
+            ).fetchall()
+            return {r[0] for r in rows}
 
     def get_image_filename(self, collocation_id: int) -> str | None:
         """Return the filename of the first image media row for a collocation, or None."""
