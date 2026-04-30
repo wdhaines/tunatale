@@ -601,6 +601,23 @@ describe('TunaTaleAPI', () => {
 		});
 	});
 
+	describe('fetchReviewQueue', () => {
+		it('GETs /api/srs/review-queue and returns the payload', async () => {
+			const queue = [{ id: 1, text: 'foo' }];
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ queue })));
+
+			const result = await api.fetchReviewQueue();
+
+			expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/review-queue`);
+			expect(result).toEqual({ queue });
+		});
+
+		it('throws on non-ok response', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail('Service Unavailable')));
+			await expect(api.fetchReviewQueue()).rejects.toThrow('Service Unavailable');
+		});
+	});
+
 	describe('fetchAnkiStatus', () => {
 		it('calls GET /api/anki/status and returns {anki_running, lock_acquirable}', async () => {
 			const payload = { anki_running: false, lock_acquirable: true };

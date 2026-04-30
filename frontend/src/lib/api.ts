@@ -315,7 +315,6 @@ export class TunaTaleAPI {
 		return this.request('/api/srs/queue-stats');
 	}
 
-	/* v8 ignore next 3 */
 	async fetchReviewQueue(): Promise<{ queue: ReviewQueueItem[] }> {
 		return this.request('/api/srs/review-queue');
 	}

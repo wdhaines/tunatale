@@ -4,44 +4,21 @@ from __future__ import annotations
 
 import json
 
-import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
-from app.models.language import Language
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
-from app.srs.database import SRSDatabase
-from app.storage.store import ContentStore
-
-
-@pytest.fixture(autouse=True)
-def _clean_app_state():
-    db = SRSDatabase(":memory:")
-    store = ContentStore(":memory:")
-    app.state.srs_db = db
-    app.state.content_store = store
-    app.state.language = Language.slovene()
-    yield
-    db.close()
-    store.close()
-    for attr in ("srs_db", "content_store", "language", "llm"):
-        if hasattr(app.state, attr):
-            delattr(app.state, attr)
-
-
-def _db() -> SRSDatabase:
-    return app.state.srs_db
 
 
 class TestQueueStats:
-    async def test_queue_stats_includes_fsrs_source_default(self):
+    async def test_queue_stats_includes_fsrs_source_default(self, api_app_state):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/srs/queue-stats")
         assert resp.status_code == 200
         assert resp.json()["fsrs_source"] == "default"
 
-    async def test_queue_stats_includes_fsrs_source_cache(self):
-        db = _db()
+    async def test_queue_stats_includes_fsrs_source_cache(self, api_app_state):
+        db = api_app_state
         db.set_anki_state_cache("fsrs_params", json.dumps({"weights": [0.0] * 19, "desired_retention": 0.9}))
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/srs/queue-stats")
@@ -50,16 +27,16 @@ class TestQueueStats:
 
 
 class TestReviewQueue:
-    async def test_returns_empty_queue_when_nothing_due(self):
+    async def test_returns_empty_queue_when_nothing_due(self, api_app_state):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/srs/review-queue")
         assert resp.status_code == 200
         assert resp.json()["queue"] == []
 
-    async def test_buries_new_when_sibling_reviewed_today(self):
+    async def test_buries_new_when_sibling_reviewed_today(self, api_app_state):
         from datetime import date
 
-        db = _db()
+        db = api_app_state
         today = date.today()
 
         # Create a collocation with both directions
@@ -91,10 +68,10 @@ class TestReviewQueue:
         prod_in_queue = [q for q in queue if q["direction"] == "production"]
         assert len(prod_in_queue) == 0
 
-    async def test_no_bury_new_when_disabled(self):
+    async def test_no_bury_new_when_disabled(self, api_app_state):
         """Test that new cards appear when bury_new=False."""
 
-        db = _db()
+        db = api_app_state
 
         # Create a new collocation
         from app.models.syntactic_unit import SyntacticUnit
@@ -113,10 +90,10 @@ class TestReviewQueue:
         new_in_queue = [q for q in queue if q["state"] == "new"]
         assert len(new_in_queue) > 0
 
-    async def test_buries_review_when_sibling_reviewed_today(self):
+    async def test_buries_review_when_sibling_reviewed_today(self, api_app_state):
         from datetime import date
 
-        db = _db()
+        db = api_app_state
         today = date.today()
 
         # Create a collocation with both directions
@@ -154,10 +131,10 @@ class TestReviewQueue:
         prod_in_queue = [q for q in queue if q["direction"] == "production" and q["state"] != "new"]
         assert len(prod_in_queue) == 0
 
-    async def test_no_bury_when_sibling_reviewed_and_bury_disabled(self):
+    async def test_no_bury_when_sibling_reviewed_and_bury_disabled(self, api_app_state):
         from datetime import date
 
-        db = _db()
+        db = api_app_state
         today = date.today()
 
         # Create a collocation with both directions
@@ -196,8 +173,8 @@ class TestReviewQueue:
         prod_in_queue = [q for q in queue if q["direction"] == "production" and q["state"] != "new"]
         assert len(prod_in_queue) > 0
 
-    async def test_caps_new_across_directions(self):
-        db = _db()
+    async def test_caps_new_across_directions(self, api_app_state):
+        db = api_app_state
 
         # Create multiple new collocations
         from app.models.syntactic_unit import SyntacticUnit
@@ -216,10 +193,10 @@ class TestReviewQueue:
         new_count = len([q for q in queue if q["state"] == "new"])
         assert new_count <= 5
 
-    async def test_new_spread_after_review(self):
+    async def test_new_spread_after_review(self, api_app_state):
         from datetime import date
 
-        db = _db()
+        db = api_app_state
         today = date.today()
 
         # Create due and new items
@@ -253,10 +230,10 @@ class TestReviewQueue:
             if due_indices and new_indices:
                 assert max(due_indices) < min(new_indices)
 
-    async def test_new_spread_mix(self):
+    async def test_new_spread_mix(self, api_app_state):
         from datetime import date
 
-        db = _db()
+        db = api_app_state
         today = date.today()
 
         # Create several due and new items
@@ -290,10 +267,10 @@ class TestReviewQueue:
         assert "new" in states
         assert any(s != "new" for s in states)
 
-    async def test_new_spread_before_review(self):
+    async def test_new_spread_before_review(self, api_app_state):
         from datetime import date
 
-        db = _db()
+        db = api_app_state
         today = date.today()
 
         # Create due and new items
@@ -323,11 +300,11 @@ class TestReviewQueue:
         # Verify the endpoint works with spread=2
         assert isinstance(queue, list)
 
-    async def test_bury_review_enabled(self):
+    async def test_bury_review_enabled(self, api_app_state):
         """Test that bury_review=True removes sibling reviews from queue."""
         from datetime import date
 
-        db = _db()
+        db = api_app_state
         today = date.today()
 
         # Create a collocation with both directions in REVIEW state
@@ -365,10 +342,10 @@ class TestReviewQueue:
         prod_reviews = [q for q in queue if q["direction"] == "production" and q["state"] == "review"]
         assert len(prod_reviews) == 0
 
-    async def test_buries_due_when_sibling_reviewed_today(self):
+    async def test_buries_due_when_sibling_reviewed_today(self, api_app_state):
         from datetime import date
 
-        db = _db()
+        db = api_app_state
         today = date.today()
 
         # Create a collocation with both directions
@@ -406,10 +383,10 @@ class TestReviewQueue:
         prod_in_queue = [q for q in queue if q["direction"] == "production" and q["state"] != "new"]
         assert len(prod_in_queue) == 0
 
-    async def test_orders_by_anki_card_id(self):
+    async def test_orders_by_anki_card_id(self, api_app_state):
         from datetime import date
 
-        db = _db()
+        db = api_app_state
 
         # Create new items with different anki_card_ids
         from app.models.syntactic_unit import SyntacticUnit
@@ -458,7 +435,7 @@ class TestReviewQueue:
         if None in ordered_ids:
             assert ordered_ids[-1] is None
 
-    async def test_spread_mix_interleaves(self):
+    async def test_spread_mix_interleaves(self, api_app_state):
         """Test _spread_mix interleaves news into reviews."""
         from app.api.srs import _spread_mix
 
@@ -474,7 +451,7 @@ class TestReviewQueue:
         review_count = sum(1 for t in result if t[3] == Direction.RECOGNITION)
         assert review_count == 10
 
-    async def test_spread_mix_direct(self):
+    async def test_spread_mix_direct(self, api_app_state):
         """Test _spread_mix directly."""
         from app.api.srs import _spread_mix
 
@@ -498,14 +475,14 @@ class TestReviewQueue:
         return SRSItem(syntactic_unit=unit, directions={direction: state}, guid="g", anki_note_id=1)
 
     # --- Tests for _merge_by_due_then_anki_id ---
-    async def test_merge_due_empty_inputs(self):
+    async def test_merge_due_empty_inputs(self, api_app_state):
 
         from app.api.srs import _merge_by_due_then_anki_id
 
         result = _merge_by_due_then_anki_id([], [])
         assert result == []
 
-    async def test_merge_due_only_recognition(self):
+    async def test_merge_due_only_recognition(self, api_app_state):
         from datetime import date
 
         from app.api.srs import _merge_by_due_then_anki_id
@@ -516,7 +493,7 @@ class TestReviewQueue:
         assert len(result) == 1
         assert result[0][3] == Direction.RECOGNITION
 
-    async def test_merge_due_only_production(self):
+    async def test_merge_due_only_production(self, api_app_state):
         from datetime import date
 
         from app.api.srs import _merge_by_due_then_anki_id
@@ -527,7 +504,7 @@ class TestReviewQueue:
         assert len(result) == 1
         assert result[0][3] == Direction.PRODUCTION
 
-    async def test_merge_due_earlier_date_wins(self):
+    async def test_merge_due_earlier_date_wins(self, api_app_state):
         from datetime import date
 
         from app.api.srs import _merge_by_due_then_anki_id
@@ -539,7 +516,7 @@ class TestReviewQueue:
         result = _merge_by_due_then_anki_id(rec, prod)
         assert result[0][3] == Direction.RECOGNITION
 
-    async def test_merge_due_later_date_wins(self):
+    async def test_merge_due_later_date_wins(self, api_app_state):
         from datetime import date
 
         from app.api.srs import _merge_by_due_then_anki_id
@@ -551,7 +528,7 @@ class TestReviewQueue:
         result = _merge_by_due_then_anki_id(rec, prod)
         assert result[0][3] == Direction.PRODUCTION
 
-    async def test_merge_due_tiebreak_anki_id_nulls_last(self):
+    async def test_merge_due_tiebreak_anki_id_nulls_last(self, api_app_state):
         from datetime import date
 
         from app.api.srs import _merge_by_due_then_anki_id
@@ -563,7 +540,7 @@ class TestReviewQueue:
         result = _merge_by_due_then_anki_id(rec, prod)
         assert result[0][3] == Direction.PRODUCTION
 
-    async def test_merge_due_tiebreak_anki_id_nulls_last_reverse(self):
+    async def test_merge_due_tiebreak_anki_id_nulls_last_reverse(self, api_app_state):
         from datetime import date
 
         from app.api.srs import _merge_by_due_then_anki_id
@@ -575,7 +552,7 @@ class TestReviewQueue:
         result = _merge_by_due_then_anki_id(rec, prod)
         assert result[0][3] == Direction.RECOGNITION
 
-    async def test_merge_due_tiebreak_anki_id_numeric(self):
+    async def test_merge_due_tiebreak_anki_id_numeric(self, api_app_state):
         from datetime import date
 
         from app.api.srs import _merge_by_due_then_anki_id
@@ -587,7 +564,7 @@ class TestReviewQueue:
         result = _merge_by_due_then_anki_id(rec, prod)
         assert result[0][3] == Direction.RECOGNITION
 
-    async def test_merge_due_tiebreak_anki_id_numeric_reverse(self):
+    async def test_merge_due_tiebreak_anki_id_numeric_reverse(self, api_app_state):
         from datetime import date
 
         from app.api.srs import _merge_by_due_then_anki_id
@@ -599,7 +576,7 @@ class TestReviewQueue:
         result = _merge_by_due_then_anki_id(rec, prod)
         assert result[0][3] == Direction.PRODUCTION
 
-    async def test_merge_due_tiebreak_both_null_uses_row_id(self):
+    async def test_merge_due_tiebreak_both_null_uses_row_id(self, api_app_state):
         from datetime import date
 
         from app.api.srs import _merge_by_due_then_anki_id
@@ -611,7 +588,7 @@ class TestReviewQueue:
         result = _merge_by_due_then_anki_id(rec, prod)
         assert result[0][3] == Direction.PRODUCTION
 
-    async def test_merge_due_tiebreak_both_null_rid_r_smaller(self):
+    async def test_merge_due_tiebreak_both_null_rid_r_smaller(self, api_app_state):
         from datetime import date
 
         from app.api.srs import _merge_by_due_then_anki_id
@@ -624,13 +601,13 @@ class TestReviewQueue:
         assert result[0][3] == Direction.RECOGNITION
 
     # --- Tests for _merge_by_anki_id ---
-    async def test_merge_anki_id_empty_inputs(self):
+    async def test_merge_anki_id_empty_inputs(self, api_app_state):
         from app.api.srs import _merge_by_anki_id
 
         result = _merge_by_anki_id([], [])
         assert result == []
 
-    async def test_merge_anki_id_orders_nulls_last(self):
+    async def test_merge_anki_id_orders_nulls_last(self, api_app_state):
         from datetime import date
 
         from app.api.srs import _merge_by_anki_id
@@ -643,7 +620,7 @@ class TestReviewQueue:
         assert result[0][3] == Direction.PRODUCTION
         assert result[1][3] == Direction.RECOGNITION
 
-    async def test_merge_anki_id_numeric_order(self):
+    async def test_merge_anki_id_numeric_order(self, api_app_state):
         from datetime import date
 
         from app.api.srs import _merge_by_anki_id
@@ -659,21 +636,21 @@ class TestReviewQueue:
         assert result[2][1].directions[result[2][3]].anki_card_id is None
 
     # --- Additional tests for _spread_mix ---
-    async def test_spread_mix_empty_news_returns_reviews(self):
+    async def test_spread_mix_empty_news_returns_reviews(self, api_app_state):
         from app.api.srs import _spread_mix
 
         reviews = [(i, None, "sl", Direction.RECOGNITION) for i in range(5)]
         result = _spread_mix(reviews, [])
         assert result == reviews
 
-    async def test_spread_mix_empty_reviews_returns_news(self):
+    async def test_spread_mix_empty_reviews_returns_news(self, api_app_state):
         from app.api.srs import _spread_mix
 
         news = [(i, None, "sl", Direction.PRODUCTION) for i in range(3)]
         result = _spread_mix([], news)
         assert result == news
 
-    async def test_spread_mix_more_news_than_reviews(self):
+    async def test_spread_mix_more_news_than_reviews(self, api_app_state):
         from app.api.srs import _spread_mix
 
         reviews = [(i, None, "sl", Direction.RECOGNITION) for i in range(2)]

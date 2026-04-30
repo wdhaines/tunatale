@@ -2,7 +2,7 @@
  * Tests for the unified /review route (single fetch from /review-queue).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, fireEvent, waitFor } from '@testing-library/svelte';
+import { render, fireEvent, waitFor, screen } from '@testing-library/svelte';
 import ReviewPage from './+page.svelte';
 import type { ReviewQueueItem } from '$lib/api';
 
@@ -18,36 +18,7 @@ import { api } from '$lib/api';
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 const mockFetchReviewQueue = vi.mocked(api.fetchReviewQueue);
 const mockSubmitDrill = vi.mocked(api.submitDrill);
-
-const makeQueueItem = (
-	id: number,
-	text: string,
-	translation: string,
-	direction: 'recognition' | 'production',
-	opts: Partial<ReviewQueueItem> = {}
-): ReviewQueueItem => ({
-	id,
-	text,
-	translation,
-	word_count: opts.word_count ?? 2,
-	state: opts.state ?? 'review',
-	due_date: opts.due_date ?? '2026-04-18',
-	stability: opts.stability ?? 5.0,
-	difficulty: opts.difficulty ?? 4.0,
-	reps: opts.reps ?? 3,
-	lapses: opts.lapses ?? 0,
-	last_review: opts.last_review ?? '2026-04-10',
-	language_code: 'sl',
-	guid: `guid_${id}`,
-	anki_note_id: null,
-	image_url: opts.image_url ?? null,
-	directions: {
-		recognition: { state: 'review', due_date: '2026-04-18', stability: 5.0, difficulty: 4.0, reps: 3, lapses: 0, last_review: '2026-04-10', anki_card_id: null },
-		production: { state: 'new', due_date: '2026-04-18', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, anki_card_id: null }
-	},
-	direction,
-	...opts,
-});
+import { makeReviewQueueItem } from '../../test/factories';
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -69,21 +40,21 @@ describe('review/+page.svelte', () => {
 	});
 
 	it('renders queue items from single fetch', async () => {
-		const item = makeQueueItem(1, 'okno', 'window', 'recognition');
+		const item = makeReviewQueueItem({ id: 1, text: 'okno', translation: 'window', direction: 'recognition' });
 		mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
 		const { findByText } = render(ReviewPage);
 		expect(await findByText('okno')).toBeTruthy();
 	});
 
 	it('shows direction badge for current card', async () => {
-		const item = makeQueueItem(1, 'okno', 'window', 'recognition');
+		const item = makeReviewQueueItem({ id: 1, text: 'okno', translation: 'window', direction: 'recognition' });
 		mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
 		const { findByText } = render(ReviewPage);
 		expect(await findByText(/Recognition/i)).toBeTruthy();
 	});
 
 	it('calls submitDrill with correct direction and id on rating', async () => {
-		const item = makeQueueItem(5, 'voda', 'water', 'recognition');
+		const item = makeReviewQueueItem({ id: 5, text: 'voda', translation: 'water', direction: 'recognition' });
 		mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
 		const { findByRole } = render(ReviewPage);
 		await fireEvent.click(await findByRole('button', { name: 'Show' }));
@@ -92,7 +63,7 @@ describe('review/+page.svelte', () => {
 	});
 
 	it('calls submitDrill with production direction for production cards', async () => {
-		const item = makeQueueItem(7, 'banka', 'bank', 'production', { word_count: 2 });
+		const item = makeReviewQueueItem({ id: 7, text: 'banka', translation: 'bank', direction: 'production', word_count: 2 });
 		mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
 		const { findByRole } = render(ReviewPage);
 		await fireEvent.click(await findByRole('button', { name: 'Show' }));
@@ -101,8 +72,8 @@ describe('review/+page.svelte', () => {
 	});
 
 	it('advances to next card after rating', async () => {
-		const item1 = makeQueueItem(1, 'okno', 'window', 'recognition');
-		const item2 = makeQueueItem(3, 'hiša', 'house', 'recognition');
+		const item1 = makeReviewQueueItem({ id: 1, text: 'okno', translation: 'window', direction: 'recognition' });
+		const item2 = makeReviewQueueItem({ id: 3, text: 'hiša', translation: 'house', direction: 'recognition' });
 		mockFetchReviewQueue.mockResolvedValue({ queue: [item1, item2] });
 		const { findByRole, findByText } = render(ReviewPage);
 		await fireEvent.click(await findByRole('button', { name: 'Show' }));
@@ -111,20 +82,18 @@ describe('review/+page.svelte', () => {
 	});
 
 	it('answer is hidden on the next card after rating (no answer leak)', async () => {
-		const item1 = makeQueueItem(1, 'okno', 'window', 'recognition');
-		const item2 = makeQueueItem(3, 'hiša', 'house', 'recognition');
+		const item1 = makeReviewQueueItem({ id: 1, text: 'okno', translation: 'window', direction: 'recognition' });
+		const item2 = makeReviewQueueItem({ id: 3, text: 'hiša', translation: 'house', direction: 'recognition' });
 		mockFetchReviewQueue.mockResolvedValue({ queue: [item1, item2] });
 		const { findByRole, queryByRole } = render(ReviewPage);
-		// Reveal and rate the first card
 		await fireEvent.click(await findByRole('button', { name: 'Show' }));
 		await fireEvent.click(await findByRole('button', { name: 'Good' }));
-		// Second card should show Show button (not rating buttons) — answer not yet revealed
 		expect(await findByRole('button', { name: 'Show' })).toBeTruthy();
 		expect(queryByRole('button', { name: 'Good' })).toBeNull();
 	});
 
 	it('shows done after last card rated', async () => {
-		const item = makeQueueItem(1, 'okno', 'window', 'recognition');
+		const item = makeReviewQueueItem({ id: 1, text: 'okno', translation: 'window', direction: 'recognition' });
 		mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
 		const { findByRole, findByText } = render(ReviewPage);
 		await fireEvent.click(await findByRole('button', { name: 'Show' }));
@@ -139,7 +108,7 @@ describe('review/+page.svelte', () => {
 	});
 
 	it('shows error and stays on card when submitDrill rejects', async () => {
-		const item = makeQueueItem(1, 'okno', 'window', 'recognition');
+		const item = makeReviewQueueItem({ id: 1, text: 'okno', translation: 'window', direction: 'recognition' });
 		mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
 		mockSubmitDrill.mockRejectedValue(new Error('Submit failed'));
 		const { findByRole, findByText } = render(ReviewPage);
@@ -149,25 +118,22 @@ describe('review/+page.svelte', () => {
 	});
 
 	it('production word_count=1 with image_url shows img element', async () => {
-		const item = makeQueueItem(10, 'banka', 'bank', 'production', {
-			word_count: 1,
-			image_url: 'banka.jpg'
-		});
+		const item = makeReviewQueueItem({ id: 10, text: 'banka', translation: 'bank', direction: 'production', word_count: 1, image_url: 'banka.jpg' });
 		mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
-		const { container, findByRole } = render(ReviewPage);
+		const { findByRole } = render(ReviewPage);
 		await findByRole('button', { name: 'Show' });
-		expect(container.querySelector('img')).toBeTruthy();
+		expect(screen.queryByRole('img')).not.toBeNull();
 	});
 
 	it('production word_count>1 shows L1 translation as prompt', async () => {
-		const item = makeQueueItem(11, 'dober dan', 'good day', 'production', { word_count: 2 });
+		const item = makeReviewQueueItem({ id: 11, text: 'dober dan', translation: 'good day', direction: 'production', word_count: 2 });
 		mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
 		const { findByText } = render(ReviewPage);
 		expect(await findByText('good day')).toBeTruthy();
 	});
 
 	it('production word_count=1 without image_url shows L1 translation as prompt', async () => {
-		const item = makeQueueItem(12, 'banka', 'bank', 'production', { word_count: 1, image_url: null });
+		const item = makeReviewQueueItem({ id: 12, text: 'banka', translation: 'bank', direction: 'production', word_count: 1, image_url: null });
 		mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
 		const { findByText } = render(ReviewPage);
 		expect(await findByText('bank')).toBeTruthy();
@@ -188,7 +154,7 @@ describe('review/+page.svelte', () => {
 		expect(await findByText(/\(default\)/)).toBeTruthy();
 	});
 
-	it('does not show source label when cap_source is cache (freshly synced from Anki)', async () => {
+	it('does not show source label when cap_source is cache (freshly synced from anki)', async () => {
 		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'cache' });
 		const { queryByText, findByText } = render(ReviewPage);
 		await findByText(/New 5/);

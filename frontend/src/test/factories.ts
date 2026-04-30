@@ -1,0 +1,66 @@
+import type { WordToken, ReviewQueueItem, SRSItemDetail } from '$lib/api';
+
+export function makeWordToken(overrides: Partial<WordToken> = {}): WordToken {
+	return {
+		surface: 'zdravo',
+		lemma: 'zdravo',
+		srs_state: 'new',
+		srs_item_id: null,
+		translation: null,
+		collocation_span_id: null,
+		collocation_start: false,
+		collocation_srs_state: null,
+		collocation_lemma: null,
+		collocation_translation: null,
+		...overrides
+	};
+}
+
+export function makeReviewQueueItem(overrides: Partial<ReviewQueueItem> = {}): ReviewQueueItem {
+	return {
+		id: 1,
+		text: 'banka',
+		translation: 'bank',
+		word_count: 2,
+		state: 'review',
+		due_date: '2026-04-18',
+		stability: 5.0,
+		difficulty: 4.0,
+		reps: 3,
+		lapses: 0,
+		last_review: '2026-04-10',
+		language_code: 'sl',
+		guid: 'guid_1',
+		anki_note_id: null,
+		image_url: null,
+		directions: {
+			recognition: { state: 'review', due_date: '2026-04-18', stability: 5.0, difficulty: 4.0, reps: 3, lapses: 0, last_review: '2026-04-10', anki_card_id: null },
+			production: { state: 'new', due_date: '2026-04-18', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, anki_card_id: null }
+		},
+		direction: 'recognition',
+		...overrides
+	};
+}
+
+export function makeSRSItemDetail(overrides: Partial<SRSItemDetail> = {}): SRSItemDetail {
+	return {
+		id: 1,
+		text: 'banka',
+		translation: 'bank',
+		word_count: 1,
+		state: 'review',
+		due_date: '2026-04-18',
+		stability: 5.0,
+		difficulty: 4.0,
+		reps: 3,
+		lapses: 0,
+		last_review: '2026-04-10',
+		language_code: 'sl',
+		image_url: '/api/media/banka.jpg',
+		directions: {
+			recognition: { state: 'review', due_date: '2026-04-18', stability: 5.0, difficulty: 4.0, reps: 3, lapses: 0, last_review: '2026-04-10', anki_card_id: null },
+			production: { state: 'new', due_date: '2026-04-18', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, anki_card_id: null }
+		},
+		...overrides
+	};
+}

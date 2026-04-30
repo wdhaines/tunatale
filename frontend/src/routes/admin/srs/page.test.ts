@@ -30,22 +30,7 @@ const mockSuspend = vi.mocked(api.suspendSRSItem);
 const mockSyncWithAnki = vi.mocked(api.syncWithAnki);
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 const mockFetchAnkiStatus = vi.mocked(api.fetchAnkiStatus);
-
-function makeItem(id: number, text: string, state: SRSItemDetail['state'] = 'new'): SRSItemDetail {
-	return {
-		id,
-		text,
-		translation: `trans_${text}`,
-		state,
-		due_date: '2026-04-07',
-		stability: 1.0,
-		difficulty: 5.0,
-		reps: 0,
-		lapses: 0,
-		last_review: null,
-		language_code: 'sl'
-	};
-}
+import { makeSRSItemDetail } from '../../../test/factories';
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -58,7 +43,7 @@ beforeEach(() => {
 describe('admin/srs/+page.svelte', () => {
 	it('renders rows returned from listSRSItems', async () => {
 		mockList.mockResolvedValue({
-			items: [makeItem(1, 'zdravo'), makeItem(2, 'hvala')],
+			items: [makeSRSItemDetail({ id: 1, text: 'zdravo' }), makeSRSItemDetail({ id: 2, text: 'hvala' })],
 			total: 2
 		});
 		const { findByText } = render(AdminSRSPage);
@@ -67,7 +52,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('typing in search re-queries after debounce', async () => {
-		mockList.mockResolvedValue({ items: [makeItem(1, 'zdravo')], total: 1 });
+		mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: 'zdravo' })], total: 1 });
 		const { getByPlaceholderText } = render(AdminSRSPage);
 		const input = getByPlaceholderText(/Search/);
 
@@ -83,7 +68,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('clicking column header flips sort order', async () => {
-		mockList.mockResolvedValue({ items: [makeItem(1, 'a')], total: 1 });
+		mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: 'a' })], total: 1 });
 		const { findByText } = render(AdminSRSPage);
 
 		// Wait for initial load
@@ -99,7 +84,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('clicking Edit, changing inputs, clicking Save calls updateSRSItem', async () => {
-		const item = makeItem(42, 'zdravo');
+		const item = makeSRSItemDetail({ id: 42, text: 'zdravo', translation: 'trans_zdravo' });
 		mockList.mockResolvedValue({ items: [item], total: 1 });
 		mockUpdate.mockResolvedValue({ ...item, text: 'Zdravo!', translation: 'Hello!' });
 
@@ -126,7 +111,7 @@ describe('admin/srs/+page.svelte', () => {
 
 	it('selecting two rows and clicking Bulk delete calls bulkDeleteSRSItems', async () => {
 		mockList.mockResolvedValue({
-			items: [makeItem(1, 'a'), makeItem(2, 'b')],
+			items: [makeSRSItemDetail({ id: 1, text: 'a' }), makeSRSItemDetail({ id: 2, text: 'b' })],
 			total: 2
 		});
 		mockBulkDelete.mockResolvedValue({ deleted: 2 });
@@ -150,7 +135,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('clicking Delete with confirm stubbed calls deleteSRSItem', async () => {
-		const item = makeItem(7, 'lep');
+		const item = makeSRSItemDetail({ id: 7, text: 'lep' });
 		mockList.mockResolvedValue({ items: [item], total: 1 });
 		mockDelete.mockResolvedValue({ status: 'deleted' });
 		vi.stubGlobal('confirm', () => true);
@@ -167,7 +152,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('clicking Suspend on a review-state row calls suspendSRSItem(id, true)', async () => {
-		const item = makeItem(9, 'lep', 'review');
+		const item = makeSRSItemDetail({ id: 9, text: 'lep', state: 'review' });
 		mockList.mockResolvedValue({ items: [item], total: 1 });
 		mockSuspend.mockResolvedValue({ ...item, state: 'suspended' });
 
@@ -183,7 +168,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('clicking Reset with confirm stubbed calls resetSRSItem', async () => {
-		const item = makeItem(11, 'kava', 'review');
+		const item = makeSRSItemDetail({ id: 11, text: 'kava', state: 'review' });
 		mockList.mockResolvedValue({ items: [item], total: 1 });
 		mockReset.mockResolvedValue({ ...item, state: 'new', reps: 0 });
 		vi.stubGlobal('confirm', () => true);
@@ -200,7 +185,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('shows error when resetSRSItem fails', async () => {
-		const item = makeItem(11, 'kava', 'review');
+		const item = makeSRSItemDetail({ id: 11, text: 'kava', state: 'review' });
 		mockList.mockResolvedValue({ items: [item], total: 1 });
 		mockReset.mockRejectedValue(new Error('reset failed'));
 		vi.stubGlobal('confirm', () => true);
@@ -214,7 +199,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('shows error when toggleSuspend fails', async () => {
-		const item = makeItem(12, 'voda', 'review');
+		const item = makeSRSItemDetail({ id: 12, text: 'voda', state: 'review' });
 		mockList.mockResolvedValue({ items: [item], total: 1 });
 		mockSuspend.mockRejectedValue(new Error('suspend failed'));
 
@@ -227,7 +212,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('clicking Cancel during edit closes the edit row without saving', async () => {
-		const item = makeItem(5, 'miza');
+		const item = makeSRSItemDetail({ id: 5, text: 'miza' });
 		mockList.mockResolvedValue({ items: [item], total: 1 });
 
 		const { findByText } = render(AdminSRSPage);
@@ -246,7 +231,7 @@ describe('admin/srs/+page.svelte', () => {
 
 	it('clicking header checkbox when nothing is selected selects all items', async () => {
 		mockList.mockResolvedValue({
-			items: [makeItem(1, 'a'), makeItem(2, 'b')],
+			items: [makeSRSItemDetail({ id: 1, text: 'a' }), makeSRSItemDetail({ id: 2, text: 'b' })],
 			total: 2
 		});
 
@@ -264,7 +249,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('shows error when saveEdit fails with non-Error', async () => {
-		const item = makeItem(15, 'vino');
+		const item = makeSRSItemDetail({ id: 15, text: 'vino' });
 		mockList.mockResolvedValue({ items: [item], total: 1 });
 		mockUpdate.mockRejectedValue('plain update error');
 
@@ -278,7 +263,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('shows error when deleteItem fails with non-Error', async () => {
-		const item = makeItem(16, 'sir');
+		const item = makeSRSItemDetail({ id: 16, text: 'sir' });
 		mockList.mockResolvedValue({ items: [item], total: 1 });
 		mockDelete.mockRejectedValue('plain delete error');
 		vi.stubGlobal('confirm', () => true);
@@ -292,7 +277,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('shows Unsuspend button for a suspended item and calls suspendSRSItem(id, false)', async () => {
-		const item = makeItem(20, 'kava', 'suspended');
+		const item = makeSRSItemDetail({ id: 20, text: 'kava', state: 'suspended' });
 		mockList.mockResolvedValue({ items: [item], total: 1 });
 		mockSuspend.mockResolvedValue({ ...item, state: 'new' });
 
@@ -308,7 +293,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('clicking same sort column twice flips order from asc to desc then back to asc', async () => {
-		mockList.mockResolvedValue({ items: [makeItem(1, 'a')], total: 1 });
+		mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: 'a' })], total: 1 });
 
 		const { findByText } = render(AdminSRSPage);
 		await findByText('a');
@@ -333,7 +318,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('clicking a different sort column changes sort to that column', async () => {
-		mockList.mockResolvedValue({ items: [makeItem(1, 'a')], total: 1 });
+		mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: 'a' })], total: 1 });
 
 		const { findByText } = render(AdminSRSPage);
 		await findByText('a');
@@ -366,7 +351,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('shows error when bulkDeleteSRSItems fails', async () => {
-		mockList.mockResolvedValue({ items: [makeItem(1, 'a'), makeItem(2, 'b')], total: 2 });
+		mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: 'a' }), makeSRSItemDetail({ id: 2, text: 'b' })], total: 2 });
 		mockBulkDelete.mockRejectedValue(new Error('bulk delete failed'));
 		vi.stubGlobal('confirm', () => true);
 
@@ -443,7 +428,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('clicking header checkbox when all items are selected deselects all', async () => {
-		mockList.mockResolvedValue({ items: [makeItem(1, 'a'), makeItem(2, 'b')], total: 2 });
+		mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: 'a' }), makeSRSItemDetail({ id: 2, text: 'b' })], total: 2 });
 
 		const { findByText, findAllByRole, queryByText } = render(AdminSRSPage);
 		await findByText('a');
@@ -466,7 +451,7 @@ describe('admin/srs/+page.svelte', () => {
 
 	it('clicking next/prev pagination changes the page', async () => {
 		// total > PAGE_SIZE (50) to enable next button
-		mockList.mockResolvedValue({ items: [makeItem(1, 'a')], total: 100 });
+		mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: 'a' })], total: 100 });
 
 		const { findByText } = render(AdminSRSPage);
 		await findByText('page 1 / 2');
@@ -485,7 +470,7 @@ describe('admin/srs/+page.svelte', () => {
 	});
 
 	it('clicking state, due, and reps sort columns each trigger a reload', async () => {
-		mockList.mockResolvedValue({ items: [makeItem(1, 'a')], total: 1 });
+		mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: 'a' })], total: 1 });
 
 		const { findByText } = render(AdminSRSPage);
 		await findByText('a');

@@ -2,40 +2,17 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
+from datetime import UTC, datetime, timedelta
+
 from app.srs.database import SRSDatabase
 from app.srs.queue_stats import refresh_review_settings, resolve_daily_new_cap
-
-
-def _encode_varint(value: int) -> bytes:
-    """Encode an unsigned integer as a protobuf varint."""
-    parts = []
-    while True:
-        b = value & 0x7F
-        value >>= 7
-        if value:
-            parts.append(b | 0x80)
-        else:
-            parts.append(b)
-            break
-    return bytes(parts)
-
-
-def _pb_varint_field(field_num: int, value: int) -> bytes:
-    tag = _encode_varint((field_num << 3) | 0)
-    return tag + _encode_varint(value)
-
-
-def _pb_len_field(field_num: int, payload: bytes) -> bytes:
-    tag = _encode_varint((field_num << 3) | 2)
-    return tag + _encode_varint(len(payload)) + payload
-
-
-def _make_db() -> SRSDatabase:
-    return SRSDatabase(":memory:")
+from tests._helpers.protobuf import pb_len_field, pb_varint_field
 
 
 def test_returns_cache_source_when_cache_present():
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     db.set_anki_state_cache("daily_new_cap", "30")
     cap, source = resolve_daily_new_cap(db)
     assert cap == 30
@@ -45,7 +22,7 @@ def test_returns_cache_source_when_cache_present():
 def test_falls_back_to_config_when_no_cache(monkeypatch):
     from app.srs import queue_stats
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     monkeypatch.setattr(queue_stats.settings, "anki_new_per_day_default", 25)
     cap, source = resolve_daily_new_cap(db)
     assert cap == 25
@@ -55,7 +32,7 @@ def test_falls_back_to_config_when_no_cache(monkeypatch):
 def test_falls_back_to_default_when_config_zero(monkeypatch):
     from app.srs import queue_stats
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     monkeypatch.setattr(queue_stats.settings, "anki_new_per_day_default", 0)
     cap, source = resolve_daily_new_cap(db)
     assert cap == 20
@@ -72,12 +49,18 @@ def test_refresh_review_settings_skips_on_missing_tables(tmp_path):
     conn.commit()
     conn.close()
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     # Call with a connection that has no deck_config table
     conn = sqlite3.connect(str(db_path))
     refresh_review_settings(db, conn, "nonexistent")
     # Should not raise - just return early
     conn.close()
+
+    # Confirm the early-return path wrote nothing to the cache
+    assert db.get_anki_state_cache("daily_new_cap") is None
+    assert db.get_anki_state_cache("new_spread") is None
+    assert db.get_anki_state_cache("bury_new") is None
+    assert db.get_anki_state_cache("bury_review") is None
 
 
 def test_refresh_review_settings_early_sqlite_error():
@@ -86,8 +69,14 @@ def test_refresh_review_settings_early_sqlite_error():
 
     conn = sqlite3.connect(":memory:")
     conn.close()
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     refresh_review_settings(db, conn, "any")  # must not raise — hits L282-283 except handler
+
+    # Confirm the early-return path wrote nothing to the cache
+    assert db.get_anki_state_cache("daily_new_cap") is None
+    assert db.get_anki_state_cache("new_spread") is None
+    assert db.get_anki_state_cache("bury_new") is None
+    assert db.get_anki_state_cache("bury_review") is None
 
 
 def test_refresh_review_settings_skips_on_missing_deck_config_table(tmp_path):
@@ -100,9 +89,15 @@ def test_refresh_review_settings_skips_on_missing_deck_config_table(tmp_path):
     conn.execute("CREATE TABLE deck_config (id INTEGER, config BLOB)")
     conn.commit()
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     refresh_review_settings(db, conn, "deck")
     conn.close()
+
+    # Confirm the early-return path wrote nothing to the cache
+    assert db.get_anki_state_cache("daily_new_cap") is None
+    assert db.get_anki_state_cache("new_spread") is None
+    assert db.get_anki_state_cache("bury_new") is None
+    assert db.get_anki_state_cache("bury_review") is None
 
 
 def test_refresh_review_settings_skips_on_no_deck_found(tmp_path):
@@ -115,9 +110,15 @@ def test_refresh_review_settings_skips_on_no_deck_found(tmp_path):
     conn.execute("CREATE TABLE deck_config (id INTEGER, config BLOB)")
     conn.commit()
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     refresh_review_settings(db, conn, "nonexistent_deck")
     conn.close()
+
+    # Confirm the early-return path wrote nothing to the cache
+    assert db.get_anki_state_cache("daily_new_cap") is None
+    assert db.get_anki_state_cache("new_spread") is None
+    assert db.get_anki_state_cache("bury_new") is None
+    assert db.get_anki_state_cache("bury_review") is None
 
 
 def test_refresh_review_settings_skips_on_empty_kind(tmp_path):
@@ -131,9 +132,15 @@ def test_refresh_review_settings_skips_on_empty_kind(tmp_path):
     conn.execute("INSERT INTO decks (id, name, kind) VALUES (1, 'Test', NULL)")
     conn.commit()
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     refresh_review_settings(db, conn, "Test")
     conn.close()
+
+    # Confirm the early-return path wrote nothing to the cache
+    assert db.get_anki_state_cache("daily_new_cap") is None
+    assert db.get_anki_state_cache("new_spread") is None
+    assert db.get_anki_state_cache("bury_new") is None
+    assert db.get_anki_state_cache("bury_review") is None
 
 
 def test_refresh_review_settings_skips_on_bad_wire_type(tmp_path):
@@ -150,9 +157,15 @@ def test_refresh_review_settings_skips_on_bad_wire_type(tmp_path):
     conn.execute("INSERT INTO decks (id, name, kind) VALUES (1, 'Test', ?)", (kind_blob,))
     conn.commit()
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     refresh_review_settings(db, conn, "Test")
     conn.close()
+
+    # Confirm the early-return path wrote nothing to the cache
+    assert db.get_anki_state_cache("daily_new_cap") is None
+    assert db.get_anki_state_cache("new_spread") is None
+    assert db.get_anki_state_cache("bury_new") is None
+    assert db.get_anki_state_cache("bury_review") is None
 
 
 def test_refresh_review_settings_skips_on_no_config_id(tmp_path):
@@ -169,9 +182,15 @@ def test_refresh_review_settings_skips_on_no_config_id(tmp_path):
     conn.execute("INSERT INTO decks (id, name, kind) VALUES (1, 'Test', ?)", (kind_blob,))
     conn.commit()
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     refresh_review_settings(db, conn, "Test")
     conn.close()
+
+    # Confirm the early-return path wrote nothing to the cache
+    assert db.get_anki_state_cache("daily_new_cap") is None
+    assert db.get_anki_state_cache("new_spread") is None
+    assert db.get_anki_state_cache("bury_new") is None
+    assert db.get_anki_state_cache("bury_review") is None
 
 
 def test_refresh_review_settings_skips_on_no_config_row(tmp_path):
@@ -187,9 +206,15 @@ def test_refresh_review_settings_skips_on_no_config_row(tmp_path):
     conn.execute("INSERT INTO decks (id, name, kind) VALUES (1, 'Test', ?)", (kind_blob,))
     conn.commit()
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     refresh_review_settings(db, conn, "Test")
     conn.close()
+
+    # Confirm the early-return path wrote nothing to the cache
+    assert db.get_anki_state_cache("daily_new_cap") is None
+    assert db.get_anki_state_cache("new_spread") is None
+    assert db.get_anki_state_cache("bury_new") is None
+    assert db.get_anki_state_cache("bury_review") is None
 
 
 def test_refresh_review_settings_skips_invalid_new_spread(tmp_path):
@@ -201,19 +226,22 @@ def test_refresh_review_settings_skips_invalid_new_spread(tmp_path):
     conn.execute("CREATE TABLE decks (id INTEGER, name TEXT, kind BLOB)")
     conn.execute("CREATE TABLE deck_config (id INTEGER, config BLOB)")
     # conf_id=1, new_spread=5 (invalid, not in (0,1,2))
-    inner = _pb_varint_field(1, 1)  # conf_id=1 inside kind blob
-    inner += _pb_varint_field(30, 5)  # new_spread=5 (invalid)
-    kind_blob = _pb_len_field(1, inner)
+    inner = pb_varint_field(1, 1)  # conf_id=1 inside kind blob
+    inner += pb_varint_field(30, 5)  # new_spread=5 (invalid)
+    kind_blob = pb_len_field(1, inner)
     # config blob with new_spread=5 (invalid, not in (0,1,2))
-    config_blob = _pb_varint_field(30, 5)
+    config_blob = pb_varint_field(30, 5)
     conn.execute("INSERT INTO deck_config VALUES (1, ?)", (config_blob,))
     conn.execute("INSERT INTO decks VALUES (1, 'Test', ?)", (kind_blob,))
     conn.commit()
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     refresh_review_settings(db, conn, "Test")
     # new_spread=5 is invalid, so cache should NOT be written
+    assert db.get_anki_state_cache("daily_new_cap") is None
     assert db.get_anki_state_cache("new_spread") is None
+    assert db.get_anki_state_cache("bury_new") is None
+    assert db.get_anki_state_cache("bury_review") is None
     conn.close()
 
 
@@ -232,9 +260,15 @@ def test_refresh_review_settings_skips_on_no_config_blob(tmp_path):
     conn.execute("INSERT INTO deck_config (id, config) VALUES (1, NULL)")
     conn.commit()
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     refresh_review_settings(db, conn, "Test")
     conn.close()
+
+    # Confirm the early-return path wrote nothing to the cache
+    assert db.get_anki_state_cache("daily_new_cap") is None
+    assert db.get_anki_state_cache("new_spread") is None
+    assert db.get_anki_state_cache("bury_new") is None
+    assert db.get_anki_state_cache("bury_review") is None
 
 
 def test_resolve_new_spread_db_none(monkeypatch):
@@ -278,9 +312,10 @@ def test_resolve_new_spread_cache_too_old(monkeypatch):
     """Test new_spread cache fallback when cache is too old."""
     from datetime import UTC, datetime, timedelta
 
+    from app.srs.database import SRSDatabase
     from app.srs.queue_stats import resolve_new_spread
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     # Set cache with old timestamp
     old_time = (datetime.now(UTC) - timedelta(days=31)).isoformat()
     db.set_anki_state_cache("new_spread", "1")
@@ -316,7 +351,7 @@ def test_resolve_bury_review_from_cache():
     """Test bury_review resolution from cache."""
     from app.srs.queue_stats import resolve_bury_review
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     db.set_anki_state_cache("bury_review", "False")
 
     val, source = resolve_bury_review(db)
@@ -328,7 +363,7 @@ def test_resolve_new_spread_invalid_value(monkeypatch):
     """Test new_spread cache with invalid value (not in 0,1,2) falls to default."""
     from app.srs.queue_stats import resolve_new_spread
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     # Cache has value "5" which is not in (0, 1, 2)
     db.set_anki_state_cache("new_spread", "5")
     val, source = resolve_new_spread(db)
@@ -343,14 +378,10 @@ def test_resolve_new_spread_invalid_timestamp(monkeypatch):
 
     from app.srs.queue_stats import resolve_new_spread
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     # Write cache with invalid timestamp
     old_ts = (datetime.now(UTC) - timedelta(days=31)).strftime("%Y-%m-%d %H:%M:%S")
-    db._conn.execute(
-        "INSERT INTO anki_state_cache (key, value, updated_at) VALUES (?, ?, ?)",
-        ("new_spread", "1", old_ts),
-    )
-    db._conn.commit()
+    db.set_anki_state_cache_raw("new_spread", "1", old_ts)
     val, source = resolve_new_spread(db)
     assert source == "default"
     assert val == 0
@@ -362,7 +393,7 @@ def test_resolve_bury_new_cache_too_old(monkeypatch):
 
     from app.srs.queue_stats import resolve_bury_new
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     db.set_anki_state_cache("bury_new", "False")
 
     val, source = resolve_bury_new(db)
@@ -371,11 +402,7 @@ def test_resolve_bury_new_cache_too_old(monkeypatch):
 
     # Now make cache stale
     old_ts = (datetime.now(UTC) - timedelta(days=31)).strftime("%Y-%m-%d %H:%M:%S")
-    db._conn.execute(
-        "UPDATE anki_state_cache SET updated_at = ? WHERE key = ?",
-        (old_ts, "bury_new"),
-    )
-    db._conn.commit()
+    db.set_anki_state_cache_raw("bury_new", "False", old_ts)
     val, source = resolve_bury_new(db)
     assert source == "default"
     assert val is True
@@ -387,7 +414,7 @@ def test_resolve_bury_review_cache_too_old(monkeypatch):
 
     from app.srs.queue_stats import resolve_bury_review
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     db.set_anki_state_cache("bury_review", "False")
 
     val, source = resolve_bury_review(db)
@@ -395,11 +422,7 @@ def test_resolve_bury_review_cache_too_old(monkeypatch):
 
     # Make cache stale
     old_ts = (datetime.now(UTC) - timedelta(days=31)).strftime("%Y-%m-%d %H:%M:%S")
-    db._conn.execute(
-        "UPDATE anki_state_cache SET updated_at = ? WHERE key = ?",
-        (old_ts, "bury_review"),
-    )
-    db._conn.commit()
+    db.set_anki_state_cache_raw("bury_review", "False", old_ts)
     val, source = resolve_bury_review(db)
     assert source == "default"
     assert val is True
@@ -407,15 +430,13 @@ def test_resolve_bury_review_cache_too_old(monkeypatch):
 
 def test_resolve_new_spread_corrupt_cache(monkeypatch):
     """Test new_spread with corrupt cache value (triggers exception handler)."""
+    from datetime import UTC, datetime
+
     from app.srs.queue_stats import resolve_new_spread
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     # Insert cache with non-integer value to trigger ValueError in int(value_str)
-    db._conn.execute(
-        "INSERT INTO anki_state_cache (key, value, updated_at) VALUES (?, ?, datetime('now'))",
-        ("new_spread", "not-a-number"),
-    )
-    db._conn.commit()
+    db.set_anki_state_cache_raw("new_spread", "not-a-number", datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"))
     val, source = resolve_new_spread(db)
     assert source == "default"
     assert val == 0
@@ -425,13 +446,9 @@ def test_resolve_bury_new_corrupt_cache(monkeypatch):
     """Test bury_new with corrupt cache value."""
     from app.srs.queue_stats import resolve_bury_new
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     # Insert cache with corrupt timestamp to trigger exception
-    db._conn.execute(
-        "INSERT INTO anki_state_cache (key, value, updated_at) VALUES (?, ?, ?)",
-        ("bury_new", "True", "not-a-valid-timestamp"),
-    )
-    db._conn.commit()
+    db.set_anki_state_cache_raw("bury_new", "True", "not-a-valid-timestamp")
     val, source = resolve_bury_new(db)
     assert source == "default"
     assert val is True
@@ -441,13 +458,207 @@ def test_resolve_bury_review_corrupt_cache(monkeypatch):
     """Test bury_review with corrupt cache timestamp."""
     from app.srs.queue_stats import resolve_bury_review
 
-    db = _make_db()
+    db = SRSDatabase(":memory:")
     # Insert cache with corrupt timestamp
-    db._conn.execute(
-        "INSERT INTO anki_state_cache (key, value, updated_at) VALUES (?, ?, ?)",
-        ("bury_review", "False", "invalid-timestamp"),
-    )
-    db._conn.commit()
+    db.set_anki_state_cache_raw("bury_review", "False", "invalid-timestamp")
     val, source = resolve_bury_review(db)
     assert source == "default"
     assert val is True
+
+
+# ---- Coverage for _read_new_per_day_from_anki legacy JSON path ----
+
+
+def test_read_new_per_day_from_anki_returns_none_when_col_row_missing(tmp_path):
+    """Line 244: row is None when col table is empty."""
+    from app.srs.queue_stats import _read_new_per_day_from_anki
+
+    conn = sqlite3.connect(str(tmp_path / "empty.anki2"))
+    conn.execute(
+        "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+        "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+        "decks TEXT, dconf TEXT, tags TEXT)"
+    )
+    conn.commit()
+    result = _read_new_per_day_from_anki(conn, "0. Slovene")
+    assert result is None
+
+
+def test_read_new_per_day_from_anki_json_decode_error(tmp_path):
+    """Lines 251-252: JSON decode error on decks or dconf."""
+    from app.srs.queue_stats import _read_new_per_day_from_anki
+
+    conn = sqlite3.connect(str(tmp_path / "bad_json.anki2"))
+    conn.execute(
+        "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+        "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+        "decks TEXT, dconf TEXT, tags TEXT)"
+    )
+    # Insert invalid JSON in both decks and dconf
+    conn.execute("INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, 'not-json', '{}', 'not-json', 'not-json', '{}')")
+    conn.commit()
+    result = _read_new_per_day_from_anki(conn, "0. Slovene")
+    assert result is None
+
+
+def test_read_new_per_day_from_anki_legacy_json_path(tmp_path):
+    """Lines 259-265: Legacy JSON path finds deck, conf_id, and perDay."""
+    from app.srs.queue_stats import _read_new_per_day_from_anki
+
+    conn = sqlite3.connect(str(tmp_path / "legacy.anki2"))
+    conn.execute(
+        "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+        "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+        "decks TEXT, dconf TEXT, tags TEXT)"
+    )
+    # Legacy format: col.decks JSON, col.dconf JSON
+    dconf_json = json.dumps({"1": {"id": 1, "name": "Default", "new": {"perDay": 15}}})
+    decks_json = json.dumps({"1": {"id": 1, "name": "0. Slovene", "conf": 1}})
+    conn.execute(
+        "INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', ?, ?, '{}')",
+        (decks_json, dconf_json),
+    )
+    conn.commit()
+    result = _read_new_per_day_from_anki(conn, "0. Slovene")
+    assert result == 15
+
+
+def test_read_new_per_day_from_anki_legacy_json_missing_conf(tmp_path):
+    """Lines 259-265: Legacy JSON path, deck found but conf_id lookup fails."""
+    from app.srs.queue_stats import _read_new_per_day_from_anki
+
+    conn = sqlite3.connect(str(tmp_path / "legacy_no_conf.anki2"))
+    conn.execute(
+        "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+        "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+        "decks TEXT, dconf TEXT, tags TEXT)"
+    )
+    # Deck points to conf_id=999 but dconf_json does not have it
+    dconf_json = json.dumps({"1": {"id": 1, "name": "Default", "new": {"perDay": 15}}})
+    decks_json = json.dumps({"1": {"id": 1, "name": "0. Slovene", "conf": 999}})
+    conn.execute(
+        "INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', ?, ?, '{}')",
+        (decks_json, dconf_json),
+    )
+    conn.commit()
+    result = _read_new_per_day_from_anki(conn, "0. Slovene")
+    assert result is None
+
+
+def test_read_new_per_day_from_anki_legacy_json_perday_not_int(tmp_path):
+    """Lines 264-265: Legacy JSON path, perDay exists but isn't convertible to int."""
+    from app.srs.queue_stats import _read_new_per_day_from_anki
+
+    conn = sqlite3.connect(str(tmp_path / "legacy_bad_perday.anki2"))
+    conn.execute(
+        "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+        "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+        "decks TEXT, dconf TEXT, tags TEXT)"
+    )
+    # conf_id=1 exists but perDay is a string, not int
+    dconf_json = json.dumps({"1": {"id": 1, "name": "Default", "new": {"perDay": "fifteen"}}})
+    decks_json = json.dumps({"1": {"id": 1, "name": "0. Slovene", "conf": 1}})
+    conn.execute(
+        "INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', ?, ?, '{}')",
+        (decks_json, dconf_json),
+    )
+    conn.commit()
+    result = _read_new_per_day_from_anki(conn, "0. Slovene")
+    assert result is None
+
+
+def test_read_new_per_day_from_anki_legacy_json_new_not_dict(tmp_path):
+    """Lines 264-265: Legacy JSON path, conf has no 'new' key or 'new' isn't a dict."""
+    from app.srs.queue_stats import _read_new_per_day_from_anki
+
+    conn = sqlite3.connect(str(tmp_path / "legacy_no_new.anki2"))
+    conn.execute(
+        "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+        "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+        "decks TEXT, dconf TEXT, tags TEXT)"
+    )
+    # conf_id=1 exists but "new" key is missing
+    dconf_json = json.dumps({"1": {"id": 1, "name": "Default"}})
+    decks_json = json.dumps({"1": {"id": 1, "name": "0. Slovene", "conf": 1}})
+    conn.execute(
+        "INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', ?, ?, '{}')",
+        (decks_json, dconf_json),
+    )
+    conn.commit()
+    result = _read_new_per_day_from_anki(conn, "0. Slovene")
+    assert result is None
+
+
+def test_resolve_daily_new_cap_db_creation_fails(monkeypatch):
+    """Lines 332-337: db is None and SRSDatabase creation fails."""
+    from app.srs.queue_stats import resolve_daily_new_cap
+
+    monkeypatch.setattr(
+        "app.srs.database.SRSDatabase.__init__", lambda self, x: (_ for _ in ()).throw(Exception("test"))
+    )
+    # Make config default 0 so it falls through to hard default
+    monkeypatch.setattr("app.srs.queue_stats.settings.anki_new_per_day_default", 0)
+    cap, source = resolve_daily_new_cap(None)
+    assert source == "default"
+    assert cap == 20
+
+
+def test_resolve_daily_new_cap_corrupt_cache_value(monkeypatch):
+    """Lines 347-348: Cache has invalid value_str that int() raises ValueError."""
+    from app.srs.queue_stats import resolve_daily_new_cap
+
+    db = SRSDatabase(":memory:")
+    # Insert cache with non-integer value to trigger ValueError in int(value_str)
+    db.set_anki_state_cache_raw("daily_new_cap", "not-a-number", datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"))
+    cap, source = resolve_daily_new_cap(db)
+    # Falls through to config/default
+    assert source in ("config", "default")
+
+
+def test_resolve_daily_new_cap_cache_too_old(monkeypatch):
+    """Lines 345->350: Cache exists but is older than _CACHE_MAX_AGE_DAYS (30 days)."""
+    from app.srs.queue_stats import resolve_daily_new_cap
+
+    db = SRSDatabase(":memory:")
+    # Set cache with timestamp older than 30 days
+    old_ts = (datetime.now(UTC) - timedelta(days=31)).strftime("%Y-%m-%d %H:%M:%S")
+    db.set_anki_state_cache_raw("daily_new_cap", "30", old_ts)
+    cap, source = resolve_daily_new_cap(db)
+    # Should fall through to config/default since cache is stale
+    assert source in ("config", "default")
+
+
+def test_resolve_daily_new_cap_corrupt_cache_timestamp(monkeypatch):
+    """Lines 347-348: Cache has invalid timestamp that fromisoformat() raises ValueError."""
+    from app.srs.queue_stats import resolve_daily_new_cap
+
+    db = SRSDatabase(":memory:")
+    # Insert cache with corrupt timestamp
+    db.set_anki_state_cache_raw("daily_new_cap", "30", "not-a-valid-timestamp")
+    cap, source = resolve_daily_new_cap(db)
+    # Falls through to config/default
+    assert source in ("config", "default")
+
+
+def test_resolve_daily_new_cap_cache_overflow_error(monkeypatch):
+    """Lines 347-348: Cache timestamp causes OverflowError via monkeypatch."""
+    from app.srs.queue_stats import resolve_daily_new_cap
+
+    db = SRSDatabase(":memory:")
+    db.set_anki_state_cache("daily_new_cap", "30")
+    # Monkeypatch datetime.fromisoformat to raise OverflowError
+    monkeypatch.setattr(
+        "app.srs.queue_stats.datetime",
+        type(
+            "FakeDatetime",
+            (),
+            {
+                "now": lambda self, tz: datetime.now(UTC),
+                "fromisoformat": lambda s: (_ for _ in ()).throw(OverflowError("overflow")),
+                "UTC": UTC,
+            },
+        )(),
+    )
+    cap, source = resolve_daily_new_cap(db)
+    # Falls through to config/default
+    assert source in ("config", "default")

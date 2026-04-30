@@ -26,7 +26,8 @@ export default defineConfig({
 				'src/lib/stores/DerivedTest.svelte',
 				'src/routes/+layout.svelte',
 				'src/routes/+error.svelte',
-				'src/routes/admin/+layout.svelte'
+				'src/routes/admin/+layout.svelte',
+				'src/test/**'
 			],
 			thresholds: {
 				statements: 99,
