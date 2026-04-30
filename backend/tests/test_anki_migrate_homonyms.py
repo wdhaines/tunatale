@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -23,59 +24,55 @@ def _build_db(tmp_path: Path, notes: list[tuple[int, str, str]]) -> Path:
     notes: [(note_id, slovene_field, english_field), ...]
     """
     db_path = tmp_path / "collection.anki2"
-    conn = sqlite3.connect(str(db_path))
-    conn.executescript("""
-        CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER,
-            ver INTEGER, dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT,
-            models TEXT, decks TEXT, dconf TEXT, tags TEXT);
-        CREATE TABLE notes (id INTEGER PRIMARY KEY, guid TEXT, mid INTEGER,
-            mod INTEGER, usn INTEGER, tags TEXT, flds TEXT, sfld TEXT,
-            csum INTEGER, flags INTEGER, data TEXT);
-        CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER,
-            ord INTEGER, mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER,
-            due INTEGER, ivl INTEGER, factor INTEGER, reps INTEGER,
-            lapses INTEGER, left INTEGER, odue INTEGER, odid INTEGER,
-            flags INTEGER, data TEXT);
-        CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER,
-            usn INTEGER, common BLOB, kind BLOB);
-        CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT,
-            mtime_secs INTEGER, usn INTEGER, config BLOB);
-        CREATE TABLE fields (ntid INTEGER, ord INTEGER, name TEXT, config BLOB,
-            PRIMARY KEY (ntid, ord));
-    """)
-    conn.execute("INSERT INTO col VALUES (1,0,0,0,18,0,0,0,'{}','{}','{}','{}','{}')")
-    conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, x'', x'')", (_DECK_ID, _DECK_NAME))
-    conn.execute(
-        "INSERT INTO notetypes VALUES (?, ?, 0, 0, x'')",
-        (_SVNT_MID, SLOVENE_VOCAB_NOTETYPE_NAME),
-    )
-    field_names = ["Slovene", "English", "Audio", "Image", "Grammar", "Note", "DisambigKey"]
-    conn.executemany(
-        "INSERT INTO fields VALUES (?, ?, ?, x'')",
-        [(_SVNT_MID, i, name) for i, name in enumerate(field_names)],
-    )
-    now_ts = int(time.time())
-    for card_id, (nid, slovene, english) in enumerate(notes, start=1000):
-        flds = "\x1f".join([slovene, english, "", "", "", "", ""])
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.executescript("""
+            CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER,
+                ver INTEGER, dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT,
+                models TEXT, decks TEXT, dconf TEXT, tags TEXT);
+            CREATE TABLE notes (id INTEGER PRIMARY KEY, guid TEXT, mid INTEGER,
+                mod INTEGER, usn INTEGER, tags TEXT, flds TEXT, sfld TEXT,
+                csum INTEGER, flags INTEGER, data TEXT);
+            CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER,
+                ord INTEGER, mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER,
+                due INTEGER, ivl INTEGER, factor INTEGER, reps INTEGER,
+                lapses INTEGER, left INTEGER, odue INTEGER, odid INTEGER,
+                flags INTEGER, data TEXT);
+            CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER,
+                usn INTEGER, common BLOB, kind BLOB);
+            CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT,
+                mtime_secs INTEGER, usn INTEGER, config BLOB);
+            CREATE TABLE fields (ntid INTEGER, ord INTEGER, name TEXT, config BLOB,
+                PRIMARY KEY (ntid, ord));
+        """)
+        conn.execute("INSERT INTO col VALUES (1,0,0,0,18,0,0,0,'{}','{}','{}','{}','{}')")
+        conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, x'', x'')", (_DECK_ID, _DECK_NAME))
         conn.execute(
-            "INSERT INTO notes VALUES (?, ?, ?, ?, -1, '', ?, ?, 0, 0, '')",
-            (nid, f"guid_{nid}", _SVNT_MID, now_ts, flds, slovene),
+            "INSERT INTO notetypes VALUES (?, ?, 0, 0, x'')",
+            (_SVNT_MID, SLOVENE_VOCAB_NOTETYPE_NAME),
         )
-        conn.execute(
-            "INSERT INTO cards VALUES (?, ?, ?, 0, ?, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')",
-            (card_id, nid, _DECK_ID, now_ts),
+        field_names = ["Slovene", "English", "Audio", "Image", "Grammar", "Note", "DisambigKey"]
+        conn.executemany(
+            "INSERT INTO fields VALUES (?, ?, ?, x'')",
+            [(_SVNT_MID, i, name) for i, name in enumerate(field_names)],
         )
-    conn.commit()
-    conn.close()
+        now_ts = int(time.time())
+        for card_id, (nid, slovene, english) in enumerate(notes, start=1000):
+            flds = "\x1f".join([slovene, english, "", "", "", "", ""])
+            conn.execute(
+                "INSERT INTO notes VALUES (?, ?, ?, ?, -1, '', ?, ?, 0, 0, '')",
+                (nid, f"guid_{nid}", _SVNT_MID, now_ts, flds, slovene),
+            )
+            conn.execute(
+                "INSERT INTO cards VALUES (?, ?, ?, 0, ?, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+                (card_id, nid, _DECK_ID, now_ts),
+            )
+        conn.commit()
     return db_path
 
 
 def _read_fields(db_path: Path, note_id: int) -> list[str]:
-    conn = sqlite3.connect(str(db_path))
-    try:
+    with closing(sqlite3.connect(str(db_path))) as conn:
         row = conn.execute("SELECT flds FROM notes WHERE id=?", (note_id,)).fetchone()
-    finally:
-        conn.close()
     return row[0].split("\x1f")
 
 
@@ -136,28 +133,27 @@ class TestMigrateHomonyms:
 
     def test_notetype_not_found_returns_empty(self, tmp_path):
         db_path = tmp_path / "empty.anki2"
-        conn = sqlite3.connect(str(db_path))
-        conn.executescript("""
-            CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER,
-                ver INTEGER, dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT,
-                models TEXT, decks TEXT, dconf TEXT, tags TEXT);
-            CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT,
-                mtime_secs INTEGER, usn INTEGER, config BLOB);
-            CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT,
-                mtime_secs INTEGER, usn INTEGER, common BLOB, kind BLOB);
-            CREATE TABLE notes (id INTEGER PRIMARY KEY, guid TEXT, mid INTEGER,
-                mod INTEGER, usn INTEGER, tags TEXT, flds TEXT, sfld TEXT,
-                csum INTEGER, flags INTEGER, data TEXT);
-            CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER,
-                ord INTEGER, mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER,
-                due INTEGER, ivl INTEGER, factor INTEGER, reps INTEGER,
-                lapses INTEGER, left INTEGER, odue INTEGER, odid INTEGER,
-                flags INTEGER, data TEXT);
-        """)
-        conn.execute("INSERT INTO col VALUES (1,0,0,0,18,0,0,0,'{}','{}','{}','{}','{}')")
-        conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, x'', x'')", (_DECK_ID, _DECK_NAME))
-        conn.commit()
-        conn.close()
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            conn.executescript("""
+                CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER,
+                    ver INTEGER, dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT,
+                    models TEXT, decks TEXT, dconf TEXT, tags TEXT);
+                CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT,
+                    mtime_secs INTEGER, usn INTEGER, config BLOB);
+                CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT,
+                    mtime_secs INTEGER, usn INTEGER, common BLOB, kind BLOB);
+                CREATE TABLE notes (id INTEGER PRIMARY KEY, guid TEXT, mid INTEGER,
+                    mod INTEGER, usn INTEGER, tags TEXT, flds TEXT, sfld TEXT,
+                    csum INTEGER, flags INTEGER, data TEXT);
+                CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER,
+                    ord INTEGER, mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER,
+                    due INTEGER, ivl INTEGER, factor INTEGER, reps INTEGER,
+                    lapses INTEGER, left INTEGER, odue INTEGER, odid INTEGER,
+                    flags INTEGER, data TEXT);
+            """)
+            conn.execute("INSERT INTO col VALUES (1,0,0,0,18,0,0,0,'{}','{}','{}','{}','{}')")
+            conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, x'', x'')", (_DECK_ID, _DECK_NAME))
+            conn.commit()
         results = migrate_homonyms(
             deck_name=_DECK_NAME,
             anki_collection_path=db_path,
@@ -180,19 +176,18 @@ class TestMigrateHomonyms:
         """Notes with < 7 fields (pre-DisambigKey) are padded before processing."""
         db_path = _build_db(tmp_path, [])
         # Manually insert a note with only 6 fields (no DisambigKey column yet)
-        conn = sqlite3.connect(str(db_path))
-        now_ts = int(time.time())
-        six_field_flds = "\x1f".join(["barva (color)", "color", "", "", "", ""])
-        conn.execute(
-            "INSERT INTO notes VALUES (?, ?, ?, ?, -1, '', ?, ?, 0, 0, '')",
-            (300, "guid_300", _SVNT_MID, now_ts, six_field_flds, "barva (color)"),
-        )
-        conn.execute(
-            "INSERT INTO cards VALUES (?, ?, ?, 0, ?, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')",
-            (3000, 300, _DECK_ID, now_ts),
-        )
-        conn.commit()
-        conn.close()
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            now_ts = int(time.time())
+            six_field_flds = "\x1f".join(["barva (color)", "color", "", "", "", ""])
+            conn.execute(
+                "INSERT INTO notes VALUES (?, ?, ?, ?, -1, '', ?, ?, 0, 0, '')",
+                (300, "guid_300", _SVNT_MID, now_ts, six_field_flds, "barva (color)"),
+            )
+            conn.execute(
+                "INSERT INTO cards VALUES (?, ?, ?, 0, ?, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+                (3000, 300, _DECK_ID, now_ts),
+            )
+            conn.commit()
         results = migrate_homonyms(
             deck_name=_DECK_NAME,
             anki_collection_path=db_path,
@@ -211,19 +206,18 @@ class TestMigrateHomonyms:
         next open Anki raises 'note has 6 fields, expected 7'.
         """
         db_path = _build_db(tmp_path, [])
-        conn = sqlite3.connect(str(db_path))
-        now_ts = int(time.time())
-        six_field_flds = "\x1f".join(["pes", "dog", "", "", "", ""])
-        conn.execute(
-            "INSERT INTO notes VALUES (?, ?, ?, ?, -1, '', ?, ?, 0, 0, '')",
-            (301, "guid_301", _SVNT_MID, now_ts, six_field_flds, "pes"),
-        )
-        conn.execute(
-            "INSERT INTO cards VALUES (?, ?, ?, 0, ?, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')",
-            (3001, 301, _DECK_ID, now_ts),
-        )
-        conn.commit()
-        conn.close()
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            now_ts = int(time.time())
+            six_field_flds = "\x1f".join(["pes", "dog", "", "", "", ""])
+            conn.execute(
+                "INSERT INTO notes VALUES (?, ?, ?, ?, -1, '', ?, ?, 0, 0, '')",
+                (301, "guid_301", _SVNT_MID, now_ts, six_field_flds, "pes"),
+            )
+            conn.execute(
+                "INSERT INTO cards VALUES (?, ?, ?, 0, ?, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+                (3001, 301, _DECK_ID, now_ts),
+            )
+            conn.commit()
         results = migrate_homonyms(
             deck_name=_DECK_NAME,
             anki_collection_path=db_path,
@@ -281,10 +275,9 @@ class TestMigrateHomonyms:
         """When notetype has only 6 fields, DisambigKey is inserted into fields table."""
         db_path = _build_db(tmp_path, [(500, "barva (color)", "color")])
         # Remove the DisambigKey field row to simulate a pre-H3 notetype
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("DELETE FROM fields WHERE ntid = ? AND ord = 6", (_SVNT_MID,))
-        conn.commit()
-        conn.close()
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            conn.execute("DELETE FROM fields WHERE ntid = ? AND ord = 6", (_SVNT_MID,))
+            conn.commit()
 
         migrate_homonyms(
             deck_name=_DECK_NAME,
@@ -293,10 +286,9 @@ class TestMigrateHomonyms:
             dry_run=False,
         )
 
-        conn = sqlite3.connect(str(db_path))
-        field_count = conn.execute("SELECT COUNT(*) FROM fields WHERE ntid = ?", (_SVNT_MID,)).fetchone()[0]
-        disambig_row = conn.execute("SELECT name FROM fields WHERE ntid = ? AND ord = 6", (_SVNT_MID,)).fetchone()
-        conn.close()
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            field_count = conn.execute("SELECT COUNT(*) FROM fields WHERE ntid = ?", (_SVNT_MID,)).fetchone()[0]
+            disambig_row = conn.execute("SELECT name FROM fields WHERE ntid = ? AND ord = 6", (_SVNT_MID,)).fetchone()
         assert field_count == 7
         assert disambig_row is not None
         assert disambig_row[0] == "DisambigKey"
@@ -311,12 +303,11 @@ class TestMigrateHomonyms:
         db_path = _build_db(tmp_path, [(501, "barva (color)", "color")])
         # Remove DisambigKey to simulate a pre-H3 6-field notetype, and pin known
         # pre-run metadata values so the test can detect that they were updated.
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("DELETE FROM fields WHERE ntid = ? AND ord = 6", (_SVNT_MID,))
-        conn.execute("UPDATE notetypes SET mtime_secs=1000, usn=0 WHERE id=?", (_SVNT_MID,))
-        conn.execute("UPDATE col SET scm=1000")
-        conn.commit()
-        conn.close()
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            conn.execute("DELETE FROM fields WHERE ntid = ? AND ord = 6", (_SVNT_MID,))
+            conn.execute("UPDATE notetypes SET mtime_secs=1000, usn=0 WHERE id=?", (_SVNT_MID,))
+            conn.execute("UPDATE col SET scm=1000")
+            conn.commit()
 
         migrate_homonyms(
             deck_name=_DECK_NAME,
@@ -325,12 +316,9 @@ class TestMigrateHomonyms:
             dry_run=False,
         )
 
-        conn = sqlite3.connect(str(db_path))
-        try:
+        with closing(sqlite3.connect(str(db_path))) as conn:
             nt_mtime, nt_usn = conn.execute("SELECT mtime_secs, usn FROM notetypes WHERE id=?", (_SVNT_MID,)).fetchone()
             col_scm = conn.execute("SELECT scm FROM col").fetchone()[0]
-        finally:
-            conn.close()
         assert nt_mtime > 1000, "notetypes.mtime_secs must be bumped when a field is added"
         assert nt_usn == -1, "notetypes.usn must be -1 (dirty) when a field is added"
         assert col_scm > 1000, "col.scm must be bumped when the schema changes (field added)"
@@ -343,11 +331,10 @@ class TestMigrateHomonyms:
         """
         db_path = _build_db(tmp_path, [(502, "barva (color)", "color")])
         # 7 fields are already present via _build_db; pin the pre-run scm.
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("UPDATE col SET scm=777")
-        conn.execute("UPDATE notetypes SET mtime_secs=777, usn=0 WHERE id=?", (_SVNT_MID,))
-        conn.commit()
-        conn.close()
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            conn.execute("UPDATE col SET scm=777")
+            conn.execute("UPDATE notetypes SET mtime_secs=777, usn=0 WHERE id=?", (_SVNT_MID,))
+            conn.commit()
 
         migrate_homonyms(
             deck_name=_DECK_NAME,
@@ -356,12 +343,9 @@ class TestMigrateHomonyms:
             dry_run=False,
         )
 
-        conn = sqlite3.connect(str(db_path))
-        try:
+        with closing(sqlite3.connect(str(db_path))) as conn:
             nt_mtime, nt_usn = conn.execute("SELECT mtime_secs, usn FROM notetypes WHERE id=?", (_SVNT_MID,)).fetchone()
             col_scm = conn.execute("SELECT scm FROM col").fetchone()[0]
-        finally:
-            conn.close()
         assert col_scm == 777, "col.scm must not be bumped when no field is added"
         assert nt_mtime == 777, "notetypes.mtime_secs must not be bumped when no field is added"
         assert nt_usn == 0, "notetypes.usn must be left clean when no field is added"

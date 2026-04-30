@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -30,100 +31,81 @@ def _build_svnt_db(tmp_path: Path, notes: list[tuple[int, str, str]]) -> Path:
     notes: [(note_id, slovene_field, english_field), ...]
     """
     db_path = tmp_path / "svnt.anki2"
-    conn = sqlite3.connect(str(db_path))
-    conn.executescript("""
-        CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER,
-            ver INTEGER, dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT,
-            models TEXT, decks TEXT, dconf TEXT, tags TEXT);
-        CREATE TABLE notes (id INTEGER PRIMARY KEY, guid TEXT, mid INTEGER,
-            mod INTEGER, usn INTEGER, tags TEXT, flds TEXT, sfld TEXT,
-            csum INTEGER, flags INTEGER, data TEXT);
-        CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER,
-            ord INTEGER, mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER,
-            due INTEGER, ivl INTEGER, factor INTEGER, reps INTEGER,
-            lapses INTEGER, left INTEGER, odue INTEGER, odid INTEGER,
-            flags INTEGER, data TEXT);
-        CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT,
-            mtime_secs INTEGER, usn INTEGER, common BLOB, kind BLOB);
-        CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT,
-            mtime_secs INTEGER, usn INTEGER, config BLOB);
-        CREATE TABLE fields (ntid INTEGER, ord INTEGER, name TEXT, config BLOB,
-            PRIMARY KEY (ntid, ord));
-    """)
-    conn.execute("INSERT INTO col VALUES (1,0,0,0,18,0,0,0,'{}','{}','{}','{}','{}')")
-    conn.execute("INSERT INTO decks VALUES (?, '0. Slovene', 0, 0, x'', x'')", (_SVNT_DECK_ID,))
-    conn.execute("INSERT INTO notetypes VALUES (?, ?, 0, 0, x'')", (_SVNT_MID, SLOVENE_VOCAB_NOTETYPE_NAME))
-    field_names = ["Slovene", "English", "Audio", "Image", "Grammar", "Note", "DisambigKey"]
-    conn.executemany(
-        "INSERT INTO fields VALUES (?, ?, ?, x'')",
-        [(_SVNT_MID, i, name) for i, name in enumerate(field_names)],
-    )
-    now_ts = int(time.time())
-    for card_id, (nid, slovene, english) in enumerate(notes, start=5000):
-        flds = "\x1f".join([slovene, english, "", "", "", "", ""])
-        conn.execute(
-            "INSERT INTO notes VALUES (?, ?, ?, ?, -1, '', ?, ?, 0, 0, '')",
-            (nid, f"guid_{nid}", _SVNT_MID, now_ts, flds, slovene),
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.executescript("""
+            CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER,
+                ver INTEGER, dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT,
+                models TEXT, decks TEXT, dconf TEXT, tags TEXT);
+            CREATE TABLE notes (id INTEGER PRIMARY KEY, guid TEXT, mid INTEGER,
+                mod INTEGER, usn INTEGER, tags TEXT, flds TEXT, sfld TEXT,
+                csum INTEGER, flags INTEGER, data TEXT);
+            CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER,
+                ord INTEGER, mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER,
+                due INTEGER, ivl INTEGER, factor INTEGER, reps INTEGER,
+                lapses INTEGER, left INTEGER, odue INTEGER, odid INTEGER,
+                flags INTEGER, data TEXT);
+            CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT,
+                mtime_secs INTEGER, usn INTEGER, common BLOB, kind BLOB);
+            CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT,
+                mtime_secs INTEGER, usn INTEGER, config BLOB);
+            CREATE TABLE fields (ntid INTEGER, ord INTEGER, name TEXT, config BLOB,
+                PRIMARY KEY (ntid, ord));
+        """)
+        conn.execute("INSERT INTO col VALUES (1,0,0,0,18,0,0,0,'{}','{}','{}','{}','{}')")
+        conn.execute("INSERT INTO decks VALUES (?, '0. Slovene', 0, 0, x'', x'')", (_SVNT_DECK_ID,))
+        conn.execute("INSERT INTO notetypes VALUES (?, ?, 0, 0, x'')", (_SVNT_MID, SLOVENE_VOCAB_NOTETYPE_NAME))
+        field_names = ["Slovene", "English", "Audio", "Image", "Grammar", "Note", "DisambigKey"]
+        conn.executemany(
+            "INSERT INTO fields VALUES (?, ?, ?, x'')",
+            [(_SVNT_MID, i, name) for i, name in enumerate(field_names)],
         )
-        conn.execute(
-            "INSERT INTO cards VALUES (?, ?, ?, 0, ?, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')",
-            (card_id, nid, _SVNT_DECK_ID, now_ts),
-        )
-    conn.commit()
-    conn.close()
+        now_ts = int(time.time())
+        for card_id, (nid, slovene, english) in enumerate(notes, start=5000):
+            flds = "\x1f".join([slovene, english, "", "", "", "", ""])
+            conn.execute(
+                "INSERT INTO notes VALUES (?, ?, ?, ?, -1, '', ?, ?, 0, 0, '')",
+                (nid, f"guid_{nid}", _SVNT_MID, now_ts, flds, slovene),
+            )
+            conn.execute(
+                "INSERT INTO cards VALUES (?, ?, ?, 0, ?, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+                (card_id, nid, _SVNT_DECK_ID, now_ts),
+            )
+        conn.commit()
     return db_path
 
 
 def _set_note_guid(db_path: Path, note_id: int, guid: str) -> None:
-    conn = sqlite3.connect(str(db_path))
-    try:
+    with closing(sqlite3.connect(str(db_path))) as conn:
         conn.execute("UPDATE notes SET guid=? WHERE id=?", (guid, note_id))
         conn.commit()
-    finally:
-        conn.close()
 
 
 def _set_note_fields(db_path: Path, note_id: int, fields: str) -> None:
-    conn = sqlite3.connect(str(db_path))
-    try:
+    with closing(sqlite3.connect(str(db_path))) as conn:
         conn.execute("UPDATE notes SET flds=? WHERE id=?", (fields, note_id))
         conn.commit()
-    finally:
-        conn.close()
 
 
 def _all_guids(db_path: Path) -> dict[int, str]:
-    conn = sqlite3.connect(str(db_path))
-    try:
+    with closing(sqlite3.connect(str(db_path))) as conn:
         rows = conn.execute("SELECT id, guid FROM notes").fetchall()
-    finally:
-        conn.close()
     return {r[0]: r[1] for r in rows}
 
 
 def _all_notes_mod(db_path: Path) -> dict[int, int]:
-    conn = sqlite3.connect(str(db_path))
-    try:
+    with closing(sqlite3.connect(str(db_path))) as conn:
         rows = conn.execute("SELECT id, mod FROM notes").fetchall()
-    finally:
-        conn.close()
     return {r[0]: r[1] for r in rows}
 
 
 def _col_usn(db_path: Path) -> int:
-    conn = sqlite3.connect(str(db_path))
-    try:
+    with closing(sqlite3.connect(str(db_path))) as conn:
         return conn.execute("SELECT usn FROM col").fetchone()[0]
-    finally:
-        conn.close()
 
 
 def _col_mod(db_path: Path) -> int:
-    conn = sqlite3.connect(str(db_path))
-    try:
+    with closing(sqlite3.connect(str(db_path))) as conn:
         return conn.execute("SELECT mod FROM col").fetchone()[0]
-    finally:
-        conn.close()
 
 
 class TestBackfillGuidsCLI:
@@ -166,13 +148,10 @@ class TestBackfillGuidsCLI:
         # Pre-seed: note 1001 already has matching guid (= noop)
         _set_note_guid(fake_anki_db, 1001, compute_guid("banka", "sl"))
         # Seed distinct mod so we can detect untouched rows
-        conn = sqlite3.connect(str(fake_anki_db))
-        try:
+        with closing(sqlite3.connect(str(fake_anki_db))) as conn:
             for nid in (1001, 1002, 1003, 1004, 1005):
                 conn.execute("UPDATE notes SET mod=? WHERE id=?", (111_111, nid))
             conn.commit()
-        finally:
-            conn.close()
 
         backfill_guids(
             deck_name="0. Slovene",
@@ -194,13 +173,10 @@ class TestBackfillGuidsCLI:
         """
         # Pre-seed: note 1001 already has matching guid (= noop); all rows usn=0.
         _set_note_guid(fake_anki_db, 1001, compute_guid("banka", "sl"))
-        conn = sqlite3.connect(str(fake_anki_db))
-        try:
+        with closing(sqlite3.connect(str(fake_anki_db))) as conn:
             for nid in (1001, 1002, 1003, 1004, 1005):
                 conn.execute("UPDATE notes SET usn=0 WHERE id=?", (nid,))
             conn.commit()
-        finally:
-            conn.close()
 
         backfill_guids(
             deck_name="0. Slovene",
@@ -210,11 +186,8 @@ class TestBackfillGuidsCLI:
             force=True,
         )
 
-        conn = sqlite3.connect(str(fake_anki_db))
-        try:
+        with closing(sqlite3.connect(str(fake_anki_db))) as conn:
             usn_by_id = dict(conn.execute("SELECT id, usn FROM notes").fetchall())
-        finally:
-            conn.close()
         assert usn_by_id[1001] == 0, "noop row must not have usn touched"
         for nid in (1002, 1003, 1004, 1005):
             assert usn_by_id[nid] == -1, f"updated row {nid} must have usn=-1 (dirty)"
@@ -422,10 +395,9 @@ class TestBackfillGuidsSuffixPreflight:
         """notetypes table present but SVNT entry absent → preflight is a no-op."""
         db_path = _build_svnt_db(tmp_path, [])
         # Remove the SVNT notetype entry so the notetype is unknown
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("DELETE FROM notetypes WHERE name = ?", (SLOVENE_VOCAB_NOTETYPE_NAME,))
-        conn.commit()
-        conn.close()
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            conn.execute("DELETE FROM notetypes WHERE name = ?", (SLOVENE_VOCAB_NOTETYPE_NAME,))
+            conn.commit()
 
         result = backfill_guids(
             deck_name="0. Slovene",
