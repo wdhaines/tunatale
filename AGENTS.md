@@ -87,3 +87,14 @@ Frontend checks are local-only (`npm run check`, `test:coverage`, `test:e2e`).
 - `.claude/rules/tdd.md` — red-green-refactor workflow, step ordering
 - `.claude/rules/environment.md` — secrets, venv, Groq setup, rate limits
 - `.claude/rules/anki-sync.md` — USN protocol, safety envelope, migration rules
+
+## Critical Rules
+
+1. **Strict TDD**: Always follow red-green-refactor. Run `./test.sh` BEFORE declaring victory — never commit with failing tests or coverage failures. Verify all changes with `./test.sh` before committing.
+
+2. **Ask for help when stuck**: If you're going in circles or stuck, proactively ask for advice from a stronger model (Claude Opus 4.7 with max thinking) rather than spinning endlessly.
+
+## Rules (from ~/.claude/CLAUDE.md)
+
+- Always run tests using the virtual environment; don't just theorize
+- Add tests to the tests directory, not other random directories.

@@ -12,6 +12,8 @@
 - Each plan step: write ALL tests for that step first, then implement
 - Tests must fail before implementation (verify with `pytest -x`)
 - After each step: `./test.sh` must pass (lint + all tests + coverage)
+- **Never declare victory with `./test.sh` failing** — fix all errors before moving on
+- **Never commit with failing tests or coverage failures**
 
 ## Plan Step Ordering
 
