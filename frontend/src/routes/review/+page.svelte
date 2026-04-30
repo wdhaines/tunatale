@@ -1,11 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import type { SRSItemDetail, QueueStats } from '$lib/api';
+	import type { ReviewQueueItem, QueueStats } from '$lib/api';
 	import DrillCard from '$lib/components/DrillCard.svelte';
 
-	type Direction = 'recognition' | 'production';
-	type QueueItem = { item: SRSItemDetail; direction: Direction };
+	type QueueItem = { item: ReviewQueueItem; direction: 'recognition' | 'production' };
 
 	let queue: QueueItem[] = $state([]);
 	let index = $state(0);
@@ -17,17 +16,7 @@
 	let current = $derived(queue[index]);
 	let done = $derived(!loading && !error && index >= queue.length);
 
-	function interleave(rec: SRSItemDetail[], prod: SRSItemDetail[]): QueueItem[] {
-		const result: QueueItem[] = [];
-		const maxLen = Math.max(rec.length, prod.length);
-		for (let i = 0; i < maxLen; i++) {
-			if (i < rec.length) result.push({ item: rec[i], direction: 'recognition' });
-			if (i < prod.length) result.push({ item: prod[i], direction: 'production' });
-		}
-		return result;
-	}
-
-	function getPromptSide(item: SRSItemDetail, direction: Direction): 'L2' | 'L1' | 'image' {
+	function getPromptSide(item: ReviewQueueItem, direction: 'recognition' | 'production'): 'L2' | 'L1' | 'image' {
 		if (direction === 'recognition') return 'L2';
 		if ((item.word_count ?? 2) === 1 && item.image_url) return 'image';
 		return 'L1';
@@ -35,21 +24,12 @@
 
 	onMount(async () => {
 		try {
-			const queueStats = await api.fetchQueueStats();
+			const [queueStats, queueData] = await Promise.all([
+				api.fetchQueueStats(),
+				api.fetchReviewQueue(),
+			]);
 			stats = queueStats;
-			const recCap = Math.ceil(queueStats.daily_new_cap / 2);
-			const prodCap = Math.floor(queueStats.daily_new_cap / 2);
-
-			const fetches: Promise<SRSItemDetail[]>[] = [
-				api.fetchDue('recognition'),
-				api.fetchDue('production'),
-				api.fetchNew('recognition', recCap),
-			];
-			if (prodCap > 0) {
-				fetches.push(api.fetchNew('production', prodCap));
-			}
-			const [dueRec, dueProd, newRec, newProd = []] = await Promise.all(fetches);
-			queue = interleave([...dueRec, ...newRec], [...dueProd, ...newProd]);
+			queue = queueData.queue.map(item => ({ item, direction: item.direction }));
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
