@@ -1159,6 +1159,20 @@ class SRSDatabase:
             )
             self._commit(conn)
 
+    def set_anki_state_cache_raw(self, key: str, value: str, updated_at: str) -> None:
+        """Test helper: upsert a cache row with caller-specified updated_at.
+
+        Production code uses set_anki_state_cache (stamps current UTC time).
+        This variant is for tests that need to simulate stale or corrupt
+        timestamps without reaching into the SQLite connection.
+        """
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO anki_state_cache (key, value, updated_at) VALUES (?, ?, ?)",
+                (key, value, updated_at),
+            )
+            self._commit(conn)
+
     def get_anki_state_cache(self, key: str) -> tuple[str, str] | None:
         """Return (value, updated_at) for the given key, or None if absent."""
         with self._get_conn() as conn:

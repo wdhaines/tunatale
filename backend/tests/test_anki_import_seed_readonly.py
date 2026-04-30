@@ -1,6 +1,7 @@
 """Integration tests for the Stage 2a import_seed CLI (read-only Anki path)."""
 
 import sqlite3
+from contextlib import closing
 from unittest.mock import patch
 
 import pytest
@@ -27,40 +28,36 @@ def _run(fake_anki_db, tmp_path, **kwargs):
 class TestBasicImport:
     def test_creates_five_parent_rows(self, fake_anki_db, tmp_path):
         _run(fake_anki_db, tmp_path)
-        db = sqlite3.connect(str(tmp_path / "tunatale.db"))
-        count = db.execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
-        db.close()
+        with closing(sqlite3.connect(str(tmp_path / "tunatale.db"))) as db:
+            count = db.execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
         assert count == 5
 
     def test_creates_ten_direction_rows(self, fake_anki_db, tmp_path):
         _run(fake_anki_db, tmp_path)
-        db = sqlite3.connect(str(tmp_path / "tunatale.db"))
-        count = db.execute("SELECT COUNT(*) FROM collocation_directions").fetchone()[0]
-        db.close()
+        with closing(sqlite3.connect(str(tmp_path / "tunatale.db"))) as db:
+            count = db.execute("SELECT COUNT(*) FROM collocation_directions").fetchone()[0]
         assert count == 10
 
     def test_fsrs_state_preserved(self, fake_anki_db, tmp_path):
         """Recognition cards with FSRS data have stability > 1.0 (not fallback)."""
         _run(fake_anki_db, tmp_path)
-        db = sqlite3.connect(str(tmp_path / "tunatale.db"))
-        row = db.execute(
-            "SELECT stability FROM collocation_directions WHERE direction='recognition' LIMIT 1"
-        ).fetchone()
-        db.close()
+        with closing(sqlite3.connect(str(tmp_path / "tunatale.db"))) as db:
+            row = db.execute(
+                "SELECT stability FROM collocation_directions WHERE direction='recognition' LIMIT 1"
+            ).fetchone()
         # note 1001 has stability=10.5 from cards.data
         assert row[0] > 1.0
 
     def test_suspended_card_is_suspended_in_tunatale(self, fake_anki_db, tmp_path):
         """Note 1003 production card is suspended in fake collection."""
         _run(fake_anki_db, tmp_path)
-        db = sqlite3.connect(str(tmp_path / "tunatale.db"))
-        # Find the "miza" row and check its production direction state
-        row = db.execute(
-            """SELECT cd.state FROM collocations c
-               JOIN collocation_directions cd ON cd.collocation_id = c.id
-               WHERE c.text = 'miza' AND cd.direction = 'production'"""
-        ).fetchone()
-        db.close()
+        with closing(sqlite3.connect(str(tmp_path / "tunatale.db"))) as db:
+            # Find the "miza" row and check its production direction state
+            row = db.execute(
+                """SELECT cd.state FROM collocations c
+                   JOIN collocation_directions cd ON cd.collocation_id = c.id
+                   WHERE c.text = 'miza' AND cd.direction = 'production'"""
+            ).fetchone()
         assert row[0] == "suspended"
 
     def test_returns_summary_dict(self, fake_anki_db, tmp_path):
@@ -73,17 +70,21 @@ class TestIdempotency:
     def test_second_run_adds_no_new_parents(self, fake_anki_db, tmp_path):
         _run(fake_anki_db, tmp_path)
         db_path = str(tmp_path / "tunatale.db")
-        before = sqlite3.connect(db_path).execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
+        with closing(sqlite3.connect(db_path)) as db:
+            before = db.execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
         _run(fake_anki_db, tmp_path)
-        after = sqlite3.connect(db_path).execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
+        with closing(sqlite3.connect(db_path)) as db:
+            after = db.execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
         assert before == after == 5
 
     def test_second_run_adds_no_new_directions(self, fake_anki_db, tmp_path):
         _run(fake_anki_db, tmp_path)
         db_path = str(tmp_path / "tunatale.db")
-        before = sqlite3.connect(db_path).execute("SELECT COUNT(*) FROM collocation_directions").fetchone()[0]
+        with closing(sqlite3.connect(db_path)) as db:
+            before = db.execute("SELECT COUNT(*) FROM collocation_directions").fetchone()[0]
         _run(fake_anki_db, tmp_path)
-        after = sqlite3.connect(db_path).execute("SELECT COUNT(*) FROM collocation_directions").fetchone()[0]
+        with closing(sqlite3.connect(db_path)) as db:
+            after = db.execute("SELECT COUNT(*) FROM collocation_directions").fetchone()[0]
         assert before == after == 10
 
 
@@ -94,13 +95,11 @@ class TestNoAnkiMutation:
         assert _sha256_file(fake_anki_db) == pre
 
     def test_notes_guid_values_unchanged(self, fake_anki_db, tmp_path):
-        orig_conn = sqlite3.connect(str(fake_anki_db))
-        orig_guids = {r[0] for r in orig_conn.execute("SELECT guid FROM notes").fetchall()}
-        orig_conn.close()
+        with closing(sqlite3.connect(str(fake_anki_db))) as orig_conn:
+            orig_guids = {r[0] for r in orig_conn.execute("SELECT guid FROM notes").fetchall()}
         _run(fake_anki_db, tmp_path)
-        post_conn = sqlite3.connect(str(fake_anki_db))
-        post_guids = {r[0] for r in post_conn.execute("SELECT guid FROM notes").fetchall()}
-        post_conn.close()
+        with closing(sqlite3.connect(str(fake_anki_db))) as post_conn:
+            post_guids = {r[0] for r in post_conn.execute("SELECT guid FROM notes").fetchall()}
         assert orig_guids == post_guids
 
     def test_backup_created_before_import(self, fake_anki_db, tmp_path):
@@ -114,7 +113,8 @@ class TestDryRun:
     def test_dry_run_rolls_back_tunatale_writes(self, fake_anki_db, tmp_path):
         _run(fake_anki_db, tmp_path, dry_run=True)
         db_path = str(tmp_path / "tunatale.db")
-        count = sqlite3.connect(db_path).execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
+        with closing(sqlite3.connect(db_path)) as db:
+            count = db.execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
         assert count == 0
 
     def test_dry_run_still_creates_backup(self, fake_anki_db, tmp_path):
@@ -158,9 +158,8 @@ class TestGuidCollisionSkip:
 
         assert result["skipped_guid_collisions"] >= 1
         # Verify the pre-existing row is untouched
-        db2 = sqlite3.connect(db_path)
-        row = db2.execute("SELECT text FROM collocations WHERE guid = ?", (guid,)).fetchone()
-        db2.close()
+        with closing(sqlite3.connect(db_path)) as db2:
+            row = db2.execute("SELECT text FROM collocations WHERE guid = ?", (guid,)).fetchone()
         assert row[0] == "DIFFERENT_TEXT"
 
 
@@ -173,18 +172,16 @@ class TestMissingCardDirection:
 
         # Build DB then delete one production card (note 1001, card id=10010+1=10011)
         db_path = build_minimal_anki_db(tmp_path)
-        conn = sq3.connect(str(db_path))
-        conn.execute("DELETE FROM cards WHERE id = ?", (1001 * 10 + 1,))
-        conn.commit()
-        conn.close()
+        with closing(sq3.connect(str(db_path))) as conn:
+            conn.execute("DELETE FROM cards WHERE id = ?", (1001 * 10 + 1,))
+            conn.commit()
 
         _run(db_path, tmp_path)
-        tdb = sq3.connect(str(tmp_path / "tunatale.db"))
-        row = tdb.execute(
-            "SELECT state FROM collocation_directions WHERE direction='production'"
-            " AND collocation_id = (SELECT id FROM collocations WHERE text='banka')"
-        ).fetchone()
-        tdb.close()
+        with closing(sq3.connect(str(tmp_path / "tunatale.db"))) as tdb:
+            row = tdb.execute(
+                "SELECT state FROM collocation_directions WHERE direction='production'"
+                " AND collocation_id = (SELECT id FROM collocations WHERE text='banka')"
+            ).fetchone()
         assert row[0] == "new"
 
 
@@ -399,7 +396,6 @@ class TestTransactionRollback:
         ):
             _run(fake_anki_db, tmp_path)
 
-        db = sqlite3.connect(str(tmp_path / "tunatale.db"))
-        count = db.execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
-        db.close()
+        with closing(sqlite3.connect(str(tmp_path / "tunatale.db"))) as db:
+            count = db.execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
         assert count == 0

@@ -13,10 +13,10 @@ import pytest
 def _autoclose_sqlite_connections(monkeypatch):
     """Track and close every sqlite3.Connection opened during a test.
 
-    Many helpers (e.g. _make_anki_conn in test_queue_stats_cache.py) build
-    in-memory databases without closing them, producing ResourceWarning
-    noise that hides genuine warnings. Wrapping sqlite3.connect at the
-    test boundary fixes all sites in one shot.
+    Belt-and-suspenders safety net: individual tests should still wrap
+    sqlite3.connect calls in `with closing(...)`. This fixture catches any
+    that slip through and prevents ResourceWarning noise from hiding real
+    warnings.
     """
     real_connect = sqlite3.connect
     opened: list[sqlite3.Connection] = []
@@ -414,6 +414,34 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 @pytest.fixture
 def llm_mode(request: pytest.FixtureRequest) -> str:
     return request.config.getoption("--llm-mode")  # type: ignore[return-value]
+
+
+@pytest.fixture
+def api_app_state():
+    """Seed app.state with fresh in-memory SRSDatabase, ContentStore, and Language.
+
+    Use in API tests that exercise routes reading from app.state. Yields the
+    SRSDatabase for direct seeding inside the test, then tears down all four
+    state attributes.
+    """
+    from app.main import app
+    from app.models.language import Language
+    from app.srs.database import SRSDatabase
+    from app.storage.store import ContentStore
+
+    db = SRSDatabase(":memory:")
+    store = ContentStore(":memory:")
+    app.state.srs_db = db
+    app.state.content_store = store
+    app.state.language = Language.slovene()
+    try:
+        yield db
+    finally:
+        db.close()
+        store.close()
+        for attr in ("srs_db", "content_store", "language", "llm"):
+            if hasattr(app.state, attr):
+                delattr(app.state, attr)
 
 
 @pytest.fixture
