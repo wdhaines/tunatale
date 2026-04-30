@@ -17,7 +17,13 @@ from app.models.syntactic_unit import SyntacticUnit
 from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, schedule
 from app.srs.lemmatizer import LowercaseLemmatizer
-from app.srs.queue_stats import resolve_daily_new_cap, resolve_fsrs_params
+from app.srs.queue_stats import (
+    resolve_bury_new,
+    resolve_bury_review,
+    resolve_daily_new_cap,
+    resolve_fsrs_params,
+    resolve_new_spread,
+)
 from app.srs.tokenizer import tokenize
 from app.srs.transcript import extract_transcript
 
@@ -501,3 +507,149 @@ async def suspend_item(item_id: int, body: SuspendRequest, request: Request):
     db.set_suspended(item_id, body.suspended, direction=dir_enum)
     row_id, item, lang = db.get_collocation_by_id(item_id)
     return _item_to_dict(row_id, item, lang)
+
+
+def _merge_by_due_then_anki_id(
+    rec: list[tuple[int, SRSItem, str]],
+    prod: list[tuple[int, SRSItem, str]],
+) -> list[tuple[int, SRSItem, str, Direction]]:
+    """Merge two pre-sorted lists by (due_date, anki_card_id NULLS LAST, c.id)."""
+    result: list[tuple[int, SRSItem, str, Direction]] = []
+    i, j = 0, 0
+    while i < len(rec) or j < len(prod):
+        if j >= len(prod):
+            row_id, item, lang = rec[i]
+            result.append((row_id, item, lang, Direction.RECOGNITION))
+            i += 1
+        elif i >= len(rec):
+            row_id, item, lang = prod[j]
+            result.append((row_id, item, lang, Direction.PRODUCTION))
+            j += 1
+        else:
+            rid_r, item_r, lang_r = rec[i]
+            rid_p, item_p, lang_p = prod[j]
+            # Compare by (due_date, anki_card_id NULLS LAST, c.id)
+            due_r = item_r.directions[Direction.RECOGNITION].due_date
+            due_p = item_p.directions[Direction.PRODUCTION].due_date
+            if due_r < due_p:
+                result.append((rid_r, item_r, lang_r, Direction.RECOGNITION))
+                i += 1
+            elif due_r > due_p:
+                result.append((rid_p, item_p, lang_p, Direction.PRODUCTION))
+                j += 1
+            else:
+                # Same due_date — compare anki_card_id
+                anki_r = item_r.directions[Direction.RECOGNITION].anki_card_id
+                anki_p = item_p.directions[Direction.PRODUCTION].anki_card_id
+                if anki_r is None and anki_p is not None:
+                    result.append((rid_p, item_p, lang_p, Direction.PRODUCTION))
+                    j += 1
+                elif anki_p is None and anki_r is not None:
+                    result.append((rid_r, item_r, lang_r, Direction.RECOGNITION))
+                    i += 1
+                elif anki_r is None and anki_p is None:
+                    # Fall back to c.id
+                    if rid_r <= rid_p:
+                        result.append((rid_r, item_r, lang_r, Direction.RECOGNITION))
+                        i += 1
+                    else:
+                        result.append((rid_p, item_p, lang_p, Direction.PRODUCTION))
+                        j += 1
+                else:
+                    if (anki_r or 0) <= (anki_p or 0):
+                        result.append((rid_r, item_r, lang_r, Direction.RECOGNITION))
+                        i += 1
+                    else:
+                        result.append((rid_p, item_p, lang_p, Direction.PRODUCTION))
+                        j += 1
+    return result
+
+
+def _merge_by_anki_id(
+    rec: list[tuple[int, SRSItem, str]],
+    prod: list[tuple[int, SRSItem, str]],
+) -> list[tuple[int, SRSItem, str, Direction]]:
+    """Combine and sort by (anki_card_id NULLS LAST, row_id)."""
+    combined: list[tuple[int, SRSItem, str, Direction]] = []
+    for row_id, item, lang in rec:
+        combined.append((row_id, item, lang, Direction.RECOGNITION))
+    for row_id, item, lang in prod:
+        combined.append((row_id, item, lang, Direction.PRODUCTION))
+    combined.sort(
+        key=lambda t: ((t[1].directions[t[3]].anki_card_id is None, t[1].directions[t[3]].anki_card_id or 0, t[0]),)
+    )
+    return combined
+
+
+def _spread_mix(
+    reviews: list[tuple[int, SRSItem, str, Direction]],
+    news: list[tuple[int, SRSItem, str, Direction]],
+) -> list[tuple[int, SRSItem, str, Direction]]:
+    """Interleave news into reviews at a ratio approximating Anki's mix."""
+    if not news or not reviews:
+        return reviews + news
+    ratio = max(1, len(reviews) // len(news))
+    result: list[tuple[int, SRSItem, str, Direction]] = []
+    review_idx = 0
+    new_idx = 0
+    while review_idx < len(reviews) or new_idx < len(news):
+        # Emit `ratio` reviews, then one new
+        for _ in range(ratio):
+            if review_idx < len(reviews):
+                result.append(reviews[review_idx])
+                review_idx += 1
+        if new_idx < len(news):
+            result.append(news[new_idx])
+            new_idx += 1
+    return result
+
+
+def _queue_item_to_dict(row_id: int, item: SRSItem, lang: str, direction: Direction) -> dict:
+    """Serialize a queue item with embedded direction."""
+    base = _item_to_dict(row_id, item, lang)
+    base["direction"] = direction.value
+    return base
+
+
+@router.get("/review-queue", status_code=200)
+async def get_review_queue(request: Request) -> dict:
+    """Return the entire ordered review queue in one shot.
+
+    Implements Anki's queue construction: combined new-card cap across directions,
+    sibling burying, and newSpread ordering.
+    """
+    db = request.app.state.srs_db
+    today = datetime.date.today()
+
+    cap, _ = resolve_daily_new_cap(db)
+    spread, _ = resolve_new_spread(db)
+    bury_new, _ = resolve_bury_new(db)
+    bury_review, _ = resolve_bury_review(db)
+
+    buried = db.list_collocations_reviewed_today(today)
+
+    # 1. Due review cards: recognition + production interleaved by due_date/anki_card_id
+    due_rec = db.get_due_items(today, Direction.RECOGNITION)
+    due_prod = db.get_due_items(today, Direction.PRODUCTION)
+    due = _merge_by_due_then_anki_id(due_rec, due_prod)
+    if bury_review:
+        due = [t for t in due if t[0] not in buried]
+
+    # 2. New cards: respect cap across BOTH directions, sibling-buried, ordered by anki_card_id
+    new_rec = db.get_new_items(direction=Direction.RECOGNITION, limit=cap)
+    new_prod = db.get_new_items(direction=Direction.PRODUCTION, limit=cap)
+    new_combined = _merge_by_anki_id(new_rec, new_prod)
+    if bury_new:
+        new_combined = [t for t in new_combined if t[0] not in buried]
+    # Apply daily cap across the combined list (NOT split 50/50)
+    new_combined = new_combined[:cap]
+
+    # 3. Apply newSpread
+    if spread == 1:  # new_after_review
+        ordered = due + new_combined
+    elif spread == 2:  # new_before_review
+        ordered = new_combined + due
+    else:  # 0 = mix: interleave one new every N reviews
+        ordered = _spread_mix(due, new_combined)
+
+    return {"queue": [_queue_item_to_dict(*t) for t in ordered]}

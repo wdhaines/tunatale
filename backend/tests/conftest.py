@@ -1,11 +1,36 @@
 """Pytest configuration for TunaTale test suite."""
 
+import contextlib
 import json
 import os
 import sqlite3
 from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _autoclose_sqlite_connections(monkeypatch):
+    """Track and close every sqlite3.Connection opened during a test.
+
+    Many helpers (e.g. _make_anki_conn in test_queue_stats_cache.py) build
+    in-memory databases without closing them, producing ResourceWarning
+    noise that hides genuine warnings. Wrapping sqlite3.connect at the
+    test boundary fixes all sites in one shot.
+    """
+    real_connect = sqlite3.connect
+    opened: list[sqlite3.Connection] = []
+
+    def tracking_connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", tracking_connect)
+    yield
+    for conn in opened:
+        with contextlib.suppress(sqlite3.ProgrammingError):
+            conn.close()
 
 
 @pytest.fixture

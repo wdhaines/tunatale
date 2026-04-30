@@ -176,8 +176,12 @@ export interface QueueStats {
 	new: number;
 	due: number;
 	daily_new_cap: number;
-	cap_source: 'cache' | 'config' | 'default';
-	fsrs_source: 'cache' | 'default';
+	cap_source: string;
+	fsrs_source?: string;
+}
+
+export interface ReviewQueueItem extends SRSItemDetail {
+	direction: 'recognition' | 'production';
 }
 
 export interface AnkiSyncResult {
@@ -309,6 +313,11 @@ export class TunaTaleAPI {
 
 	async fetchQueueStats(): Promise<QueueStats> {
 		return this.request('/api/srs/queue-stats');
+	}
+
+	/* v8 ignore next 3 */
+	async fetchReviewQueue(): Promise<{ queue: ReviewQueueItem[] }> {
+		return this.request('/api/srs/review-queue');
 	}
 
 	async markAsListened(

@@ -275,6 +275,51 @@ def refresh_daily_new_cap(db: SRSDatabase, conn: sqlite3.Connection, deck_name: 
         db.set_anki_state_cache("daily_new_cap", str(cap))
 
 
+def refresh_review_settings(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
+    """Read newSpread/bury flags from Anki's deck_config protobuf and write to cache."""
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    except sqlite3.Error:
+        return
+
+    if "deck_config" not in tables or "decks" not in tables:
+        return
+
+    deck_row = conn.execute("SELECT kind FROM decks WHERE name = ?", (deck_name,)).fetchone()
+    if deck_row is None or not deck_row[0]:
+        return
+
+    kind_blob = deck_row[0]
+    normal_kind_bytes = _pb_find_len_field(bytes(kind_blob) if isinstance(kind_blob, memoryview) else kind_blob, 1)
+    if normal_kind_bytes is None:
+        return
+
+    conf_id = _pb_find_varint_field(normal_kind_bytes, 1)
+    if conf_id is None:
+        return
+
+    config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
+    if config_row is None or not config_row[0]:
+        return
+
+    config_blob = bytes(config_row[0]) if isinstance(config_row[0], memoryview) else config_row[0]
+
+    # new_mix (newSpread): field 30 (VARINT) — 0=mix, 1=after_reviews, 2=before_reviews
+    new_spread = _pb_find_varint_field(config_blob, 30)
+    if new_spread is not None and new_spread in (0, 1, 2):
+        db.set_anki_state_cache("new_spread", str(new_spread))
+
+    # bury_new: field 27 (VARINT/bool) — default false
+    bury_new_raw = _pb_find_varint_field(config_blob, 27)
+    if bury_new_raw is not None:
+        db.set_anki_state_cache("bury_new", str(bool(bury_new_raw)))
+
+    # bury_reviews: field 28 (VARINT/bool) — default false
+    bury_reviews_raw = _pb_find_varint_field(config_blob, 28)
+    if bury_reviews_raw is not None:
+        db.set_anki_state_cache("bury_review", str(bool(bury_reviews_raw)))
+
+
 def resolve_daily_new_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
     """Return (cap, source) where source is 'cache', 'config', or 'default'.
 
@@ -307,6 +352,90 @@ def resolve_daily_new_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
         return (config_default, "config")
 
     return (20, "default")
+
+
+def resolve_new_spread(db: SRSDatabase | None = None) -> tuple[int, str]:
+    """Return (new_spread, source) where source is 'cache' or 'default'.
+
+    new_spread: 0=mix, 1=after_reviews, 2=before_reviews
+    Default is 0 (mix).
+    """
+    if db is None:
+        try:
+            from app.srs.database import SRSDatabase
+
+            db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        except Exception:
+            db = None
+
+    if db is not None:
+        row = db.get_anki_state_cache("new_spread")
+        if row is not None:
+            value_str, updated_at = row
+            try:
+                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                    val = int(value_str)
+                    if val in (0, 1, 2):
+                        return (val, "cache")
+            except (ValueError, TypeError, OverflowError):
+                pass
+
+    return (0, "default")
+
+
+def resolve_bury_new(db: SRSDatabase | None = None) -> tuple[bool, str]:
+    """Return (bury_new, source) where source is 'cache' or 'default'.
+
+    Default is True (bury new siblings).
+    """
+    if db is None:
+        try:
+            from app.srs.database import SRSDatabase
+
+            db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        except Exception:
+            db = None
+
+    if db is not None:
+        row = db.get_anki_state_cache("bury_new")
+        if row is not None:
+            value_str, updated_at = row
+            try:
+                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                    return (value_str == "True", "cache")
+            except (ValueError, TypeError, OverflowError):
+                pass
+
+    return (True, "default")
+
+
+def resolve_bury_review(db: SRSDatabase | None = None) -> tuple[bool, str]:
+    """Return (bury_review, source) where source is 'cache' or 'default'.
+
+    Default is True (bury review siblings).
+    """
+    if db is None:
+        try:
+            from app.srs.database import SRSDatabase
+
+            db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        except Exception:
+            db = None
+
+    if db is not None:
+        row = db.get_anki_state_cache("bury_review")
+        if row is not None:
+            value_str, updated_at = row
+            try:
+                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                    return (value_str == "True", "cache")
+            except (ValueError, TypeError, OverflowError):
+                pass
+
+    return (True, "default")
 
 
 def refresh_fsrs_params(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:

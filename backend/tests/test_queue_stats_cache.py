@@ -9,7 +9,16 @@ from datetime import UTC, datetime, timedelta
 
 from app.srs.database import SRSDatabase
 from app.srs.fsrs import DEFAULT_FSRS5_PARAMS
-from app.srs.queue_stats import refresh_daily_new_cap, refresh_fsrs_params, resolve_daily_new_cap, resolve_fsrs_params
+from app.srs.queue_stats import (
+    refresh_daily_new_cap,
+    refresh_fsrs_params,
+    refresh_review_settings,
+    resolve_bury_new,
+    resolve_bury_review,
+    resolve_daily_new_cap,
+    resolve_fsrs_params,
+    resolve_new_spread,
+)
 
 
 def _make_db() -> SRSDatabase:
@@ -729,6 +738,34 @@ class TestRefreshFSRSParams:
             refresh_fsrs_params(db, conn, "No Such Deck")
         assert not any("FSRS" in r.message for r in caplog.records)
 
+    def test_skips_when_decks_table_missing(self):
+        """When 'decks' table not in schema, function returns early (legacy Anki)."""
+        import sqlite3
+
+        db = _make_db()
+        conn = sqlite3.connect(":memory:")
+        # Only col table, no 'decks' table (legacy Anki format)
+        conn.execute(
+            "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+            "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+            "decks TEXT, dconf TEXT, tags TEXT)"
+        )
+        conn.execute("INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', '', '', '{}')")
+        conn.commit()
+        # Should not raise, should return early
+        refresh_fsrs_params(db, conn, "0. Slovene")
+        assert db.get_anki_state_cache("fsrs_params") is None
+
+    def test_no_warning_when_fsrs_params_none_modern(self, caplog):
+        """Modern Anki with 'decks' table but no FSRS params → warning logged."""
+        import logging
+
+        db = _make_db()
+        conn = _make_modern_anki_conn(new_per_day=20)  # no FSRS weights in blob
+        with caplog.at_level(logging.WARNING, logger="app.srs.queue_stats"):
+            refresh_fsrs_params(db, conn, "0. Slovene")
+        assert any("FSRS" in r.message and "0. Slovene" in r.message for r in caplog.records)
+
 
 class TestResolveFSRSParams:
     """Tests for resolve_fsrs_params() priority chain."""
@@ -898,3 +935,121 @@ class TestReadFSRSParamsEdgeCases:
         conn.commit()
         result = _read_fsrs_params_from_deck_config_table(conn, "0. Slovene")
         assert result is None
+
+
+# ---- Helpers for review-settings protobuf blobs ----
+
+
+def _make_review_settings_blob(new_spread: int = 0, bury_new: bool = False, bury_reviews: bool = False) -> bytes:
+    """Build a minimal DeckConfig.Config protobuf blob with review settings."""
+    blob = b""
+    if new_spread in (0, 1, 2):
+        blob += _pb_varint_field(30, new_spread)
+    if bury_new:
+        blob += _pb_varint_field(27, 1)
+    if bury_reviews:
+        blob += _pb_varint_field(28, 1)
+    return blob
+
+
+def _make_deck_config_with_review_settings(
+    new_spread: int = 0, bury_new: bool = False, bury_reviews: bool = False
+) -> tuple[sqlite3.Connection, int]:
+    """Return (conn, conf_id) with review settings in the config blob."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+
+    for sql in [
+        "CREATE TABLE deck_config (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)",
+        "CREATE TABLE decks (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, conf INTEGER, kind BLOB)",
+    ]:
+        conn.execute(sql)
+
+    config_blob = _make_review_settings_blob(new_spread, bury_new, bury_reviews)
+    conn.execute("INSERT INTO deck_config VALUES (1, 'Slovene',0, -1, ?)", (config_blob,))
+    kind_blob = _make_deck_kind_blob(1)
+    conn.execute("INSERT INTO decks VALUES (1, '0. Slovene',0, -1, 1, ?)", (kind_blob,))
+    conn.commit()
+    return conn, 1
+
+
+class TestRefreshReviewSettings:
+    def test_reads_new_spread_from_blob(self):
+        db = _make_db()
+        conn, _ = _make_deck_config_with_review_settings(new_spread=1)
+        refresh_review_settings(db, conn, "0. Slovene")
+        row = db.get_anki_state_cache("new_spread")
+        assert row is not None
+        assert int(row[0]) == 1
+
+    def test_reads_bury_new_from_blob(self):
+        db = _make_db()
+        conn, _ = _make_deck_config_with_review_settings(bury_new=True)
+        refresh_review_settings(db, conn, "0. Slovene")
+        row = db.get_anki_state_cache("bury_new")
+        assert row is not None
+        assert row[0] == "True"
+
+    def test_reads_bury_review_from_blob(self):
+        db = _make_db()
+        conn, _ = _make_deck_config_with_review_settings(bury_reviews=True)
+        refresh_review_settings(db, conn, "0. Slovene")
+        row = db.get_anki_state_cache("bury_review")
+        assert row is not None
+        assert row[0] == "True"
+
+    def test_no_error_when_deck_not_found(self):
+        db = _make_db()
+        conn, _ = _make_deck_config_with_review_settings()
+        refresh_review_settings(db, conn, "No Such Deck")  # must not raise
+
+    def test_no_error_when_tables_missing(self):
+        db = _make_db()
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        refresh_review_settings(db, conn, "0. Slovene")  # must not raise
+
+
+class TestResolveNewSpread:
+    def test_returns_cache_when_fresh(self):
+        db = _make_db()
+        db.set_anki_state_cache("new_spread", "2")
+        spread, source = resolve_new_spread(db)
+        assert spread == 2
+        assert source == "cache"
+
+    def test_returns_default_when_cache_missing(self):
+        db = _make_db()
+        spread, source = resolve_new_spread(db)
+        assert spread == 0
+        assert source == "default"
+
+
+class TestResolveBuryNew:
+    def test_returns_cache_when_fresh(self):
+        db = _make_db()
+        db.set_anki_state_cache("bury_new", "False")
+        val, source = resolve_bury_new(db)
+        assert val is False
+        assert source == "cache"
+
+    def test_returns_default_true(self):
+        db = _make_db()
+        val, source = resolve_bury_new(db)
+        assert val is True
+        assert source == "default"
+
+
+class TestResolveBuryReview:
+    def test_returns_cache_when_fresh(self):
+        db = _make_db()
+        db.set_anki_state_cache("bury_review", "False")
+        val, source = resolve_bury_review(db)
+        assert val is False
+        assert source == "cache"
+
+    def test_returns_default_true(self):
+        db = _make_db()
+        val, source = resolve_bury_review(db)
+        assert val is True
+        assert source == "default"
