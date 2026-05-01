@@ -27,6 +27,7 @@ class SRSState(Enum):
     REVIEW = "review"
     RELEARNING = "relearning"
     SUSPENDED = "suspended"
+    BURIED = "buried"
     KNOWN = "known"
 
 

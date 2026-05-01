@@ -659,3 +659,40 @@ class TestReviewQueue:
         assert len(result) == 7
         assert result[0][3] == Direction.RECOGNITION
         assert result[1][3] == Direction.PRODUCTION
+
+    async def test_review_queue_excludes_own_buried_direction(self, api_app_state):
+        """Buried directions must not appear in /api/srs/review-queue."""
+        from datetime import date
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+
+        # Create a collocation with recognition=buried, production=new
+        unit = SyntacticUnit(text="buried_test", translation="test", word_count=2, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+
+        rows, _ = db.list_collocations(search="buried_test", limit=1)
+        row_id, item, _ = rows[0]
+
+        # Set recognition as buried
+        rec_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.BURIED,
+            due_date=today,
+        )
+        db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
+
+        # Production is new (default state)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+
+        # Recognition should NOT be in the queue (buried)
+        rec_in_queue = [q for q in queue if q["direction"] == "recognition"]
+        assert len(rec_in_queue) == 0
+
+        # Just verify the endpoint works and doesn't error
+        assert isinstance(queue, list)

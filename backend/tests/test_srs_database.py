@@ -190,6 +190,38 @@ class TestDueQueries:
         #   word_c (5d ago, anki_id=100), word_a (5d ago, anki_id=300), word_b (1d ago, anki_id=200)
         assert texts == ["word_c", "word_a", "word_b"]
 
+    def test_get_due_items_excludes_buried_state(self, srs_db):
+        """Buried directions must not appear in get_due_items even if due_date <= today."""
+        today = date.today()
+        srs_db.add_collocation(_unit("review_word", "trans"), language_code="sl")
+        srs_db.add_collocation(_unit("buried_word", "trans"), language_code="sl")
+        srs_db.add_collocation(_unit("learning_word", "trans"), language_code="sl")
+
+        # Set review_word → REVIEW, due today
+        item_r = srs_db.get_collocation("review_word")
+        item_r.due_date = today
+        item_r.state = SRSState.REVIEW
+        srs_db.update_collocation(item_r)
+
+        # Set buried_word → BURIED, due today
+        item_b = srs_db.get_collocation("buried_word")
+        item_b.due_date = today
+        item_b.state = SRSState.BURIED
+        srs_db.update_collocation(item_b)
+
+        # Set learning_word → LEARNING, due today
+        item_l = srs_db.get_collocation("learning_word")
+        item_l.due_date = today
+        item_l.state = SRSState.LEARNING
+        srs_db.update_collocation(item_l)
+
+        result = srs_db.get_due_items(today)
+        texts = [item.syntactic_unit.text for _, item, _ in result]
+
+        assert "review_word" in texts
+        assert "learning_word" in texts
+        assert "buried_word" not in texts
+
 
 class TestReviewedToday:
     """Tests for list_collocations_reviewed_today."""
@@ -792,6 +824,11 @@ class TestQueueStatHelpers:
     def test_count_due_today_total_excludes_known(self):
         db = SRSDatabase(":memory:")
         self._seed(db, "hvala", SRSState.KNOWN, SRSState.KNOWN, due_offset_days=0)
+        assert db.count_due_today_total(date.today()) == 0
+
+    def test_count_due_today_total_excludes_buried(self):
+        db = SRSDatabase(":memory:")
+        self._seed(db, "hvala", SRSState.BURIED, SRSState.BURIED, due_offset_days=0)
         assert db.count_due_today_total(date.today()) == 0
 
     def test_count_due_today_total_includes_mixed_directions(self):

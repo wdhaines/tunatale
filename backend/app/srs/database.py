@@ -115,7 +115,7 @@ _DIR_COLUMNS = (
 )
 
 # States that should never surface in the due queue regardless of due_date.
-_NON_REVIEWABLE_STATES = ("new", "suspended", "known")
+_NON_REVIEWABLE_STATES = ("new", "suspended", "known", "buried")
 
 
 class SRSDatabase:
@@ -907,9 +907,19 @@ class SRSDatabase:
                             ),
                         )
                     elif dir_row["reps"] > 0:
+                        # Preserve TunaTale-local FSRS progress; only update state (from Anki queue) and anki_card_id.
                         conn.execute(
-                            "UPDATE collocation_directions SET anki_card_id = ? WHERE collocation_id = ? AND direction = ?",
-                            (state.anki_card_id, coll_id, direction.value),
+                            """
+                            UPDATE collocation_directions SET
+                                state = ?, anki_card_id = ?
+                            WHERE collocation_id = ? AND direction = ?
+                            """,
+                            (
+                                state.state.value,
+                                state.anki_card_id,
+                                coll_id,
+                                direction.value,
+                            ),
                         )
                     else:
                         conn.execute(

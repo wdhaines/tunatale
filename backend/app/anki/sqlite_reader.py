@@ -166,6 +166,12 @@ def parse_fsrs_data(
 
     if queue == -1:
         state = SRSState.SUSPENDED
+    elif queue in (-2, -3):
+        state = SRSState.BURIED
+    elif queue == 1:
+        state = SRSState.LEARNING
+    elif queue == 3:
+        state = SRSState.RELEARNING
     elif reps == 0:
         state = SRSState.NEW
     else:

@@ -259,6 +259,58 @@ class TestParseFsrsData:
         )
         assert state.due_date == date.today()
 
+    def test_queue_minus_2_sets_state_buried(self):
+        """queue=-2 (user-buried) → SRSState.BURIED."""
+        state = parse_fsrs_data(
+            card_id=4,
+            ord=0,
+            data_str=json.dumps({"s": 5.0, "d": 5.0}),
+            queue=-2,
+            reps=4,
+            lapses=0,
+        )
+        assert state.state == SRSState.BURIED
+
+    def test_queue_minus_3_sets_state_buried(self):
+        """queue=-3 (sibling-buried) → SRSState.BURIED."""
+        state = parse_fsrs_data(
+            card_id=5,
+            ord=0,
+            data_str=json.dumps({"s": 5.0, "d": 5.0}),
+            queue=-3,
+            reps=4,
+            lapses=0,
+        )
+        assert state.state == SRSState.BURIED
+
+    def test_queue_1_sets_state_learning(self):
+        """queue=1 (learning) → SRSState.LEARNING (not REVIEW)."""
+        state = parse_fsrs_data(
+            card_id=6,
+            ord=0,
+            data_str=json.dumps({"s": 5.0, "d": 5.0}),
+            queue=1,
+            reps=2,
+            lapses=0,
+            col_crt=1704067200,
+            due_raw=1704067200 + 86400,
+        )
+        assert state.state == SRSState.LEARNING
+
+    def test_queue_3_sets_state_relearning(self):
+        """queue=3 (day-learn / relearning) → SRSState.RELEARNING."""
+        state = parse_fsrs_data(
+            card_id=7,
+            ord=0,
+            data_str=json.dumps({"s": 5.0, "d": 5.0}),
+            queue=3,
+            reps=5,
+            lapses=1,
+            col_crt=1704067200,
+            due_raw=5,
+        )
+        assert state.state == SRSState.RELEARNING
+
 
 class TestExtractL2:
     def test_extracts_from_class_slovene(self):

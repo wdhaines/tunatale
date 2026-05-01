@@ -705,13 +705,18 @@ class AnkiSync:
                         last_synced_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
                     )
                 elif card_rec.fsrs_known:
-                    new_state = (
-                        SRSState.SUSPENDED
-                        if card_rec.queue == -1
-                        else SRSState.NEW
-                        if card_rec.reps == 0
-                        else SRSState.REVIEW
-                    )
+                    if card_rec.queue == -1:
+                        new_state = SRSState.SUSPENDED
+                    elif card_rec.queue in (-2, -3):
+                        new_state = SRSState.BURIED
+                    elif card_rec.queue == 1:
+                        new_state = SRSState.LEARNING
+                    elif card_rec.queue == 3:
+                        new_state = SRSState.RELEARNING
+                    elif card_rec.reps == 0:
+                        new_state = SRSState.NEW
+                    else:
+                        new_state = SRSState.REVIEW
                     new_dir_state = DirectionState(
                         direction=direction,
                         due_date=card_rec.due_date,
@@ -728,13 +733,18 @@ class AnkiSync:
                     # Online pull: FSRS state not available via cardsInfo. Keep
                     # local stability/difficulty/due_date/reps/lapses and the
                     # existing dirty_fsrs so the next push can still flush.
-                    new_state = (
-                        SRSState.SUSPENDED
-                        if card_rec.queue == -1
-                        else SRSState.NEW
-                        if card_rec.reps == 0
-                        else SRSState.REVIEW
-                    )
+                    if card_rec.queue == -1:
+                        new_state = SRSState.SUSPENDED
+                    elif card_rec.queue in (-2, -3):
+                        new_state = SRSState.BURIED
+                    elif card_rec.queue == 1:
+                        new_state = SRSState.LEARNING
+                    elif card_rec.queue == 3:
+                        new_state = SRSState.RELEARNING
+                    elif card_rec.reps == 0:
+                        new_state = SRSState.NEW
+                    else:
+                        new_state = SRSState.REVIEW
                     new_dir_state = replace(
                         local_dir,
                         state=new_state,

@@ -775,6 +775,168 @@ class TestSyncPull:
         updated = db.get_collocation_by_guid(guid)
         assert updated.directions[Direction.RECOGNITION].state == SRSState.SUSPENDED
 
+    def test_fsrs_known_false_maps_queue_minus_2_to_buried(self):
+        """queue=-2 (user-buried) → SRSState.BURIED even when fsrs_known=False."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=-2,
+                        reps=4,
+                        lapses=0,
+                        stability=0.0,
+                        difficulty=0.0,
+                        due_date=date.today(),
+                        fsrs_known=False,
+                    ),
+                ],
+            )
+        ]
+        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        updated = db.get_collocation_by_guid(guid)
+        assert updated.directions[Direction.RECOGNITION].state == SRSState.BURIED
+
+    def test_fsrs_known_false_maps_queue_1_to_learning(self):
+        """queue=1 (learning) → SRSState.LEARNING even when fsrs_known=False."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        today = date.today()
+
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=1,
+                        reps=2,
+                        lapses=0,
+                        stability=0.0,
+                        difficulty=0.0,
+                        due_date=today,
+                        fsrs_known=False,
+                    ),
+                ],
+            )
+        ]
+        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        updated = db.get_collocation_by_guid(guid)
+        assert updated.directions[Direction.RECOGNITION].state == SRSState.LEARNING
+
+    def test_fsrs_known_false_maps_queue_3_to_relearning(self):
+        """queue=3 (day-learn) → SRSState.RELEARNING even when fsrs_known=False."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        today = date.today()
+
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=3,
+                        reps=5,
+                        lapses=1,
+                        stability=0.0,
+                        difficulty=0.0,
+                        due_date=today,
+                        fsrs_known=False,
+                    ),
+                ],
+            )
+        ]
+        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        updated = db.get_collocation_by_guid(guid)
+        assert updated.directions[Direction.RECOGNITION].state == SRSState.RELEARNING
+
+    def test_fsrs_known_false_maps_queue_0_reps_0_to_new(self):
+        """queue=0, reps=0 → SRSState.NEW when fsrs_known=False."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=0,
+                        reps=0,
+                        lapses=0,
+                        stability=0.0,
+                        difficulty=0.0,
+                        due_date=date.today(),
+                        fsrs_known=False,
+                    ),
+                ],
+            )
+        ]
+        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        updated = db.get_collocation_by_guid(guid)
+        assert updated.directions[Direction.RECOGNITION].state == SRSState.NEW
+
+    def test_fsrs_known_false_maps_queue_0_reps_gt_0_to_review(self):
+        """queue=0, reps>0 → SRSState.REVIEW when fsrs_known=False."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=0,
+                        reps=5,
+                        lapses=0,
+                        stability=0.0,
+                        difficulty=0.0,
+                        due_date=date.today(),
+                        fsrs_known=False,
+                    ),
+                ],
+            )
+        ]
+        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        updated = db.get_collocation_by_guid(guid)
+        assert updated.directions[Direction.RECOGNITION].state == SRSState.REVIEW
+
 
 # ── B15: diff-before-write in sync_pull ───────────────────────────────────────
 
@@ -1181,3 +1343,171 @@ class TestLastSyncedAtOnPull:
 
         item = db.get_collocation("banka")
         assert item.directions[Direction.RECOGNITION].last_synced_at is not None
+
+
+class TestSyncPullFsrsKnownQueueMapping:
+    """Tests for fsrs_known=True path (offline sync) with new queue→state mappings."""
+
+    def test_queue_minus_2_to_buried(self):
+        """fsrs_known=True + queue=-2 → SRSState.BURIED."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        today = date.today()
+
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=-2,
+                        reps=4,
+                        lapses=0,
+                        stability=5.0,
+                        difficulty=4.5,
+                        due_date=today,
+                        fsrs_known=True,
+                    ),
+                ],
+            )
+        ]
+        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.BURIED
+
+    def test_queue_minus_3_to_buried(self):
+        """fsrs_known=True + queue=-3 → SRSState.BURIED."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        today = date.today()
+
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=-3,
+                        reps=4,
+                        lapses=0,
+                        stability=5.0,
+                        difficulty=4.5,
+                        due_date=today,
+                        fsrs_known=True,
+                    ),
+                ],
+            )
+        ]
+        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.BURIED
+
+    def test_queue_1_to_learning(self):
+        """fsrs_known=True + queue=1 → SRSState.LEARNING."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        today = date.today()
+
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=1,
+                        reps=2,
+                        lapses=0,
+                        stability=5.0,
+                        difficulty=4.5,
+                        due_date=today,
+                        fsrs_known=True,
+                    ),
+                ],
+            )
+        ]
+        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.LEARNING
+
+    def test_queue_3_to_relearning(self):
+        """fsrs_known=True + queue=3 → SRSState.RELEARNING."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        today = date.today()
+
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=3,
+                        reps=5,
+                        lapses=1,
+                        stability=5.0,
+                        difficulty=4.5,
+                        due_date=today,
+                        fsrs_known=True,
+                    ),
+                ],
+            )
+        ]
+        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.RELEARNING
+
+    def test_queue_0_reps_0_to_new(self):
+        """fsrs_known=True + queue=0, reps=0 → SRSState.NEW."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=0,
+                        reps=0,
+                        lapses=0,
+                        stability=1.0,
+                        difficulty=5.0,
+                        due_date=date.today(),
+                        fsrs_known=True,
+                    ),
+                ],
+            )
+        ]
+        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.NEW
