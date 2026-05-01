@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 5
+CURRENT_VERSION = 6
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -380,12 +380,20 @@ def migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
     _set_version(conn, 5)
 
 
+def migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
+    """Add anki_due INTEGER (nullable) to collocation_directions for new-card ordering."""
+    if not _column_exists(conn, "collocation_directions", "anki_due"):
+        conn.execute("ALTER TABLE collocation_directions ADD COLUMN anki_due INTEGER")
+    _set_version(conn, 6)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
     2: migrate_v2_to_v3,
     3: migrate_v3_to_v4,
     4: migrate_v4_to_v5,
+    5: migrate_v5_to_v6,
 }
 
 

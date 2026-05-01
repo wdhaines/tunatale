@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version_is_3(self):
-        assert CURRENT_VERSION == 5
+        assert CURRENT_VERSION == 6
 
     def test_migrates_from_v1_to_v2(self):
         from app.srs.migrations import migrate_v1_to_v2
@@ -670,11 +670,70 @@ class TestMigrateV3ToV4:
         conn.commit()
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
 
-    def test_full_migrate_includes_v5(self):
-        """migrate() runs all migrations including v4→v5 and ends at CURRENT_VERSION=5."""
+
+class TestMigrateV5ToV6:
+    def _make_v5_conn(self) -> sqlite3.Connection:
+        """In-memory DB at schema version 5 (collocation_directions with last_rating)."""
+        from app.srs.migrations import migrate_v1_to_v2, migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5
+
+        conn = _make_v1_conn()
+        _insert(conn, "banka")
+        migrate_v1_to_v2(conn)
+        conn.commit()
+        migrate_v2_to_v3(conn)
+        conn.commit()
+        migrate_v3_to_v4(conn)
+        conn.commit()
+        migrate_v4_to_v5(conn)
+        conn.commit()
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+        return conn
+
+    def test_migrates_from_v5_to_v6_adds_anki_due_column(self):
+        """migrate_v5_to_v6 adds anki_due INTEGER column to collocation_directions."""
+        from app.srs.migrations import migrate_v5_to_v6
+
+        conn = self._make_v5_conn()
+        migrate_v5_to_v6(conn)
+        conn.commit()
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
+        assert "anki_due" in cols
+
+    def test_v5_to_v6_idempotent(self):
+        """Running migrate_v5_to_v6 twice does not raise or lose data."""
+        from app.srs.migrations import migrate_v5_to_v6
+
+        conn = self._make_v5_conn()
+        migrate_v5_to_v6(conn)
+        conn.commit()
+        migrate_v5_to_v6(conn)  # second call — must not raise
+        conn.commit()
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
+        assert "anki_due" in cols
+
+    def test_v5_to_v6_preserves_existing_data(self):
+        """After v5→v6 migration, existing row data is unchanged (anki_due is NULL)."""
+        from app.srs.migrations import migrate_v5_to_v6
+
+        conn = self._make_v5_conn()
+        migrate_v5_to_v6(conn)
+        conn.commit()
+        # Check both directions exist and anki_due is NULL for all
+        rows = conn.execute(
+            "SELECT last_rating, state, anki_card_id, due_date, anki_due FROM collocation_directions"
+        ).fetchall()
+        assert len(rows) == 2
+        for row in rows:
+            assert row["anki_due"] is None
+            assert row["due_date"] is not None
+
+    def test_full_migrate_includes_v6(self):
+        """migrate() runs all migrations including v5→v6 and ends at CURRENT_VERSION=6."""
         conn = _make_v1_conn()
         _insert(conn, "banka")
         migrate(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
         cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
-        assert "last_rating" in cols
+        assert "anki_due" in cols

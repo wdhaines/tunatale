@@ -565,18 +565,24 @@ def _merge_by_due_then_anki_id(
     return result
 
 
-def _merge_by_anki_id(
+def _merge_by_anki_due_then_id(
     rec: list[tuple[int, SRSItem, str]],
     prod: list[tuple[int, SRSItem, str]],
 ) -> list[tuple[int, SRSItem, str, Direction]]:
-    """Combine and sort by (anki_card_id NULLS LAST, row_id)."""
+    """Combine and sort by (anki_due ASC NULLS LAST, anki_card_id ASC NULLS LAST, row_id)."""
     combined: list[tuple[int, SRSItem, str, Direction]] = []
     for row_id, item, lang in rec:
         combined.append((row_id, item, lang, Direction.RECOGNITION))
     for row_id, item, lang in prod:
         combined.append((row_id, item, lang, Direction.PRODUCTION))
     combined.sort(
-        key=lambda t: ((t[1].directions[t[3]].anki_card_id is None, t[1].directions[t[3]].anki_card_id or 0, t[0]),)
+        key=lambda t: (
+            t[1].directions[t[3]].anki_due is None,
+            t[1].directions[t[3]].anki_due or 0,
+            t[1].directions[t[3]].anki_card_id is None,
+            t[1].directions[t[3]].anki_card_id or 0,
+            t[0],
+        ),
     )
     return combined
 
@@ -635,10 +641,10 @@ async def get_review_queue(request: Request) -> dict:
     if bury_review:
         due = [t for t in due if t[0] not in buried]
 
-    # 2. New cards: respect cap across BOTH directions, sibling-buried, ordered by anki_card_id
+    # 2. New cards: respect cap across BOTH directions, sibling-buried, ordered by anki_due then anki_card_id
     new_rec = db.get_new_items(direction=Direction.RECOGNITION, limit=cap)
     new_prod = db.get_new_items(direction=Direction.PRODUCTION, limit=cap)
-    new_combined = _merge_by_anki_id(new_rec, new_prod)
+    new_combined = _merge_by_anki_due_then_id(new_rec, new_prod)
     if bury_new:
         new_combined = [t for t in new_combined if t[0] not in buried]
     # Apply daily cap across the combined list (NOT split 50/50)

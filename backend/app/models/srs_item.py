@@ -60,6 +60,7 @@ class DirectionState:
     state: SRSState = field(default=SRSState.NEW)
     last_review: date | None = None
     anki_card_id: int | None = None
+    anki_due: int | None = None
     dirty_fsrs: bool = False
     last_synced_at: str | None = None
     last_rating: int | None = None

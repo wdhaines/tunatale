@@ -109,6 +109,7 @@ _DIR_COLUMNS = (
     "state",
     "last_review",
     "anki_card_id",
+    "anki_due",
     "dirty_fsrs",
     "last_synced_at",
     "last_rating",
@@ -327,6 +328,7 @@ class SRSDatabase:
                     state = ?,
                     last_review = ?,
                     anki_card_id = ?,
+                    anki_due = ?,
                     dirty_fsrs = ?,
                     last_synced_at = ?,
                     last_rating = ?
@@ -341,6 +343,7 @@ class SRSDatabase:
                     state.state.value,
                     state.last_review.isoformat() if state.last_review else None,
                     state.anki_card_id,
+                    state.anki_due,
                     1 if state.dirty_fsrs else 0,
                     state.last_synced_at,
                     state.last_rating,
@@ -400,6 +403,7 @@ class SRSDatabase:
                 state=SRSState(row["state"]),
                 last_review=date.fromisoformat(row["last_review"]) if row["last_review"] else None,
                 anki_card_id=row["anki_card_id"],
+                anki_due=row["anki_due"],
                 dirty_fsrs=bool(row["dirty_fsrs"]),
                 last_synced_at=row["last_synced_at"],
                 last_rating=row["last_rating"],
@@ -544,7 +548,7 @@ class SRSDatabase:
                 SELECT c.* FROM collocations c
                 JOIN collocation_directions d ON d.collocation_id = c.id
                 WHERE d.direction = ? AND d.state = 'new'
-                 ORDER BY d.anki_card_id ASC NULLS LAST, c.id ASC
+                 ORDER BY d.anki_due ASC NULLS LAST, d.anki_card_id ASC NULLS LAST, c.id ASC
                  LIMIT ?
                 """,
                 (direction.value, limit),

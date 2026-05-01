@@ -191,6 +191,7 @@ def parse_fsrs_data(
                 lapses=lapses,
                 state=state,
                 anki_card_id=card_id,
+                anki_due=due_raw,
             )
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         pass
@@ -210,6 +211,7 @@ def parse_fsrs_data(
         lapses=lapses,
         state=state,
         anki_card_id=card_id,
+        anki_due=due_raw,
     )
 
 

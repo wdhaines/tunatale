@@ -461,17 +461,18 @@ class TestReviewQueue:
         assert len(result) == 8
 
     # --- Helper for merge tests ---
-    def _make_item(self, due, anki_id, direction):
+    def _make_item(self, due, anki_id, direction, anki_due=None):
         """Build a minimal SRSItem with one direction populated for merge testing."""
         from app.models.syntactic_unit import SyntacticUnit
 
-        unit = SyntacticUnit(text="x", translation="x", word_count=1, difficulty=1, source="t")
         state = DirectionState(
             direction=direction,
             due_date=due,
             state=SRSState.REVIEW,
             anki_card_id=anki_id,
+            anki_due=anki_due,
         )
+        unit = SyntacticUnit(text="x", translation="x", word_count=1, difficulty=1, source="t")
         return SRSItem(syntactic_unit=unit, directions={direction: state}, guid="g", anki_note_id=1)
 
     # --- Tests for _merge_by_due_then_anki_id ---
@@ -600,40 +601,140 @@ class TestReviewQueue:
         result = _merge_by_due_then_anki_id(rec, prod)
         assert result[0][3] == Direction.RECOGNITION
 
-    # --- Tests for _merge_by_anki_id ---
-    async def test_merge_anki_id_empty_inputs(self, api_app_state):
-        from app.api.srs import _merge_by_anki_id
+    # --- Tests for _merge_by_anki_due_then_id ---
+    async def test_merge_anki_due_empty_inputs(self, api_app_state):
+        from app.api.srs import _merge_by_anki_due_then_id
 
-        result = _merge_by_anki_id([], [])
+        result = _merge_by_anki_due_then_id([], [])
         assert result == []
 
-    async def test_merge_anki_id_orders_nulls_last(self, api_app_state):
+    async def test_merge_anki_due_orders_nulls_last(self, api_app_state):
         from datetime import date
 
-        from app.api.srs import _merge_by_anki_id
+        from app.api.srs import _merge_by_anki_due_then_id
 
-        rec_item = self._make_item(date(2026, 1, 1), None, Direction.RECOGNITION)
-        prod_item = self._make_item(date(2026, 1, 1), 100, Direction.PRODUCTION)
+        rec_item = self._make_item(date(2026, 1, 1), None, Direction.RECOGNITION, anki_due=None)
+        prod_item = self._make_item(date(2026, 1, 1), 100, Direction.PRODUCTION, anki_due=50)
         rec = [(1, rec_item, "sl")]
         prod = [(2, prod_item, "sl")]
-        result = _merge_by_anki_id(rec, prod)
+        result = _merge_by_anki_due_then_id(rec, prod)
+        # prod has anki_due=50, rec has anki_due=None, so prod should come first
         assert result[0][3] == Direction.PRODUCTION
         assert result[1][3] == Direction.RECOGNITION
 
-    async def test_merge_anki_id_numeric_order(self, api_app_state):
+    async def test_merge_anki_due_numeric_order(self, api_app_state):
         from datetime import date
 
-        from app.api.srs import _merge_by_anki_id
+        from app.api.srs import _merge_by_anki_due_then_id
 
-        item1 = self._make_item(date(2026, 1, 1), 200, Direction.RECOGNITION)
-        item2 = self._make_item(date(2026, 1, 1), 100, Direction.PRODUCTION)
-        item3 = self._make_item(date(2026, 1, 1), None, Direction.RECOGNITION)
+        # item1: anki_due=200, item2: anki_due=100, item3: anki_due=None
+        item1 = self._make_item(date(2026, 1, 1), 999, Direction.RECOGNITION, anki_due=200)
+        item2 = self._make_item(date(2026, 1, 1), 100, Direction.PRODUCTION, anki_due=100)
+        item3 = self._make_item(date(2026, 1, 1), 200, Direction.RECOGNITION, anki_due=None)
         rec = [(1, item1, "sl"), (3, item3, "sl")]
         prod = [(2, item2, "sl")]
-        result = _merge_by_anki_id(rec, prod)
-        assert result[0][1].directions[result[0][3]].anki_card_id == 100
-        assert result[1][1].directions[result[1][3]].anki_card_id == 200
-        assert result[2][1].directions[result[2][3]].anki_card_id is None
+        result = _merge_by_anki_due_then_id(rec, prod)
+        # item2 (anki_due=100) < item1 (anki_due=200) < item3 (anki_due=None)
+        assert result[0][1].directions[result[0][3]].anki_due == 100
+        assert result[1][1].directions[result[1][3]].anki_due == 200
+        assert result[2][1].directions[result[2][3]].anki_due is None
+
+    async def test_review_queue_new_cards_ordered_by_anki_due_across_directions(self, api_app_state):
+        """New cards ordered by anki_due across directions."""
+        from datetime import date
+
+        db = api_app_state
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        # Coll A: recognition (anki_due=596, anki_card_id=999)
+        # Coll B: production (anki_due=595, anki_card_id=100)
+        unit_a = SyntacticUnit(text="coll_a", translation="a", word_count=2, difficulty=1, source="test")
+        unit_b = SyntacticUnit(text="coll_b", translation="b", word_count=2, difficulty=1, source="test")
+        db.add_collocation(unit_a, language_code="sl")
+        db.add_collocation(unit_b, language_code="sl")
+
+        rows_a, _ = db.list_collocations(search="coll_a", limit=1)
+        row_id_a, item_a, _ = rows_a[0]
+        rows_b, _ = db.list_collocations(search="coll_b", limit=1)
+        row_id_b, item_b, _ = rows_b[0]
+
+        # Set recognition for coll_a: anki_due=596, anki_card_id=999
+        rec_dir_a = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.NEW,
+            due_date=date.today(),
+            anki_card_id=999,
+            anki_due=596,
+        )
+        db.update_direction_by_id(row_id_a, Direction.RECOGNITION, rec_dir_a)
+
+        # Set production for coll_b: anki_due=595, anki_card_id=100
+        prod_dir_b = DirectionState(
+            direction=Direction.PRODUCTION,
+            state=SRSState.NEW,
+            due_date=date.today(),
+            anki_card_id=100,
+            anki_due=595,
+        )
+        db.update_direction_by_id(row_id_b, Direction.PRODUCTION, prod_dir_b)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+        new_items = [q for q in queue if q["state"] == "new"]
+        # coll_b (anki_due=595) should come before coll_a (anki_due=596)
+        assert len(new_items) >= 2
+        assert new_items[0]["text"] == "coll_b"
+        assert new_items[1]["text"] == "coll_a"
+
+    async def test_review_queue_new_cards_fall_back_to_anki_card_id_when_anki_due_null(self, api_app_state):
+        """When anki_due is None, fall back to anki_card_id ordering."""
+        from datetime import date
+
+        db = api_app_state
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        unit_a = SyntacticUnit(text="null_a", translation="a", word_count=2, difficulty=1, source="test")
+        unit_b = SyntacticUnit(text="null_b", translation="b", word_count=2, difficulty=1, source="test")
+        db.add_collocation(unit_a, language_code="sl")
+        db.add_collocation(unit_b, language_code="sl")
+
+        rows_a, _ = db.list_collocations(search="null_a", limit=1)
+        row_id_a, item_a, _ = rows_a[0]
+        rows_b, _ = db.list_collocations(search="null_b", limit=1)
+        row_id_b, item_b, _ = rows_b[0]
+
+        # Both have anki_due=None, but different anki_card_ids
+        rec_dir_a = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.NEW,
+            due_date=date.today(),
+            anki_card_id=200,
+            anki_due=None,
+        )
+        db.update_direction_by_id(row_id_a, Direction.RECOGNITION, rec_dir_a)
+
+        rec_dir_b = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.NEW,
+            due_date=date.today(),
+            anki_card_id=100,
+            anki_due=None,
+        )
+        db.update_direction_by_id(row_id_b, Direction.RECOGNITION, rec_dir_b)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+        new_items = [q for q in queue if q["state"] == "new"]
+        # Both have anki_due=None, so fall back to anki_card_id: null_b (100) < null_a (200)
+        assert len(new_items) >= 2
+        assert new_items[0]["text"] == "null_b"
+        assert new_items[1]["text"] == "null_a"
 
     # --- Additional tests for _spread_mix ---
     async def test_spread_mix_empty_news_returns_reviews(self, api_app_state):

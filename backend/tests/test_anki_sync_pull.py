@@ -1511,3 +1511,82 @@ class TestSyncPullFsrsKnownQueueMapping:
         AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
         item = db.get_collocation("banka")
         assert item.directions[Direction.RECOGNITION].state == SRSState.NEW
+
+
+class TestSyncPullWritesAnkiDue:
+    def test_pull_writes_anki_due_for_new_card(self):
+        """sync_pull writes anki_due from CardRecord for new cards."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        # CardRecord with queue=0 and anki_due=842
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=0,
+                        reps=0,
+                        lapses=0,
+                        stability=1.0,
+                        difficulty=5.0,
+                        due_date=date.today(),
+                        anki_due=842,
+                        fsrs_known=True,
+                    ),
+                ],
+            )
+        ]
+        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].anki_due == 842
+
+    def test_pull_preserves_anki_due_on_dirty_fsrs(self):
+        """When local_dir.dirty_fsrs==True, sync still updates anki_due from remote."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        # Set local direction as dirty
+        item = db.get_collocation("banka")
+        rec_dir = item.directions[Direction.RECOGNITION]
+        rec_dir.dirty_fsrs = True
+        db.update_direction(guid, Direction.RECOGNITION, rec_dir)
+
+        # Remote has anki_due=842
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=0,
+                        reps=0,
+                        lapses=0,
+                        stability=1.0,
+                        difficulty=5.0,
+                        due_date=date.today(),
+                        anki_due=842,
+                        fsrs_known=True,
+                    ),
+                ],
+            )
+        ]
+        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        reloaded = db.get_collocation("banka")
+        # anki_due should be updated even though dirty_fsrs is True
+        assert reloaded.directions[Direction.RECOGNITION].anki_due == 842
+        # FSRS state should be preserved (dirty_fsrs)
+        assert reloaded.directions[Direction.RECOGNITION].dirty_fsrs is True

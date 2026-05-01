@@ -108,6 +108,7 @@ class CardRecord:
     stability: float
     difficulty: float
     due_date: date
+    anki_due: int | None = None
     # False when the source (e.g. AnkiConnect cardsInfo) does not reliably expose
     # FSRS stability/difficulty/due_date — sync_pull then preserves local FSRS
     # state instead of overwriting it with the placeholder values above.
@@ -194,6 +195,7 @@ class OfflineReader:
                     stability=c.fsrs_state.stability,
                     difficulty=c.fsrs_state.difficulty,
                     due_date=c.fsrs_state.due_date,
+                    anki_due=c.fsrs_state.anki_due,
                 )
                 for c in cards_by_note.get(note.id, [])
             ]
@@ -286,6 +288,7 @@ class OnlineReader:
                         stability=stability_val,
                         difficulty=difficulty_val,
                         due_date=due_date_val,
+                        anki_due=c.get("due") if q == 0 else None,
                         fsrs_known=fsrs_known_val,
                     )
                 )
@@ -702,6 +705,7 @@ class AnkiSync:
                     new_dir_state = replace(
                         local_dir,
                         anki_card_id=card_rec.anki_card_id,
+                        anki_due=card_rec.anki_due,
                         last_synced_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
                     )
                 elif card_rec.fsrs_known:
@@ -727,6 +731,7 @@ class AnkiSync:
                         state=new_state,
                         dirty_fsrs=False,
                         anki_card_id=card_rec.anki_card_id,
+                        anki_due=card_rec.anki_due,
                         last_synced_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
                     )
                 else:
@@ -749,6 +754,7 @@ class AnkiSync:
                         local_dir,
                         state=new_state,
                         anki_card_id=card_rec.anki_card_id,
+                        anki_due=card_rec.anki_due,
                         last_synced_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
                     )
 

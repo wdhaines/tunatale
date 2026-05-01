@@ -258,6 +258,22 @@ class TestParseFsrsData:
             due_raw=5,
         )
         assert state.due_date == date.today()
+        assert state.anki_due == 5
+
+    def test_review_card_captures_anki_due(self):
+        """queue=2 (review): anki_due captures due_raw (days since col.crt)."""
+        col_crt = 1704067200  # 2024-01-01
+        state = parse_fsrs_data(
+            card_id=10,
+            ord=0,
+            data_str=json.dumps({"s": 5.0, "d": 5.0}),
+            queue=2,
+            reps=3,
+            lapses=0,
+            col_crt=col_crt,
+            due_raw=10,
+        )
+        assert state.anki_due == 10
 
     def test_queue_minus_2_sets_state_buried(self):
         """queue=-2 (user-buried) → SRSState.BURIED."""

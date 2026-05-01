@@ -77,6 +77,20 @@ class TestCRUD:
         assert updated.stability == 20.0
         assert updated.state == SRSState.REVIEW
 
+    def test_update_direction_round_trips_anki_due(self, srs_db):
+        """update_direction then _load_directions round-trips anki_due."""
+        unit = _unit("test_word", "test")
+        srs_db.add_collocation(unit, language_code="sl")
+        item = srs_db.get_collocation("test_word")
+        guid = item.guid
+        # Update recognition direction with anki_due
+        rec_dir = item.directions[Direction.RECOGNITION]
+        rec_dir.anki_due = 612
+        srs_db.update_direction(guid, Direction.RECOGNITION, rec_dir)
+        # Reload and check
+        reloaded = srs_db.get_collocation("test_word")
+        assert reloaded.directions[Direction.RECOGNITION].anki_due == 612
+
 
 class TestDueQueries:
     """Tests for due/new collocation queries."""
@@ -117,14 +131,18 @@ class TestDueQueries:
         second = [item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(limit=5)]
         assert first == second
 
-    def test_get_new_items_orders_by_anki_card_id(self, srs_db):
-        """anki_card_id asc (NULLS LAST) then c.id asc."""
-        for t in ["word_a", "word_b", "word_c"]:
+    def test_get_new_items_orders_by_anki_due_then_anki_card_id(self, srs_db):
+        """anki_due ASC NULLS LAST, then anki_card_id ASC NULLS LAST, then c.id ASC."""
+        for t in ["word_a", "word_b", "word_c", "word_d"]:
             srs_db.add_collocation(_unit(t, f"trans_{t}"), language_code="sl")
 
-        # Assign anki_card_ids: word_b=100, word_c=200, word_a=None
-        anki_ids = {"word_a": None, "word_b": 100, "word_c": 200}
-        for text in ["word_a", "word_b", "word_c"]:
+        # word_a: anki_due=None, anki_card_id=100
+        # word_b: anki_due=596, anki_card_id=999 (low position, late ID)
+        # word_c: anki_due=597, anki_card_id=200
+        # word_d: anki_due=None, anki_card_id=50
+        anki_due_map = {"word_a": None, "word_b": 596, "word_c": 597, "word_d": None}
+        anki_id_map = {"word_a": 100, "word_b": 999, "word_c": 200, "word_d": 50}
+        for text in ["word_a", "word_b", "word_c", "word_d"]:
             rows, _ = srs_db.list_collocations(search=text, limit=1)
             row_id, item, _ = rows[0]
             orig = item.directions[Direction.RECOGNITION]
@@ -136,14 +154,15 @@ class TestDueQueries:
                 difficulty=orig.difficulty,
                 reps=orig.reps,
                 lapses=orig.lapses,
-                anki_card_id=anki_ids[text],
+                anki_card_id=anki_id_map[text],
+                anki_due=anki_due_map[text],
             )
             srs_db.update_direction_by_id(row_id, Direction.RECOGNITION, new_dir)
 
         result = srs_db.get_new_items(limit=10)
         texts = [item.syntactic_unit.text for _, item, _ in result]
-        # word_b (anki=100), word_c (anki=200), word_a (anki=None → NULLS LAST)
-        assert texts == ["word_b", "word_c", "word_a"]
+        # word_b (596), word_c (597), word_d (None, id=50), word_a (None, id=100)
+        assert texts == ["word_b", "word_c", "word_d", "word_a"]
 
     def test_get_due_items_returns_due_date_then_id_order(self, srs_db):
         today = date.today()
