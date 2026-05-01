@@ -15,6 +15,14 @@ def _derive_media_dir(collection_path) -> Path:
     return Path(collection_path).parent / "collection.media"
 
 
+def _refresh_media_if_not_dry_run(dry_run: bool) -> dict:
+    if dry_run:
+        return {}
+    from app.anki.import_seed import import_seed
+
+    return import_seed()
+
+
 @router.post("/sync", status_code=200)
 async def trigger_sync(request: Request, dry_run: bool = False):
     """Unified create-new + push + drain + pull sync using direct sqlite access.
@@ -80,6 +88,11 @@ async def trigger_sync(request: Request, dry_run: bool = False):
             detail="Close Anki to sync — TunaTale needs exclusive access to collection.anki2.",
         ) from exc
 
+    media_result = _refresh_media_if_not_dry_run(dry_run)
+    media_updated = media_result.get("updated_media", 0)
+    media_unchanged = media_result.get("unchanged_media", 0)
+    media_new = media_result.get("new_media", 0)
+
     return {
         "mode": "offline",
         "created": create_report.created,
@@ -92,6 +105,9 @@ async def trigger_sync(request: Request, dry_run: bool = False):
         "directions_pushed": push_report.directions_pushed,
         "revlog_drained": drained,
         "dry_run": dry_run,
+        "media_updated": media_updated,
+        "media_unchanged": media_unchanged,
+        "media_new": media_new,
     }
 
 

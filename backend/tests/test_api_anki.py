@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -84,7 +86,8 @@ class TestSyncOfflineEndpoint:
         assert response.status_code == 409
         assert "Close Anki" in response.json()["detail"]
 
-    async def test_returns_offline_mode_and_counters(self, monkeypatch):
+    @patch("app.anki.import_seed.import_seed")
+    async def test_returns_offline_mode_and_counters(self, mock_import_seed, monkeypatch):
         from app.config import settings
 
         monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
@@ -170,6 +173,105 @@ class TestSyncOfflineEndpoint:
         assert response.json()["dry_run"] is True
         assert dry_runs_seen == [True, True, True]
 
+    @patch("app.anki.import_seed.import_seed")
+    async def test_sync_calls_import_seed_and_returns_media_counts(self, mock_import_seed, monkeypatch):
+        from app.config import settings
+
+        mock_import_seed.return_value = {
+            "updated_media": 3,
+            "unchanged_media": 100,
+            "new_media": 5,
+            "skipped_guid_collisions": 1,
+            "skipped_non_vocab": 2,
+        }
+
+        monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
+        monkeypatch.setattr(settings, "anki_collection_path", "/fake/collection.anki2")
+
+        conn = _make_minimal_anki_conn()
+        monkeypatch.setattr("app.anki.safety.safe_open", _make_fake_safe_open(conn))
+
+        async def fake_create_new(self, *, deck_name, model_name, dry_run=False, _media_fn=None):
+            return CreateNewReport(count=2, created=2)
+
+        def fake_push(self, dry_run=False, force_fsrs=False):
+            return PushReport(directions_pushed=3)
+
+        def fake_pull(self, dry_run=False):
+            return PullReport(directions_updated=4)
+
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_create_new", fake_create_new)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_push", fake_push)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_pull", fake_pull)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post("/api/anki/sync")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["media_updated"] == 3
+        assert data["media_unchanged"] == 100
+        assert data["media_new"] == 5
+
+    @patch("app.anki.import_seed.import_seed")
+    async def test_sync_dry_run_skips_media_refresh(self, mock_import_seed, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
+        monkeypatch.setattr(settings, "anki_collection_path", "/fake/collection.anki2")
+
+        conn = _make_minimal_anki_conn()
+        monkeypatch.setattr("app.anki.safety.safe_open", _make_fake_safe_open(conn))
+
+        async def fake_create_new(self, *, deck_name, model_name, dry_run=False, _media_fn=None):
+            return CreateNewReport()
+
+        def fake_push(self, dry_run=False, force_fsrs=False):
+            return PushReport()
+
+        def fake_pull(self, dry_run=False):
+            return PullReport()
+
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_create_new", fake_create_new)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_push", fake_push)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_pull", fake_pull)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            await c.post("/api/anki/sync?dry_run=true")
+
+        mock_import_seed.assert_not_called()
+
+    async def test_dry_run_response_has_zero_media_counts(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
+        monkeypatch.setattr(settings, "anki_collection_path", "/fake/collection.anki2")
+
+        conn = _make_minimal_anki_conn()
+        monkeypatch.setattr("app.anki.safety.safe_open", _make_fake_safe_open(conn))
+
+        async def fake_create_new(self, *, deck_name, model_name, dry_run=False, _media_fn=None):
+            return CreateNewReport()
+
+        def fake_push(self, dry_run=False, force_fsrs=False):
+            return PushReport()
+
+        def fake_pull(self, dry_run=False):
+            return PullReport()
+
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_create_new", fake_create_new)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_push", fake_push)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_pull", fake_pull)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post("/api/anki/sync?dry_run=true")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["media_updated"] == 0
+        assert data["media_unchanged"] == 0
+        assert data["media_new"] == 0
+
 
 # ── GET /api/anki/status ──────────────────────────────────────────────────────
 
@@ -199,7 +301,8 @@ class TestAnkiStatusEndpoint:
         assert data["anki_running"] is True
         assert data["lock_acquirable"] is False
 
-    async def test_media_fn_called_during_create_new(self, monkeypatch):
+    @patch("app.anki.import_seed.import_seed")
+    async def test_media_fn_called_during_create_new(self, mock_import_seed, monkeypatch):
         """_media_fn closure inside trigger_sync must be invoked for new SRS items."""
         from app.config import settings
 

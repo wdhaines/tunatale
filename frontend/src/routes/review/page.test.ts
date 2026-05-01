@@ -181,26 +181,4 @@ describe('review/+page.svelte', () => {
 		await findByText(/New 5/);
 		expect(queryByText(/FSRS:/)).toBeFalsy();
 	});
-
-	// ── refreshMedia ──────────────────────────────────────────────────
-
-	it('calls refresh-media endpoint and reloads queue on success', async () => {
-		const { getByRole, findByText } = render(ReviewPage);
-		await findByText(/Done for today/); // wait for initial load
-		// Mock fetch for refresh-media endpoint
-		const mockFetch = vi.fn().mockResolvedValue({ ok: true } as Response);
-		global.fetch = mockFetch;
-		mockFetchReviewQueue.mockResolvedValue({ queue: [] }); // reload
-		await fireEvent.click(getByRole('button', { name: /Refresh from Anki/ }));
-		expect(mockFetch).toHaveBeenCalledWith('/api/admin/refresh-media', { method: 'POST' });
-	});
-
-	it('shows error when refresh-media fails', async () => {
-		const { getByRole, findByText } = render(ReviewPage);
-		await findByText(/Done for today/); // wait for initial load
-		const mockFetch = vi.fn().mockResolvedValue({ ok: false } as Response);
-		global.fetch = mockFetch;
-		await fireEvent.click(getByRole('button', { name: /Refresh from Anki/ }));
-		expect(await findByText('Refresh failed')).toBeTruthy();
-	});
 });

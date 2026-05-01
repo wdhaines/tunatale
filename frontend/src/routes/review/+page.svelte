@@ -1,4 +1,4 @@
-<script lang="ts">
+	<script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { ReviewQueueItem, QueueStats } from '$lib/api';
@@ -12,23 +12,6 @@
 	let error = $state('');
 	let reviewed = $state(0);
 	let stats = $state<QueueStats | null>(null);
-	let refreshing = $state(false);
-
-	async function refreshMedia() {
-		refreshing = true;
-		try {
-			const resp = await fetch('/api/admin/refresh-media', { method: 'POST' });
-			if (!resp.ok) throw new Error('Refresh failed');
-			// Reload queue after refresh
-			const queueData = await api.fetchReviewQueue();
-			queue = queueData.queue.map(item => ({ item, direction: item.direction }));
-			index = 0;
-		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
-		} finally {
-			refreshing = false;
-		}
-	}
 
 	let current = $derived(queue[index]);
 	let done = $derived(!loading && !error && index >= queue.length);
@@ -67,10 +50,6 @@
 	{#if stats}
 		<p class="stats">New {stats.new} · Due {stats.due}{stats.cap_source !== 'cache' ? ` (${stats.cap_source})` : ''}{stats.fsrs_source !== 'cache' ? ' · FSRS: defaults' : ''}</p>
 	{/if}
-
-	<button class="refresh-btn" onclick={refreshMedia} disabled={refreshing}>
-		{refreshing ? 'Refreshing…' : 'Refresh from Anki'}
-	</button>
 
 	{#if loading}
 		<p>Loading…</p>
@@ -133,19 +112,5 @@
 		color: var(--color-muted);
 		font-size: 0.9rem;
 		margin-bottom: 0.5rem;
-	}
-	.refresh-btn {
-		margin-bottom: 1rem;
-		padding: 0.4rem 1rem;
-		background: var(--color-border);
-		color: var(--color-text);
-		border: 1px solid var(--color-border);
-		border-radius: 4px;
-		cursor: pointer;
-		font-size: 0.9rem;
-	}
-	.refresh-btn:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
 	}
 </style>
