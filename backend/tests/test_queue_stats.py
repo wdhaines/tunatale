@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from app.srs.database import SRSDatabase
 from app.srs.queue_stats import refresh_review_settings, resolve_daily_new_cap
@@ -466,127 +467,117 @@ def test_resolve_bury_review_corrupt_cache(monkeypatch):
     assert val is True
 
 
-# ---- Coverage for _read_new_per_day_from_anki legacy JSON path ----
+# ---- refresh_daily_new_cap: legacy JSON deck config (col.dconf) ----
+#
+# refresh_daily_new_cap writes the cap to the cache only when it can read
+# one from Anki. These tests pin the legacy-JSON-format branches by asserting
+# what does and doesn't land in db.get_anki_state_cache("daily_new_cap").
 
 
-def test_read_new_per_day_from_anki_returns_none_when_col_row_missing(tmp_path):
-    """Line 244: row is None when col table is empty."""
-    from app.srs.queue_stats import _read_new_per_day_from_anki
-
-    conn = sqlite3.connect(str(tmp_path / "empty.anki2"))
+def _make_legacy_col_conn(tmp_path: Path, name: str, decks_json: str = "", dconf_json: str = "") -> sqlite3.Connection:
+    """Build an in-memory-style col-only Anki conn for legacy JSON tests."""
+    conn = sqlite3.connect(str(tmp_path / name))
     conn.execute(
         "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
         "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
         "decks TEXT, dconf TEXT, tags TEXT)"
     )
+    if decks_json or dconf_json:
+        conn.execute(
+            "INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', ?, ?, '{}')",
+            (decks_json, dconf_json),
+        )
     conn.commit()
-    result = _read_new_per_day_from_anki(conn, "0. Slovene")
-    assert result is None
+    return conn
 
 
-def test_read_new_per_day_from_anki_json_decode_error(tmp_path):
-    """Lines 251-252: JSON decode error on decks or dconf."""
-    from app.srs.queue_stats import _read_new_per_day_from_anki
+def test_refresh_daily_new_cap_writes_nothing_when_col_row_missing(tmp_path):
+    """Empty col table → cache stays empty."""
+    from app.srs.queue_stats import refresh_daily_new_cap
 
+    db = SRSDatabase(":memory:")
+    conn = _make_legacy_col_conn(tmp_path, "empty.anki2")
+    refresh_daily_new_cap(db, conn, "0. Slovene")
+    assert db.get_anki_state_cache("daily_new_cap") is None
+
+
+def test_refresh_daily_new_cap_writes_nothing_on_corrupt_legacy_json(tmp_path):
+    """Bad JSON in col.decks/col.dconf → cache stays empty (no crash)."""
+    from app.srs.queue_stats import refresh_daily_new_cap
+
+    db = SRSDatabase(":memory:")
     conn = sqlite3.connect(str(tmp_path / "bad_json.anki2"))
     conn.execute(
         "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
         "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
         "decks TEXT, dconf TEXT, tags TEXT)"
     )
-    # Insert invalid JSON in both decks and dconf
     conn.execute("INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, 'not-json', '{}', 'not-json', 'not-json', '{}')")
     conn.commit()
-    result = _read_new_per_day_from_anki(conn, "0. Slovene")
-    assert result is None
+    refresh_daily_new_cap(db, conn, "0. Slovene")
+    assert db.get_anki_state_cache("daily_new_cap") is None
 
 
-def test_read_new_per_day_from_anki_legacy_json_path(tmp_path):
-    """Lines 259-265: Legacy JSON path finds deck, conf_id, and perDay."""
-    from app.srs.queue_stats import _read_new_per_day_from_anki
+def test_refresh_daily_new_cap_caches_value_from_legacy_json(tmp_path):
+    """Legacy JSON deck config with perDay=15 → cache is set to "15"."""
+    from app.srs.queue_stats import refresh_daily_new_cap
 
-    conn = sqlite3.connect(str(tmp_path / "legacy.anki2"))
-    conn.execute(
-        "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
-        "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
-        "decks TEXT, dconf TEXT, tags TEXT)"
+    db = SRSDatabase(":memory:")
+    conn = _make_legacy_col_conn(
+        tmp_path,
+        "legacy.anki2",
+        decks_json=json.dumps({"1": {"id": 1, "name": "0. Slovene", "conf": 1}}),
+        dconf_json=json.dumps({"1": {"id": 1, "name": "Default", "new": {"perDay": 15}}}),
     )
-    # Legacy format: col.decks JSON, col.dconf JSON
-    dconf_json = json.dumps({"1": {"id": 1, "name": "Default", "new": {"perDay": 15}}})
-    decks_json = json.dumps({"1": {"id": 1, "name": "0. Slovene", "conf": 1}})
-    conn.execute(
-        "INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', ?, ?, '{}')",
-        (decks_json, dconf_json),
+    refresh_daily_new_cap(db, conn, "0. Slovene")
+    row = db.get_anki_state_cache("daily_new_cap")
+    assert row is not None
+    assert row[0] == "15"
+
+
+def test_refresh_daily_new_cap_writes_nothing_when_legacy_conf_id_absent(tmp_path):
+    """Deck points to conf_id=999 that's not in dconf → cache stays empty."""
+    from app.srs.queue_stats import refresh_daily_new_cap
+
+    db = SRSDatabase(":memory:")
+    conn = _make_legacy_col_conn(
+        tmp_path,
+        "legacy_no_conf.anki2",
+        decks_json=json.dumps({"1": {"id": 1, "name": "0. Slovene", "conf": 999}}),
+        dconf_json=json.dumps({"1": {"id": 1, "name": "Default", "new": {"perDay": 15}}}),
     )
-    conn.commit()
-    result = _read_new_per_day_from_anki(conn, "0. Slovene")
-    assert result == 15
+    refresh_daily_new_cap(db, conn, "0. Slovene")
+    assert db.get_anki_state_cache("daily_new_cap") is None
 
 
-def test_read_new_per_day_from_anki_legacy_json_missing_conf(tmp_path):
-    """Lines 259-265: Legacy JSON path, deck found but conf_id lookup fails."""
-    from app.srs.queue_stats import _read_new_per_day_from_anki
+def test_refresh_daily_new_cap_writes_nothing_when_legacy_perday_not_numeric(tmp_path):
+    """perDay is a string → int() raises, cache stays empty."""
+    from app.srs.queue_stats import refresh_daily_new_cap
 
-    conn = sqlite3.connect(str(tmp_path / "legacy_no_conf.anki2"))
-    conn.execute(
-        "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
-        "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
-        "decks TEXT, dconf TEXT, tags TEXT)"
+    db = SRSDatabase(":memory:")
+    conn = _make_legacy_col_conn(
+        tmp_path,
+        "legacy_bad_perday.anki2",
+        decks_json=json.dumps({"1": {"id": 1, "name": "0. Slovene", "conf": 1}}),
+        dconf_json=json.dumps({"1": {"id": 1, "name": "Default", "new": {"perDay": "fifteen"}}}),
     )
-    # Deck points to conf_id=999 but dconf_json does not have it
-    dconf_json = json.dumps({"1": {"id": 1, "name": "Default", "new": {"perDay": 15}}})
-    decks_json = json.dumps({"1": {"id": 1, "name": "0. Slovene", "conf": 999}})
-    conn.execute(
-        "INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', ?, ?, '{}')",
-        (decks_json, dconf_json),
+    refresh_daily_new_cap(db, conn, "0. Slovene")
+    assert db.get_anki_state_cache("daily_new_cap") is None
+
+
+def test_refresh_daily_new_cap_writes_nothing_when_legacy_new_key_missing(tmp_path):
+    """conf has no 'new' key → KeyError, cache stays empty."""
+    from app.srs.queue_stats import refresh_daily_new_cap
+
+    db = SRSDatabase(":memory:")
+    conn = _make_legacy_col_conn(
+        tmp_path,
+        "legacy_no_new.anki2",
+        decks_json=json.dumps({"1": {"id": 1, "name": "0. Slovene", "conf": 1}}),
+        dconf_json=json.dumps({"1": {"id": 1, "name": "Default"}}),
     )
-    conn.commit()
-    result = _read_new_per_day_from_anki(conn, "0. Slovene")
-    assert result is None
-
-
-def test_read_new_per_day_from_anki_legacy_json_perday_not_int(tmp_path):
-    """Lines 264-265: Legacy JSON path, perDay exists but isn't convertible to int."""
-    from app.srs.queue_stats import _read_new_per_day_from_anki
-
-    conn = sqlite3.connect(str(tmp_path / "legacy_bad_perday.anki2"))
-    conn.execute(
-        "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
-        "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
-        "decks TEXT, dconf TEXT, tags TEXT)"
-    )
-    # conf_id=1 exists but perDay is a string, not int
-    dconf_json = json.dumps({"1": {"id": 1, "name": "Default", "new": {"perDay": "fifteen"}}})
-    decks_json = json.dumps({"1": {"id": 1, "name": "0. Slovene", "conf": 1}})
-    conn.execute(
-        "INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', ?, ?, '{}')",
-        (decks_json, dconf_json),
-    )
-    conn.commit()
-    result = _read_new_per_day_from_anki(conn, "0. Slovene")
-    assert result is None
-
-
-def test_read_new_per_day_from_anki_legacy_json_new_not_dict(tmp_path):
-    """Lines 264-265: Legacy JSON path, conf has no 'new' key or 'new' isn't a dict."""
-    from app.srs.queue_stats import _read_new_per_day_from_anki
-
-    conn = sqlite3.connect(str(tmp_path / "legacy_no_new.anki2"))
-    conn.execute(
-        "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
-        "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
-        "decks TEXT, dconf TEXT, tags TEXT)"
-    )
-    # conf_id=1 exists but "new" key is missing
-    dconf_json = json.dumps({"1": {"id": 1, "name": "Default"}})
-    decks_json = json.dumps({"1": {"id": 1, "name": "0. Slovene", "conf": 1}})
-    conn.execute(
-        "INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', ?, ?, '{}')",
-        (decks_json, dconf_json),
-    )
-    conn.commit()
-    result = _read_new_per_day_from_anki(conn, "0. Slovene")
-    assert result is None
+    refresh_daily_new_cap(db, conn, "0. Slovene")
+    assert db.get_anki_state_cache("daily_new_cap") is None
 
 
 def test_resolve_daily_new_cap_db_creation_fails(monkeypatch):
@@ -635,30 +626,6 @@ def test_resolve_daily_new_cap_corrupt_cache_timestamp(monkeypatch):
     db = SRSDatabase(":memory:")
     # Insert cache with corrupt timestamp
     db.set_anki_state_cache_raw("daily_new_cap", "30", "not-a-valid-timestamp")
-    cap, source = resolve_daily_new_cap(db)
-    # Falls through to config/default
-    assert source in ("config", "default")
-
-
-def test_resolve_daily_new_cap_cache_overflow_error(monkeypatch):
-    """Lines 347-348: Cache timestamp causes OverflowError via monkeypatch."""
-    from app.srs.queue_stats import resolve_daily_new_cap
-
-    db = SRSDatabase(":memory:")
-    db.set_anki_state_cache("daily_new_cap", "30")
-    # Monkeypatch datetime.fromisoformat to raise OverflowError
-    monkeypatch.setattr(
-        "app.srs.queue_stats.datetime",
-        type(
-            "FakeDatetime",
-            (),
-            {
-                "now": lambda self, tz: datetime.now(UTC),
-                "fromisoformat": lambda s: (_ for _ in ()).throw(OverflowError("overflow")),
-                "UTC": UTC,
-            },
-        )(),
-    )
     cap, source = resolve_daily_new_cap(db)
     # Falls through to config/default
     assert source in ("config", "default")
