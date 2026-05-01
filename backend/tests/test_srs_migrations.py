@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 6
+        assert CURRENT_VERSION == 7
 
     def test_migrates_from_v1_to_v2(self):
         from app.srs.migrations import migrate_v1_to_v2
@@ -734,7 +734,7 @@ class TestMigrateV5ToV6:
         conn = _make_v1_conn()
         _insert(conn, "banka")
         migrate(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
         cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
         assert "anki_due" in cols
 
@@ -800,4 +800,94 @@ class TestMigrationV6ToV7:
         conn = _make_v1_conn()
         _insert(conn, "banka")
         migrate(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
+
+
+class TestMigrationV6ToV7Detailed:
+    """Detailed tests for v6->v7 migration."""
+
+    def test_adds_grammar_and_note_columns(self, tmp_path):
+        """migrate_v6_to_v7 adds grammar and note columns."""
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        # Create v6 schema (without grammar/note)
+        conn.execute("""
+            CREATE TABLE collocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT UNIQUE NOT NULL,
+                translation TEXT NOT NULL DEFAULT '',
+                language_code TEXT NOT NULL DEFAULT 'sl',
+                word_count INTEGER NOT NULL DEFAULT 1,
+                unit_difficulty INTEGER NOT NULL DEFAULT 1,
+                source TEXT NOT NULL DEFAULT 'corpus',
+                corpus_frequency INTEGER NOT NULL DEFAULT 0,
+                lemma TEXT,
+                guid TEXT UNIQUE,
+                anki_note_id INTEGER,
+                dirty_fields TEXT NOT NULL DEFAULT '',
+                last_synced_at TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("PRAGMA user_version = 6")
+        conn.commit()
+
+        from app.srs.migrations import migrate_v6_to_v7
+
+        migrate_v6_to_v7(conn)
+
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocations)").fetchall()}
+        assert "grammar" in cols
+        assert "note" in cols
+
+    def test_grammar_default_empty_string(self, tmp_path):
+        """New rows get empty string for grammar/note."""
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            CREATE TABLE collocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT UNIQUE NOT NULL,
+                translation TEXT NOT NULL DEFAULT '',
+                language_code TEXT NOT NULL DEFAULT 'sl'
+            )
+        """)
+        conn.execute("PRAGMA user_version = 6")
+        conn.commit()
+
+        from app.srs.migrations import migrate_v6_to_v7
+
+        migrate_v6_to_v7(conn)
+
+        conn.execute("INSERT INTO collocations (text, translation) VALUES ('test', 't')")
+        row = conn.execute("SELECT grammar, note FROM collocations").fetchone()
+        assert row["grammar"] == ""
+        assert row["note"] == ""
+
+    def test_idempotent(self, tmp_path):
+        """Running migrate_v6_to_v7 twice does not raise."""
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            CREATE TABLE collocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT UNIQUE NOT NULL,
+                translation TEXT NOT NULL DEFAULT ''
+            )
+        """)
+        conn.execute("PRAGMA user_version = 6")
+        conn.commit()
+
+        from app.srs.migrations import migrate_v6_to_v7
+
+        migrate_v6_to_v7(conn)
+        migrate_v6_to_v7(conn)  # second call should not raise
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 7

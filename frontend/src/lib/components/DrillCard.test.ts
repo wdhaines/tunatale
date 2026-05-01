@@ -1,118 +1,183 @@
 /**
  * Tests for DrillCard shared flashcard component.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, screen } from '@testing-library/svelte';
 import DrillCard from './DrillCard.svelte';
 import type { SRSItemDetail } from '$lib/api';
 import { makeSRSItemDetail } from '../../test/factories';
 
 describe('DrillCard', () => {
-	describe('recognition mode (promptSide=L2)', () => {
-		it('shows L2 text as prompt', async () => {
-			const onRate = vi.fn().mockResolvedValue(undefined);
-			const { findByText } = render(DrillCard, { item: makeSRSItemDetail(), promptSide: 'L2', onRate });
-			expect(await findByText('banka')).toBeTruthy();
+	describe('recognition direction', () => {
+		const item = makeSRSItemDetail({
+			text: 'dober dan',
+			translation: 'good day',
+			audio_url: '/api/media/sl_dober_dan.mp3',
+			image_url: '/api/media/dober_dan.jpg',
+			grammar: 'phrase, masc',
+			note: 'common greeting',
 		});
 
-		it('shows Show button before reveal', async () => {
+		it('front renders audio element with autoplay and Slovene text', async () => {
 			const onRate = vi.fn().mockResolvedValue(undefined);
-			const { findByRole } = render(DrillCard, { item: makeSRSItemDetail(), promptSide: 'L2', onRate });
-			expect(await findByRole('button', { name: 'Show' })).toBeTruthy();
+			const { container } = render(DrillCard, { item, direction: 'recognition', onRate });
+			const audio = container.querySelector('audio');
+			expect(audio).toBeTruthy();
+			expect(audio?.getAttribute('autoplay')).toBe('');
+			expect(audio?.getAttribute('src')).toBe('/api/media/sl_dober_dan.mp3');
+			expect(container.textContent).toContain('dober dan');
 		});
 
-		it('hides translation before reveal', async () => {
+		it('front shows play button for manual replay', async () => {
 			const onRate = vi.fn().mockResolvedValue(undefined);
-			const item = makeSRSItemDetail({ text: 'okno', translation: 'window' });
-			const { container } = render(DrillCard, { item, promptSide: 'L2', onRate });
-			expect(container.textContent).not.toContain('window');
+			const { getByRole } = render(DrillCard, { item, direction: 'recognition', onRate });
+			expect(getByRole('button', { name: 'Play audio' })).toBeTruthy();
 		});
 
-		it('shows L1 translation after Show clicked', async () => {
+		it('front does NOT show image, English, grammar, note before reveal', async () => {
 			const onRate = vi.fn().mockResolvedValue(undefined);
-			const { findByRole, findByText } = render(DrillCard, { item: makeSRSItemDetail(), promptSide: 'L2', onRate });
+			const { container } = render(DrillCard, { item, direction: 'recognition', onRate });
+			expect(container.textContent).not.toContain('good day');
+			expect(container.textContent).not.toContain('common greeting');
+			expect(container.querySelector('img')).toBeNull();
+		});
+
+		it('back stacks: Slovene still in DOM, <hr>, image, English, grammar, note', async () => {
+			const onRate = vi.fn().mockResolvedValue(undefined);
+			const { findByRole, container } = render(DrillCard, { item, direction: 'recognition', onRate });
 			await fireEvent.click(await findByRole('button', { name: 'Show' }));
-			expect(await findByText('bank')).toBeTruthy();
+
+			// Slovene still visible
+			expect(container.textContent).toContain('dober dan');
+			// HR divider exists
+			expect(container.querySelector('hr')).toBeTruthy();
+			// Image shown
+			expect(container.querySelector('img')).toBeTruthy();
+			// English translation
+			expect(container.textContent).toContain('good day');
+			// Grammar shown
+			expect(container.textContent).toContain('phrase, masc');
+			// Note shown
+			expect(container.textContent).toContain('common greeting');
 		});
 
-		it('shows all four rating buttons after Show clicked', async () => {
+		it('back hides empty grammar/note divs', async () => {
 			const onRate = vi.fn().mockResolvedValue(undefined);
-			const { findByRole, getByText } = render(DrillCard, { item: makeSRSItemDetail(), promptSide: 'L2', onRate });
+			const noGramNote = makeSRSItemDetail({
+				text: 'hvala',
+				translation: 'thank you',
+				grammar: '',
+				note: ''
+			});
+			const { findByRole, container } = render(DrillCard, { item: noGramNote, direction: 'recognition', onRate });
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			expect(container.querySelector('.gram')).toBeNull();
+			expect(container.querySelector('.note')).toBeNull();
+		});
+
+		it('shows all four rating buttons after reveal', async () => {
+			const onRate = vi.fn().mockResolvedValue(undefined);
+			const { findByRole, getByText } = render(DrillCard, { item, direction: 'recognition', onRate });
 			await fireEvent.click(await findByRole('button', { name: 'Show' }));
 			expect(getByText('Again')).toBeTruthy();
 			expect(getByText('Hard')).toBeTruthy();
 			expect(getByText('Good')).toBeTruthy();
 			expect(getByText('Easy')).toBeTruthy();
 		});
+	});
 
-		it('calls onRate with "good" when Good clicked', async () => {
+	describe('production direction', () => {
+		const item = makeSRSItemDetail({
+			text: 'dober dan',
+			translation: 'good day',
+			audio_url: '/api/media/sl_dober_dan.mp3',
+			image_url: '/api/media/dober_dan.jpg',
+			grammar: 'phrase',
+			note: 'greeting',
+		});
+
+		it('front renders image only (no audio), falls back to translation when no image', async () => {
 			const onRate = vi.fn().mockResolvedValue(undefined);
-			const { findByRole } = render(DrillCard, { item: makeSRSItemDetail(), promptSide: 'L2', onRate });
+			const { container } = render(DrillCard, { item, direction: 'production', onRate });
+			expect(container.querySelector('audio')).toBeNull();
+			expect(container.querySelector('img')).toBeTruthy();
+		});
+
+		it('front falls back to translation text when image_url is null', async () => {
+			const onRate = vi.fn().mockResolvedValue(undefined);
+			const noImg = makeSRSItemDetail({ text: 'hvala', translation: 'thank you', image_url: null });
+			const { findByText } = render(DrillCard, { item: noImg, direction: 'production', onRate });
+			expect(await findByText('thank you')).toBeTruthy();
+		});
+
+		it('back: image stays on top, <hr>, then audio + Slovene + English + grammar + note', async () => {
+			const onRate = vi.fn().mockResolvedValue(undefined);
+			const { findByRole, container } = render(DrillCard, { item, direction: 'production', onRate });
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+
+			// Image still visible
+			expect(container.querySelector('img')).toBeTruthy();
+			// HR divider
+			expect(container.querySelector('hr')).toBeTruthy();
+			// Audio element on back
+			const audios = container.querySelectorAll('audio');
+			expect(audios.length).toBe(1);
+			// Slovene and English visible
+			expect(container.textContent).toContain('dober dan');
+			expect(container.textContent).toContain('good day');
+			// Grammar and note
+			expect(container.textContent).toContain('phrase');
+			expect(container.textContent).toContain('greeting');
+		});
+	});
+
+	describe('rating callbacks', () => {
+		it('calls onRate("good") when Good clicked', async () => {
+			const onRate = vi.fn().mockResolvedValue(undefined);
+			const item = makeSRSItemDetail({});
+			const { findByRole } = render(DrillCard, { item, direction: 'recognition', onRate });
 			await fireEvent.click(await findByRole('button', { name: 'Show' }));
 			await fireEvent.click(await findByRole('button', { name: 'Good' }));
 			expect(onRate).toHaveBeenCalledWith('good');
 		});
 
-		it('calls onRate with "again" when Again clicked', async () => {
+		it('calls onRate("again") when Again clicked', async () => {
 			const onRate = vi.fn().mockResolvedValue(undefined);
-			const { findByRole } = render(DrillCard, { item: makeSRSItemDetail(), promptSide: 'L2', onRate });
+			const item = makeSRSItemDetail({});
+			const { findByRole } = render(DrillCard, { item, direction: 'recognition', onRate });
 			await fireEvent.click(await findByRole('button', { name: 'Show' }));
 			await fireEvent.click(await findByRole('button', { name: 'Again' }));
 			expect(onRate).toHaveBeenCalledWith('again');
 		});
+	});
 
-		it('calls onRate with "hard" when Hard clicked', async () => {
+	describe('audio play button', () => {
+		it('calls audioEl.play() when play button clicked', async () => {
 			const onRate = vi.fn().mockResolvedValue(undefined);
-			const { findByRole } = render(DrillCard, { item: makeSRSItemDetail(), promptSide: 'L2', onRate });
-			await fireEvent.click(await findByRole('button', { name: 'Show' }));
-			await fireEvent.click(await findByRole('button', { name: 'Hard' }));
-			expect(onRate).toHaveBeenCalledWith('hard');
-		});
-
-		it('calls onRate with "easy" when Easy clicked', async () => {
-			const onRate = vi.fn().mockResolvedValue(undefined);
-			const { findByRole } = render(DrillCard, { item: makeSRSItemDetail(), promptSide: 'L2', onRate });
-			await fireEvent.click(await findByRole('button', { name: 'Show' }));
-			await fireEvent.click(await findByRole('button', { name: 'Easy' }));
-			expect(onRate).toHaveBeenCalledWith('easy');
+			const item = makeSRSItemDetail({
+				audio_url: '/api/media/test.mp3',
+			});
+			const { getByRole, container } = render(DrillCard, { item, direction: 'recognition', onRate });
+			const audio = container.querySelector('audio');
+			expect(audio).toBeTruthy();
+			const playMock = vi.fn().mockResolvedValue(undefined);
+			if (audio) {
+				audio.play = playMock;
+			}
+			await fireEvent.click(getByRole('button', { name: 'Play audio' }));
+			expect(playMock).toHaveBeenCalled();
 		});
 	});
 
-	describe('production mode (promptSide=image)', () => {
-		it('shows image when item has image_url', async () => {
+	describe('card with null audio_url', () => {
+		it('renders cleanly without audio element or play button', async () => {
 			const onRate = vi.fn().mockResolvedValue(undefined);
-			const { container } = render(DrillCard, { item: makeSRSItemDetail(), promptSide: 'image', onRate });
-			const img = screen.getByRole('img');
-			expect(img).not.toBeNull();
-			expect(img?.getAttribute('src')).toBe('/api/media/banka.jpg');
-		});
-
-		it('shows L1 translation as gloss fallback when no image_url', async () => {
-			const onRate = vi.fn().mockResolvedValue(undefined);
-			const { findByText } = render(DrillCard, { item: makeSRSItemDetail({ image_url: null }), promptSide: 'image', onRate });
-			expect(await findByText('bank')).toBeTruthy();
-		});
-
-		it('shows L2 text as answer after Show clicked', async () => {
-			const onRate = vi.fn().mockResolvedValue(undefined);
-			const { findByRole, findByText } = render(DrillCard, { item: makeSRSItemDetail(), promptSide: 'image', onRate });
-			await fireEvent.click(await findByRole('button', { name: 'Show' }));
-			expect(await findByText('banka')).toBeTruthy();
-		});
-	});
-
-	describe('L1 gloss mode (promptSide=L1)', () => {
-		it('shows L1 translation as prompt', async () => {
-			const onRate = vi.fn().mockResolvedValue(undefined);
-			const { findByText } = render(DrillCard, { item: makeSRSItemDetail({ text: 'okno', translation: 'window' }), promptSide: 'L1', onRate });
-			expect(await findByText('window')).toBeTruthy();
-		});
-
-		it('shows L2 text as answer after Show clicked', async () => {
-			const onRate = vi.fn().mockResolvedValue(undefined);
-			const { findByRole, findByText } = render(DrillCard, { item: makeSRSItemDetail({ text: 'okno', translation: 'window' }), promptSide: 'L1', onRate });
-			await fireEvent.click(await findByRole('button', { name: 'Show' }));
-			expect(await findByText('okno')).toBeTruthy();
+			const item = makeSRSItemDetail({
+				audio_url: null,
+			});
+			const { container } = render(DrillCard, { item, direction: 'recognition', onRate });
+			expect(container.querySelector('audio')).toBeNull();
+			expect(container.querySelector('button[aria-label="Play audio"]')).toBeNull();
 		});
 	});
 });

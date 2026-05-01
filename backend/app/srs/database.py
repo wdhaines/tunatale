@@ -1017,6 +1017,15 @@ class SRSDatabase:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def update_media_file(self, row_id: int, sha256: str, size_bytes: int) -> None:
+        """Update sha256 and size_bytes for an existing media row (used by refresh-media)."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE media SET sha256 = ?, bytes = ? WHERE id = ?",
+                (sha256, size_bytes, row_id),
+            )
+            self._commit(conn)
+
     def list_dirty(
         self,
         direction: Direction | None = None,

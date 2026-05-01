@@ -259,6 +259,25 @@ class TestMediaImport:
         result2 = _run(db_path, tmp_path, anki_media_path=anki_media_path, media_dir=media_dir)
         assert result2["new_media"] == 0
 
+    def test_sha_mismatch_updates_media_and_db(self, tmp_path):
+        """When Anki media content changes (SHA mismatch), file is overwritten and DB updated."""
+        db_path = self._build_db_with_sound(tmp_path)
+        anki_media_path = tmp_path / "anki" / "media"
+        anki_media_path.mkdir()
+        media_file = anki_media_path / "sl_banka.mp3"
+        media_file.write_bytes(b"original audio content")
+        media_dir = tmp_path / "tunatale_media"
+        # First import
+        result1 = _run(db_path, tmp_path, anki_media_path=anki_media_path, media_dir=media_dir)
+        assert result1["new_media"] == 1
+        # Overwrite Anki media with new content (changes SHA)
+        media_file.write_bytes(b"updated audio content changed")
+        # Second import should detect SHA mismatch and update
+        result2 = _run(db_path, tmp_path, anki_media_path=anki_media_path, media_dir=media_dir)
+        assert result2["updated_media"] == 1
+        # Verify the file was actually overwritten
+        assert (media_dir / "sl_banka.mp3").read_bytes() == b"updated audio content changed"
+
 
 class TestTranslationStrip:
     def test_translation_html_stripped(self, tmp_path):

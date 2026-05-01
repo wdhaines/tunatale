@@ -30,6 +30,15 @@ def infer_kind(filename: str) -> str:
     return "image"
 
 
+def compute_sha256(path: Path) -> str:
+    """Compute SHA256 hex digest of a file without copying it."""
+    sha256_hash = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            sha256_hash.update(chunk)
+    return sha256_hash.hexdigest()
+
+
 def copy_media_file(src: Path, dest_dir: Path) -> MediaCopyResult:
     """Copy a media file from Anki's collection.media/ into dest_dir.
 

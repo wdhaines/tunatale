@@ -88,6 +88,8 @@ def import_seed(
         "new_parents": 0,
         "new_directions": 0,
         "new_media": 0,
+        "updated_media": 0,
+        "unchanged_media": 0,
         "skipped_guid_collisions": 0,
         "skipped_non_vocab": 0,
     }
@@ -185,8 +187,24 @@ def import_seed(
                     src = anki_media_path / filename
                     if not src.exists():
                         continue
-                    if db.find_media_by_anki_filename(filename) is not None:
-                        continue  # already imported on a prior run
+                    existing_row = db.find_media_by_anki_filename(filename)
+                    if existing_row is not None:
+                        # SHA-aware: only skip if content unchanged
+                        from app.media.importer import compute_sha256
+
+                        current_sha = compute_sha256(src)
+                        if current_sha == existing_row["sha256"]:
+                            results["unchanged_media"] = results.get("unchanged_media", 0) + 1
+                            continue  # no-op: same content
+                        # Content changed: overwrite file and update DB
+                        dest_dir = Path(media_dir)
+                        dest_path = dest_dir / filename
+                        import shutil
+
+                        shutil.copy2(src, dest_path)
+                        db.update_media_file(existing_row["id"], sha256=current_sha, size_bytes=src.stat().st_size)
+                        results["updated_media"] += 1
+                        continue
                     copy_result = copy_media_file(src, media_dir)
                     db.add_media(
                         coll_id,

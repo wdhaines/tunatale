@@ -12,15 +12,26 @@
 	let error = $state('');
 	let reviewed = $state(0);
 	let stats = $state<QueueStats | null>(null);
+	let refreshing = $state(false);
+
+	async function refreshMedia() {
+		refreshing = true;
+		try {
+			const resp = await fetch('/api/admin/refresh-media', { method: 'POST' });
+			if (!resp.ok) throw new Error('Refresh failed');
+			// Reload queue after refresh
+			const queueData = await api.fetchReviewQueue();
+			queue = queueData.queue.map(item => ({ item, direction: item.direction }));
+			index = 0;
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			refreshing = false;
+		}
+	}
 
 	let current = $derived(queue[index]);
 	let done = $derived(!loading && !error && index >= queue.length);
-
-	function getPromptSide(item: ReviewQueueItem, direction: 'recognition' | 'production'): 'L2' | 'L1' | 'image' {
-		if (direction === 'recognition') return 'L2';
-		if ((item.word_count ?? 2) === 1 && item.image_url) return 'image';
-		return 'L1';
-	}
 
 	onMount(async () => {
 		try {
@@ -57,6 +68,10 @@
 		<p class="stats">New {stats.new} · Due {stats.due}{stats.cap_source !== 'cache' ? ` (${stats.cap_source})` : ''}{stats.fsrs_source !== 'cache' ? ' · FSRS: defaults' : ''}</p>
 	{/if}
 
+	<button class="refresh-btn" onclick={refreshMedia} disabled={refreshing}>
+		{refreshing ? 'Refreshing…' : 'Refresh from Anki'}
+	</button>
+
 	{#if loading}
 		<p>Loading…</p>
 	{:else if error}
@@ -72,7 +87,7 @@
 		<p class="badge">{current.direction === 'recognition' ? 'Recognition' : 'Production'}</p>
 		<section class="card-section">
 			{#key index}
-				<DrillCard item={current.item} promptSide={getPromptSide(current.item, current.direction)} onRate={rate} />
+				<DrillCard item={current.item} direction={current.direction} onRate={rate} />
 			{/key}
 		</section>
 	{/if}
@@ -118,5 +133,19 @@
 		color: var(--color-muted);
 		font-size: 0.9rem;
 		margin-bottom: 0.5rem;
+	}
+	.refresh-btn {
+		margin-bottom: 1rem;
+		padding: 0.4rem 1rem;
+		background: var(--color-border);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		cursor: pointer;
+		font-size: 0.9rem;
+	}
+	.refresh-btn:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
 	}
 </style>

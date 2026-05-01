@@ -930,3 +930,45 @@ class TestGetAudioFilename:
 
     def test_returns_none_for_unknown_collocation(self, srs_db):
         assert srs_db.get_audio_filename(99999) is None
+
+
+class TestUpdateMediaFile:
+    """Tests for update_media_file."""
+
+    def test_updates_sha_and_size(self, srs_db):
+        """update_media_file changes sha256 and bytes."""
+        db = srs_db
+        # Add a media row using add_media (which handles the transaction)
+        # First need a collocation to reference
+        from datetime import date
+
+        from app.models.srs_item import Direction, DirectionState
+        from app.models.syntactic_unit import SyntacticUnit
+
+        unit = SyntacticUnit(text="test_media", translation="test", word_count=2, difficulty=1, source="test")
+        dirs = {Direction.RECOGNITION: DirectionState(direction=Direction.RECOGNITION, due_date=date.today())}
+        coll_id = db.upsert_by_guid(unit, "sl", dirs)
+        db.add_media(
+            coll_id,
+            kind="audio_forvo",
+            filename="test.mp3",
+            path="/tmp/test.mp3",
+            anki_filename="test.mp3",
+            sha256="old_sha",
+            size_bytes=100,
+        )
+
+        row = db.find_media_by_anki_filename("test.mp3")
+        assert row["sha256"] == "old_sha"
+        assert row["bytes"] == 100
+
+        db.update_media_file(row["id"], sha256="new_sha", size_bytes=200)
+
+        updated = db.find_media_by_anki_filename("test.mp3")
+        assert updated["sha256"] == "new_sha"
+        assert updated["bytes"] == 200
+
+    def test_updates_nothing_for_invalid_id(self, srs_db):
+        """Calling with unknown id should not raise."""
+        db = srs_db
+        db.update_media_file(99999, sha256="x", size_bytes=0)  # should not raise

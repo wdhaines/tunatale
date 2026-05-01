@@ -78,13 +78,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from app.api import anki, audio, curriculum, generation, srs  # noqa: E402
+from app.api import admin, anki, audio, curriculum, generation, srs  # noqa: E402
 
 app.include_router(curriculum.router)
 app.include_router(generation.router)
 app.include_router(srs.router)
 app.include_router(audio.router)
 app.include_router(anki.router)
+app.include_router(admin.router)
 
 
 @app.get("/api/health")

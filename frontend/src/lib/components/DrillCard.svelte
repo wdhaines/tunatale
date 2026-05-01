@@ -5,15 +5,16 @@
 
 	let {
 		item,
-		promptSide,
+		direction,
 		onRate
 	}: {
 		item: SRSItemDetail;
-		promptSide: 'L2' | 'L1' | 'image';
+		direction: 'recognition' | 'production';
 		onRate: (rating: Rating) => Promise<void>;
 	} = $props();
 
 	let revealed = $state(false);
+	let audioEl: HTMLAudioElement | undefined = $state();
 
 	function show() {
 		revealed = true;
@@ -22,29 +23,56 @@
 	async function rate(r: Rating) {
 		await onRate(r);
 	}
+
+	function playAudio() {
+		audioEl?.play().catch(() => {});
+	}
 </script>
 
 <div class="drill-card">
 	<div class="prompt">
-		{#if promptSide === 'L2'}
-			<p class="main-text">{item.text}</p>
-		{:else if promptSide === 'image'}
+		{#if direction === 'recognition'}
+			{#if item.audio_url}
+				<audio bind:this={audioEl} src={item.audio_url} autoplay preload="auto"></audio>
+				<button class="play-btn" onclick={playAudio} aria-label="Play audio">▶</button>
+			{/if}
+			<p class="main-text slovene">{item.text}</p>
+		{:else if direction === 'production'}
 			{#if item.image_url != null}
 				<img src={item.image_url} alt={item.translation} class="prompt-image" />
 			{:else}
 				<p class="main-text">{item.translation}</p>
 			{/if}
-		{:else}
-			<p class="main-text">{item.translation}</p>
 		{/if}
 	</div>
 
 	{#if revealed}
+		<hr class="answer-divider" />
 		<div class="answer">
-			{#if promptSide === 'L2'}
-				<p class="answer-text">{item.translation}</p>
-			{:else}
-				<p class="answer-text">{item.text}</p>
+			{#if direction === 'recognition'}
+				{#if item.image_url != null}
+					<img src={item.image_url} alt={item.translation} class="answer-image" />
+				{/if}
+				<p class="answer-text english">{item.translation}</p>
+				{#if item.grammar}
+					<div class="gram">{item.grammar}</div>
+				{/if}
+				{#if item.note}
+					<div class="note">{item.note}</div>
+				{/if}
+			{:else if direction === 'production'}
+				{#if item.audio_url}
+					<audio bind:this={audioEl} src={item.audio_url} autoplay preload="auto"></audio>
+					<button class="play-btn" onclick={playAudio} aria-label="Play audio">▶</button>
+				{/if}
+				<p class="answer-text slovene">{item.text}</p>
+				<p class="answer-text english">{item.translation}</p>
+				{#if item.grammar}
+					<div class="gram">{item.grammar}</div>
+				{/if}
+				{#if item.note}
+					<div class="note">{item.note}</div>
+				{/if}
 			{/if}
 		</div>
 		<div class="ratings">
@@ -74,10 +102,51 @@
 		border-radius: 8px;
 		margin-bottom: 1rem;
 	}
+	.answer-divider {
+		border: none;
+		border-top: 1px solid var(--color-border, #ccc);
+		margin: 1.5rem 0;
+	}
+	.answer-image {
+		max-width: 240px;
+		max-height: 240px;
+		border-radius: 8px;
+		margin-bottom: 1rem;
+	}
 	.answer-text {
 		font-size: 1.25rem;
 		color: var(--color-muted);
-		margin-bottom: 1.5rem;
+		margin-bottom: 0.75rem;
+	}
+	.slovene {
+		/* Slovene text styling */
+	}
+	.english {
+		/* English translation styling */
+	}
+	.gram {
+		font-size: 0.9rem;
+		color: var(--color-muted);
+		font-style: italic;
+		margin-bottom: 0.5rem;
+	}
+	.note {
+		font-size: 0.85rem;
+		color: var(--color-muted);
+		margin-bottom: 0.75rem;
+	}
+	.play-btn {
+		background: none;
+		border: 1px solid var(--color-border, #ccc);
+		border-radius: 50%;
+		width: 36px;
+		height: 36px;
+		cursor: pointer;
+		font-size: 1rem;
+		margin-bottom: 0.75rem;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 	}
 	.ratings {
 		display: flex;
