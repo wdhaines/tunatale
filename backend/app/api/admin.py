@@ -24,5 +24,5 @@ async def refresh_media() -> dict:
         "updated": result.get("updated_media", 0),
         "unchanged": result.get("unchanged_media", 0),
         "new": result.get("new_media", 0),
-        "errors": result.get("skipped_guid_collisions", 0) + result.get("skipped_non_vocab", 0),
+        "errors": result.get("skipped_guid_collisions", 0),
     }

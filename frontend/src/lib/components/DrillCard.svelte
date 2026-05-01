@@ -119,10 +119,10 @@
 		margin-bottom: 0.75rem;
 	}
 	.slovene {
-		/* Slovene text styling */
+		/* Semantic hook for per-language typography — currently inherits .main-text */
 	}
 	.english {
-		/* English translation styling */
+		/* Semantic hook for per-language typography — currently inherits .answer-text */
 	}
 	.gram {
 		font-size: 0.9rem;
@@ -136,13 +136,14 @@
 		margin-bottom: 0.75rem;
 	}
 	.play-btn {
-		background: none;
-		border: 1px solid var(--color-border, #ccc);
+		background: var(--color-text, #333);
+		border: 1px solid var(--color-text, #333);
 		border-radius: 50%;
 		width: 36px;
 		height: 36px;
 		cursor: pointer;
 		font-size: 1rem;
+		color: var(--color-bg, #fff);
 		margin-bottom: 0.75rem;
 		display: inline-flex;
 		align-items: center;

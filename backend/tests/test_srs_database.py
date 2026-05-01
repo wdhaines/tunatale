@@ -972,3 +972,67 @@ class TestUpdateMediaFile:
         """Calling with unknown id should not raise."""
         db = srs_db
         db.update_media_file(99999, sha256="x", size_bytes=0)  # should not raise
+
+
+class TestGetImageFilename:
+    """Tests for get_image_filename."""
+
+    def test_returns_image_when_one_exists(self, srs_db):
+        from datetime import date
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        dirs = {Direction.RECOGNITION: DirectionState(Direction.RECOGNITION, date.today(), state=SRSState.NEW)}
+        coll_id = srs_db.upsert_by_guid(_unit("ptica", "bird"), "sl", dirs)
+        srs_db.add_media(
+            coll_id,
+            kind="image",
+            filename="bird.jpg",
+            path="/tmp/bird.jpg",
+            anki_filename="bird.jpg",
+            sha256="i1",
+            size_bytes=300,
+        )
+        assert srs_db.get_image_filename(coll_id) == "bird.jpg"
+
+    def test_returns_newest_image_when_multiple_exist(self, srs_db):
+        """When a collocation has multiple images, the most recently inserted one should be returned."""
+        from datetime import date
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        dirs = {Direction.RECOGNITION: DirectionState(Direction.RECOGNITION, date.today(), state=SRSState.NEW)}
+        coll_id = srs_db.upsert_by_guid(_unit("ptica", "bird"), "sl", dirs)
+        # Add first image
+        srs_db.add_media(
+            coll_id,
+            kind="image",
+            filename="img_old.jpg",
+            path="/tmp/img_old.jpg",
+            anki_filename="img_old.jpg",
+            sha256="old",
+            size_bytes=100,
+        )
+        # Add second (newer) image
+        srs_db.add_media(
+            coll_id,
+            kind="image",
+            filename="paste-new.jpg",
+            path="/tmp/paste-new.jpg",
+            anki_filename="paste-new.jpg",
+            sha256="new",
+            size_bytes=200,
+        )
+        assert srs_db.get_image_filename(coll_id) == "paste-new.jpg"
+
+    def test_returns_none_when_no_image(self, srs_db):
+        from datetime import date
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        dirs = {Direction.RECOGNITION: DirectionState(Direction.RECOGNITION, date.today(), state=SRSState.NEW)}
+        coll_id = srs_db.upsert_by_guid(_unit("miza", "table"), "sl", dirs)
+        assert srs_db.get_image_filename(coll_id) is None
+
+    def test_returns_none_for_unknown_collocation(self, srs_db):
+        assert srs_db.get_image_filename(99999) is None

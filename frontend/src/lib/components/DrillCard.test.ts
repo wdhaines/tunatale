@@ -91,9 +91,46 @@ describe('DrillCard', () => {
 			text: 'dober dan',
 			translation: 'good day',
 			audio_url: '/api/media/sl_dober_dan.mp3',
-			image_url: '/api/media/dober_dan.jpg',
+			image_url: '/api/media/dober-dan.jpg',
 			grammar: 'phrase',
 			note: 'greeting',
+		});
+
+		it('front: image only (no text)', async () => {
+			const onRate = vi.fn().mockResolvedValue(undefined);
+			const { queryByText, container } = render(DrillCard, { item, direction: 'production', onRate });
+			expect(container.querySelector('img')).toBeTruthy();
+			expect(queryByText('dober dan')).toBeFalsy();
+			expect(queryByText('good day')).toBeFalsy();
+		});
+
+		it('back: image stays on top after reveal, <hr>, then audio + Slovene + English + grammar + note', async () => {
+			const onRate = vi.fn().mockResolvedValue(undefined);
+			const { findByRole, container, findByText } = render(DrillCard, { item, direction: 'production', onRate });
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+
+			// Wait for back content to render
+			await findByText('dober dan'); // Slovene text indicates back is shown
+
+			// Image still visible AFTER reveal
+			const img = container.querySelector('img');
+			expect(img).toBeTruthy();
+			expect(img?.getAttribute('src')).toBe('/api/media/dober-dan.jpg');
+
+			// HR divider between front and back
+			expect(container.querySelector('hr')).toBeTruthy();
+
+			// Audio element on back
+			const audios = container.querySelectorAll('audio');
+			expect(audios.length).toBe(1);
+
+			// Slovene and English visible
+			expect(container.textContent).toContain('dober dan');
+			expect(container.textContent).toContain('good day');
+
+			// Grammar and note
+			expect(container.textContent).toContain('phrase');
+			expect(container.textContent).toContain('greeting');
 		});
 
 		it('front renders image only (no audio), falls back to translation when no image', async () => {
@@ -108,26 +145,6 @@ describe('DrillCard', () => {
 			const noImg = makeSRSItemDetail({ text: 'hvala', translation: 'thank you', image_url: null });
 			const { findByText } = render(DrillCard, { item: noImg, direction: 'production', onRate });
 			expect(await findByText('thank you')).toBeTruthy();
-		});
-
-		it('back: image stays on top, <hr>, then audio + Slovene + English + grammar + note', async () => {
-			const onRate = vi.fn().mockResolvedValue(undefined);
-			const { findByRole, container } = render(DrillCard, { item, direction: 'production', onRate });
-			await fireEvent.click(await findByRole('button', { name: 'Show' }));
-
-			// Image still visible
-			expect(container.querySelector('img')).toBeTruthy();
-			// HR divider
-			expect(container.querySelector('hr')).toBeTruthy();
-			// Audio element on back
-			const audios = container.querySelectorAll('audio');
-			expect(audios.length).toBe(1);
-			// Slovene and English visible
-			expect(container.textContent).toContain('dober dan');
-			expect(container.textContent).toContain('good day');
-			// Grammar and note
-			expect(container.textContent).toContain('phrase');
-			expect(container.textContent).toContain('greeting');
 		});
 	});
 

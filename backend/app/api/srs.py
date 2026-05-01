@@ -101,9 +101,9 @@ def _triples_to_dicts(db, triples: list[tuple[int, SRSItem, str]]) -> list[dict]
             continue
         seen_ids.add(row_id)
         img = db.get_image_filename(row_id)
-        image_url = f"/api/media/{img}" if img else None
+        image_url = f"/api/srs/media/{img}" if img else None
         aud = db.get_audio_filename(row_id)
-        audio_url = f"/api/media/{aud}" if aud else None
+        audio_url = f"/api/srs/media/{aud}" if aud else None
         result.append(_item_to_dict(row_id, item, lang, image_url, audio_url))
     return result
 
@@ -616,9 +616,12 @@ def _spread_mix(
     return result
 
 
-def _queue_item_to_dict(row_id: int, item: SRSItem, lang: str, direction: Direction) -> dict:
-    """Serialize a queue item with embedded direction."""
-    base = _item_to_dict(row_id, item, lang)
+def _queue_item_to_dict(row_id: int, item: SRSItem, lang: str, direction: Direction, db) -> dict:
+    img = db.get_image_filename(row_id)
+    image_url = f"/api/srs/media/{img}" if img else None
+    aud = db.get_audio_filename(row_id)
+    audio_url = f"/api/srs/media/{aud}" if aud else None
+    base = _item_to_dict(row_id, item, lang, image_url, audio_url)
     base["direction"] = direction.value
     return base
 
@@ -664,4 +667,4 @@ async def get_review_queue(request: Request) -> dict:
     else:  # 0 = mix: interleave one new every N reviews
         ordered = _spread_mix(due, new_combined)
 
-    return {"queue": [_queue_item_to_dict(*t) for t in ordered]}
+    return {"queue": [_queue_item_to_dict(*t, db) for t in ordered]}

@@ -798,6 +798,66 @@ class TestReviewQueue:
         # Just verify the endpoint works and doesn't error
         assert isinstance(queue, list)
 
+    async def test_review_queue_includes_audio_url_when_audio_exists(self, api_app_state):
+        from datetime import date
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        unit = SyntacticUnit(text="mleko", translation="milk", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="mleko", limit=1)
+        row_id = rows[0][0]
+        db.add_media(
+            row_id,
+            kind="audio_forvo",
+            filename="sl_mleko.mp3",
+            path="/tmp/sl_mleko.mp3",
+            anki_filename="sl_mleko.mp3",
+            sha256="abc",
+            size_bytes=100,
+        )
+        rec_dir = DirectionState(direction=Direction.RECOGNITION, due_date=date.today(), state=SRSState.REVIEW)
+        db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+        item = next(q for q in queue if q["text"] == "mleko")
+        assert item["audio_url"] == "/api/srs/media/sl_mleko.mp3"
+
+    async def test_review_queue_includes_image_url_when_image_exists(self, api_app_state):
+        from datetime import date
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        unit = SyntacticUnit(text="jabolko", translation="apple", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="jabolko", limit=1)
+        row_id = rows[0][0]
+        db.add_media(
+            row_id,
+            kind="image",
+            filename="apple.jpg",
+            path="/tmp/apple.jpg",
+            anki_filename="apple.jpg",
+            sha256="def",
+            size_bytes=200,
+        )
+        rec_dir = DirectionState(direction=Direction.RECOGNITION, due_date=date.today(), state=SRSState.REVIEW)
+        db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+        item = next(q for q in queue if q["text"] == "jabolko")
+        assert item["image_url"] == "/api/srs/media/apple.jpg"
+
 
 class TestAudioUrlGrammarNote:
     """Tests for audio_url, grammar, note in API responses."""
@@ -840,7 +900,7 @@ class TestAudioUrlGrammarNote:
         due = resp.json()["due"]
         assert len(due) > 0
         item = due[0]
-        assert item["audio_url"] == "/api/media/sl_stol.mp3"
+        assert item["audio_url"] == "/api/srs/media/sl_stol.mp3"
         assert item["grammar"] == "noun, masc, sing"
         assert item["note"] == "common"
 

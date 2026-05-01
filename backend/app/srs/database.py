@@ -580,7 +580,7 @@ class SRSDatabase:
         """Return the filename of the first image media row for a collocation, or None."""
         with self._get_conn() as conn:
             row = conn.execute(
-                "SELECT filename FROM media WHERE collocation_id = ? AND kind = 'image' LIMIT 1",
+                "SELECT filename FROM media WHERE collocation_id = ? AND kind = 'image' ORDER BY id DESC LIMIT 1",
                 (collocation_id,),
             ).fetchone()
         return row["filename"] if row is not None else None
