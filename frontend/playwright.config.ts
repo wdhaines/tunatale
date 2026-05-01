@@ -27,6 +27,9 @@ export default defineConfig({
 	testDir: 'tests',
 	testMatch: /(.+\.)?(test|spec)\.[jt]s/,
 	timeout: 30000,
+	// workers: 1 — all specs share one backend DB (tunatale-test.db), so
+	// parallel runs cause seed-data bleeding between specs.
+	workers: 1,
 	retries: process.env.CI ? 2 : 0,
 	use: {
 		baseURL: 'http://localhost:5174',

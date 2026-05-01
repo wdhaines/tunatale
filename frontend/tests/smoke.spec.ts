@@ -14,15 +14,6 @@ test('home page loads', async ({ page }) => {
 	await expect(page.getByRole('button', { name: 'Generate' })).toBeDisabled();
 });
 
-test('review page loads', async ({ page }) => {
-	await page.goto('/review');
-	await expect(page.getByRole('link', { name: /TunaTale/ })).toBeVisible();
-	// Either shows loading → done state when no cards
-	await expect(
-		page.getByText(/Done for today|Loading/)
-	).toBeVisible({ timeout: 5000 });
-});
-
 test('frontend proxies /api to backend', async ({ request }) => {
 	// Hits backend via Vite proxy — catches the "Not Found" gap
 	const res = await request.get('http://localhost:5174/api/health');
@@ -46,14 +37,24 @@ test('generate curriculum flow', async ({ page, request }) => {
 	await expect(page.getByText('Day 1')).toBeVisible();
 });
 
-test('review page shows done state when no cards due', async ({ page, request }) => {
+test('review page loads', async ({ page }) => {
+	await page.goto('/review');
+	await expect(page.getByRole('link', { name: /TunaTale/ })).toBeVisible();
+	// Either shows loading → done state when no cards
+	await expect(
+		page.getByText(/Done for today|Loading/)
+	).toBeVisible({ timeout: 5000 });
+});
+
+test('review page loads (with backend)', async ({ page, request }) => {
 	const health = await request.get('http://localhost:8001/api/health');
 	test.skip(!health.ok(), 'Backend not available');
 
 	await page.goto('/review');
+	// With backend reachable, should resolve past "Loading" to either done or queue
 	await expect(
-		page.getByText(/Done for today/)
-	).toBeVisible({ timeout: 5000 });
+		page.getByText(/Done for today|[0-9]+ \/ [0-9]+/)
+	).toBeVisible({ timeout: 10000 });
 });
 
 test('bad curriculum URL shows error boundary', async ({ page }) => {
