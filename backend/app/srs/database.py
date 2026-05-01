@@ -242,8 +242,8 @@ class SRSDatabase:
                 """
                 INSERT INTO collocations
                     (text, translation, language_code, word_count, unit_difficulty,
-                     source, corpus_frequency, lemma, guid, disambig_key)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     source, corpus_frequency, lemma, guid, disambig_key, grammar, note)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(text, disambig_key) DO UPDATE SET
                     translation = CASE
                         WHEN excluded.translation != '' AND collocations.translation = ''
@@ -262,6 +262,8 @@ class SRSDatabase:
                     unit.lemma,
                     guid,
                     disambig,
+                    unit.grammar,
+                    unit.note,
                 ),
             )
             row = conn.execute(
@@ -421,6 +423,8 @@ class SRSDatabase:
             lemma=row["lemma"],
             guid=row["guid"],
             disambig_key=row["disambig_key"],
+            grammar=row["grammar"],
+            note=row["note"],
         )
         directions = self._load_directions(conn, row["id"])
         return SRSItem(
@@ -577,6 +581,16 @@ class SRSDatabase:
         with self._get_conn() as conn:
             row = conn.execute(
                 "SELECT filename FROM media WHERE collocation_id = ? AND kind = 'image' LIMIT 1",
+                (collocation_id,),
+            ).fetchone()
+        return row["filename"] if row is not None else None
+
+    def get_audio_filename(self, collocation_id: int) -> str | None:
+        """Return the filename of the preferred audio media row (forvo > tts), or None."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT filename FROM media WHERE collocation_id = ? AND kind IN ('audio_forvo','audio_tts') "
+                "ORDER BY CASE kind WHEN 'audio_forvo' THEN 0 ELSE 1 END LIMIT 1",
                 (collocation_id,),
             ).fetchone()
         return row["filename"] if row is not None else None

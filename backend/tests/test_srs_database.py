@@ -860,3 +860,73 @@ class TestQueueStatHelpers:
         self._seed(db, "hvala", SRSState.REVIEW, SRSState.REVIEW, due_offset_days=0)
         self._seed(db, "banka", SRSState.REVIEW, SRSState.SUSPENDED, due_offset_days=0)
         assert db.count_due_today_total(date.today()) == 3
+
+
+class TestGetAudioFilename:
+    """Tests for get_audio_filename."""
+
+    def test_prefers_audio_forvo_over_audio_tts(self, srs_db):
+        from datetime import date
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        dirs = {Direction.RECOGNITION: DirectionState(Direction.RECOGNITION, date.today(), state=SRSState.NEW)}
+        coll_id = srs_db.upsert_by_guid(_unit("stol", "chair"), "sl", dirs)
+        srs_db.add_media(
+            coll_id,
+            kind="audio_tts",
+            filename="tts_stol.mp3",
+            path="/tmp/tts_stol.mp3",
+            anki_filename="tts_stol.mp3",
+            sha256="t1",
+            size_bytes=100,
+        )
+        srs_db.add_media(
+            coll_id,
+            kind="audio_forvo",
+            filename="sl_stol.mp3",
+            path="/tmp/sl_stol.mp3",
+            anki_filename="sl_stol.mp3",
+            sha256="f1",
+            size_bytes=200,
+        )
+        assert srs_db.get_audio_filename(coll_id) == "sl_stol.mp3"
+
+    def test_falls_back_to_audio_tts_when_no_forvo(self, srs_db):
+        from datetime import date
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        dirs = {Direction.RECOGNITION: DirectionState(Direction.RECOGNITION, date.today(), state=SRSState.NEW)}
+        coll_id = srs_db.upsert_by_guid(_unit("stol", "chair"), "sl", dirs)
+        srs_db.add_media(
+            coll_id,
+            kind="audio_tts",
+            filename="tts_stol.mp3",
+            path="/tmp/tts_stol.mp3",
+            anki_filename="tts_stol.mp3",
+            sha256="t1",
+            size_bytes=100,
+        )
+        assert srs_db.get_audio_filename(coll_id) == "tts_stol.mp3"
+
+    def test_returns_none_when_only_image_exists(self, srs_db):
+        from datetime import date
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        dirs = {Direction.RECOGNITION: DirectionState(Direction.RECOGNITION, date.today(), state=SRSState.NEW)}
+        coll_id = srs_db.upsert_by_guid(_unit("stol", "chair"), "sl", dirs)
+        srs_db.add_media(
+            coll_id,
+            kind="image",
+            filename="stol.jpg",
+            path="/tmp/stol.jpg",
+            anki_filename="stol.jpg",
+            sha256="i1",
+            size_bytes=300,
+        )
+        assert srs_db.get_audio_filename(coll_id) is None
+
+    def test_returns_none_for_unknown_collocation(self, srs_db):
+        assert srs_db.get_audio_filename(99999) is None

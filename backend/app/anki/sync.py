@@ -278,6 +278,10 @@ class OnlineReader:
                     stability_val = 0.0
                     difficulty_val = 0.0
                     fsrs_known_val = False
+                # AnkiConnect's `due` semantics differ by queue:
+                # q==0 → deck position (usable for new-card sort);
+                # q==2 → days since col.crt (not a deck position).
+                # Only capture q==0 for anki_due ordering; defer full online parity.
                 card_records.append(
                     CardRecord(
                         anki_card_id=cid,
@@ -594,6 +598,7 @@ def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool
         or local.lapses != candidate.lapses
         or local.dirty_fsrs != candidate.dirty_fsrs
         or local.anki_card_id != candidate.anki_card_id
+        or local.anki_due != candidate.anki_due
     )
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from datetime import date, timedelta
 
 import httpx
@@ -1590,3 +1591,37 @@ class TestSyncPullWritesAnkiDue:
         assert reloaded.directions[Direction.RECOGNITION].anki_due == 842
         # FSRS state should be preserved (dirty_fsrs)
         assert reloaded.directions[Direction.RECOGNITION].dirty_fsrs is True
+
+    def test_pull_propagates_anki_due_change_when_other_fields_unchanged(self):
+        """When only anki_due changes (Anki reposition), sync_pull must persist it."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        base_card = CardRecord(
+            anki_card_id=90010,
+            ord=0,
+            queue=0,
+            reps=0,
+            lapses=0,
+            stability=1.0,
+            difficulty=5.0,
+            due_date=date.today(),
+            anki_due=842,
+            fsrs_known=True,
+        )
+        note = NoteRecord(
+            anki_note_id=9001,
+            anki_guid=guid,
+            l2_text="banka",
+            translation="bank",
+            disambig_key="",
+            mod=0,
+            cards=[base_card],
+        )
+        # First sync: locks in anki_due=842 (anki_card_id change forces write).
+        AnkiSync(db=db, _reader=FakeReader([note])).sync_pull()
+        assert db.get_collocation("banka").directions[Direction.RECOGNITION].anki_due == 842
+
+        # Second sync: only anki_due changed in Anki (reposition).
+        note.cards[0] = replace(base_card, anki_due=100)
+        AnkiSync(db=db, _reader=FakeReader([note])).sync_pull()
+        assert db.get_collocation("banka").directions[Direction.RECOGNITION].anki_due == 100

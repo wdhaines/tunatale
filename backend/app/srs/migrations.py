@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 6
+CURRENT_VERSION = 7
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -387,6 +387,14 @@ def migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
     _set_version(conn, 6)
 
 
+def migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
+    """Add grammar and note TEXT columns to collocations (default '')."""
+    for col in ("grammar", "note"):
+        if not _column_exists(conn, "collocations", col):
+            conn.execute(f"ALTER TABLE collocations ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+    _set_version(conn, 7)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -394,6 +402,7 @@ _MIGRATIONS = {
     3: migrate_v3_to_v4,
     4: migrate_v4_to_v5,
     5: migrate_v5_to_v6,
+    6: migrate_v6_to_v7,
 }
 
 

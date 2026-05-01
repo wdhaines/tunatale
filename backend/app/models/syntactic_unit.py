@@ -22,6 +22,8 @@ class SyntacticUnit:
     lemma: str | None = None
     guid: str | None = None
     disambig_key: str = ""
+    grammar: str = ""
+    note: str = ""
 
     def __post_init__(self) -> None:
         if not 1 <= self.word_count <= 8:

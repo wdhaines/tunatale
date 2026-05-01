@@ -797,3 +797,112 @@ class TestReviewQueue:
 
         # Just verify the endpoint works and doesn't error
         assert isinstance(queue, list)
+
+
+class TestAudioUrlGrammarNote:
+    """Tests for audio_url, grammar, note in API responses."""
+
+    async def test_due_item_has_audio_url_when_audio_exists(self, api_app_state):
+        from datetime import date
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        unit = SyntacticUnit(
+            text="stol",
+            translation="chair",
+            word_count=2,
+            difficulty=1,
+            source="test",
+            grammar="noun, masc, sing",
+            note="common",
+        )
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="stol", limit=1)
+        row_id = rows[0][0]
+        db.add_media(
+            row_id,
+            kind="audio_forvo",
+            filename="sl_stol.mp3",
+            path="/tmp/sl_stol.mp3",
+            anki_filename="sl_stol.mp3",
+            sha256="abc",
+            size_bytes=100,
+        )
+        # Set to REVIEW so it appears in /due
+        rec_dir = DirectionState(direction=Direction.RECOGNITION, due_date=date.today(), state=SRSState.REVIEW)
+        db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/due")
+        assert resp.status_code == 200
+        due = resp.json()["due"]
+        assert len(due) > 0
+        item = due[0]
+        assert item["audio_url"] == "/api/media/sl_stol.mp3"
+        assert item["grammar"] == "noun, masc, sing"
+        assert item["note"] == "common"
+
+    async def test_due_item_audio_url_null_when_no_audio(self, api_app_state):
+        from datetime import date
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        unit = SyntacticUnit(text="miza", translation="table", word_count=2, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="miza", limit=1)
+        row_id = rows[0][0]
+        rec_dir = DirectionState(direction=Direction.RECOGNITION, due_date=date.today(), state=SRSState.REVIEW)
+        db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/due")
+        assert resp.status_code == 200
+        due = resp.json()["due"]
+        assert len(due) > 0
+        assert due[0]["audio_url"] is None
+
+    async def test_review_queue_includes_grammar_and_note(self, api_app_state):
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        unit = SyntacticUnit(
+            text="okno",
+            translation="window",
+            word_count=2,
+            difficulty=1,
+            source="test",
+            grammar="noun, neut, sing",
+            note="irregular",
+        )
+        db.add_collocation(unit, language_code="sl")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+        assert len(queue) > 0
+        item = queue[0]
+        assert "audio_url" in item
+        assert item["grammar"] == "noun, neut, sing"
+        assert item["note"] == "irregular"
+
+    async def test_grammar_and_note_default_to_empty_for_legacy_rows(self, api_app_state):
+        """Legacy rows (no grammar/note set) should default to empty strings."""
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        unit = SyntacticUnit(text="knjiga", translation="book", word_count=2, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+        assert len(queue) > 0
+        item = queue[0]
+        assert item["grammar"] == ""
+        assert item["note"] == ""

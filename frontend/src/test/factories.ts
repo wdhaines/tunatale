@@ -33,6 +33,9 @@ export function makeReviewQueueItem(overrides: Partial<ReviewQueueItem> = {}): R
 		guid: 'guid_1',
 		anki_note_id: null,
 		image_url: null,
+		audio_url: null,
+		grammar: '',
+		note: '',
 		directions: {
 			recognition: { state: 'review', due_date: '2026-04-18', stability: 5.0, difficulty: 4.0, reps: 3, lapses: 0, last_review: '2026-04-10', anki_card_id: null },
 			production: { state: 'new', due_date: '2026-04-18', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, anki_card_id: null }
@@ -57,6 +60,9 @@ export function makeSRSItemDetail(overrides: Partial<SRSItemDetail> = {}): SRSIt
 		last_review: '2026-04-10',
 		language_code: 'sl',
 		image_url: '/api/media/banka.jpg',
+		audio_url: null,
+		grammar: '',
+		note: '',
 		directions: {
 			recognition: { state: 'review', due_date: '2026-04-18', stability: 5.0, difficulty: 4.0, reps: 3, lapses: 0, last_review: '2026-04-10', anki_card_id: null },
 			production: { state: 'new', due_date: '2026-04-18', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, anki_card_id: null }

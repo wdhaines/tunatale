@@ -58,6 +58,7 @@ def _item_to_dict(
     item: SRSItem,
     language_code: str,
     image_url: str | None = None,
+    audio_url: str | None = None,
 ) -> dict:
     """Serialize an SRSItem to a response dict."""
     return {
@@ -81,6 +82,9 @@ def _item_to_dict(
             "production": _direction_to_dict(item.directions[Direction.PRODUCTION]),
         },
         "image_url": image_url,
+        "audio_url": audio_url,
+        "grammar": item.syntactic_unit.grammar,
+        "note": item.syntactic_unit.note,
     }
 
 
@@ -98,7 +102,9 @@ def _triples_to_dicts(db, triples: list[tuple[int, SRSItem, str]]) -> list[dict]
         seen_ids.add(row_id)
         img = db.get_image_filename(row_id)
         image_url = f"/api/media/{img}" if img else None
-        result.append(_item_to_dict(row_id, item, lang, image_url))
+        aud = db.get_audio_filename(row_id)
+        audio_url = f"/api/media/{aud}" if aud else None
+        result.append(_item_to_dict(row_id, item, lang, image_url, audio_url))
     return result
 
 

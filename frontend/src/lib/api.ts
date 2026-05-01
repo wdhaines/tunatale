@@ -143,6 +143,9 @@ export interface SRSItemDetail {
 		production: DirectionState;
 	};
 	image_url?: string | null;
+	audio_url?: string | null;
+	grammar?: string;
+	note?: string;
 }
 
 export interface SRSItemsPage {
