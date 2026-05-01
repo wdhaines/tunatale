@@ -14,9 +14,10 @@ vi.mock('$lib/storage', () => ({
 
 import CurriculumForm from './CurriculumForm.svelte';
 import { api } from '$lib/api';
-import { loadFormPreferences } from '$lib/storage';
+import { saveFormPreferences, loadFormPreferences } from '$lib/storage';
 
 const mockGenerate = vi.mocked(api.generateCurriculum);
+const mockSavePrefs = vi.mocked(saveFormPreferences);
 const mockLoadPrefs = vi.mocked(loadFormPreferences);
 
 beforeEach(() => {
@@ -85,5 +86,22 @@ describe('CurriculumForm', () => {
 			expect((getByPlaceholderText(/ordering coffee/i) as HTMLInputElement).value).toBe('camping');
 		});
 		expect((getByDisplayValue('B1') as HTMLSelectElement).value).toBe('B1');
+	});
+
+	it('saves prefs to localStorage when form values change', async () => {
+		const { getByPlaceholderText, getByRole, getByDisplayValue } = render(CurriculumForm, { props: { onGenerate: vi.fn() } });
+		// Change topic
+		await fireEvent.input(getByPlaceholderText(/ordering coffee/i), { target: { value: 'hiking' } });
+		// Change CEFR level
+		await fireEvent.change(getByDisplayValue('A2'), { target: { value: 'B1' } });
+		// Change days
+		const numInput = document.querySelector('input[type="number"]') as HTMLInputElement;
+		await fireEvent.input(numInput, { target: { value: '14' } });
+
+		// Wait for effect to run
+		await new Promise(resolve => setTimeout(resolve, 100));
+		
+		// Verify saveFormPreferences was called
+		expect(mockSavePrefs).toHaveBeenCalled();
 	});
 });
