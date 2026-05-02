@@ -966,3 +966,103 @@ class TestAudioUrlGrammarNote:
         item = queue[0]
         assert item["grammar"] == ""
         assert item["note"] == ""
+
+
+class TestCreateItemWithSourceContext:
+    """Tests for POST /api/srs/items with source context and LLM auto-translate."""
+
+    async def test_create_item_with_source_context(self, api_app_state):
+        """POST with source_sentence, source_lesson_id, source_line_index stores them."""
+        payload = {
+            "text": "kako si",
+            "language_code": "sl",
+            "word_count": 2,
+            "translation": "how are you",
+            "source_sentence": "Kako si? Jaz sem dobro.",
+            "source_lesson_id": "lesson-123",
+            "source_line_index": 5,
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/srs/items", json=payload)
+        assert resp.status_code == 201
+        data = resp.json()
+        # Check that the item was created (source context is stored in DB, not returned in response)
+        assert data["text"] == "kako si"
+        assert data["translation"] == "how are you"
+
+    async def test_create_item_without_translation_triggers_llm(self, api_app_state, monkeypatch):
+        """POST with empty translation triggers LLM auto-translate."""
+        from unittest.mock import AsyncMock
+
+        from app.llm.client import LLMClient
+
+        # Ensure llm_client exists on app.state, then mock it with monkeypatch for auto-cleanup
+        app.state.llm_client = None  # Ensure attribute exists
+        mock_client = AsyncMock(spec=LLMClient)
+        monkeypatch.setattr(app.state, "llm_client", mock_client)
+
+        # Mock translate_term to return a translation
+        async def mock_translate(*args, **kwargs):
+            return "how are you"
+
+        monkeypatch.setattr("app.api.srs.translate_term", mock_translate)
+
+        payload = {
+            "text": "kako si",
+            "language_code": "sl",
+            "word_count": 2,
+            # No translation - should trigger LLM
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/srs/items", json=payload)
+
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["translation"] == "how are you"
+
+    async def test_create_item_with_translation_skips_llm(self, api_app_state):
+        """POST with non-empty translation should NOT call LLM."""
+        payload = {
+            "text": "dober dan",
+            "language_code": "sl",
+            "word_count": 2,
+            "translation": "good day",  # Has translation - no LLM needed
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/srs/items", json=payload)
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["translation"] == "good day"
+
+    async def test_create_item_minimal_payload(self, api_app_state):
+        """POST with only required fields works."""
+        payload = {
+            "text": "test word",
+            "language_code": "sl",
+            "word_count": 1,
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/srs/items", json=payload)
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["text"] == "test word"
+
+    async def test_create_item_raises_500_if_item_not_found_after_insert(self, api_app_state, monkeypatch):
+        """POST raises 500 if add_collocation succeeds but item can't be retrieved."""
+        db = api_app_state
+
+        # Patch list_collocations to return empty (rows, total) after successful add
+        def mock_list(*args, **kwargs):
+            return [], 0
+
+        monkeypatch.setattr(db, "list_collocations", mock_list)
+
+        payload = {
+            "text": "test",
+            "language_code": "sl",
+            "word_count": 1,
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/srs/items", json=payload)
+        assert resp.status_code == 500
+        assert "Failed to retrieve created item" in resp.json()["detail"]

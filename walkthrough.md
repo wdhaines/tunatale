@@ -9,24 +9,30 @@ This walkthrough covers the production TunaTale codebase — the unified applica
 
 **What changed from the prototypes:** The production rebuild unified the audio pipeline (micro-demo-0.0) and the content engine (micro-demo-0.1) under a single FastAPI application. Hardcoded language logic was replaced with pluggable preprocessors and voice maps. The mock LLM (MD5-hashed) became a cassette system with multiple modes. FSRS-5 replaced the custom SRS scheduler. The entire codebase follows hexagonal architecture with Protocol-based ports. Since the initial production build: ContentStore added SQLite persistence for curricula/lessons/audio, per-word SRS tracking added lemmatizer/tokenizer/transcript modules, section_builder extracted from StoryGenerator (now a thin orchestrator), Slovene syllabification added for Pimsleur backward buildup, pydub replaced raw-PCM concatenation, SRS admin UI added (6 admin endpoints + SvelteKit admin page).
 
+**What changed since the last walkthrough revision:** The biggest addition is bidirectional Anki sync (Stage 3 — see PART 12 below). SRS items now track two directions independently (RECOGNITION L2→L1 and PRODUCTION L1→L2) with per-direction FSRS state, mirroring Anki's note/card model. A new `app/anki/` package handles direct SQLite access to `collection.anki2` with a backup-and-lock safety envelope (`safe_open`), GUID/homonym/USN migrations, and an offline-first sync engine (push → drain pending revlog → pull) that no longer depends on AnkiConnect being running. A media pipeline (`app/anki/media/`) fetches Forvo audio with EdgeTTS fallback, Pixabay images with token-overlap scoring, and ffmpeg LUFS normalization — deduplicated across cards via `used_image_urls`. Queue stats now read FSRS-5 parameters and the daily-new-cap directly from Anki's deck_config protobuf, cached in `anki_state_cache`. Frontend gained a unified review queue, Anki-running status gating, a single Sync button, and an `/admin/srs` page; e2e tests run via Playwright. Test count grew from 409 to 1460 across 73 files.
+
 ## Architecture at a Glance
 
 ```
 backend/
 ├── app/
 │   ├── main.py              # FastAPI app with CORS, lifespan, routers
-│   ├── config.py             # Pydantic Settings (env-driven)
+│   ├── config.py             # Pydantic Settings (env-driven, +Anki/Forvo/Pixabay)
+│   ├── common/               # Cross-cutting helpers (guid generation)
 │   ├── models/               # Pure domain models (no I/O)
 │   ├── llm/                  # Groq LLM client + cassette replay system
-│   ├── srs/                  # FSRS-5 spaced repetition engine + lemmatizer/tokenizer/transcript
+│   ├── srs/                  # FSRS-5 + queue_stats + lemmatizer/tokenizer/transcript/migrations
 │   ├── generation/           # Curriculum + story + section_builder + syllabify + enforcement
 │   ├── audio/                # TTS, pydub assembly, preprocessing
 │   ├── storage/              # ContentStore SQLite repository
-│   └── api/                  # FastAPI route modules (22 endpoints)
+│   ├── media/                # In-app media import (refresh Anki media into TT cache)
+│   ├── anki/                 # Direct sqlite access to collection.anki2 (safety/sync/media)
+│   │   └── media/            # Forvo + EdgeTTS fallback + Pixabay + ffmpeg normalize
+│   └── api/                  # FastAPI route modules (28 endpoints)
 └── tests/
-    ├── conftest.py           # Cassette fixtures, CLI options
+    ├── conftest.py           # Cassette + DB + ASGI fixtures
     ├── cassettes/            # Recorded LLM responses (JSON)
-    └── test_*.py             # 26 test files, 100% branch coverage
+    └── test_*.py             # 73 test files, ~1460 tests, ~99.95% branch coverage
 ```
 
 ---
@@ -1537,137 +1543,172 @@ cat -n backend/app/srs/fsrs.py
      6	from __future__ import annotations
      7	
      8	import math
-     9	from datetime import date, timedelta
-    10	
-    11	from app.models.srs_item import Rating, SRSItem, SRSState
-    12	
-    13	# FSRS-5 default parameters (w vector, 19 values)
-    14	W = [
-    15	    0.4072,  # w0: initial stability for Again
-    16	    1.1829,  # w1: initial stability for Hard
-    17	    3.1262,  # w2: initial stability for Good
-    18	    15.4722,  # w3: initial stability for Easy
-    19	    7.2102,  # w4: initial difficulty
-    20	    0.5316,  # w5: initial difficulty decay
-    21	    1.0651,  # w6: difficulty mean-reversion weight
-    22	    0.0589,  # w7: difficulty update weight
-    23	    1.5330,  # w8: stability increase factor
-    24	    0.1544,  # w9: stability increase decay
-    25	    1.0050,  # w10: stability increase R-factor
-    26	    1.9767,  # w11: lapse stability factor
-    27	    0.0967,  # w12: lapse stability difficulty decay
-    28	    0.2573,  # w13: lapse stability S-factor
-    29	    2.2930,  # w14: lapse stability R-factor
-    30	    0.5100,  # w15: hard penalty
-    31	    2.9898,  # w16: easy bonus
-    32	    0.5100,  # w17: (unused in v5)
-    33	    0.4350,  # w18: (unused in v5)
-    34	]
-    35	
-    36	REQUESTED_RETENTION = 0.9
+     9	from dataclasses import dataclass
+    10	from datetime import date, timedelta
+    11	
+    12	from app.models.srs_item import Direction, Rating, SRSItem, SRSState
+    13	
+    14	# FSRS-5 default parameters (w vector, 19 values)
+    15	_DEFAULT_WEIGHTS: tuple[float, ...] = (
+    16	    0.4072,  # w0: initial stability for Again
+    17	    1.1829,  # w1: initial stability for Hard
+    18	    3.1262,  # w2: initial stability for Good
+    19	    15.4722,  # w3: initial stability for Easy
+    20	    7.2102,  # w4: initial difficulty
+    21	    0.5316,  # w5: initial difficulty decay
+    22	    1.0651,  # w6: difficulty mean-reversion weight
+    23	    0.0589,  # w7: difficulty update weight
+    24	    1.5330,  # w8: stability increase factor
+    25	    0.1544,  # w9: stability increase decay
+    26	    1.0050,  # w10: stability increase R-factor
+    27	    1.9767,  # w11: lapse stability factor
+    28	    0.0967,  # w12: lapse stability difficulty decay
+    29	    0.2573,  # w13: lapse stability S-factor
+    30	    2.2930,  # w14: lapse stability R-factor
+    31	    0.5100,  # w15: hard penalty
+    32	    2.9898,  # w16: easy bonus
+    33	    0.5100,  # w17: (unused in v5)
+    34	    0.4350,  # w18: (unused in v5)
+    35	)
+    36	
     37	DECAY = -0.5
     38	FACTOR = 19 / 81  # = 0.234...
     39	
     40	
-    41	def _forgetting_curve(elapsed_days: float, stability: float) -> float:
-    42	    """Retrievability at elapsed_days given stability."""
-    43	    return (1 + FACTOR * elapsed_days / stability) ** DECAY
+    41	@dataclass(frozen=True)
+    42	class FSRSParams:
+    43	    """FSRS scheduling parameters (weights + desired retention)."""
     44	
-    45	
-    46	def _next_interval(stability: float) -> int:
-    47	    """Days until next review at REQUESTED_RETENTION."""
-    48	    interval = stability / FACTOR * (REQUESTED_RETENTION ** (1 / DECAY) - 1)
-    49	    return max(1, min(round(interval), 36500))
-    50	
+    45	    weights: tuple[float, ...]  # 19 floats for FSRS-5
+    46	    desired_retention: float = 0.9
+    47	
+    48	    def __post_init__(self) -> None:
+    49	        if len(self.weights) != 19:
+    50	            raise ValueError(f"FSRSParams requires exactly 19 weights, got {len(self.weights)}")
     51	
-    52	def _init_stability(rating: Rating) -> float:
-    53	    return W[rating.value - 1]
+    52	
+    53	DEFAULT_FSRS5_PARAMS = FSRSParams(weights=_DEFAULT_WEIGHTS)
     54	
     55	
-    56	def _init_difficulty(rating: Rating) -> float:
-    57	    d = W[4] - math.exp(W[5] * (rating.value - 1)) + 1
-    58	    return max(1.0, min(10.0, d))
+    56	def _forgetting_curve(elapsed_days: float, stability: float) -> float:
+    57	    """Retrievability at elapsed_days given stability."""
+    58	    return (1 + FACTOR * elapsed_days / stability) ** DECAY
     59	
     60	
-    61	def _next_difficulty(d: float, rating: Rating) -> float:
-    62	    # W[6]=1.0651 is the delta multiplier; W[7]=0.0589 is the mean-reversion weight
-    63	    next_d = d - W[6] * (rating.value - 3)
-    64	    # Mean-reversion toward W[4]=7.21 (the initial difficulty for a "normal" item)
-    65	    next_d = W[7] * W[4] + (1 - W[7]) * next_d
-    66	    return max(1.0, min(10.0, next_d))
-    67	
-    68	
-    69	def _next_stability_recall(d: float, s: float, r: float, rating: Rating) -> float:
-    70	    hard_penalty = W[15] if rating == Rating.HARD else 1.0
-    71	    easy_bonus = W[16] if rating == Rating.EASY else 1.0
-    72	    return s * (
-    73	        math.exp(W[8]) * (11 - d) * s ** (-W[9]) * (math.exp((1 - r) * W[10]) - 1) * hard_penalty * easy_bonus + 1
-    74	    )
+    61	def _next_interval(stability: float, desired_retention: float) -> int:
+    62	    """Days until next review at the given desired_retention."""
+    63	    interval = stability / FACTOR * (desired_retention ** (1 / DECAY) - 1)
+    64	    return max(1, min(round(interval), 36500))
+    65	
+    66	
+    67	def _init_stability(rating: Rating, w: tuple[float, ...]) -> float:
+    68	    return w[rating.value - 1]
+    69	
+    70	
+    71	def _init_difficulty(rating: Rating, w: tuple[float, ...]) -> float:
+    72	    d = w[4] - math.exp(w[5] * (rating.value - 1)) + 1
+    73	    return max(1.0, min(10.0, d))
+    74	
     75	
-    76	
-    77	def _next_stability_lapse(d: float, s: float, r: float) -> float:
-    78	    return W[11] * d ** (-W[12]) * ((s + 1) ** W[13] - 1) * math.exp((1 - r) * W[14])
-    79	
-    80	
-    81	def schedule(item: SRSItem, rating: Rating, review_date: date | None = None) -> SRSItem:
-    82	    """Apply a review rating to an SRSItem and return the updated item (copy).
-    83	
-    84	    Args:
-    85	        item: The SRSItem to schedule.
-    86	        rating: Learner's rating for this review.
-    87	        review_date: The date of the review (defaults to today).
-    88	
-    89	    Returns:
-    90	        A new SRSItem with updated scheduling fields.
-    91	    """
-    92	    if review_date is None:
-    93	        review_date = date.today()
+    76	def _next_difficulty(d: float, rating: Rating, w: tuple[float, ...]) -> float:
+    77	    next_d = d - w[6] * (rating.value - 3)
+    78	    # Mean-reversion toward w[4] (the initial difficulty for a "normal" item)
+    79	    next_d = w[7] * w[4] + (1 - w[7]) * next_d
+    80	    return max(1.0, min(10.0, next_d))
+    81	
+    82	
+    83	def _next_stability_recall(d: float, s: float, r: float, rating: Rating, w: tuple[float, ...]) -> float:
+    84	    hard_penalty = w[15] if rating == Rating.HARD else 1.0
+    85	    easy_bonus = w[16] if rating == Rating.EASY else 1.0
+    86	    return s * (
+    87	        math.exp(w[8]) * (11 - d) * s ** (-w[9]) * (math.exp((1 - r) * w[10]) - 1) * hard_penalty * easy_bonus + 1
+    88	    )
+    89	
+    90	
+    91	def _next_stability_lapse(d: float, s: float, r: float, w: tuple[float, ...]) -> float:
+    92	    return w[11] * d ** (-w[12]) * ((s + 1) ** w[13] - 1) * math.exp((1 - r) * w[14])
+    93	
     94	
-    95	    from dataclasses import replace
-    96	
-    97	    if item.state == SRSState.NEW:
-    98	        new_stability = _init_stability(rating)
-    99	        new_difficulty = _init_difficulty(rating)
-   100	        new_reps = 1
-   101	        new_lapses = item.lapses
-   102	        new_state = SRSState.LEARNING if rating == Rating.AGAIN else SRSState.REVIEW
-   103	    else:
-   104	        # Calculate elapsed days and retrievability
-   105	        last = item.last_review or review_date
-   106	        elapsed = max(0, (review_date - last).days)
-   107	        r = _forgetting_curve(elapsed, item.stability)
-   108	
-   109	        if rating == Rating.AGAIN:
-   110	            new_stability = _next_stability_lapse(item.difficulty, item.stability, r)
-   111	            new_difficulty = _next_difficulty(item.difficulty, rating)
-   112	            new_reps = item.reps + 1
-   113	            new_lapses = item.lapses + 1
-   114	            new_state = SRSState.RELEARNING
-   115	        else:
-   116	            new_stability = _next_stability_recall(item.difficulty, item.stability, r, rating)
-   117	            new_difficulty = _next_difficulty(item.difficulty, rating)
-   118	            new_reps = item.reps + 1
-   119	            new_lapses = item.lapses
-   120	            new_state = SRSState.REVIEW
-   121	
-   122	    new_stability = max(0.1, new_stability)
-   123	    new_difficulty = max(1.0, min(10.0, new_difficulty))
-   124	    interval = _next_interval(new_stability)
-   125	    new_due = review_date + timedelta(days=interval)
+    95	def schedule(
+    96	    item: SRSItem,
+    97	    rating: Rating,
+    98	    review_date: date | None = None,
+    99	    direction: Direction = Direction.RECOGNITION,
+   100	    params: FSRSParams = DEFAULT_FSRS5_PARAMS,
+   101	) -> SRSItem:
+   102	    """Apply a review rating to the given direction of an SRSItem.
+   103	
+   104	    Updates only the specified direction; the other is left untouched.
+   105	    Marks `dirty_fsrs=True` on the updated direction so the Anki-sync layer
+   106	    can later push the change.
+   107	    """
+   108	    if review_date is None:
+   109	        review_date = date.today()
+   110	
+   111	    from dataclasses import replace
+   112	
+   113	    w = params.weights
+   114	    prev = item.directions[direction]
+   115	
+   116	    if prev.state == SRSState.NEW:
+   117	        new_stability = _init_stability(rating, w)
+   118	        new_difficulty = _init_difficulty(rating, w)
+   119	        new_reps = 1
+   120	        new_lapses = prev.lapses
+   121	        new_state = SRSState.LEARNING if rating == Rating.AGAIN else SRSState.REVIEW
+   122	    else:
+   123	        last = prev.last_review or review_date
+   124	        elapsed = max(0, (review_date - last).days)
+   125	        r = _forgetting_curve(elapsed, prev.stability)
    126	
-   127	    return replace(
-   128	        item,
-   129	        stability=new_stability,
-   130	        difficulty=new_difficulty,
-   131	        due_date=new_due,
-   132	        reps=new_reps,
-   133	        lapses=new_lapses,
-   134	        state=new_state,
-   135	        last_review=review_date,
-   136	    )
+   127	        if rating == Rating.AGAIN:
+   128	            new_stability = _next_stability_lapse(prev.difficulty, prev.stability, r, w)
+   129	            new_difficulty = _next_difficulty(prev.difficulty, rating, w)
+   130	            new_reps = prev.reps + 1
+   131	            new_lapses = prev.lapses + 1
+   132	            new_state = SRSState.RELEARNING
+   133	        else:
+   134	            new_stability = _next_stability_recall(prev.difficulty, prev.stability, r, rating, w)
+   135	            new_difficulty = _next_difficulty(prev.difficulty, rating, w)
+   136	            new_reps = prev.reps + 1
+   137	            new_lapses = prev.lapses
+   138	            new_state = SRSState.REVIEW
+   139	
+   140	    new_stability = max(0.1, new_stability)
+   141	    new_difficulty = max(1.0, min(10.0, new_difficulty))
+   142	    interval = _next_interval(new_stability, params.desired_retention)
+   143	    new_due = review_date + timedelta(days=interval)
+   144	
+   145	    new_dir = replace(
+   146	        prev,
+   147	        stability=new_stability,
+   148	        difficulty=new_difficulty,
+   149	        due_date=new_due,
+   150	        reps=new_reps,
+   151	        lapses=new_lapses,
+   152	        state=new_state,
+   153	        last_review=review_date,
+   154	        dirty_fsrs=True,
+   155	        last_rating=rating.value,
+   156	    )
+   157	    new_directions = dict(item.directions)
+   158	    new_directions[direction] = new_dir
+   159	    return SRSItem(
+   160	        syntactic_unit=item.syntactic_unit,
+   161	        directions=new_directions,
+   162	        guid=item.guid,
+   163	        anki_note_id=item.anki_note_id,
+   164	    )
+
 ```
 
 FSRS-5 is a 19-parameter model trained on millions of reviews. The key insight: **stability** is how many days before retention drops to 90%. A stability of 3.12 (initial Good rating) means after ~3 days, the learner has a 90% chance of recall — time to review.
+
+Three changes since the original walkthrough revision:
+
+- **`FSRSParams` dataclass** replaces the module-level `W` and `REQUESTED_RETENTION` constants. The 19-float weights vector and the desired retention can now be threaded in from Anki's deck_config protobuf (PART 12.6) so TunaTale's scheduler matches what Anki would predict for the same card. `DEFAULT_FSRS5_PARAMS` keeps the original constants as a fallback.
+- **`direction` parameter** — every call updates exactly one direction's `DirectionState` (RECOGNITION or PRODUCTION), leaving the other untouched. The function returns a new `SRSItem` with the chosen direction's state swapped in.
+- **Sync bookkeeping writes** — every successful schedule sets `dirty_fsrs=True` and stores the integer rating in `last_rating`. The next `/api/anki/sync` push reads those flags to decide what to write to Anki's revlog and card FSRS state. See PART 12.4 (sync_push) for the consumer side.
 
 Here is the scheduling in action — watch how ratings affect the next review date:
 
@@ -1724,45 +1765,112 @@ grep -n "def \|class " backend/app/srs/database.py
 ```
 
 ```output
-51:class SRSDatabase:
-57:    def close(self) -> None:
-63:    def __enter__(self) -> SRSDatabase:
-66:    def __exit__(self, *_) -> None:
-69:    def __init__(self, db_path: str = ":memory:") -> None:
-83:    def _init_schema(self, conn: sqlite3.Connection) -> None:
-94:    def _file_conn(self):
-104:    def _get_conn(self):
-113:    def add_collocation(self, unit: SyntacticUnit, language_code: str = "sl") -> None:
-140:    def update_collocation(self, item: SRSItem) -> None:
-170:    def record_violation(
-184:    def get_collocation(self, text: str) -> SRSItem | None:
-192:    def get_collocation_by_lemma(self, lemma: str) -> SRSItem | None:
-200:    def get_due_collocations(self, as_of: date) -> list[SRSItem]:
-209:    def get_new_collocations(self, limit: int = 10) -> list[SRSItem]:
-218:    def get_collocation_by_id(self, row_id: int) -> tuple[int, SRSItem, str] | None:
-226:    def update_collocation_fields(self, row_id: int, *, text: str, translation: str) -> None:
-242:    def delete_collocation(self, row_id: int) -> None:
-252:    def delete_collocations(self, row_ids: list[int]) -> int:
-268:    def reset_collocation(self, row_id: int) -> None:
-284:    def set_suspended(self, row_id: int, suspended: bool) -> None:
-295:    def list_collocations(
-349:    def get_violations(self, collocation_text: str) -> list[dict]:
-358:    def count_collocations(self) -> int:
-362:    def count_due_collocations(self, as_of: date) -> int:
-372:    def _row_to_item(row: sqlite3.Row) -> SRSItem:
+122:class SRSDatabase:
+128:    def close(self) -> None:
+134:    def __enter__(self) -> SRSDatabase:
+137:    def __exit__(self, *_) -> None:
+140:    def __init__(self, db_path: str = ":memory:") -> None:
+155:    def _init_schema(self, conn: sqlite3.Connection) -> None:
+167:    def _file_conn(self):
+178:    def _get_conn(self):
+188:    def _commit(self, conn: sqlite3.Connection) -> None:
+196:    def begin_transaction(self, dry_run: bool = False):
+232:    def add_collocation(self, unit: SyntacticUnit, language_code: str = "sl") -> None:
+289:    def get_untranslated_collocations(self) -> list[tuple[str, str]]:
+297:    def backfill_translations(self, glosses: dict[str, str]) -> int:
+315:    def update_direction(
+362:    def update_collocation(self, item: SRSItem) -> None:
+382:    def record_violation(
+394:    def _load_directions(self, conn: sqlite3.Connection, collocation_id: int) -> dict[Direction, DirectionState]:
+419:    def _row_to_item(self, conn: sqlite3.Connection, row: sqlite3.Row) -> SRSItem:
+444:    def get_collocation(self, text: str) -> SRSItem | None:
+451:    def get_collocation_by_guid(self, guid: str) -> SRSItem | None:
+458:    def get_collocation_by_anki_note_id(self, anki_note_id: int) -> SRSItem | None:
+465:    def get_collocation_by_lemma(self, lemma: str) -> SRSItem | None:
+472:    def get_collocation_by_lemma_with_id(self, lemma: str) -> tuple[int, SRSItem] | None:
+479:    def get_collocations_for_language(
+491:    def get_due_collocations(
+511:    def get_new_collocations(
+529:    def get_due_items(
+550:    def get_new_items(
+569:    def update_direction_by_id(self, row_id: int, direction: Direction, state: DirectionState) -> None:
+577:    def list_collocations_reviewed_today(self, today: date) -> set[int]:
+586:    def get_image_filename(self, collocation_id: int) -> str | None:
+595:    def get_audio_filename(self, collocation_id: int) -> str | None:
+605:    def get_collocation_by_id(self, row_id: int) -> tuple[int, SRSItem, str] | None:
+612:    def update_collocation_fields(self, row_id: int, *, text: str, translation: str) -> None:
+644:    def delete_collocation(self, row_id: int) -> None:
+652:    def delete_collocations(self, row_ids: list[int]) -> int:
+666:    def reset_collocation(self, row_id: int, direction: Direction | None = None) -> None:
+696:    def set_state_by_id(
+720:    def set_suspended(
+756:    def list_collocations(
+811:    def get_violations(self, collocation_text: str) -> list[dict]:
+819:    def count_collocations(self) -> int:
+825:    def upsert_by_guid(
+973:    def set_anki_ids(
+996:    def add_media(
+1018:    def find_media_by_anki_filename(self, anki_filename: str) -> dict[str, Any] | None:
+1027:    def update_media_file(self, row_id: int, sha256: str, size_bytes: int) -> None:
+1036:    def list_dirty(
+1085:    def mark_direction_clean(self, guid: str, direction: Direction) -> None:
+1102:    def count_new_available(self) -> int:
+1107:    def count_due_today_total(self, today: date) -> int:
+1120:    def count_due_collocations(
+1138:    def record_sync_conflict(
+1159:    def list_sync_conflicts(self) -> list[dict]:
+1164:    def enqueue_pending_revlog(
+1186:    def drain_pending_revlog(self) -> list[dict]:
+1194:    def set_anki_state_cache(self, key: str, value: str) -> None:
+1206:    def set_anki_state_cache_raw(self, key: str, value: str, updated_at: str) -> None:
+1220:    def get_anki_state_cache(self, key: str) -> tuple[str, str] | None:
+1231:    def set_dirty_fields(self, guid: str, fields_str: str) -> None:
+1240:    def get_dirty_fields(self, guid: str) -> str:
+1249:    def update_collocation_for_sync(
+1265:    def list_items_without_anki_note(self) -> list[tuple[str, SRSItem]]:
+1271:    def list_dirty_field_edits(self) -> list[tuple[str, int | None, str, SRSItem]]:
+
 ```
 
-The `SRSDatabase` is a SQLite repository with two tables: `collocations` (vocabulary with FSRS fields) and `violations` (content rule violations for debugging). It supports `:memory:` for tests and file-based persistence for production. `count_due_collocations` powers the `/api/srs/stats` endpoint's `due_today` counter.
+The `SRSDatabase` is a SQLite repository. Originally two tables (`collocations` + `violations`); since the Anki integration the schema has grown to seven (managed by the v0→v8 migrations in `app/srs/migrations.py` — see PART 14.1):
 
-**Schema additions since the prototype:** the `collocations` table gained a `lemma` column (with an idempotent `ALTER TABLE … ADD COLUMN` migration in `_init_schema`) so per-word SRS tracking can collapse inflected variants. There's also a new `idx_collocations_lemma` index for the `get_collocation_by_lemma` lookup used by `/api/srs/listen`.
+- **`collocations`** — one row per vocabulary item. Holds language-agnostic content (`text`, `translation`, `lemma`, `image_filename`, `audio_filename`, `grammar`, `note`, source-context columns) plus the Anki sync identity (`guid`, `anki_note_id`).
+- **`collocation_directions`** — two rows per collocation, one per `Direction` (RECOGNITION + PRODUCTION). This is where the FSRS state lives now — `due_date`, `stability`, `difficulty`, `reps`, `lapses`, `state`, `last_review`, `last_rating`, `anki_card_id`, `anki_due`, `dirty_fsrs`, `last_synced_at`. The flat fields on `SRSItem` (`item.due_date`, `item.stability`, ...) are compatibility shims that read/write `directions[Direction.RECOGNITION]`; they are scheduled for removal once all call sites move to direction-aware access.
+- **`violations`** — content rule violations for debugging.
+- **`pending_revlog`** — local scratch table of every rated review, drained to Anki's `revlog` on the next sync (PART 12.4).
+- **`sync_conflicts`** — recorded when a pull detects field text that diverged on both sides since last sync.
+- **`anki_state_cache`** — key/value cache for values pulled from Anki's deck_config protobuf (daily new cap, FSRS-5 weights, bury settings — PART 12.6).
+- **`dirty_fields`** — per-GUID list of field names whose content has been edited locally and needs pushing on next sync.
+- **`media`** — bookkeeping for media files (image/audio) by Anki filename + sha256, used for dedup.
 
-**Admin methods (powering the SRS admin UI):**
+`count_due_collocations` powers `/api/srs/stats`; `count_due_today_total` and `count_new_available` power the unified queue stats endpoint.
+
+**The new sync surface:**
+
+- `upsert_by_guid(...)` — the canonical write path used by sync. Takes a GUID + content + per-direction state and creates or updates atomically.
+- `set_anki_ids(guid, anki_note_id, recognition_card_id, production_card_id)` — link a TunaTale row to its Anki counterparts after `sync_create_new`.
+- `list_dirty(...)` / `mark_direction_clean(guid, direction)` — find directions with `dirty_fsrs=True` for push, then clear the flag once Anki has caught up.
+- `enqueue_pending_revlog(...)` / `drain_pending_revlog()` — write+drain for the scratch revlog.
+- `record_sync_conflict(...)` / `list_sync_conflicts()` — record/inspect field-text conflicts.
+- `set_anki_state_cache(key, value)` / `get_anki_state_cache(key)` — cache the protobuf-decoded deck config values.
+- `set_dirty_fields(guid, fields_str)` / `get_dirty_fields(guid)` — per-field dirty tracking for selective field push.
+- `list_items_without_anki_note()` — drives `sync_create_new` (every collocation lacking an `anki_note_id`).
+- `list_dirty_field_edits()` — drives `sync_push` (collocations whose text/translation changed locally).
+- `update_collocation_for_sync(...)` — the inverse of `upsert_by_guid`; used by `sync_pull` when Anki is the authoritative source.
+- `list_collocations_reviewed_today(today)` — set of collocation ids reviewed today; lets the queue enforce the daily-new cap without double-counting just-introduced items.
+
+**Admin methods (powering `/admin/srs`):**
 
 - `list_collocations(limit, offset, search, state, order_by, order_dir)` — paginated browse with full-text search across `text`/`translation`, state filter, and validated sort columns. Returns `(rows, total_count)`.
 - `get_collocation_by_id(id)` / `update_collocation_fields(id, text, translation)` — read/edit by primary key. Update raises `ValueError` on UNIQUE collisions so the API can return 409.
 - `delete_collocation(id)` and `delete_collocations(ids)` — single + bulk delete with cascading violation cleanup.
-- `reset_collocation(id)` — wipes FSRS scheduling fields back to NEW (stability=1.0, difficulty=5.0, reps=0, lapses=0).
-- `set_suspended(id, suspended)` — toggles between `suspended` and `new` states. Suspended items are filtered out of `get_due_collocations`.
+- `reset_collocation(id, direction=None)` — wipes FSRS scheduling fields back to NEW for the given direction (or both if `None`). Per-direction reset is a side effect of the two-direction split.
+- `set_state_by_id(id, direction, state)` — admin force-set a specific `SRSState`, used by the `/items/{id}/state` endpoint to override scheduling (e.g. mark a card as `KNOWN` or `BURIED`).
+- `set_suspended(id, suspended, direction=None)` — toggle between `suspended` and `new`. Suspended directions are filtered out of `get_due_collocations`.
+
+The method `update_collocation(item)` is now a recognition-only compatibility shim — it writes back only `directions[Direction.RECOGNITION]`. New code paths should call `update_direction(...)` or `upsert_by_guid(...)` directly.
+
+> See PART 12 for how this schema round-trips with Anki via offline sync.
 
 Here is a round-trip through the database — add a collocation, schedule it, and query due items:
 
@@ -1824,10 +1932,10 @@ cat -n backend/app/srs/feedback.py
 ```
 
 ```output
-     1	"""SRS feedback adapters.
+     1	"""SRS feedback utilities.
      2	
-     3	ImplicitFeedbackAdapter: maps learner signals → FSRS ratings.
-     4	PostGenerationFeedback: identifies which collocations appear in a generated story.
+     3	PostGenerationFeedback: identifies which collocations appear in a generated story.
+     4	rating_from_input: maps explicit rating strings or implicit signal strings to FSRS ratings.
      5	"""
      6	
      7	from __future__ import annotations
@@ -1841,35 +1949,45 @@ cat -n backend/app/srs/feedback.py
     15	    "fast_forward": Rating.EASY,
     16	}
     17	
-    18	
-    19	class ImplicitFeedbackAdapter:
-    20	    """Maps implicit learner signals to FSRS ratings."""
-    21	
-    22	    def signal_to_rating(self, signal: str) -> Rating:
-    23	        """Convert a learner signal string to an FSRS Rating.
+    18	_RATING_MAP: dict[str, Rating] = {
+    19	    "again": Rating.AGAIN,
+    20	    "hard": Rating.HARD,
+    21	    "good": Rating.GOOD,
+    22	    "easy": Rating.EASY,
+    23	}
     24	
-    25	        Signals:
-    26	            no_help: Learner did not request help → Good
-    27	            slowdown: Learner slowed playback → Hard
-    28	            translation_request: Learner requested translation → Again
-    29	            fast_forward: Learner fast-forwarded → Easy
-    30	        """
-    31	        if signal not in _SIGNAL_MAP:
-    32	            raise ValueError(f"Unknown signal {signal!r}. Valid: {list(_SIGNAL_MAP)}")
-    33	        return _SIGNAL_MAP[signal]
-    34	
-    35	
-    36	class PostGenerationFeedback:
-    37	    """Identifies which provided collocations were actually used in a story."""
-    38	
-    39	    def find_used_collocations(self, provided: list[str], story_text: str) -> list[str]:
-    40	        """Return the subset of provided collocations that appear in story_text.
-    41	
-    42	        Matching is case-insensitive. Only collocations that appear as
-    43	        substrings in the story are marked as used.
-    44	        """
-    45	        story_lower = story_text.lower()
-    46	        return [c for c in provided if c.lower() in story_lower]
+    25	
+    26	def rating_from_input(rating: str | None = None, signal: str | None = None) -> Rating:
+    27	    """Convert explicit rating string or implicit signal string to a Rating enum.
+    28	
+    29	    Exactly one of rating/signal must be provided; raises ValueError otherwise.
+    30	    rating accepts 'again'|'hard'|'good'|'easy' (case-insensitive).
+    31	    signal delegates to the existing _SIGNAL_MAP.
+    32	    """
+    33	    if (rating is None) == (signal is None):
+    34	        raise ValueError("Provide exactly one of rating or signal, not both (or neither).")
+    35	    if rating is not None:
+    36	        key = rating.lower()
+    37	        if key not in _RATING_MAP:
+    38	            raise ValueError(f"Unknown rating {rating!r}. Valid: {list(_RATING_MAP)}")
+    39	        return _RATING_MAP[key]
+    40	    if signal not in _SIGNAL_MAP:
+    41	        raise ValueError(f"Unknown signal {signal!r}. Valid: {list(_SIGNAL_MAP)}")
+    42	    return _SIGNAL_MAP[signal]
+    43	
+    44	
+    45	class PostGenerationFeedback:
+    46	    """Identifies which provided collocations were actually used in a story."""
+    47	
+    48	    def find_used_collocations(self, provided: list[str], story_text: str) -> list[str]:
+    49	        """Return the subset of provided collocations that appear in story_text.
+    50	
+    51	        Matching is case-insensitive. Only collocations that appear as
+    52	        substrings in the story are marked as used.
+    53	        """
+    54	        story_lower = story_text.lower()
+    55	        return [c for c in provided if c.lower() in story_lower]
+
 ```
 
 ```bash
@@ -1882,9 +2000,9 @@ grep -n "class CollocationSelector\|def score\|def select" backend/app/srs/selec
 54:    def select(
 ```
 
-The feedback adapter translates what the learner *does* into what the SRS *needs*: skipping ahead means they know it (EASY), asking for a translation means they forgot (AGAIN). `PostGenerationFeedback` checks which collocations the LLM actually used in a generated story — useful for tracking whether the content engine is following the curriculum.
+`rating_from_input(rating=..., signal=...)` is the unified entry point. Pass `rating="good"` for explicit four-button feedback (the `/review` UI's path) or `signal="translation_request"` for implicit signals from the player. Skipping ahead means they know it (EASY), asking for a translation means they forgot (AGAIN). `PostGenerationFeedback` is unchanged: it checks which collocations the LLM actually used in a generated story — useful for tracking whether the content engine is following the curriculum.
 
-The `CollocationSelector` scores items using the weighted formula from the strategy model (SRS readiness 40%, language quality 30%, pedagogical value 20%, diversity 10%), then selects the best mix of new and review items for the next lesson.
+The `CollocationSelector` scores items using the weighted formula from the strategy model (SRS readiness 40%, language quality 30%, pedagogical value 20%, diversity 10%), then selects the best mix of new and review items for the next lesson. Note: it is currently **direction-agnostic** — it scores using the recognition-direction shim fields on `SRSItem` and treats each row as a single unit. The unified review queue at `/api/srs/review-queue` (PART 13) is where direction-aware ordering actually happens; the selector is preserved for the older curriculum-driven path.
 
 ---
 
@@ -3722,60 +3840,60 @@ cat -n backend/app/api/curriculum.py
 
 ```output
      1	"""Curriculum generation and retrieval endpoints."""
-     2
+     2	
      3	from __future__ import annotations
-     4
+     4	
      5	import re
      6	import uuid
-     7
+     7	
      8	from fastapi import APIRouter, HTTPException, Request
      9	from pydantic import BaseModel
-    10
+    10	
     11	router = APIRouter(prefix="/api/curriculum", tags=["curriculum"])
-    12
-    13
+    12	
+    13	
     14	def _slug(text: str) -> str:
     15	    text = text.lower()
     16	    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
     17	    return text[:50]
-    18
-    19
+    18	
+    19	
     20	class GenerateCurriculumRequest(BaseModel):
     21	    topic: str
     22	    cefr_level: str = "A2"
     23	    num_days: int = 7
-    24
-    25
+    24	
+    25	
     26	@router.post("/generate", status_code=201)
     27	async def generate_curriculum(body: GenerateCurriculumRequest, request: Request):
     28	    generator = request.app.state.curriculum_generator
     29	    language = request.app.state.language
     30	    store = request.app.state.content_store
-    31
+    31	
     32	    curriculum = await generator.generate(
     33	        topic=body.topic,
     34	        language=language,
     35	        cefr_level=body.cefr_level,
     36	        num_days=body.num_days,
     37	    )
-    38
+    38	
     39	    curriculum_id = f"{_slug(body.topic)}-{uuid.uuid4().hex[:8]}"
     40	    store.save_curriculum(curriculum_id, curriculum)
-    41
+    41	
     42	    return {
     43	        "id": curriculum_id,
     44	        "topic": curriculum.topic,
     45	        "language_code": curriculum.language_code,
     46	        "days": len(curriculum.days),
     47	    }
-    48
-    49
+    48	
+    49	
     50	@router.get("", status_code=200)
     51	async def list_curricula(request: Request):
     52	    store = request.app.state.content_store
     53	    return store.list_curricula()
-    54
-    55
+    54	
+    55	
     56	@router.get("/{curriculum_id}", status_code=200)
     57	async def get_curriculum(curriculum_id: str, request: Request):
     58	    store = request.app.state.content_store
@@ -3788,38 +3906,48 @@ cat -n backend/app/api/curriculum.py
     65	        "language_code": curriculum.language_code,
     66	        "days": len(curriculum.days),
     67	    }
-    68
-    69
-    70	@router.get("/{curriculum_id}/days/{day}/lesson", status_code=200)
-    71	async def get_lesson_by_day(curriculum_id: str, day: int, request: Request):
+    68	
+    69	
+    70	@router.get("/{curriculum_id}/progress")
+    71	async def get_curriculum_progress(curriculum_id: str, request: Request):
     72	    store = request.app.state.content_store
-    73	    result = store.get_latest_lesson_by_day(curriculum_id, day)
-    74	    if result is None:
-    75	        raise HTTPException(status_code=404, detail=f"No lesson found for day {day}")
-    76	    lesson_id, lesson = result
-    77	    return {
-    78	        "id": lesson_id,
-    79	        "title": lesson.title,
-    80	        "language_code": lesson.language_code,
-    81	        "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in lesson.key_phrases],
-    82	        "sections": [
-    83	            {
-    84	                "type": s.section_type.value,
-    85	                "phrases": [
-    86	                    {"text": p.text, "role": p.role, "language_code": p.language_code, "voice_id": p.voice_id}
-    87	                    for p in s.phrases
-    88	                ],
-    89	            }
-    90	            for s in lesson.sections
-    91	        ],
-    92	    }
+    73	    if store.get_curriculum(curriculum_id) is None:
+    74	        raise HTTPException(status_code=404, detail="Curriculum not found")
+    75	    return store.get_lesson_days(curriculum_id)
+    76	
+    77	
+    78	@router.get("/{curriculum_id}/days/{day}/lesson", status_code=200)
+    79	async def get_lesson_by_day(curriculum_id: str, day: int, request: Request):
+    80	    store = request.app.state.content_store
+    81	    result = store.get_latest_lesson_by_day(curriculum_id, day)
+    82	    if result is None:
+    83	        raise HTTPException(status_code=404, detail=f"No lesson found for day {day}")
+    84	    lesson_id, lesson = result
+    85	    return {
+    86	        "id": lesson_id,
+    87	        "title": lesson.title,
+    88	        "language_code": lesson.language_code,
+    89	        "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in lesson.key_phrases],
+    90	        "sections": [
+    91	            {
+    92	                "type": s.section_type.value,
+    93	                "phrases": [
+    94	                    {"text": p.text, "role": p.role, "language_code": p.language_code, "voice_id": p.voice_id}
+    95	                    for p in s.phrases
+    96	                ],
+    97	            }
+    98	            for s in lesson.sections
+    99	        ],
+   100	    }
+
 ```
 
-Three changes from the prototype:
+Four changes from the prototype:
 
 1. **Slug-based IDs.** `_slug(topic)` lowercases and hyphenates the topic, then appends 8 hex characters from a fresh UUID: `f"{_slug(body.topic)}-{uuid.uuid4().hex[:8]}"`. The result is stable enough to use in URLs (`arriving-in-ljubljana-a3f1b2c8`) and human-readable in logs.
 2. **ContentStore replaces `app.state.curricula` dict.** Curricula now survive a server restart and are visible across requests without any threading locks.
 3. **`GET /{curriculum_id}/days/{day}/lesson`** is a convenience endpoint for the frontend: given a curriculum and a day number it returns the latest generated lesson, fully expanded (all phrases, all sections, key phrases list).
+4. **`GET /{curriculum_id}/progress`** returns per-day SRS progress so the day-picker UI can show which days have been listened to and how many of their words are scheduled vs new. The handler delegates to a `ContentStore` lookup that joins each lesson's lemma list against the SRS direction state.
 
 ### 7.2 Story Generation API
 
@@ -3914,294 +4042,148 @@ The generation router is similarly slug-based. Lesson IDs are derived from the l
 
 ### 7.3 SRS API
 
+The SRS router is now the largest module in `app/api/` (~700 lines, 19 routes). The full surface:
+
 ```bash
-cat -n backend/app/api/srs.py
+grep -nE "^@router\." backend/app/api/srs.py
 ```
 
 ```output
-     1	"""SRS state and review endpoints."""
-     2
-     3	from __future__ import annotations
-     4
-     5	import datetime
-     6
-     7	from fastapi import APIRouter, HTTPException, Request
-     8	from pydantic import BaseModel
-     9
-    10	from app.models.srs_item import SRSItem, SRSState
-    11	from app.models.syntactic_unit import SyntacticUnit
-    12	from app.srs.feedback import ImplicitFeedbackAdapter
-    13	from app.srs.fsrs import Rating, schedule
-    14	from app.srs.lemmatizer import LowercaseLemmatizer
-    15	from app.srs.tokenizer import tokenize
-    16	from app.srs.transcript import extract_transcript
-    17
-    18	router = APIRouter(prefix="/api/srs", tags=["srs"])
-    19
-    20	_feedback_adapter = ImplicitFeedbackAdapter()
-    21	_lemmatizer = LowercaseLemmatizer()
-    22
-    23	_WORD_RATING_MAP: dict[str, Rating] = {
-    24	    "again": Rating.AGAIN,
-    25	    "hard": Rating.HARD,
-    26	    "good": Rating.GOOD,
-    27	    "easy": Rating.EASY,
-    28	}
-    29
-    30
-    31	def _item_to_dict(row_id: int, item: SRSItem, language_code: str) -> dict:
-    32	    """Serialize an SRSItem to a response dict for admin endpoints."""
-    33	    return {
-    34	        "id": row_id,
-    35	        "text": item.syntactic_unit.text,
-    36	        "translation": item.syntactic_unit.translation,
-    37	        "state": item.state.value,
-    38	        "due_date": item.due_date.isoformat(),
-    39	        "stability": item.stability,
-    40	        "difficulty": item.difficulty,
-    41	        "reps": item.reps,
-    42	        "lapses": item.lapses,
-    43	        "last_review": item.last_review.isoformat() if item.last_review else None,
-    44	        "language_code": language_code,
-    45	    }
-    46
-    47
-    48	class FeedbackRequest(BaseModel):
-    49	    collocation_text: str
-    50	    signal: str  # no_help | slowdown | translation_request | fast_forward
-    51
-    52
-    53	class ListenRequest(BaseModel):
-    54	    lesson_id: str
-    55	    word_ratings: dict[str, str] = {}  # lemma → "hard"|"easy"|"again"
-    56
-    57
-    58	@router.get("/due", status_code=200)
-    59	async def get_due_collocations(request: Request):
-    60	    db = request.app.state.srs_db
-    61	    today = datetime.date.today()
-    62	    items = db.get_due_collocations(today)
-    63	    return {"due": [{"text": i.syntactic_unit.text, "translation": i.syntactic_unit.translation} for i in items]}
-    64
-    65
-    66	@router.get("/new", status_code=200)
-    67	async def get_new_collocations(request: Request, limit: int = 10):
-    68	    db = request.app.state.srs_db
-    69	    items = db.get_new_collocations(limit=limit)
-    70	    return {"new": [{"text": i.syntactic_unit.text, "translation": i.syntactic_unit.translation} for i in items]}
-    71
-    72
-    73	@router.post("/feedback", status_code=200)
-    74	async def record_feedback(body: FeedbackRequest, request: Request):
-    75	    db = request.app.state.srs_db
-    76
-    77	    item = db.get_collocation(body.collocation_text)
-    78	    if item is None:
-    79	        return {"status": "not_found"}
-    80
-    81	    rating = _feedback_adapter.signal_to_rating(body.signal)
-    82	    updated = schedule(item, rating)
-    83	    db.update_collocation(updated)
-    84	    return {"status": "ok", "new_due_date": str(updated.due_date)}
-    85
-    86
-    87	@router.post("/listen", status_code=200)
-    88	async def mark_lesson_listened(body: ListenRequest, request: Request):
-    89	    store = request.app.state.content_store
-    90	    lesson = store.get_lesson(body.lesson_id)
-    91	    if lesson is None:
-    92	        raise HTTPException(status_code=404, detail="Lesson not found")
-    93
-    94	    db = request.app.state.srs_db
-    95
-    96	    # ── Word-level tracking from NATURAL_SPEED section ──────────────────
-    97	    from app.models.lesson import SectionType
-    98
-    99	    natural_speed = next(
-   100	        (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
-   101	        None,
-   102	    )
-   103
-   104	    unique_lemmas: set[str] = set()
-   105	    if natural_speed is not None:
-   106	        for phrase in natural_speed.phrases:
-   107	            if phrase.language_code != lesson.language_code:
-   108	                continue
-   109	            for surface in tokenize(phrase.text):
-   110	                lemma = _lemmatizer.lemmatize(surface, lesson.language_code)
-   111	                unique_lemmas.add(lemma)
-   112
-   113	    for lemma in unique_lemmas:
-   114	        unit = SyntacticUnit(
-   115	            text=lemma,
-   116	            translation="",
-   117	            word_count=1,
-   118	            difficulty=1,
-   119	            source="llm",
-   120	            lemma=lemma,
-   121	        )
-   122	        db.add_collocation(unit, language_code=lesson.language_code)
-   123	        item = db.get_collocation_by_lemma(lemma)
-   124	        if item is not None:
-   125	            rating = _WORD_RATING_MAP.get(body.word_ratings.get(lemma, "good"), Rating.GOOD)
-   126	            updated = schedule(item, rating)
-   127	            db.update_collocation(updated)
-   128
-   129	    # ── Key phrase registration (preserves translations) ─────────────────
-   130	    for kp in lesson.key_phrases:
-   131	        unit = SyntacticUnit(
-   132	            text=kp.phrase,
-   133	            translation=kp.translation,
-   134	            word_count=min(8, max(1, len(kp.phrase.split()))),
-   135	            difficulty=1,
-   136	            source="llm",
-   137	        )
-   138	        db.add_collocation(unit, language_code=lesson.language_code)
-   139
-   140	    registered = len(unique_lemmas) + len(lesson.key_phrases)
-   141	    return {"status": "ok", "registered": registered}
-   142
-   143
-   144	@router.get("/lesson/{lesson_id}/transcript", status_code=200)
-   145	async def get_lesson_transcript(lesson_id: str, request: Request):
-   146	    store = request.app.state.content_store
-   147	    lesson = store.get_lesson(lesson_id)
-   148	    if lesson is None:
-   149	        raise HTTPException(status_code=404, detail="Lesson not found")
-   150
-   151	    db = request.app.state.srs_db
-   152	    transcript = extract_transcript(lesson, db, _lemmatizer)
-   153
-   154	    return {
-   155	        "lesson_id": lesson_id,
-   156	        "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in transcript.key_phrases],
-   157	        "dialogue_lines": [
-   158	            {
-   159	                "role": line.role,
-   160	                "words": [{"surface": w.surface, "lemma": w.lemma, "srs_state": w.srs_state} for w in line.words],
-   161	            }
-   162	            for line in transcript.dialogue_lines
-   163	        ],
-   164	    }
-   165
-   166
-   167	@router.get("/stats", status_code=200)
-   168	async def get_stats(request: Request):
-   169	    db = request.app.state.srs_db
-   170	    today = datetime.date.today()
-   171	    return {"total": db.count_collocations(), "due_today": db.count_due_collocations(today)}
-   172
-   173
-   174	# ── Admin endpoints ────────────────────────────────────────────────────────────
-   175
-   176
-   177	class UpdateItemRequest(BaseModel):
-   178	    text: str
-   179	    translation: str
-   180
-   181
-   182	class BulkDeleteRequest(BaseModel):
-   183	    ids: list[int]
-   184
-   185
-   186	class SuspendRequest(BaseModel):
-   187	    suspended: bool
-   188
-   189
-   190	@router.get("/items", status_code=200)
-   191	async def list_items(
-   192	    request: Request,
-   193	    search: str | None = None,
-   194	    state: str | None = None,
-   195	    sort: str = "text",
-   196	    order: str = "asc",
-   197	    limit: int = 50,
-   198	    offset: int = 0,
-   199	):
-   200	    db = request.app.state.srs_db
-   201	    state_enum = SRSState(state) if state else None
-   202	    try:
-   203	        rows, total = db.list_collocations(
-   204	            limit=limit,
-   205	            offset=offset,
-   206	            search=search,
-   207	            state=state_enum,
-   208	            order_by=sort,
-   209	            order_dir=order,
-   210	        )
-   211	    except ValueError as exc:
-   212	        raise HTTPException(status_code=422, detail=str(exc)) from exc
-   213	    return {"items": [_item_to_dict(rid, item, lang) for rid, item, lang in rows], "total": total}
-   214
-   215
-   216	@router.patch("/items/{item_id}", status_code=200)
-   217	async def patch_item(item_id: int, body: UpdateItemRequest, request: Request):
-   218	    db = request.app.state.srs_db
-   219	    if db.get_collocation_by_id(item_id) is None:
-   220	        raise HTTPException(status_code=404, detail="Item not found")
-   221	    try:
-   222	        db.update_collocation_fields(item_id, text=body.text, translation=body.translation)
-   223	    except ValueError as exc:
-   224	        raise HTTPException(status_code=409, detail=str(exc)) from exc
-   225	    row_id, item, lang = db.get_collocation_by_id(item_id)
-   226	    return _item_to_dict(row_id, item, lang)
-   227
-   228
-   229	@router.delete("/items/{item_id}", status_code=200)
-   230	async def delete_item(item_id: int, request: Request):
-   231	    db = request.app.state.srs_db
-   232	    if db.get_collocation_by_id(item_id) is None:
-   233	        raise HTTPException(status_code=404, detail="Item not found")
-   234	    db.delete_collocation(item_id)
-   235	    return {"status": "deleted"}
-   236
-   237
-   238	@router.post("/items/bulk-delete", status_code=200)
-   239	async def bulk_delete_items(body: BulkDeleteRequest, request: Request):
-   240	    db = request.app.state.srs_db
-   241	    deleted = db.delete_collocations(body.ids)
-   242	    return {"deleted": deleted}
-   243
-   244
-   245	@router.post("/items/{item_id}/reset", status_code=200)
-   246	async def reset_item(item_id: int, request: Request):
-   247	    db = request.app.state.srs_db
-   248	    if db.get_collocation_by_id(item_id) is None:
-   249	        raise HTTPException(status_code=404, detail="Item not found")
-   250	    db.reset_collocation(item_id)
-   251	    row_id, item, lang = db.get_collocation_by_id(item_id)
-   252	    return _item_to_dict(row_id, item, lang)
-   253
-   254
-   255	@router.post("/items/{item_id}/suspend", status_code=200)
-   256	async def suspend_item(item_id: int, body: SuspendRequest, request: Request):
-   257	    db = request.app.state.srs_db
-   258	    if db.get_collocation_by_id(item_id) is None:
-   259	        raise HTTPException(status_code=404, detail="Item not found")
-   260	    db.set_suspended(item_id, body.suspended)
-   261	    row_id, item, lang = db.get_collocation_by_id(item_id)
-   262	    return _item_to_dict(row_id, item, lang)
+111:@router.get("/due", status_code=200)
+128:@router.get("/new", status_code=200)
+144:@router.post("/items/{item_id}/direction/{direction}/feedback", status_code=200)
+175:@router.get("/media/{filename}", status_code=200)
+186:@router.post("/listen", status_code=200)
+245:@router.get("/lesson/{lesson_id}/transcript", status_code=200)
+296:@router.post("/translate-missing", status_code=200)
+328:@router.post("/backfill-translations", status_code=200)
+338:@router.get("/stats", status_code=200)
+345:@router.get("/queue-stats", status_code=200)
+400:@router.post("/items", status_code=201)
+440:@router.get("/items", status_code=200)
+466:@router.patch("/items/{item_id}", status_code=200)
+479:@router.delete("/items/{item_id}", status_code=200)
+488:@router.post("/items/bulk-delete", status_code=200)
+495:@router.post("/items/{item_id}/reset", status_code=200)
+505:@router.post("/items/{item_id}/state", status_code=200)
+519:@router.post("/items/{item_id}/suspend", status_code=200)
+646:@router.get("/review-queue", status_code=200)
 ```
 
-The SRS router grew substantially. It now covers three functional areas:
+These cover four functional areas: **learner loop** (due/new/feedback), **per-word capture and transcript** (listen/transcript/translate-missing/backfill-translations/queue-stats/stats), **review queue and media** (review-queue, media/{filename}), and **admin CRUD** (items POST/GET/PATCH/DELETE/state/suspend/reset, items/bulk-delete).
 
-**Learner loop** (unchanged from prototype):
-- `GET /due` — collocations due for review today
-- `GET /new` — collocations in `new` state (for spaced introduction)
-- `POST /feedback` — record implicit feedback signal, advance FSRS schedule
-- `GET /stats` — total and due-today counts
+#### Response shape — `_item_to_dict`
 
-**Per-word tracking** (new):
-- `POST /listen` — called after the learner finishes a lesson. Tokenizes every L2 word in the NATURAL_SPEED section, lemmatizes it, and upserts a word-level `SRSItem`. Optional `word_ratings` map lets the frontend pass per-word ratings (`"dober": "hard"`) so the first FSRS schedule isn't always `Good`. Also registers key phrases (with translations) so they appear in the review queue.
-- `GET /lesson/{lesson_id}/transcript` — returns the NATURAL_SPEED dialogue annotated with per-word SRS state (`new`/`learning`/`review`/`relearning`/`unknown`). Used by the frontend to colour-code words red/yellow/green.
+Every list and detail endpoint serialises through one helper. Response payload includes both flat (legacy) FSRS fields and a per-direction breakdown — plus Anki identity, media URLs, and grammar/note context:
 
-**Admin** (new — see §9.x):
-- `GET /items` — paginated, filterable, sortable list of all SRS items. Query params: `search` (substring match on text/translation), `state` (`new`/`learning`/`review`/`relearning`/`suspended`), `sort` (`text`/`state`/`due_date`/etc.), `order` (`asc`/`desc`), `limit`, `offset`.
-- `PATCH /items/{id}` — edit text + translation in-place. Returns the updated item. Raises 409 if the new text conflicts with an existing row.
-- `DELETE /items/{id}` — remove a single item.
-- `POST /items/bulk-delete` — remove a list of items by ID in one call (used by the admin UI's multi-select delete).
-- `POST /items/{id}/reset` — reset FSRS state to `new` (due today, all scheduling fields zeroed). Useful when a learner wants to re-learn a phrase from scratch.
-- `POST /items/{id}/suspend` — toggle the `suspended` state flag. Suspended items are excluded from `GET /due` so the learner never sees them until unsuspended.
+```bash
+sed -n '56,88p' backend/app/api/srs.py
+```
+
+```output
+def _item_to_dict(
+    row_id: int,
+    item: SRSItem,
+    language_code: str,
+    image_url: str | None = None,
+    audio_url: str | None = None,
+) -> dict:
+    """Serialize an SRSItem to a response dict."""
+    return {
+        "id": row_id,
+        "text": item.syntactic_unit.text,
+        "translation": item.syntactic_unit.translation,
+        "word_count": item.syntactic_unit.word_count,
+        # Flat recognition shims (back-compat)
+        "state": item.state.value,
+        "due_date": item.due_date.isoformat(),
+        "stability": item.stability,
+        "difficulty": item.difficulty,
+        "reps": item.reps,
+        "lapses": item.lapses,
+        "last_review": item.last_review.isoformat() if item.last_review else None,
+        "language_code": language_code,
+        "guid": item.guid,
+        "anki_note_id": item.anki_note_id,
+        "directions": {
+            "recognition": _direction_to_dict(item.directions[Direction.RECOGNITION]),
+            "production": _direction_to_dict(item.directions[Direction.PRODUCTION]),
+        },
+        "image_url": image_url,
+        "audio_url": audio_url,
+        "grammar": item.syntactic_unit.grammar,
+        "note": item.syntactic_unit.note,
+    }
+```
+
+The two `directions` entries each contain `{state, due_date, stability, difficulty, reps, lapses, last_review, anki_card_id, anki_due, dirty_fsrs, last_synced_at, last_rating}` — the full `DirectionState` (PART 4.2). `image_url` and `audio_url` point at `/api/srs/media/{filename}`, populated only when the row has stored media (post-sync).
+
+#### Per-direction feedback (`POST /items/{id}/direction/{direction}/feedback`)
+
+This replaces the old single-direction `/api/srs/feedback`. The body accepts either an explicit `rating` (`"again"`/`"hard"`/`"good"`/`"easy"`) or an implicit `signal` (`"no_help"`/`"slowdown"`/`"translation_request"`/`"fast_forward"`); `rating_from_input` enforces exactly-one-of:
+
+```bash
+sed -n '144,165p' backend/app/api/srs.py
+```
+
+```output
+@router.post("/items/{item_id}/direction/{direction}/feedback", status_code=200)
+async def drill_feedback(item_id: int, direction: str, body: DrillRequest, request: Request):
+    try:
+        dir_enum = Direction(direction)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid direction: {direction!r}") from exc
+
+    try:
+        rating = rating_from_input(rating=body.rating, signal=body.signal)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    db = request.app.state.srs_db
+    result = db.get_collocation_by_id(item_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    _, item, _ = result
+
+    fsrs_params, _ = resolve_fsrs_params(db)
+    updated = schedule(item, rating, direction=dir_enum, params=fsrs_params)
+    db.update_direction_by_id(item_id, dir_enum, updated.directions[dir_enum])
+
+```
+
+Three points worth noting:
+
+- The `direction` path segment is parsed into the `Direction` enum (422 on garbage); `schedule(...)` updates only that direction.
+- `resolve_fsrs_params(db)` reads the cached weights+retention from `anki_state_cache` (PART 12.6), falling back to `DEFAULT_FSRS5_PARAMS` when no Anki cache is present.
+- The handler also enqueues a `pending_revlog` row so the next `/api/anki/sync` push has the rating to write to Anki's revlog (see PART 12.4 — drain phase).
+
+#### Routes by functional area
+
+**Learner loop:**
+- `GET /due?direction={recognition|production|any}` — items due for review today, scoped by direction. `any` returns both directions concatenated.
+- `GET /new?limit=N&direction=...` — items in NEW state, scoped.
+- `POST /items/{id}/direction/{direction}/feedback` — record an FSRS rating (above).
+- `GET /stats` — total + due-today counts.
+- `GET /queue-stats` — new + due breakdown using the cached daily-new-cap (so the UI can show "X new available, Y new used today, Z due"). Reads from `anki_state_cache.new_per_day` populated by the sync flow.
+
+**Per-word capture and content:**
+- `POST /listen` — hooks a finished lesson into SRS. Now reads `token_glosses` from `lesson.generation_metadata` (LingQ-style auto-gloss capture) so first-encounter translations are populated automatically rather than left blank. Tokenises the L2 NATURAL_SPEED text, lemmatises, upserts a per-lemma `SRSItem`. Also stores `source_sentence`, `source_lesson_id`, and `source_line_index` on each new item so the admin UI can show provenance. Optional `word_ratings` map lets the frontend pass per-word ratings; otherwise everything starts at GOOD.
+- `GET /lesson/{lesson_id}/transcript` — NATURAL_SPEED dialogue annotated with per-word `srs_state` for the colour-coded transcript view.
+- `POST /translate-missing` — bulk LLM-translate every collocation whose `translation` is empty. Used for cleanup after a `listen` registered words without glosses.
+- `POST /backfill-translations` — apply a stored `{lemma: gloss}` dict in one call (the bulk-edit path).
+
+**Review queue and media:**
+- `GET /review-queue` — the unified queue used by `/review`. Merges due + a daily-capped slice of new, alternates direction, attaches media URLs to each card. The cap is read from `anki_state_cache.new_per_day` (PART 12.6).
+- `GET /media/{filename}` — serves images and audio from `media_dir`. The frontend embeds these URLs directly in `<img>` and `<audio>` tags.
+
+**Admin (powering `/admin/srs`):**
+- `POST /items` — create a new SRS item (text + translation + optional grammar/note). Generates a deterministic GUID via `app.common.guid` so a later sync will round-trip cleanly to Anki.
+- `GET /items?search=&state=&sort=&order=&limit=&offset=` — paginated, filtered, sorted item list. `_item_to_dict` powers each row.
+- `PATCH /items/{id}` — edit text + translation. 409 on UNIQUE collisions, marks `dirty_fields` for the next sync push.
+- `DELETE /items/{id}` and `POST /items/bulk-delete` — single + bulk delete.
+- `POST /items/{id}/reset` — reset FSRS for a direction (or both) back to NEW.
+- `POST /items/{id}/state` — force a specific `SRSState` (`KNOWN`, `BURIED`, etc.) on a direction. Lets the admin UI override scheduling without going through FSRS.
+- `POST /items/{id}/suspend` — toggle the suspended flag.
 
 ### 7.4 Audio API
 
@@ -4211,153 +4193,226 @@ cat -n backend/app/api/audio.py
 
 ```output
      1	"""Audio generation and streaming endpoints."""
-     2
+     2	
      3	from __future__ import annotations
-     4
-     5	import re
-     6	import uuid
-     7	from pathlib import Path
-     8
-     9	from fastapi import APIRouter, HTTPException, Request
-    10	from fastapi.responses import FileResponse
-    11	from pydantic import BaseModel
-    12
-    13	from app.generation.section_builder import SECTION_TITLES
-    14	from app.models.lesson import SectionType
-    15
-    16	router = APIRouter(prefix="/api/audio", tags=["audio"])
-    17
-    18
-    19	def _sanitize_filename(name: str) -> str:
-    20	    """Strip filesystem-illegal characters and collapse whitespace to underscores."""
-    21	    name = re.sub(r'[/\\:*?"<>|]', "", name)
-    22	    name = re.sub(r"\s+", "_", name.strip())
-    23	    return name or "audio"
-    24
-    25
-    26	class RenderAudioRequest(BaseModel):
-    27	    lesson_id: str
-    28
-    29
-    30	@router.post("/render", status_code=202)
-    31	async def render_audio(body: RenderAudioRequest, request: Request):
-    32	    store = request.app.state.content_store
-    33	    lesson = store.get_lesson(body.lesson_id)
-    34	    if lesson is None:
-    35	        raise HTTPException(status_code=404, detail="Lesson not found")
-    36
-    37	    renderer = request.app.state.renderer
-    38	    audio_dir: Path = request.app.state.audio_dir
-    39	    audio_dir.mkdir(parents=True, exist_ok=True)
-    40
-    41	    # Allocate UUIDs for full lesson and each section
-    42	    audio_id = str(uuid.uuid4())
-    43	    full_path = audio_dir / f"{audio_id}.wav"
-    44
-    45	    section_ids = [str(uuid.uuid4()) for _ in lesson.sections]
-    46	    section_paths = [audio_dir / f"{sid}.wav" for sid in section_ids]
-    47
-    48	    await renderer.render(lesson, full_path, section_paths=section_paths)
-    49
-    50	    # Persist full lesson row
-    51	    store.save_audio_file(audio_id, body.lesson_id, str(full_path))
-    52
-    53	    # Persist per-section rows
-    54	    for i, (sid, section) in enumerate(zip(section_ids, lesson.sections, strict=True)):
-    55	        store.save_audio_file(
-    56	            sid,
-    57	            body.lesson_id,
-    58	            str(section_paths[i]),
-    59	            section_index=i,
-    60	            section_type=section.section_type.value,
-    61	        )
-    62
-    63	    sections = [
-    64	        {
-    65	            "audio_id": sid,
-    66	            "section_index": i,
-    67	            "section_type": section.section_type.value,
-    68	            "title": SECTION_TITLES.get(section.section_type, section.section_type.value),
-    69	        }
-    70	        for i, (sid, section) in enumerate(zip(section_ids, lesson.sections, strict=True))
-    71	    ]
-    72
-    73	    return {"audio_id": audio_id, "lesson_id": body.lesson_id, "sections": sections}
-    74
-    75
-    76	@router.get("/lesson/{lesson_id}", status_code=200)
-    77	async def get_lesson_audio(lesson_id: str, request: Request):
-    78	    """Return the audio file list for a lesson (full + sections) without re-rendering."""
-    79	    store = request.app.state.content_store
-    80	    rows = store.list_audio_files_for_lesson(lesson_id)
-    81	    if not rows:
-    82	        raise HTTPException(status_code=404, detail="No audio found for this lesson")
-    83
-    84	    full_row = next((r for r in rows if r["section_index"] is None), None)
-    85	    if full_row is None:
-    86	        raise HTTPException(status_code=404, detail="Full lesson audio not found")
-    87
-    88	    section_rows = [r for r in rows if r["section_index"] is not None]
-    89
-    90	    sections = []
-    91	    for r in section_rows:
-    92	        section_type_str = r["section_type"] or ""
-    93	        try:
-    94	            st = SectionType(section_type_str)
-    95	            title = SECTION_TITLES.get(st, section_type_str)
-    96	        except ValueError:
-    97	            title = section_type_str
-    98	        sections.append(
-    99	            {
-   100	                "audio_id": r["id"],
-   101	                "section_index": r["section_index"],
-   102	                "section_type": section_type_str,
-   103	                "title": title,
-   104	            }
-   105	        )
-   106
-   107	    return {
-   108	        "audio_id": full_row["id"],
-   109	        "lesson_id": lesson_id,
-   110	        "sections": sections,
-   111	    }
-   112
-   113
-   114	@router.get("/{audio_id}", status_code=200)
-   115	async def get_audio(audio_id: str, request: Request):
-   116	    store = request.app.state.content_store
-   117	    row = store.get_audio_file_row(audio_id)
-   118	    if row is None:
-   119	        raise HTTPException(status_code=404, detail="Audio not found")
-   120
-   121	    path = Path(row["file_path"])
-   122	    if not path.exists():
-   123	        raise HTTPException(status_code=404, detail="Audio file missing")
-   124
-   125	    # Build a friendly download filename
-   126	    lesson = store.get_lesson(row["lesson_id"])
-   127	    lesson_title = lesson.title if lesson else "audio"
-   128	    safe_title = _sanitize_filename(lesson_title)
-   129
-   130	    if row["section_index"] is not None:
-   131	        section_type = row["section_type"] or "section"
-   132	        idx = row["section_index"]
-   133	        filename = f"{safe_title}_{idx:02d}_{section_type}.wav"
-   134	    else:
-   135	        filename = f"{safe_title}.wav"
-   136
-   137	    return FileResponse(
-   138	        str(path),
-   139	        media_type="audio/wav",
-   140	        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-   141	    )
+     4	
+     5	import io
+     6	import re
+     7	import uuid
+     8	import zipfile
+     9	from pathlib import Path
+    10	
+    11	from fastapi import APIRouter, HTTPException, Request
+    12	from fastapi.responses import FileResponse, Response
+    13	from pydantic import BaseModel
+    14	
+    15	from app.generation.section_builder import SECTION_TITLES
+    16	from app.models.lesson import SectionType
+    17	
+    18	router = APIRouter(prefix="/api/audio", tags=["audio"])
+    19	
+    20	
+    21	def _sanitize_filename(name: str) -> str:
+    22	    """Strip filesystem-illegal characters and collapse whitespace to underscores."""
+    23	    name = re.sub(r'[/\\:*?"<>|]', "", name)
+    24	    name = re.sub(r"\s+", "_", name.strip())
+    25	    return name or "audio"
+    26	
+    27	
+    28	def _build_section_filename(topic: str, day: int, section_index: int, section_type: str) -> str:
+    29	    """Build a context-rich section WAV filename: {Topic}_Day{DD}_{NN}_{Title}.wav."""
+    30	    safe_topic = _sanitize_filename(topic)
+    31	    try:
+    32	        st = SectionType(section_type)
+    33	        title = SECTION_TITLES.get(st, section_type)
+    34	    except ValueError:
+    35	        title = section_type
+    36	    safe_title = _sanitize_filename(title)
+    37	    return f"{safe_topic}_Day{day:02d}_{section_index + 1:02d}_{safe_title}.wav"
+    38	
+    39	
+    40	class RenderAudioRequest(BaseModel):
+    41	    lesson_id: str
+    42	
+    43	
+    44	@router.post("/render", status_code=202)
+    45	async def render_audio(body: RenderAudioRequest, request: Request):
+    46	    store = request.app.state.content_store
+    47	    lesson = store.get_lesson(body.lesson_id)
+    48	    if lesson is None:
+    49	        raise HTTPException(status_code=404, detail="Lesson not found")
+    50	
+    51	    renderer = request.app.state.renderer
+    52	    audio_dir: Path = request.app.state.audio_dir
+    53	    audio_dir.mkdir(parents=True, exist_ok=True)
+    54	
+    55	    # Allocate UUIDs for full lesson and each section
+    56	    audio_id = str(uuid.uuid4())
+    57	    full_path = audio_dir / f"{audio_id}.wav"
+    58	
+    59	    section_ids = [str(uuid.uuid4()) for _ in lesson.sections]
+    60	    section_paths = [audio_dir / f"{sid}.wav" for sid in section_ids]
+    61	
+    62	    await renderer.render(lesson, full_path, section_paths=section_paths)
+    63	
+    64	    # Persist full lesson row
+    65	    store.save_audio_file(audio_id, body.lesson_id, str(full_path))
+    66	
+    67	    # Persist per-section rows
+    68	    for i, (sid, section) in enumerate(zip(section_ids, lesson.sections, strict=True)):
+    69	        store.save_audio_file(
+    70	            sid,
+    71	            body.lesson_id,
+    72	            str(section_paths[i]),
+    73	            section_index=i,
+    74	            section_type=section.section_type.value,
+    75	        )
+    76	
+    77	    sections = [
+    78	        {
+    79	            "audio_id": sid,
+    80	            "section_index": i,
+    81	            "section_type": section.section_type.value,
+    82	            "title": SECTION_TITLES.get(section.section_type, section.section_type.value),
+    83	        }
+    84	        for i, (sid, section) in enumerate(zip(section_ids, lesson.sections, strict=True))
+    85	    ]
+    86	
+    87	    return {"audio_id": audio_id, "lesson_id": body.lesson_id, "sections": sections}
+    88	
+    89	
+    90	@router.get("/lesson/{lesson_id}", status_code=200)
+    91	async def get_lesson_audio(lesson_id: str, request: Request):
+    92	    """Return the audio file list for a lesson (full + sections) without re-rendering."""
+    93	    store = request.app.state.content_store
+    94	    rows = store.list_audio_files_for_lesson(lesson_id)
+    95	    if not rows:
+    96	        raise HTTPException(status_code=404, detail="No audio found for this lesson")
+    97	
+    98	    full_row = next((r for r in rows if r["section_index"] is None), None)
+    99	    if full_row is None:
+   100	        raise HTTPException(status_code=404, detail="Full lesson audio not found")
+   101	
+   102	    section_rows = [r for r in rows if r["section_index"] is not None]
+   103	
+   104	    sections = []
+   105	    for r in section_rows:
+   106	        section_type_str = r["section_type"] or ""
+   107	        try:
+   108	            st = SectionType(section_type_str)
+   109	            title = SECTION_TITLES.get(st, section_type_str)
+   110	        except ValueError:
+   111	            title = section_type_str
+   112	        sections.append(
+   113	            {
+   114	                "audio_id": r["id"],
+   115	                "section_index": r["section_index"],
+   116	                "section_type": section_type_str,
+   117	                "title": title,
+   118	            }
+   119	        )
+   120	
+   121	    return {
+   122	        "audio_id": full_row["id"],
+   123	        "lesson_id": lesson_id,
+   124	        "sections": sections,
+   125	    }
+   126	
+   127	
+   128	@router.get("/lesson/{lesson_id}/zip", status_code=200)
+   129	async def download_lesson_zip(lesson_id: str, request: Request):
+   130	    """Return a ZIP of all section WAVs for a lesson with context-rich filenames."""
+   131	    store = request.app.state.content_store
+   132	    rows = store.list_audio_files_for_lesson(lesson_id)
+   133	    full_row = next((r for r in rows if r["section_index"] is None), None)
+   134	    section_rows = [r for r in rows if r["section_index"] is not None]
+   135	
+   136	    if not section_rows:
+   137	        raise HTTPException(status_code=404, detail="No section audio files found for this lesson")
+   138	
+   139	    # Validate all files exist before building the ZIP
+   140	    all_rows = ([full_row] if full_row else []) + section_rows
+   141	    for r in all_rows:
+   142	        if not Path(r["file_path"]).exists():
+   143	            raise HTTPException(status_code=404, detail=f"Audio file missing: {r['file_path']}")
+   144	
+   145	    # Resolve topic and day for naming
+   146	    topic = "audio"
+   147	    day = 1
+   148	    lesson_row = store.get_lesson_row(lesson_id)
+   149	    if lesson_row is not None:
+   150	        day = lesson_row["day"]
+   151	        curriculum = store.get_curriculum(lesson_row["curriculum_id"])
+   152	        if curriculum is not None:
+   153	            topic = curriculum.topic
+   154	        else:
+   155	            lesson = store.get_lesson(lesson_id)
+   156	            topic = lesson.title  # lesson_row exists → lesson exists
+   157	
+   158	    safe_topic = _sanitize_filename(topic)
+   159	
+   160	    # Build ZIP in memory: full lesson file first (sorts as _00_), then sections
+   161	    buf = io.BytesIO()
+   162	    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_STORED) as zf:
+   163	        if full_row:
+   164	            full_filename = f"{safe_topic}_Day{day:02d}_00_Full.wav"
+   165	            zf.write(full_row["file_path"], arcname=full_filename)
+   166	        for r in sorted(section_rows, key=lambda x: x["section_index"]):
+   167	            filename = _build_section_filename(topic, day, r["section_index"], r["section_type"] or "")
+   168	            zf.write(r["file_path"], arcname=filename)
+   169	
+   170	    zip_name = f"{_sanitize_filename(topic)}_Day{day:02d}.zip"
+   171	    return Response(
+   172	        content=buf.getvalue(),
+   173	        media_type="application/zip",
+   174	        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+   175	    )
+   176	
+   177	
+   178	@router.get("/{audio_id}", status_code=200)
+   179	async def get_audio(audio_id: str, request: Request):
+   180	    store = request.app.state.content_store
+   181	    row = store.get_audio_file_row(audio_id)
+   182	    if row is None:
+   183	        raise HTTPException(status_code=404, detail="Audio not found")
+   184	
+   185	    path = Path(row["file_path"])
+   186	    if not path.exists():
+   187	        raise HTTPException(status_code=404, detail="Audio file missing")
+   188	
+   189	    # Build a friendly download filename with curriculum context
+   190	    lesson_id = row["lesson_id"]
+   191	    topic = "audio"
+   192	    day = 1
+   193	    lesson_row = store.get_lesson_row(lesson_id)
+   194	    if lesson_row is not None:
+   195	        day = lesson_row["day"]
+   196	        curriculum = store.get_curriculum(lesson_row["curriculum_id"])
+   197	        if curriculum is not None:
+   198	            topic = curriculum.topic
+   199	        else:
+   200	            lesson = store.get_lesson(lesson_id)
+   201	            topic = lesson.title  # lesson_row exists → lesson exists
+   202	
+   203	    if row["section_index"] is not None:
+   204	        filename = _build_section_filename(topic, day, row["section_index"], row["section_type"] or "")
+   205	    else:
+   206	        filename = f"{_sanitize_filename(topic)}_Day{day:02d}_full.wav"
+   207	
+   208	    return FileResponse(
+   209	        str(path),
+   210	        media_type="audio/wav",
+   211	        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+   212	    )
+
 ```
 
-Three changes from the prototype:
+Four changes from the prototype:
 
 1. **Per-section audio.** `POST /render` allocates a UUID for each section as well as for the full lesson. The renderer writes one WAV per section plus the full-lesson WAV. All are persisted in `ContentStore.audio_files` with `section_index` and `section_type` columns. The response body includes the section list so the frontend can build a section picker immediately.
 2. **`GET /lesson/{lesson_id}`** returns the audio metadata (full audio ID + section list) for a lesson that was already rendered, without re-rendering. The frontend calls this on lesson load to check whether audio is ready.
 3. **Friendly filenames.** `GET /{audio_id}` builds a `Content-Disposition` filename from the lesson title and section info (`Arriving_in_Ljubljana_01_slow_speed.wav`), so the file is self-describing when downloaded.
+4. **Bulk download.** `GET /lesson/{lesson_id}/zip` streams every rendered section (full + per-section WAVs) as a single ZIP, with the lesson title as the archive filename. Lets the user download a whole Pimsleur day in one click rather than fetching seven separate WAVs.
 
 ### 7.5 Route Reference
 
@@ -4366,24 +4421,36 @@ Three changes from the prototype:
 | `/api/curriculum/generate` | POST | Generate a multi-day curriculum |
 | `/api/curriculum` | GET | List all persisted curricula |
 | `/api/curriculum/{id}` | GET | Retrieve curriculum metadata |
+| `/api/curriculum/{id}/progress` | GET | Per-day SRS progress for a curriculum |
 | `/api/curriculum/{id}/days/{day}/lesson` | GET | Get latest lesson for a curriculum day |
 | `/api/story/generate` | POST | Generate a Pimsleur lesson from a curriculum day |
 | `/api/story/{lesson_id}` | GET | Retrieve lesson with full phrase list |
 | `/api/srs/due` | GET | Collocations due for review today |
 | `/api/srs/new` | GET | Collocations in `new` state |
-| `/api/srs/feedback` | POST | Record implicit feedback signal |
+| `/api/srs/review-queue` | GET | Unified queue (due + capped new), per-direction, with media URLs |
+| `/api/srs/items/{id}/direction/{direction}/feedback` | POST | Per-direction FSRS feedback (Again/Hard/Good/Easy) |
 | `/api/srs/listen` | POST | Mark lesson listened + register words with SRS |
 | `/api/srs/lesson/{id}/transcript` | GET | Per-word transcript with SRS state |
 | `/api/srs/stats` | GET | Total / due-today counts |
+| `/api/srs/queue-stats` | GET | New + due breakdown using cached daily-new-cap |
+| `/api/srs/translate-missing` | POST | Backfill translations via LLM for untranslated lemmas |
+| `/api/srs/backfill-translations` | POST | Bulk-apply a translation dict |
+| `/api/srs/items` | POST | Admin: create new SRS item |
 | `/api/srs/items` | GET | Admin: paginated SRS item list |
 | `/api/srs/items/{id}` | PATCH | Admin: edit text + translation |
 | `/api/srs/items/{id}` | DELETE | Admin: delete item |
 | `/api/srs/items/bulk-delete` | POST | Admin: bulk delete by ID list |
 | `/api/srs/items/{id}/reset` | POST | Admin: reset FSRS schedule to `new` |
+| `/api/srs/items/{id}/state` | POST | Admin: force a specific SRS state |
 | `/api/srs/items/{id}/suspend` | POST | Admin: toggle suspended flag |
+| `/api/srs/media/{filename}` | GET | Serve media file (image/audio) by filename |
 | `/api/audio/render` | POST | Render lesson to WAV (full + per-section) |
 | `/api/audio/lesson/{lesson_id}` | GET | Get audio metadata for a lesson |
+| `/api/audio/lesson/{lesson_id}/zip` | GET | Download all sections as a single ZIP |
 | `/api/audio/{audio_id}` | GET | Download a WAV file |
+| `/api/anki/sync` | POST | Unified offline sync (create-new → push → drain → pull); 409 if Anki running |
+| `/api/anki/status` | GET | Whether Anki holds the collection lock |
+| `/api/admin/refresh-media` | POST | Re-import Anki media → TunaTale cache |
 | `/api/health` | GET | Health check |
 
 
@@ -4459,7 +4526,7 @@ Required test coverage of 100.0% reached. Total coverage: 100.00%
 409 passed in 6.85s
 ```
 
-409 tests, **100% branch coverage**. All in mock mode — no network calls needed. The coverage target was raised from 95% to 100% after the test suite expanded to cover every branch.
+409 tests, **100% branch coverage** *(at the time of the original walkthrough revision)*. As of the Anki-sync work the suite has grown to **1460 tests across 73 files** at **~99.95% branch coverage** — the only remaining uncovered lines are a handful of conditional ALTER guards in `srs/migrations.py` that only fire when re-running a partially applied migration. All in mock mode — no network calls needed. PART 8 below shows the original test snapshot; for an up-to-date breakdown of the new Anki-sync test files see PART 12.
 
 ### 8.2 Test File Inventory
 
@@ -4468,48 +4535,84 @@ ls backend/tests/test_*.py | xargs -I{} sh -c "echo \"{}: \$(grep -c \"def test_
 ```
 
 ```output
-backend/tests/test_api.py: 48 tests
-backend/tests/test_api_srs_admin.py: 14 tests
+backend/tests/test_anki_audit_guids.py: 12 tests
+backend/tests/test_anki_backfill_guids.py: 16 tests
+backend/tests/test_anki_bootstrap_e2e.py: 8 tests
+backend/tests/test_anki_connect_client.py: 24 tests
+backend/tests/test_anki_fallback_log.py: 4 tests
+backend/tests/test_anki_guid.py: 4 tests
+backend/tests/test_anki_import_seed_readonly.py: 27 tests
+backend/tests/test_anki_media_forvo.py: 13 tests
+backend/tests/test_anki_media_normalize.py: 9 tests
+backend/tests/test_anki_media_pipeline.py: 15 tests
+backend/tests/test_anki_media_pixabay.py: 24 tests
+backend/tests/test_anki_media_tts.py: 5 tests
+backend/tests/test_anki_merge_dupes_apply.py: 26 tests
+backend/tests/test_anki_merge_dupes_cli.py: 9 tests
+backend/tests/test_anki_merge_dupes_plan.py: 20 tests
+backend/tests/test_anki_migrate_homonyms.py: 20 tests
+backend/tests/test_anki_model_discovery.py: 16 tests
+backend/tests/test_anki_normalize_usns.py: 5 tests
+backend/tests/test_anki_notetype.py: 16 tests
+backend/tests/test_anki_offline_writer_create_note.py: 24 tests
+backend/tests/test_anki_repair_nested_homonyms.py: 14 tests
+backend/tests/test_anki_safety.py: 17 tests
+backend/tests/test_anki_safety_rw.py: 11 tests
+backend/tests/test_anki_sqlite_reader.py: 43 tests
+backend/tests/test_anki_sqlite_writer.py: 22 tests
+backend/tests/test_anki_syncKey_preflight.py: 8 tests
+backend/tests/test_anki_sync_create_new.py: 43 tests
+backend/tests/test_anki_sync_force_fsrs.py: 22 tests
+backend/tests/test_anki_sync_mode_detection.py: 19 tests
+backend/tests/test_anki_sync_pull.py: 60 tests
+backend/tests/test_anki_sync_push.py: 43 tests
+backend/tests/test_anki_sync_round_trip.py: 2 tests
+backend/tests/test_api.py: 66 tests
+backend/tests/test_api_admin.py: 3 tests
+backend/tests/test_api_anki.py: 10 tests
+backend/tests/test_api_srs.py: 46 tests
+backend/tests/test_api_srs_admin.py: 39 tests
+backend/tests/test_api_srs_directions.py: 25 tests
 backend/tests/test_audio_ports.py: 5 tests
-backend/tests/test_config.py: 2 tests
+backend/tests/test_collocation_matcher.py: 11 tests
+backend/tests/test_config.py: 5 tests
 backend/tests/test_curriculum.py: 13 tests
+backend/tests/test_dirty_fields.py: 11 tests
 backend/tests/test_edge_tts.py: 9 tests
 backend/tests/test_enforcer.py: 10 tests
-backend/tests/test_fsrs.py: 13 tests
+backend/tests/test_feedback_rating_input.py: 13 tests
+backend/tests/test_fsrs.py: 18 tests
 backend/tests/test_lemmatizer.py: 7 tests
 backend/tests/test_llm_cassette.py: 11 tests
 backend/tests/test_llm_client.py: 41 tests
+backend/tests/test_llm_translate.py: 6 tests
 backend/tests/test_main_lifespan.py: 2 tests
+backend/tests/test_media_importer.py: 12 tests
 backend/tests/test_models.py: 37 tests
 backend/tests/test_pauses.py: 12 tests
 backend/tests/test_preprocessor.py: 7 tests
-backend/tests/test_prompts.py: 7 tests
+backend/tests/test_prompts.py: 22 tests
+backend/tests/test_queue_stats.py: 35 tests
+backend/tests/test_queue_stats_cache.py: 53 tests
 backend/tests/test_renderer.py: 19 tests
 backend/tests/test_section_builder.py: 24 tests
-backend/tests/test_srs_database.py: 37 tests
-backend/tests/test_srs_feedback.py: 5 tests
+backend/tests/test_srs_database.py: 88 tests
+backend/tests/test_srs_database_anki_surface.py: 15 tests
+backend/tests/test_srs_direction_state.py: 20 tests
+backend/tests/test_srs_feedback.py: 3 tests
+backend/tests/test_srs_guid.py: 7 tests
+backend/tests/test_srs_migrations.py: 51 tests
 backend/tests/test_srs_selector.py: 7 tests
-backend/tests/test_storage.py: 17 tests
-backend/tests/test_story.py: 11 tests
+backend/tests/test_srs_sync_scratch.py: 8 tests
+backend/tests/test_storage.py: 25 tests
+backend/tests/test_story.py: 18 tests
 backend/tests/test_syllabify.py: 5 tests
 backend/tests/test_tokenizer.py: 13 tests
-backend/tests/test_transcript.py: 11 tests
+backend/tests/test_transcript.py: 25 tests
+
 ```
 
-409 tests across 26 files. New test files since the original walkthrough:
-
-| File | Tests | What it covers |
-|------|-------|----------------|
-| `test_api_srs_admin.py` | 14 | SRS admin endpoints (list/patch/delete/bulk-delete/reset/suspend) |
-| `test_lemmatizer.py` | 7 | `LowercaseLemmatizer` Protocol implementation |
-| `test_main_lifespan.py` | 2 | FastAPI startup/shutdown lifecycle |
-| `test_section_builder.py` | 24 | All four section builders + `build_word_breakdown` |
-| `test_storage.py` | 17 | `ContentStore` round-trips for curricula, lessons, audio files |
-| `test_syllabify.py` | 5 | `syllabify_slovene_word` onset-maximization algorithm |
-| `test_tokenizer.py` | 13 | `tokenize()` whitespace splitting and punctuation stripping |
-| `test_transcript.py` | 11 | `extract_transcript` per-word SRS annotation |
-
-The heaviest areas: API (48+14=62), LLM client (41), SRS database (37), models (37), section builder (24), renderer (19), storage (17).
+~1474 tests across 74 files. The big growth is in `app/anki/` — see PART 12.8 for a per-file breakdown of the Anki integration tests. The non-anki test files were largely unchanged in count from the original 26-file walkthrough snapshot; the additional ~48 anki/sync/media/queue-stats files are the diff.
 
 ### 8.3 Mocking Patterns
 
@@ -4661,8 +4764,15 @@ Each step is independently testable: cassettes for LLM, `:memory:` for SRS and C
 | **TTS concurrency** | 3 concurrent EdgeTTS requests | 10 concurrent + `asyncio.gather` parallelises sections (~80s → ~12s on 7-section lesson) |
 | **Pause system** | Complex word_count multiplier table | Flat 500ms (natural/translated) + proportional for KEY_PHRASES L2 + 600ms for SLOW_SPEED |
 | **SRS admin** | No UI | `/srs` SvelteKit admin page + 6 REST endpoints (list/edit/delete/bulk-delete/reset/suspend) |
-| **Testing** | Unit tests only | 409 tests, 100% branch coverage, cassette fixtures, 4 mock strategies |
-| **API endpoints** | 10 endpoints | 22 endpoints |
+| **Testing** | Unit tests only | 1460 tests, ~99.95% branch coverage, cassette fixtures, 4 mock strategies, Playwright e2e |
+| **API endpoints** | 10 endpoints | 28 endpoints |
+| **SRS directions** | Single direction (recognition only) | Two directions per item (RECOGNITION L2→L1 + PRODUCTION L1→L2) with independent FSRS state |
+| **SRS states** | new/learning/review/relearning + suspended | + `BURIED` (Anki bury), `KNOWN` (graduated), full Anki queue mapping |
+| **Anki integration** | None | Bidirectional offline sync over `collection.anki2` SQLite (push → drain revlog → pull → create-new) |
+| **Anki safety** | n/a | `safe_open` lock-probe + SHA-256 backup + integrity validation; USN normalization protocol |
+| **Media** | EdgeTTS only | Forvo audio → EdgeTTS fallback + Pixabay images (token-overlap scoring) + ffmpeg LUFS normalize, deduped per-card |
+| **Queue stats** | Live count from SRS DB | Cached daily-new-cap + FSRS-5 params parsed from Anki `deck_config` protobuf |
+| **Frontend** | Generate / lesson / practice routes | + unified `/review`, `/admin/srs`, single Sync button, Anki-running gating |
 
 **What was preserved from the prototypes:**
 - Pimsleur 4-section format (KEY_PHRASES, NATURAL_SPEED, SLOW_SPEED, TRANSLATED)
@@ -4681,19 +4791,810 @@ Each step is independently testable: cassettes for LLM, `:memory:` for SRS and C
 - `cd backend && uv sync --all-groups`
 
 ### Automated suite
+
 ```bash
-./test.sh   # ruff lint + pytest (409 tests) + vitest (frontend)
+./test.sh   # ruff lint + pytest (~1460 tests) + vitest (frontend) + playwright e2e
 ```
 
 ### Start the dev server
+
 ```bash
 ./start-dev.sh   # FastAPI at :8000 + SvelteKit at :5173
 ```
+
 Open http://localhost:5173, enter a topic (e.g. "ordering coffee in Ljubljana"), choose CEFR level and days, click Generate → select a day → Generate Lesson → Render Audio → play.
 
-### SRS practice loop
-First generate a curriculum and lesson (which registers SRS items via `POST /api/srs/listen`), then navigate to http://localhost:5173/practice — click through cards, rate each with Again / Hard / Good / Easy, and view the completion screen after the last card.
+### SRS review loop
+First generate a curriculum and lesson (which registers SRS items via `POST /api/srs/listen`), then navigate to http://localhost:5173/review — the unified queue blends due cards and a daily-capped slice of new ones, alternating directions (L2→L1 and L1→L2). Rate each with Again / Hard / Good / Easy.
 
 ### SRS admin UI
-Navigate to http://localhost:5173/srs to browse and manage SRS items. Features: search (full-text across text and translation), filter by state, sortable columns, inline edit, single and bulk delete, reset schedule, suspend/unsuspend.
+Navigate to http://localhost:5173/admin/srs to browse and manage SRS items. Features: search (full-text across text and translation), filter by state, sortable columns, inline edit, single and bulk delete, reset schedule, suspend/unsuspend, force state, create new item.
 
+### Anki sync
+Close Anki, then click **Sync** in the UI (or `POST /api/anki/sync`). The backend acquires an exclusive lock on `collection.anki2`, takes a SHA-256-validated backup, and runs the four-phase sync (create-new → push → drain pending revlog → pull). If Anki is open you'll get a 409 with a user-facing message; the `/api/anki/status` endpoint drives the UI's gating spinner.
+
+### Developer reference
+For day-to-day developer commands, testing quirks (cassette modes, the offline-Anki test fixtures), and architectural conventions, see `AGENTS.md` at the repo root and `.claude/rules/anki-sync.md` for the USN/sync protocol details. CLAUDE.md is the project-level companion that points at the rules directory.
+
+---
+
+## PART 12: Anki Integration (Stage 3)
+
+The biggest change since the original walkthrough is **bidirectional Anki sync**. TunaTale's SRS database now mirrors a user's Anki collection: items have stable Anki-compatible GUIDs, two review directions (recognition + production matching Anki ord 0/1), and a sync engine that reads and writes `collection.anki2` directly via SQLite. AnkiConnect (the HTTP plugin) is supported for compatibility but is no longer the primary path — offline sync is faster and works while Anki is closed.
+
+This part explains the design from the inside out: domain shape (12.1), safety envelope (12.2), readers/writers (12.3), the four-phase sync flow (12.4), media pipeline (12.5), queue stats from Anki's protobuf deck config (12.6), and the API surface (12.7).
+
+### 12.1 Two-Direction SRS Items
+
+Each `SRSItem` now has independent FSRS state for two directions: **RECOGNITION** (L2→L1, shown the Slovene word and asked for the English) and **PRODUCTION** (L1→L2, the reverse). Anki models the same shape with `cards.ord = 0/1`. The model lives in `app/models/srs_item.py`.
+
+```bash
+sed -n '14,75p' backend/app/models/srs_item.py | cat -n
+```
+
+```output
+     1	
+     2	from dataclasses import dataclass, field
+     3	from datetime import date
+     4	from enum import Enum
+     5	
+     6	from .syntactic_unit import SyntacticUnit
+     7	
+     8	
+     9	class SRSState(Enum):
+    10	    """Learning state of an SRS item."""
+    11	
+    12	    NEW = "new"
+    13	    LEARNING = "learning"
+    14	    REVIEW = "review"
+    15	    RELEARNING = "relearning"
+    16	    SUSPENDED = "suspended"
+    17	    BURIED = "buried"
+    18	    KNOWN = "known"
+    19	
+    20	
+    21	class Rating(Enum):
+    22	    """Learner rating for an SRS review."""
+    23	
+    24	    AGAIN = 1  # Complete blackout / forgot
+    25	    HARD = 2  # Significant difficulty
+    26	    GOOD = 3  # Correct with some effort
+    27	    EASY = 4  # Perfect recall
+    28	
+    29	
+    30	class Direction(Enum):
+    31	    """Review direction for an SRS item."""
+    32	
+    33	    RECOGNITION = "recognition"  # L2 → L1 (Anki ord=0)
+    34	    PRODUCTION = "production"  # L1 → L2 (Anki ord=1)
+    35	
+    36	
+    37	@dataclass
+    38	class DirectionState:
+    39	    """FSRS scheduling state for one direction of a collocation."""
+    40	
+    41	    direction: Direction
+    42	    due_date: date
+    43	    stability: float = 1.0
+    44	    difficulty: float = 5.0
+    45	    reps: int = 0
+    46	    lapses: int = 0
+    47	    state: SRSState = field(default=SRSState.NEW)
+    48	    last_review: date | None = None
+    49	    anki_card_id: int | None = None
+    50	    anki_due: int | None = None
+    51	    dirty_fsrs: bool = False
+    52	    last_synced_at: str | None = None
+    53	    last_rating: int | None = None
+    54	
+    55	
+    56	class SRSItem:
+    57	    """An SRS-tracked syntactic unit with per-direction FSRS scheduling.
+    58	
+    59	    Accepts two construction styles:
+    60	
+    61	    1. Two-direction (new): `SRSItem(syntactic_unit=..., directions={...}, guid=..., anki_note_id=...)`.
+    62	    2. Flat legacy:         `SRSItem(syntactic_unit=..., due_date=..., stability=..., state=..., ...)`.
+```
+
+Three pieces are new since the original walkthrough:
+
+- **`SRSState.SUSPENDED` / `BURIED` / `KNOWN`** — full Anki queue mapping. Suspended is admin-toggled; buried mirrors Anki's bury (excluded from today only); known is a graduated terminal state.
+- **`Direction`** — drives the per-direction FSRS state map and round-trips to Anki via `cards.ord`. The review queue now alternates directions to keep practice varied.
+- **`DirectionState.anki_card_id` / `anki_due` / `dirty_fsrs` / `last_synced_at`** — the sync bookkeeping. `dirty_fsrs=True` means TunaTale has FSRS state changes the user hasn't pushed to Anki yet; `anki_due` preserves Anki's deck position so newly-introduced items keep the same ordering they would have in Anki.
+
+The flat fields on `SRSItem` (`due_date`, `stability`, `state`, ...) are compatibility shims that delegate to `directions[Direction.RECOGNITION]` so callers predating the two-direction schema keep working. They will be removed in Stage 3.5.
+
+The matching schema in `app/srs/database.py` uses two tables — `collocations` (1 row per item, with `guid`, `anki_note_id`, `text`, `translation`, etc.) and `collocation_directions` (2 rows per item, one per direction, with the FSRS fields). New columns added by the v1→v8 migrations: `guid`, `anki_note_id`, `anki_card_id`, `anki_due`, `dirty_fsrs`, `last_synced_at`, `last_rating`, `grammar`, `note`, `source_sentence`, `source_lesson_id`, `source_line_index`.
+
+### 12.2 Safety Envelope: `safe_open`, USN, Backups
+
+`collection.anki2` is a SQLite file. Touching it directly without the right precautions corrupts AnkiWeb sync state — see the project rule file `.claude/rules/anki-sync.md` for the full theory. Every TunaTale write goes through `app/anki/safety.py::safe_open`, which is the *only* sanctioned way to open the collection.
+
+```bash
+sed -n '135,205p' backend/app/anki/safety.py | cat -n
+```
+
+```output
+     1	class AnkiRunningError(RuntimeError):
+     2	    """Raised when the Anki collection is exclusively locked (Anki is running)."""
+     3	
+     4	
+     5	def probe_lock(path: Path) -> bool:
+     6	    """Return True if the collection is locked (Anki is running), False if acquirable."""
+     7	    try:
+     8	        _probe_exclusive_lock(path)
+     9	        return False
+    10	    except AnkiRunningError:
+    11	        return True
+    12	
+    13	
+    14	def _probe_exclusive_lock(path: Path) -> None:
+    15	    """Raise AnkiRunningError if the database cannot be exclusively locked (Anki running)."""
+    16	    probe = sqlite3.connect(str(path), timeout=0.1)
+    17	    try:
+    18	        probe.execute("BEGIN EXCLUSIVE")
+    19	        probe.execute("ROLLBACK")
+    20	    except (sqlite3.OperationalError, sqlite3.DatabaseError) as exc:
+    21	        probe.close()
+    22	        raise AnkiRunningError(
+    23	            f"Anki collection is locked (Anki may be running): {path}\n"
+    24	            f"Close Anki before running import. Original error: {exc}"
+    25	        ) from exc
+    26	    finally:
+    27	        with suppress(Exception):  # pragma: no cover
+    28	            probe.close()
+    29	
+    30	
+    31	@contextmanager
+    32	def safe_open(
+    33	    collection_path: Path,
+    34	    backup_dir: Path | None = None,
+    35	    mode: Literal["ro", "rw"] = "ro",
+    36	) -> Generator[AnkiContext]:
+    37	    """Open an Anki collection with full safety checks.
+    38	
+    39	    Yields an AnkiContext with a connection (read-only or read-write per ``mode``)
+    40	    and backup metadata. Raises RuntimeError if Anki is running, the backup is
+    41	    invalid, or (in ro mode) the source SHA256 changes during the run.
+    42	    """
+    43	    if backup_dir is None:
+    44	        backup_dir = settings.anki_backup_dir
+    45	
+    46	    # Gate 1: lock probe
+    47	    _probe_exclusive_lock(collection_path)
+    48	
+    49	    # Gate 2: SHA256 before open
+    50	    source_sha256 = _sha256_file(collection_path)
+    51	
+    52	    # Get source note count for backup validation
+    53	    _src = sqlite3.connect(str(collection_path))
+    54	    _register_anki_collations(_src)
+    55	    try:
+    56	        source_note_count = _src.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+    57	    finally:
+    58	        _src.close()
+    59	
+    60	    # Gate 3: backup via Connection.backup()
+    61	    backup_dir.mkdir(parents=True, exist_ok=True)
+    62	    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    63	    backup_path = backup_dir / f"collection.anki2.bak_{timestamp}"
+    64	
+    65	    src_conn = sqlite3.connect(str(collection_path))
+    66	    dst_conn = sqlite3.connect(str(backup_path))
+    67	    try:
+    68	        src_conn.backup(dst_conn)
+    69	    finally:
+    70	        dst_conn.close()
+    71	        src_conn.close()
+```
+
+Three gates execute on every `safe_open` call before the caller sees a connection:
+
+1. **Lock probe.** `BEGIN EXCLUSIVE` against the collection — if Anki holds it, the probe fails and `AnkiRunningError` propagates up to the API as a 409. `probe_lock()` is the read-only inverse used by `/api/anki/status`.
+2. **SHA-256 fingerprint.** Computed before any work. In `mode="ro"`, the same hash is checked again at exit — any mid-run mutation is treated as a torn read and raises.
+3. **Backup + validation.** A timestamped copy goes to `~/.tunatale/anki-backups/` via SQLite's online `Connection.backup()` API. The backup is then opened independently, an integrity check runs, and the note count must match the source. Any mismatch raises before the caller's transaction begins.
+
+After successful open, `AnkiContext` exposes the connection plus an `audit_changes()` post-write hook that diffs row counts and surfaces unintended writes (e.g. a new note appearing during a metadata update).
+
+Two more pieces complete the protocol — they live alongside `safe_open` and the project rule file:
+
+- **GUID-aware writes.** Every mutation must set `row.usn = -1` and bump `mod`. `UPDATE col SET ..., usn = -1` runs after each batch. Without this, Anki's integrity check on next open re-detects the change itself, bumps `col.scm`, and forces an unnecessary full upload.
+- **`normalize_usns.py`** (in `app/anki/`). After a forced full upload the local `col.usn` resets to the server value, but per-row `usn` values stay at their old (now "newer than server") value — so AnkiWeb keeps re-uploading them forever. `normalize_usns` clamps `cards.usn`, `notes.usn`, `revlog.usn` back to `col.usn` with no content change. Run it after every schema-bumping migration.
+
+### 12.3 Readers and Writers
+
+The sync engine talks to the underlying store through four ports defined in `app/anki/sync.py`:
+
+| Port | When used | Backend |
+|------|-----------|---------|
+| `OfflineReader` | Default sync; Anki must be closed | Direct SQLite `SELECT` against `collection.anki2` |
+| `OfflineWriter` | Default sync | Direct SQLite `INSERT`/`UPDATE` with USN bookkeeping |
+| `OnlineReader` | Compatibility / legacy paths | AnkiConnect JSON-RPC (`findNotes`, `notesInfo`) |
+| `OnlineWriter` | Compatibility / legacy paths | AnkiConnect (`addNote`, `updateNoteFields`, `storeMediaFile`) |
+
+Both *Reader* ports return the same in-memory shapes — `AnkiNote` and `AnkiCard` from `app/anki/sqlite_reader.py`. The card record carries the FSRS state parsed out of Anki's per-card data blob (queue, due, ivl, factor, lapses, reps), plus the `fsrs_data` payload (stability, difficulty, last review).
+
+```bash
+sed -n '38,80p' backend/app/anki/sqlite_reader.py | cat -n
+```
+
+```output
+     1	def compute_due_date(queue: int, due_raw: int, col_crt: int) -> date:
+     2	    """Convert Anki's queue-dependent due field to a Python date.
+     3	
+     4	    queue 2/3 (review/day-learn): due_raw is days since col.crt epoch.
+     5	    queue 1 (learning): due_raw is an absolute unix timestamp (seconds).
+     6	    queue 0 (new) or -1 (suspended): due_raw is a queue position — fall back to today.
+     7	    """
+     8	    if queue in (2, 3):
+     9	        return date.fromtimestamp(col_crt) + timedelta(days=due_raw)
+    10	    if queue == 1:
+    11	        return datetime.fromtimestamp(due_raw).date()
+    12	    return date.today()
+    13	
+    14	
+    15	def find_deck_id(conn: sqlite3.Connection, deck_name: str) -> int | None:
+    16	    """Find deck id by name. Tries col.decks JSON (legacy) then decks table (modern)."""
+    17	    row = conn.execute("SELECT decks FROM col").fetchone()
+    18	    if row:
+    19	        try:
+    20	            deck_data = json.loads(row[0])
+    21	            for did, info in deck_data.items():
+    22	                if isinstance(info, dict) and info.get("name") == deck_name:
+    23	                    return int(did)
+    24	        except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+    25	            pass
+    26	
+    27	    try:
+    28	        rows = conn.execute("SELECT id, name FROM decks").fetchall()
+    29	        for r in rows:
+    30	            if r[1] == deck_name:
+    31	                return r[0]
+    32	    except sqlite3.OperationalError:
+    33	        pass
+    34	
+    35	    return None
+    36	
+    37	
+    38	def fetch_notes_for_deck(conn: sqlite3.Connection, deck_id: int) -> list[AnkiNote]:
+    39	    """Fetch all notes that have at least one card in the given deck."""
+    40	    rows = conn.execute(
+    41	        """
+    42	        SELECT DISTINCT n.id, n.guid, n.mid, n.mod, n.tags, n.flds
+    43	        FROM notes n
+```
+
+Two details from the reader are worth highlighting because they're easy to get wrong:
+
+- **Dual deck lookup.** Modern Anki stores decks in a `decks` *table*, but legacy collections still keep the deck list as JSON in `col.decks`. `find_deck_id` reads JSON first then falls back to the table — neither is canonical, and which exists depends on the user's Anki version.
+- **Queue-dependent due decoding.** Anki's `cards.due` field is overloaded: it's days-since-collection-epoch for queues 2/3 (review / day-learn), an absolute Unix timestamp for queue 1 (intra-day learning), and a positional integer for queues 0 / -1 (new / suspended). `compute_due_date` unifies these into a Python `date` and the offline reader propagates them through `AnkiCard.due_date`.
+
+`OfflineWriter` is the first place where the safety rules from 12.2 turn into code. Every `INSERT`/`UPDATE` sets `usn = -1` and `mod = now()` on touched rows; every batch ends with `UPDATE col SET mod = ?, usn = -1`; revlog rows additionally bump `col.scm` only when the schema actually changed. `OfflineWriter.create_note` (a Stage 3.9 addition) hashes new media bytes, dedupes against existing files in the media collection, and stores both the binary and a row in `media` with the right `csum`.
+
+### 12.4 The Four-Phase Sync Flow
+
+The user-visible `POST /api/anki/sync` runs four phases in a single `safe_open` transaction. The order matters — getting it wrong loses revlog entries or creates duplicate notes.
+
+```bash
+grep -nE '    def sync_|    def _direction_differs|class AnkiSync' backend/app/anki/sync.py | head -20
+```
+
+```output
+605:class AnkiSync:
+637:    def sync_pull(self, dry_run: bool = False) -> PullReport:
+773:    def sync_push(self, dry_run: bool = False, force_fsrs: bool = False) -> PushReport:
+```
+
+1. **`sync_create_new`** — for every TunaTale collocation that has no `anki_note_id`, fetch media (12.5), call `writer.create_note` to add it to Anki, and stash the new note id back on the SRSItem. New notes are filtered against existing GUIDs/L2-text-with-disambiguation to avoid duplicate-note errors (the B11/B16/B17/B19 fixes from session 2 of S3.11 — `detect_and_link_duplicates` does an id-first lookup before falling back to GUID).
+2. **`sync_push`** — for every direction with `dirty_fsrs=True` or pending field edits, write the FSRS state and field changes to Anki via `writer.update_*`. Push uses `setSpecificValueOfCard` (preflighted in `preflight_set_specific_value_of_card`) since stock AnkiConnect doesn't expose FSRS-state edits. Suspends, due dates, and field text round-trip here.
+3. **Drain pending revlog.** TunaTale records every review locally in a scratch `pending_revlog` table — direction id, rating, ease/factor, time taken — independently of whether Anki was reachable. `drain_pending_revlog_to_writer` flushes those rows to Anki's `revlog` table (this is what populates Anki's review history graph). The drain happens *after* push so the rated card already has its updated FSRS state on the Anki side; running it before push could lose entries if push fails partway. (See commit `67e9a57` — B14 swap.)
+4. **`sync_pull`** — read every note in the deck, diff against TunaTale's local copy, and update SRSItems whose Anki side changed. The diff function `_direction_differs` compares state, due, stability, difficulty, lapses, reps, last_rating, and `anki_due` — anything else (e.g. internal review counts) is treated as noise. **Local FSRS state with `dirty_fsrs=True` is preserved** even if Anki has different values, since the next push will overwrite Anki anyway (the b9bbcb4 fix). Conflicts on field text are recorded in the `sync_conflicts` scratch table for later resolution.
+
+Each phase returns a typed report (`CreateNewReport`, `PushReport`, `PullReport`) and the API combines them into a single response shape.
+
+Two helper concepts appear repeatedly:
+
+- **`force_fsrs` gating** (`ensure_force_fsrs_ack`). Pushing FSRS-state changes to Anki is irreversible from Anki's perspective. The first time a user runs sync the writer prompts for explicit ack and writes a marker file; subsequent runs read the marker and proceed silently.
+- **Mode auto-detection** (`detect_mode`). The CLI wrapper sniffs whether AnkiConnect is reachable on `anki_connect_url`; if yes, it uses Online ports; if no, it falls back to Offline. The HTTP API always uses Offline.
+
+### 12.5 Media Pipeline
+
+`fetch_card_media(word, english, *, used_image_urls)` in `app/anki/media/pipeline.py` is the single entry point that the sync engine calls when creating a new Anki note. It returns a `MediaResult` with audio bytes, image bytes, and chosen filenames.
+
+```bash
+cat -n backend/app/anki/media/pipeline.py
+```
+
+```output
+     1	"""Media pipeline: fetch audio (Forvo → TTS) and image (Pixabay) for an Anki card."""
+     2	
+     3	from __future__ import annotations
+     4	
+     5	from collections.abc import Awaitable, Callable
+     6	from dataclasses import dataclass
+     7	from typing import Any
+     8	
+     9	from .forvo import fetch_forvo_audio
+    10	from .normalize import normalize_audio
+    11	from .pixabay import fetch_pixabay_image
+    12	from .tts import DEFAULT_VOICE, generate_tts_audio
+    13	
+    14	
+    15	@dataclass
+    16	class MediaResult:
+    17	    audio_bytes: bytes | None = None
+    18	    audio_source: str | None = None
+    19	    image_bytes: bytes | None = None
+    20	    image_ext: str | None = None
+    21	    image_url: str | None = None
+    22	
+    23	
+    24	async def fetch_card_media(
+    25	    word: str,
+    26	    english: str,
+    27	    *,
+    28	    pixabay_key: str,
+    29	    http_client: Any = None,
+    30	    tts_voice: str = DEFAULT_VOICE,
+    31	    normalize: bool = True,
+    32	    used_image_urls: set[str] | None = None,
+    33	    _forvo_fn: Callable[..., bytes | None] | None = None,
+    34	    _tts_fn: Callable[..., Awaitable[bytes | None]] | None = None,
+    35	    _pixabay_fn: Callable[..., Any] | None = None,
+    36	    _normalize_fn: Callable[..., bytes] | None = None,
+    37	) -> MediaResult:
+    38	    """Fetch audio and image for a vocabulary card.
+    39	
+    40	    Tries Forvo first, falls back to edge-tts. Image from Pixabay.
+    41	    Pass used_image_urls (a shared set) across cards to prevent duplicate images.
+    42	    """
+    43	    forvo_fn = _forvo_fn or fetch_forvo_audio
+    44	    tts_fn = _tts_fn or generate_tts_audio
+    45	    pixabay_fn = _pixabay_fn or fetch_pixabay_image
+    46	    norm_fn = _normalize_fn or normalize_audio
+    47	
+    48	    result = MediaResult()
+    49	
+    50	    audio = forvo_fn(word, http_client=http_client)
+    51	    if audio is not None:
+    52	        result.audio_source = "forvo"
+    53	        result.audio_bytes = audio
+    54	    else:
+    55	        audio = await tts_fn(word, voice=tts_voice)
+    56	        if audio is not None:
+    57	            result.audio_source = "tts"
+    58	            result.audio_bytes = audio
+    59	
+    60	    if result.audio_bytes is not None and normalize:
+    61	        result.audio_bytes = norm_fn(result.audio_bytes)
+    62	
+    63	    img = pixabay_fn(
+    64	        english,
+    65	        api_key=pixabay_key,
+    66	        http_client=http_client,
+    67	        used_urls=frozenset(used_image_urls) if used_image_urls is not None else frozenset(),
+    68	    )
+    69	    if img is not None:
+    70	        result.image_bytes, result.image_ext, result.image_url = img
+    71	        if used_image_urls is not None:
+    72	            used_image_urls.add(result.image_url)
+    73	
+    74	    return result
+```
+
+Audio path: **Forvo → EdgeTTS fallback → ffmpeg LUFS normalize**. Forvo is a community pronunciation database — `forvo.py` scrapes the public word page (no API key needed) and returns the first MP3 link. If no Forvo audio exists for the word, EdgeTTS synthesizes a fallback. Either way the resulting bytes go through `normalize.py`, which uses ffmpeg's `loudnorm` filter to clamp output to a target LUFS so cards in the same deck have consistent volume.
+
+Image path: **Pixabay with token-overlap scoring**. `build_query(english)` strips function words; `fetch_pixabay_image` scores candidate hits against the query tokens (`_tag_overlap`) and picks the best match not already in `used_image_urls`. The shared `used_image_urls` set threads through every call in the same sync run so two cards that would otherwise pick the same image get distinct images instead — this was the dedup feature added in commit `85279f6`.
+
+The `/api/admin/refresh-media` endpoint and the `app/media/importer.py` module handle a separate task: copying Anki's `collection.media/` files into TunaTale's local `media_dir` so the review UI can serve them. Since commit `83c4c9e` this is invoked as a side effect of every sync, not via a manual button.
+
+### 12.6 Queue Stats from Anki's Protobuf Deck Config
+
+A subtle but important detail: modern Anki stores deck configuration (daily new cap, FSRS parameters, bury settings) as **protobuf-encoded blobs** in the `deck_config` table — not JSON in `col.dconf` like older versions. `app/srs/queue_stats.py` includes a hand-rolled minimal protobuf decoder (`_pb_read_varint`, `_pb_find_varint_field`, `_pb_find_packed_float_field`, etc.) so TunaTale can read those values without a protoc-generated stub.
+
+```bash
+sed -n '154,235p' backend/app/srs/queue_stats.py | cat -n
+```
+
+```output
+     1	def _read_fsrs_params_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> FSRSParams | None:
+     2	    """Return FSRSParams from Anki's deck_config protobuf, or None if absent."""
+     3	    try:
+     4	        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+     5	    except sqlite3.Error:  # pragma: no cover
+     6	        return None  # pragma: no cover
+     7	
+     8	    if "deck_config" not in tables or "decks" not in tables:
+     9	        return None
+    10	
+    11	    deck_row = conn.execute("SELECT kind FROM decks WHERE name = ?", (deck_name,)).fetchone()
+    12	    if deck_row is None or not deck_row[0]:
+    13	        return None
+    14	
+    15	    kind_blob = deck_row[0]
+    16	    normal_kind_bytes = _pb_find_len_field(kind_blob if isinstance(kind_blob, bytes) else bytes(kind_blob), 1)
+    17	    if normal_kind_bytes is None:
+    18	        return None
+    19	
+    20	    conf_id = _pb_find_varint_field(normal_kind_bytes, 1)
+    21	    if conf_id is None:
+    22	        return None
+    23	
+    24	    config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
+    25	    if config_row is None or not config_row[0]:
+    26	        return None
+    27	
+    28	    config_blob = config_row[0]
+    29	    config_blob = bytes(config_blob) if isinstance(config_blob, memoryview) else config_blob
+    30	
+    31	    weights = _pb_find_packed_float_field(config_blob, _FSRS5_WEIGHTS_FIELD)
+    32	    if weights is None or len(weights) != 19:
+    33	        return None
+    34	
+    35	    retention_raw = _pb_find_fixed32_float_field(config_blob, _DESIRED_RETENTION_FIELD)
+    36	    retention = float(retention_raw) if retention_raw is not None else 0.9
+    37	
+    38	    try:
+    39	        return FSRSParams(weights=tuple(weights), desired_retention=retention)
+    40	    except (ValueError, TypeError):  # pragma: no cover
+    41	        return None  # pragma: no cover
+    42	
+    43	
+    44	def _read_new_per_day_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> int | None:
+    45	    """Read new-per-day from modern Anki's deck_config table (Anki ≥2.1.55).
+    46	
+    47	    Modern Anki stores deck configs as protobuf BLOBs in the deck_config table.
+    48	    The deck's conf_id is found via decks.kind (protobuf: field 1 LEN → field 1 VARINT).
+    49	    The cap is at field 9 (VARINT) in deck_config.config.
+    50	    """
+    51	    try:
+    52	        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    53	    except sqlite3.Error:  # pragma: no cover
+    54	        return None  # pragma: no cover
+    55	
+    56	    if "deck_config" not in tables or "decks" not in tables:
+    57	        return None
+    58	
+    59	    deck_row = conn.execute("SELECT kind FROM decks WHERE name = ?", (deck_name,)).fetchone()
+    60	    if deck_row is None or not deck_row[0]:
+    61	        return None
+    62	
+    63	    kind_blob = deck_row[0]
+    64	    # NormalDeckKind: field 1 (LEN) contains the config sub-message
+    65	    normal_kind_bytes = _pb_find_len_field(kind_blob if isinstance(kind_blob, bytes) else bytes(kind_blob), 1)
+    66	    if normal_kind_bytes is None:
+    67	        return None
+    68	
+    69	    # Within NormalDeckKind, field 1 (VARINT) = conf_id
+    70	    conf_id = _pb_find_varint_field(normal_kind_bytes, 1)
+    71	    if conf_id is None:
+    72	        return None
+    73	
+    74	    config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
+    75	    if config_row is None or not config_row[0]:
+    76	        return None
+    77	
+    78	    config_blob = config_row[0]
+    79	    # DeckConfig.Config: field 9 (VARINT) = new_per_day
+    80	    return _pb_find_varint_field(config_blob if isinstance(config_blob, bytes) else bytes(config_blob), 9)
+    81	
+    82	
+```
+
+Three values are pulled out of the protobuf blobs:
+
+- **`new_per_day`** (varint at field 9 of `DeckConfig.Config`) — the daily new-card cap. Cached in `anki_state_cache` keyed `new_per_day` so the review queue can rate-limit new items without re-reading the Anki collection on every request.
+- **FSRS-5 weights** (packed float at field `_FSRS5_WEIGHTS_FIELD`) — 19 floats. The TunaTale FSRS engine uses these weights to ensure scheduling matches what Anki would predict, avoiding drift between the two systems.
+- **`desired_retention`** (fixed32 float) — defaults to 0.9 when absent.
+
+Plus bury settings (bury_new, bury_review) and the new-card spread mode used by the review queue.
+
+`refresh_daily_new_cap`, `refresh_review_settings`, and `refresh_fsrs_params` run as side effects of every successful sync (see the bottom of the `/api/anki/sync` handler in 12.7), so the cache stays current. `resolve_*` accessors return tuples of `(value, source)` where source is `anki`, `legacy_dconf`, or `fallback` so the UI can show provenance — the green-yellow-red badge in the queue stats card.
+
+Two test files exercise this end-to-end with synthesized protobuf blobs: `test_queue_stats.py` and `test_queue_stats_cache.py`.
+
+### 12.7 Anki API Surface
+
+Two FastAPI routes drive the Anki integration:
+
+```bash
+cat -n backend/app/api/anki.py
+```
+
+```output
+     1	"""Anki integration endpoints."""
+     2	
+     3	from __future__ import annotations
+     4	
+     5	from pathlib import Path
+     6	
+     7	from fastapi import APIRouter, HTTPException, Request
+     8	
+     9	from app.anki.media.pipeline import fetch_card_media
+    10	
+    11	router = APIRouter(prefix="/api/anki", tags=["anki"])
+    12	
+    13	
+    14	def _derive_media_dir(collection_path) -> Path:
+    15	    return Path(collection_path).parent / "collection.media"
+    16	
+    17	
+    18	def _refresh_media_if_not_dry_run(dry_run: bool) -> dict:
+    19	    if dry_run:
+    20	        return {}
+    21	    from app.anki.import_seed import import_seed
+    22	
+    23	    return import_seed()
+    24	
+    25	
+    26	@router.post("/sync", status_code=200)
+    27	async def trigger_sync(request: Request, dry_run: bool = False):
+    28	    """Unified create-new + push + drain + pull sync using direct sqlite access.
+    29	
+    30	    Requires Anki to be closed (safe_open acquires an exclusive lock).
+    31	    Returns 409 with a user-facing message if Anki is running.
+    32	    """
+    33	    from app.anki import model_discovery
+    34	    from app.anki.safety import AnkiRunningError, safe_open
+    35	    from app.anki.sync import AnkiSync, OfflineReader, OfflineWriter, drain_pending_revlog_to_writer
+    36	    from app.config import settings
+    37	
+    38	    db = request.app.state.srs_db
+    39	
+    40	    try:
+    41	        with safe_open(settings.anki_collection_path, mode="rw") as ctx:
+    42	            col_ver = ctx.conn.execute("SELECT ver FROM col").fetchone()[0]
+    43	            reader = OfflineReader(ctx.conn, settings.anki_deck_name)
+    44	            writer = OfflineWriter(ctx.conn, media_dir=_derive_media_dir(settings.anki_collection_path))
+    45	
+    46	            model_name = settings.anki_model_name
+    47	            if not model_name:
+    48	                model_name = model_discovery.get_or_discover_model_name_offline(ctx.conn, settings.anki_deck_name)
+    49	            if not model_name:
+    50	                raise HTTPException(
+    51	                    status_code=409,
+    52	                    detail=(
+    53	                        "Anki model not configured and no notes found to discover from. "
+    54	                        "Set anki_model_name in settings."
+    55	                    ),
+    56	                )
+    57	
+    58	            sync = AnkiSync(db=db, _reader=reader, _writer=writer, _anki_col_ver=col_ver)
+    59	
+    60	            async def _media_fn(word, english, *, used_image_urls):
+    61	                return await fetch_card_media(
+    62	                    word,
+    63	                    english,
+    64	                    pixabay_key=settings.pixabay_api_key,
+    65	                    used_image_urls=used_image_urls,
+    66	                )
+    67	
+    68	            create_report = await sync.sync_create_new(
+    69	                deck_name=settings.anki_deck_name,
+    70	                model_name=model_name,
+    71	                dry_run=dry_run,
+    72	                _media_fn=_media_fn,
+    73	            )
+    74	            push_report = sync.sync_push(dry_run=dry_run)
+    75	            drained = 0 if dry_run else drain_pending_revlog_to_writer(db, writer)
+    76	            pull_report = sync.sync_pull(dry_run=dry_run)
+    77	
+    78	            if not dry_run:
+    79	                from app.srs.queue_stats import refresh_daily_new_cap, refresh_fsrs_params, refresh_review_settings
+    80	
+    81	                refresh_daily_new_cap(db, ctx.conn, settings.anki_deck_name)
+    82	                refresh_fsrs_params(db, ctx.conn, settings.anki_deck_name)
+    83	                refresh_review_settings(db, ctx.conn, settings.anki_deck_name)
+    84	
+    85	    except AnkiRunningError as exc:
+    86	        raise HTTPException(
+    87	            status_code=409,
+    88	            detail="Close Anki to sync — TunaTale needs exclusive access to collection.anki2.",
+    89	        ) from exc
+    90	
+    91	    media_result = _refresh_media_if_not_dry_run(dry_run)
+    92	    media_updated = media_result.get("updated_media", 0)
+    93	    media_unchanged = media_result.get("unchanged_media", 0)
+    94	    media_new = media_result.get("new_media", 0)
+    95	
+    96	    return {
+    97	        "mode": "offline",
+    98	        "created": create_report.created,
+    99	        "linked": create_report.linked,
+   100	        "skipped": create_report.skipped,
+   101	        "notes_pulled": pull_report.notes_updated,
+   102	        "directions_pulled": pull_report.directions_updated,
+   103	        "conflicts": len(pull_report.conflicts),
+   104	        "notes_pushed": push_report.notes_pushed,
+   105	        "directions_pushed": push_report.directions_pushed,
+   106	        "revlog_drained": drained,
+   107	        "dry_run": dry_run,
+   108	        "media_updated": media_updated,
+   109	        "media_unchanged": media_unchanged,
+   110	        "media_new": media_new,
+   111	    }
+   112	
+   113	
+   114	@router.get("/status", status_code=200)
+   115	def get_anki_status(request: Request):
+   116	    """Return whether Anki is currently running (i.e. collection.anki2 is locked)."""
+   117	    from app.anki.safety import probe_lock
+   118	    from app.config import settings
+   119	
+   120	    locked = probe_lock(settings.anki_collection_path)
+   121	    return {"anki_running": locked, "lock_acquirable": not locked}
+```
+
+The handler reads as the canonical demonstration of how every piece in PART 12 wires together: `safe_open` provides the connection, `model_discovery` finds the right notetype to use (or 409s if none can be inferred), an `AnkiSync` is constructed with the offline reader/writer, the four phases run, and `refresh_*` updates the cached deck config from protobuf. Media re-import (`import_seed`) runs as a side effect after the transaction commits.
+
+`/api/anki/status` is the cheap polling endpoint the frontend uses to grey out the Sync button when Anki is running.
+
+### 12.8 Anki Test Inventory
+
+The new test files exclusively for Anki integration:
+
+| File | What it covers |
+|------|----------------|
+| `test_anki_safety.py`, `test_anki_safety_rw.py` | `safe_open` lock probe, backup, integrity validation, audit |
+| `test_anki_sqlite_reader.py` | `fetch_notes_for_deck`, `compute_due_date`, dual deck lookup |
+| `test_anki_sqlite_writer.py` | GUID backfill plan + apply, USN bookkeeping |
+| `test_anki_offline_writer_create_note.py` | Stage 3.9 — offline note creation with media dedup |
+| `test_anki_sync_pull.py`, `test_anki_sync_push.py` | Per-direction diffs, conflict recording, dirty-FSRS preservation |
+| `test_anki_sync_create_new.py` | Duplicate detection (id-first then GUID), media linking |
+| `test_anki_sync_round_trip.py` | Full push → drain → pull cycle |
+| `test_anki_sync_force_fsrs.py`, `test_anki_syncKey_preflight.py` | force-FSRS ack flow, setSpecificValueOfCard preflight |
+| `test_anki_sync_mode_detection.py` | Online vs offline auto-detection |
+| `test_anki_connect_client.py` | JSON-RPC client over a mock transport |
+| `test_anki_model_discovery.py` | Notetype inference from existing notes |
+| `test_anki_normalize_usns.py` | USN clamping after a full upload |
+| `test_anki_migrate_homonyms.py`, `test_anki_repair_nested_homonyms.py` | Disambiguation migrations for homonym L2 forms |
+| `test_anki_merge_dupes_*.py` | Plan / apply / CLI for merging duplicate notes |
+| `test_anki_backfill_guids.py`, `test_anki_audit_guids.py`, `test_anki_guid.py` | GUID generation + backfill + audit |
+| `test_anki_notetype.py` | Hand-rolled protobuf encoder for adding fields |
+| `test_anki_import_seed_readonly.py` | Read-only seed import (media refresh) |
+| `test_anki_bootstrap_e2e.py` | End-to-end bootstrap on a fresh collection |
+| `test_anki_media_forvo.py`, `test_anki_media_pixabay.py`, `test_anki_media_normalize.py`, `test_anki_media_pipeline.py`, `test_anki_media_tts.py` | Per-source media fetchers + the orchestrator |
+| `test_anki_fallback_log.py` | Logging when Forvo misses and TTS fills in |
+| `test_queue_stats.py`, `test_queue_stats_cache.py` | Protobuf decode + cache resolution |
+| `test_api_anki.py` | The two HTTP endpoints, including the 409 paths |
+| `test_srs_database_anki_surface.py` | DB methods that the sync engine relies on |
+| `test_srs_sync_scratch.py` | `pending_revlog` and `sync_conflicts` scratch tables |
+| `test_dirty_fields.py` | The `dirty_fields` blob used to push selective field edits |
+| `test_srs_guid.py` | GUID-keyed upsert path in `SRSDatabase` |
+
+### 12.9 Anki Bootstrap CLIs
+
+The four-phase sync described in 12.4 only works once a user's Anki collection has been brought into a TunaTale-compatible shape: every note needs a stable deterministic GUID, every word needs a unified two-template notetype (recognition + production on the same note), and homonyms need their disambiguation in a hidden field rather than baked into the visible text. Most users have a pre-existing Anki deck that doesn't satisfy any of these. The bootstrap CLIs in `app/anki/` cover the one-time transformation:
+
+| Step | Module | What it does |
+|------|--------|--------------|
+| **H1** | `app.anki.audit_guids` | Read-only diagnostic. Emits a JSON report of every note whose visible text changed since the last GUID backfill — these are the rows that need attention before re-running backfill. |
+| **H2** | `app.anki.merge_dupes` | Consolidates the two historical "Basic" notetype cards per word (one for recognition, one for production) into a single two-template "Slovene Vocabulary" note. Hand-rolled protobuf (`app.anki.notetype`) builds the new notetype's field/template/CSS config. This is the biggest single anki module and the one that requires a forced full-upload afterward. |
+| **H3** | `app.anki.migrate_homonyms` | Moves disambiguation suffixes (e.g. `(noun)` in `kapus (noun)`) out of the visible Slovene field into a hidden `DisambigKey` field, so two homonyms can share a clean visible form while still hashing to distinct GUIDs. `repair_nested_homonyms` is a 3-row surgical companion for cases the regex missed (parens-inside-parens). |
+| **H4** | `app.anki.backfill_guids` | Rewrites every Anki note GUID to TunaTale's deterministic formula (sha256 of language + visible text + DisambigKey). After this, sync's GUID-based reconciliation works. `app.anki.sqlite_writer.check_anki_web_sync_active` warns the user to force-upload after running. |
+| **H5** | `app.anki.normalize_usns` | Post-full-upload USN clamp (already covered in 12.2). Resets `cards.usn`, `notes.usn`, `revlog.usn` back to `col.usn` after the user has done a forced full upload. |
+
+Each step has a `__main__` entry point (`uv run python -m app.anki.<module>`), goes through `safe_open` for backup + lock probe, and emits a dry-run plan before mutating. All five test files in PART 12.8 cover these CLIs.
+
+After this pipeline, ongoing sync uses only `/api/anki/sync` (PART 12.4) — no further bootstrap is needed unless the user adds a third notetype or imports a substantially new deck.
+
+`app.anki.model_discovery` is a small support utility: given a deck and an open Anki connection (or just the offline collection), it figures out which notetype's notes to sync. Called by `/api/anki/sync` whenever `settings.anki_model_name` is unset.
+
+---
+
+## PART 13: Frontend Updates
+
+The SvelteKit app in `frontend/` got significant new UI work alongside the Anki integration.
+
+### 13.1 Routes
+
+```
+frontend/src/routes/
+├── +page.svelte                # Home: curriculum form + list
+├── +layout.svelte              # Header, Sync button, Anki status badge
+├── c/[curriculumId]/           # Curriculum overview + day picker
+│   └── l/[lessonId]/           # Lesson view: transcript, audio player, render
+├── review/                     # Unified review queue (replaces the old /practice)
+└── admin/srs/                  # SRS item admin: search/edit/bulk delete/reset/suspend
+```
+
+The notable changes:
+
+- **`/review`** replaces the per-lesson `/practice` flow. It pulls from `/api/srs/review-queue`, which serves a unified queue blending due cards with a daily-capped slice of new ones (capped by the `new_per_day` value cached from Anki — see 12.6) and alternates direction per card. Each card shows L2 audio, image, English gloss, and optional grammar/note metadata; the user rates Again / Hard / Good / Easy. Media URLs come pre-populated in the queue payload (commit `52003c2`); `DrillCard` resets its revealed state between cards (commit `472b845`).
+
+- **`/admin/srs`** provides full CRUD over the SRS database: paginated table, search across text and translation, state filter, sortable columns, inline edit, single + bulk delete, reset schedule, suspend/unsuspend, force state, create new item.
+
+- **Sync button** in the layout calls `POST /api/anki/sync`. The button polls `/api/anki/status` and disables itself with a tooltip when Anki is running. On success it shows a toast with the report (created / pushed / pulled / drained / media counts).
+
+### 13.2 Components
+
+| Component | Purpose |
+|-----------|---------|
+| `CurriculumForm.svelte` | Topic + CEFR + days form on home page |
+| `DayPicker.svelte` | Day-list with progress badges per curriculum |
+| `AudioPlayer.svelte` | Section-aware audio player (full lesson + per-section) |
+| `Transcript.svelte` | Per-word colour-coded transcript (SRS state) |
+| `DrillCard.svelte` | Review card (used by `/review`); resets reveal state per card |
+| `Tooltip.svelte` | Reusable tooltip (used in Sync button gating) |
+
+Each component has a sibling `*.test.ts` Vitest spec. The vitest coverage thresholds were tuned for Opus 4.7 in commit `dfb24c9`.
+
+### 13.3 Playwright e2e
+
+`frontend/tests/` holds the Playwright specs:
+
+- `smoke.spec.ts` — home page loads, server is up.
+- `review-flow.spec.ts` — generate curriculum → generate lesson → mark listened → review queue → rate first card. Workers serialized to avoid SQLite races (commit `5bedaa1`).
+- `global-setup.ts` — boots a backend instance against a temp DB.
+
+Run with `./test.sh`, which chains ruff lint, pytest, vitest, and Playwright.
+
+---
+
+## PART 14: Updated Settings & Migrations
+
+`app/config.py` gained an Anki/media block. Here's the full settings object as it stands now:
+
+```bash
+cat -n backend/app/config.py
+```
+
+```output
+     1	"""Application configuration via Pydantic Settings."""
+     2	
+     3	from pathlib import Path
+     4	
+     5	from pydantic_settings import BaseSettings, SettingsConfigDict
+     6	
+     7	
+     8	class Settings(BaseSettings):
+     9	    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    10	
+    11	    groq_api_key: str = ""
+    12	    database_url: str = "sqlite:///./tunatale.db"
+    13	    llm_mode: str = "mock"  # mock | live | record | patch
+    14	    llm_model: str = "llama-3.3-70b-versatile"
+    15	
+    16	    anki_collection_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.anki2").expanduser()
+    17	    anki_media_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.media").expanduser()
+    18	    anki_deck_name: str = "0. Slovene"
+    19	    anki_backup_dir: Path = Path("~/.tunatale/anki-backups").expanduser()
+    20	    media_dir: Path = Path("./media")
+    21	    anki_fallback_log: Path = Path("~/.tunatale/logs/anki-fallback.log").expanduser()
+    22	
+    23	    anki_connect_url: str = "http://127.0.0.1:8765"
+    24	    anki_model_name: str = ""
+    25	    forvo_api_key: str = ""
+    26	    pixabay_api_key: str = ""
+    27	    anki_new_per_day_default: int = 20
+    28	
+    29	
+    30	settings = Settings()
+```
+
+Most of the new fields are paths to the user's Anki install (`anki_collection_path`, `anki_media_path`, `anki_backup_dir`) plus three optional API keys (`forvo_api_key` is unused — Forvo's web scraper doesn't need one — but `pixabay_api_key` and `groq_api_key` are required if you want media or recording-mode cassettes). `anki_new_per_day_default` is the fallback when no value is in the cache and no deck_config protobuf is parseable.
+
+### 14.1 SRS Schema Migrations (v1 → v8)
+
+`app/srs/migrations.py` runs every pending migration in dependency order, each in its own transaction. The current migrations:
+
+| Version | Adds |
+|---------|------|
+| v0 → v1 | Initial schema: `collocations` + `collocation_directions` + `schema_version` |
+| v1 → v2 | Two-direction split (RECOGNITION + PRODUCTION rows in `collocation_directions`) |
+| v2 → v3 | `guid`, `anki_note_id`, `anki_card_id`, `dirty_fsrs`, `last_synced_at`, scratch tables (`pending_revlog`, `sync_conflicts`, `anki_state_cache`, `dirty_fields`, `media`) |
+| v3 → v4 | Image/audio filename columns + media indexes |
+| v4 → v5 | `last_rating` on `collocation_directions` (real revlog ease factor — B5 fix) |
+| v5 → v6 | `anki_due` on `collocation_directions` (preserves Anki's deck position for new-card ordering) |
+| v6 → v7 | `grammar` and `note` text columns on `collocations` |
+| v7 → v8 | `source_sentence`, `source_lesson_id`, `source_line_index` (LingQ-style capture context) |
+
+Migrations are guarded by `_column_exists` / `_table_exists` so they're idempotent — re-running a partial migration after a crash won't fail.
+
+### 14.2 New Bash Helpers
+
+Two CLI entry points worth knowing:
+
+- `uv run python -m app.anki.normalize_usns` — the post-full-upload USN clamp. Run it whenever `*_gt_col > 0` from the diagnostic in `.claude/rules/anki-sync.md`.
+- `uv run python -m app.anki.import_seed` — refresh Anki media into TunaTale's local cache. Now invoked automatically by `/api/anki/sync` so the manual button was removed.

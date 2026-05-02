@@ -439,7 +439,7 @@ def api_app_state():
     finally:
         db.close()
         store.close()
-        for attr in ("srs_db", "content_store", "language", "llm"):
+        for attr in ("srs_db", "content_store", "language", "llm", "llm_client"):
             if hasattr(app.state, attr):
                 delattr(app.state, attr)
 

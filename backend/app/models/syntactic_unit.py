@@ -17,13 +17,16 @@ class SyntacticUnit:
     translation: str  # L1 translation
     word_count: int
     difficulty: int  # 1–5
-    source: str  # "corpus" | "llm"
+    source: str  # "corpus" | "llm" | "user"
     frequency: int = 0
     lemma: str | None = None
     guid: str | None = None
     disambig_key: str = ""
     grammar: str = ""
     note: str = ""
+    source_sentence: str = ""
+    source_lesson_id: str | None = None
+    source_line_index: int | None = None
 
     def __post_init__(self) -> None:
         if not 1 <= self.word_count <= 8:

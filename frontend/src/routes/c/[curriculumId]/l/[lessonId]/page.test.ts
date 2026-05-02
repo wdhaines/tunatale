@@ -11,6 +11,7 @@ vi.mock('$lib/api', () => ({
 		markAsListened: vi.fn(),
 		createSRSItem: vi.fn(),
 		setSRSItemState: vi.fn(),
+		syncCreateNew: vi.fn(),
 		audioUrl: vi.fn((id: string) => `/api/audio/${id}`)
 	}
 }));
@@ -31,6 +32,7 @@ const mockGetTranscript = vi.mocked(api.getLessonTranscript);
 const mockMarkAsListened = vi.mocked(api.markAsListened);
 const mockCreateSRSItem = vi.mocked(api.createSRSItem);
 const mockSetSRSItemState = vi.mocked(api.setSRSItemState);
+const mockSyncCreateNew = vi.mocked(api.syncCreateNew);
 
 const curriculum = { id: 'cid-1', topic: 'Coffee', language_code: 'sl', days: 3 };
 const lesson = {
@@ -512,9 +514,57 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 					text: 'centru mesta',
 					language_code: 'sl',
 					word_count: 2,
-					translation: ''
+					translation: '',
+					source_sentence: expect.any(String),
+					source_lesson_id: expect.any(String),
+					source_line_index: 0
 				});
 				expect(mockGetTranscript).toHaveBeenCalled();
+			});
+		});
+
+		it('forwards source_line_index from the selected line', async () => {
+			const transcriptTwoLines = {
+				lesson_id: 'l1',
+				key_phrases: [],
+				dialogue_lines: [
+					{
+						role: 'Petra',
+						words: [
+							{ surface: 'prva', lemma: 'prva', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }
+						]
+					},
+					{
+						role: 'Petra',
+						words: [
+							{ surface: 'centru', lemma: 'centru', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null },
+							{ surface: 'mesta', lemma: 'mesto', srs_state: 'new' as const, srs_item_id: null, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }
+						]
+					}
+				]
+			};
+			const createdItem = { id: 56, text: 'centru mesta', translation: '', state: 'new' as const, due_date: '2026-04-15', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, language_code: 'sl' };
+			mockCreateSRSItem.mockResolvedValue(createdItem);
+			mockGetTranscript.mockResolvedValue(transcriptTwoLines);
+
+			const { container } = render(Page, {
+				props: { data: { curriculum, lesson, audio, transcript: transcriptTwoLines } }
+			});
+
+			// Drag-select on line index 1 (the second dialogue line)
+			const centruSpan = container.querySelector('[data-line-index="1"][data-word-index="0"]') as HTMLElement;
+			const mestaSpan = container.querySelector('[data-line-index="1"][data-word-index="1"]') as HTMLElement;
+
+			await fireEvent.pointerDown(centruSpan);
+			await fireEvent.pointerMove(mestaSpan);
+			await fireEvent.pointerUp(mestaSpan);
+
+			await fireEvent.click(container.querySelector('.phrase-confirm-bar button.confirm-create') as HTMLElement);
+
+			await waitFor(() => {
+				expect(mockCreateSRSItem).toHaveBeenCalledWith(
+					expect.objectContaining({ source_line_index: 1 })
+				);
 			});
 		});
 
@@ -587,4 +637,48 @@ describe('load function for /c/[curriculumId]/l/[lessonId]', () => {
 		expect(result).toHaveProperty('audio');
 		expect(result).toHaveProperty('transcript');
 	});
+
+	describe('syncCreateNew button', () => {
+		it('calls syncCreateNew with correct deck and model names', async () => {
+			mockSyncCreateNew.mockResolvedValue({ created: 3, updated: 0, skipped: 1 });
+			const { getByText } = render(Page, {
+				props: { data: { curriculum, lesson, audio: null, transcript: null } }
+			});
+
+			const syncBtn = getByText('Sync New Cards to Anki');
+			await fireEvent.click(syncBtn);
+
+			await waitFor(() => {
+				expect(mockSyncCreateNew).toHaveBeenCalledWith('0. Slovene', 'Slovene Vocabulary');
+			});
+		});
+
+		it('displays sync result after successful sync', async () => {
+			mockSyncCreateNew.mockResolvedValue({ created: 5, updated: 0, skipped: 2 });
+			const { getByText } = render(Page, {
+				props: { data: { curriculum, lesson, audio: null, transcript: null } }
+			});
+
+			const syncBtn = getByText('Sync New Cards to Anki');
+			await fireEvent.click(syncBtn);
+
+			await waitFor(() => {
+				expect(getByText(/Created 5 new cards/)).toBeTruthy();
+			});
+		});
+
+		it('sets error when syncCreateNew fails', async () => {
+			mockSyncCreateNew.mockRejectedValue(new Error('Sync failed'));
+			const { getByText, findByText } = render(Page, {
+				props: { data: { curriculum, lesson, audio: null, transcript: null } }
+			});
+
+			const syncBtn = getByText('Sync New Cards to Anki');
+			await fireEvent.click(syncBtn);
+
+			expect(await findByText('Sync failed')).toBeTruthy();
+		});
+	});
+
+
 });

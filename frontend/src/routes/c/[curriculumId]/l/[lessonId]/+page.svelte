@@ -5,6 +5,7 @@
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import AudioPlayer from '$lib/components/AudioPlayer.svelte';
 	import Transcript from '$lib/components/Transcript.svelte';
+	import SyncButton from '$lib/components/SyncButton.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -115,7 +116,10 @@
 	async function handleCreatePhrase({
 		text,
 		word_count,
-		translation
+		translation,
+		source_sentence,
+		source_lesson_id,
+		source_line_index
 	}: {
 		text: string;
 		word_count: number;
@@ -123,10 +127,21 @@
 		lineIndex: number;
 		startIdx: number;
 		endIdx: number;
+		source_sentence?: string;
+		source_lesson_id?: string;
+		source_line_index?: number;
 	}) {
 		error = '';
 		try {
-			await api.createSRSItem({ text, language_code: data.lesson.language_code, word_count, translation });
+			await api.createSRSItem({
+				text,
+				language_code: data.lesson.language_code,
+				word_count,
+				translation,
+				source_sentence,
+				source_lesson_id,
+				source_line_index
+			});
 			transcript = await api.getLessonTranscript(data.lesson.id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -150,6 +165,7 @@
 				{audioLoading ? 'Rendering…' : 'Render Audio'}
 			</button>
 		{/if}
+		<SyncButton deckName="0. Slovene" modelName="Slovene Vocabulary" />
 		{#if error}
 			<p class="error">{error}</p>
 		{/if}

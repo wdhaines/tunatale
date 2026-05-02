@@ -11,6 +11,9 @@
 		lineIndex: number;
 		startIdx: number;
 		endIdx: number;
+		source_sentence?: string;
+		source_lesson_id?: string;
+		source_line_index?: number;
 	}
 
 	interface Props {
@@ -162,13 +165,17 @@
 	function confirmPhrase(lineIndex: number, words: WordToken[]) {
 		const { startIdx, endIdx } = selection!;
 		const text = words.slice(startIdx, endIdx + 1).map((w) => w.surface).join(' ');
+		const sourceSentence = transcript?.dialogue_lines?.[lineIndex]?.words?.map((w: WordToken) => w.surface).join(' ');
 		onCreatePhrase?.({
 			text,
 			word_count: endIdx - startIdx + 1,
 			translation: pendingTranslation,
 			lineIndex,
 			startIdx,
-			endIdx
+			endIdx,
+			source_sentence: sourceSentence,
+			source_lesson_id: lesson?.id,
+			source_line_index: lineIndex
 		});
 		selectionMode = false;
 		resetSelection();

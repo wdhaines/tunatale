@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 7
+CURRENT_VERSION = 8
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -395,6 +395,17 @@ def migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
     _set_version(conn, 7)
 
 
+def migrate_v7_to_v8(conn: sqlite3.Connection) -> None:
+    """Add source context columns to collocations for LingQ-style capture."""
+    if not _column_exists(conn, "collocations", "source_sentence"):
+        conn.execute("ALTER TABLE collocations ADD COLUMN source_sentence TEXT NOT NULL DEFAULT ''")
+    if not _column_exists(conn, "collocations", "source_lesson_id"):
+        conn.execute("ALTER TABLE collocations ADD COLUMN source_lesson_id TEXT")
+    if not _column_exists(conn, "collocations", "source_line_index"):
+        conn.execute("ALTER TABLE collocations ADD COLUMN source_line_index INTEGER")
+    _set_version(conn, 8)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -403,6 +414,7 @@ _MIGRATIONS = {
     4: migrate_v4_to_v5,
     5: migrate_v5_to_v6,
     6: migrate_v6_to_v7,
+    7: migrate_v7_to_v8,
 }
 
 

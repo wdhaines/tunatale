@@ -635,4 +635,30 @@ describe('TunaTaleAPI', () => {
 			await expect(api.fetchAnkiStatus()).rejects.toThrow('Service Unavailable');
 		});
 	});
+
+	describe('syncCreateNew', () => {
+		it('calls POST /api/anki/sync-create-new with deck and model names', async () => {
+			const payload = { created: 5, updated: 0, skipped: 2 };
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk(payload)));
+
+			const result = await api.syncCreateNew('0. Slovene', 'Slovene Vocabulary');
+
+			expect(fetch).toHaveBeenCalledWith(
+				`${BASE}/api/anki/sync-create-new`,
+				expect.objectContaining({
+					method: 'POST',
+					body: JSON.stringify({ deck_name: '0. Slovene', model_name: 'Slovene Vocabulary' })
+				})
+			);
+			expect(result.created).toBe(5);
+			expect(result.skipped).toBe(2);
+		});
+
+		it('throws on non-ok response', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail('Sync failed')));
+			await expect(api.syncCreateNew('Deck', 'Model')).rejects.toThrow(
+				'POST /api/anki/sync-create-new: Sync failed'
+			);
+		});
+	});
 });

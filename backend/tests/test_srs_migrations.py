@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 7
+        assert CURRENT_VERSION == 8
 
     def test_migrates_from_v1_to_v2(self):
         from app.srs.migrations import migrate_v1_to_v2
@@ -730,11 +730,11 @@ class TestMigrateV5ToV6:
             assert row["due_date"] is not None
 
     def test_full_migrate_includes_v6(self):
-        """migrate() runs all migrations including v5→v6 and ends at CURRENT_VERSION=6."""
+        """migrate() runs all migrations including v5→v6 and ends at CURRENT_VERSION."""
         conn = _make_v1_conn()
         _insert(conn, "banka")
         migrate(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
         cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
         assert "anki_due" in cols
 
@@ -800,7 +800,7 @@ class TestMigrationV6ToV7:
         conn = _make_v1_conn()
         _insert(conn, "banka")
         migrate(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
 
 
 class TestMigrationV6ToV7Detailed:
@@ -844,6 +844,122 @@ class TestMigrationV6ToV7Detailed:
         assert "grammar" in cols
         assert "note" in cols
 
+
+class TestMigrationV7ToV8:
+    """Migration v7→v8 adds source context columns to collocations."""
+
+    def _make_v7_conn(self) -> sqlite3.Connection:
+        """In-memory DB at schema version 7 (with grammar and note columns)."""
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            CREATE TABLE collocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT UNIQUE NOT NULL,
+                translation TEXT NOT NULL DEFAULT '',
+                language_code TEXT NOT NULL DEFAULT 'sl',
+                word_count INTEGER NOT NULL DEFAULT 1,
+                unit_difficulty INTEGER NOT NULL DEFAULT 1,
+                source TEXT NOT NULL DEFAULT 'corpus',
+                corpus_frequency INTEGER NOT NULL DEFAULT 0,
+                lemma TEXT,
+                guid TEXT UNIQUE,
+                disambig_key TEXT NOT NULL DEFAULT '',
+                grammar TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT '',
+                anki_note_id INTEGER,
+                dirty_fields TEXT NOT NULL DEFAULT '',
+                last_synced_at TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("PRAGMA user_version = 7")
+        conn.commit()
+        return conn
+
+    def test_adds_source_sentence_column(self):
+        """migrate_v7_to_v8 adds source_sentence TEXT column."""
+        from app.srs.migrations import migrate_v7_to_v8
+
+        conn = self._make_v7_conn()
+        migrate_v7_to_v8(conn)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocations)").fetchall()}
+        assert "source_sentence" in cols
+
+    def test_source_sentence_defaults_to_empty_string(self):
+        """New source_sentence column defaults to empty string."""
+        from app.srs.migrations import migrate_v7_to_v8
+
+        conn = self._make_v7_conn()
+        migrate_v7_to_v8(conn)
+        conn.execute("INSERT INTO collocations (text, translation) VALUES ('test', 't')")
+        row = conn.execute("SELECT source_sentence FROM collocations").fetchone()
+        assert row["source_sentence"] == ""
+
+    def test_adds_source_lesson_id_column(self):
+        """migrate_v7_to_v8 adds source_lesson_id TEXT column (nullable)."""
+        from app.srs.migrations import migrate_v7_to_v8
+
+        conn = self._make_v7_conn()
+        migrate_v7_to_v8(conn)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocations)").fetchall()}
+        assert "source_lesson_id" in cols
+
+    def test_source_lesson_id_allows_null(self):
+        """source_lesson_id column is nullable."""
+        from app.srs.migrations import migrate_v7_to_v8
+
+        conn = self._make_v7_conn()
+        migrate_v7_to_v8(conn)
+        conn.execute("INSERT INTO collocations (text, translation) VALUES ('test', 't')")
+        row = conn.execute("SELECT source_lesson_id FROM collocations").fetchone()
+        assert row["source_lesson_id"] is None
+
+    def test_adds_source_line_index_column(self):
+        """migrate_v7_to_v8 adds source_line_index INTEGER column (nullable)."""
+        from app.srs.migrations import migrate_v7_to_v8
+
+        conn = self._make_v7_conn()
+        migrate_v7_to_v8(conn)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocations)").fetchall()}
+        assert "source_line_index" in cols
+
+    def test_source_line_index_allows_null(self):
+        """source_line_index column is nullable."""
+        from app.srs.migrations import migrate_v7_to_v8
+
+        conn = self._make_v7_conn()
+        migrate_v7_to_v8(conn)
+        conn.execute("INSERT INTO collocations (text, translation) VALUES ('test', 't')")
+        row = conn.execute("SELECT source_line_index FROM collocations").fetchone()
+        assert row["source_line_index"] is None
+
+    def test_bumps_version_to_8(self):
+        """migrate_v7_to_v8 bumps user_version to 8."""
+        from app.srs.migrations import migrate_v7_to_v8
+
+        conn = self._make_v7_conn()
+        migrate_v7_to_v8(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+
+    def test_idempotent(self):
+        """Running migrate_v7_to_v8 twice does not raise."""
+        from app.srs.migrations import migrate_v7_to_v8
+
+        conn = self._make_v7_conn()
+        migrate_v7_to_v8(conn)
+        migrate_v7_to_v8(conn)  # second call should not raise
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+
+    def test_full_migrate_includes_v8(self):
+        """migrate() runs all migrations including v7→v8 and ends at CURRENT_VERSION=8."""
+        from app.srs.migrations import CURRENT_VERSION, migrate
+
+        conn = self._make_v7_conn()
+        migrate(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_VERSION
+
     def test_grammar_default_empty_string(self, tmp_path):
         """New rows get empty string for grammar/note."""
         import sqlite3
@@ -870,7 +986,7 @@ class TestMigrationV6ToV7Detailed:
         assert row["grammar"] == ""
         assert row["note"] == ""
 
-    def test_idempotent(self, tmp_path):
+    def test_idempotent_v6_to_v7(self, tmp_path):
         """Running migrate_v6_to_v7 twice does not raise."""
         import sqlite3
 

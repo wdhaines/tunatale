@@ -1036,3 +1036,89 @@ class TestGetImageFilename:
 
     def test_returns_none_for_unknown_collocation(self, srs_db):
         assert srs_db.get_image_filename(99999) is None
+
+
+class TestSourceContextFields:
+    """Tests for source context fields (source_sentence, source_lesson_id, source_line_index)."""
+
+    def test_add_collocation_with_source_context(self, srs_db):
+        """Storing a unit with source context preserves all three fields."""
+        unit = SyntacticUnit(
+            text="kako si",
+            translation="how are you",
+            word_count=2,
+            difficulty=1,
+            source="user",
+            source_sentence="Kako si? Jaz sem dobro.",
+            source_lesson_id="lesson-123",
+            source_line_index=5,
+        )
+        srs_db.add_collocation(unit, language_code="sl")
+        retrieved = srs_db.get_collocation("kako si")
+        assert retrieved is not None
+        assert retrieved.syntactic_unit.source_sentence == "Kako si? Jaz sem dobro."
+        assert retrieved.syntactic_unit.source_lesson_id == "lesson-123"
+        assert retrieved.syntactic_unit.source_line_index == 5
+
+    def test_add_collocation_without_source_context(self, srs_db):
+        """Storing a unit without source context defaults to empty/None."""
+        unit = SyntacticUnit(
+            text="dober dan",
+            translation="good day",
+            word_count=2,
+            difficulty=1,
+            source="corpus",
+        )
+        srs_db.add_collocation(unit, language_code="sl")
+        retrieved = srs_db.get_collocation("dober dan")
+        assert retrieved.syntactic_unit.source_sentence == ""
+        assert retrieved.syntactic_unit.source_lesson_id is None
+        assert retrieved.syntactic_unit.source_line_index is None
+
+    def test_source_context_round_trip_via_guid(self, srs_db):
+        """Source context survives get_collocation_by_guid round-trip."""
+        unit = SyntacticUnit(
+            text="test phrase",
+            translation="test",
+            word_count=2,
+            difficulty=1,
+            source="user",
+            source_sentence="This is a test sentence.",
+            source_lesson_id="lesson-456",
+            source_line_index=10,
+        )
+        srs_db.add_collocation(unit, language_code="sl")
+        item = srs_db.get_collocation("test phrase")
+        guid = item.guid
+        retrieved = srs_db.get_collocation_by_guid(guid)
+        assert retrieved is not None
+        assert retrieved.syntactic_unit.source_sentence == "This is a test sentence."
+        assert retrieved.syntactic_unit.source_lesson_id == "lesson-456"
+        assert retrieved.syntactic_unit.source_line_index == 10
+
+    def test_list_items_without_anki_note_includes_source_context(self, srs_db):
+        """list_items_without_anki_note returns items with source context."""
+        unit = SyntacticUnit(
+            text="nova fraza",
+            translation="new phrase",
+            word_count=2,
+            difficulty=1,
+            source="user",
+            source_sentence="Nova fraza v kontekstu.",
+            source_lesson_id="lesson-789",
+            source_line_index=3,
+        )
+        srs_db.add_collocation(unit, language_code="sl")
+        items = srs_db.list_items_without_anki_note()
+        assert len(items) > 0
+        # Find our item
+        for _, item in items:
+            if item.syntactic_unit.text == "nova fraza":
+                assert item.syntactic_unit.source_sentence == "Nova fraza v kontekstu."
+                assert item.syntactic_unit.source_lesson_id == "lesson-789"
+                assert item.syntactic_unit.source_line_index == 3
+                break
+        else:
+            import pytest
+
+            pytest.fail("nova fraza not found in items without anki note")

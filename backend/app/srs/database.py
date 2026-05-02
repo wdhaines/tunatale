@@ -242,8 +242,9 @@ class SRSDatabase:
                 """
                 INSERT INTO collocations
                     (text, translation, language_code, word_count, unit_difficulty,
-                     source, corpus_frequency, lemma, guid, disambig_key, grammar, note)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     source, corpus_frequency, lemma, guid, disambig_key, grammar, note,
+                     source_sentence, source_lesson_id, source_line_index)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(text, disambig_key) DO UPDATE SET
                     translation = CASE
                         WHEN excluded.translation != '' AND collocations.translation = ''
@@ -264,6 +265,9 @@ class SRSDatabase:
                     disambig,
                     unit.grammar,
                     unit.note,
+                    unit.source_sentence,
+                    unit.source_lesson_id,
+                    unit.source_line_index,
                 ),
             )
             row = conn.execute(
@@ -425,6 +429,9 @@ class SRSDatabase:
             disambig_key=row["disambig_key"],
             grammar=row["grammar"],
             note=row["note"],
+            source_sentence=row["source_sentence"],
+            source_lesson_id=row["source_lesson_id"],
+            source_line_index=row["source_line_index"],
         )
         directions = self._load_directions(conn, row["id"])
         return SRSItem(

@@ -872,8 +872,8 @@ class AnkiSync:
                 "English": english,
                 "Audio": audio_tag,
                 "Image": image_tag,
-                "Grammar": "",
-                "Note": "",
+                "Grammar": item.syntactic_unit.grammar or "",
+                "Note": item.syntactic_unit.source_sentence or "",
                 "DisambigKey": item.syntactic_unit.disambig_key or "",
             }
 

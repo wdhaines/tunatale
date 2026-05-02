@@ -100,7 +100,12 @@ async def _forvo_media(word: str, english: str, *, used_image_urls: set[str]) ->
 
 
 async def _tts_media(word: str, english: str, *, used_image_urls: set[str]) -> MediaResult | None:
-    return MediaResult(audio_bytes=b"tts_data", audio_source="tts")
+    return MediaResult(
+        audio_bytes=b"tts_data",
+        audio_source="tts",
+        image_bytes=b"img_data",
+        image_ext="jpg",
+    )
 
 
 async def _full_media(word: str, english: str, *, used_image_urls: set[str]) -> MediaResult | None:
@@ -380,8 +385,10 @@ class TestSyncCreateNew:
             deck_name="0. Slovene", model_name="Slovene Vocabulary", _media_fn=_tts_media
         )
         stored = [c for c in writer.calls if c[0] == "store_media_file"]
-        assert len(stored) == 1
-        assert stored[0][1].startswith("tts_")
+        assert len(stored) == 2  # audio + image
+        audio_files = [s for s in stored if s[1].startswith("tts_")]
+        assert len(audio_files) == 1
+        assert audio_files[0][1] == "tts_voda.mp3"
 
     async def test_audio_field_contains_sound_tag(self):
         db = _make_db()
@@ -398,10 +405,45 @@ class TestSyncCreateNew:
         _add_item(db, "voda", "water")
         writer = FakeCreateWriter()
         await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
-            deck_name="0. Slovene", model_name="Slovene Vocabulary", _media_fn=_full_media
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", _media_fn=_tts_media
         )
         call = next(c for c in writer.calls if c[0] == "create_note")
         assert '<img src="' in call[3]["Image"]
+
+    async def test_source_sentence_written_to_note_field(self):
+        """Item with source_sentence should have it in the Note field."""
+        db = _make_db()
+        # Add item with source context
+        unit = SyntacticUnit(
+            text="kako si",
+            translation="how are you",
+            word_count=2,
+            difficulty=1,
+            source="user",
+            source_sentence="Kako si? Jaz sem dobro.",
+        )
+        db.add_collocation(unit)
+        _ = db.get_collocation("kako si").guid  # Ensure item is created
+
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        call = next(c for c in writer.calls if c[0] == "create_note")
+        fields = call[3]
+        assert fields["Note"] == "Kako si? Jaz sem dobro."
+
+    async def test_empty_source_sentence_gives_empty_note_field(self):
+        """Item without source_sentence should have empty Note field."""
+        db = _make_db()
+        _add_item(db, "voda", "water")  # No source_sentence
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        call = next(c for c in writer.calls if c[0] == "create_note")
+        fields = call[3]
+        assert fields["Note"] == ""
 
     async def test_image_stored_with_img_prefix(self):
         db = _make_db()

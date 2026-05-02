@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from app.llm.translate import translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.feedback import rating_from_input
@@ -365,6 +366,9 @@ class CreateItemRequest(BaseModel):
     language_code: str
     word_count: int
     translation: str = ""
+    source_sentence: str = ""
+    source_lesson_id: str | None = None
+    source_line_index: int | None = None
 
 
 class UpdateItemRequest(BaseModel):
@@ -401,13 +405,27 @@ async def create_item(body: CreateItemRequest, request: Request):
         from fastapi import HTTPException as _HTTPException
 
         raise _HTTPException(status_code=422, detail="word_count must be >= 1")
+
+    # LLM auto-translate if translation is empty
+    translation = body.translation
+    if translation == "":
+        try:
+            llm_client = request.app.state.llm_client
+            translation = await translate_term(llm_client, body.text, body.language_code)
+        except AttributeError:
+            # LLM client not configured - proceed with empty translation
+            pass
+
     unit = SyntacticUnit(
         text=body.text,
-        translation=body.translation,
+        translation=translation,
         word_count=body.word_count,
         difficulty=1,
         source="user",
         lemma=body.text.lower() if body.word_count == 1 else None,
+        source_sentence=body.source_sentence,
+        source_lesson_id=body.source_lesson_id,
+        source_line_index=body.source_line_index,
     )
     existing = db.get_collocation(body.text)
     if existing is not None:

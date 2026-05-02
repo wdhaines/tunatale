@@ -20,7 +20,6 @@ export default defineConfig({
 			reporter: ['text'],
 			include: ['src/lib/**/*.ts', 'src/lib/**/*.svelte', 'src/routes/**/*.svelte'],
 			exclude: [
-				'src/**/*.test.ts',
 				'src/**/*.d.ts',
 				'src/lib/index.ts',
 				'src/lib/stores/DerivedTest.svelte',

@@ -81,6 +81,9 @@ export interface CreateSRSItemRequest {
 	language_code: string;
 	word_count: number;
 	translation?: string;
+	source_sentence?: string;
+	source_lesson_id?: string;
+	source_line_index?: number;
 }
 
 export interface DialogueLine {
@@ -400,6 +403,13 @@ export class TunaTaleAPI {
 
 	async fetchAnkiStatus(): Promise<AnkiStatusResult> {
 		return this.request('/api/anki/status');
+	}
+
+	async syncCreateNew(deckName: string, modelName: string): Promise<{ created: number; updated: number; skipped: number }> {
+		return this.request('/api/anki/sync-create-new', {
+			method: 'POST',
+			body: JSON.stringify({ deck_name: deckName, model_name: modelName })
+		});
 	}
 }
 
