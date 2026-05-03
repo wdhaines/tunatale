@@ -209,6 +209,37 @@ class TestDueQueries:
         #   word_c (5d ago, anki_id=100), word_a (5d ago, anki_id=300), word_b (1d ago, anki_id=200)
         assert texts == ["word_c", "word_a", "word_b"]
 
+    def test_get_due_items_orders_by_stability_ascending_within_same_due_date(self, srs_db):
+        """Within same due_date, lower stability (lower retrievability) comes first."""
+        today = date.today()
+        due_date = today - timedelta(days=5)  # 5 days overdue
+
+        # word_a: stability=0.086 (very low), anki_card_id=100 (low)
+        # word_b: stability=0.4 (higher), anki_card_id=200 (higher)
+        # Expected: word_a first (lower stability), even though anki_card_id is lower
+        for text, stab, anki_id in [("word_a", 0.086, 100), ("word_b", 0.4, 200)]:
+            srs_db.add_collocation(_unit(text, f"trans_{text}"), language_code="sl")
+            rows, _ = srs_db.list_collocations(search=text, limit=1)
+            row_id, item, _ = rows[0]
+            orig = item.directions[Direction.RECOGNITION]
+            new_dir = DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.REVIEW,
+                due_date=due_date,
+                stability=stab,
+                difficulty=orig.difficulty,
+                reps=orig.reps,
+                lapses=orig.lapses,
+                anki_card_id=anki_id,
+                last_review=today - timedelta(days=1),
+            )
+            srs_db.update_direction_by_id(row_id, Direction.RECOGNITION, new_dir)
+
+        result = srs_db.get_due_items(today)
+        texts = [item.syntactic_unit.text for _, item, _ in result]
+        # word_a (stability=0.086) should come before word_b (stability=0.4)
+        assert texts.index("word_a") < texts.index("word_b")
+
     def test_get_due_items_excludes_buried_state(self, srs_db):
         """Buried directions must not appear in get_due_items even if due_date <= today."""
         today = date.today()

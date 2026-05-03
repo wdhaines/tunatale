@@ -461,145 +461,119 @@ class TestReviewQueue:
         assert len(result) == 8
 
     # --- Helper for merge tests ---
-    def _make_item(self, due, anki_id, direction, anki_due=None):
-        """Build a minimal SRSItem with one direction populated for merge testing."""
+    def _make_item(self, due, anki_id, direction, anki_due=None, stability=1.0, last_review=None):
+        """Build a minimal SRSItem with both directions populated for merge testing."""
         from app.models.syntactic_unit import SyntacticUnit
 
-        state = DirectionState(
+        # Create the specified direction
+        dir_state = DirectionState(
             direction=direction,
             due_date=due,
             state=SRSState.REVIEW,
             anki_card_id=anki_id,
             anki_due=anki_due,
+            stability=stability,
+            last_review=last_review,
+        )
+        # Create the opposite direction with defaults
+        opposite = Direction.PRODUCTION if direction == Direction.RECOGNITION else Direction.RECOGNITION
+        opposite_state = DirectionState(
+            direction=opposite,
+            due_date=due,
+            state=SRSState.REVIEW,
+            stability=1.0,
+            last_review=None,
         )
         unit = SyntacticUnit(text="x", translation="x", word_count=1, difficulty=1, source="t")
-        return SRSItem(syntactic_unit=unit, directions={direction: state}, guid="g", anki_note_id=1)
+        return SRSItem(
+            syntactic_unit=unit, directions={direction: dir_state, opposite: opposite_state}, guid="g", anki_note_id=1
+        )
 
-    # --- Tests for _merge_by_due_then_anki_id ---
-    async def test_merge_due_empty_inputs(self, api_app_state):
+    # --- Tests for _merge_by_due_then_retrievability ---
+    async def test_merge_retrievability_empty_inputs(self, api_app_state):
+        from datetime import date
 
-        from app.api.srs import _merge_by_due_then_anki_id
+        from app.api.srs import _merge_by_due_then_retrievability
 
-        result = _merge_by_due_then_anki_id([], [])
+        result = _merge_by_due_then_retrievability([], [], date.today())
         assert result == []
 
-    async def test_merge_due_only_recognition(self, api_app_state):
+    async def test_merge_retrievability_orders_by_retrievability_within_same_due_date(self, api_app_state):
+        """Exact regression from plan: prašič-rec (s=0.4) vs vlak-prod (s=0.086) vs prašič-prod (s=0.5, due next day)."""
         from datetime import date
 
-        from app.api.srs import _merge_by_due_then_anki_id
+        from app.api.srs import _merge_by_due_then_retrievability
 
-        item = self._make_item(date(2026, 1, 1), 100, Direction.RECOGNITION)
-        rec = [(1, item, "sl")]
-        result = _merge_by_due_then_anki_id(rec, [])
-        assert len(result) == 1
-        assert result[0][3] == Direction.RECOGNITION
+        today = date(2026, 5, 2)
 
-    async def test_merge_due_only_production(self, api_app_state):
+        # prašič recognition: s=0.4, due=2026-05-01, anki=1766
+        prasic_rec = self._make_item(
+            date(2026, 5, 1),
+            1766,
+            Direction.RECOGNITION,
+            stability=0.4,
+            last_review=date(2026, 5, 1),
+        )
+        # vlak production: s=0.086, due=2026-05-01, anki=1777
+        vlak_prod = self._make_item(
+            date(2026, 5, 1),
+            1777,
+            Direction.PRODUCTION,
+            stability=0.086,
+            last_review=date(2026, 5, 1),
+        )
+        # prašič production: s=0.5, due=2026-05-02, anki=1767
+        prasic_prod = self._make_item(
+            date(2026, 5, 2),
+            1767,
+            Direction.PRODUCTION,
+            stability=0.5,
+            last_review=date(2026, 5, 1),
+        )
+
+        rec = [(1, prasic_rec, "sl")]
+        prod = [(2, vlak_prod, "sl"), (3, prasic_prod, "sl")]
+
+        result = _merge_by_due_then_retrievability(rec, prod, today)
+        # Expected: vlak-prod (lowest R), prašič-rec (next R), prašič-prod (due next day)
+        assert result[0][3] == Direction.PRODUCTION  # vlak-prod
+        assert result[0][1].directions[Direction.PRODUCTION].stability == 0.086
+        assert result[1][3] == Direction.RECOGNITION  # prašič-rec
+        assert result[1][1].directions[Direction.RECOGNITION].stability == 0.4
+        assert result[2][3] == Direction.PRODUCTION  # prašič-prod (due 2026-05-02)
+
+    async def test_merge_retrievability_null_stability_sorts_last(self, api_app_state):
+        """Directions with null stability (R=1.0) sort after those with real stability."""
         from datetime import date
 
-        from app.api.srs import _merge_by_due_then_anki_id
+        from app.api.srs import _merge_by_due_then_retrievability
 
-        item = self._make_item(date(2026, 1, 1), 100, Direction.PRODUCTION)
-        prod = [(2, item, "sl")]
-        result = _merge_by_due_then_anki_id([], prod)
-        assert len(result) == 1
+        today = date(2026, 5, 2)
+
+        # word_a: stability=None (null), due=today-1
+        item_null = self._make_item(
+            date(2026, 5, 1),
+            100,
+            Direction.RECOGNITION,
+            stability=None,
+            last_review=date(2026, 5, 1),
+        )
+        # word_b: stability=0.086, due=today-1
+        item_low = self._make_item(
+            date(2026, 5, 1),
+            200,
+            Direction.PRODUCTION,
+            stability=0.086,
+            last_review=date(2026, 5, 1),
+        )
+
+        rec = [(1, item_null, "sl")]
+        prod = [(2, item_low, "sl")]
+
+        result = _merge_by_due_then_retrievability(rec, prod, today)
+        # item_low (stability=0.086, R < 1.0) comes first
         assert result[0][3] == Direction.PRODUCTION
-
-    async def test_merge_due_earlier_date_wins(self, api_app_state):
-        from datetime import date
-
-        from app.api.srs import _merge_by_due_then_anki_id
-
-        rec_item = self._make_item(date(2026, 1, 1), 100, Direction.RECOGNITION)
-        prod_item = self._make_item(date(2026, 1, 2), 200, Direction.PRODUCTION)
-        rec = [(1, rec_item, "sl")]
-        prod = [(2, prod_item, "sl")]
-        result = _merge_by_due_then_anki_id(rec, prod)
-        assert result[0][3] == Direction.RECOGNITION
-
-    async def test_merge_due_later_date_wins(self, api_app_state):
-        from datetime import date
-
-        from app.api.srs import _merge_by_due_then_anki_id
-
-        rec_item = self._make_item(date(2026, 1, 2), 100, Direction.RECOGNITION)
-        prod_item = self._make_item(date(2026, 1, 1), 200, Direction.PRODUCTION)
-        rec = [(1, rec_item, "sl")]
-        prod = [(2, prod_item, "sl")]
-        result = _merge_by_due_then_anki_id(rec, prod)
-        assert result[0][3] == Direction.PRODUCTION
-
-    async def test_merge_due_tiebreak_anki_id_nulls_last(self, api_app_state):
-        from datetime import date
-
-        from app.api.srs import _merge_by_due_then_anki_id
-
-        rec_item = self._make_item(date(2026, 1, 1), None, Direction.RECOGNITION)
-        prod_item = self._make_item(date(2026, 1, 1), 100, Direction.PRODUCTION)
-        rec = [(1, rec_item, "sl")]
-        prod = [(2, prod_item, "sl")]
-        result = _merge_by_due_then_anki_id(rec, prod)
-        assert result[0][3] == Direction.PRODUCTION
-
-    async def test_merge_due_tiebreak_anki_id_nulls_last_reverse(self, api_app_state):
-        from datetime import date
-
-        from app.api.srs import _merge_by_due_then_anki_id
-
-        rec_item = self._make_item(date(2026, 1, 1), 100, Direction.RECOGNITION)
-        prod_item = self._make_item(date(2026, 1, 1), None, Direction.PRODUCTION)
-        rec = [(1, rec_item, "sl")]
-        prod = [(2, prod_item, "sl")]
-        result = _merge_by_due_then_anki_id(rec, prod)
-        assert result[0][3] == Direction.RECOGNITION
-
-    async def test_merge_due_tiebreak_anki_id_numeric(self, api_app_state):
-        from datetime import date
-
-        from app.api.srs import _merge_by_due_then_anki_id
-
-        rec_item = self._make_item(date(2026, 1, 1), 100, Direction.RECOGNITION)
-        prod_item = self._make_item(date(2026, 1, 1), 200, Direction.PRODUCTION)
-        rec = [(1, rec_item, "sl")]
-        prod = [(2, prod_item, "sl")]
-        result = _merge_by_due_then_anki_id(rec, prod)
-        assert result[0][3] == Direction.RECOGNITION
-
-    async def test_merge_due_tiebreak_anki_id_numeric_reverse(self, api_app_state):
-        from datetime import date
-
-        from app.api.srs import _merge_by_due_then_anki_id
-
-        rec_item = self._make_item(date(2026, 1, 1), 200, Direction.RECOGNITION)
-        prod_item = self._make_item(date(2026, 1, 1), 100, Direction.PRODUCTION)
-        rec = [(1, rec_item, "sl")]
-        prod = [(2, prod_item, "sl")]
-        result = _merge_by_due_then_anki_id(rec, prod)
-        assert result[0][3] == Direction.PRODUCTION
-
-    async def test_merge_due_tiebreak_both_null_uses_row_id(self, api_app_state):
-        from datetime import date
-
-        from app.api.srs import _merge_by_due_then_anki_id
-
-        rec_item = self._make_item(date(2026, 1, 1), None, Direction.RECOGNITION)
-        prod_item = self._make_item(date(2026, 1, 1), None, Direction.PRODUCTION)
-        rec = [(5, rec_item, "sl")]
-        prod = [(3, prod_item, "sl")]
-        result = _merge_by_due_then_anki_id(rec, prod)
-        assert result[0][3] == Direction.PRODUCTION
-
-    async def test_merge_due_tiebreak_both_null_rid_r_smaller(self, api_app_state):
-        from datetime import date
-
-        from app.api.srs import _merge_by_due_then_anki_id
-
-        rec_item = self._make_item(date(2026, 1, 1), None, Direction.RECOGNITION)
-        prod_item = self._make_item(date(2026, 1, 1), None, Direction.PRODUCTION)
-        rec = [(3, rec_item, "sl")]
-        prod = [(5, prod_item, "sl")]
-        result = _merge_by_due_then_anki_id(rec, prod)
-        assert result[0][3] == Direction.RECOGNITION
+        assert result[1][3] == Direction.RECOGNITION
 
     # --- Tests for _merge_by_anki_due_then_id ---
     async def test_merge_anki_due_empty_inputs(self, api_app_state):

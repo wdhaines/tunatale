@@ -9,7 +9,7 @@ import math
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from app.models.srs_item import Direction, Rating, SRSItem, SRSState
+from app.models.srs_item import Direction, DirectionState, Rating, SRSItem, SRSState
 
 # FSRS-5 default parameters (w vector, 19 values)
 _DEFAULT_WEIGHTS: tuple[float, ...] = (
@@ -56,6 +56,19 @@ DEFAULT_FSRS5_PARAMS = FSRSParams(weights=_DEFAULT_WEIGHTS)
 def _forgetting_curve(elapsed_days: float, stability: float) -> float:
     """Retrievability at elapsed_days given stability."""
     return (1 + FACTOR * elapsed_days / stability) ** DECAY
+
+
+def compute_retrievability(direction_state: DirectionState, today: date) -> float:
+    """Return retrievability (0-1) for a direction_state, handling edge cases.
+
+    Null stability or null last_review → return 1.0 (sorts last among due cards).
+    """
+    stability = direction_state.stability
+    last_review = direction_state.last_review
+    if stability is None or last_review is None:
+        return 1.0
+    elapsed = max(0, (today - last_review).days)
+    return _forgetting_curve(elapsed, stability)
 
 
 def _next_interval(stability: float, desired_retention: float) -> int:
