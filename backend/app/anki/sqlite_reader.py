@@ -105,12 +105,12 @@ def fetch_cards_for_notes(
 
     placeholders = ",".join("?" * len(note_ids))
     rows = conn.execute(
-        f"SELECT id, nid, did, ord, queue, reps, lapses, data, due FROM cards WHERE nid IN ({placeholders})",
+        f"SELECT id, nid, did, ord, queue, reps, lapses, data, due, ivl FROM cards WHERE nid IN ({placeholders})",
         note_ids,
     ).fetchall()
     cards = []
     for r in rows:
-        card_id, note_id, deck_id, ord_, queue, reps, lapses, data_str, due_raw = (
+        card_id, note_id, deck_id, ord_, queue, reps, lapses, data_str, due_raw, ivl = (
             r[0],
             r[1],
             r[2],
@@ -120,6 +120,7 @@ def fetch_cards_for_notes(
             r[6],
             r[7] or "",
             r[8] or 0,
+            r[9] or 0,
         )
         fsrs = parse_fsrs_data(
             card_id=card_id,
@@ -131,6 +132,7 @@ def fetch_cards_for_notes(
             fallback_log_path=fallback_log_path,
             col_crt=col_crt,
             due_raw=due_raw,
+            ivl=ivl,
         )
         direction = Direction.RECOGNITION if ord_ == 0 else Direction.PRODUCTION
         cards.append(
@@ -159,10 +161,14 @@ def parse_fsrs_data(
     fallback_log_path: Path | None = None,
     col_crt: int = 0,
     due_raw: int = 0,
+    ivl: int = 0,
 ) -> DirectionState:
     """Parse FSRS state from cards.data JSON. Falls back to NEW on missing/malformed data."""
     direction = Direction.RECOGNITION if ord == 0 else Direction.PRODUCTION
     due_date = compute_due_date(queue, due_raw, col_crt)
+
+    # Compute last_review for review/relearning queues
+    last_review = _compute_last_review(queue, due_raw, ivl, col_crt)
 
     if queue == -1:
         state = SRSState.SUSPENDED
@@ -192,6 +198,7 @@ def parse_fsrs_data(
                 state=state,
                 anki_card_id=card_id,
                 anki_due=due_raw,
+                last_review=last_review,
             )
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         pass
@@ -212,7 +219,15 @@ def parse_fsrs_data(
         state=state,
         anki_card_id=card_id,
         anki_due=due_raw,
+        last_review=last_review,
     )
+
+
+def _compute_last_review(queue: int, due_raw: int, ivl: int, col_crt: int) -> date | None:
+    """Compute last_review date for queue 2/3 cards: last_review_day = due - ivl."""
+    if queue in (2, 3):
+        return date.fromtimestamp(col_crt) + timedelta(days=due_raw - ivl)
+    return None
 
 
 def read_fsrs_state_for_cards(collection_path: str | Path, card_ids: list[int]) -> dict[int, tuple[float, float]]:

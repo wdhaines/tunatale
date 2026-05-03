@@ -17,6 +17,7 @@ from app.anki.sync import (
     NoteRecord,
     OfflineReader,
     OnlineReader,
+    _direction_differs,
 )
 from app.common.guid import compute_guid
 from app.models.srs_item import Direction, DirectionState, SRSState
@@ -1712,3 +1713,141 @@ class TestSyncPullWritesAnkiDue:
         note.cards[0] = replace(base_card, anki_due=100)
         AnkiSync(db=db, _reader=FakeReader([note])).sync_pull()
         assert db.get_collocation("banka").directions[Direction.RECOGNITION].anki_due == 100
+
+
+# ── Step 4: last_review propagation tests ──────────────────────────────
+
+
+class TestOfflineReaderPopulatesLastReview:
+    def test_offline_reader_populates_last_review(self, fake_anki_db):
+        """OfflineReader: CardRecord.last_review set for queue=2 cards."""
+        conn = sqlite3.connect(str(fake_anki_db))
+        # Update card 10010 (banka recognition) to have queue=2, ivl=5, due=15
+        conn.execute("UPDATE cards SET queue=2, ivl=5, due=15 WHERE id=10010")
+        conn.commit()
+        conn.close()
+
+        conn = sqlite3.connect(str(fake_anki_db))
+        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        conn.close()
+
+        # Find card 10010 specifically (banka recognition)
+        for rec in records:
+            if rec.l2_text != "banka":
+                continue
+            for card in rec.cards:
+                if card.anki_card_id == 10010:
+                    # col_crt=1704067200 -> date.fromtimestamp = 2023-12-31 (local)
+                    # due=15, ivl=5 -> last_review_day = 10
+                    # 2023-12-31 + 10 days = 2024-01-10
+                    assert card.last_review == date(2024, 1, 10)
+                    break
+
+
+class TestOnlineReaderPopulatesLastReview:
+    def test_online_reader_populates_last_review(self):
+        """OnlineReader: CardRecord.last_review set for queue=2 cards."""
+        client = _online_client(
+            {
+                "findNotes": lambda p: [1001],
+                "notesInfo": lambda p: [
+                    {
+                        "noteId": 1001,
+                        "modelName": "Basic",
+                        "mod": 0,
+                        "tags": [],
+                        "fields": {
+                            "Front": {"value": "vlak", "order": 0},
+                            "Back": {"value": "train", "order": 1},
+                        },
+                        "cards": [10010],
+                    }
+                ],
+                "findCards": lambda p: [10010],
+                "cardsInfo": lambda p: [
+                    {
+                        "cardId": 10010,
+                        "ord": 0,
+                        "queue": 2,
+                        "due": 10,
+                        "ivl": 3,
+                        "factor": 2500,
+                        "reps": 9,
+                        "lapses": 0,
+                    }
+                ],
+            }
+        )
+        records = OnlineReader(client, "0. Slovene").get_note_records()
+        # today_anki_day=10-10=0, last_review = today + (10-3) - 10 = today - 3
+        assert records[0].cards[0].last_review == date.today() + timedelta(days=-3)
+
+
+class TestSyncPullWritesLastReviewToDb:
+    def test_sync_pull_writes_last_review_to_db(self):
+        """sync_pull persists CardRecord.last_review into collocation_directions."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        expected_last_review = date(2024, 1, 11)
+        records = [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=2,
+                        reps=5,
+                        lapses=0,
+                        stability=7.5,
+                        difficulty=4.8,
+                        due_date=date.today(),
+                        last_review=expected_last_review,
+                    ),
+                ],
+            )
+        ]
+        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].last_review == expected_last_review
+
+
+class TestDirectionDiffersDetectsLastReviewTransition:
+    def test_direction_differs_detects_last_review_transition(self):
+        """None → date transition detected by _direction_differs."""
+        from dataclasses import replace
+
+        local = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=7.5,
+            difficulty=4.8,
+            reps=5,
+            lapses=0,
+            state=SRSState.REVIEW,
+        )
+        candidate = replace(local, last_review=date(2024, 1, 11))
+
+        assert _direction_differs(local, candidate) is True
+
+    def test_direction_differs_no_change_when_same_last_review(self):
+        """Same last_review → no difference."""
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=7.5,
+            difficulty=4.8,
+            reps=5,
+            lapses=0,
+            state=SRSState.REVIEW,
+            last_review=date(2024, 1, 11),
+        )
+
+        assert _direction_differs(ds, ds) is False

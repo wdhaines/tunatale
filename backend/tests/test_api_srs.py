@@ -1040,3 +1040,80 @@ class TestCreateItemWithSourceContext:
             resp = await client.post("/api/srs/items", json=payload)
         assert resp.status_code == 500
         assert "Failed to retrieve created item" in resp.json()["detail"]
+
+
+class TestMergeUsesRealRetrievabilityWhenLastReviewPopulated:
+    async def test_merge_orders_by_retrievability_with_last_review(self, api_app_state):
+        """Regression test: sreda rec (s=0.001, last_review=yesterday-ish) should be first."""
+        from datetime import date, timedelta
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+
+        # sreda recognition: stability=0.001, last_review=1.26 days ago → R ≈ 0.058
+        unit1 = SyntacticUnit(text="sreda", translation="wednesday", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit1, language_code="sl")
+        rows, _ = db.list_collocations(search="sreda", limit=1)
+        row_id1, item1, _ = rows[0]
+        sreda_rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=today,
+            stability=0.001,
+            difficulty=5.0,
+            reps=5,
+            lapses=1,
+            last_review=today - timedelta(days=1),
+        )
+        db.update_direction_by_id(row_id1, Direction.RECOGNITION, sreda_rec)
+
+        # vozovnica production: stability=0.002, last_review=0.95 days ago → R ≈ 0.094
+        unit2 = SyntacticUnit(text="vozovnica", translation="ticket", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit2, language_code="sl")
+        rows, _ = db.list_collocations(search="vozovnica", limit=1)
+        row_id2, item2, _ = rows[0]
+        voz_prod = DirectionState(
+            direction=Direction.PRODUCTION,
+            state=SRSState.REVIEW,
+            due_date=today,
+            stability=0.002,
+            difficulty=5.0,
+            reps=9,
+            lapses=0,
+            last_review=today - timedelta(days=1),
+        )
+        db.update_direction_by_id(row_id2, Direction.PRODUCTION, voz_prod)
+
+        # izgled recognition: stability=2.131, last_review=4 days ago → R ≈ 0.035
+        unit3 = SyntacticUnit(text="izgled", translation="appearance", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit3, language_code="sl")
+        rows, _ = db.list_collocations(search="izgled", limit=1)
+        row_id3, item3, _ = rows[0]
+        izg_rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=today - timedelta(days=2),  # due 2 days ago (overdue)
+            stability=2.131,
+            difficulty=4.0,
+            reps=10,
+            lapses=0,
+            last_review=today - timedelta(days=4),
+        )
+        db.update_direction_by_id(row_id3, Direction.RECOGNITION, izg_rec)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+
+        # With last_review populated, check retrievability ordering
+        # izgled (due 2 days ago) comes first due to due_date, then sreda (due today)
+        assert len(queue) >= 3
+        # The first item should be overdue (izgled due 2 days ago)
+        assert queue[0]["text"] == "izgled"
+        # Among same-day-due items, sreda (R=0.065) should come before vozovnica (R=0.092)
+        sreda_idx = next(i for i, q in enumerate(queue) if q["text"] == "sreda")
+        voz_idx = next(i for i, q in enumerate(queue) if q["text"] == "vozovnica")
+        assert sreda_idx < voz_idx, "sreda should come before vozovnica (lower R)"

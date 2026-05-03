@@ -110,6 +110,7 @@ class CardRecord:
     difficulty: float
     due_date: date
     anki_due: int | None = None
+    last_review: date | None = None
     # False when the source (e.g. AnkiConnect cardsInfo) does not reliably expose
     # FSRS stability/difficulty/due_date — sync_pull then preserves local FSRS
     # state instead of overwriting it with the placeholder values above.
@@ -197,6 +198,7 @@ class OfflineReader:
                     difficulty=c.fsrs_state.difficulty,
                     due_date=c.fsrs_state.due_date,
                     anki_due=c.fsrs_state.anki_due,
+                    last_review=c.fsrs_state.last_review,
                 )
                 for c in cards_by_note.get(note.id, [])
             ]
@@ -282,11 +284,13 @@ class OnlineReader:
                     due_date_val = date.today() + timedelta(days=due_offset)
                     stability_val = max(1.0, float(c.get("ivl", 1)))
                     difficulty_val = _factor_to_fsrs_difficulty(c.get("factor", 2500))
+                    last_review_val = date.today() + timedelta(days=(c["due"] - c.get("ivl", 0)) - today_anki_day)
                     fsrs_known_val = True
                 else:
                     due_date_val = date.today()
                     stability_val = 0.0
                     difficulty_val = 0.0
+                    last_review_val = None
                     fsrs_known_val = False
                 # AnkiConnect's `due` semantics differ by queue:
                 # q==0 → deck position (usable for new-card sort);
@@ -303,6 +307,7 @@ class OnlineReader:
                         difficulty=difficulty_val,
                         due_date=due_date_val,
                         anki_due=c.get("due") if q == 0 else None,
+                        last_review=last_review_val,
                         fsrs_known=fsrs_known_val,
                     )
                 )
@@ -608,7 +613,7 @@ class OfflineWriter:
 def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool:
     """Return True only if a sync-relevant field changed between local and candidate.
 
-    Excludes last_synced_at, last_review, and last_rating from the comparison
+    Excludes last_synced_at and last_rating from the comparison
     so benign timestamp updates don't trigger a spurious write.
     """
     return (
@@ -621,6 +626,7 @@ def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool
         or local.dirty_fsrs != candidate.dirty_fsrs
         or local.anki_card_id != candidate.anki_card_id
         or local.anki_due != candidate.anki_due
+        or local.last_review != candidate.last_review
     )
 
 
@@ -760,6 +766,7 @@ class AnkiSync:
                         dirty_fsrs=False,
                         anki_card_id=card_rec.anki_card_id,
                         anki_due=card_rec.anki_due,
+                        last_review=card_rec.last_review,
                         last_synced_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
                     )
                 else:

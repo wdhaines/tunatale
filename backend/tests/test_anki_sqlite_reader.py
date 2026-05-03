@@ -328,6 +328,86 @@ class TestParseFsrsData:
         )
         assert state.state == SRSState.RELEARNING
 
+    def test_parse_fsrs_data_sets_last_review_for_review_card(self):
+        """queue=2 (review): last_review = date from (due - ivl) via col_crt."""
+        col_crt = 1388836800  # 2014-01-04 12:00:00 UTC
+        # due_raw=4501, ivl=3 → last_review_day = 4498 → 2014-01-04 + 4498 days = 2026-04-29
+        state = parse_fsrs_data(
+            card_id=1,
+            ord=0,
+            data_str=json.dumps({"s": 0.001, "d": 5.0}),
+            queue=2,
+            reps=4,
+            lapses=0,
+            col_crt=col_crt,
+            due_raw=4501,
+            ivl=3,
+        )
+        assert state.last_review == date(2026, 4, 29)
+
+    def test_parse_fsrs_data_sets_last_review_for_relearning_card(self):
+        """queue=3 (day-relearning): last_review computed same as queue=2."""
+        col_crt = 1388836800
+        # due_raw=500, ivl=10 → last_review_day = 490 → 2014-01-04 + 490 days = 2015-05-09
+        state = parse_fsrs_data(
+            card_id=2,
+            ord=1,
+            data_str=json.dumps({"s": 0.5, "d": 6.0}),
+            queue=3,
+            reps=5,
+            lapses=1,
+            col_crt=col_crt,
+            due_raw=500,
+            ivl=10,
+        )
+        assert state.last_review == date(2015, 5, 9)
+
+    def test_parse_fsrs_data_last_review_none_for_new_card(self):
+        """queue=0 (new): last_review is None."""
+        state = parse_fsrs_data(
+            card_id=3,
+            ord=0,
+            data_str="",
+            queue=0,
+            reps=0,
+            lapses=0,
+            col_crt=1704067200,
+            due_raw=5,
+            ivl=0,
+        )
+        assert state.last_review is None
+
+    def test_parse_fsrs_data_last_review_none_for_learning_card(self):
+        """queue=1 (sub-day learning): last_review is None (no due/ivl formula)."""
+        state = parse_fsrs_data(
+            card_id=4,
+            ord=0,
+            data_str=json.dumps({"s": 5.0, "d": 5.0}),
+            queue=1,
+            reps=1,
+            lapses=0,
+            col_crt=1704067200,
+            due_raw=1704067200 + 86400,
+            ivl=0,
+        )
+        assert state.last_review is None
+
+    def test_parse_fsrs_data_last_review_fallback_branch(self):
+        """Fallback branch (no JSON data) also computes last_review for queue 2."""
+        col_crt = 1388836800
+        state = parse_fsrs_data(
+            card_id=5,
+            ord=0,
+            data_str="",  # no JSON → fallback
+            queue=2,
+            reps=3,
+            lapses=0,
+            col_crt=col_crt,
+            due_raw=4501,
+            ivl=3,
+        )
+        assert state.last_review == date(2026, 4, 29)
+
 
 class TestExtractL2:
     def test_extracts_from_class_slovene(self):
