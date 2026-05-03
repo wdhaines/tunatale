@@ -12,9 +12,15 @@
 	let error = $state('');
 	let reviewed = $state(0);
 	let stats = $state<QueueStats | null>(null);
+	let buriedCollocationIds: Set<number> = $state(new Set());
 
 	let current = $derived(queue[index]);
 	let done = $derived(!loading && !error && index >= queue.length);
+	let upcomingUnburiedCount = $derived(
+		queue.slice(index + 1).filter(q => !buriedCollocationIds.has(q.item.id)).length
+	);
+	let progressCurrent = $derived(reviewed + 1);
+	let progressTotal = $derived(progressCurrent + upcomingUnburiedCount);
 
 	onMount(async () => {
 		try {
@@ -31,6 +37,14 @@
 		}
 	});
 
+	function nextNonBuriedIndex(start: number): number {
+		let i = start;
+		while (i < queue.length && buriedCollocationIds.has(queue[i].item.id)) {
+			i++;
+		}
+		return i;
+	}
+
 	async function rate(rating: 'again' | 'hard' | 'good' | 'easy') {
 		const { item, direction } = current;
 		try {
@@ -40,7 +54,8 @@
 			return;
 		}
 		reviewed += 1;
-		index += 1;
+		buriedCollocationIds = new Set(buriedCollocationIds).add(item.id);
+		index = nextNonBuriedIndex(index + 1);
 	}
 </script>
 
@@ -62,7 +77,7 @@
 			<a href="/">← Home</a>
 		</section>
 	{:else if current}
-		<p class="progress">{index + 1} / {queue.length}</p>
+		<p class="progress">{progressCurrent} / {progressTotal}</p>
 		<p class="badge">{current.direction === 'recognition' ? 'Recognition' : 'Production'}</p>
 		<section class="card-section">
 			{#key index}

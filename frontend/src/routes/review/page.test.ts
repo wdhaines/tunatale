@@ -181,4 +181,55 @@ describe('review/+page.svelte', () => {
 		await findByText(/New 5/);
 		expect(queryByText(/FSRS:/)).toBeFalsy();
 	});
+
+	// ── client-side sibling burying ────────────────────────────────────────
+	// Backend buries collocations whose last_review=today at queue-build time, but
+	// the queue is fetched once on mount; without client-side burying the OTHER
+	// direction of a just-reviewed collocation would appear next in the cached queue.
+
+	it('skips sibling direction after rating: prašič rec then prašič prod', async () => {
+		const prasicRec = makeReviewQueueItem({ id: 202, text: 'prašič', translation: 'pig', direction: 'recognition' });
+		const prasicProd = makeReviewQueueItem({ id: 202, text: 'prašič', translation: 'pig', direction: 'production' });
+		const vlakRec = makeReviewQueueItem({ id: 251, text: 'vlak', translation: 'train', direction: 'recognition' });
+		mockFetchReviewQueue.mockResolvedValue({ queue: [prasicRec, prasicProd, vlakRec] });
+		const { findByRole, findByText } = render(ReviewPage);
+		await fireEvent.click(await findByRole('button', { name: 'Show' }));
+		await fireEvent.click(await findByRole('button', { name: 'Good' }));
+		// Sibling prasicProd is buried; vlak (recognition) is shown next.
+		expect(await findByText('vlak')).toBeTruthy();
+	});
+
+	it('shows done when all remaining queue items are siblings of just-reviewed card', async () => {
+		const recA = makeReviewQueueItem({ id: 100, text: 'okno', translation: 'window', direction: 'recognition' });
+		const prodA = makeReviewQueueItem({ id: 100, text: 'okno', translation: 'window', direction: 'production' });
+		mockFetchReviewQueue.mockResolvedValue({ queue: [recA, prodA] });
+		const { findByRole, findByText } = render(ReviewPage);
+		await fireEvent.click(await findByRole('button', { name: 'Show' }));
+		await fireEvent.click(await findByRole('button', { name: 'Good' }));
+		expect(await findByText(/Done for today/)).toBeTruthy();
+	});
+
+	it('progress counter excludes buried siblings from total', async () => {
+		const recA = makeReviewQueueItem({ id: 100, text: 'okno', translation: 'window', direction: 'recognition' });
+		const prodA = makeReviewQueueItem({ id: 100, text: 'okno', translation: 'window', direction: 'production' });
+		const recB = makeReviewQueueItem({ id: 200, text: 'vrata', translation: 'door', direction: 'recognition' });
+		mockFetchReviewQueue.mockResolvedValue({ queue: [recA, prodA, recB] });
+		const { findByRole, findByText } = render(ReviewPage);
+		// Before rating: 1 / 3 (full queue)
+		expect(await findByText('1 / 3')).toBeTruthy();
+		await fireEvent.click(await findByRole('button', { name: 'Show' }));
+		await fireEvent.click(await findByRole('button', { name: 'Good' }));
+		// After rating recA (id=100), prodA is buried → effective total drops to 2
+		expect(await findByText('2 / 2')).toBeTruthy();
+	});
+
+	it('does not bury non-siblings with different collocation ids', async () => {
+		const itemA = makeReviewQueueItem({ id: 1, text: 'okno', translation: 'window', direction: 'recognition' });
+		const itemB = makeReviewQueueItem({ id: 2, text: 'vrata', translation: 'door', direction: 'recognition' });
+		mockFetchReviewQueue.mockResolvedValue({ queue: [itemA, itemB] });
+		const { findByRole, findByText } = render(ReviewPage);
+		await fireEvent.click(await findByRole('button', { name: 'Show' }));
+		await fireEvent.click(await findByRole('button', { name: 'Good' }));
+		expect(await findByText('vrata')).toBeTruthy();
+	});
 });

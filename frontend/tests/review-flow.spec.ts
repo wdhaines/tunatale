@@ -28,20 +28,26 @@ test('review flow: seed items, drill through queue, complete', async ({ page, re
 	await expect(page).toHaveURL('/review');
 	await expect(page.getByText(/New 6 · Due 0/)).toBeVisible({ timeout: 10000 });
 
-	// Review queue has 6 items (3 words × 2 directions)
-	const totalItems = 6;
-	await expect(page.getByText(`1 / ${totalItems}`)).toBeVisible({ timeout: 5000 });
+	// Queue has 6 items (3 words × 2 directions), but client-side sibling burying skips
+	// the second direction of each word once one direction is rated. So 3 effective reviews.
+	// Progress sequence: 1/6 (start) → 2/5 (after 1st rate, 1 sibling buried)
+	// → 3/4 (after 2nd rate, 2 siblings buried) → done.
+	const expectedReviews = 3;
+	const totalShown = 6;
+	await expect(page.getByText(`1 / ${totalShown}`)).toBeVisible({ timeout: 5000 });
 	await expect(page.getByText(/Recognition|Production/)).toBeVisible();
 
-	for (let i = 0; i < totalItems; i++) {
+	for (let i = 0; i < expectedReviews; i++) {
 		await expect(page.getByRole('button', { name: 'Show' })).toBeVisible();
 		await page.getByRole('button', { name: 'Show' }).click();
 		await page.getByRole('button', { name: 'Good' }).click();
-		if (i < totalItems - 1) {
-			await expect(page.getByText(`${i + 2} / ${totalItems}`)).toBeVisible({ timeout: 5000 });
+		if (i < expectedReviews - 1) {
+			const nextNum = i + 2;
+			const nextDenom = totalShown - (i + 1);
+			await expect(page.getByText(`${nextNum} / ${nextDenom}`)).toBeVisible({ timeout: 5000 });
 		}
 	}
 
 	await expect(page.getByText('Done for today')).toBeVisible({ timeout: 5000 });
-	await expect(page.getByText(`Reviewed: ${totalItems}`)).toBeVisible();
+	await expect(page.getByText(`Reviewed: ${expectedReviews}`)).toBeVisible();
 });
