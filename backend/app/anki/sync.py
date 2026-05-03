@@ -279,7 +279,7 @@ class OnlineReader:
                     continue
                 c = cards_by_id[cid]
                 q = c["queue"]
-                if q == 2 and today_anki_day is not None:
+                if q in (2, 3) and today_anki_day is not None:
                     due_offset = c["due"] - today_anki_day
                     due_date_val = date.today() + timedelta(days=due_offset)
                     stability_val = max(1.0, float(c.get("ivl", 1)))

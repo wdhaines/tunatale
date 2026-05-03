@@ -1782,6 +1782,55 @@ class TestOnlineReaderPopulatesLastReview:
         # today_anki_day=10-10=0, last_review = today + (10-3) - 10 = today - 3
         assert records[0].cards[0].last_review == date.today() + timedelta(days=-3)
 
+    def test_online_reader_populates_last_review_for_relearning_card(self):
+        """OnlineReader: CardRecord.last_review set for queue=3 (day-relearning) cards."""
+        client = _online_client(
+            {
+                "findNotes": lambda p: [1001],
+                "notesInfo": lambda p: [
+                    {
+                        "noteId": 1001,
+                        "modelName": "Basic",
+                        "mod": 0,
+                        "tags": [],
+                        "fields": {
+                            "Front": {"value": "vlak", "order": 0},
+                            "Back": {"value": "train", "order": 1},
+                        },
+                        "cards": [10011],
+                    }
+                ],
+                # Card 10010 (queue=2) anchors _discover_today_anki_day (today_anki_day=10).
+                # Card 10011 is the queue=3 (relearning) card under test.
+                "findCards": lambda p: [10010],
+                "cardsInfo": lambda p: [
+                    {
+                        "cardId": 10010,
+                        "ord": 0,
+                        "queue": 2,
+                        "due": 10,
+                        "ivl": 5,
+                        "factor": 2500,
+                        "reps": 5,
+                        "lapses": 0,
+                    },
+                    {
+                        "cardId": 10011,
+                        "ord": 1,
+                        "queue": 3,
+                        "due": 10,
+                        "ivl": 1,
+                        "factor": 2500,
+                        "reps": 8,
+                        "lapses": 1,
+                    },
+                ],
+            }
+        )
+        records = OnlineReader(client, "0. Slovene").get_note_records()
+        # today_anki_day=10, queue=3: last_review = today + (10-1) - 10 = today - 1
+        assert records[0].cards[0].last_review == date.today() + timedelta(days=-1)
+
 
 class TestSyncPullWritesLastReviewToDb:
     def test_sync_pull_writes_last_review_to_db(self):
