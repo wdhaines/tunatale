@@ -24,6 +24,7 @@ from app.anki.sqlite_reader import (
     fetch_cards_for_notes,
     fetch_notes_for_deck,
     find_deck_id,
+    read_fsrs_state_for_cards,
 )
 from app.common.guid import compute_guid
 from app.models.srs_item import Direction, DirectionState, SRSState
@@ -217,12 +218,21 @@ class OnlineReader:
     """Read NoteRecords via AnkiConnect.
 
     stability and difficulty are reconstructed from ivl/factor for review-queue cards
-    (lossy — authoritative FSRS state requires offline mode with Anki closed).
+    (lossy — authoritative FSRS state requires offline mode with Anki closed), unless
+    `collection_path` points at the live collection.anki2 file. AnkiConnect being
+    reachable implies the file is co-located, so we can read `cards.data` JSON in
+    parallel and override the reconstructed values with real FSRS s/d.
     """
 
-    def __init__(self, client: AnkiConnectClient, deck_name: str) -> None:
+    def __init__(
+        self,
+        client: AnkiConnectClient,
+        deck_name: str,
+        collection_path: str | Path | None = None,
+    ) -> None:
         self._client = client
         self._deck_name = deck_name
+        self._collection_path = collection_path
 
     def _discover_today_anki_day(self) -> int | None:
         """Return today's Anki day-number (days since collection creation).
@@ -308,6 +318,18 @@ class OnlineReader:
                     cards=card_records,
                 )
             )
+
+        if self._collection_path is not None:
+            all_card_ids_for_supplement = [c.anki_card_id for r in records for c in r.cards]
+            real_fsrs = read_fsrs_state_for_cards(self._collection_path, all_card_ids_for_supplement)
+            for r in records:
+                r.cards = [
+                    replace(c, stability=real_fsrs[c.anki_card_id][0], difficulty=real_fsrs[c.anki_card_id][1])
+                    if c.anki_card_id in real_fsrs
+                    else c
+                    for c in r.cards
+                ]
+
         return records
 
 
@@ -612,6 +634,7 @@ class AnkiSync:
         mode: str = "online",
         client: AnkiConnectClient | None = None,
         deck_name: str | None = None,
+        collection_path: str | Path | None = None,
         _reader=None,
         _writer=None,
         _anki_col_ver: int | None = None,
@@ -623,7 +646,7 @@ class AnkiSync:
         elif mode == "online":
             if client is None or deck_name is None:
                 raise ValueError("client and deck_name required for mode='online'")
-            self._reader = OnlineReader(client, deck_name)
+            self._reader = OnlineReader(client, deck_name, collection_path=collection_path)
         else:
             raise NotImplementedError(f"mode={mode!r} not yet implemented")
 
@@ -1012,7 +1035,13 @@ def main(
             return 1
 
     if mode == "online":
-        sync = AnkiSync(db=db, mode="online", client=client, deck_name=_s.anki_deck_name)
+        sync = AnkiSync(
+            db=db,
+            mode="online",
+            client=client,
+            deck_name=_s.anki_deck_name,
+            collection_path=_s.anki_collection_path if _s.anki_collection_path.exists() else None,
+        )
         pull = sync.sync_pull(dry_run=args.dry_run)
         push = sync.sync_push(dry_run=args.dry_run, force_fsrs=args.force_fsrs)
         _print_report(pull, push)

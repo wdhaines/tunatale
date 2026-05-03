@@ -299,6 +299,93 @@ class TestOnlineReader:
         assert records[0].cards[0].fsrs_known is False
 
 
+class TestOnlineReaderSqliteSupplement:
+    """OnlineReader with a collection_path supplements FSRS state from cards.data JSON,
+    overriding the lossy ivl/factor reconstruction with real Anki FSRS values."""
+
+    def _make_anki_sqlite(self, tmp_path, cards_data: dict[int, str]) -> str:
+        """Write a minimal collection.anki2-shaped SQLite file with the given cards."""
+        path = tmp_path / "collection.anki2"
+        with sqlite3.connect(str(path)) as conn:
+            conn.execute("CREATE TABLE cards (id INTEGER PRIMARY KEY, data TEXT)")
+            for card_id, data_str in cards_data.items():
+                conn.execute("INSERT INTO cards (id, data) VALUES (?, ?)", (card_id, data_str))
+        return str(path)
+
+    def _online_handlers_for_card(self, card_id: int, ivl: int, factor: int):
+        return {
+            "findNotes": lambda p: [card_id - 1],  # arbitrary nid
+            "notesInfo": lambda p: [
+                {
+                    "noteId": card_id - 1,
+                    "modelName": "Basic",
+                    "mod": 0,
+                    "tags": [],
+                    "fields": {
+                        "Front": {"value": "vlak", "order": 0},
+                        "Back": {"value": "train", "order": 1},
+                    },
+                    "cards": [card_id],
+                }
+            ],
+            "findCards": lambda p: [card_id],
+            "cardsInfo": lambda p: [
+                {
+                    "cardId": card_id,
+                    "ord": 1,
+                    "queue": 2,
+                    "due": 4500,
+                    "ivl": ivl,
+                    "factor": factor,
+                    "reps": 9,
+                    "lapses": 0,
+                }
+            ],
+        }
+
+    def test_supplements_fsrs_from_cards_data_when_path_given(self, tmp_path):
+        """With collection_path: real FSRS s/d from cards.data overrides ivl/factor reconstruction."""
+        path = self._make_anki_sqlite(tmp_path, {1775264031777: '{"s": 0.086, "d": 9.4}'})
+        client = _online_client(self._online_handlers_for_card(1775264031777, ivl=1, factor=1310))
+        records = OnlineReader(client, "0. Slovene", collection_path=path).get_note_records()
+        card = records[0].cards[0]
+        assert card.stability == 0.086
+        assert card.difficulty == 9.4
+        assert card.fsrs_known is True
+
+    def test_no_path_keeps_legacy_ivl_factor_reconstruction(self):
+        """Without collection_path: reconstructs stability=max(1.0, ivl), difficulty from factor."""
+        client = _online_client(self._online_handlers_for_card(1775264031777, ivl=1, factor=1310))
+        records = OnlineReader(client, "0. Slovene").get_note_records()
+        card = records[0].cards[0]
+        # ivl=1 → stability=max(1.0, 1)=1.0 (NOT 0.086)
+        assert card.stability == 1.0
+        # factor=1310 → difficulty=(3500-1310)/220 ≈ 9.95
+        assert abs(card.difficulty - (3500 - 1310) / 220) < 0.01
+
+    def test_card_missing_from_sqlite_falls_back_to_reconstruction(self, tmp_path):
+        """If AnkiConnect knows about a card that SQLite doesn't, fall back to ivl/factor."""
+        path = self._make_anki_sqlite(tmp_path, {})  # empty
+        client = _online_client(self._online_handlers_for_card(1775264031777, ivl=21, factor=2500))
+        records = OnlineReader(client, "0. Slovene", collection_path=path).get_note_records()
+        card = records[0].cards[0]
+        assert card.stability == 21.0  # reconstruction kicks in
+
+    def test_malformed_cards_data_falls_back_to_reconstruction(self, tmp_path):
+        """data column with junk JSON or missing s/d → ivl/factor reconstruction."""
+        path = self._make_anki_sqlite(tmp_path, {1775264031777: "not-json"})
+        client = _online_client(self._online_handlers_for_card(1775264031777, ivl=21, factor=2500))
+        records = OnlineReader(client, "0. Slovene", collection_path=path).get_note_records()
+        card = records[0].cards[0]
+        assert card.stability == 21.0
+
+    def test_path_does_not_exist_raises(self, tmp_path):
+        """Misconfigured collection_path should fail loudly, not silently."""
+        client = _online_client(self._online_handlers_for_card(1775264031777, ivl=1, factor=1310))
+        with pytest.raises(FileNotFoundError):
+            OnlineReader(client, "0. Slovene", collection_path=str(tmp_path / "nonexistent.anki2")).get_note_records()
+
+
 # ── AnkiSync constructor ──────────────────────────────────────────────────────
 
 
