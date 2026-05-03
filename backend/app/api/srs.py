@@ -648,6 +648,7 @@ async def get_review_queue(request: Request) -> dict:
     due_rec = db.get_due_items(today, Direction.RECOGNITION)
     due_prod = db.get_due_items(today, Direction.PRODUCTION)
     due = _merge_by_due_then_retrievability(due_rec, due_prod, today)
+
     if bury_review:
         due = [t for t in due if t[0] not in buried]
 
@@ -657,15 +658,39 @@ async def get_review_queue(request: Request) -> dict:
     new_combined = _merge_by_anki_due_then_id(new_rec, new_prod)
     if bury_new:
         new_combined = [t for t in new_combined if t[0] not in buried]
-    # Apply daily cap across the combined list (NOT split 50/50)
     new_combined = new_combined[:cap]
 
-    # 3. Apply newSpread
+    # 3. Extract learning-state cards (Anki queue=1 behavior: they go first).
+    #    Also remove any new cards whose collocation has a learning direction.
+    learning_cards = [t for t in due if t[1].directions[t[3]].state == SRSState.LEARNING]
+    nonlearning_due = [t for t in due if t[1].directions[t[3]].state != SRSState.LEARNING]
+
+    learning_collocation_ids = {t[0] for t in learning_cards}
+    nonlearning_new = [t for t in new_combined if t[0] not in learning_collocation_ids]
+
+    # Sort learning cards by anki_due ASC (the sub-day unix timestamp Anki uses for queue=1
+    # dispatch). Fall back to stability ASC when anki_due is missing (e.g. AnkiConnect-only
+    # sync without collection_path). NULL anki_due sorts last within the bucket.
+    learning_cards.sort(
+        key=lambda t: (
+            t[1].directions[t[3]].anki_due is None,
+            t[1].directions[t[3]].anki_due or 0,
+            t[1].directions[t[3]].stability,
+            t[1].directions[t[3]].anki_card_id is None,
+            t[1].directions[t[3]].anki_card_id or 0,
+            t[0],
+        ),
+    )
+
+    # 4. Apply newSpread to nonlearning cards only
     if spread == 1:  # new_after_review
-        ordered = due + new_combined
+        ordered = nonlearning_due + nonlearning_new
     elif spread == 2:  # new_before_review
-        ordered = new_combined + due
+        ordered = nonlearning_new + nonlearning_due
     else:  # 0 = mix: interleave one new every N reviews
-        ordered = _spread_mix(due, new_combined)
+        ordered = _spread_mix(nonlearning_due, nonlearning_new)
+
+    # 5. Prepend learning cards (always first, matching Anki's queue=1 dispatcher)
+    ordered = learning_cards + ordered
 
     return {"queue": [_queue_item_to_dict(*t, db) for t in ordered]}

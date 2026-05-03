@@ -1117,3 +1117,196 @@ class TestMergeUsesRealRetrievabilityWhenLastReviewPopulated:
         sreda_idx = next(i for i, q in enumerate(queue) if q["text"] == "sreda")
         voz_idx = next(i for i, q in enumerate(queue) if q["text"] == "vozovnica")
         assert sreda_idx < voz_idx, "sreda should come before vozovnica (lower R)"
+
+
+class TestLearningStatePriority:
+    """Learning-state cards should sort before review cards (Anki queue=1 behavior)."""
+
+    async def test_review_queue_learning_state_sorts_before_overdue_review(self, api_app_state):
+        """Regression: ženska prod (learning) should appear before tovornjak prod (overdue review)."""
+        from datetime import date, timedelta
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+
+        # tovornjak prod: state=review, due_date=yesterday (overdue), stability=0.116
+        unit1 = SyntacticUnit(text="tovornjak", translation="truck", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit1, language_code="sl")
+        rows, _ = db.list_collocations(search="tovornjak", limit=1)
+        row_id1, item1, _ = rows[0]
+        tovornjak_prod = DirectionState(
+            direction=Direction.PRODUCTION,
+            state=SRSState.REVIEW,
+            due_date=today - timedelta(days=1),
+            stability=0.116,
+            last_review=today - timedelta(days=2),
+        )
+        db.update_direction_by_id(row_id1, Direction.PRODUCTION, tovornjak_prod)
+
+        # ženska prod: state=learning, due_date=today, stability=0.036, last_review=NULL
+        unit2 = SyntacticUnit(text="ženska", translation="woman", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit2, language_code="sl")
+        rows, _ = db.list_collocations(search="ženska", limit=1)
+        row_id2, item2, _ = rows[0]
+        zenska_prod = DirectionState(
+            direction=Direction.PRODUCTION,
+            state=SRSState.LEARNING,
+            due_date=today,
+            stability=0.036,
+            last_review=None,
+        )
+        db.update_direction_by_id(row_id2, Direction.PRODUCTION, zenska_prod)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+
+        # ženska (learning) should be first, before tovornjak (overdue review)
+        assert len(queue) >= 2
+        assert queue[0]["text"] == "ženska"
+        # Check the state from the directions dict for the correct direction
+        first_item = queue[0]
+        if first_item["direction"] == "production":
+            assert first_item["directions"]["production"]["state"] == "learning"
+        else:
+            assert first_item["directions"]["recognition"]["state"] == "learning"
+
+    async def test_learning_bucket_orders_by_stability_then_anki_card_id(self, api_app_state):
+        """Learning cards should order by stability ASC, then anki_card_id ASC."""
+        from datetime import date
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+
+        # Create three learning cards with different stability values
+        cards = [
+            ("mnozica", 300, 0.01),  # lowest stability
+            ("clovek", 301, 0.05),  # middle stability
+            ("dekle", 302, 0.26),  # highest stability
+        ]
+        for text, anki_id, stability in cards:
+            unit = SyntacticUnit(text=text, translation=f"trans_{text}", word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+            rows, _ = db.list_collocations(search=text, limit=1)
+            row_id, item, _ = rows[0]
+            dstate = DirectionState(
+                direction=Direction.PRODUCTION,
+                state=SRSState.LEARNING,
+                due_date=today,
+                stability=stability,
+                anki_card_id=anki_id,
+            )
+            db.update_direction_by_id(row_id, Direction.PRODUCTION, dstate)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+        # Check learning state from the correct direction
+        learning_queue = []
+        for q in queue:
+            if q["direction"] == "production":
+                if q["directions"]["production"]["state"] == "learning":
+                    learning_queue.append(q)
+            elif q["directions"]["recognition"]["state"] == "learning":
+                learning_queue.append(q)
+
+        assert len(learning_queue) == 3
+        assert learning_queue[0]["text"] == "mnozica"
+        assert learning_queue[1]["text"] == "clovek"
+        assert learning_queue[2]["text"] == "dekle"
+
+    async def test_learning_bucket_respects_bury_review(self, api_app_state):
+        """Bury review should still work after the learning/review split."""
+        from datetime import date
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+
+        # Create a collocation with both directions: recognition=reviewed today, production=learning
+        unit = SyntacticUnit(text="bury_test", translation="test", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="bury_test", limit=1)
+        row_id, item, _ = rows[0]
+
+        # Recognition reviewed today (triggers bury)
+        rec_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=today,
+            last_review=today,
+        )
+        db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
+
+        # Production in learning state (should be buried)
+        prod_dir = DirectionState(
+            direction=Direction.PRODUCTION,
+            state=SRSState.LEARNING,
+            due_date=today,
+            stability=0.01,
+        )
+        db.update_direction_by_id(row_id, Direction.PRODUCTION, prod_dir)
+
+        # Enable bury_review
+        db.set_anki_state_cache("bury_review", "True")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+
+        # Production should be buried (check direction-specific state)
+        prod_in_queue = [
+            q for q in queue if q["direction"] == "production" and q["directions"]["production"]["state"] == "learning"
+        ]
+        assert len(prod_in_queue) == 0
+
+    async def test_learning_bucket_orders_by_anki_due_when_present(self, api_app_state):
+        """Regression for ženska/dojenček: when anki_due is set (queue=1 sub-day timestamp),
+        it must override stability as the sort key. Anki dispatches queue=1 by raw `due` ASC.
+        """
+        from datetime import date
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+
+        # Real-world case: dojenček has lower stability but LATER sub-day due than ženska.
+        # Anki shows ženska first (earlier sub-day due); TunaTale must agree.
+        cards = [
+            # (text, anki_card_id, stability, anki_due_unix_timestamp)
+            ("dojencek", 1775264031923, 0.01, 1777835006),  # lower stability, later sub-day due
+            ("zenska", 1775264031927, 0.036, 1777834178),   # higher stability, earlier sub-day due
+        ]
+        for text, anki_id, stability, anki_due_ts in cards:
+            unit = SyntacticUnit(text=text, translation=f"trans_{text}", word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+            rows, _ = db.list_collocations(search=text, limit=1)
+            row_id, item, _ = rows[0]
+            dstate = DirectionState(
+                direction=Direction.PRODUCTION,
+                state=SRSState.LEARNING,
+                due_date=today,
+                stability=stability,
+                anki_card_id=anki_id,
+                anki_due=anki_due_ts,
+            )
+            db.update_direction_by_id(row_id, Direction.PRODUCTION, dstate)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+
+        # ženska must come before dojenček despite higher stability — anki_due dominates
+        zenska_idx = next(i for i, q in enumerate(queue) if q["text"] == "zenska")
+        dojencek_idx = next(i for i, q in enumerate(queue) if q["text"] == "dojencek")
+        assert zenska_idx < dojencek_idx, "ženska (earlier anki_due) must come before dojenček"

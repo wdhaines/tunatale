@@ -1782,6 +1782,45 @@ class TestOnlineReaderPopulatesLastReview:
         # today_anki_day=10-10=0, last_review = today + (10-3) - 10 = today - 3
         assert records[0].cards[0].last_review == date.today() + timedelta(days=-3)
 
+    def test_online_reader_populates_anki_due_for_learning_card(self):
+        """OnlineReader: queue=1 cards must propagate `due` (sub-day unix timestamp) to anki_due.
+        TunaTale uses this to dispatch learning cards in the same order as Anki's queue=1 scheduler.
+        """
+        sub_day_due_ts = 1777834178  # arbitrary unix timestamp
+        client = _online_client(
+            {
+                "findNotes": lambda p: [1001],
+                "notesInfo": lambda p: [
+                    {
+                        "noteId": 1001,
+                        "modelName": "Basic",
+                        "mod": 0,
+                        "tags": [],
+                        "fields": {
+                            "Front": {"value": "ženska", "order": 0},
+                            "Back": {"value": "woman", "order": 1},
+                        },
+                        "cards": [10010],
+                    }
+                ],
+                "findCards": lambda p: [10010],
+                "cardsInfo": lambda p: [
+                    {
+                        "cardId": 10010,
+                        "ord": 1,
+                        "queue": 1,  # sub-day learning
+                        "due": sub_day_due_ts,
+                        "ivl": 0,
+                        "factor": 0,
+                        "reps": 8,
+                        "lapses": 0,
+                    }
+                ],
+            }
+        )
+        records = OnlineReader(client, "0. Slovene").get_note_records()
+        assert records[0].cards[0].anki_due == sub_day_due_ts
+
     def test_online_reader_populates_last_review_for_relearning_card(self):
         """OnlineReader: CardRecord.last_review set for queue=3 (day-relearning) cards."""
         client = _online_client(

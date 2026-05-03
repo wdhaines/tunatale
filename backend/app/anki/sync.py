@@ -306,7 +306,7 @@ class OnlineReader:
                         stability=stability_val,
                         difficulty=difficulty_val,
                         due_date=due_date_val,
-                        anki_due=c.get("due") if q == 0 else None,
+                        anki_due=c.get("due") if q in (0, 1) else None,
                         last_review=last_review_val,
                         fsrs_known=fsrs_known_val,
                     )
