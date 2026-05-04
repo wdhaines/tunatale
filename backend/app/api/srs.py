@@ -409,12 +409,9 @@ async def create_item(body: CreateItemRequest, request: Request):
     # LLM auto-translate if translation is empty
     translation = body.translation
     if translation == "":
-        try:
-            llm_client = request.app.state.llm_client
+        llm_client = getattr(request.app.state, "llm", None)
+        if llm_client is not None:
             translation = await translate_term(llm_client, body.text, body.language_code)
-        except AttributeError:
-            # LLM client not configured - proceed with empty translation
-            pass
 
     unit = SyntacticUnit(
         text=body.text,

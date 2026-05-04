@@ -970,10 +970,9 @@ class TestCreateItemWithSourceContext:
 
         from app.llm.client import LLMClient
 
-        # Ensure llm_client exists on app.state, then mock it with monkeypatch for auto-cleanup
-        app.state.llm_client = None  # Ensure attribute exists
+        # Set llm on app.state (matching production wiring in main.py), then mock translate_term
         mock_client = AsyncMock(spec=LLMClient)
-        monkeypatch.setattr(app.state, "llm_client", mock_client)
+        app.state.llm = mock_client
 
         # Mock translate_term to return a translation
         async def mock_translate(*args, **kwargs):

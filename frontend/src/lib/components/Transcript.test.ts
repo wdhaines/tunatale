@@ -638,7 +638,10 @@ describe('Transcript', () => {
 					translation: '',
 					lineIndex: 0,
 					startIdx: 0,
-					endIdx: 1
+					endIdx: 1,
+					source_sentence: 'centru mesta hvala',
+					source_lesson_id: undefined,
+					source_line_index: 0
 				})
 			);
 		});

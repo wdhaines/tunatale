@@ -6,7 +6,8 @@ import { render, fireEvent, waitFor } from '@testing-library/svelte';
 
 vi.mock('$lib/api', () => ({
 	api: {
-		syncWithAnki: vi.fn()
+		syncWithAnki: vi.fn(),
+		fetchAnkiStatus: vi.fn()
 	}
 }));
 
@@ -14,6 +15,7 @@ import { api } from '$lib/api';
 import SyncButton from '$lib/components/SyncButton.svelte';
 
 const mockSyncWithAnki = vi.mocked(api.syncWithAnki);
+const mockFetchAnkiStatus = vi.mocked(api.fetchAnkiStatus);
 
 describe('SyncButton', () => {
 	beforeEach(() => {
@@ -128,5 +130,77 @@ describe('SyncButton', () => {
 			revlog_drained: 0,
 			dry_run: false
 		});
+	});
+
+	it('disables button and shows warning when Anki is running', async () => {
+		mockFetchAnkiStatus.mockResolvedValue({ anki_running: true, lock_acquirable: false });
+		const { getByText, getByRole } = render(SyncButton);
+
+		await waitFor(() => {
+			const btn = getByRole('button', { name: /Sync with Anki/ });
+			expect(btn.hasAttribute('disabled')).toBeTruthy();
+			expect(getByText('Close Anki to sync.')).toBeTruthy();
+		});
+	});
+
+	it('does not call syncWithAnki when Anki is running and button is clicked', async () => {
+		mockFetchAnkiStatus.mockResolvedValue({ anki_running: true, lock_acquirable: false });
+		const { getByRole } = render(SyncButton);
+
+		await waitFor(() => {
+			const btn = getByRole('button', { name: /Sync with Anki/ });
+			expect(btn.hasAttribute('disabled')).toBeTruthy();
+		});
+
+		// Button should be disabled, but fireEvent.click might still work; verify sync not called
+		expect(mockSyncWithAnki).not.toHaveBeenCalled();
+	});
+
+	it('aborts sync if Anki starts between mount and click', async () => {
+		mockFetchAnkiStatus
+			.mockResolvedValueOnce({ anki_running: false, lock_acquirable: true }) // onMount
+			.mockResolvedValueOnce({ anki_running: true, lock_acquirable: false }); // click
+		mockSyncWithAnki.mockResolvedValue({
+			mode: 'full', created: 0, linked: 0, skipped: 0,
+			notes_pulled: 0, directions_pulled: 0, conflicts: 0,
+			notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
+		});
+
+		const { getByRole, findByText } = render(SyncButton);
+		await waitFor(() => expect(getByRole('button').hasAttribute('disabled')).toBe(false));
+		await fireEvent.click(getByRole('button', { name: /Sync with Anki/ }));
+		await findByText('Close Anki to sync.');
+		expect(mockSyncWithAnki).not.toHaveBeenCalled();
+	});
+
+	it('calls onSyncResult callback when sync succeeds', async () => {
+		const onSyncResult = vi.fn();
+		mockFetchAnkiStatus.mockResolvedValue({ anki_running: false, lock_acquirable: true });
+		mockSyncWithAnki.mockResolvedValue({
+			mode: 'full', created: 3, linked: 1, skipped: 0,
+			notes_pulled: 0, directions_pulled: 0, conflicts: 0,
+			notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
+		});
+
+		const { getByText } = render(SyncButton, { props: { onSyncResult } });
+		await waitFor(() => expect(getByText('Sync with Anki').hasAttribute('disabled')).toBe(false));
+		await fireEvent.click(getByText('Sync with Anki'));
+		await waitFor(() => expect(onSyncResult).toHaveBeenCalledWith(
+			expect.objectContaining({ created: 3, linked: 1 })
+		));
+	});
+
+	it('compact variant shows summary when sync succeeds (no onSyncResult)', async () => {
+		mockFetchAnkiStatus.mockResolvedValue({ anki_running: false, lock_acquirable: true });
+		mockSyncWithAnki.mockResolvedValue({
+			mode: 'full', created: 5, linked: 2, skipped: 0,
+			notes_pulled: 0, directions_pulled: 0, conflicts: 0,
+			notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
+		});
+
+		const { getByText, findByText } = render(SyncButton, { props: { variant: 'compact' } });
+		await waitFor(() => expect(getByText('Sync with Anki').hasAttribute('disabled')).toBe(false));
+		await fireEvent.click(getByText('Sync with Anki'));
+		await findByText('5 created, 2 linked');
 	});
 });

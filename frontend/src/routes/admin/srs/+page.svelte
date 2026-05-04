@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import type { SRSItemDetail, SRSListParams, QueueStats } from '$lib/api';
+	import type { SRSItemDetail, SRSListParams, QueueStats, AnkiSyncResult } from '$lib/api';
+	import SyncButton from '$lib/components/SyncButton.svelte';
 
 	const PAGE_SIZE = 50;
 
@@ -18,9 +19,15 @@
 	let editTranslation = $state('');
 	let loading = $state(false);
 	let error = $state<string | null>(null);
-	let syncStatus = $state<string | null>(null);
 	let queueStats = $state<QueueStats | null>(null);
-	let ankiRunning = $state(false);
+	let syncStatus = $state<string | null>(null);
+
+	function handleSyncResult(r: AnkiSyncResult) {
+		syncStatus =
+			`Created ${r.created} · Linked ${r.linked} · Pulled ${r.directions_pulled} · Pushed ${r.directions_pushed}` +
+			(r.conflicts > 0 ? ` · Conflicts ${r.conflicts}` : '');
+		loadItems();
+	}
 
 	let debounceTimer: ReturnType<typeof setTimeout>;
 	let lastSearch = $state('');
@@ -48,31 +55,6 @@
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
 			loading = false;
-		}
-	}
-
-	async function refreshAnkiStatus() {
-		try {
-			const s = await api.fetchAnkiStatus();
-			ankiRunning = s.anki_running;
-		} catch {
-			// non-fatal: if status endpoint is unavailable, leave button enabled
-		}
-	}
-
-	async function syncWithAnki() {
-		await refreshAnkiStatus();
-		if (ankiRunning) return;
-		syncStatus = 'Syncing…';
-		try {
-			const r = await api.syncWithAnki(false);
-			syncStatus =
-				`Created ${r.created} · Linked ${r.linked} · Pulled ${r.directions_pulled} · Pushed ${r.directions_pushed}` +
-				(r.conflicts > 0 ? ` · Conflicts ${r.conflicts}` : '');
-			await loadItems();
-		} catch (e) {
-			syncStatus = e instanceof Error ? e.message : String(e);
-			await refreshAnkiStatus();
 		}
 	}
 
@@ -190,15 +172,6 @@
 
 	onMount(() => {
 		loadItems();
-		refreshAnkiStatus();
-		const onVisibility = () => refreshAnkiStatus();
-		const onFocus = () => refreshAnkiStatus();
-		document.addEventListener('visibilitychange', onVisibility);
-		window.addEventListener('focus', onFocus);
-		return () => {
-			document.removeEventListener('visibilitychange', onVisibility);
-			window.removeEventListener('focus', onFocus);
-		};
 	});
 </script>
 
@@ -224,14 +197,7 @@
 				<button class="danger" onclick={bulkDelete}>Delete selected ({selected.size})</button>
 			{/if}
 			<button onclick={loadItems} title="Refresh">⟳</button>
-			<button
-				onclick={syncWithAnki}
-				disabled={ankiRunning}
-				title={ankiRunning ? 'Close Anki to sync — TunaTale needs exclusive access to collection.anki2.' : 'Sync with Anki (Anki must stay closed during sync).'}
-			>Sync with Anki</button>
-			{#if ankiRunning}
-				<span class="anki-warning">Close Anki to sync.</span>
-			{/if}
+			<SyncButton variant="compact" onSyncResult={handleSyncResult} />
 		</div>
 	</div>
 
