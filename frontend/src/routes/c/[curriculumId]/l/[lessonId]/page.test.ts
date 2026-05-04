@@ -11,7 +11,7 @@ vi.mock('$lib/api', () => ({
 		markAsListened: vi.fn(),
 		createSRSItem: vi.fn(),
 		setSRSItemState: vi.fn(),
-		syncCreateNew: vi.fn(),
+		syncWithAnki: vi.fn(),
 		audioUrl: vi.fn((id: string) => `/api/audio/${id}`)
 	}
 }));
@@ -32,7 +32,7 @@ const mockGetTranscript = vi.mocked(api.getLessonTranscript);
 const mockMarkAsListened = vi.mocked(api.markAsListened);
 const mockCreateSRSItem = vi.mocked(api.createSRSItem);
 const mockSetSRSItemState = vi.mocked(api.setSRSItemState);
-const mockSyncCreateNew = vi.mocked(api.syncCreateNew);
+const mockSyncWithAnki = vi.mocked(api.syncWithAnki);
 
 const curriculum = { id: 'cid-1', topic: 'Coffee', language_code: 'sl', days: 3 };
 const lesson = {
@@ -638,42 +638,66 @@ describe('load function for /c/[curriculumId]/l/[lessonId]', () => {
 		expect(result).toHaveProperty('transcript');
 	});
 
-	describe('syncCreateNew button', () => {
-		it('calls syncCreateNew with correct deck and model names', async () => {
-			mockSyncCreateNew.mockResolvedValue({ created: 3, updated: 0, skipped: 1 });
+	describe('sync button', () => {
+		it('calls syncWithAnki on click', async () => {
+			mockSyncWithAnki.mockResolvedValue({
+				mode: 'full',
+				created: 3,
+				linked: 0,
+				skipped: 1,
+				notes_pulled: 0,
+				directions_pulled: 0,
+				conflicts: 0,
+				notes_pushed: 2,
+				directions_pushed: 2,
+				revlog_drained: 5,
+				dry_run: false
+			});
 			const { getByText } = render(Page, {
 				props: { data: { curriculum, lesson, audio: null, transcript: null } }
 			});
 
-			const syncBtn = getByText('Sync New Cards to Anki');
+			const syncBtn = getByText('Sync with Anki');
 			await fireEvent.click(syncBtn);
 
 			await waitFor(() => {
-				expect(mockSyncCreateNew).toHaveBeenCalledWith('0. Slovene', 'Slovene Vocabulary');
+				expect(mockSyncWithAnki).toHaveBeenCalledWith(false);
 			});
 		});
 
 		it('displays sync result after successful sync', async () => {
-			mockSyncCreateNew.mockResolvedValue({ created: 5, updated: 0, skipped: 2 });
+			mockSyncWithAnki.mockResolvedValue({
+				mode: 'full',
+				created: 5,
+				linked: 2,
+				skipped: 1,
+				notes_pulled: 3,
+				directions_pulled: 4,
+				conflicts: 0,
+				notes_pushed: 2,
+				directions_pushed: 2,
+				revlog_drained: 5,
+				dry_run: false
+			});
 			const { getByText } = render(Page, {
 				props: { data: { curriculum, lesson, audio: null, transcript: null } }
 			});
 
-			const syncBtn = getByText('Sync New Cards to Anki');
+			const syncBtn = getByText('Sync with Anki');
 			await fireEvent.click(syncBtn);
 
 			await waitFor(() => {
-				expect(getByText(/Created 5 new cards/)).toBeTruthy();
+				expect(getByText(/Mode: full/)).toBeTruthy();
 			});
 		});
 
-		it('sets error when syncCreateNew fails', async () => {
-			mockSyncCreateNew.mockRejectedValue(new Error('Sync failed'));
+		it('sets error when syncWithAnki fails', async () => {
+			mockSyncWithAnki.mockRejectedValue(new Error('Sync failed'));
 			const { getByText, findByText } = render(Page, {
 				props: { data: { curriculum, lesson, audio: null, transcript: null } }
 			});
 
-			const syncBtn = getByText('Sync New Cards to Anki');
+			const syncBtn = getByText('Sync with Anki');
 			await fireEvent.click(syncBtn);
 
 			expect(await findByText('Sync failed')).toBeTruthy();

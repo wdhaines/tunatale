@@ -145,6 +145,9 @@ class SRSDatabase:
             self._conn.execute("PRAGMA foreign_keys = ON")
             self._init_schema(self._conn)
         else:
+            # Handle sqlite:// URL format
+            if db_path.startswith("sqlite:///"):
+                db_path = db_path[10:]  # Remove "sqlite:///"
             path = Path(db_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             self._path = str(path)

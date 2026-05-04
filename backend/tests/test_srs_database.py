@@ -2,6 +2,8 @@
 
 from datetime import date, timedelta
 
+import pytest
+
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
@@ -1150,6 +1152,42 @@ class TestSourceContextFields:
                 assert item.syntactic_unit.source_line_index == 3
                 break
         else:
-            import pytest
-
             pytest.fail("nova fraza not found in items without anki note")
+
+
+class TestDatabaseURLParsing:
+    """Tests for sqlite:// URL parsing in SRSDatabase."""
+
+    def test_sqlite_url_format_parsing(self, tmp_path):
+        """Test that sqlite:/// URLs are correctly parsed."""
+
+        # Create a test database with the sqlite:/// URL format
+        db_path = tmp_path / "test.db"
+        url = f"sqlite:///{db_path}"
+
+        db = SRSDatabase(url)
+        with db._get_conn() as conn:
+            # Should connect to the correct database, not create a new one
+            tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            table_names = [t["name"] for t in tables]
+            # The database should be initialized with the schema
+            assert "collocations" in table_names
+        db.close()
+
+    def test_sqlite_url_with_relative_path(self, srs_db):
+        """Test that relative paths in sqlite:// URLs work correctly."""
+        # srs_db fixture uses :memory: which doesn't test the path parsing
+        # This test ensures the parsing logic works
+        from app.srs.database import SRSDatabase
+
+        # Test with the actual format used in settings
+        url = "sqlite:///./tunatale.db"
+        # Just verify it doesn't raise an error
+        try:
+            db = SRSDatabase(url)
+            # Try to connect
+            with db._get_conn() as conn:
+                conn.execute("SELECT 1")
+            db.close()
+        except Exception as e:
+            pytest.fail(f"Failed to parse sqlite:/// URL: {e}")

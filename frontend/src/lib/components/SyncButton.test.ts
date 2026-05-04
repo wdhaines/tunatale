@@ -6,14 +6,14 @@ import { render, fireEvent, waitFor } from '@testing-library/svelte';
 
 vi.mock('$lib/api', () => ({
 	api: {
-		syncCreateNew: vi.fn()
+		syncWithAnki: vi.fn()
 	}
 }));
 
 import { api } from '$lib/api';
 import SyncButton from '$lib/components/SyncButton.svelte';
 
-const mockSyncCreateNew = vi.mocked(api.syncCreateNew);
+const mockSyncWithAnki = vi.mocked(api.syncWithAnki);
 
 describe('SyncButton', () => {
 	beforeEach(() => {
@@ -21,85 +21,112 @@ describe('SyncButton', () => {
 	});
 
 	it('renders the sync button', () => {
-		const { getByText } = render(SyncButton);
-		expect(getByText('Sync New Cards to Anki')).toBeTruthy();
+		const { getByText, queryByText } = render(SyncButton);
+		expect(getByText('Sync with Anki')).toBeTruthy();
+		// syncResult is null initially, so result display should not be present
+		expect(queryByText(/Mode:/)).toBeNull();
 	});
 
-	it('calls syncCreateNew with default deck and model names', async () => {
-		mockSyncCreateNew.mockResolvedValue({ created: 3, updated: 0, skipped: 1 });
+	it('calls syncWithAnki on click', async () => {
+		mockSyncWithAnki.mockResolvedValue({
+			mode: 'full',
+			created: 3,
+			linked: 0,
+			skipped: 1,
+			notes_pulled: 0,
+			directions_pulled: 0,
+			conflicts: 0,
+			notes_pushed: 2,
+			directions_pushed: 2,
+			revlog_drained: 5,
+			dry_run: false
+		});
 		const { getByText } = render(SyncButton);
-		
-		const btn = getByText('Sync New Cards to Anki');
+
+		const btn = getByText('Sync with Anki');
 		await fireEvent.click(btn);
 
 		await waitFor(() => {
-			expect(mockSyncCreateNew).toHaveBeenCalledWith('0. Slovene', 'Slovene Vocabulary');
-		});
-	});
-
-	it('calls syncCreateNew with custom deck and model names', async () => {
-		mockSyncCreateNew.mockResolvedValue({ created: 2, updated: 0, skipped: 0 });
-		const { getByText } = render(SyncButton, {
-			props: { deckName: 'Custom Deck', modelName: 'Custom Model' }
-		});
-		
-		const btn = getByText('Sync New Cards to Anki');
-		await fireEvent.click(btn);
-
-		await waitFor(() => {
-			expect(mockSyncCreateNew).toHaveBeenCalledWith('Custom Deck', 'Custom Model');
+			expect(mockSyncWithAnki).toHaveBeenCalledWith(false);
 		});
 	});
 
 	it('displays sync result after successful sync', async () => {
-		mockSyncCreateNew.mockResolvedValue({ created: 5, updated: 0, skipped: 2 });
+		mockSyncWithAnki.mockResolvedValue({
+			mode: 'full',
+			created: 5,
+			linked: 2,
+			skipped: 1,
+			notes_pulled: 3,
+			directions_pulled: 4,
+			conflicts: 0,
+			notes_pushed: 2,
+			directions_pushed: 2,
+			revlog_drained: 5,
+			dry_run: false
+		});
 		const { getByText } = render(SyncButton);
-		
-		const btn = getByText('Sync New Cards to Anki');
+
+		const btn = getByText('Sync with Anki');
 		await fireEvent.click(btn);
 
 		await waitFor(() => {
-			expect(getByText(/Created 5 new cards/)).toBeTruthy();
+			expect(getByText(/Mode: full/)).toBeTruthy();
+			expect(getByText(/Created: 5/)).toBeTruthy();
+			expect(getByText(/Linked: 2/)).toBeTruthy();
+			expect(getByText(/Skipped: 1/)).toBeTruthy();
+			expect(getByText(/Pulled: 3 notes/)).toBeTruthy();
+			expect(getByText(/Pushed: 2 notes/)).toBeTruthy();
+			expect(getByText(/Conflicts: 0/)).toBeTruthy();
+			expect(getByText(/Revlog drained: 5/)).toBeTruthy();
 		});
 	});
 
-	it('displays singular "card" when created is 1', async () => {
-		mockSyncCreateNew.mockResolvedValue({ created: 1, updated: 0, skipped: 0 });
-		const { getByText } = render(SyncButton);
-		
-		const btn = getByText('Sync New Cards to Anki');
-		await fireEvent.click(btn);
-
-		await waitFor(() => {
-			expect(getByText('Created 1 new card')).toBeTruthy();
-		});
-	});
-
-	it('sets error when syncCreateNew fails', async () => {
-		mockSyncCreateNew.mockRejectedValue(new Error('Sync failed'));
+	it('sets error when syncWithAnki fails with Error instance', async () => {
+		mockSyncWithAnki.mockRejectedValue(new Error('Sync failed'));
 		const { getByText, findByText } = render(SyncButton);
-		
-		const btn = getByText('Sync New Cards to Anki');
+
+		const btn = getByText('Sync with Anki');
 		await fireEvent.click(btn);
 
 		expect(await findByText('Sync failed')).toBeTruthy();
 	});
 
+	it('sets error when syncWithAnki fails with non-Error value', async () => {
+		mockSyncWithAnki.mockRejectedValue('string error');
+		const { getByText, findByText } = render(SyncButton);
+
+		const btn = getByText('Sync with Anki');
+		await fireEvent.click(btn);
+
+		expect(await findByText('string error')).toBeTruthy();
+	});
+
 	it('shows loading state while syncing', async () => {
-		// Create a promise that we can control
-		let resolveSync: ((value: { created: number; updated: number; skipped: number }) => void) | undefined;
-		const syncPromise = new Promise<{ created: number; updated: number; skipped: number }>((resolve) => {
+		let resolveSync: ((value: any) => void) | undefined;
+		const syncPromise = new Promise<any>((resolve) => {
 			resolveSync = resolve;
 		});
-		mockSyncCreateNew.mockReturnValue(syncPromise);
-		
+		mockSyncWithAnki.mockReturnValue(syncPromise);
+
 		const { getByText } = render(SyncButton);
-		const btn = getByText('Sync New Cards to Anki');
+		const btn = getByText('Sync with Anki');
 		await fireEvent.click(btn);
 
 		expect(getByText('Syncing…')).toBeTruthy();
-		
-		// Resolve the promise
-		resolveSync!({ created: 1, updated: 0, skipped: 0 });
+
+		resolveSync!({
+			mode: 'full',
+			created: 1,
+			linked: 0,
+			skipped: 0,
+			notes_pulled: 0,
+			directions_pulled: 0,
+			conflicts: 0,
+			notes_pushed: 0,
+			directions_pushed: 0,
+			revlog_drained: 0,
+			dry_run: false
+		});
 	});
 });

@@ -165,7 +165,7 @@
 				{audioLoading ? 'Rendering…' : 'Render Audio'}
 			</button>
 		{/if}
-		<SyncButton deckName="0. Slovene" modelName="Slovene Vocabulary" />
+		<SyncButton />
 		{#if error}
 			<p class="error">{error}</p>
 		{/if}

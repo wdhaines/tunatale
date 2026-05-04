@@ -1,10 +1,9 @@
 <script lang="ts">
 	import { api } from '$lib/api';
-
-	let { deckName = '0. Slovene', modelName = 'Slovene Vocabulary' }: { deckName?: string; modelName?: string } = $props();
+	import type { AnkiSyncResult } from '$lib/api';
 
 	let syncLoading = $state(false);
-	let syncResult = $state<{ created: number; updated: number; skipped: number } | null>(null);
+	let syncResult = $state<AnkiSyncResult | null>(null);
 	let error = $state('');
 
 	async function handleSync() {
@@ -12,7 +11,7 @@
 		syncResult = null;
 		error = '';
 		try {
-			const result = await api.syncCreateNew(deckName, modelName);
+			const result = await api.syncWithAnki(false);
 			syncResult = result;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -20,16 +19,22 @@
 			syncLoading = false;
 		}
 	}
+
+	function formatResult(r: AnkiSyncResult): string {
+		return `Mode: ${r.mode}
+Created: ${r.created}, Linked: ${r.linked}, Skipped: ${r.skipped}
+Pulled: ${r.notes_pulled} notes, ${r.directions_pulled} directions
+Pushed: ${r.notes_pushed} notes, ${r.directions_pushed} directions
+Conflicts: ${r.conflicts}, Revlog drained: ${r.revlog_drained}`;
+	}
 </script>
 
 <button onclick={handleSync} disabled={syncLoading}>
-	{syncLoading ? 'Syncing…' : 'Sync New Cards to Anki'}
+	{syncLoading ? 'Syncing…' : 'Sync with Anki'}
 </button>
 
 {#if syncResult}
-	<p class="sync-result">
-		Created {syncResult.created} new card{syncResult.created === 1 ? '' : 's'}
-	</p>
+	<pre class="sync-result">{formatResult(syncResult)}</pre>
 {/if}
 
 {#if error}

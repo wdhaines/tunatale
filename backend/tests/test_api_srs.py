@@ -1284,7 +1284,7 @@ class TestLearningStatePriority:
         cards = [
             # (text, anki_card_id, stability, anki_due_unix_timestamp)
             ("dojencek", 1775264031923, 0.01, 1777835006),  # lower stability, later sub-day due
-            ("zenska", 1775264031927, 0.036, 1777834178),   # higher stability, earlier sub-day due
+            ("zenska", 1775264031927, 0.036, 1777834178),  # higher stability, earlier sub-day due
         ]
         for text, anki_id, stability, anki_due_ts in cards:
             unit = SyntacticUnit(text=text, translation=f"trans_{text}", word_count=1, difficulty=1, source="test")
