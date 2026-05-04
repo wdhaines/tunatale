@@ -40,7 +40,6 @@ describe('SyncButton', () => {
 			conflicts: 0,
 			notes_pushed: 2,
 			directions_pushed: 2,
-			revlog_drained: 5,
 			dry_run: false
 		});
 		const { getByText } = render(SyncButton);
@@ -64,7 +63,6 @@ describe('SyncButton', () => {
 			conflicts: 0,
 			notes_pushed: 2,
 			directions_pushed: 2,
-			revlog_drained: 5,
 			dry_run: false
 		});
 		const { getByText } = render(SyncButton);
@@ -80,7 +78,6 @@ describe('SyncButton', () => {
 			expect(getByText(/Pulled: 3 notes/)).toBeTruthy();
 			expect(getByText(/Pushed: 2 notes/)).toBeTruthy();
 			expect(getByText(/Conflicts: 0/)).toBeTruthy();
-			expect(getByText(/Revlog drained: 5/)).toBeTruthy();
 		});
 	});
 
@@ -127,7 +124,6 @@ describe('SyncButton', () => {
 			conflicts: 0,
 			notes_pushed: 0,
 			directions_pushed: 0,
-			revlog_drained: 0,
 			dry_run: false
 		});
 	});
@@ -163,7 +159,7 @@ describe('SyncButton', () => {
 		mockSyncWithAnki.mockResolvedValue({
 			mode: 'full', created: 0, linked: 0, skipped: 0,
 			notes_pulled: 0, directions_pulled: 0, conflicts: 0,
-			notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
+			notes_pushed: 0, directions_pushed: 0, dry_run: false
 		});
 
 		const { getByRole, findByText } = render(SyncButton);
@@ -179,7 +175,7 @@ describe('SyncButton', () => {
 		mockSyncWithAnki.mockResolvedValue({
 			mode: 'full', created: 3, linked: 1, skipped: 0,
 			notes_pulled: 0, directions_pulled: 0, conflicts: 0,
-			notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
+			notes_pushed: 0, directions_pushed: 0, dry_run: false
 		});
 
 		const { getByText } = render(SyncButton, { props: { onSyncResult } });
@@ -195,7 +191,7 @@ describe('SyncButton', () => {
 		mockSyncWithAnki.mockResolvedValue({
 			mode: 'full', created: 5, linked: 2, skipped: 0,
 			notes_pulled: 0, directions_pulled: 0, conflicts: 0,
-			notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
+			notes_pushed: 0, directions_pushed: 0, dry_run: false
 		});
 
 		const { getByText, findByText } = render(SyncButton, { props: { variant: 'compact' } });

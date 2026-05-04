@@ -480,3 +480,18 @@ class TestReadFsrsStateForCards:
     def test_nonexistent_path_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             read_fsrs_state_for_cards(tmp_path / "missing.anki2", [1])
+
+    def test_invalid_json_skipped(self, tmp_path):
+        """Invalid JSON in data column is skipped."""
+        path = self._write_db(
+            tmp_path,
+            [
+                (1, '{"s": 1.0, "d": 5.0}'),
+                (2, "not valid json"),
+                (3, '{"s": "bad", "d": 7.0}'),
+            ],
+        )
+        result = read_fsrs_state_for_cards(path, [1, 2, 3])
+        assert 1 in result
+        assert 2 not in result
+        assert 3 not in result

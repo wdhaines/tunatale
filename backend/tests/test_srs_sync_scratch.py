@@ -1,4 +1,4 @@
-"""Tests for sync_conflicts and pending_revlog scratch tables."""
+"""Tests for sync_conflicts scratch table."""
 
 from app.srs.database import SRSDatabase
 
@@ -47,40 +47,6 @@ class TestSyncConflicts:
                 resolution="anki_wins",
             )
         assert len(srs_db.list_sync_conflicts()) == 3
-
-
-class TestPendingRevlog:
-    def test_enqueue_and_drain_roundtrip(self, srs_db):
-        srs_db.enqueue_pending_revlog(cid=101, ease=3, ivl=14, last_ivl=7, factor=2500, time_ms=8000, type_=1)
-        rows = srs_db.drain_pending_revlog()
-        assert len(rows) == 1
-        r = rows[0]
-        assert r["cid"] == 101
-        assert r["ease"] == 3
-        assert r["ivl"] == 14
-        assert r["last_ivl"] == 7
-        assert r["factor"] == 2500
-        assert r["time_ms"] == 8000
-        assert r["type"] == 1
-
-    def test_drain_deletes_rows(self, srs_db):
-        srs_db.enqueue_pending_revlog(cid=1, ease=4, ivl=21, last_ivl=14, factor=2500, time_ms=5000, type_=1)
-        srs_db.drain_pending_revlog()
-        assert srs_db.drain_pending_revlog() == []
-
-    def test_drain_multiple_returns_all(self, srs_db):
-        for cid in [10, 20, 30]:
-            srs_db.enqueue_pending_revlog(cid=cid, ease=3, ivl=7, last_ivl=3, factor=2500, time_ms=3000, type_=1)
-        rows = srs_db.drain_pending_revlog()
-        assert {r["cid"] for r in rows} == {10, 20, 30}
-        assert srs_db.drain_pending_revlog() == []
-
-    def test_drain_atomic_clears_on_success(self, srs_db):
-        srs_db.enqueue_pending_revlog(cid=99, ease=2, ivl=3, last_ivl=1, factor=2000, time_ms=2000, type_=0)
-        first = srs_db.drain_pending_revlog()
-        assert len(first) == 1
-        second = srs_db.drain_pending_revlog()
-        assert second == []
 
 
 class TestIdempotentInit:

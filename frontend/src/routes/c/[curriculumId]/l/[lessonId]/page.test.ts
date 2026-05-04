@@ -650,7 +650,6 @@ describe('load function for /c/[curriculumId]/l/[lessonId]', () => {
 				conflicts: 0,
 				notes_pushed: 2,
 				directions_pushed: 2,
-				revlog_drained: 5,
 				dry_run: false
 			});
 			const { getByText } = render(Page, {
@@ -676,7 +675,6 @@ describe('load function for /c/[curriculumId]/l/[lessonId]', () => {
 				conflicts: 0,
 				notes_pushed: 2,
 				directions_pushed: 2,
-				revlog_drained: 5,
 				dry_run: false
 			});
 			const { getByText } = render(Page, {

@@ -7,13 +7,12 @@ S3.6: --force-fsrs gate + setSpecificValueOfCard.
 
 from __future__ import annotations
 
-import base64
 import json as _json
 import re
 import sqlite3
 import time as _time
 from dataclasses import dataclass, field, replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from app.anki.anki_connect import AnkiConnectClient
@@ -24,7 +23,6 @@ from app.anki.sqlite_reader import (
     fetch_cards_for_notes,
     fetch_notes_for_deck,
     find_deck_id,
-    read_fsrs_state_for_cards,
 )
 from app.common.guid import compute_guid
 from app.models.srs_item import Direction, DirectionState, SRSState
@@ -214,174 +212,6 @@ class OfflineReader:
                 )
             )
         return records
-
-
-class OnlineReader:
-    """Read NoteRecords via AnkiConnect.
-
-    stability and difficulty are reconstructed from ivl/factor for review-queue cards
-    (lossy — authoritative FSRS state requires offline mode with Anki closed), unless
-    `collection_path` points at the live collection.anki2 file. AnkiConnect being
-    reachable implies the file is co-located, so we can read `cards.data` JSON in
-    parallel and override the reconstructed values with real FSRS s/d.
-    """
-
-    def __init__(
-        self,
-        client: AnkiConnectClient,
-        deck_name: str,
-        collection_path: str | Path | None = None,
-    ) -> None:
-        self._client = client
-        self._deck_name = deck_name
-        self._collection_path = collection_path
-
-    def _discover_today_anki_day(self) -> int | None:
-        """Return today's Anki day-number (days since collection creation).
-
-        Finds any review card with prop:due=<offset> and derives the absolute
-        day from its `due` field.  Returns None if no review card is found.
-        """
-        for offset in (0, 1, -1, 2, -2, 7, -7):
-            ids = self._client.find_cards(f'deck:"{self._deck_name}" prop:due={offset}')
-            if ids:
-                info = self._client.cards_info(ids[:1])
-                if info and info[0].get("queue") == 2:
-                    return info[0]["due"] - offset
-        return None
-
-    def get_note_records(self) -> list[NoteRecord]:
-        note_ids = self._client.find_notes(f'deck:"{self._deck_name}"')
-        if not note_ids:
-            return []
-        notes_info = self._client.notes_info(note_ids)
-
-        all_card_ids = [cid for ni in notes_info for cid in ni.get("cards", [])]
-        if all_card_ids:
-            cards_info = self._client.cards_info(all_card_ids)
-            cards_by_id = {c["cardId"]: c for c in cards_info}
-        else:
-            cards_by_id = {}
-
-        today_anki_day = self._discover_today_anki_day()
-
-        records = []
-        for ni in notes_info:
-            fields_list = [v["value"] for v in sorted(ni["fields"].values(), key=lambda x: x["order"])]
-            l2_text = extract_l2_from_fields(fields_list)
-            translation = extract_translation(fields_list[1]) if len(fields_list) > 1 else ""
-            disambig_key = extract_disambig_from_fields(fields_list)
-            anki_guid = compute_guid(l2_text, "sl", disambig_key)
-
-            card_records = []
-            for cid in ni.get("cards", []):
-                if cid not in cards_by_id:
-                    continue
-                c = cards_by_id[cid]
-                q = c["queue"]
-                if q in (2, 3) and today_anki_day is not None:
-                    due_offset = c["due"] - today_anki_day
-                    due_date_val = date.today() + timedelta(days=due_offset)
-                    stability_val = max(1.0, float(c.get("ivl", 1)))
-                    difficulty_val = _factor_to_fsrs_difficulty(c.get("factor", 2500))
-                    last_review_val = date.today() + timedelta(days=(c["due"] - c.get("ivl", 0)) - today_anki_day)
-                    fsrs_known_val = True
-                else:
-                    due_date_val = date.today()
-                    stability_val = 0.0
-                    difficulty_val = 0.0
-                    last_review_val = None
-                    fsrs_known_val = False
-                # AnkiConnect's `due` semantics differ by queue:
-                # q==0 → deck position (usable for new-card sort);
-                # q==2 → days since col.crt (not a deck position).
-                # Only capture q==0 for anki_due ordering; defer full online parity.
-                card_records.append(
-                    CardRecord(
-                        anki_card_id=cid,
-                        ord=c["ord"],
-                        queue=q,
-                        reps=c.get("reps", 0),
-                        lapses=c.get("lapses", 0),
-                        stability=stability_val,
-                        difficulty=difficulty_val,
-                        due_date=due_date_val,
-                        anki_due=c.get("due") if q in (0, 1) else None,
-                        last_review=last_review_val,
-                        fsrs_known=fsrs_known_val,
-                    )
-                )
-
-            records.append(
-                NoteRecord(
-                    anki_note_id=ni["noteId"],
-                    anki_guid=anki_guid,
-                    l2_text=l2_text,
-                    translation=translation,
-                    disambig_key=disambig_key,
-                    mod=ni.get("mod", 0),
-                    cards=card_records,
-                )
-            )
-
-        if self._collection_path is not None:
-            all_card_ids_for_supplement = [c.anki_card_id for r in records for c in r.cards]
-            real_fsrs = read_fsrs_state_for_cards(self._collection_path, all_card_ids_for_supplement)
-            for r in records:
-                r.cards = [
-                    replace(c, stability=real_fsrs[c.anki_card_id][0], difficulty=real_fsrs[c.anki_card_id][1])
-                    if c.anki_card_id in real_fsrs
-                    else c
-                    for c in r.cards
-                ]
-
-        return records
-
-
-class OnlineWriter:
-    """Write changes back to Anki via AnkiConnect."""
-
-    def __init__(self, client: AnkiConnectClient, db: SRSDatabase) -> None:
-        self._client = client
-        self._db = db
-
-    def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
-        self._client.update_note_fields(note_id, fields)
-
-    def suspend(self, card_ids: list[int]) -> None:
-        self._client.suspend(card_ids)
-
-    def unsuspend(self, card_ids: list[int]) -> None:
-        self._client.unsuspend(card_ids)
-
-    def set_due_date(self, card_ids: list[int], days: str) -> None:
-        self._client.set_due_date(card_ids, days)
-
-    def write_revlog(
-        self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_: int
-    ) -> None:
-        self._db.enqueue_pending_revlog(
-            cid=cid, ease=ease, ivl=ivl, last_ivl=last_ivl, factor=factor, time_ms=time_ms, type_=type_
-        )
-
-    def set_specific_value_of_card(self, card_id: int, keys: list[str], new_values: list[str]) -> None:
-        self._client.set_specific_value_of_card(card_id, keys=keys, newValues=new_values)
-
-    def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list) -> int:
-        return self._client.add_note({"deckName": deck_name, "modelName": model_name, "fields": fields, "tags": tags})
-
-    def store_media_file(self, filename: str, data: bytes) -> None:
-        self._client.store_media_file(filename, base64.b64encode(data).decode("ascii"))
-
-    def get_cards_for_note(self, note_id: int) -> dict[int, int]:
-        notes_info = self._client.notes_info([note_id])
-        if not notes_info:
-            return {}
-        card_ids = notes_info[0].get("cards", [])
-        if not card_ids:
-            return {}
-        cards_info = self._client.cards_info(card_ids)
-        return {c["ord"]: c["cardId"] for c in cards_info}
 
 
 class OfflineWriter:
@@ -637,10 +467,6 @@ class AnkiSync:
         self,
         *,
         db: SRSDatabase,
-        mode: str = "online",
-        client: AnkiConnectClient | None = None,
-        deck_name: str | None = None,
-        collection_path: str | Path | None = None,
         _reader=None,
         _writer=None,
         _anki_col_ver: int | None = None,
@@ -649,19 +475,13 @@ class AnkiSync:
         self._anki_col_ver = _anki_col_ver
         if _reader is not None:
             self._reader = _reader
-        elif mode == "online":
-            if client is None or deck_name is None:
-                raise ValueError("client and deck_name required for mode='online'")
-            self._reader = OnlineReader(client, deck_name, collection_path=collection_path)
         else:
-            raise NotImplementedError(f"mode={mode!r} not yet implemented")
+            raise ValueError("_reader is required")
 
         if _writer is not None:
             self._writer = _writer
-        elif mode == "online" and client is not None:
-            self._writer = OnlineWriter(client, db)
         else:
-            self._writer = None
+            raise ValueError("_writer is required")
 
     def sync_pull(self, dry_run: bool = False) -> PullReport:
         """Pull Anki → TunaTale. Returns a PullReport summarising changes."""
@@ -923,99 +743,36 @@ class AnkiSync:
         return CreateNewReport(count=count, created=created, linked=linked, skipped=skipped)
 
 
-def drain_pending_revlog_to_writer(db: SRSDatabase, writer) -> int:
-    """Drain queued revlog rows from TT's pending_revlog into ``writer``.
-
-    Called at the start of an offline push: online sessions enqueue revlog rows
-    to TT while Anki is running; the next offline run flushes them into Anki's
-    revlog via ``writer.write_revlog``.
-    """
-    rows = db.drain_pending_revlog()
-    for r in rows:
-        writer.write_revlog(
-            cid=r["cid"],
-            ease=r["ease"],
-            ivl=r["ivl"],
-            last_ivl=r["last_ivl"],
-            factor=r["factor"],
-            time_ms=r["time_ms"],
-            type_=r["type"],
-        )
-    return len(rows)
-
-
-# ── S3.7: mode detection + CLI ────────────────────────────────────────────────
-
-_FORCE_FSRS_ACK_PATH = Path("~/.tunatale/force_fsrs_ack.txt").expanduser()
-
-
-class AnkiUnavailableError(Exception):
-    """Both AnkiConnect and the offline collection are unavailable."""
-
-
-def detect_mode(
-    client: AnkiConnectClient,
-    collection_path: Path,
-    *,
-    _probe_lock=None,
-) -> str:
-    """Return 'online' or 'offline'. Raise AnkiUnavailableError if both unavailable."""
-    from app.anki.anki_connect import AnkiConnectUnavailable
-    from app.anki.safety import _probe_exclusive_lock
-
-    probe = _probe_lock if _probe_lock is not None else _probe_exclusive_lock
-    try:
-        client.ping()
-        return "online"
-    except AnkiConnectUnavailable:
-        try:
-            probe(collection_path)
-            return "offline"
-        except RuntimeError as exc:
-            raise AnkiUnavailableError(
-                "AnkiConnect is unreachable and the Anki collection is locked.\n"
-                "Close Anki and install AnkiConnect, or close Anki to run in offline mode."
-            ) from exc
-
-
-def _print_report(pull: PullReport, push: PushReport) -> None:
-    print(
-        f"Pull: {pull.notes_updated} notes updated, "
-        f"{pull.directions_updated} directions, "
-        f"{len(pull.conflicts)} conflicts"
-    )
-    print(f"Push: {push.notes_pushed} notes, {push.directions_pushed} directions")
-
-
 def main(
     argv: list[str] | None = None,
     *,
     _settings=None,
     _safe_open_fn=None,
-    _client: AnkiConnectClient | None = None,
     _force_fsrs_ack_path: Path | None = None,
-    _probe_lock=None,
+    _db=None,
 ) -> int:
     import argparse
     import sys
 
-    from app.anki.anki_connect import AnkiConnectUnavailable
     from app.anki.safety import safe_open
     from app.config import settings as _default_settings
+    from app.srs.database import SRSDatabase
 
     _s = _settings if _settings is not None else _default_settings
     _so = _safe_open_fn if _safe_open_fn is not None else safe_open
-    _ack_path = _force_fsrs_ack_path if _force_fsrs_ack_path is not None else _FORCE_FSRS_ACK_PATH
+    _ack_path = (
+        _force_fsrs_ack_path
+        if _force_fsrs_ack_path is not None
+        else Path("~/.tunatale/force_fsrs_ack.txt").expanduser()
+    )
+
+    # Get database instance
+    db = _db if _db is not None else SRSDatabase(_s.database_url.removeprefix("sqlite:///"))
 
     parser = argparse.ArgumentParser(description="TunaTale ↔ Anki bidirectional sync")
-    parser.add_argument("--mode", choices=["auto", "online", "offline"], default="auto")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force-fsrs", action="store_true", dest="force_fsrs")
     args = parser.parse_args(argv)
-
-    client = _client if _client is not None else AnkiConnectClient(url=_s.anki_connect_url)
-    db_path = _s.database_url.removeprefix("sqlite:///")
-    db = SRSDatabase(db_path)
 
     if args.force_fsrs:
         interactive = sys.stdin.isatty()
@@ -1025,50 +782,24 @@ def main(
             print(f"Error: {e}", file=sys.stderr)
             return 1
 
-    if args.mode == "online":
-        try:
-            client.ping()
-        except AnkiConnectUnavailable:
-            print("AnkiConnect is not reachable. Is Anki running with AnkiConnect installed?", file=sys.stderr)
-            return 1
-        mode = "online"
-    elif args.mode == "offline":
-        mode = "offline"
-    else:  # auto
-        try:
-            mode = detect_mode(client, _s.anki_collection_path, _probe_lock=_probe_lock)
-        except AnkiUnavailableError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return 1
-
-    if mode == "online":
-        sync = AnkiSync(
-            db=db,
-            mode="online",
-            client=client,
-            deck_name=_s.anki_deck_name,
-            collection_path=_s.anki_collection_path if _s.anki_collection_path.exists() else None,
-        )
-        pull = sync.sync_pull(dry_run=args.dry_run)
-        push = sync.sync_push(dry_run=args.dry_run, force_fsrs=args.force_fsrs)
-        _print_report(pull, push)
-        return 0
-    else:  # offline
-        try:
-            with _so(_s.anki_collection_path, mode="rw") as ctx:
-                col_ver = ctx.conn.execute("SELECT ver FROM col").fetchone()[0]
-                reader = OfflineReader(ctx.conn, _s.anki_deck_name)
-                writer = OfflineWriter(ctx.conn)
-                sync = AnkiSync(db=db, _reader=reader, _writer=writer, _anki_col_ver=col_ver)
-                push = sync.sync_push(dry_run=args.dry_run, force_fsrs=args.force_fsrs)
-                if not args.dry_run:
-                    drain_pending_revlog_to_writer(db, writer)
-                pull = sync.sync_pull(dry_run=args.dry_run)
-                _print_report(pull, push)
-                return 0
-        except RuntimeError as e:
-            print(f"Error opening collection: {e}", file=sys.stderr)
-            return 1
+    try:
+        with _so(_s.anki_collection_path, mode="rw") as ctx:
+            col_ver = ctx.conn.execute("SELECT ver FROM col").fetchone()[0]
+            reader = OfflineReader(ctx.conn, _s.anki_deck_name)
+            writer = OfflineWriter(ctx.conn)
+            sync = AnkiSync(db=db, _reader=reader, _writer=writer, _anki_col_ver=col_ver)
+            push = sync.sync_push(dry_run=args.dry_run, force_fsrs=args.force_fsrs)
+            pull = sync.sync_pull(dry_run=args.dry_run)
+            print(
+                f"Pull: {pull.notes_updated} notes updated, "
+                f"{pull.directions_updated} directions, "
+                f"{len(pull.conflicts)} conflicts"
+            )
+            print(f"Push: {push.notes_pushed} notes, {push.directions_pushed} directions")
+            return 0
+    except RuntimeError as e:
+        print(f"Error opening collection: {e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 8
+CURRENT_VERSION = 9
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -406,6 +406,13 @@ def migrate_v7_to_v8(conn: sqlite3.Connection) -> None:
     _set_version(conn, 8)
 
 
+def migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
+    """Drop pending_revlog table (no longer used after removing online mode)."""
+    conn.execute("DROP TABLE IF EXISTS pending_revlog")
+    conn.execute("DROP INDEX IF EXISTS idx_pending_revlog_cid")
+    _set_version(conn, 9)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -415,6 +422,7 @@ _MIGRATIONS = {
     5: migrate_v5_to_v6,
     6: migrate_v6_to_v7,
     7: migrate_v7_to_v8,
+    8: migrate_v8_to_v9,
 }
 
 

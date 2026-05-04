@@ -200,7 +200,6 @@ export interface AnkiSyncResult {
 	conflicts: number;
 	notes_pushed: number;
 	directions_pushed: number;
-	revlog_drained: number;
 	dry_run: boolean;
 }
 

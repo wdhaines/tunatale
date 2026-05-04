@@ -12,8 +12,6 @@ from app.anki.anki_connect import AnkiConnectClient
 from app.anki.sync import (
     AnkiSync,
     OfflineWriter,
-    OnlineWriter,
-    drain_pending_revlog_to_writer,
 )
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -142,50 +140,7 @@ class TestListDirtyFieldEdits:
         assert db.list_dirty_field_edits() == []
 
 
-# ── TestOnlineWriter ──────────────────────────────────────────────────────────
-
-
-class TestOnlineWriter:
-    def test_update_note_fields_sends_correct_payload(self):
-        client, transport = _recording_client()
-        writer = OnlineWriter(client, _make_tt_db())
-        writer.update_note_fields(1001, {"English": "bank"})
-        assert transport.calls[0][0] == "updateNoteFields"
-        assert transport.calls[0][1]["note"]["id"] == 1001
-        assert transport.calls[0][1]["note"]["fields"] == {"English": "bank"}
-
-    def test_suspend_sends_correct_payload(self):
-        client, transport = _recording_client()
-        writer = OnlineWriter(client, _make_tt_db())
-        writer.suspend([90010])
-        assert transport.calls[0][0] == "suspend"
-        assert 90010 in transport.calls[0][1]["cards"]
-
-    def test_unsuspend_sends_correct_payload(self):
-        client, transport = _recording_client()
-        writer = OnlineWriter(client, _make_tt_db())
-        writer.unsuspend([90010])
-        assert transport.calls[0][0] == "unsuspend"
-        assert 90010 in transport.calls[0][1]["cards"]
-
-    def test_set_due_date_sends_correct_payload(self):
-        client, transport = _recording_client()
-        writer = OnlineWriter(client, _make_tt_db())
-        writer.set_due_date([90010], "7")
-        assert transport.calls[0][0] == "setDueDate"
-        assert 90010 in transport.calls[0][1]["cards"]
-
-    def test_write_revlog_queues_to_pending_revlog(self):
-        db = _make_tt_db()
-        client, _ = _recording_client()
-        writer = OnlineWriter(client, db)
-        writer.write_revlog(cid=90010, ease=3, ivl=10, last_ivl=10, factor=2500, time_ms=0, type_=2)
-        rows = db.drain_pending_revlog()
-        assert len(rows) == 1
-        assert rows[0]["cid"] == 90010
-        assert rows[0]["ease"] == 3
-
-
+# ── TestOfflineWriter
 # ── TestOfflineWriter ──────────────────────────────────────────────────────────
 
 
@@ -479,17 +434,18 @@ class TestSyncPush:
 
         assert "set_specific_value_of_card" not in writer.action_names()
 
-    def test_dirty_direction_with_reps_queues_revlog_online(self):
-        """Online: pushing a reviewed dirty direction enqueues a pending_revlog entry."""
+    def test_dirty_direction_with_reps_inserts_revlog(self):
+        """Pushing a reviewed dirty direction inserts revlog directly."""
         db = _make_tt_db()
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         _mark_direction_dirty(db, guid, reps=3, stability=10.5)
 
-        client, _ = _recording_client()
-        writer = OnlineWriter(client, db)
+        anki_conn = _make_anki_full_db()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid)
+        writer = OfflineWriter(anki_conn)
         AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
 
-        rows = db.drain_pending_revlog()
+        rows = anki_conn.execute("SELECT * FROM revlog").fetchall()
         assert len(rows) == 1
         assert rows[0]["cid"] == rec_cid
         assert rows[0]["ivl"] == max(1, round(10.5))
@@ -608,33 +564,6 @@ class TestSyncPush:
 
 
 # ── TestDrainPendingRevlog ────────────────────────────────────────────────────
-
-
-class TestDrainPendingRevlog:
-    def test_drains_into_offline_writer_and_empties_queue(self):
-        """drain_pending_revlog_to_writer moves queued rows into the writer and clears the queue."""
-        db = _make_tt_db()
-        db.enqueue_pending_revlog(cid=11, ease=3, ivl=7, last_ivl=7, factor=2500, time_ms=1000, type_=2)
-        db.enqueue_pending_revlog(cid=22, ease=1, ivl=1, last_ivl=1, factor=2500, time_ms=500, type_=2)
-
-        conn = _make_anki_full_db()
-        writer = OfflineWriter(conn)
-        n = drain_pending_revlog_to_writer(db, writer)
-
-        assert n == 2
-        assert db.drain_pending_revlog() == []  # queue empty
-        rows = conn.execute("SELECT cid, ease, ivl, time, type FROM revlog ORDER BY cid").fetchall()
-        assert [tuple(r) for r in rows] == [(11, 3, 7, 1000, 2), (22, 1, 1, 500, 2)]
-
-    def test_empty_queue_is_noop(self):
-        db = _make_tt_db()
-        conn = _make_anki_full_db()
-        writer = OfflineWriter(conn)
-        assert drain_pending_revlog_to_writer(db, writer) == 0
-        assert conn.execute("SELECT COUNT(*) FROM revlog").fetchone()[0] == 0
-
-
-# ── B5: real ease emitted from last_rating ────────────────────────────────────
 
 
 class TestSyncPushEase:

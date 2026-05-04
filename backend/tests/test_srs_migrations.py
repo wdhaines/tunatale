@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 8
+        assert CURRENT_VERSION == 9
 
     def test_migrates_from_v1_to_v2(self):
         from app.srs.migrations import migrate_v1_to_v2
@@ -734,7 +734,7 @@ class TestMigrateV5ToV6:
         conn = _make_v1_conn()
         _insert(conn, "banka")
         migrate(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 9
         cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
         assert "anki_due" in cols
 
@@ -800,7 +800,7 @@ class TestMigrationV6ToV7:
         conn = _make_v1_conn()
         _insert(conn, "banka")
         migrate(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 9
 
 
 class TestMigrationV6ToV7Detailed:
@@ -952,8 +952,8 @@ class TestMigrationV7ToV8:
         migrate_v7_to_v8(conn)  # second call should not raise
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
 
-    def test_full_migrate_includes_v8(self):
-        """migrate() runs all migrations including v7→v8 and ends at CURRENT_VERSION=8."""
+    def test_full_migrate_includes_v9(self):
+        """migrate() runs all migrations including v8→v9 and ends at CURRENT_VERSION=9."""
         from app.srs.migrations import CURRENT_VERSION, migrate
 
         conn = self._make_v7_conn()

@@ -32,7 +32,7 @@ async def trigger_sync(request: Request, dry_run: bool = False):
     """
     from app.anki import model_discovery
     from app.anki.safety import AnkiRunningError, safe_open
-    from app.anki.sync import AnkiSync, OfflineReader, OfflineWriter, drain_pending_revlog_to_writer
+    from app.anki.sync import AnkiSync, OfflineReader, OfflineWriter
     from app.config import settings
 
     db = request.app.state.srs_db
@@ -72,7 +72,6 @@ async def trigger_sync(request: Request, dry_run: bool = False):
                 _media_fn=_media_fn,
             )
             push_report = sync.sync_push(dry_run=dry_run)
-            drained = 0 if dry_run else drain_pending_revlog_to_writer(db, writer)
             pull_report = sync.sync_pull(dry_run=dry_run)
 
             if not dry_run:
@@ -103,7 +102,6 @@ async def trigger_sync(request: Request, dry_run: bool = False):
         "conflicts": len(pull_report.conflicts),
         "notes_pushed": push_report.notes_pushed,
         "directions_pushed": push_report.directions_pushed,
-        "revlog_drained": drained,
         "dry_run": dry_run,
         "media_updated": media_updated,
         "media_unchanged": media_unchanged,

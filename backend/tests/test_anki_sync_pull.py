@@ -16,13 +16,34 @@ from app.anki.sync import (
     CardRecord,
     NoteRecord,
     OfflineReader,
-    OnlineReader,
     _direction_differs,
 )
 from app.common.guid import compute_guid
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
+
+
+class FakeWriter:
+    """Minimal writer stub for tests that only need AnkiSync construction."""
+
+    def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
+        pass
+
+    def suspend(self, card_ids: list[int]) -> None:
+        pass
+
+    def unsuspend(self, card_ids: list[int]) -> None:
+        pass
+
+    def set_due_date(self, card_ids: list[int], days: str) -> None:
+        pass
+
+    def write_revlog(
+        self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_: int
+    ) -> None:
+        pass
+
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -128,7 +149,7 @@ class TestOfflineReader:
         assert records == []
 
 
-# ── OnlineReader ──────────────────────────────────────────────────────────────
+# ── Additional tests ──────────────────────────────────────────────────────────
 
 
 class DispatchTransport(httpx.BaseTransport):
@@ -146,271 +167,7 @@ def _online_client(handlers: dict) -> AnkiConnectClient:
     return AnkiConnectClient(http_client=httpx.Client(transport=DispatchTransport(handlers)))
 
 
-class TestOnlineReader:
-    def test_returns_note_records(self):
-        client = _online_client(
-            {
-                "findNotes": lambda p: [1001],
-                "notesInfo": lambda p: [
-                    {
-                        "noteId": 1001,
-                        "modelName": "Basic",
-                        "mod": 0,
-                        "tags": [],
-                        "fields": {
-                            "Front": {"value": "banka", "order": 0},
-                            "Back": {"value": "bank", "order": 1},
-                        },
-                        "cards": [10010],
-                    }
-                ],
-                # findCards used by _discover_today_anki_day; card 10010 is due=10 on day 10
-                "findCards": lambda p: [10010],
-                "cardsInfo": lambda p: [
-                    {
-                        "cardId": 10010,
-                        "ord": 0,
-                        "queue": 2,
-                        "due": 10,
-                        "ivl": 21,
-                        "factor": 2500,
-                        "reps": 5,
-                        "lapses": 0,
-                    }
-                ],
-            }
-        )
-        records = OnlineReader(client, "0. Slovene").get_note_records()
-        assert len(records) == 1
-        rec = records[0]
-        assert rec.l2_text == "banka"
-        assert rec.translation == "bank"
-        assert len(rec.cards) == 1
-        # queue=2 card: FSRS reconstructed from ivl/factor; due=10=today_anki_day → due_date=today
-        assert rec.cards[0].fsrs_known is True
-        assert rec.cards[0].stability == 21.0
-        assert rec.cards[0].due_date == date.today()
-        # reps/lapses/queue still carried from cardsInfo
-        assert rec.cards[0].reps == 5
-        assert rec.cards[0].queue == 2
-
-    def test_empty_deck_returns_empty(self):
-        client = _online_client({"findNotes": lambda p: []})
-        records = OnlineReader(client, "Empty Deck").get_note_records()
-        assert records == []
-
-    def test_note_without_cards_has_empty_card_list(self):
-        """notesInfo returns cards=[] → NoteRecord.cards is empty."""
-        client = _online_client(
-            {
-                "findNotes": lambda p: [2001],
-                "notesInfo": lambda p: [
-                    {
-                        "noteId": 2001,
-                        "modelName": "Basic",
-                        "mod": 0,
-                        "tags": [],
-                        "fields": {
-                            "Front": {"value": "miza", "order": 0},
-                            "Back": {"value": "table", "order": 1},
-                        },
-                        "cards": [],
-                    }
-                ],
-                "findCards": lambda p: [],
-            }
-        )
-        records = OnlineReader(client, "0. Slovene").get_note_records()
-        assert len(records) == 1
-        assert records[0].cards == []
-
-    def test_card_not_in_cards_info_is_skipped(self):
-        """Card listed in notesInfo but absent from cardsInfo response is skipped."""
-        client = _online_client(
-            {
-                "findNotes": lambda p: [4001],
-                "notesInfo": lambda p: [
-                    {
-                        "noteId": 4001,
-                        "modelName": "Basic",
-                        "mod": 0,
-                        "tags": [],
-                        "fields": {
-                            "Front": {"value": "okno", "order": 0},
-                            "Back": {"value": "window", "order": 1},
-                        },
-                        "cards": [40010, 40011],  # 40011 won't be in cardsInfo
-                    }
-                ],
-                # findCards for _discover_today_anki_day: card 40010 due=5 on day 5
-                "findCards": lambda p: [40010],
-                "cardsInfo": lambda p: [
-                    {
-                        "cardId": 40010,
-                        "ord": 0,
-                        "queue": 2,
-                        "due": 5,
-                        "ivl": 7,
-                        "factor": 2500,
-                        "reps": 2,
-                        "lapses": 0,
-                    }
-                ],
-            }
-        )
-        records = OnlineReader(client, "0. Slovene").get_note_records()
-        assert len(records) == 1
-        assert len(records[0].cards) == 1  # 40011 skipped
-
-    def test_card_with_zero_interval_uses_default_stability(self):
-        """queue=0 card → fsrs_known stays False even when ivl=0."""
-        client = _online_client(
-            {
-                "findNotes": lambda p: [3001],
-                "notesInfo": lambda p: [
-                    {
-                        "noteId": 3001,
-                        "modelName": "Basic",
-                        "mod": 0,
-                        "tags": [],
-                        "fields": {
-                            "Front": {"value": "stol", "order": 0},
-                            "Back": {"value": "chair", "order": 1},
-                        },
-                        "cards": [30010],
-                    }
-                ],
-                # No review cards to discover today_anki_day → returns None → fsrs_known=False
-                "findCards": lambda p: [],
-                "cardsInfo": lambda p: [
-                    {
-                        "cardId": 30010,
-                        "ord": 0,
-                        "queue": 0,
-                        "due": 0,
-                        "ivl": 0,
-                        "factor": 0,
-                        "reps": 0,
-                        "lapses": 0,
-                    }
-                ],
-            }
-        )
-        records = OnlineReader(client, "0. Slovene").get_note_records()
-        assert records[0].cards[0].fsrs_known is False
-
-
-class TestOnlineReaderSqliteSupplement:
-    """OnlineReader with a collection_path supplements FSRS state from cards.data JSON,
-    overriding the lossy ivl/factor reconstruction with real Anki FSRS values."""
-
-    def _make_anki_sqlite(self, tmp_path, cards_data: dict[int, str]) -> str:
-        """Write a minimal collection.anki2-shaped SQLite file with the given cards."""
-        path = tmp_path / "collection.anki2"
-        with sqlite3.connect(str(path)) as conn:
-            conn.execute("CREATE TABLE cards (id INTEGER PRIMARY KEY, data TEXT)")
-            for card_id, data_str in cards_data.items():
-                conn.execute("INSERT INTO cards (id, data) VALUES (?, ?)", (card_id, data_str))
-        return str(path)
-
-    def _online_handlers_for_card(self, card_id: int, ivl: int, factor: int):
-        return {
-            "findNotes": lambda p: [card_id - 1],  # arbitrary nid
-            "notesInfo": lambda p: [
-                {
-                    "noteId": card_id - 1,
-                    "modelName": "Basic",
-                    "mod": 0,
-                    "tags": [],
-                    "fields": {
-                        "Front": {"value": "vlak", "order": 0},
-                        "Back": {"value": "train", "order": 1},
-                    },
-                    "cards": [card_id],
-                }
-            ],
-            "findCards": lambda p: [card_id],
-            "cardsInfo": lambda p: [
-                {
-                    "cardId": card_id,
-                    "ord": 1,
-                    "queue": 2,
-                    "due": 4500,
-                    "ivl": ivl,
-                    "factor": factor,
-                    "reps": 9,
-                    "lapses": 0,
-                }
-            ],
-        }
-
-    def test_supplements_fsrs_from_cards_data_when_path_given(self, tmp_path):
-        """With collection_path: real FSRS s/d from cards.data overrides ivl/factor reconstruction."""
-        path = self._make_anki_sqlite(tmp_path, {1775264031777: '{"s": 0.086, "d": 9.4}'})
-        client = _online_client(self._online_handlers_for_card(1775264031777, ivl=1, factor=1310))
-        records = OnlineReader(client, "0. Slovene", collection_path=path).get_note_records()
-        card = records[0].cards[0]
-        assert card.stability == 0.086
-        assert card.difficulty == 9.4
-        assert card.fsrs_known is True
-
-    def test_no_path_keeps_legacy_ivl_factor_reconstruction(self):
-        """Without collection_path: reconstructs stability=max(1.0, ivl), difficulty from factor."""
-        client = _online_client(self._online_handlers_for_card(1775264031777, ivl=1, factor=1310))
-        records = OnlineReader(client, "0. Slovene").get_note_records()
-        card = records[0].cards[0]
-        # ivl=1 → stability=max(1.0, 1)=1.0 (NOT 0.086)
-        assert card.stability == 1.0
-        # factor=1310 → difficulty=(3500-1310)/220 ≈ 9.95
-        assert abs(card.difficulty - (3500 - 1310) / 220) < 0.01
-
-    def test_card_missing_from_sqlite_falls_back_to_reconstruction(self, tmp_path):
-        """If AnkiConnect knows about a card that SQLite doesn't, fall back to ivl/factor."""
-        path = self._make_anki_sqlite(tmp_path, {})  # empty
-        client = _online_client(self._online_handlers_for_card(1775264031777, ivl=21, factor=2500))
-        records = OnlineReader(client, "0. Slovene", collection_path=path).get_note_records()
-        card = records[0].cards[0]
-        assert card.stability == 21.0  # reconstruction kicks in
-
-    def test_malformed_cards_data_falls_back_to_reconstruction(self, tmp_path):
-        """data column with junk JSON or missing s/d → ivl/factor reconstruction."""
-        path = self._make_anki_sqlite(tmp_path, {1775264031777: "not-json"})
-        client = _online_client(self._online_handlers_for_card(1775264031777, ivl=21, factor=2500))
-        records = OnlineReader(client, "0. Slovene", collection_path=path).get_note_records()
-        card = records[0].cards[0]
-        assert card.stability == 21.0
-
-    def test_path_does_not_exist_raises(self, tmp_path):
-        """Misconfigured collection_path should fail loudly, not silently."""
-        client = _online_client(self._online_handlers_for_card(1775264031777, ivl=1, factor=1310))
-        with pytest.raises(FileNotFoundError):
-            OnlineReader(client, "0. Slovene", collection_path=str(tmp_path / "nonexistent.anki2")).get_note_records()
-
-
 # ── AnkiSync constructor ──────────────────────────────────────────────────────
-
-
-class TestAnkiSyncConstructor:
-    def test_mode_online_creates_online_reader(self):
-        db = _make_tt_db()
-        client = _online_client({"findNotes": lambda p: []})
-        sync = AnkiSync(db=db, mode="online", client=client, deck_name="0. Slovene")
-        assert isinstance(sync._reader, OnlineReader)
-
-    def test_mode_online_without_client_raises(self):
-        db = _make_tt_db()
-        with pytest.raises(ValueError):
-            AnkiSync(db=db, mode="online", deck_name="0. Slovene")  # no client
-
-    def test_mode_auto_raises_not_implemented(self):
-        db = _make_tt_db()
-        with pytest.raises(NotImplementedError):
-            AnkiSync(db=db, mode="auto", deck_name="0. Slovene")
-
-    def test_mode_offline_raises_not_implemented(self):
-        db = _make_tt_db()
-        with pytest.raises(NotImplementedError):
-            AnkiSync(db=db, mode="offline", deck_name="0. Slovene")
 
 
 # ── AnkiSync.sync_pull algorithm ──────────────────────────────────────────────
@@ -433,7 +190,7 @@ class TestSyncPull:
                 cards=[],
             )
         ]
-        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
 
         assert report.notes_updated == 1
         assert report.conflicts == []
@@ -457,7 +214,7 @@ class TestSyncPull:
                 cards=[],
             )
         ]
-        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
 
         assert len(report.conflicts) == 1
         assert report.conflicts[0].field == "translation"
@@ -485,7 +242,7 @@ class TestSyncPull:
                 cards=[],
             )
         ]
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
 
         assert db.get_dirty_fields(guid) == ""
 
@@ -526,7 +283,7 @@ class TestSyncPull:
                 ],
             )
         ]
-        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
 
         assert report.directions_updated == 2
         item = db.get_collocation_by_guid(guid)
@@ -549,7 +306,7 @@ class TestSyncPull:
                 cards=[],
             )
         ]
-        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull(dry_run=True)
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull(dry_run=True)
 
         assert report.notes_updated == 1
         # DB unchanged
@@ -572,7 +329,7 @@ class TestSyncPull:
                 cards=[],
             )
         ]
-        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
 
         assert report.skipped_unknown_guid == 1
         assert report.notes_updated == 0
@@ -618,7 +375,7 @@ class TestSyncPull:
                 ],
             )
         ]
-        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
 
         # No conflict — dirty local data is queued work, not a real divergence
         assert report.conflicts == []
@@ -645,7 +402,7 @@ class TestSyncPull:
                 cards=[],
             )
         ]
-        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
 
         assert report.notes_updated == 0
         assert report.directions_updated == 0
@@ -669,7 +426,7 @@ class TestSyncPull:
                 cards=[],
             )
         ]
-        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
 
         assert report.notes_updated == 0
         assert report.skipped_unknown_guid == 0
@@ -691,7 +448,7 @@ class TestSyncPull:
                 cards=[],
             )
         ]
-        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull(dry_run=True)
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull(dry_run=True)
 
         assert len(report.conflicts) == 1
         # DB conflict table untouched
@@ -736,7 +493,7 @@ class TestSyncPull:
                 ],
             )
         ]
-        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull(dry_run=True)
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull(dry_run=True)
 
         # No conflict — dirty local data is queued work
         assert report.conflicts == []
@@ -776,7 +533,7 @@ class TestSyncPull:
                 ],
             )
         ]
-        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
         assert report.directions_updated == 0
 
     def test_fsrs_known_false_preserves_local_fsrs_state(self):
@@ -822,7 +579,7 @@ class TestSyncPull:
                 ],
             )
         ]
-        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
 
         assert report.conflicts == []
         updated = db.get_collocation_by_guid(guid)
@@ -860,7 +617,7 @@ class TestSyncPull:
                 ],
             )
         ]
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
         updated = db.get_collocation_by_guid(guid)
         assert updated.directions[Direction.RECOGNITION].state == SRSState.SUSPENDED
 
@@ -892,7 +649,7 @@ class TestSyncPull:
                 ],
             )
         ]
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
         updated = db.get_collocation_by_guid(guid)
         assert updated.directions[Direction.RECOGNITION].state == SRSState.BURIED
 
@@ -925,7 +682,7 @@ class TestSyncPull:
                 ],
             )
         ]
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
         updated = db.get_collocation_by_guid(guid)
         assert updated.directions[Direction.RECOGNITION].state == SRSState.LEARNING
 
@@ -958,7 +715,7 @@ class TestSyncPull:
                 ],
             )
         ]
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
         updated = db.get_collocation_by_guid(guid)
         assert updated.directions[Direction.RECOGNITION].state == SRSState.RELEARNING
 
@@ -990,7 +747,7 @@ class TestSyncPull:
                 ],
             )
         ]
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
         updated = db.get_collocation_by_guid(guid)
         assert updated.directions[Direction.RECOGNITION].state == SRSState.NEW
 
@@ -1022,7 +779,7 @@ class TestSyncPull:
                 ],
             )
         ]
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
         updated = db.get_collocation_by_guid(guid)
         assert updated.directions[Direction.RECOGNITION].state == SRSState.REVIEW
 
@@ -1092,7 +849,7 @@ class TestSyncPullNoOp:
             )
         ]
 
-        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
 
         assert report.directions_updated == 0
 
@@ -1139,7 +896,7 @@ class TestSyncPullNoOp:
             )
         ]
 
-        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
 
         assert report.directions_updated == 1
 
@@ -1180,14 +937,14 @@ class TestSyncPullIdFirstLookup:
             ),
         ]
 
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
 
         # NID_A's translation wins; NID_B is ignored.
         item = db.get_collocation("banka")
         assert item.syntactic_unit.translation == "carry"
 
         # Second run: TT already matches NID_A → idempotent (NID_B still ignored).
-        report2 = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        report2 = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
         assert report2.notes_updated == 0
 
     def test_unlinked_tt_row_still_falls_back_to_guid_lookup(self):
@@ -1208,7 +965,7 @@ class TestSyncPullIdFirstLookup:
             )
         ]
 
-        report = AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
 
         assert report.notes_updated == 1
         item = db.get_collocation("banka")
@@ -1242,155 +999,6 @@ class TestFactorToFsrsDifficulty:
 
 
 # ── _discover_today_anki_day ──────────────────────────────────────────────────
-
-
-class TestDiscoverTodayAnkiDay:
-    def test_finds_today_from_review_card_at_offset_zero(self):
-        """prop:due=0 returns review card with due=4494 → today_anki_day=4494."""
-        client = _online_client(
-            {
-                "findCards": lambda p: [9999] if "prop:due=0" in p.get("query", "") else [],
-                "cardsInfo": lambda p: [{"cardId": 9999, "queue": 2, "due": 4494}],
-            }
-        )
-        reader = OnlineReader(client, "0. Slovene")
-        assert reader._discover_today_anki_day() == 4494
-
-    def test_returns_none_when_no_review_cards(self):
-        client = _online_client({"findCards": lambda p: []})
-        reader = OnlineReader(client, "0. Slovene")
-        assert reader._discover_today_anki_day() is None
-
-    def test_skips_non_review_card_returns_none(self):
-        """findCards returns a card but queue=0; all offsets exhausted → None."""
-        client = _online_client(
-            {
-                "findCards": lambda p: [9998],
-                "cardsInfo": lambda p: [{"cardId": 9998, "queue": 0, "due": 0}],
-            }
-        )
-        reader = OnlineReader(client, "0. Slovene")
-        assert reader._discover_today_anki_day() is None
-
-
-# ── OnlineReader FSRS reconstruction ─────────────────────────────────────────
-
-
-class TestOnlineReaderFsrsReconstruction:
-    def _make_client(
-        self,
-        *,
-        note_due: int,
-        today_anki_day: int,
-        ivl: int,
-        factor: int,
-        note_queue: int = 2,
-    ) -> AnkiConnectClient:
-        DISC = 9999
-        NOTE_CARD = 50010
-
-        def cards_info_handler(p):
-            cards = p.get("cards", [])
-            results = []
-            if DISC in cards:
-                results.append({"cardId": DISC, "queue": 2, "due": today_anki_day})
-            if NOTE_CARD in cards:
-                results.append(
-                    {
-                        "cardId": NOTE_CARD,
-                        "ord": 0,
-                        "queue": note_queue,
-                        "due": note_due,
-                        "ivl": ivl,
-                        "factor": factor,
-                        "reps": 3,
-                        "lapses": 0,
-                    }
-                )
-            return results
-
-        return _online_client(
-            {
-                "findNotes": lambda p: [1001],
-                "notesInfo": lambda p: [
-                    {
-                        "noteId": 1001,
-                        "modelName": "Basic",
-                        "mod": 0,
-                        "tags": [],
-                        "fields": {
-                            "Front": {"value": "banka", "order": 0},
-                            "Back": {"value": "bank", "order": 1},
-                        },
-                        "cards": [NOTE_CARD],
-                    }
-                ],
-                "findCards": lambda p: [DISC] if "prop:due=0" in p.get("query", "") else [],
-                "cardsInfo": cards_info_handler,
-            }
-        )
-
-    def test_due_date_computed_from_card_due(self):
-        today_anki_day = 4494
-        client = self._make_client(note_due=4498, today_anki_day=today_anki_day, ivl=12, factor=2500)
-        records = OnlineReader(client, "0. Slovene").get_note_records()
-        card = records[0].cards[0]
-        assert card.fsrs_known is True
-        assert card.due_date == date.today() + timedelta(days=4)
-
-    def test_stability_from_ivl(self):
-        client = self._make_client(note_due=4494, today_anki_day=4494, ivl=12, factor=2500)
-        records = OnlineReader(client, "0. Slovene").get_note_records()
-        assert records[0].cards[0].stability == 12.0
-
-    def test_difficulty_from_factor(self):
-        client = self._make_client(note_due=4494, today_anki_day=4494, ivl=12, factor=2500)
-        records = OnlineReader(client, "0. Slovene").get_note_records()
-        assert records[0].cards[0].difficulty == pytest.approx(4.545, abs=0.01)
-
-    def test_queue_0_card_stays_fsrs_known_false(self):
-        client = self._make_client(note_due=4494, today_anki_day=4494, ivl=0, factor=0, note_queue=0)
-        records = OnlineReader(client, "0. Slovene").get_note_records()
-        assert records[0].cards[0].fsrs_known is False
-
-    def test_today_anki_day_none_yields_fsrs_known_false(self):
-        """No discovery card → today_anki_day=None → queue=2 card stays fsrs_known=False."""
-        client = _online_client(
-            {
-                "findNotes": lambda p: [1001],
-                "notesInfo": lambda p: [
-                    {
-                        "noteId": 1001,
-                        "modelName": "Basic",
-                        "mod": 0,
-                        "tags": [],
-                        "fields": {
-                            "Front": {"value": "banka", "order": 0},
-                            "Back": {"value": "bank", "order": 1},
-                        },
-                        "cards": [10010],
-                    }
-                ],
-                "findCards": lambda p: [],
-                "cardsInfo": lambda p: [
-                    {
-                        "cardId": 10010,
-                        "ord": 0,
-                        "queue": 2,
-                        "due": 4498,
-                        "ivl": 12,
-                        "factor": 2500,
-                        "reps": 3,
-                        "lapses": 0,
-                    }
-                ],
-            }
-        )
-        records = OnlineReader(client, "0. Slovene").get_note_records()
-        assert records[0].cards[0].fsrs_known is False
-
-
-# ── Fix 4: last_synced_at populated on pull ───────────────────────────────────
 
 
 class TestLastSyncedAtOnPull:
@@ -1428,7 +1036,7 @@ class TestLastSyncedAtOnPull:
             )
         ]
 
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
 
         item = db.get_collocation("banka")
         assert item.directions[Direction.RECOGNITION].last_synced_at is not None
@@ -1466,7 +1074,7 @@ class TestSyncPullFsrsKnownQueueMapping:
                 ],
             )
         ]
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
         item = db.get_collocation("banka")
         assert item.directions[Direction.RECOGNITION].state == SRSState.BURIED
 
@@ -1499,7 +1107,7 @@ class TestSyncPullFsrsKnownQueueMapping:
                 ],
             )
         ]
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
         item = db.get_collocation("banka")
         assert item.directions[Direction.RECOGNITION].state == SRSState.BURIED
 
@@ -1532,7 +1140,7 @@ class TestSyncPullFsrsKnownQueueMapping:
                 ],
             )
         ]
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
         item = db.get_collocation("banka")
         assert item.directions[Direction.RECOGNITION].state == SRSState.LEARNING
 
@@ -1565,7 +1173,7 @@ class TestSyncPullFsrsKnownQueueMapping:
                 ],
             )
         ]
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
         item = db.get_collocation("banka")
         assert item.directions[Direction.RECOGNITION].state == SRSState.RELEARNING
 
@@ -1597,7 +1205,7 @@ class TestSyncPullFsrsKnownQueueMapping:
                 ],
             )
         ]
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
         item = db.get_collocation("banka")
         assert item.directions[Direction.RECOGNITION].state == SRSState.NEW
 
@@ -1633,7 +1241,7 @@ class TestSyncPullWritesAnkiDue:
                 ],
             )
         ]
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
         item = db.get_collocation("banka")
         assert item.directions[Direction.RECOGNITION].anki_due == 842
 
@@ -1673,7 +1281,7 @@ class TestSyncPullWritesAnkiDue:
                 ],
             )
         ]
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
         reloaded = db.get_collocation("banka")
         # anki_due should be updated even though dirty_fsrs is True
         assert reloaded.directions[Direction.RECOGNITION].anki_due == 842
@@ -1706,12 +1314,12 @@ class TestSyncPullWritesAnkiDue:
             cards=[base_card],
         )
         # First sync: locks in anki_due=842 (anki_card_id change forces write).
-        AnkiSync(db=db, _reader=FakeReader([note])).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader([note]), _writer=FakeWriter()).sync_pull()
         assert db.get_collocation("banka").directions[Direction.RECOGNITION].anki_due == 842
 
         # Second sync: only anki_due changed in Anki (reposition).
         note.cards[0] = replace(base_card, anki_due=100)
-        AnkiSync(db=db, _reader=FakeReader([note])).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader([note]), _writer=FakeWriter()).sync_pull()
         assert db.get_collocation("banka").directions[Direction.RECOGNITION].anki_due == 100
 
 
@@ -1744,133 +1352,6 @@ class TestOfflineReaderPopulatesLastReview:
                     break
 
 
-class TestOnlineReaderPopulatesLastReview:
-    def test_online_reader_populates_last_review(self):
-        """OnlineReader: CardRecord.last_review set for queue=2 cards."""
-        client = _online_client(
-            {
-                "findNotes": lambda p: [1001],
-                "notesInfo": lambda p: [
-                    {
-                        "noteId": 1001,
-                        "modelName": "Basic",
-                        "mod": 0,
-                        "tags": [],
-                        "fields": {
-                            "Front": {"value": "vlak", "order": 0},
-                            "Back": {"value": "train", "order": 1},
-                        },
-                        "cards": [10010],
-                    }
-                ],
-                "findCards": lambda p: [10010],
-                "cardsInfo": lambda p: [
-                    {
-                        "cardId": 10010,
-                        "ord": 0,
-                        "queue": 2,
-                        "due": 10,
-                        "ivl": 3,
-                        "factor": 2500,
-                        "reps": 9,
-                        "lapses": 0,
-                    }
-                ],
-            }
-        )
-        records = OnlineReader(client, "0. Slovene").get_note_records()
-        # today_anki_day=10-10=0, last_review = today + (10-3) - 10 = today - 3
-        assert records[0].cards[0].last_review == date.today() + timedelta(days=-3)
-
-    def test_online_reader_populates_anki_due_for_learning_card(self):
-        """OnlineReader: queue=1 cards must propagate `due` (sub-day unix timestamp) to anki_due.
-        TunaTale uses this to dispatch learning cards in the same order as Anki's queue=1 scheduler.
-        """
-        sub_day_due_ts = 1777834178  # arbitrary unix timestamp
-        client = _online_client(
-            {
-                "findNotes": lambda p: [1001],
-                "notesInfo": lambda p: [
-                    {
-                        "noteId": 1001,
-                        "modelName": "Basic",
-                        "mod": 0,
-                        "tags": [],
-                        "fields": {
-                            "Front": {"value": "ženska", "order": 0},
-                            "Back": {"value": "woman", "order": 1},
-                        },
-                        "cards": [10010],
-                    }
-                ],
-                "findCards": lambda p: [10010],
-                "cardsInfo": lambda p: [
-                    {
-                        "cardId": 10010,
-                        "ord": 1,
-                        "queue": 1,  # sub-day learning
-                        "due": sub_day_due_ts,
-                        "ivl": 0,
-                        "factor": 0,
-                        "reps": 8,
-                        "lapses": 0,
-                    }
-                ],
-            }
-        )
-        records = OnlineReader(client, "0. Slovene").get_note_records()
-        assert records[0].cards[0].anki_due == sub_day_due_ts
-
-    def test_online_reader_populates_last_review_for_relearning_card(self):
-        """OnlineReader: CardRecord.last_review set for queue=3 (day-relearning) cards."""
-        client = _online_client(
-            {
-                "findNotes": lambda p: [1001],
-                "notesInfo": lambda p: [
-                    {
-                        "noteId": 1001,
-                        "modelName": "Basic",
-                        "mod": 0,
-                        "tags": [],
-                        "fields": {
-                            "Front": {"value": "vlak", "order": 0},
-                            "Back": {"value": "train", "order": 1},
-                        },
-                        "cards": [10011],
-                    }
-                ],
-                # Card 10010 (queue=2) anchors _discover_today_anki_day (today_anki_day=10).
-                # Card 10011 is the queue=3 (relearning) card under test.
-                "findCards": lambda p: [10010],
-                "cardsInfo": lambda p: [
-                    {
-                        "cardId": 10010,
-                        "ord": 0,
-                        "queue": 2,
-                        "due": 10,
-                        "ivl": 5,
-                        "factor": 2500,
-                        "reps": 5,
-                        "lapses": 0,
-                    },
-                    {
-                        "cardId": 10011,
-                        "ord": 1,
-                        "queue": 3,
-                        "due": 10,
-                        "ivl": 1,
-                        "factor": 2500,
-                        "reps": 8,
-                        "lapses": 1,
-                    },
-                ],
-            }
-        )
-        records = OnlineReader(client, "0. Slovene").get_note_records()
-        # today_anki_day=10, queue=3: last_review = today + (10-1) - 10 = today - 1
-        assert records[0].cards[0].last_review == date.today() + timedelta(days=-1)
-
-
 class TestSyncPullWritesLastReviewToDb:
     def test_sync_pull_writes_last_review_to_db(self):
         """sync_pull persists CardRecord.last_review into collocation_directions."""
@@ -1901,7 +1382,7 @@ class TestSyncPullWritesLastReviewToDb:
                 ],
             )
         ]
-        AnkiSync(db=db, _reader=FakeReader(records)).sync_pull()
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
 
         item = db.get_collocation("banka")
         assert item.directions[Direction.RECOGNITION].last_review == expected_last_review
@@ -1939,3 +1420,28 @@ class TestDirectionDiffersDetectsLastReviewTransition:
         )
 
         assert _direction_differs(ds, ds) is False
+
+
+# ── TestAnkiSyncConstructor ────────────────────────────────────────────────────
+
+
+class TestAnkiSyncConstructor:
+    def test_missing_reader_raises(self):
+        """AnkiSync requires _reader."""
+        db = _make_tt_db()
+        try:
+            AnkiSync(db=db, _writer=FakeWriter())
+        except ValueError as e:
+            assert "_reader is required" in str(e)
+        else:
+            raise AssertionError("Expected ValueError")
+
+    def test_missing_writer_raises(self):
+        """AnkiSync requires _writer."""
+        db = _make_tt_db()
+        try:
+            AnkiSync(db=db, _reader=FakeReader([]))
+        except ValueError as e:
+            assert "_writer is required" in str(e)
+        else:
+            raise AssertionError("Expected ValueError")

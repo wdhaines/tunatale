@@ -14,7 +14,6 @@ from app.anki.sync import (
     AnkiSync,
     ForceFsrsNotAcknowledgedError,
     OfflineWriter,
-    OnlineWriter,
     SetSpecificValueMissingError,
     ensure_force_fsrs_ack,
     preflight_set_specific_value_of_card,
@@ -185,38 +184,6 @@ class TestPreflightSetSpecificValue:
         client = self._make_client([])
         with pytest.raises(SetSpecificValueMissingError, match="setSpecificValueOfCard"):
             preflight_set_specific_value_of_card(client)
-
-
-# ── TestOnlineWriterSetSpecificValue ────────────────────────────────────────────
-
-
-class TestOnlineWriterSetSpecificValue:
-    def _make_recording_client(self) -> tuple[AnkiConnectClient, list]:
-        calls = []
-
-        def handle_request(request):
-            body = json.loads(request.content)
-            calls.append((body["action"], body.get("params", {})))
-            return httpx.Response(200, json={"result": None, "error": None})
-
-        transport = httpx.MockTransport(handle_request)
-        client = AnkiConnectClient(http_client=httpx.Client(transport=transport))
-        return client, calls
-
-    def test_calls_client_set_specific_value(self):
-        db = _make_tt_db()
-        client, calls = self._make_recording_client()
-        writer = OnlineWriter(client, db)
-        writer.set_specific_value_of_card(12345, keys=["ivl", "factor"], new_values=["10", "2500"])
-        assert len(calls) == 1
-        action, params = calls[0]
-        assert action == "setSpecificValueOfCard"
-        assert params["card"] == 12345
-        assert params["keys"] == ["ivl", "factor"]
-        assert params["newValues"] == ["10", "2500"]
-
-
-# ── TestOfflineWriterSetSpecificValue ───────────────────────────────────────────
 
 
 class TestOfflineWriterSetSpecificValue:

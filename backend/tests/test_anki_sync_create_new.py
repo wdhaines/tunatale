@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 
 import httpx
@@ -11,8 +10,6 @@ from app.anki.anki_connect import AnkiConnectClient
 from app.anki.media.pipeline import MediaResult
 from app.anki.sync import (
     AnkiSync,
-    OfflineWriter,
-    OnlineWriter,
     _safe_stem,
 )
 from app.models.srs_item import Direction
@@ -187,127 +184,6 @@ class TestSafeStem:
 
     def test_prefix_applied(self):
         assert _safe_stem("table", "img").startswith("img_")
-
-
-# ── TestOnlineWriterCreateNote ────────────────────────────────────────────────
-
-
-class TestOnlineWriterCreateNote:
-    def test_sends_add_note_action(self):
-        client, transport = _flex_client({"addNote": 5001})
-        writer = OnlineWriter(client, _make_db())
-        note_id = writer.create_note("0. Slovene", "Slovene Vocabulary", {"Slovene": "voda"}, ["tunatale"])
-        assert note_id == 5001
-        assert transport.calls[0][0] == "addNote"
-
-    def test_add_note_payload_has_deck_and_model(self):
-        client, transport = _flex_client({"addNote": 5001})
-        writer = OnlineWriter(client, _make_db())
-        writer.create_note("0. Slovene", "Slovene Vocabulary", {"Slovene": "voda"}, [])
-        note_param = transport.calls[0][1]["note"]
-        assert note_param["deckName"] == "0. Slovene"
-        assert note_param["modelName"] == "Slovene Vocabulary"
-
-    def test_add_note_payload_has_fields(self):
-        client, transport = _flex_client({"addNote": 5001})
-        writer = OnlineWriter(client, _make_db())
-        writer.create_note("deck", "model", {"Slovene": "voda", "English": "water"}, [])
-        note_param = transport.calls[0][1]["note"]
-        assert note_param["fields"]["Slovene"] == "voda"
-        assert note_param["fields"]["English"] == "water"
-
-    def test_add_note_payload_includes_tags(self):
-        client, transport = _flex_client({"addNote": 5001})
-        writer = OnlineWriter(client, _make_db())
-        writer.create_note("deck", "model", {}, ["tunatale", "sl"])
-        note_param = transport.calls[0][1]["note"]
-        assert "tunatale" in note_param["tags"]
-
-
-# ── TestOnlineWriterStoreMediaFile ────────────────────────────────────────────
-
-
-class TestOnlineWriterStoreMediaFile:
-    def test_sends_store_media_file_action(self):
-        client, transport = _flex_client({"storeMediaFile": "test.mp3"})
-        writer = OnlineWriter(client, _make_db())
-        writer.store_media_file("test.mp3", b"audio_data")
-        assert transport.calls[0][0] == "storeMediaFile"
-
-    def test_base64_encodes_data(self):
-        client, transport = _flex_client({"storeMediaFile": "test.mp3"})
-        writer = OnlineWriter(client, _make_db())
-        raw = b"\xff\xfbfake_mp3"
-        writer.store_media_file("test.mp3", raw)
-        sent_data = transport.calls[0][1]["data"]
-        assert base64.b64decode(sent_data) == raw
-
-    def test_filename_in_payload(self):
-        client, transport = _flex_client({"storeMediaFile": "voda.mp3"})
-        writer = OnlineWriter(client, _make_db())
-        writer.store_media_file("voda.mp3", b"x")
-        assert transport.calls[0][1]["filename"] == "voda.mp3"
-
-
-# ── TestOnlineWriterGetCardsForNote ───────────────────────────────────────────
-
-
-class TestOnlineWriterGetCardsForNote:
-    def test_returns_ord_to_card_id_mapping(self):
-        client, _ = _flex_client(
-            {
-                "notesInfo": [{"noteId": 5001, "cards": [50010, 50011], "fields": {}, "tags": []}],
-                "cardsInfo": [
-                    {"cardId": 50010, "ord": 0},
-                    {"cardId": 50011, "ord": 1},
-                ],
-            }
-        )
-        writer = OnlineWriter(client, _make_db())
-        result = writer.get_cards_for_note(5001)
-        assert result == {0: 50010, 1: 50011}
-
-    def test_returns_empty_when_note_not_found(self):
-        client, _ = _flex_client({"notesInfo": []})
-        writer = OnlineWriter(client, _make_db())
-        result = writer.get_cards_for_note(9999)
-        assert result == {}
-
-    def test_returns_empty_when_no_cards(self):
-        client, _ = _flex_client({"notesInfo": [{"noteId": 5001, "cards": [], "fields": {}, "tags": []}]})
-        writer = OnlineWriter(client, _make_db())
-        result = writer.get_cards_for_note(5001)
-        assert result == {}
-
-
-# ── TestOfflineWriterNewMethods ───────────────────────────────────────────────
-
-
-class TestOfflineWriterNewMethods:
-    def _conn(self):
-        import sqlite3
-
-        c = sqlite3.connect(":memory:")
-        c.row_factory = sqlite3.Row
-        c.execute(
-            "CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER, "
-            "ord INTEGER, mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER, "
-            "due INTEGER, ivl INTEGER, factor INTEGER, reps INTEGER, lapses INTEGER, "
-            "left INTEGER, odue INTEGER, odid INTEGER, flags INTEGER, data TEXT)"
-        )
-        c.execute(
-            "CREATE TABLE revlog (id INTEGER PRIMARY KEY, cid INTEGER, usn INTEGER, "
-            "ease INTEGER, ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)"
-        )
-        return c
-
-    def test_store_media_file_does_not_raise(self):
-        writer = OfflineWriter(self._conn())
-        writer.store_media_file("test.mp3", b"data")  # should not raise
-
-    def test_get_cards_for_note_returns_empty_dict_for_missing_note(self):
-        writer = OfflineWriter(self._conn())
-        assert writer.get_cards_for_note(9001) == {}
 
 
 # ── TestSyncCreateNew ─────────────────────────────────────────────────────────

@@ -495,7 +495,7 @@ describe('admin/srs/+page.svelte', () => {
 		mockSyncWithAnki.mockResolvedValue({
 			created: 0, linked: 0, skipped: 0,
 			notes_pulled: 5, directions_pulled: 10, conflicts: 0,
-			mode: 'offline', notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
+			mode: 'offline', notes_pushed: 0, directions_pushed: 0, dry_run: false
 		});
 		const { findByText } = render(AdminSRSPage);
 		await fireEvent.click(await findByText('Sync with Anki'));
@@ -508,7 +508,7 @@ describe('admin/srs/+page.svelte', () => {
 		mockSyncWithAnki.mockResolvedValue({
 			created: 2, linked: 1, skipped: 0,
 			notes_pulled: 7, directions_pulled: 14, conflicts: 0,
-			mode: 'offline', notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
+			mode: 'offline', notes_pushed: 0, directions_pushed: 0, dry_run: false
 		});
 		const { findByText } = render(AdminSRSPage);
 		await fireEvent.click(await findByText('Sync with Anki'));
@@ -520,7 +520,7 @@ describe('admin/srs/+page.svelte', () => {
 		mockSyncWithAnki.mockResolvedValue({
 			created: 0, linked: 0, skipped: 0,
 			notes_pulled: 3, directions_pulled: 6, conflicts: 2,
-			mode: 'offline', notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
+			mode: 'offline', notes_pushed: 0, directions_pushed: 0, dry_run: false
 		});
 		const { findByText } = render(AdminSRSPage);
 		await fireEvent.click(await findByText('Sync with Anki'));
@@ -538,7 +538,7 @@ describe('admin/srs/+page.svelte', () => {
 		mockSyncWithAnki.mockResolvedValue({
 			created: 0, linked: 0, skipped: 0,
 			notes_pulled: 3, directions_pulled: 6, conflicts: 0,
-			mode: 'offline', notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
+			mode: 'offline', notes_pushed: 0, directions_pushed: 0, dry_run: false
 		});
 		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 10, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'cache' });
 
@@ -597,7 +597,7 @@ describe('admin/srs/+page.svelte', () => {
 		mockSyncWithAnki.mockResolvedValue({
 			created: 0, linked: 0, skipped: 0,
 			notes_pulled: 0, directions_pulled: 0, conflicts: 0,
-			mode: 'offline', notes_pushed: 0, directions_pushed: 0, revlog_drained: 0, dry_run: false
+			mode: 'offline', notes_pushed: 0, directions_pushed: 0, dry_run: false
 		});
 		const { findByText } = render(AdminSRSPage);
 		await findByText(/0 total/);

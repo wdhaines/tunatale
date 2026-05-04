@@ -62,7 +62,7 @@
 Created: ${r.created}, Linked: ${r.linked}, Skipped: ${r.skipped}
 Pulled: ${r.notes_pulled} notes, ${r.directions_pulled} directions
 Pushed: ${r.notes_pushed} notes, ${r.directions_pushed} directions
-Conflicts: ${r.conflicts}, Revlog drained: ${r.revlog_drained}`;
+Conflicts: ${r.conflicts}`;
 	}
 </script>
 

@@ -73,24 +73,6 @@ CREATE TABLE IF NOT EXISTS sync_conflicts (
 )
 """
 
-_CREATE_PENDING_REVLOG = """
-CREATE TABLE IF NOT EXISTS pending_revlog (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    cid INTEGER NOT NULL,
-    ease INTEGER NOT NULL,
-    ivl INTEGER NOT NULL,
-    last_ivl INTEGER NOT NULL,
-    factor INTEGER NOT NULL,
-    time_ms INTEGER NOT NULL,
-    type INTEGER NOT NULL,
-    created_at TEXT NOT NULL
-)
-"""
-
-_CREATE_PENDING_REVLOG_IDX = """
-CREATE INDEX IF NOT EXISTS idx_pending_revlog_cid ON pending_revlog(cid)
-"""
-
 _CREATE_ANKI_STATE_CACHE = """
 CREATE TABLE IF NOT EXISTS anki_state_cache (
     key TEXT PRIMARY KEY,
@@ -161,8 +143,6 @@ class SRSDatabase:
         conn.commit()
         migrate(conn)
         conn.execute(_CREATE_SYNC_CONFLICTS)
-        conn.execute(_CREATE_PENDING_REVLOG)
-        conn.execute(_CREATE_PENDING_REVLOG_IDX)
         conn.execute(_CREATE_ANKI_STATE_CACHE)
         conn.commit()
 
@@ -1164,36 +1144,6 @@ class SRSDatabase:
         with self._get_conn() as conn:
             rows = conn.execute("SELECT * FROM sync_conflicts ORDER BY id").fetchall()
             return [dict(r) for r in rows]
-
-    def enqueue_pending_revlog(
-        self,
-        *,
-        cid: int,
-        ease: int,
-        ivl: int,
-        last_ivl: int,
-        factor: int,
-        time_ms: int,
-        type_: int,
-    ) -> None:
-        with self._get_conn() as conn:
-            conn.execute(
-                """
-                INSERT INTO pending_revlog
-                    (cid, ease, ivl, last_ivl, factor, time_ms, type, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
-                """,
-                (cid, ease, ivl, last_ivl, factor, time_ms, type_),
-            )
-            self._commit(conn)
-
-    def drain_pending_revlog(self) -> list[dict]:
-        with self._get_conn() as conn:
-            rows = conn.execute("SELECT * FROM pending_revlog ORDER BY id").fetchall()
-            result = [dict(r) for r in rows]
-            conn.execute("DELETE FROM pending_revlog")
-            self._commit(conn)
-            return result
 
     def set_anki_state_cache(self, key: str, value: str) -> None:
         """Upsert a key/value pair in the Anki state cache with the current UTC timestamp."""
