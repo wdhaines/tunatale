@@ -120,9 +120,11 @@
 	}
 	.slovene {
 		/* Semantic hook for per-language typography — currently inherits .main-text */
+		font: inherit;
 	}
 	.english {
 		/* Semantic hook for per-language typography — currently inherits .answer-text */
+		font: inherit;
 	}
 	.gram {
 		font-size: 0.9rem;

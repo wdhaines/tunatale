@@ -13,7 +13,7 @@ import re
 import sqlite3
 import time as _time
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from app.anki.anki_connect import AnkiConnectClient
@@ -740,7 +740,7 @@ class AnkiSync:
                         local_dir,
                         anki_card_id=card_rec.anki_card_id,
                         anki_due=card_rec.anki_due,
-                        last_synced_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                        last_synced_at=datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
                     )
                 elif card_rec.fsrs_known:
                     if card_rec.queue == -1:
@@ -767,7 +767,7 @@ class AnkiSync:
                         anki_card_id=card_rec.anki_card_id,
                         anki_due=card_rec.anki_due,
                         last_review=card_rec.last_review,
-                        last_synced_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                        last_synced_at=datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
                     )
                 else:
                     # Online pull: FSRS state not available via cardsInfo. Keep
@@ -790,7 +790,7 @@ class AnkiSync:
                         state=new_state,
                         anki_card_id=card_rec.anki_card_id,
                         anki_due=card_rec.anki_due,
-                        last_synced_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                        last_synced_at=datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
                     )
 
                 if _direction_differs(local_dir, new_dir_state):
