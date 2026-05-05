@@ -54,7 +54,7 @@ class _FakeWriter:
         self.set_due_date_calls.append((list(card_ids), days))
 
     def write_revlog(
-        self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_: int
+        self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_, preferred_id=None
     ) -> None:
         self.write_revlog_calls.append(cid)
 

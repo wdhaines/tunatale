@@ -10,18 +10,20 @@
 	}: {
 		item: SRSItemDetail;
 		direction: 'recognition' | 'production';
-		onRate: (rating: Rating) => Promise<void>;
+		onRate: (rating: Rating, timeMs: number) => Promise<void>;
 	} = $props();
 
 	let revealed = $state(false);
 	let audioEl: HTMLAudioElement | undefined = $state();
+	const startedAt = performance.now();
 
 	function show() {
 		revealed = true;
 	}
 
 	async function rate(r: Rating) {
-		await onRate(r);
+		const elapsed = Math.min(60000, Math.round(performance.now() - startedAt));
+		await onRate(r, elapsed);
 	}
 
 	function playAudio() {

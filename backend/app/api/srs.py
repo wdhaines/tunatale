@@ -50,6 +50,7 @@ def _direction_to_dict(ds: DirectionState) -> dict:
         "reps": ds.reps,
         "lapses": ds.lapses,
         "last_review": ds.last_review.isoformat() if ds.last_review else None,
+        "last_review_time_ms": ds.last_review_time_ms,
         "anki_card_id": ds.anki_card_id,
     }
 
@@ -140,6 +141,7 @@ async def get_new_collocations(request: Request, limit: int = 10, direction: str
 class DrillRequest(BaseModel):
     rating: str | None = None
     signal: str | None = None
+    time_ms: int = 0
 
 
 @router.post("/items/{item_id}/direction/{direction}/feedback", status_code=200)
@@ -161,7 +163,7 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
     _, item, _ = result
 
     fsrs_params, _ = resolve_fsrs_params(db)
-    updated = schedule(item, rating, direction=dir_enum, params=fsrs_params)
+    updated = schedule(item, rating, direction=dir_enum, params=fsrs_params, time_ms=body.time_ms)
     db.update_direction_by_id(item_id, dir_enum, updated.directions[dir_enum])
 
     new_dir = updated.directions[dir_enum]

@@ -303,12 +303,13 @@ export class TunaTaleAPI {
 	async submitDrill(
 		itemId: number,
 		direction: 'recognition' | 'production',
-		rating: 'again' | 'hard' | 'good' | 'easy'
+		rating: 'again' | 'hard' | 'good' | 'easy',
+		timeMs?: number
 	): Promise<{ new_due_date: string; new_state: string }> {
 		return this.request(`/api/srs/items/${itemId}/direction/${direction}/feedback`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ rating })
+			body: JSON.stringify({ rating, time_ms: timeMs })
 		});
 	}
 

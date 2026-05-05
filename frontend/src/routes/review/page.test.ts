@@ -59,7 +59,11 @@ describe('review/+page.svelte', () => {
 		const { findByRole } = render(ReviewPage);
 		await fireEvent.click(await findByRole('button', { name: 'Show' }));
 		await fireEvent.click(await findByRole('button', { name: 'Good' }));
-		expect(mockSubmitDrill).toHaveBeenCalledWith(5, 'recognition', 'good');
+		expect(mockSubmitDrill).toHaveBeenCalledWith(5, 'recognition', 'good', expect.any(Number));
+		// Verify timeMs is within reasonable range (0-60000)
+		const timeMs = mockSubmitDrill.mock.calls[0][3];
+		expect(timeMs).toBeGreaterThanOrEqual(0);
+		expect(timeMs).toBeLessThanOrEqual(60000);
 	});
 
 	it('calls submitDrill with production direction for production cards', async () => {
@@ -68,7 +72,7 @@ describe('review/+page.svelte', () => {
 		const { findByRole } = render(ReviewPage);
 		await fireEvent.click(await findByRole('button', { name: 'Show' }));
 		await fireEvent.click(await findByRole('button', { name: 'Good' }));
-		expect(mockSubmitDrill).toHaveBeenCalledWith(7, 'production', 'good');
+		expect(mockSubmitDrill).toHaveBeenCalledWith(7, 'production', 'good', expect.any(Number));
 	});
 
 	it('advances to next card after rating', async () => {

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from app.models.srs_item import Direction, DirectionState, Rating, SRSItem, SRSState
 
@@ -67,7 +67,9 @@ def compute_retrievability(direction_state: DirectionState, today: date) -> floa
     last_review = direction_state.last_review
     if stability is None or last_review is None:
         return 1.0
-    elapsed = max(0, (today - last_review).days)
+    # Handle both date and datetime for last_review
+    last_review_date = last_review.date() if isinstance(last_review, datetime) else last_review
+    elapsed = max(0, (today - last_review_date).days)
     return _forgetting_curve(elapsed, stability)
 
 
@@ -111,6 +113,7 @@ def schedule(
     review_date: date | None = None,
     direction: Direction = Direction.RECOGNITION,
     params: FSRSParams = DEFAULT_FSRS5_PARAMS,
+    time_ms: int = 0,
 ) -> SRSItem:
     """Apply a review rating to the given direction of an SRSItem.
 
@@ -120,6 +123,12 @@ def schedule(
     """
     if review_date is None:
         review_date = date.today()
+
+    now = datetime.now(tz=UTC)
+    if review_date == date.today():
+        last_review_dt = now
+    else:
+        last_review_dt = datetime.combine(review_date, datetime.min.time(), tzinfo=UTC)
 
     from dataclasses import replace
 
@@ -133,8 +142,9 @@ def schedule(
         new_lapses = prev.lapses
         new_state = SRSState.LEARNING if rating == Rating.AGAIN else SRSState.REVIEW
     else:
-        last = prev.last_review or review_date
-        elapsed = max(0, (review_date - last).days)
+        last = prev.last_review or last_review_dt
+        last_date = last.date() if isinstance(last, datetime) else last
+        elapsed = max(0, (last_review_dt.date() - last_date).days)
         r = _forgetting_curve(elapsed, prev.stability)
 
         if rating == Rating.AGAIN:
@@ -163,7 +173,8 @@ def schedule(
         reps=new_reps,
         lapses=new_lapses,
         state=new_state,
-        last_review=review_date,
+        last_review=last_review_dt,
+        last_review_time_ms=time_ms,
         dirty_fsrs=True,
         last_rating=rating.value,
     )

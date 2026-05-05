@@ -51,6 +51,7 @@ def _mark_direction_dirty(
     stability: float = 10.5,
     anki_card_id: int = 90010,
     due_date: date | None = None,
+    last_rating: int = 3,
 ) -> None:
     """Update a direction to dirty_fsrs=True, simulating a TT review."""
     ds = DirectionState(
@@ -63,6 +64,7 @@ def _mark_direction_dirty(
         state=state,
         dirty_fsrs=True,
         anki_card_id=anki_card_id,
+        last_rating=last_rating,
     )
     db.update_direction(guid, direction, ds)
 
@@ -86,9 +88,9 @@ class FakeWriter:
         self.calls.append(("set_due_date", list(card_ids), days))
 
     def write_revlog(
-        self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_: int
+        self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_, preferred_id=None
     ) -> None:
-        self.calls.append(("write_revlog", cid, ease, ivl, last_ivl, factor, time_ms, type_))
+        self.calls.append(("write_revlog", cid, ease, ivl, last_ivl, factor, time_ms, type_, preferred_id))
 
     def action_names(self) -> list[str]:
         return [c[0] for c in self.calls]

@@ -13,7 +13,7 @@ are scheduled for removal in Stage 3.5 of the Anki sync plan.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
 
 from .syntactic_unit import SyntacticUnit
@@ -58,7 +58,8 @@ class DirectionState:
     reps: int = 0
     lapses: int = 0
     state: SRSState = field(default=SRSState.NEW)
-    last_review: date | None = None
+    last_review: datetime | None = None
+    last_review_time_ms: int = 0
     anki_card_id: int | None = None
     anki_due: int | None = None
     dirty_fsrs: bool = False

@@ -1,10 +1,15 @@
 """FSRS algorithm tests."""
 
-from datetime import date, timedelta
+from datetime import UTC, date, timedelta
 
-from app.models.srs_item import Rating, SRSItem, SRSState
+from app.models.srs_item import Direction, DirectionState, Rating, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
-from app.srs.fsrs import DEFAULT_FSRS5_PARAMS, FSRSParams, schedule
+from app.srs.fsrs import (
+    DEFAULT_FSRS5_PARAMS,
+    FSRSParams,
+    compute_retrievability,
+    schedule,
+)
 
 
 def _new_item() -> SRSItem:
@@ -31,8 +36,8 @@ class TestNewItemScheduling:
     def test_schedule_new_good_advances_to_learning(self):
         item = _new_item()
         result = schedule(item, Rating.GOOD)
-        assert result.state in (SRSState.LEARNING, SRSState.REVIEW)
-        assert result.reps == 1
+        assert result.directions[Direction.RECOGNITION].state in (SRSState.LEARNING, SRSState.REVIEW)
+        assert result.directions[Direction.RECOGNITION].reps == 1
 
     def test_schedule_new_easy_longer_interval_than_good(self):
         item_good = _new_item()
@@ -45,7 +50,7 @@ class TestNewItemScheduling:
     def test_schedule_new_again_stays_learning(self):
         item = _new_item()
         result = schedule(item, Rating.AGAIN)
-        assert result.state in (SRSState.LEARNING, SRSState.NEW)
+        assert result.directions[Direction.RECOGNITION].state in (SRSState.LEARNING, SRSState.NEW)
 
     def test_schedule_new_good_stability_above_one(self):
         item = _new_item()
@@ -70,8 +75,8 @@ class TestReviewScheduling:
     def test_review_again_triggers_relearning(self):
         item = _review_item()
         result = schedule(item, Rating.AGAIN)
-        assert result.state == SRSState.RELEARNING
-        assert result.lapses == item.lapses + 1
+        assert result.directions[Direction.RECOGNITION].state == SRSState.RELEARNING
+        assert result.directions[Direction.RECOGNITION].lapses == item.directions[Direction.RECOGNITION].lapses + 1
 
     def test_review_again_reduces_stability(self):
         item = _review_item()
@@ -87,7 +92,37 @@ class TestReviewScheduling:
         today = date.today()
         item = _review_item()
         result = schedule(item, Rating.GOOD, today)
-        assert result.last_review == today
+        # last_review should be a datetime with UTC timezone
+        assert result.last_review is not None
+        assert result.last_review.tzinfo is not None
+
+    def test_schedule_past_date_uses_datetime_combine(self):
+        """When review_date is not today, uses datetime.combine (line 134)."""
+        past_date = date.today() - timedelta(days=5)
+        item = _review_item()
+        result = schedule(item, Rating.GOOD, past_date)
+        # last_review should be a datetime with the past_date
+        assert result.last_review.date() == past_date
+        assert result.last_review.tzinfo is not None
+
+    def test_schedule_with_date_last_review(self):
+        """When last_review is date (not datetime), triggers line 157."""
+        from dataclasses import replace
+        from datetime import timedelta
+
+        item = _review_item()
+        # Set last_review as a date (not datetime)
+        item.directions[Direction.RECOGNITION] = replace(
+            item.directions[Direction.RECOGNITION],
+            last_review=date.today() - timedelta(days=10),
+        )
+        # Schedule with a past date so last_review_dt is NOT datetime
+        # (it will be datetime.combine(review_date, ...))
+        # but last = prev.last_review (date), so line 157 triggers
+        past_date = date.today() - timedelta(days=5)
+        result = schedule(item, Rating.GOOD, past_date)
+        # Should not raise TypeError
+        assert result.last_review.date() == past_date
 
 
 class TestDifficultyAdjustment:
@@ -120,8 +155,6 @@ class TestLastRating:
 
     def test_schedule_sets_last_rating_to_rating_value(self):
         """schedule() stores rating.value on the updated DirectionState."""
-        from app.models.srs_item import Direction
-
         item = _review_item()
         for rating in Rating:
             result = schedule(item, rating)
@@ -129,8 +162,6 @@ class TestLastRating:
 
     def test_schedule_does_not_touch_other_direction_last_rating(self):
         """Scheduling recognition leaves production.last_rating unchanged."""
-        from app.models.srs_item import Direction
-
         item = _new_item()
         result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
         assert result.directions[Direction.PRODUCTION].last_rating is None
@@ -172,12 +203,45 @@ class TestFSRSParams:
         assert without_arg.due_date == with_default.due_date
 
     def test_non_default_weights_change_interval(self):
-        """Custom weights produce a different due_date than defaults (w3: 100 vs 15.47)."""
+        """Custom weights produce a different due_date than defaults."""
         today = date.today()
-        anki_params = FSRSParams(weights=self._ANKI_WEIGHTS)
+        ank_params = FSRSParams(weights=self._ANKI_WEIGHTS)
         result_default = schedule(_new_item(), Rating.EASY, today)
-        result_anki = schedule(_new_item(), Rating.EASY, today, params=anki_params)
+        result_anki = schedule(_new_item(), Rating.EASY, today, params=ank_params)
         assert result_anki.due_date != result_default.due_date
+
+    def test_compute_retrievability_with_datetime_last_review(self):
+        """compute_retrievability handles last_review as datetime (line 157)."""
+        from datetime import datetime
+
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=3.0,
+            difficulty=5.0,
+            reps=5,
+            lapses=0,
+            state=SRSState.REVIEW,
+            last_review=datetime.now(tz=UTC),
+        )
+        # Should not raise TypeError
+        r = compute_retrievability(ds, date.today())
+        assert 0.0 <= r <= 1.0
+
+    def test_compute_retrievability_with_date_last_review(self):
+        """compute_retrievability handles last_review as date (line 157)."""
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=3.0,
+            difficulty=5.0,
+            reps=5,
+            lapses=0,
+            state=SRSState.REVIEW,
+            last_review=date.today() - timedelta(days=5),
+        )
+        r = compute_retrievability(ds, date.today())
+        assert 0.0 <= r <= 1.0
 
     def test_fsrs_params_has_19_weights(self):
         """FSRSParams rejects weights that aren't 19 floats."""

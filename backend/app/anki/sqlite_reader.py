@@ -6,7 +6,7 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
 from app.models.srs_item import Direction, DirectionState, SRSState
@@ -223,10 +223,16 @@ def parse_fsrs_data(
     )
 
 
-def _compute_last_review(queue: int, due_raw: int, ivl: int, col_crt: int) -> date | None:
-    """Compute last_review date for queue 2/3 cards: last_review_day = due - ivl."""
+def _compute_last_review(queue: int, due_raw: int, ivl: int, col_crt: int) -> datetime | None:
+    """Compute last_review datetime (midnight UTC) for queue 2/3 cards.
+
+    Anki only persists day-level last review; we promote to midnight UTC so the
+    field type matches DirectionState.last_review and round-trips cleanly through
+    DB writes that expect datetime.
+    """
     if queue in (2, 3):
-        return date.fromtimestamp(col_crt) + timedelta(days=due_raw - ivl)
+        d = date.fromtimestamp(col_crt) + timedelta(days=due_raw - ivl)
+        return datetime.combine(d, time.min, tzinfo=UTC)
     return None
 
 

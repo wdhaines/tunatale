@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import UTC, date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +24,18 @@ from app.models.srs_item import (
 )
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.migrations import migrate
+
+
+def _parse_last_review(value: str | None) -> datetime | None:
+    """Parse last_review from DB. Handles both date and datetime strings."""
+    if value is None:
+        return None
+    dt = datetime.fromisoformat(value)
+    # Promote naive to UTC for safe comparisons
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
+
 
 # v0 base schema. Fresh DBs go through v0 → v1 → v2 via migrations so every
 # deployment converges on the same path.
@@ -90,6 +102,7 @@ _DIR_COLUMNS = (
     "lapses",
     "state",
     "last_review",
+    "last_review_time_ms",
     "anki_card_id",
     "anki_due",
     "dirty_fsrs",
@@ -316,6 +329,7 @@ class SRSDatabase:
                     lapses = ?,
                     state = ?,
                     last_review = ?,
+                    last_review_time_ms = ?,
                     anki_card_id = ?,
                     anki_due = ?,
                     dirty_fsrs = ?,
@@ -331,6 +345,7 @@ class SRSDatabase:
                     state.lapses,
                     state.state.value,
                     state.last_review.isoformat() if state.last_review else None,
+                    state.last_review_time_ms,
                     state.anki_card_id,
                     state.anki_due,
                     1 if state.dirty_fsrs else 0,
@@ -390,7 +405,8 @@ class SRSDatabase:
                 reps=row["reps"],
                 lapses=row["lapses"],
                 state=SRSState(row["state"]),
-                last_review=date.fromisoformat(row["last_review"]) if row["last_review"] else None,
+                last_review=_parse_last_review(row["last_review"]),
+                last_review_time_ms=row["last_review_time_ms"] or 0,
                 anki_card_id=row["anki_card_id"],
                 anki_due=row["anki_due"],
                 dirty_fsrs=bool(row["dirty_fsrs"]),
@@ -1057,7 +1073,8 @@ class SRSDatabase:
                     reps=row["reps"],
                     lapses=row["lapses"],
                     state=SRSState(row["state"]),
-                    last_review=date.fromisoformat(row["last_review"]) if row["last_review"] else None,
+                    last_review=_parse_last_review(row["last_review"]),
+                    last_review_time_ms=row["last_review_time_ms"] or 0,
                     anki_card_id=row["anki_card_id"],
                     dirty_fsrs=bool(row["dirty_fsrs"]),
                     last_synced_at=row["last_synced_at"],
@@ -1065,6 +1082,82 @@ class SRSDatabase:
                 )
                 result.append((row["guid"], d, ds))
         return result
+
+    def list_recently_graded_clean(
+        self,
+        direction: Direction | None = None,
+    ) -> list[tuple[str, Direction, DirectionState]]:
+        """Return (guid, direction, DirectionState) for clean rows that need revlog.
+
+        These are directions where:
+        - last_review > last_synced_at (a grade happened after last sync)
+        - dirty_fsrs = 0 (already synced schedule)
+        - last_rating IS NOT NULL (there is a grade to write)
+        """
+        with self._get_conn() as conn:
+            if direction is None:
+                rows = conn.execute(
+                    f"""
+                    SELECT c.guid, d.direction, {", ".join(f"d.{col}" for col in _DIR_COLUMNS)}
+                    FROM collocations c
+                    JOIN collocation_directions d ON d.collocation_id = c.id
+                    WHERE d.dirty_fsrs = 0
+                      AND d.last_rating IS NOT NULL
+                    """,
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"""
+                    SELECT c.guid, d.direction, {", ".join(f"d.{col}" for col in _DIR_COLUMNS)}
+                    FROM collocations c
+                    JOIN collocation_directions d ON d.collocation_id = c.id
+                    WHERE d.dirty_fsrs = 0
+                      AND d.last_rating IS NOT NULL
+                      AND d.direction = ?
+                    """,
+                    (direction.value,),
+                ).fetchall()
+            result = []
+            for row in rows:
+                d = Direction(row["direction"])
+                # SQL already filters: dirty_fsrs = 0 AND last_rating IS NOT NULL
+                # No need for last_review > last_synced_at check since last_rating
+                # being non-NULL indicates a pending revlog write.
+                last_review_dt = _parse_last_review(row["last_review"])
+                last_synced_at = row["last_synced_at"]
+                ds = DirectionState(
+                    direction=d,
+                    due_date=date.fromisoformat(row["due_date"]),
+                    stability=row["stability"],
+                    difficulty=row["fsrs_difficulty"],
+                    reps=row["reps"],
+                    lapses=row["lapses"],
+                    state=SRSState(row["state"]),
+                    last_review=last_review_dt,
+                    last_review_time_ms=row["last_review_time_ms"] or 0,
+                    anki_card_id=row["anki_card_id"],
+                    dirty_fsrs=bool(row["dirty_fsrs"]),
+                    last_synced_at=last_synced_at,
+                    last_rating=row["last_rating"],
+                )
+                result.append((row["guid"], d, ds))
+        return result
+
+    def touch_last_synced_at(self, guid: str, direction: Direction) -> None:
+        """Update last_synced_at to now for one direction without clearing dirty_fsrs."""
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT id FROM collocations WHERE guid = ?", (guid,)).fetchone()
+            if row is None:
+                return
+            conn.execute(
+                """
+                UPDATE collocation_directions SET
+                    last_synced_at = ?
+                WHERE collocation_id = ? AND direction = ?
+                """,
+                (datetime.now(UTC).isoformat(), row["id"], direction.value),
+            )
+            self._commit(conn)
 
     def mark_direction_clean(self, guid: str, direction: Direction) -> None:
         """Clear dirty_fsrs and set last_synced_at to now for one direction."""
@@ -1076,10 +1169,11 @@ class SRSDatabase:
                 """
                 UPDATE collocation_directions SET
                     dirty_fsrs = 0,
-                    last_synced_at = datetime('now')
+                    last_rating = NULL,
+                    last_synced_at = ?
                 WHERE collocation_id = ? AND direction = ?
                 """,
-                (row["id"], direction.value),
+                (datetime.now(UTC).isoformat(), row["id"], direction.value),
             )
             self._commit(conn)
 
@@ -1208,11 +1302,12 @@ class SRSDatabase:
         dirty_fields_str: str,
     ) -> None:
         """Update translation and dirty_fields after a sync pull."""
+        now_iso = datetime.now(UTC).isoformat()
         with self._get_conn() as conn:
             conn.execute(
                 "UPDATE collocations SET translation = ?, dirty_fields = ?, "
-                "last_synced_at = datetime('now'), updated_at = datetime('now') WHERE guid = ?",
-                (translation, dirty_fields_str, guid),
+                "last_synced_at = ?, updated_at = ? WHERE guid = ?",
+                (translation, dirty_fields_str, now_iso, now_iso, guid),
             )
             self._commit(conn)
 

@@ -1191,3 +1191,98 @@ class TestDatabaseURLParsing:
             db.close()
         except Exception as e:
             pytest.fail(f"Failed to parse sqlite:/// URL: {e}")
+
+
+class TestListRecentlyGradedCleanWithDirection:
+    """Tests for list_recently_graded_clean with direction parameter (line 1121)."""
+
+    def test_filters_by_direction(self, srs_db):
+        """When direction is provided, only that direction is returned (line 1121)."""
+        from datetime import UTC, datetime
+
+        unit = SyntacticUnit(text="test word", translation="test", word_count=1, difficulty=1, source="corpus")
+        srs_db.add_collocation(unit, language_code="sl")
+        item = srs_db.get_collocation("test word")
+        assert item is not None
+        guid = item.guid
+
+        # Grade recognition only
+        grade_time = datetime(2026, 5, 4, 10, 0, 0, tzinfo=UTC)
+        srs_db.update_direction(
+            guid,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                due_date=grade_time.date(),
+                stability=5.0,
+                difficulty=4.5,
+                reps=1,
+                lapses=0,
+                state=SRSState.REVIEW,
+                last_review=grade_time,
+                last_review_time_ms=3000,
+                dirty_fsrs=False,
+                last_rating=3,
+            ),
+        )
+
+        # list_recently_graded_clean with Direction.RECOGNITION should return it
+        result = srs_db.list_recently_graded_clean(direction=Direction.RECOGNITION)
+        assert len(result) == 1
+        assert result[0][0] == guid
+        assert result[0][1] == Direction.RECOGNITION
+
+        # list_recently_graded_clean with Direction.PRODUCTION should not return it
+        result_prod = srs_db.list_recently_graded_clean(direction=Direction.PRODUCTION)
+        assert len(result_prod) == 0
+
+
+class TestTouchLastSyncedAtNonExistentGuid:
+    """Tests for touch_last_synced_at with non-existent GUID (line 1163)."""
+
+    def test_returns_early_for_missing_guid(self, srs_db):
+        """When GUID doesn't exist, touch_last_synced_at returns early (line 1163)."""
+        # Should not raise even though GUID doesn't exist
+        srs_db.touch_last_synced_at("nonexistent-guid-123", Direction.RECOGNITION)
+        # If we get here, it returned early (no crash on missing GUID)
+
+    def test_actually_calls_the_function(self, srs_db):
+        """Verify the function is actually called and returns early."""
+        # First add a collocation so we have a valid GUID
+        from app.models.syntactic_unit import SyntacticUnit
+
+        unit = SyntacticUnit(text="test", translation="test", word_count=1, difficulty=1, source="corpus")
+        srs_db.add_collocation(unit, language_code="sl")
+        item = srs_db.get_collocation("test")
+        assert item is not None
+
+        # Call with non-existent GUID - should return early (line 1163-1164)
+        srs_db.touch_last_synced_at("totally-fake-guid", Direction.RECOGNITION)
+
+        # Call with valid GUID - should NOT return early (lines 1165-1173)
+        srs_db.touch_last_synced_at(item.guid, Direction.RECOGNITION)
+        # If we get here without error, the function works
+
+
+class TestMigrateV9toV10ColumnExists:
+    """Tests for migrate_v9_to_v10 when column already exists (line 418->422)."""
+
+    def test_migrate_skips_if_column_exists(self):
+        """When last_review_time_ms already exists, migration skips ALTER (line 418)."""
+        import sqlite3
+
+        from app.srs.migrations import CURRENT_VERSION, migrate_v9_to_v10
+
+        # Create a DB that already has the column (simulating already-migrated state)
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE collocation_directions (id INTEGER PRIMARY KEY)")
+        conn.execute("ALTER TABLE collocation_directions ADD COLUMN last_review_time_ms INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+
+        # Migration should not fail even though column exists
+        migrate_v9_to_v10(conn)
+
+        # Verify version is set
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        assert version == CURRENT_VERSION
+        conn.close()

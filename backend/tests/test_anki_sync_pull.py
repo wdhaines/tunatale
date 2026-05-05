@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import UTC, date, timedelta
 
 import httpx
 import pytest
@@ -1347,18 +1347,24 @@ class TestOfflineReaderPopulatesLastReview:
                 if card.anki_card_id == 10010:
                     # col_crt=1704067200 -> date.fromtimestamp = 2023-12-31 (local)
                     # due=15, ivl=5 -> last_review_day = 10
-                    # 2023-12-31 + 10 days = 2024-01-10
-                    assert card.last_review == date(2024, 1, 10)
+                    # 2023-12-31 + 10 days = 2024-01-10 (midnight UTC)
+                    from datetime import datetime as _dt
+                    from datetime import time as _time
+
+                    assert card.last_review == _dt.combine(date(2024, 1, 10), _time.min, tzinfo=UTC)
                     break
 
 
 class TestSyncPullWritesLastReviewToDb:
     def test_sync_pull_writes_last_review_to_db(self):
         """sync_pull persists CardRecord.last_review into collocation_directions."""
+        from datetime import datetime as _dt
+        from datetime import time as _time
+
         db = _make_tt_db()
         guid = _add_banka(db)
 
-        expected_last_review = date(2024, 1, 11)
+        expected_last_review = _dt.combine(date(2024, 1, 11), _time.min, tzinfo=UTC)
         records = [
             NoteRecord(
                 anki_note_id=9001,
@@ -1390,8 +1396,10 @@ class TestSyncPullWritesLastReviewToDb:
 
 class TestDirectionDiffersDetectsLastReviewTransition:
     def test_direction_differs_detects_last_review_transition(self):
-        """None → date transition detected by _direction_differs."""
+        """None → datetime transition detected by _direction_differs."""
         from dataclasses import replace
+        from datetime import datetime as _dt
+        from datetime import time as _time
 
         local = DirectionState(
             direction=Direction.RECOGNITION,
@@ -1402,12 +1410,15 @@ class TestDirectionDiffersDetectsLastReviewTransition:
             lapses=0,
             state=SRSState.REVIEW,
         )
-        candidate = replace(local, last_review=date(2024, 1, 11))
+        candidate = replace(local, last_review=_dt.combine(date(2024, 1, 11), _time.min, tzinfo=UTC))
 
         assert _direction_differs(local, candidate) is True
 
     def test_direction_differs_no_change_when_same_last_review(self):
         """Same last_review → no difference."""
+        from datetime import datetime as _dt
+        from datetime import time as _time
+
         ds = DirectionState(
             direction=Direction.RECOGNITION,
             due_date=date.today(),
@@ -1416,7 +1427,7 @@ class TestDirectionDiffersDetectsLastReviewTransition:
             reps=5,
             lapses=0,
             state=SRSState.REVIEW,
-            last_review=date(2024, 1, 11),
+            last_review=_dt.combine(date(2024, 1, 11), _time.min, tzinfo=UTC),
         )
 
         assert _direction_differs(ds, ds) is False

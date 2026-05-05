@@ -155,7 +155,7 @@ describe('DrillCard', () => {
 			const { findByRole } = render(DrillCard, { item, direction: 'recognition', onRate });
 			await fireEvent.click(await findByRole('button', { name: 'Show' }));
 			await fireEvent.click(await findByRole('button', { name: 'Good' }));
-			expect(onRate).toHaveBeenCalledWith('good');
+			expect(onRate).toHaveBeenCalledWith('good', expect.any(Number));
 		});
 
 		it('calls onRate("again") when Again clicked', async () => {
@@ -164,7 +164,7 @@ describe('DrillCard', () => {
 			const { findByRole } = render(DrillCard, { item, direction: 'recognition', onRate });
 			await fireEvent.click(await findByRole('button', { name: 'Show' }));
 			await fireEvent.click(await findByRole('button', { name: 'Again' }));
-			expect(onRate).toHaveBeenCalledWith('again');
+			expect(onRate).toHaveBeenCalledWith('again', expect.any(Number));
 		});
 	});
 

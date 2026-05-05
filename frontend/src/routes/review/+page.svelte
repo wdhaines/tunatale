@@ -45,10 +45,10 @@
 		return i;
 	}
 
-	async function rate(rating: 'again' | 'hard' | 'good' | 'easy') {
+	async function rate(rating: 'again' | 'hard' | 'good' | 'easy', timeMs: number) {
 		const { item, direction } = current;
 		try {
-			await api.submitDrill(item.id, direction, rating);
+			await api.submitDrill(item.id, direction, rating, timeMs);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 			return;

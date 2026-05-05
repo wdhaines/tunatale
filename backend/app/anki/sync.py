@@ -108,7 +108,8 @@ class CardRecord:
     difficulty: float
     due_date: date
     anki_due: int | None = None
-    last_review: date | None = None
+    last_review: datetime | None = None
+    last_review_ms: int | None = None
     # False when the source (e.g. AnkiConnect cardsInfo) does not reliably expose
     # FSRS stability/difficulty/due_date — sync_pull then preserves local FSRS
     # state instead of overwriting it with the placeholder values above.
@@ -176,6 +177,17 @@ class OfflineReader:
         note_ids = [n.id for n in notes]
         cards = fetch_cards_for_notes(self._conn, note_ids)
 
+        # Fetch last review timestamp from revlog for each card
+        cid_list = [c.id for c in cards]
+        last_revlog_ms: dict[int, int] = {}
+        if cid_list:  # pragma: no branch
+            placeholders = ",".join("?" * len(cid_list))
+            rows = self._conn.execute(
+                f"SELECT cid, MAX(id) FROM revlog WHERE cid IN ({placeholders}) GROUP BY cid",
+                cid_list,
+            ).fetchall()
+            last_revlog_ms = {cid: ms for cid, ms in rows}
+
         cards_by_note: dict[int, list] = {}
         for c in cards:
             cards_by_note.setdefault(c.note_id, []).append(c)
@@ -197,6 +209,7 @@ class OfflineReader:
                     due_date=c.fsrs_state.due_date,
                     anki_due=c.fsrs_state.anki_due,
                     last_review=c.fsrs_state.last_review,
+                    last_review_ms=last_revlog_ms.get(c.id),
                 )
                 for c in cards_by_note.get(note.id, [])
             ]
@@ -323,12 +336,12 @@ class OfflineWriter:
         self._conn.commit()
 
     def write_revlog(
-        self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_: int
+        self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_, preferred_id=None
     ) -> None:
-        ts = int(_time.time() * 1000)
         max_row = self._conn.execute("SELECT MAX(id) FROM revlog").fetchone()
         max_id = (max_row[0] or 0) if max_row else 0
-        rid = max(ts, max_id + 1)
+        base = preferred_id if preferred_id is not None else int(_time.time() * 1000)
+        rid = max(base, max_id + 1)
         self._conn.execute(
             "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -553,14 +566,68 @@ class AnkiSync:
                 if local_dir is None:
                     continue
 
-                if local_dir.dirty_fsrs:
-                    # Local has unpushed grades — preserve all FSRS state; sync_push
-                    # will flush. Not a conflict: this is queued local work.
+                # Compute timestamps for conflict resolution
+                local_last_ms = int(local_dir.last_review.timestamp() * 1000) if local_dir.last_review else 0
+                anki_last_ms = card_rec.last_review_ms or 0
+
+                if local_dir.dirty_fsrs and anki_last_ms > local_last_ms:
+                    # Anki's review is newer than TunaTale's pending grade.
+                    # Anki wins for cards.due/ivl/factor. TunaTale's grade still
+                    # becomes a revlog row in Anki (push will handle it).
+                    if card_rec.queue == -1:
+                        new_state = SRSState.SUSPENDED
+                    elif card_rec.queue in (-2, -3):
+                        new_state = SRSState.BURIED
+                    elif card_rec.queue == 1:
+                        new_state = SRSState.LEARNING
+                    elif card_rec.queue == 3:
+                        new_state = SRSState.RELEARNING
+                    elif card_rec.reps == 0:
+                        new_state = SRSState.NEW
+                    else:
+                        new_state = SRSState.REVIEW
+                    new_dir_state = DirectionState(
+                        direction=direction,
+                        due_date=card_rec.due_date,
+                        stability=card_rec.stability,
+                        difficulty=card_rec.difficulty,
+                        reps=card_rec.reps,
+                        lapses=card_rec.lapses,
+                        state=new_state,
+                        dirty_fsrs=False,  # cleared so push won't overwrite Anki
+                        anki_card_id=card_rec.anki_card_id,
+                        anki_due=card_rec.anki_due,
+                        last_review=local_dir.last_review,  # preserve TunaTale's timestamp for revlog ID
+                        last_review_time_ms=local_dir.last_review_time_ms,  # preserve duration
+                        last_synced_at=datetime.now(UTC).isoformat(),
+                        last_rating=local_dir.last_rating,  # preserve for push revlog
+                    )
+                    conflict = SyncConflict(
+                        guid=guid,
+                        direction=direction.value,
+                        field="schedule",
+                        local_value=str(local_dir.last_review),
+                        remote_value=str(card_rec.last_review),
+                        resolution="anki_wins_by_timestamp",
+                    )
+                    report.conflicts.append(conflict)
+                    if not dry_run:
+                        self._db.record_sync_conflict(
+                            guid=guid,
+                            direction=direction.value,
+                            field="schedule",
+                            local=str(local_dir.last_review),
+                            remote=str(card_rec.last_review),
+                            resolution="anki_wins_by_timestamp",
+                        )
+                elif local_dir.dirty_fsrs:
+                    # TunaTale's grade is the latest event. Preserve local FSRS,
+                    # let push flush. (anki_card_id / anki_due / last_synced_at refresh.)
                     new_dir_state = replace(
                         local_dir,
                         anki_card_id=card_rec.anki_card_id,
                         anki_due=card_rec.anki_due,
-                        last_synced_at=datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+                        last_synced_at=datetime.now(UTC).isoformat(),
                     )
                 elif card_rec.fsrs_known:
                     if card_rec.queue == -1:
@@ -587,12 +654,10 @@ class AnkiSync:
                         anki_card_id=card_rec.anki_card_id,
                         anki_due=card_rec.anki_due,
                         last_review=card_rec.last_review,
-                        last_synced_at=datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+                        last_synced_at=datetime.now(UTC).isoformat(),
                     )
                 else:
-                    # Online pull: FSRS state not available via cardsInfo. Keep
-                    # local stability/difficulty/due_date/reps/lapses and the
-                    # existing dirty_fsrs so the next push can still flush.
+                    # fsrs_known=False and not dirty_fsrs: apply basic queue mapping
                     if card_rec.queue == -1:
                         new_state = SRSState.SUSPENDED
                     elif card_rec.queue in (-2, -3):
@@ -605,14 +670,20 @@ class AnkiSync:
                         new_state = SRSState.NEW
                     else:
                         new_state = SRSState.REVIEW
-                    new_dir_state = replace(
-                        local_dir,
+                    new_dir_state = DirectionState(
+                        direction=direction,
+                        due_date=card_rec.due_date,
+                        stability=local_dir.stability,
+                        difficulty=local_dir.difficulty,
+                        reps=card_rec.reps,
+                        lapses=card_rec.lapses,
                         state=new_state,
+                        dirty_fsrs=False,
                         anki_card_id=card_rec.anki_card_id,
                         anki_due=card_rec.anki_due,
-                        last_synced_at=datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+                        last_review=card_rec.last_review,
+                        last_synced_at=datetime.now(UTC).isoformat(),
                     )
-
                 if _direction_differs(local_dir, new_dir_state):
                     if not dry_run:
                         self._db.update_direction(guid, direction, new_dir_state)
@@ -638,6 +709,7 @@ class AnkiSync:
                 self._db.set_dirty_fields(guid, "")
             report.notes_pushed += 1
 
+        # First loop: dirty directions (TunaTale's grade is latest)
         for guid, direction, ds in self._db.list_dirty():
             if ds.anki_card_id is None:
                 continue
@@ -652,14 +724,17 @@ class AnkiSync:
                     ivl = max(1, round(ds.stability))
                     ease = ds.last_rating if ds.last_rating is not None else 3
                     factor = max(1300, min(13000, round(ds.difficulty * 1000)))
+                    # Use last_review timestamp for revlog ID
+                    preferred_id = int(ds.last_review.timestamp() * 1000) if ds.last_review else None
                     self._writer.write_revlog(
                         cid=ds.anki_card_id,
                         ease=ease,
                         ivl=ivl,
                         last_ivl=ivl,
                         factor=factor,
-                        time_ms=0,
+                        time_ms=ds.last_review_time_ms,
                         type_=2,
+                        preferred_id=preferred_id,
                     )
                 if force_fsrs:
                     schema_ok = self._anki_col_ver is None or self._anki_col_ver <= KNOWN_ANKI_SCHEMA_VER
@@ -672,6 +747,30 @@ class AnkiSync:
                             keys=["data", "ivl", "factor"],
                             new_values=[data_json, str(ivl_val), str(factor_val)],
                         )
+                self._db.mark_direction_clean(guid, direction)
+            report.directions_pushed += 1
+
+        # Second loop: clean directions that need revlog (Anki won earlier by timestamp)
+        for guid, direction, ds in self._db.list_recently_graded_clean():
+            if ds.anki_card_id is None:
+                continue
+            if not dry_run:
+                if ds.reps > 0:
+                    ivl = max(1, round(ds.stability))
+                    ease = ds.last_rating if ds.last_rating is not None else 3
+                    factor = max(1300, min(13000, round(ds.difficulty * 1000)))
+                    preferred_id = int(ds.last_review.timestamp() * 1000) if ds.last_review else None
+                    self._writer.write_revlog(
+                        cid=ds.anki_card_id,
+                        ease=ease,
+                        ivl=ivl,
+                        last_ivl=ivl,
+                        factor=factor,
+                        time_ms=ds.last_review_time_ms,
+                        type_=2,
+                        preferred_id=preferred_id,
+                    )
+                # Clear last_rating so it doesn't re-fire next sync
                 self._db.mark_direction_clean(guid, direction)
             report.directions_pushed += 1
 

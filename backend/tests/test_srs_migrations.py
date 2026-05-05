@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 9
+        assert CURRENT_VERSION == 10
 
     def test_migrates_from_v1_to_v2(self):
         from app.srs.migrations import migrate_v1_to_v2
@@ -734,7 +734,7 @@ class TestMigrateV5ToV6:
         conn = _make_v1_conn()
         _insert(conn, "banka")
         migrate(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 10
         cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
         assert "anki_due" in cols
 
@@ -800,7 +800,7 @@ class TestMigrationV6ToV7:
         conn = _make_v1_conn()
         _insert(conn, "banka")
         migrate(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 10
 
 
 class TestMigrationV6ToV7Detailed:
@@ -872,6 +872,45 @@ class TestMigrationV7ToV8:
                 last_synced_at TEXT,
                 created_at TEXT DEFAULT (datetime('now')),
                 updated_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE collocation_directions (
+                collocation_id INTEGER NOT NULL REFERENCES collocations(id) ON DELETE CASCADE,
+                direction TEXT NOT NULL CHECK(direction IN ('recognition','production')),
+                stability REAL NOT NULL DEFAULT 1.0,
+                fsrs_difficulty REAL NOT NULL DEFAULT 5.0,
+                due_date TEXT NOT NULL,
+                reps INTEGER NOT NULL DEFAULT 0,
+                lapses INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL DEFAULT 'new',
+                last_review TEXT,
+                anki_card_id INTEGER,
+                dirty_fsrs INTEGER NOT NULL DEFAULT 0,
+                last_synced_at TEXT,
+                last_rating INTEGER,
+                anki_due INTEGER,
+                PRIMARY KEY (collocation_id, direction)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE media (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                collocation_id INTEGER REFERENCES collocations(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL CHECK(kind IN ('image','audio_forvo','audio_tts')),
+                filename TEXT NOT NULL,
+                path TEXT,
+                anki_filename TEXT,
+                sha256 TEXT,
+                bytes INTEGER,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE collocation_tags (
+                collocation_id INTEGER NOT NULL REFERENCES collocations(id) ON DELETE CASCADE,
+                tag TEXT NOT NULL,
+                PRIMARY KEY (collocation_id, tag)
             )
         """)
         conn.execute("PRAGMA user_version = 7")
@@ -953,7 +992,7 @@ class TestMigrationV7ToV8:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
 
     def test_full_migrate_includes_v9(self):
-        """migrate() runs all migrations including v8→v9 and ends at CURRENT_VERSION=9."""
+        """migrate() runs all migrations including v8→v9 and ends at CURRENT_VERSION=10."""
         from app.srs.migrations import CURRENT_VERSION, migrate
 
         conn = self._make_v7_conn()

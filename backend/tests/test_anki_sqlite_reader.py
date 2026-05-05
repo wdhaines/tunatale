@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 
@@ -343,7 +343,7 @@ class TestParseFsrsData:
             due_raw=4501,
             ivl=3,
         )
-        assert state.last_review == date(2026, 4, 29)
+        assert state.last_review == datetime.combine(date(2026, 4, 29), time.min, tzinfo=UTC)
 
     def test_parse_fsrs_data_sets_last_review_for_relearning_card(self):
         """queue=3 (day-relearning): last_review computed same as queue=2."""
@@ -360,7 +360,7 @@ class TestParseFsrsData:
             due_raw=500,
             ivl=10,
         )
-        assert state.last_review == date(2015, 5, 9)
+        assert state.last_review == datetime.combine(date(2015, 5, 9), time.min, tzinfo=UTC)
 
     def test_parse_fsrs_data_last_review_none_for_new_card(self):
         """queue=0 (new): last_review is None."""
@@ -406,7 +406,7 @@ class TestParseFsrsData:
             due_raw=4501,
             ivl=3,
         )
-        assert state.last_review == date(2026, 4, 29)
+        assert state.last_review == datetime.combine(date(2026, 4, 29), time.min, tzinfo=UTC)
 
 
 class TestExtractL2:
