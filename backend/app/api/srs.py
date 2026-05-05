@@ -42,7 +42,7 @@ _WORD_RATING_MAP: dict[str, Rating] = {
 
 
 def _direction_to_dict(ds: DirectionState) -> dict:
-    return {
+    result = {
         "state": ds.state.value,
         "due_date": ds.due_date.isoformat(),
         "stability": ds.stability,
@@ -53,6 +53,11 @@ def _direction_to_dict(ds: DirectionState) -> dict:
         "last_review_time_ms": ds.last_review_time_ms,
         "anki_card_id": ds.anki_card_id,
     }
+    if ds.due_at is not None:
+        result["due_at"] = ds.due_at.isoformat()
+    if ds.left is not None:
+        result["left"] = ds.left
+    return result
 
 
 def _item_to_dict(
@@ -163,16 +168,22 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
     _, item, _ = result
 
     fsrs_params, _ = resolve_fsrs_params(db)
-    updated = schedule(item, rating, direction=dir_enum, params=fsrs_params, time_ms=body.time_ms)
+    now = datetime.datetime.now(datetime.UTC)
+    updated = schedule(item, rating, direction=dir_enum, params=fsrs_params, time_ms=body.time_ms, now=now)
     db.update_direction_by_id(item_id, dir_enum, updated.directions[dir_enum])
 
     new_dir = updated.directions[dir_enum]
-    return {
+    response = {
         "status": "ok",
         "direction": dir_enum.value,
         "new_due_date": new_dir.due_date.isoformat(),
         "new_state": new_dir.state.value,
     }
+    if new_dir.left is not None:
+        response["left"] = new_dir.left
+    if new_dir.due_at is not None:
+        response["due_at"] = new_dir.due_at.isoformat()
+    return response
 
 
 @router.get("/media/{filename}", status_code=200)
@@ -227,7 +238,8 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         item = db.get_collocation_by_lemma(lemma)
         if item is not None:
             rating = _WORD_RATING_MAP.get(body.word_ratings.get(lemma, "good"), Rating.GOOD)
-            updated = schedule(item, rating, params=resolve_fsrs_params(db)[0])
+            now = datetime.datetime.now(datetime.UTC)
+            updated = schedule(item, rating, params=resolve_fsrs_params(db)[0], now=now)
             db.update_collocation(updated)
 
     # ── Key phrase registration (preserves translations) ─────────────────
@@ -661,11 +673,34 @@ async def get_review_queue(request: Request) -> dict:
 
     # 3. Extract learning-state cards (Anki queue=1 behavior: they go first).
     #    Also remove any new cards whose collocation has a learning direction.
-    learning_cards = [t for t in due if t[1].directions[t[3]].state == SRSState.LEARNING]
-    nonlearning_due = [t for t in due if t[1].directions[t[3]].state != SRSState.LEARNING]
+    #    Filter by due_at: only include cards with due_at <= now (or None for legacy).
+    now = datetime.datetime.now(datetime.UTC)
 
+    def _has_future_learning(item: SRSItem) -> bool:
+        """Check if ANY direction is LEARNING with future due_at."""
+        for dir_enum in [Direction.RECOGNITION, Direction.PRODUCTION]:
+            ds = item.directions[dir_enum]
+            if ds.state == SRSState.LEARNING and ds.due_at is not None and ds.due_at > now:
+                return True
+        return False
+
+    learning_cards = [
+        t
+        for t in due
+        if t[1].directions[t[3]].state == SRSState.LEARNING
+        and (t[1].directions[t[3]].due_at is None or t[1].directions[t[3]].due_at <= now)
+    ]
+    # Non-learning due cards (exclude LEARNING tuples AND cards where ANY direction has future learning due_at)
+    nonlearning_due = [
+        t for t in due if t[1].directions[t[3]].state != SRSState.LEARNING and not _has_future_learning(t[1])
+    ]
+
+    # Also filter learning cards from new_combined (they shouldn't appear if due_at is in the future)
     learning_collocation_ids = {t[0] for t in learning_cards}
     nonlearning_new = [t for t in new_combined if t[0] not in learning_collocation_ids]
+    # Filter out cards where ANY direction has future learning due_at
+    filtered_new = [t for t in nonlearning_new if not _has_future_learning(t[1])]
+    nonlearning_new = filtered_new
 
     # Sort learning cards by anki_due ASC (the sub-day unix timestamp Anki uses for queue=1
     # dispatch). Fall back to stability ASC when anki_due is missing (e.g. AnkiConnect-only

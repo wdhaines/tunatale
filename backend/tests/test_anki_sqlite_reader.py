@@ -495,3 +495,110 @@ class TestReadFsrsStateForCards:
         assert 1 in result
         assert 2 not in result
         assert 3 not in result
+
+
+class TestLeftAndDueAtFromCards:
+    """Tests that left column and due_at are correctly read from Anki cards table."""
+
+    def _make_db(self, tmp_path, cards_rows):
+        """Create a minimal Anki DB with given cards rows.
+
+        cards_rows: list of (id, nid, did, ord, queue, reps, lapses, data, due, ivl, left)
+        """
+        path = tmp_path / "collection.anki2"
+        conn = sqlite3.connect(str(path))
+        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, crt INTEGER)")
+        conn.execute("INSERT INTO col VALUES (1, 1704067200)")  # 2024-01-01 UTC
+        conn.execute(
+            """CREATE TABLE cards (
+                id INTEGER PRIMARY KEY,
+                nid INTEGER,
+                did INTEGER,
+                ord INTEGER,
+                queue INTEGER,
+                reps INTEGER,
+                lapses INTEGER,
+                data TEXT,
+                due INTEGER,
+                ivl INTEGER,
+                left INTEGER
+            )"""
+        )
+        conn.executemany(
+            "INSERT INTO cards (id, nid, did, ord, queue, reps, lapses, data, due, ivl, left) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            cards_rows,
+        )
+        conn.commit()
+        conn.close()
+        return str(path)
+
+    def test_learning_card_populates_left_and_due_at(self, tmp_path):
+        """queue=1 (learning): left column read, due_at set from cards.due (unix timestamp)."""
+        import datetime
+
+        due_ts = int(datetime.datetime(2024, 1, 1, 10, 0, 0, tzinfo=datetime.UTC).timestamp())
+        db_path = self._make_db(
+            tmp_path,
+            [(1, 1001, 12345, 0, 1, 1, 0, '{"s": 5.0, "d": 5.0}', due_ts, 0, 2002)],
+        )
+        conn = sqlite3.connect(db_path)
+        cards = fetch_cards_for_notes(conn, [1001])
+        conn.close()
+        assert len(cards) == 1
+        state = cards[0].fsrs_state
+        assert state.left == 2002
+        assert state.due_at is not None
+        # due_at should match the due_ts converted to UTC datetime
+        expected_due_at = datetime.datetime.fromtimestamp(due_ts, tz=datetime.UTC)
+        assert state.due_at == expected_due_at
+
+    def test_relearning_card_populates_left_and_due_at(self, tmp_path):
+        """queue=3 (relearning): left column read, due_at set from cards.due (days since epoch)."""
+        import datetime
+
+        # queue=3: due is days since col_crt (1704067200 = 2024-01-01)
+        # due=5 means 2024-01-06
+        db_path = self._make_db(
+            tmp_path,
+            [(2, 1002, 12345, 0, 3, 5, 1, '{"s": 3.0, "d": 6.0}', 5, 2, 1001)],
+        )
+        conn = sqlite3.connect(db_path)
+        cards = fetch_cards_for_notes(conn, [1002])
+        conn.close()
+        assert len(cards) == 1
+        state = cards[0].fsrs_state
+        assert state.left == 1001
+        assert state.due_at is not None
+        # due_at for queue=3: col_crt + due days → midnight UTC
+        expected_due_at = datetime.datetime.fromtimestamp(1704067200 + 5 * 86400, tz=datetime.UTC).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        assert state.due_at == expected_due_at
+
+    def test_new_card_has_no_left_or_due_at(self, tmp_path):
+        """queue=0 (new): left may be present but due_at is None (not a learning card)."""
+        db_path = self._make_db(
+            tmp_path,
+            [(3, 1003, 12345, 0, 0, 0, 0, "", 0, 0, 0)],
+        )
+        conn = sqlite3.connect(db_path)
+        cards = fetch_cards_for_notes(conn, [1003])
+        conn.close()
+        assert len(cards) == 1
+        state = cards[0].fsrs_state
+        assert state.left is None
+        assert state.due_at is None
+
+    def test_review_card_has_no_due_at(self, tmp_path):
+        """queue=2 (review): left ignored, due_at is None (not sub-day learning)."""
+        db_path = self._make_db(
+            tmp_path,
+            [(4, 1004, 12345, 0, 2, 10, 1, '{"s": 100.0, "d": 3.0}', 50, 50, 0)],
+        )
+        conn = sqlite3.connect(db_path)
+        cards = fetch_cards_for_notes(conn, [1004])
+        conn.close()
+        assert len(cards) == 1
+        state = cards[0].fsrs_state
+        assert state.left is None
+        assert state.due_at is None

@@ -107,6 +107,34 @@ def _next_stability_lapse(d: float, s: float, r: float, w: tuple[float, ...]) ->
     return w[11] * d ** (-w[12]) * ((s + 1) ** w[13] - 1) * math.exp((1 - r) * w[14])
 
 
+def _parse_left(left: int | None) -> tuple[int, int]:
+    """Parse Anki's left field into (steps_remaining, total_steps)."""
+    if left is None or left == 0:
+        return (0, 0)
+    steps_remaining = left // 1000
+    total_steps = left % 1000
+    return (steps_remaining, total_steps)
+
+
+def _pack_left(steps_remaining: int, total_steps: int) -> int:
+    """Pack steps_remaining and total_steps into Anki's left format (steps_remaining * 1000 + total_steps)."""
+    return steps_remaining * 1000 + total_steps
+
+
+def _get_steps_for_state(state: SRSState) -> tuple[list[float], str]:
+    """Get learning/relearning steps for the given state.
+
+    Returns (steps_list, step_field_name).
+    """
+    from app.srs.queue_stats import resolve_learning_steps, resolve_relearning_steps
+
+    if state == SRSState.RELEARNING:
+        steps, _ = resolve_relearning_steps()
+    else:
+        steps, _ = resolve_learning_steps()
+    return steps
+
+
 def schedule(
     item: SRSItem,
     rating: Rating,
@@ -114,17 +142,28 @@ def schedule(
     direction: Direction = Direction.RECOGNITION,
     params: FSRSParams = DEFAULT_FSRS5_PARAMS,
     time_ms: int = 0,
+    now: datetime | None = None,
 ) -> SRSItem:
     """Apply a review rating to the given direction of an SRSItem.
 
     Updates only the specified direction; the other is left untouched.
     Marks `dirty_fsrs=True` on the updated direction so the Anki-sync layer
     can later push the change.
+
+    Implements Anki-parity learning steps:
+    - NEW + AGAIN → LEARNING (step 0)
+    - NEW + anything else → REVIEW (FSRS init)
+    - LEARNING/RELEARNING + AGAIN → reset to step 0
+    - LEARNING/RELEARNING + HARD → same step (or step 0 if already there)
+    - LEARNING/RELEARNING + GOOD → next step (or graduate if last step)
+    - LEARNING/RELEARNING + EASY → graduate immediately
+    - REVIEW + AGAIN → RELEARNING (step 0 of relearn steps)
     """
     if review_date is None:
         review_date = date.today()
 
-    now = datetime.now(tz=UTC)
+    if now is None:
+        now = datetime.now(tz=UTC)
     if review_date == date.today():
         last_review_dt = now
     else:
@@ -135,24 +174,33 @@ def schedule(
     w = params.weights
     prev = item.directions[direction]
 
+    # Handle learning step semantics for LEARNING and RELEARNING states
+    if prev.state in (SRSState.LEARNING, SRSState.RELEARNING):
+        return _schedule_with_steps(item, prev, rating, review_date, direction, params, time_ms, now, last_review_dt)
+
+    # Original logic for NEW and REVIEW states (without learning steps)
     if prev.state == SRSState.NEW:
         new_stability = _init_stability(rating, w)
         new_difficulty = _init_difficulty(rating, w)
         new_reps = 1
         new_lapses = prev.lapses
-        new_state = SRSState.LEARNING if rating == Rating.AGAIN else SRSState.REVIEW
+        if rating == Rating.AGAIN:
+            # NEW + AGAIN → LEARNING (start learning steps)
+            return _schedule_new_again(item, prev, direction, time_ms, now, last_review_dt)
+        else:
+            new_state = SRSState.REVIEW
     else:
+        # REVIEW state
         last = prev.last_review or last_review_dt
         last_date = last.date() if isinstance(last, datetime) else last
         elapsed = max(0, (last_review_dt.date() - last_date).days)
         r = _forgetting_curve(elapsed, prev.stability)
 
         if rating == Rating.AGAIN:
-            new_stability = _next_stability_lapse(prev.difficulty, prev.stability, r, w)
-            new_difficulty = _next_difficulty(prev.difficulty, rating, w)
-            new_reps = prev.reps + 1
-            new_lapses = prev.lapses + 1
-            new_state = SRSState.RELEARNING
+            # REVIEW + AGAIN → RELEARNING
+            return _schedule_review_again(
+                item, prev, rating, review_date, direction, params, time_ms, now, last_review_dt
+            )
         else:
             new_stability = _next_stability_recall(prev.difficulty, prev.stability, r, rating, w)
             new_difficulty = _next_difficulty(prev.difficulty, rating, w)
@@ -173,6 +221,274 @@ def schedule(
         reps=new_reps,
         lapses=new_lapses,
         state=new_state,
+        last_review=last_review_dt,
+        last_review_time_ms=time_ms,
+        dirty_fsrs=True,
+        last_rating=rating.value,
+    )
+    new_directions = dict(item.directions)
+    new_directions[direction] = new_dir
+    return SRSItem(
+        syntactic_unit=item.syntactic_unit,
+        directions=new_directions,
+        guid=item.guid,
+        anki_note_id=item.anki_note_id,
+    )
+
+
+def _schedule_new_again(
+    item: SRSItem,
+    prev: DirectionState,
+    direction: Direction,
+    time_ms: int,
+    now: datetime,
+    last_review_dt: datetime,
+) -> SRSItem:
+    """Handle NEW + AGAIN: start learning steps."""
+    from dataclasses import replace
+
+    steps = _get_steps_for_state(SRSState.LEARNING)
+
+    if not steps:
+        # Empty steps = graduate immediately (same as Anki)
+        return _graduate_to_review(item, prev, Rating.AGAIN, direction, time_ms, now, last_review_dt)
+
+    # Start at step 0
+    total_steps = len(steps)
+    new_left = _pack_left(total_steps, total_steps)  # All steps remaining
+    new_due_at = now + timedelta(minutes=steps[0])
+
+    new_dir = replace(
+        prev,
+        state=SRSState.LEARNING,
+        due_date=new_due_at.date(),
+        due_at=new_due_at,
+        left=new_left,
+        reps=prev.reps + 1,
+        lapses=prev.lapses,
+        last_review=last_review_dt,
+        last_review_time_ms=time_ms,
+        dirty_fsrs=True,
+        last_rating=Rating.AGAIN.value,
+    )
+    new_directions = dict(item.directions)
+    new_directions[direction] = new_dir
+    return SRSItem(
+        syntactic_unit=item.syntactic_unit,
+        directions=new_directions,
+        guid=item.guid,
+        anki_note_id=item.anki_note_id,
+    )
+
+
+def _schedule_review_again(
+    item: SRSItem,
+    prev: DirectionState,
+    rating: Rating,
+    review_date: date,
+    direction: Direction,
+    params: FSRSParams,
+    time_ms: int,
+    now: datetime,
+    last_review_dt: datetime,
+) -> SRSItem:
+    """Handle REVIEW + AGAIN: enter RELEARNING with relearning steps."""
+    from dataclasses import replace
+
+    w = params.weights
+    # Compute real retrievability from elapsed time since last review
+    last = prev.last_review or last_review_dt
+    last_date = last.date() if isinstance(last, datetime) else last
+    elapsed = max(0, (last_review_dt.date() - last_date).days)
+    r = _forgetting_curve(elapsed, prev.stability) if prev.stability > 0 else 1.0
+    new_stability = _next_stability_lapse(prev.difficulty, prev.stability, r, w)
+    new_difficulty = _next_difficulty(prev.difficulty, rating, w)
+
+    steps = _get_steps_for_state(SRSState.RELEARNING)
+
+    if not steps:
+        # Empty steps = graduate immediately (same as Anki)
+        return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt)
+
+    # Start at step 0 of relearning
+    total_steps = len(steps)
+    new_left = _pack_left(total_steps, total_steps)
+    new_due_at = now + timedelta(minutes=steps[0])
+
+    new_dir = replace(
+        prev,
+        stability=new_stability,
+        difficulty=new_difficulty,
+        state=SRSState.RELEARNING,
+        due_date=new_due_at.date(),
+        due_at=new_due_at,
+        left=new_left,
+        reps=prev.reps + 1,
+        lapses=prev.lapses + 1,
+        last_review=last_review_dt,
+        last_review_time_ms=time_ms,
+        dirty_fsrs=True,
+        last_rating=rating.value,
+    )
+    new_directions = dict(item.directions)
+    new_directions[direction] = new_dir
+    return SRSItem(
+        syntactic_unit=item.syntactic_unit,
+        directions=new_directions,
+        guid=item.guid,
+        anki_note_id=item.anki_note_id,
+    )
+
+
+def _schedule_with_steps(
+    item: SRSItem,
+    prev: DirectionState,
+    rating: Rating,
+    review_date: date,
+    direction: Direction,
+    params: FSRSParams,
+    time_ms: int,
+    now: datetime,
+    last_review_dt: datetime,
+) -> SRSItem:
+    """Handle LEARNING/RELEARNING with step semantics."""
+    from dataclasses import replace
+
+    steps = _get_steps_for_state(prev.state)
+    steps_remaining, total_steps = _parse_left(prev.left)
+
+    if not steps:
+        # Empty steps list = graduate immediately
+        return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt)
+
+    total_steps = len(steps)
+
+    if rating == Rating.AGAIN:
+        # Reset to step 0 (all steps remaining)
+        new_steps_remaining = total_steps
+        new_left = _pack_left(new_steps_remaining, total_steps)
+        new_due_at = now + timedelta(minutes=steps[0])
+
+        new_dir = replace(
+            prev,
+            due_date=new_due_at.date(),
+            due_at=new_due_at,
+            left=new_left,
+            reps=prev.reps + 1,
+            lapses=prev.lapses + (1 if prev.state == SRSState.REVIEW else 0),
+            last_review=last_review_dt,
+            last_review_time_ms=time_ms,
+            dirty_fsrs=True,
+            last_rating=rating.value,
+        )
+
+    elif rating == Rating.HARD:
+        # Stay on same step
+        current_step_index = total_steps - steps_remaining
+        step_index = current_step_index  # Stay on same step
+        new_steps_remaining = steps_remaining  # Unchanged
+        new_left = _pack_left(new_steps_remaining, total_steps)
+        new_due_at = now + timedelta(minutes=steps[step_index])
+
+        new_dir = replace(
+            prev,
+            due_date=new_due_at.date(),
+            due_at=new_due_at,
+            left=new_left,
+            reps=prev.reps + 1,
+            lapses=prev.lapses,
+            last_review=last_review_dt,
+            last_review_time_ms=time_ms,
+            dirty_fsrs=True,
+            last_rating=rating.value,
+        )
+
+    elif rating == Rating.GOOD:
+        # Advance to next step, or graduate if this was the last step
+        current_step_index = total_steps - steps_remaining
+
+        if current_step_index >= len(steps) - 1:
+            # On last step, graduate!
+            return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt)
+
+        # Move to next step
+        next_step_index = current_step_index + 1
+        new_steps_remaining = total_steps - next_step_index
+        new_left = _pack_left(new_steps_remaining, total_steps)
+        new_due_at = now + timedelta(minutes=steps[next_step_index])
+
+        new_dir = replace(
+            prev,
+            due_date=new_due_at.date(),
+            due_at=new_due_at,
+            left=new_left,
+            reps=prev.reps + 1,
+            lapses=prev.lapses,
+            last_review=last_review_dt,
+            last_review_time_ms=time_ms,
+            dirty_fsrs=True,
+            last_rating=rating.value,
+        )
+
+    else:  # Rating.EASY
+        # Graduate immediately
+        return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt)
+
+    new_directions = dict(item.directions)
+    new_directions[direction] = new_dir
+    return SRSItem(
+        syntactic_unit=item.syntactic_unit,
+        directions=new_directions,
+        guid=item.guid,
+        anki_note_id=item.anki_note_id,
+    )
+
+
+def _graduate_to_review(
+    item: SRSItem,
+    prev: DirectionState,
+    rating: Rating,
+    direction: Direction,
+    time_ms: int,
+    now: datetime,
+    last_review_dt: datetime,
+) -> SRSItem:
+    """Graduate from LEARNING/RELEARNING to REVIEW with FSRS init."""
+    from dataclasses import replace
+
+    w = DEFAULT_FSRS5_PARAMS.weights
+    params = DEFAULT_FSRS5_PARAMS
+
+    if prev.state == SRSState.NEW:
+        new_stability = _init_stability(rating, w)
+        new_difficulty = _init_difficulty(rating, w)
+    else:
+        # Lapse or learning graduation
+        elapsed = 0  # Graduation = fresh start
+        r = _forgetting_curve(elapsed, prev.stability) if prev.stability > 0 else 1.0
+
+        if prev.state == SRSState.RELEARNING:
+            new_stability = _next_stability_lapse(prev.difficulty, prev.stability, r, w)
+            new_difficulty = _next_difficulty(prev.difficulty, rating, w)
+        else:
+            new_stability = _next_stability_recall(prev.difficulty, prev.stability, r, rating, w)
+            new_difficulty = _next_difficulty(prev.difficulty, rating, w)
+
+    new_stability = max(0.1, new_stability)
+    new_difficulty = max(1.0, min(10.0, new_difficulty))
+    interval = _next_interval(new_stability, params.desired_retention)
+    new_due = date.today() + timedelta(days=interval)
+
+    new_dir = replace(
+        prev,
+        stability=new_stability,
+        difficulty=new_difficulty,
+        due_date=new_due,
+        due_at=None,  # No longer need sub-day precision
+        left=None,  # No longer in learning
+        reps=prev.reps + 1,
+        lapses=prev.lapses + (1 if prev.state == SRSState.RELEARNING else 0),
+        state=SRSState.REVIEW,
         last_review=last_review_dt,
         last_review_time_ms=time_ms,
         dirty_fsrs=True,

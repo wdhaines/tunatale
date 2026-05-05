@@ -309,7 +309,7 @@ class OfflineWriter:
     def set_due_date(self, card_ids: list[int], days: str) -> None:
         days_int = int(days)
         col_row = self._conn.execute("SELECT crt FROM col LIMIT 1").fetchone()
-        col_crt = int(col_row["crt"] or 0)
+        col_crt = int(col_row[0] if isinstance(col_row, (tuple, list)) else col_row["crt"] or 0)
         from datetime import date as _date
 
         days_since_crt = (_date.today() - _date.fromtimestamp(col_crt)).days
@@ -326,11 +326,22 @@ class OfflineWriter:
                 ivl = ?,
                 queue = CASE WHEN queue = -1 THEN queue ELSE 2 END,
                 type  = CASE WHEN queue = -1 THEN type  ELSE 2 END,
+                left  = CASE WHEN queue = -1 THEN left ELSE 0 END,
                 mod = ?,
                 usn = -1
             WHERE id IN ({placeholders})
             """,
             (new_due, new_ivl, ts, *card_ids),
+        )
+        self._bump_col(ts)
+        self._conn.commit()
+
+    def set_learning_state(self, card_id: int, left: int, due_at: int) -> None:
+        """Update a learning/relearning card's left and due (absolute timestamp for queue=1)."""
+        ts = int(_time.time())
+        self._conn.execute(
+            "UPDATE cards SET left = ?, due = ?, mod = ?, usn = -1 WHERE id = ?",
+            (left, due_at, ts, card_id),
         )
         self._bump_col(ts)
         self._conn.commit()
@@ -719,7 +730,20 @@ class AnkiSync:
                     self._writer.suspend([ds.anki_card_id])
                 else:
                     self._writer.unsuspend([ds.anki_card_id])
-                self._writer.set_due_date([ds.anki_card_id], days_str)
+
+                # Handle learning/relearning cards differently: update left and due (absolute timestamp)
+                if (
+                    ds.state in (SRSState.LEARNING, SRSState.RELEARNING)
+                    and ds.left is not None
+                    and ds.due_at is not None
+                ):
+                    # Convert due_at to timestamp for queue=1 (learning) or queue=3 (relearning)
+                    due_timestamp = int(ds.due_at.timestamp())
+                    self._writer.set_learning_state(ds.anki_card_id, ds.left, due_timestamp)
+                else:
+                    # Review/new cards: use set_due_date (days since col_crt)
+                    self._writer.set_due_date([ds.anki_card_id], days_str)
+
                 if ds.reps > 0:
                     ivl = max(1, round(ds.stability))
                     ease = ds.last_rating if ds.last_rating is not None else 3

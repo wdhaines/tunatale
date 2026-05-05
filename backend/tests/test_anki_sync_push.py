@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date, timedelta
+from datetime import UTC, date, timedelta
 
 import httpx
 
@@ -86,6 +86,9 @@ class FakeWriter:
 
     def set_due_date(self, card_ids: list[int], days: str) -> None:
         self.calls.append(("set_due_date", list(card_ids), days))
+
+    def set_learning_state(self, card_id: int, left: int, due_at: int) -> None:
+        self.calls.append(("set_learning_state", card_id, left, due_at))
 
     def write_revlog(
         self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_, preferred_id=None
@@ -806,3 +809,241 @@ class TestRevlogFactor:
         calls = self._push_with_difficulty(15.0)
         revlog_call = next(c for c in calls if c[0] == "write_revlog")
         assert revlog_call[5] == 13000
+
+
+# ── TestPushLearningCardLeftAndDue ────────────────────────────────────────
+
+
+class TestPushLearningCardLeftAndDue:
+    """Step 5: Push round-trip — verify left/due_at written to Anki correctly."""
+
+    def _make_fake_reader(self, guid, rec_cid, queue=1, left=2002):
+        """Create a fake reader that returns a single card record."""
+        from datetime import date, timedelta
+
+        from app.anki.sync import CardRecord, NoteRecord
+
+        class FakeReader:
+            def get_note_records(self):
+                return [
+                    NoteRecord(
+                        anki_note_id=9001,
+                        anki_guid=guid,
+                        l2_text="banka",
+                        translation="bank",
+                        disambig_key="",
+                        mod=0,
+                        cards=[
+                            CardRecord(
+                                anki_card_id=rec_cid,
+                                ord=0,
+                                queue=queue,
+                                reps=1,
+                                lapses=0,
+                                stability=1.0,
+                                difficulty=5.0,
+                                due_date=date.today() + timedelta(days=1),
+                                fsrs_known=True,
+                                left=left,
+                            )
+                        ],
+                    )
+                ]
+
+        return FakeReader()
+
+    def test_push_learning_good_advances_step(self, tmp_path):
+        """Pushing a LEARNING+GOOD grade writes correct left and due (seconds)."""
+
+        # Setup: create Anki DB with a learning card (left=2002, 2 steps remaining)
+        db_path = tmp_path / "collection.anki2"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, crt INTEGER, mod INTEGER, usn INTEGER)")
+        conn.execute("INSERT INTO col VALUES (1, 1704067200, 0, 0)")  # crt = 2024-01-01
+        conn.execute(
+            """CREATE TABLE cards (
+                id INTEGER PRIMARY KEY,
+                nid INTEGER,
+                did INTEGER,
+                ord INTEGER,
+                mod INTEGER,
+                usn INTEGER,
+                type INTEGER,
+                queue INTEGER,
+                due INTEGER,
+                ivl INTEGER,
+                factor INTEGER,
+                reps INTEGER,
+                lapses INTEGER,
+                left INTEGER,
+                odue INTEGER,
+                odid INTEGER,
+                flags INTEGER,
+                data TEXT
+            )"""
+        )
+        # Card: learning state, left=2002 (2 steps remaining of 2 total)
+        conn.execute(
+            "INSERT INTO cards VALUES (90010, 9001, 123, 0, 0, 0, 1, 1, 1704103200, 0, 0, 1, 0, 2002, 0, 0, 0, '{}')"
+        )
+        # Create revlog table (required by sync_push)
+        conn.execute(
+            """CREATE TABLE revlog (
+                id INTEGER PRIMARY KEY,
+                cid INTEGER,
+                usn INTEGER,
+                ease INTEGER,
+                ivl INTEGER,
+                lastIvl INTEGER,
+                factor INTEGER,
+                time INTEGER,
+                type INTEGER
+            )"""
+        )
+        conn.commit()
+        conn.close()
+
+        # Setup TunaTale DB with matching item
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db, anki_note_id=9001, rec_cid=90010)
+
+        # Simulate a review: call schedule() with Rating.GOOD on a learning card with left=2002
+        from datetime import datetime as dt
+        from datetime import timedelta
+
+        from app.srs.fsrs import Rating, schedule
+
+        item = db.get_collocation("banka")
+        assert item is not None
+        rec_state = item.directions[Direction.RECOGNITION]
+
+        # Set up the learning state with left=2002
+        now = dt.now(UTC)
+        rec_state = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=now.date(),
+            stability=1.0,
+            difficulty=5.0,
+            reps=1,
+            lapses=0,
+            state=SRSState.LEARNING,
+            anki_card_id=rec_cid,
+            left=2002,
+            due_at=now + timedelta(minutes=1),  # Step 0: 1 minute
+            dirty_fsrs=True,
+            last_rating=3,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, rec_state)
+
+        # Re-fetch so item reflects the LEARNING+left=2002 state we just wrote
+        item = db.get_collocation("banka")
+        assert item is not None
+
+        # schedule() with GOOD on step 0 of 2-step deck → advance to step 1 (left=1002)
+        result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
+        new_state = result.directions[Direction.RECOGNITION]
+        assert new_state.left == 1002, f"Expected left=1002 after GOOD, got {new_state.left}"
+
+        # Write the post-GOOD state back so sync_push has something to push
+        db.update_direction(guid, Direction.RECOGNITION, new_state)
+
+        # Push to Anki
+        conn = sqlite3.connect(str(db_path))
+        writer = OfflineWriter(conn)
+        reader = self._make_fake_reader(guid, rec_cid, queue=1, left=2002)
+        sync = AnkiSync(db=db, _reader=reader, _writer=writer)
+        sync.sync_push()
+        conn.close()
+
+        # Verify Anki cards table updated correctly
+        conn = sqlite3.connect(str(db_path))
+        row = conn.execute("SELECT left, due, queue FROM cards WHERE id = 90010").fetchone()
+        conn.close()
+
+        # After GOOD on step 0 of 2: should advance to step 1, left=1002
+        assert row is not None, "Card row should exist"
+        new_left, new_due, new_queue = row
+        assert new_left == 1002, f"Expected left=1002 after advancing step, got {new_left}"
+        assert new_queue == 1, f"Expected queue=1 (still learning), got {new_queue}"
+        # due should be an absolute timestamp (seconds) for queue=1
+        assert new_due > 1704067200, f"Expected due as absolute timestamp, got {new_due}"
+
+    def test_push_learning_step_advances_left(self, tmp_path):
+        """Pushing learning steps correctly decrements steps_remaining in left."""
+        db_path = tmp_path / "collection.anki2"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, crt INTEGER, mod INTEGER, usn INTEGER)")
+        conn.execute("INSERT INTO col VALUES (1, 1704067200, 0, 0)")
+        conn.execute(
+            """CREATE TABLE cards (
+                id INTEGER PRIMARY KEY,
+                nid INTEGER, did INTEGER, ord INTEGER, mod INTEGER, usn INTEGER,
+                type INTEGER, queue INTEGER, due INTEGER, ivl INTEGER, factor INTEGER,
+                reps INTEGER, lapses INTEGER, left INTEGER, odue INTEGER, odid INTEGER,
+                flags INTEGER, data TEXT
+            )"""
+        )
+        # learning, left=1002 (1 step remaining of 2 total)
+        conn.execute(
+            "INSERT INTO cards VALUES (90010, 9001, 123, 0, 0, 0, 1, 1, 1704103200, 0, 0, 2, 0, 1002, 0, 0, 0, '{}')"
+        )
+        # Create revlog table (required by sync_push)
+        conn.execute(
+            """CREATE TABLE revlog (
+                id INTEGER PRIMARY KEY,
+                cid INTEGER,
+                usn INTEGER,
+                ease INTEGER,
+                ivl INTEGER,
+                lastIvl INTEGER,
+                factor INTEGER,
+                time INTEGER,
+                type INTEGER
+            )"""
+        )
+        conn.commit()
+        conn.close()
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db, anki_note_id=9001, rec_cid=90010)
+        # Mark as learning with left=1002 (1 step remaining)
+        _mark_direction_dirty(
+            db, guid, state=SRSState.LEARNING, reps=2, stability=1.0, anki_card_id=90010, last_rating=3
+        )
+
+        # Update the direction to have left=1002
+        item = db.get_collocation("banka")
+        rec_state = item.directions[Direction.RECOGNITION]
+        rec_state = DirectionState(
+            direction=rec_state.direction,
+            due_date=rec_state.due_date,
+            stability=rec_state.stability,
+            difficulty=rec_state.difficulty,
+            reps=rec_state.reps,
+            lapses=rec_state.lapses,
+            state=SRSState.REVIEW,
+            anki_card_id=rec_state.anki_card_id,
+            anki_due=rec_state.anki_due,
+            left=None,
+            due_at=None,
+            dirty_fsrs=True,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, rec_state)
+
+        # Push
+        conn = sqlite3.connect(str(db_path))
+        writer = OfflineWriter(conn)
+        reader = self._make_fake_reader(guid, rec_cid, queue=1, left=1002)
+        sync = AnkiSync(db=db, _reader=reader, _writer=writer)
+        sync.sync_push()
+        conn.close()
+
+        # Verify: after GOOD on last step (1 remaining), should graduate (left=0, queue=2)
+        conn = sqlite3.connect(str(db_path))
+        row = conn.execute("SELECT left, queue FROM cards WHERE id = 90010").fetchone()
+        conn.close()
+        assert row is not None
+        new_left, new_queue = row
+        # After graduating from learning, left should be 0 and queue should be 2 (review)
+        assert new_left == 0, f"Expected left=0 after graduating, got {new_left}"
+        assert new_queue == 2, f"Expected queue=2 (review) after graduating, got {new_queue}"

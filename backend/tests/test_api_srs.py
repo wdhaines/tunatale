@@ -1309,3 +1309,131 @@ class TestLearningStatePriority:
         zenska_idx = next(i for i, q in enumerate(queue) if q["text"] == "zenska")
         dojencek_idx = next(i for i, q in enumerate(queue) if q["text"] == "dojencek")
         assert zenska_idx < dojencek_idx, "ženska (earlier anki_due) must come before dojenček"
+
+
+class TestLearningStepFeedback:
+    """Tests for feedback returning learning state with due_at, and queue filtering."""
+
+    async def test_good_on_learning_card_returns_learning_state_with_due_at(self, api_app_state):
+        """Rating Good on a 2-step learning card returns new_state=learning with future due_at."""
+        from datetime import UTC, datetime, timedelta
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+
+        # Create a learning card with 2 steps
+        unit = SyntacticUnit(text="test_learning", translation="test", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="test_learning", limit=1)
+        row_id, item, _ = rows[0]
+
+        # Set up learning state with 2 steps remaining (left=2002)
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        now = datetime.now(UTC)
+        dstate = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.LEARNING,
+            due_date=now.date(),
+            stability=1.0,
+            left=2002,
+            due_at=now + timedelta(minutes=1),  # Step 0: 1 minute
+            dirty_fsrs=True,
+            last_rating=3,
+        )
+        db.update_direction_by_id(row_id, Direction.RECOGNITION, dstate)
+
+        # Rate Good (should advance to step 1, left=1002)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(f"/api/srs/items/{row_id}/direction/recognition/feedback", json={"rating": "good"})
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # Should return learning state with due_at
+        assert data["new_state"] == "learning"
+        assert "due_at" in data, "Response should include due_at for learning cards"
+        assert "left" in data, "Response should include left for learning cards"
+        assert data["left"] == 1002, f"Expected left=1002 after GOOD, got {data.get('left')}"
+
+        # Parse due_at and verify it's in the future
+        from datetime import datetime
+
+        due_at = datetime.fromisoformat(data["due_at"])
+        assert due_at > datetime.now(UTC), "due_at should be in the future"
+
+    async def test_learning_card_excluded_from_queue_when_due_at_future(self, api_app_state):
+        """Learning card with future due_at should not appear in review queue."""
+        from datetime import UTC, datetime, timedelta
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+
+        # Create a learning card with future due_at
+        unit = SyntacticUnit(text="test_future", translation="test", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="test_future", limit=1)
+        row_id, item, _ = rows[0]
+
+        now = datetime.now(UTC)
+        dstate = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.LEARNING,
+            due_date=now.date(),
+            stability=1.0,
+            left=1002,
+            due_at=now + timedelta(minutes=10),  # Future due_at
+            dirty_fsrs=True,
+            last_rating=3,
+        )
+        db.update_direction_by_id(row_id, Direction.RECOGNITION, dstate)
+
+        # Check that the card is NOT in the queue
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+
+        # This card should not be in the queue (due_at is in the future)
+        card_in_queue = any(q["text"] == "test_future" for q in queue)
+        assert not card_in_queue, "Learning card with future due_at should not be in queue"
+
+    async def test_learning_card_appears_in_queue_when_due_at_past(self, api_app_state):
+        """Learning card with past due_at should appear in review queue."""
+        from datetime import UTC, datetime, timedelta
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+
+        # Create a learning card with past due_at
+        unit = SyntacticUnit(text="test_past", translation="test", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="test_past", limit=1)
+        row_id, item, _ = rows[0]
+
+        now = datetime.now(UTC)
+        dstate = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.LEARNING,
+            due_date=now.date(),
+            stability=1.0,
+            left=1002,
+            due_at=now - timedelta(minutes=1),  # Past due_at
+            dirty_fsrs=True,
+            last_rating=3,
+        )
+        db.update_direction_by_id(row_id, Direction.RECOGNITION, dstate)
+
+        # Check that the card IS in the queue
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+
+        # This card should be in the queue (due_at is in the past)
+        card_in_queue = any(q["text"] == "test_past" for q in queue)
+        assert card_in_queue, "Learning card with past due_at should be in queue"

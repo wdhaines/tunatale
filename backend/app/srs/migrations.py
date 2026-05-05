@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 10
+CURRENT_VERSION = 11
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -420,6 +420,15 @@ def migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
     _set_version(conn, 10)
 
 
+def migrate_v10_to_v11(conn: sqlite3.Connection) -> None:
+    """Add left INTEGER and due_at TEXT columns to collocation_directions for learning steps."""
+    if not _column_exists(conn, "collocation_directions", "left"):
+        conn.execute("ALTER TABLE collocation_directions ADD COLUMN left INTEGER")
+    if not _column_exists(conn, "collocation_directions", "due_at"):
+        conn.execute("ALTER TABLE collocation_directions ADD COLUMN due_at TEXT")
+    _set_version(conn, 11)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -431,6 +440,7 @@ _MIGRATIONS = {
     7: migrate_v7_to_v8,
     8: migrate_v8_to_v9,
     9: migrate_v9_to_v10,
+    10: migrate_v10_to_v11,
 }
 
 

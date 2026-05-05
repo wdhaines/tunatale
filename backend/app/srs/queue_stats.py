@@ -496,3 +496,112 @@ def resolve_fsrs_params(db: SRSDatabase | None = None) -> tuple[FSRSParams, str]
                 pass
 
     return (DEFAULT_FSRS5_PARAMS, "default")
+
+
+# Field numbers in DeckConfig.Config protobuf for learning steps
+_LEARN_STEPS_FIELD = 2  # packed float: learn steps in minutes
+_RELEARN_STEPS_FIELD = 3  # packed float: relearn steps in minutes
+
+
+def _read_learning_steps_from_deck_config_table(
+    conn: sqlite3.Connection, deck_name: str
+) -> tuple[list[float], list[float]] | None:
+    """Return (learn_steps, relearn_steps) from Anki's deck_config protobuf, or None if absent."""
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    except sqlite3.Error:
+        return None
+
+    if "deck_config" not in tables or "decks" not in tables:
+        return None
+
+    deck_row = conn.execute("SELECT kind FROM decks WHERE name = ?", (deck_name,)).fetchone()
+    if deck_row is None or not deck_row[0]:
+        return None
+
+    kind_blob = deck_row[0]
+    normal_kind_bytes = _pb_find_len_field(kind_blob if isinstance(kind_blob, bytes) else bytes(kind_blob), 1)
+    if normal_kind_bytes is None:
+        return None
+
+    conf_id = _pb_find_varint_field(normal_kind_bytes, 1)
+    if conf_id is None:
+        return None
+
+    config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
+    if config_row is None or not config_row[0]:
+        return None
+
+    config_blob = config_row[0]
+    config_blob = bytes(config_blob) if isinstance(config_blob, memoryview) else config_blob
+
+    learn_steps = _pb_find_packed_float_field(config_blob, _LEARN_STEPS_FIELD)
+    relearn_steps = _pb_find_packed_float_field(config_blob, _RELEARN_STEPS_FIELD)
+
+    if learn_steps is None and relearn_steps is None:
+        return None
+
+    return (learn_steps or [], relearn_steps or [])
+
+
+def refresh_learning_steps(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
+    """Read learning steps from collection.anki2 and write them to the cache."""
+    steps = _read_learning_steps_from_deck_config_table(conn, deck_name)
+    if steps is not None:
+        learn_steps, relearn_steps = steps
+        db.set_anki_state_cache("learn_steps", json.dumps(learn_steps))
+        db.set_anki_state_cache("relearn_steps", json.dumps(relearn_steps))
+
+
+def resolve_learning_steps(db: SRSDatabase | None = None) -> tuple[list[float], str]:
+    """Return (steps, source) where source is 'cache' or 'default'.
+
+    Steps are in minutes (float). Default is [1.0, 10.0] (Anki's default).
+    """
+    if db is None:
+        try:
+            from app.srs.database import SRSDatabase as _SRSDatabase
+
+            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        except Exception:
+            db = None
+
+    if db is not None:
+        row = db.get_anki_state_cache("learn_steps")
+        if row is not None:
+            value_str, updated_at = row
+            try:
+                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                    return (json.loads(value_str), "cache")
+            except (ValueError, TypeError, OverflowError):
+                pass
+
+    return ([1.0, 10.0], "default")
+
+
+def resolve_relearning_steps(db: SRSDatabase | None = None) -> tuple[list[float], str]:
+    """Return (steps, source) where source is 'cache' or 'default'.
+
+    Steps are in minutes (float). Default is [10.0] (Anki's default).
+    """
+    if db is None:
+        try:
+            from app.srs.database import SRSDatabase as _SRSDatabase
+
+            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        except Exception:
+            db = None
+
+    if db is not None:
+        row = db.get_anki_state_cache("relearn_steps")
+        if row is not None:
+            value_str, updated_at = row
+            try:
+                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                    return (json.loads(value_str), "cache")
+            except (ValueError, TypeError, OverflowError):
+                pass
+
+    return ([10.0], "default")

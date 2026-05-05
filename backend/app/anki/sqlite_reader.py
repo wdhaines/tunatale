@@ -104,13 +104,14 @@ def fetch_cards_for_notes(
     col_crt: int = int(col_row[0]) if col_row else 0
 
     placeholders = ",".join("?" * len(note_ids))
+    # Also select `left` column for learning step tracking
     rows = conn.execute(
-        f"SELECT id, nid, did, ord, queue, reps, lapses, data, due, ivl FROM cards WHERE nid IN ({placeholders})",
+        f"SELECT id, nid, did, ord, queue, reps, lapses, data, due, ivl, IFNULL(left, 0) FROM cards WHERE nid IN ({placeholders})",
         note_ids,
     ).fetchall()
     cards = []
     for r in rows:
-        card_id, note_id, deck_id, ord_, queue, reps, lapses, data_str, due_raw, ivl = (
+        card_id, note_id, deck_id, ord_, queue, reps, lapses, data_str, due_raw, ivl, left_val = (
             r[0],
             r[1],
             r[2],
@@ -121,6 +122,7 @@ def fetch_cards_for_notes(
             r[7] or "",
             r[8] or 0,
             r[9] or 0,
+            r[10] or 0,
         )
         fsrs = parse_fsrs_data(
             card_id=card_id,
@@ -133,6 +135,7 @@ def fetch_cards_for_notes(
             col_crt=col_crt,
             due_raw=due_raw,
             ivl=ivl,
+            left=left_val,
         )
         direction = Direction.RECOGNITION if ord_ == 0 else Direction.PRODUCTION
         cards.append(
@@ -162,13 +165,26 @@ def parse_fsrs_data(
     col_crt: int = 0,
     due_raw: int = 0,
     ivl: int = 0,
+    left: int = 0,
 ) -> DirectionState:
     """Parse FSRS state from cards.data JSON. Falls back to NEW on missing/malformed data."""
+
     direction = Direction.RECOGNITION if ord == 0 else Direction.PRODUCTION
     due_date = compute_due_date(queue, due_raw, col_crt)
 
     # Compute last_review for review/relearning queues
     last_review = _compute_last_review(queue, due_raw, ivl, col_crt)
+
+    # Compute due_at for learning/relearning cards (sub-day learning)
+    due_at = None
+    if queue == 1:
+        # queue=1: due_raw is an absolute unix timestamp (seconds)
+        due_at = datetime.fromtimestamp(due_raw, tz=UTC)
+    elif queue == 3:
+        # queue=3: due_raw is days since col_crt epoch; set to midnight UTC
+        due_at = datetime.fromtimestamp(col_crt, tz=UTC).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(
+            days=due_raw
+        )
 
     if queue == -1:
         state = SRSState.SUSPENDED
@@ -199,6 +215,8 @@ def parse_fsrs_data(
                 anki_card_id=card_id,
                 anki_due=due_raw,
                 last_review=last_review,
+                left=left if left != 0 else None,
+                due_at=due_at,
             )
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         pass
@@ -220,6 +238,8 @@ def parse_fsrs_data(
         anki_card_id=card_id,
         anki_due=due_raw,
         last_review=last_review,
+        left=left if left != 0 else None,
+        due_at=due_at,
     )
 
 

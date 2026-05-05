@@ -1237,6 +1237,54 @@ class TestListRecentlyGradedCleanWithDirection:
         assert len(result_prod) == 0
 
 
+class TestListRecentlyGradedCleanDueAt:
+    """list_recently_graded_clean parses due_at when present (line 1156)."""
+
+    def test_due_at_populated_when_set(self, srs_db):
+        from datetime import UTC, datetime
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        unit = SyntacticUnit(
+            text="learning card",
+            translation="test",
+            word_count=2,
+            difficulty=1,
+            source="corpus",
+        )
+        srs_db.add_collocation(unit, language_code="sl")
+        item = srs_db.get_collocation("learning card")
+        assert item is not None
+        guid = item.guid
+
+        grade_time = datetime(2026, 5, 4, 10, 0, 0, tzinfo=UTC)
+        due_at = datetime(2026, 5, 4, 10, 10, 0, tzinfo=UTC)
+        srs_db.update_direction(
+            guid,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                due_date=grade_time.date(),
+                stability=1.0,
+                difficulty=5.0,
+                reps=1,
+                lapses=0,
+                state=SRSState.LEARNING,
+                last_review=grade_time,
+                last_review_time_ms=3000,
+                dirty_fsrs=False,
+                last_rating=3,
+                left=1002,
+                due_at=due_at,
+            ),
+        )
+
+        result = srs_db.list_recently_graded_clean()
+        assert len(result) == 1
+        assert result[0][2].due_at == due_at
+        assert result[0][2].left == 1002
+
+
 class TestTouchLastSyncedAtNonExistentGuid:
     """Tests for touch_last_synced_at with non-existent GUID (line 1163)."""
 
@@ -1271,7 +1319,7 @@ class TestMigrateV9toV10ColumnExists:
         """When last_review_time_ms already exists, migration skips ALTER (line 418)."""
         import sqlite3
 
-        from app.srs.migrations import CURRENT_VERSION, migrate_v9_to_v10
+        from app.srs.migrations import migrate_v9_to_v10
 
         # Create a DB that already has the column (simulating already-migrated state)
         conn = sqlite3.connect(":memory:")
@@ -1284,5 +1332,5 @@ class TestMigrateV9toV10ColumnExists:
 
         # Verify version is set
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        assert version == CURRENT_VERSION
+        assert version == 10  # specifically tests v9→v10 idempotence
         conn.close()

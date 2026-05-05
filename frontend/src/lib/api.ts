@@ -305,7 +305,7 @@ export class TunaTaleAPI {
 		direction: 'recognition' | 'production',
 		rating: 'again' | 'hard' | 'good' | 'easy',
 		timeMs?: number
-	): Promise<{ new_due_date: string; new_state: string }> {
+	): Promise<{ new_due_date: string; new_state: string; due_at?: string; left?: number }> {
 		return this.request(`/api/srs/items/${itemId}/direction/${direction}/feedback`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },

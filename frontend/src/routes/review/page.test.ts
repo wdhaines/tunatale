@@ -236,4 +236,69 @@ describe('review/+page.svelte', () => {
 		await fireEvent.click(await findByRole('button', { name: 'Good' }));
 		expect(await findByText('vrata')).toBeTruthy();
 	});
+
+	// ── deferred learning ──────────────────────────────────────
+
+	describe('deferred learning', () => {
+		it('defers learning card with future due_at to end of queue', async () => {
+			const future = new Date(Date.now() + 600_000).toISOString(); // +10 min
+			mockSubmitDrill.mockResolvedValue({
+				new_due_date: '2026-04-25', new_state: 'learning', due_at: future, left: 1002,
+			});
+			const item1 = makeReviewQueueItem({ id: 1, text: 'okno', direction: 'recognition' });
+			const item2 = makeReviewQueueItem({ id: 3, text: 'hiša', direction: 'recognition' });
+			mockFetchReviewQueue.mockResolvedValue({ queue: [item1, item2] });
+			const { findByRole, findByText } = render(ReviewPage);
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			await fireEvent.click(await findByRole('button', { name: 'Good' }));
+			// Card 2 shown next; card 1 deferred (not buried — should resurface later)
+			expect(await findByText('hiša')).toBeTruthy();
+		});
+
+		it('graduated card (new_state=review) does NOT resurface', async () => {
+			mockSubmitDrill.mockResolvedValue({ new_due_date: '2026-04-25', new_state: 'review' });
+			const item = makeReviewQueueItem({ id: 1, text: 'okno', direction: 'recognition' });
+			mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
+			const { findByRole, findByText } = render(ReviewPage);
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			await fireEvent.click(await findByRole('button', { name: 'Good' }));
+			expect(await findByText(/Done for today/)).toBeTruthy();
+		});
+
+		it('resurfaces deferred card on next rating after due_at passes', async () => {
+			const t0 = Date.parse('2026-05-04T10:00:00Z');
+			const dueAt = new Date(t0 + 5 * 60_000); // +5 min
+			const t1 = t0 + 10 * 60_000; // +10 min — past dueAt
+
+			const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(t0);
+
+			mockSubmitDrill
+				.mockResolvedValueOnce({
+					new_due_date: '2026-04-25', new_state: 'learning',
+					due_at: dueAt.toISOString(), left: 1002,
+				})
+				.mockResolvedValueOnce({ new_due_date: '2026-04-25', new_state: 'review' });
+
+			const item1 = makeReviewQueueItem({ id: 1, text: 'okno', translation: 'window', direction: 'recognition' });
+			const item2 = makeReviewQueueItem({ id: 3, text: 'hiša', translation: 'house', direction: 'recognition' });
+			mockFetchReviewQueue.mockResolvedValue({ queue: [item1, item2] });
+
+			const { findByRole, findByText } = render(ReviewPage);
+
+			// Rate card 1 → deferred
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			await fireEvent.click(await findByRole('button', { name: 'Good' }));
+			expect(await findByText('hiša')).toBeTruthy();
+
+			// Advance the clock past dueAt, then rate card 2
+			dateNowSpy.mockReturnValue(t1);
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			await fireEvent.click(await findByRole('button', { name: 'Good' }));
+
+			// reapDeferred runs after card 2's rate; card 1 should resurface
+			expect(await findByText('okno')).toBeTruthy();
+
+			dateNowSpy.mockRestore();
+		});
+	});
 });

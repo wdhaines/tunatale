@@ -5,6 +5,7 @@
 	import DrillCard from '$lib/components/DrillCard.svelte';
 
 	type QueueItem = { item: ReviewQueueItem; direction: 'recognition' | 'production' };
+	type DeferredCard = QueueItem & { dueAt: number };
 
 	let queue: QueueItem[] = $state([]);
 	let index = $state(0);
@@ -13,14 +14,31 @@
 	let reviewed = $state(0);
 	let stats = $state<QueueStats | null>(null);
 	let buriedCollocationIds: Set<number> = $state(new Set());
+	let deferred: DeferredCard[] = $state([]);
 
 	let current = $derived(queue[index]);
-	let done = $derived(!loading && !error && index >= queue.length);
+	let done = $derived(!loading && !error && index >= queue.length && deferred.length === 0);
 	let upcomingUnburiedCount = $derived(
 		queue.slice(index + 1).filter(q => !buriedCollocationIds.has(q.item.id)).length
 	);
 	let progressCurrent = $derived(reviewed + 1);
 	let progressTotal = $derived(progressCurrent + upcomingUnburiedCount);
+
+	function nextNonBuriedIndex(start: number): number {
+		let i = start;
+		while (i < queue.length && buriedCollocationIds.has(queue[i].item.id)) {
+			i++;
+		}
+		return i;
+	}
+
+	function reapDeferred() {
+		const now = Date.now();
+		const ready = deferred.filter(d => d.dueAt <= now);
+		if (ready.length === 0) return;
+		deferred = deferred.filter(d => d.dueAt > now);
+		queue = [...queue, ...ready.map(d => ({ item: d.item, direction: d.direction }))];
+	}
 
 	onMount(async () => {
 		try {
@@ -37,25 +55,30 @@
 		}
 	});
 
-	function nextNonBuriedIndex(start: number): number {
-		let i = start;
-		while (i < queue.length && buriedCollocationIds.has(queue[i].item.id)) {
-			i++;
-		}
-		return i;
-	}
-
 	async function rate(rating: 'again' | 'hard' | 'good' | 'easy', timeMs: number) {
 		const { item, direction } = current;
+		let resp;
 		try {
-			await api.submitDrill(item.id, direction, rating, timeMs);
+			resp = await api.submitDrill(item.id, direction, rating, timeMs);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 			return;
 		}
 		reviewed += 1;
+
+		if (resp.new_state === 'learning' && resp.due_at) {
+			const dueAt = Date.parse(resp.due_at);
+			if (dueAt > Date.now()) {
+				deferred = [...deferred, { item, direction, dueAt }];
+				index = nextNonBuriedIndex(index + 1);
+				reapDeferred();
+				return;
+			}
+		}
+
 		buriedCollocationIds = new Set(buriedCollocationIds).add(item.id);
 		index = nextNonBuriedIndex(index + 1);
+		reapDeferred();
 	}
 </script>
 

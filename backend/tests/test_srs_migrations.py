@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 10
+        assert CURRENT_VERSION == 11
 
     def test_migrates_from_v1_to_v2(self):
         from app.srs.migrations import migrate_v1_to_v2
@@ -734,9 +734,11 @@ class TestMigrateV5ToV6:
         conn = _make_v1_conn()
         _insert(conn, "banka")
         migrate(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 10
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 11
         cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
         assert "anki_due" in cols
+        assert "left" in cols
+        assert "due_at" in cols
 
 
 class TestMigrationV6ToV7:
@@ -800,7 +802,7 @@ class TestMigrationV6ToV7:
         conn = _make_v1_conn()
         _insert(conn, "banka")
         migrate(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 10
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 11
 
 
 class TestMigrationV6ToV7Detailed:
@@ -1046,3 +1048,74 @@ class TestMigrationV7ToV8:
         migrate_v6_to_v7(conn)
         migrate_v6_to_v7(conn)  # second call should not raise
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
+
+
+class TestMigrateV10ToV11:
+    """Tests for migration from v10 to v11 (add left and due_at columns)."""
+
+    def _make_v10_conn(self):
+        """Create an in-memory DB with v10 schema."""
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+
+        # Create collocations table (v1)
+        conn.execute("""
+            CREATE TABLE collocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT UNIQUE NOT NULL,
+                translation TEXT NOT NULL DEFAULT '',
+                language_code TEXT NOT NULL DEFAULT 'sl'
+            )
+        """)
+
+        # Create collocation_directions table (v3 schema, before v10)
+        conn.execute("""
+            CREATE TABLE collocation_directions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                collocation_id INTEGER NOT NULL,
+                direction TEXT NOT NULL,
+                due_date TEXT,
+                stability REAL NOT NULL DEFAULT 0,
+                difficulty REAL NOT NULL DEFAULT 0,
+                reps INTEGER NOT NULL DEFAULT 0,
+                lapses INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL DEFAULT 'new',
+                last_review TEXT,
+                anki_card_id INTEGER,
+                anki_due INTEGER,
+                dirty_fsrs BOOLEAN NOT NULL DEFAULT 0,
+                last_synced_at TEXT,
+                last_rating INTEGER,
+                FOREIGN KEY (collocation_id) REFERENCES collocations(id)
+            )
+        """)
+
+        # Add v9 column (last_review_time_ms)
+        conn.execute("ALTER TABLE collocation_directions ADD COLUMN last_review_time_ms INTEGER NOT NULL DEFAULT 0")
+
+        conn.execute("PRAGMA user_version = 10")
+        conn.commit()
+        return conn
+
+    def test_adds_left_and_due_at_columns(self, tmp_path):
+        """migrate_v10_to_v11 adds left INTEGER and due_at TEXT columns."""
+        from app.srs.migrations import migrate_v10_to_v11
+
+        conn = self._make_v10_conn()
+        migrate_v10_to_v11(conn)
+
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()]
+        assert "left" in columns, f"left column not found in {columns}"
+        assert "due_at" in columns, f"due_at column not found in {columns}"
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 11
+
+    def test_idempotent_v10_to_v11(self, tmp_path):
+        """Running migrate_v10_to_v11 twice does not raise."""
+        from app.srs.migrations import migrate_v10_to_v11
+
+        conn = self._make_v10_conn()
+        migrate_v10_to_v11(conn)
+        migrate_v10_to_v11(conn)  # second call should not raise
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 11

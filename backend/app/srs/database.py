@@ -108,6 +108,8 @@ _DIR_COLUMNS = (
     "dirty_fsrs",
     "last_synced_at",
     "last_rating",
+    "left",
+    "due_at",
 )
 
 # States that should never surface in the due queue regardless of due_date.
@@ -334,7 +336,9 @@ class SRSDatabase:
                     anki_due = ?,
                     dirty_fsrs = ?,
                     last_synced_at = ?,
-                    last_rating = ?
+                    last_rating = ?,
+                    left = ?,
+                    due_at = ?
                 WHERE collocation_id = ? AND direction = ?
                 """,
                 (
@@ -351,6 +355,8 @@ class SRSDatabase:
                     1 if state.dirty_fsrs else 0,
                     state.last_synced_at,
                     state.last_rating,
+                    state.left,
+                    state.due_at.isoformat() if state.due_at else None,
                     row["id"],
                     direction.value,
                 ),
@@ -397,6 +403,10 @@ class SRSDatabase:
         directions: dict[Direction, DirectionState] = {}
         for row in rows:
             d = Direction(row["direction"])
+            # Parse due_at if present
+            due_at = None
+            if row["due_at"] is not None:
+                due_at = datetime.fromisoformat(row["due_at"])
             directions[d] = DirectionState(
                 direction=d,
                 due_date=date.fromisoformat(row["due_date"]),
@@ -412,6 +422,8 @@ class SRSDatabase:
                 dirty_fsrs=bool(row["dirty_fsrs"]),
                 last_synced_at=row["last_synced_at"],
                 last_rating=row["last_rating"],
+                left=row["left"],
+                due_at=due_at,
             )
         return directions
 
@@ -867,8 +879,8 @@ class SRSDatabase:
                         """
                         INSERT INTO collocation_directions
                             (collocation_id, direction, stability, fsrs_difficulty, due_date,
-                             reps, lapses, state, last_review, anki_card_id)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             reps, lapses, state, last_review, anki_card_id, left, due_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             coll_id,
@@ -881,6 +893,8 @@ class SRSDatabase:
                             state.state.value,
                             state.last_review.isoformat() if state.last_review else None,
                             state.anki_card_id,
+                            state.left,
+                            state.due_at.isoformat() if state.due_at else None,
                         ),
                     )
             else:
@@ -915,8 +929,8 @@ class SRSDatabase:
                             """
                             INSERT INTO collocation_directions
                                 (collocation_id, direction, stability, fsrs_difficulty, due_date,
-                                 reps, lapses, state, last_review, anki_card_id)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 reps, lapses, state, last_review, anki_card_id, left, due_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 coll_id,
@@ -929,6 +943,8 @@ class SRSDatabase:
                                 state.state.value,
                                 state.last_review.isoformat() if state.last_review else None,
                                 state.anki_card_id,
+                                state.left,
+                                state.due_at.isoformat() if state.due_at else None,
                             ),
                         )
                     elif dir_row["reps"] > 0:
@@ -936,12 +952,14 @@ class SRSDatabase:
                         conn.execute(
                             """
                             UPDATE collocation_directions SET
-                                state = ?, anki_card_id = ?
+                                state = ?, anki_card_id = ?, left = ?, due_at = ?
                             WHERE collocation_id = ? AND direction = ?
                             """,
                             (
                                 state.state.value,
                                 state.anki_card_id,
+                                state.left,
+                                state.due_at.isoformat() if state.due_at else None,
                                 coll_id,
                                 direction.value,
                             ),
@@ -951,7 +969,8 @@ class SRSDatabase:
                             """
                             UPDATE collocation_directions SET
                                 stability = ?, fsrs_difficulty = ?, due_date = ?,
-                                reps = ?, lapses = ?, state = ?, last_review = ?, anki_card_id = ?
+                                reps = ?, lapses = ?, state = ?, last_review = ?, anki_card_id = ?,
+                                left = ?, due_at = ?
                             WHERE collocation_id = ? AND direction = ?
                             """,
                             (
@@ -963,6 +982,8 @@ class SRSDatabase:
                                 state.state.value,
                                 state.last_review.isoformat() if state.last_review else None,
                                 state.anki_card_id,
+                                state.left,
+                                state.due_at.isoformat() if state.due_at else None,
                                 coll_id,
                                 direction.value,
                             ),
@@ -1065,6 +1086,9 @@ class SRSDatabase:
             result = []
             for row in rows:
                 d = Direction(row["direction"])
+                due_at = None
+                if row["due_at"] is not None:
+                    due_at = datetime.fromisoformat(row["due_at"])
                 ds = DirectionState(
                     direction=d,
                     due_date=date.fromisoformat(row["due_date"]),
@@ -1079,6 +1103,8 @@ class SRSDatabase:
                     dirty_fsrs=bool(row["dirty_fsrs"]),
                     last_synced_at=row["last_synced_at"],
                     last_rating=row["last_rating"],
+                    left=row["left"],
+                    due_at=due_at,
                 )
                 result.append((row["guid"], d, ds))
         return result
@@ -1125,6 +1151,9 @@ class SRSDatabase:
                 # being non-NULL indicates a pending revlog write.
                 last_review_dt = _parse_last_review(row["last_review"])
                 last_synced_at = row["last_synced_at"]
+                due_at = None
+                if row["due_at"] is not None:
+                    due_at = datetime.fromisoformat(row["due_at"])
                 ds = DirectionState(
                     direction=d,
                     due_date=date.fromisoformat(row["due_date"]),
@@ -1139,6 +1168,8 @@ class SRSDatabase:
                     dirty_fsrs=bool(row["dirty_fsrs"]),
                     last_synced_at=last_synced_at,
                     last_rating=row["last_rating"],
+                    left=row["left"],
+                    due_at=due_at,
                 )
                 result.append((row["guid"], d, ds))
         return result

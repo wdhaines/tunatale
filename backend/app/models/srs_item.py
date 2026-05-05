@@ -65,6 +65,8 @@ class DirectionState:
     dirty_fsrs: bool = False
     last_synced_at: str | None = None
     last_rating: int | None = None
+    left: int | None = None
+    due_at: datetime | None = None
 
 
 class SRSItem:
