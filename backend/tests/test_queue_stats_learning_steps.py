@@ -101,13 +101,15 @@ class TestResolveLearningSteps:
 
     def test_resolve_learning_steps_default(self):
         """Without cache or Anki DB, returns default [1.0, 10.0]."""
-        steps, source = resolve_learning_steps(db=None)
+        db = SRSDatabase(":memory:")
+        steps, source = resolve_learning_steps(db=db)
         assert steps == [1.0, 10.0]
         assert source == "default"
 
     def test_resolve_relearning_steps_default(self):
         """Without cache or Anki DB, returns default [10.0]."""
-        steps, source = resolve_relearning_steps(db=None)
+        db = SRSDatabase(":memory:")
+        steps, source = resolve_relearning_steps(db=db)
         assert steps == [10.0]
         assert source == "default"
 

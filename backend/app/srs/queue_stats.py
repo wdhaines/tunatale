@@ -499,8 +499,8 @@ def resolve_fsrs_params(db: SRSDatabase | None = None) -> tuple[FSRSParams, str]
 
 
 # Field numbers in DeckConfig.Config protobuf for learning steps
-_LEARN_STEPS_FIELD = 2  # packed float: learn steps in minutes
-_RELEARN_STEPS_FIELD = 3  # packed float: relearn steps in minutes
+_LEARN_STEPS_FIELD = 1  # packed float: learn steps in minutes
+_RELEARN_STEPS_FIELD = 2  # packed float: relearn steps in minutes
 
 
 def _read_learning_steps_from_deck_config_table(

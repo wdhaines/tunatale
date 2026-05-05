@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime
 
+import pytest
+
 from app.models.srs_item import Direction, DirectionState, Rating, SRSItem, SRSState
 from app.srs.fsrs import schedule
 
@@ -23,6 +25,11 @@ def _make_item(state: SRSState = SRSState.NEW, left: int = None, due_at: datetim
 
 class TestLearningStepSemantics:
     """Tests for scheduler with learning steps."""
+
+    @pytest.fixture(autouse=True)
+    def _default_steps(self, monkeypatch):
+        monkeypatch.setattr("app.srs.queue_stats.resolve_learning_steps", lambda db=None: ([1.0, 10.0], "default"))
+        monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([10.0], "default"))
 
     def test_new_again_goes_to_learning(self):
         """NEW + AGAIN → LEARNING state."""
