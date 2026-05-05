@@ -1345,13 +1345,12 @@ class TestOfflineReaderPopulatesLastReview:
                 continue
             for card in rec.cards:
                 if card.anki_card_id == 10010:
-                    # col_crt=1704067200 -> date.fromtimestamp = 2023-12-31 (local)
-                    # due=15, ivl=5 -> last_review_day = 10
-                    # 2023-12-31 + 10 days = 2024-01-10 (midnight UTC)
+                    # col_crt=1704067200 -> 2024-01-01 UTC
+                    # due=15, ivl=5 -> +10 days -> 2024-01-11 (midnight UTC)
                     from datetime import datetime as _dt
                     from datetime import time as _time
 
-                    assert card.last_review == _dt.combine(date(2024, 1, 10), _time.min, tzinfo=UTC)
+                    assert card.last_review == _dt.combine(date(2024, 1, 11), _time.min, tzinfo=UTC)
                     break
 
 

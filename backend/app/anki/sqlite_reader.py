@@ -231,7 +231,7 @@ def _compute_last_review(queue: int, due_raw: int, ivl: int, col_crt: int) -> da
     DB writes that expect datetime.
     """
     if queue in (2, 3):
-        d = date.fromtimestamp(col_crt) + timedelta(days=due_raw - ivl)
+        d = datetime.fromtimestamp(col_crt, tz=UTC).date() + timedelta(days=due_raw - ivl)
         return datetime.combine(d, time.min, tzinfo=UTC)
     return None
 
