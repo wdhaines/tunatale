@@ -102,6 +102,7 @@
 	{:else if current}
 		<p class="progress">{progressCurrent} / {progressTotal}</p>
 		<p class="badge">{current.direction === 'recognition' ? 'Recognition' : 'Production'}</p>
+		<p class="badge state-{current.item.state}">{current.item.state}</p>
 		<section class="card-section">
 			{#key index}
 				<DrillCard item={current.item} direction={current.direction} onRate={rate} />
@@ -151,4 +152,11 @@
 		font-size: 0.9rem;
 		margin-bottom: 0.5rem;
 	}
+	.badge.state-new { background: #e0f2fe; color: #0369a1; }
+	.badge.state-learning { background: #fef3c7; color: #d97706; }
+	.badge.state-review { background: #d1fae5; color: #059669; }
+	.badge.state-relearning { background: #fce7f3; color: #db2777; }
+	.badge.state-suspended { background: #f3f4f6; color: #6b7280; }
+	.badge.state-buried { background: #f3f4f6; color: #6b7280; }
+	.badge.state-known { background: #ede9fe; color: #7c3aed; }
 </style>

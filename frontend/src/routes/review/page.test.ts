@@ -300,5 +300,14 @@ describe('review/+page.svelte', () => {
 
 			dateNowSpy.mockRestore();
 		});
+
+		it('displays state badge with correct text and class', async () => {
+			const item = makeReviewQueueItem({ id: 1, text: 'okno', state: 'learning', direction: 'recognition' });
+			mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
+			const { findByText } = render(ReviewPage);
+			const badge = await findByText('learning');
+			expect(badge).toBeTruthy();
+			expect(badge.className).toContain('state-learning');
+		});
 	});
 });

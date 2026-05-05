@@ -635,6 +635,8 @@ def _queue_item_to_dict(row_id: int, item: SRSItem, lang: str, direction: Direct
     audio_url = f"/api/srs/media/{aud}" if aud else None
     base = _item_to_dict(row_id, item, lang, image_url, audio_url)
     base["direction"] = direction.value
+    # Override flat state with per-direction state
+    base["state"] = item.directions[direction].state.value
     return base
 
 
