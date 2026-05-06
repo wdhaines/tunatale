@@ -833,66 +833,43 @@ class TestQueueStatHelpers:
             )
             db.update_direction(item.guid, direction, ds)
 
-    def test_count_new_available_counts_both_direction_rows(self):
+    @pytest.mark.parametrize(
+        "collocations,expected",
+        [
+            ([("hvala", SRSState.NEW, SRSState.NEW)], 2),
+            ([("hvala", SRSState.SUSPENDED, SRSState.NEW)], 1),
+            ([("hvala", SRSState.NEW, SRSState.SUSPENDED)], 1),
+            ([("hvala", SRSState.NEW, SRSState.NEW), ("banka", SRSState.NEW, SRSState.REVIEW)], 3),
+        ],
+    )
+    def test_count_new_available(self, collocations, expected):
         db = SRSDatabase(":memory:")
-        self._seed(db, "hvala", SRSState.NEW, SRSState.NEW)
-        assert db.count_new_available() == 2
-
-    def test_count_new_available_counts_across_multiple_collocations(self):
-        db = SRSDatabase(":memory:")
-        self._seed(db, "hvala", SRSState.NEW, SRSState.NEW)
-        self._seed(db, "banka", SRSState.NEW, SRSState.REVIEW)
-        assert db.count_new_available() == 3
-
-    def test_count_new_available_excludes_suspended(self):
-        db = SRSDatabase(":memory:")
-        self._seed(db, "hvala", SRSState.SUSPENDED, SRSState.NEW)
-        assert db.count_new_available() == 1
+        for text, rec_state, prod_state in collocations:
+            self._seed(db, text, rec_state, prod_state)
+        assert db.count_new_available() == expected
 
     def test_count_new_available_returns_zero_when_empty(self):
         db = SRSDatabase(":memory:")
         assert db.count_new_available() == 0
 
-    def test_count_due_today_total_counts_due_review_rows(self):
+    @pytest.mark.parametrize(
+        "collocations,due_offset,expected",
+        [
+            ([("hvala", SRSState.REVIEW, SRSState.REVIEW)], 0, 2),
+            ([("hvala", SRSState.REVIEW, SRSState.REVIEW)], 1, 0),
+            ([("hvala", SRSState.NEW, SRSState.NEW)], 0, 0),
+            ([("hvala", SRSState.SUSPENDED, SRSState.SUSPENDED)], 0, 0),
+            ([("hvala", SRSState.KNOWN, SRSState.KNOWN)], 0, 0),
+            ([("hvala", SRSState.BURIED, SRSState.BURIED)], 0, 0),
+            ([("hvala", SRSState.REVIEW, SRSState.NEW)], 0, 1),
+            ([("hvala", SRSState.REVIEW, SRSState.REVIEW), ("banka", SRSState.REVIEW, SRSState.SUSPENDED)], 0, 3),
+        ],
+    )
+    def test_count_due_today_total(self, collocations, due_offset, expected):
         db = SRSDatabase(":memory:")
-        self._seed(db, "hvala", SRSState.REVIEW, SRSState.REVIEW, due_offset_days=0)
-        assert db.count_due_today_total(date.today()) == 2
-
-    def test_count_due_today_total_excludes_future_due(self):
-        db = SRSDatabase(":memory:")
-        self._seed(db, "hvala", SRSState.REVIEW, SRSState.REVIEW, due_offset_days=1)
-        assert db.count_due_today_total(date.today()) == 0
-
-    def test_count_due_today_total_excludes_new_state(self):
-        db = SRSDatabase(":memory:")
-        self._seed(db, "hvala", SRSState.NEW, SRSState.NEW, due_offset_days=0)
-        assert db.count_due_today_total(date.today()) == 0
-
-    def test_count_due_today_total_excludes_suspended(self):
-        db = SRSDatabase(":memory:")
-        self._seed(db, "hvala", SRSState.SUSPENDED, SRSState.SUSPENDED, due_offset_days=0)
-        assert db.count_due_today_total(date.today()) == 0
-
-    def test_count_due_today_total_excludes_known(self):
-        db = SRSDatabase(":memory:")
-        self._seed(db, "hvala", SRSState.KNOWN, SRSState.KNOWN, due_offset_days=0)
-        assert db.count_due_today_total(date.today()) == 0
-
-    def test_count_due_today_total_excludes_buried(self):
-        db = SRSDatabase(":memory:")
-        self._seed(db, "hvala", SRSState.BURIED, SRSState.BURIED, due_offset_days=0)
-        assert db.count_due_today_total(date.today()) == 0
-
-    def test_count_due_today_total_includes_mixed_directions(self):
-        db = SRSDatabase(":memory:")
-        self._seed(db, "hvala", SRSState.REVIEW, SRSState.NEW, due_offset_days=0)
-        assert db.count_due_today_total(date.today()) == 1
-
-    def test_count_due_today_total_counts_multiple_collocations(self):
-        db = SRSDatabase(":memory:")
-        self._seed(db, "hvala", SRSState.REVIEW, SRSState.REVIEW, due_offset_days=0)
-        self._seed(db, "banka", SRSState.REVIEW, SRSState.SUSPENDED, due_offset_days=0)
-        assert db.count_due_today_total(date.today()) == 3
+        for text, rec_state, prod_state in collocations:
+            self._seed(db, text, rec_state, prod_state, due_offset_days=due_offset)
+        assert db.count_due_today_total(date.today()) == expected
 
 
 class TestGetAudioFilename:
