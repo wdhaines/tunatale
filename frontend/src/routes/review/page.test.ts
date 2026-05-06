@@ -265,6 +265,55 @@ describe('review/+page.svelte', () => {
 			expect(await findByText('hiša')).toBeTruthy();
 		});
 
+		it('wakes up deferred card via timer when it is the only card', async () => {
+			vi.useFakeTimers();
+			const dueAt = Date.now() + 60_000; // +60s
+			mockSubmitDrill.mockResolvedValue({
+				new_due_date: '2026-05-06', new_state: 'learning',
+				due_at: new Date(dueAt).toISOString(), left: 1002,
+			});
+			const item = makeReviewQueueItem({ id: 1, text: 'okno', translation: 'window', direction: 'recognition' });
+			mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
+			const { findByRole, queryByText, findByText } = render(ReviewPage);
+
+			// Rate AGAIN → card deferred
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			await fireEvent.click(await findByRole('button', { name: 'Again' }));
+
+			// Card should NOT be on screen yet (still deferred)
+			expect(queryByText('okno')).toBeNull();
+
+			// Advance past dueAt
+			vi.advanceTimersByTime(60_000 + 100);
+			await vi.waitFor(() => expect(findByText('okno')).toBeTruthy());
+
+			vi.useRealTimers();
+		});
+
+		it('refreshes stats on deferred branch (AGAIN on new card)', async () => {
+			const future = new Date(Date.now() + 60_000).toISOString();
+			mockSubmitDrill.mockResolvedValue({
+				new_due_date: '2026-05-06', new_state: 'learning', due_at: future, left: 1002,
+			});
+			mockFetchQueueStats
+				.mockResolvedValueOnce({ new: 1, learning: 0, review: 0, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' })
+				.mockResolvedValueOnce({ new: 0, learning: 1, review: 0, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' });
+			const item = makeReviewQueueItem({ id: 1, text: 'okno', direction: 'recognition' });
+			mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
+			const { findByRole, findByText } = render(ReviewPage);
+
+			// Wait for initial stats to load
+			await findByText('1'); // new:1
+
+			// Rate AGAIN → deferred
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			await fireEvent.click(await findByRole('button', { name: 'Again' }));
+
+			// Stats should have been refetched with updated counts
+			await waitFor(() => expect(findByText('0')).toBeTruthy()); // new:0
+			await waitFor(() => expect(findByText('1')).toBeTruthy()); // learning:1
+		});
+
 		it('graduated card (new_state=review) does NOT resurface', async () => {
 			mockSubmitDrill.mockResolvedValue({ new_due_date: '2026-04-25', new_state: 'review' });
 			const item = makeReviewQueueItem({ id: 1, text: 'okno', direction: 'recognition' });

@@ -117,6 +117,25 @@ describe('Review links', () => {
 		const link = await findByRole('link', { name: /^Review$/i });
 		expect(link).toBeTruthy();
 	});
+
+	it('refreshes queue stats on window focus', async () => {
+		mockFetchQueueStats
+			.mockResolvedValueOnce({ new: 5, learning: 2, review: 3, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' })
+			.mockResolvedValueOnce({ new: 3, learning: 1, review: 4, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' });
+		const { findByText, unmount } = render(Page);
+
+		// Wait for initial stats (5 + 2 + 3)
+		await findByText('5');
+
+		// Simulate returning from /review
+		window.dispatchEvent(new Event('focus'));
+
+		// Stats should refetch and show updated counts (3 + 1 + 4)
+		await waitFor(() => expect(findByText('3')).toBeTruthy());
+
+		// Unmount to cover cleanup function
+		unmount();
+	});
 });
 
 describe('Recent Curricula section', () => {

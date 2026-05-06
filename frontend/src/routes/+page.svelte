@@ -27,6 +27,21 @@
 		}
 	});
 
+	// Refresh queue stats when returning from /review
+	$effect(() => {
+		const onFocus = async () => {
+			try {
+				queueStats = await api.fetchQueueStats();
+			} catch {
+				// silently ignore
+			}
+		};
+		window.addEventListener('focus', onFocus);
+		return () => {
+			window.removeEventListener('focus', onFocus);
+		};
+	});
+
 	function formatDate(iso: string): string {
 		return new Date(iso).toLocaleDateString();
 	}

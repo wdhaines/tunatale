@@ -35,7 +35,25 @@
 		if (ready.length === 0) return;
 		deferred = deferred.filter(d => d.dueAt > now);
 		queue = [...queue, ...ready.map(d => ({ item: d.item, direction: d.direction }))];
+		refreshStats();
 	}
+
+	async function refreshStats() {
+		try {
+			stats = await api.fetchQueueStats();
+		} catch {
+			// Silently ignore - widget will show stale data
+		}
+	}
+
+	// Wake-up timer: when deferred cards exist, schedule a timeout for the soonest dueAt
+	$effect(() => {
+		if (deferred.length === 0) return;
+		const wakeAt = Math.min(...deferred.map(d => d.dueAt));
+		const delay = Math.max(0, wakeAt - Date.now());
+		const t = setTimeout(() => reapDeferred(), delay);
+		return () => clearTimeout(t);
+	});
 
 	onMount(async () => {
 		try {
@@ -69,6 +87,8 @@
 				deferred = [...deferred, { item, direction, dueAt }];
 				index = nextNonBuriedIndex(index + 1);
 				reapDeferred();
+				// Refresh stats on deferred branch too
+				await refreshStats();
 				return;
 			}
 		}
@@ -77,11 +97,7 @@
 		index = nextNonBuriedIndex(index + 1);
 		reapDeferred();
 		// Refetch queue stats to update the widget in real-time
-		try {
-			stats = await api.fetchQueueStats();
-		} catch {
-			// Silently ignore - widget will show stale data
-		}
+		await refreshStats();
 	}
 </script>
 
