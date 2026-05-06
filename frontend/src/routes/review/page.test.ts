@@ -415,5 +415,35 @@ describe('review/+page.svelte', () => {
 			// Should NOT have refetched the queue
 			expect(mockFetchReviewQueue).toHaveBeenCalledTimes(1);
 		});
+
+		// ── learning-first ordering after topUpQueue ──────────────────────
+
+		it('inserts server learning cards before remaining review cards after topUpQueue', async () => {
+			// Initial queue: two review cards, no learning
+			const reviewA = makeReviewQueueItem({ id: 1, text: 'okno', translation: 'window', direction: 'recognition', state: 'review' });
+			const reviewB = makeReviewQueueItem({ id: 3, text: 'hiša', translation: 'house', direction: 'recognition', state: 'review' });
+			const learningCard = makeReviewQueueItem({ id: 999, text: 'umor', translation: 'mood', direction: 'production', state: 'learning' });
+			mockFetchQueueStats
+				.mockResolvedValueOnce({ new: 0, learning: 0, review: 2, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' })
+				.mockResolvedValueOnce({ new: 0, learning: 1, review: 1, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' });
+			mockFetchReviewQueue
+				.mockResolvedValueOnce({ queue: [reviewA, reviewB] })
+				.mockResolvedValueOnce({ queue: [learningCard, reviewB] });
+
+			const { findByRole, findByText } = render(ReviewPage);
+
+			// Rate reviewA → triggers refreshStats → sees learning:1 > localLearningCount() → topUpQueue
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			await fireEvent.click(await findByRole('button', { name: 'Good' }));
+
+			// Now on reviewB. Rate it to advance to the learning card.
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			await fireEvent.click(await findByRole('button', { name: 'Good' }));
+
+			// Learning card should be next (inserted at index 2, after reviewB)
+			await findByRole('button', { name: 'Show' });
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			expect(await findByText('umor')).toBeTruthy();
+		});
 	});
 });

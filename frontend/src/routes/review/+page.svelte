@@ -29,6 +29,11 @@
 		return i;
 	}
 
+	function localLearningCount(): number {
+		const remaining = queue.slice(index).filter(q => q.item.state === 'learning' || q.item.state === 'relearning');
+		return remaining.length + deferred.length;
+	}
+
 	function reapDeferred() {
 		const now = Date.now();
 		const ready = deferred.filter(d => d.dueAt <= now);
@@ -41,8 +46,8 @@
 	async function refreshStats() {
 		try {
 			stats = await api.fetchQueueStats();
-			// If server has learning cards but our local queue is exhausted, top up
-			if (stats.learning > 0 && index >= queue.length) {
+			// If server has more learning cards than we have locally, top up
+			if (stats.learning > localLearningCount()) {
 				await topUpQueue();
 			}
 		} catch {
@@ -58,7 +63,10 @@
 				.map(item => ({ item, direction: item.direction as 'recognition' | 'production' }))
 				.filter(q => !existingKeys.has(`${q.item.id}:${q.direction}`));
 			if (newItems.length > 0) {
-				queue = [...queue, ...newItems];
+				// Preserve learning-first ordering: splice learning cards right after current index
+				const newLearning = newItems.filter(q => q.item.state === 'learning' || q.item.state === 'relearning');
+				const newOther = newItems.filter(q => !newLearning.includes(q));
+				queue = [...queue.slice(0, index + 1), ...newLearning, ...queue.slice(index + 1), ...newOther];
 			}
 		} catch {
 			// Silently ignore - queue fetch failed, will retry on next refresh
@@ -82,8 +90,8 @@
 			]);
 			stats = queueStats;
 			queue = queueData.queue.map(item => ({ item, direction: item.direction }));
-			// Top up if server has learning cards that weren't in initial queue
-			if (stats.learning > 0 && queue.length === 0) {
+			// Top up if server has more learning cards than we have locally
+			if (stats.learning > localLearningCount()) {
 				await topUpQueue();
 			}
 		} catch (e) {
