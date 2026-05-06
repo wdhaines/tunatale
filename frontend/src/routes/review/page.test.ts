@@ -379,5 +379,41 @@ describe('review/+page.svelte', () => {
 			// Should have refetched stats at least once after rating
 			expect(mockFetchQueueStats.mock.calls.length).toBeGreaterThan(callsBefore);
 		});
+
+		// ── server-side learning card refetch ──────────────────────────────
+		// When a server-side learning card's due_at elapses during the session,
+		// and the local queue is exhausted, we should refetch the queue.
+
+		it('tops up queue on mount when stats.learning > 0 and initial queue empty', async () => {
+			// Initial state: empty queue, but stats show 1 learning card on server
+			mockFetchQueueStats.mockResolvedValue({ new: 0, learning: 1, review: 0, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' });
+			mockFetchReviewQueue
+				.mockResolvedValueOnce({ queue: [] }) // initial fetch: empty
+				.mockResolvedValueOnce({ queue: [makeReviewQueueItem({ id: 999, text: 'umor', translation: 'mood', direction: 'production', state: 'learning' })] }); // refetch
+
+			const { findByText, findByRole } = render(ReviewPage);
+
+			// topUpQueue() should have been called during onMount
+			// The learning card should be in the queue now
+			// Click "Show" to reveal the card text
+			await findByRole('button', { name: 'Show' });
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			expect(await findByText('umor')).toBeTruthy();
+			expect(mockFetchReviewQueue).toHaveBeenCalledTimes(2);
+		});
+
+		it('does not refetch queue when stats.learning = 0 even if queue exhausted', async () => {
+			// Initial state: empty queue, stats show 0 learning
+			mockFetchQueueStats.mockResolvedValue({ new: 0, learning: 0, review: 0, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' });
+			mockFetchReviewQueue.mockResolvedValue({ queue: [] });
+
+			const { findByText } = render(ReviewPage);
+
+			// Wait for initial load
+			expect(await findByText(/Done for today/)).toBeTruthy();
+
+			// Should NOT have refetched the queue
+			expect(mockFetchReviewQueue).toHaveBeenCalledTimes(1);
+		});
 	});
 });

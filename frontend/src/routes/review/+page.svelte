@@ -41,8 +41,27 @@
 	async function refreshStats() {
 		try {
 			stats = await api.fetchQueueStats();
+			// If server has learning cards but our local queue is exhausted, top up
+			if (stats.learning > 0 && index >= queue.length) {
+				await topUpQueue();
+			}
 		} catch {
 			// Silently ignore - widget will show stale data
+		}
+	}
+
+	async function topUpQueue() {
+		try {
+			const data = await api.fetchReviewQueue();
+			const existingKeys = new Set(queue.map(q => `${q.item.id}:${q.direction}`));
+			const newItems = data.queue
+				.map(item => ({ item, direction: item.direction as 'recognition' | 'production' }))
+				.filter(q => !existingKeys.has(`${q.item.id}:${q.direction}`));
+			if (newItems.length > 0) {
+				queue = [...queue, ...newItems];
+			}
+		} catch {
+			// Silently ignore - queue fetch failed, will retry on next refresh
 		}
 	}
 
@@ -63,6 +82,10 @@
 			]);
 			stats = queueStats;
 			queue = queueData.queue.map(item => ({ item, direction: item.direction }));
+			// Top up if server has learning cards that weren't in initial queue
+			if (stats.learning > 0 && queue.length === 0) {
+				await topUpQueue();
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
