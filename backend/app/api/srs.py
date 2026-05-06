@@ -365,7 +365,8 @@ async def get_queue_stats(request: Request):
     _, fsrs_source = resolve_fsrs_params(db)
     return {
         "new": min(cap, db.count_new_available()),
-        "due": db.count_due_today_total(today),
+        "learning": db.count_learning_due(today),
+        "review": db.count_review_due(today),
         "daily_new_cap": cap,
         "cap_source": source,
         "fsrs_source": fsrs_source,

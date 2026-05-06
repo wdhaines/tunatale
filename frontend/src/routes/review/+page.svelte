@@ -1,7 +1,9 @@
-	<script lang="ts">
+<script lang="ts">
 	import { onMount } from 'svelte';
+	import type { QueueStats } from '$lib/api';
 	import { api } from '$lib/api';
-	import type { ReviewQueueItem, QueueStats } from '$lib/api';
+	import QueueStatsWidget from '$lib/components/QueueStatsWidget.svelte';
+	import type { ReviewQueueItem } from '$lib/api';
 	import DrillCard from '$lib/components/DrillCard.svelte';
 
 	type QueueItem = { item: ReviewQueueItem; direction: 'recognition' | 'production' };
@@ -18,11 +20,6 @@
 
 	let current = $derived(queue[index]);
 	let done = $derived(!loading && !error && index >= queue.length && deferred.length === 0);
-	let upcomingUnburiedCount = $derived(
-		queue.slice(index + 1).filter(q => !buriedCollocationIds.has(q.item.id)).length
-	);
-	let progressCurrent = $derived(reviewed + 1);
-	let progressTotal = $derived(progressCurrent + upcomingUnburiedCount);
 
 	function nextNonBuriedIndex(start: number): number {
 		let i = start;
@@ -79,6 +76,12 @@
 		buriedCollocationIds = new Set(buriedCollocationIds).add(item.id);
 		index = nextNonBuriedIndex(index + 1);
 		reapDeferred();
+		// Refetch queue stats to update the widget in real-time
+		try {
+			stats = await api.fetchQueueStats();
+		} catch {
+			// Silently ignore - widget will show stale data
+		}
 	}
 </script>
 
@@ -86,7 +89,15 @@
 	<h1>Review</h1>
 
 	{#if stats}
-		<p class="stats">New {stats.new} · Due {stats.due}{stats.cap_source !== 'cache' ? ` (${stats.cap_source})` : ''}{stats.fsrs_source !== 'cache' ? ' · FSRS: defaults' : ''}</p>
+		<p class="stats">
+			<QueueStatsWidget {stats} />
+			{#if stats.cap_source !== 'cache'}
+				<span class="source"> ({stats.cap_source})</span>
+			{/if}
+			{#if stats.fsrs_source !== 'cache'}
+				<span class="source"> · FSRS: defaults</span>
+			{/if}
+		</p>
 	{/if}
 
 	{#if loading}
@@ -100,7 +111,6 @@
 			<a href="/">← Home</a>
 		</section>
 	{:else if current}
-		<p class="progress">{progressCurrent} / {progressTotal}</p>
 		<p class="badge">{current.direction === 'recognition' ? 'Recognition' : 'Production'}</p>
 		<p class="badge state-{current.item.state}">{current.item.state}</p>
 		<section class="card-section">
@@ -128,10 +138,6 @@
 		padding: 2rem;
 		text-align: center;
 	}
-	.progress {
-		color: var(--color-muted);
-		font-size: 0.9rem;
-	}
 	.badge {
 		display: inline-block;
 		font-size: 0.75rem;
@@ -151,6 +157,10 @@
 		color: var(--color-muted);
 		font-size: 0.9rem;
 		margin-bottom: 0.5rem;
+	}
+	.source {
+		color: var(--color-muted);
+		font-size: 0.8rem;
 	}
 	.badge.state-new { background: #e0f2fe; color: #0369a1; }
 	.badge.state-learning { background: #fef3c7; color: #d97706; }

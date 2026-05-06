@@ -857,6 +857,44 @@ class TestQueueStatHelpers:
         assert db.count_new_available() == expected_new
         assert db.count_due_today_total(date.today()) == expected_due
 
+    @pytest.mark.parametrize(
+        "collocations,due_offset,expected_learning",
+        [
+            ([("hvala", SRSState.LEARNING, SRSState.LEARNING)], 0, 2),
+            ([("hvala", SRSState.LEARNING, SRSState.REVIEW)], 0, 1),
+            ([("hvala", SRSState.RELEARNING, SRSState.RELEARNING)], 0, 2),
+            ([("hvala", SRSState.LEARNING, SRSState.RELEARNING)], 0, 2),
+            ([("hvala", SRSState.NEW, SRSState.LEARNING)], 0, 1),
+            ([("hvala", SRSState.LEARNING, SRSState.LEARNING), ("banka", SRSState.REVIEW, SRSState.NEW)], 0, 2),
+            ([("hvala", SRSState.LEARNING, SRSState.LEARNING)], 1, 0),  # future due date
+            ([("hvala", SRSState.SUSPENDED, SRSState.SUSPENDED)], 0, 0),
+            ([], 0, 0),
+        ],
+    )
+    def test_count_learning_due_includes_relearning(self, collocations, due_offset, expected_learning):
+        db = SRSDatabase(":memory:")
+        for text, rec_state, prod_state in collocations:
+            self._seed(db, text, rec_state, prod_state, due_offset_days=due_offset)
+        assert db.count_learning_due(date.today()) == expected_learning
+
+    @pytest.mark.parametrize(
+        "collocations,due_offset,expected_review",
+        [
+            ([("hvala", SRSState.REVIEW, SRSState.REVIEW)], 0, 2),
+            ([("hvala", SRSState.REVIEW, SRSState.LEARNING)], 0, 1),
+            ([("hvala", SRSState.REVIEW, SRSState.REVIEW), ("banka", SRSState.NEW, SRSState.NEW)], 0, 2),
+            ([("hvala", SRSState.REVIEW, SRSState.REVIEW)], 1, 0),  # future due date
+            ([("hvala", SRSState.LEARNING, SRSState.LEARNING)], 0, 0),
+            ([("hvala", SRSState.RELEARNING, SRSState.RELEARNING)], 0, 0),
+            ([], 0, 0),
+        ],
+    )
+    def test_count_review_due(self, collocations, due_offset, expected_review):
+        db = SRSDatabase(":memory:")
+        for text, rec_state, prod_state in collocations:
+            self._seed(db, text, rec_state, prod_state, due_offset_days=due_offset)
+        assert db.count_review_due(date.today()) == expected_review
+
 
 class TestGetAudioFilename:
     """Tests for get_audio_filename."""

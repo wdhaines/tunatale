@@ -177,7 +177,7 @@
 
 <main>
 	<div class="toolbar">
-		<h1>SRS Admin <span class="muted">· {total} total{#if queueStats} · {queueStats.new} new · {queueStats.due} due today{/if}</span></h1>
+		<h1>SRS Admin <span class="muted">· {total} total{#if queueStats} · {queueStats.new} new · {queueStats.learning} learning · {queueStats.review} review{/if}</span></h1>
 		<div class="controls">
 			<input
 				type="search"

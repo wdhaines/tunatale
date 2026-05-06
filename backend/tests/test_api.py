@@ -875,7 +875,9 @@ class TestQueueStatsEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert "new" in data
-        assert "due" in data
+        assert "learning" in data
+        assert "review" in data
+        assert "due" not in data
         assert "daily_new_cap" in data
         assert "cap_source" in data
 

@@ -1226,6 +1226,28 @@ class SRSDatabase:
                 (today.isoformat(), *_NON_REVIEWABLE_STATES),
             ).fetchone()[0]
 
+    def count_learning_due(self, today: date) -> int:
+        """Count learning+relearning directions due today (Anki red bucket)."""
+        with self._get_conn() as conn:
+            return conn.execute(
+                """
+                SELECT COUNT(*) FROM collocation_directions
+                WHERE due_date <= ? AND state IN ('learning', 'relearning')
+                """,
+                (today.isoformat(),),
+            ).fetchone()[0]
+
+    def count_review_due(self, today: date) -> int:
+        """Count review directions due today (Anki green bucket)."""
+        with self._get_conn() as conn:
+            return conn.execute(
+                """
+                SELECT COUNT(*) FROM collocation_directions
+                WHERE due_date <= ? AND state = 'review'
+                """,
+                (today.isoformat(),),
+            ).fetchone()[0]
+
     def count_due_collocations(
         self,
         as_of: date,

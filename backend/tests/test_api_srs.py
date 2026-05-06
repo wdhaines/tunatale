@@ -25,6 +25,94 @@ class TestQueueStats:
         assert resp.status_code == 200
         assert resp.json()["fsrs_source"] == "cache"
 
+    async def test_queue_stats_splits_learning_and_review(self, api_app_state):
+        """Test that queue-stats returns learning and review fields, not due."""
+        from datetime import date
+
+        db = api_app_state
+        # Seed a collocation with LEARNING and REVIEW states
+        from app.models.syntactic_unit import SyntacticUnit
+
+        unit1 = SyntacticUnit(text="word1", translation="w1", word_count=2, difficulty=1, source="test")
+        unit2 = SyntacticUnit(text="word2", translation="w2", word_count=2, difficulty=1, source="test")
+        db.add_collocation(unit1, language_code="sl")
+        db.add_collocation(unit2, language_code="sl")
+
+        item1 = db.get_collocation("word1")
+        item2 = db.get_collocation("word2")
+        today = date.today()
+
+        # word1: both directions LEARNING (should count as learning)
+        for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
+            ds = DirectionState(
+                direction=direction,
+                due_date=today,
+                stability=1.0,
+                difficulty=5.0,
+                reps=1,
+                lapses=1,
+                state=SRSState.LEARNING,
+            )
+            db.update_direction(item1.guid, direction, ds)
+
+        # word2: both directions REVIEW (should count as review)
+        for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
+            ds = DirectionState(
+                direction=direction,
+                due_date=today,
+                stability=1.0,
+                difficulty=5.0,
+                reps=5,
+                lapses=0,
+                state=SRSState.REVIEW,
+            )
+            db.update_direction(item2.guid, direction, ds)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/queue-stats")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "learning" in data
+        assert "review" in data
+        assert "due" not in data
+        assert data["learning"] == 2  # word1: 2 directions in LEARNING
+        assert data["review"] == 2  # word2: 2 directions in REVIEW
+        assert data["new"] == 0
+
+    async def test_queue_stats_learning_includes_relearning(self, api_app_state):
+        """Test that RELEARNING states are counted in learning bucket."""
+        from datetime import date
+
+        db = api_app_state
+        from app.models.syntactic_unit import SyntacticUnit
+
+        unit = SyntacticUnit(text="relearn_word", translation="rw", word_count=2, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation("relearn_word")
+        today = date.today()
+
+        # Both directions in RELEARNING (should count as learning)
+        for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
+            ds = DirectionState(
+                direction=direction,
+                due_date=today,
+                stability=1.0,
+                difficulty=5.0,
+                reps=5,
+                lapses=2,
+                state=SRSState.RELEARNING,
+            )
+            db.update_direction(item.guid, direction, ds)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/queue-stats")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["learning"] == 2  # RELEARNING counts as learning
+        assert data["review"] == 0
+
 
 class TestReviewQueue:
     async def test_returns_empty_queue_when_nothing_due(self, api_app_state):

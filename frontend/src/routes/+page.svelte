@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import CurriculumForm from '$lib/components/CurriculumForm.svelte';
+	import QueueStatsWidget from '$lib/components/QueueStatsWidget.svelte';
 	import type { CurriculumSummary, QueueStats } from '$lib/api';
 	import { api } from '$lib/api';
 
@@ -9,10 +10,6 @@
 	let listLoading = $state(true);
 	let listError = $state('');
 	let queueStats = $state<QueueStats | null>(null);
-
-	let reviewLabel = $derived(
-		queueStats ? `Review · New ${queueStats.new} · Due ${queueStats.due}` : 'Review'
-	);
 
 	onMount(async () => {
 		try {
@@ -48,7 +45,10 @@
 	<section class="review-section">
 		<h2>Review</h2>
 		<div class="review-links">
-			<a href="/review" class="review-btn">{reviewLabel}</a>
+			<a href="/review" class="review-btn">Review</a>
+		{#if queueStats}
+			<QueueStatsWidget stats={queueStats} />
+		{/if}
 		</div>
 	</section>
 

@@ -180,7 +180,8 @@ export interface SRSStats {
 
 export interface QueueStats {
 	new: number;
-	due: number;
+	learning: number;
+	review: number;
 	daily_new_cap: number;
 	cap_source: string;
 	fsrs_source?: string;

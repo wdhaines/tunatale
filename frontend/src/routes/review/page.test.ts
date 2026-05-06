@@ -6,11 +6,18 @@ import { render, fireEvent, waitFor, screen } from '@testing-library/svelte';
 import ReviewPage from './+page.svelte';
 import type { ReviewQueueItem } from '$lib/api';
 
+// Mock onMount from svelte - must be before component import
+vi.mock('svelte', () => {
+	return {
+		onMount: vi.fn((fn: () => void) => fn())
+	};
+});
+
 vi.mock('$lib/api', () => ({
 	api: {
 		fetchQueueStats: vi.fn(),
 		fetchReviewQueue: vi.fn(),
-		submitDrill: vi.fn(),
+		submitDrill: vi.fn()
 	}
 }));
 
@@ -22,7 +29,7 @@ import { makeReviewQueueItem } from '../../test/factories';
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	mockFetchQueueStats.mockResolvedValue({ new: 0, due: 0, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' });
+	mockFetchQueueStats.mockResolvedValue({ new: 0, learning: 0, review: 0, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' });
 	mockFetchReviewQueue.mockResolvedValue({ queue: [] });
 	mockSubmitDrill.mockResolvedValue({ new_due_date: '2026-04-25', new_state: 'review' });
 });
@@ -143,46 +150,63 @@ describe('review/+page.svelte', () => {
 		expect(await findByText('bank')).toBeTruthy();
 	});
 
-	// ── queue-stats breakdown display ───────────────────────────────────────
+	// ── queue-stats breakdown display (Anki-style widget) ──────────────
 
-	it('shows New · Due breakdown from queue-stats', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 7, due: 15, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'cache' });
+	it('shows Anki-style widget with three counts', async () => {
+		mockFetchQueueStats.mockResolvedValue({ new: 7, learning: 5, review: 10, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'cache' });
 		const { findByText } = render(ReviewPage);
-		expect(await findByText(/New 7/)).toBeTruthy();
-		expect(await findByText(/Due 15/)).toBeTruthy();
+		// Widget shows: 7 + 5 + 10
+		expect(await findByText('7')).toBeTruthy();
+		expect(await findByText('5')).toBeTruthy();
+		expect(await findByText('10')).toBeTruthy();
 	});
 
 	it('shows source label when cap_source is not anki', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' });
+		mockFetchQueueStats.mockResolvedValue({ new: 5, learning: 2, review: 3, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' });
 		const { findByText } = render(ReviewPage);
 		expect(await findByText(/\(default\)/)).toBeTruthy();
 	});
 
 	it('does not show source label when cap_source is cache (freshly synced from anki)', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'cache' });
+		mockFetchQueueStats.mockResolvedValue({ new: 5, learning: 2, review: 3, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'cache' });
 		const { queryByText, findByText } = render(ReviewPage);
-		await findByText(/New 5/);
+		await findByText('5');
 		expect(queryByText(/\(cache\)/)).toBeFalsy();
 	});
 
 	it('shows source label when cap_source is config', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 20, cap_source: 'config', fsrs_source: 'default' });
+		mockFetchQueueStats.mockResolvedValue({ new: 5, learning: 2, review: 3, daily_new_cap: 20, cap_source: 'config', fsrs_source: 'default' });
 		const { findByText } = render(ReviewPage);
 		expect(await findByText(/\(config\)/)).toBeTruthy();
 	});
 
-	// ── FSRS source indicator ──────────────────────────────────────────────
+	// ── FSRS source indicator ───────────────────────────────────────────
 
 	it('shows FSRS: defaults when fsrs_source is not cache', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'default' });
+		mockFetchQueueStats.mockResolvedValue({ new: 5, learning: 2, review: 3, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'default' });
 		const { findByText } = render(ReviewPage);
 		expect(await findByText(/FSRS: defaults/)).toBeTruthy();
 	});
 
 	it('does not show FSRS marker when fsrs_source is cache', async () => {
-		mockFetchQueueStats.mockResolvedValue({ new: 5, due: 3, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'cache' });
+		mockFetchQueueStats.mockResolvedValue({ new: 5, learning: 2, review: 3, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'cache' });
 		const { queryByText, findByText } = render(ReviewPage);
-		await findByText(/New 5/);
+		await findByText('5');
+		expect(queryByText(/FSRS:/)).toBeFalsy();
+	});
+
+	// ── client-side sibling burying ────────────────────────────────────────────────
+
+	it('shows FSRS: defaults when fsrs_source is not cache', async () => {
+		mockFetchQueueStats.mockResolvedValue({ new: 5, learning: 2, review: 3, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'default' });
+		const { findByText } = render(ReviewPage);
+		expect(await findByText(/FSRS: defaults/)).toBeTruthy();
+	});
+
+	it('does not show FSRS marker when fsrs_source is cache', async () => {
+		mockFetchQueueStats.mockResolvedValue({ new: 5, learning: 2, review: 3, daily_new_cap: 30, cap_source: 'cache', fsrs_source: 'cache' });
+		const { queryByText, findByText } = render(ReviewPage);
+		await findByText('5');
 		expect(queryByText(/FSRS:/)).toBeFalsy();
 	});
 
@@ -211,20 +235,6 @@ describe('review/+page.svelte', () => {
 		await fireEvent.click(await findByRole('button', { name: 'Show' }));
 		await fireEvent.click(await findByRole('button', { name: 'Good' }));
 		expect(await findByText(/Done for today/)).toBeTruthy();
-	});
-
-	it('progress counter excludes buried siblings from total', async () => {
-		const recA = makeReviewQueueItem({ id: 100, text: 'okno', translation: 'window', direction: 'recognition' });
-		const prodA = makeReviewQueueItem({ id: 100, text: 'okno', translation: 'window', direction: 'production' });
-		const recB = makeReviewQueueItem({ id: 200, text: 'vrata', translation: 'door', direction: 'recognition' });
-		mockFetchReviewQueue.mockResolvedValue({ queue: [recA, prodA, recB] });
-		const { findByRole, findByText } = render(ReviewPage);
-		// Before rating: 1 / 3 (full queue)
-		expect(await findByText('1 / 3')).toBeTruthy();
-		await fireEvent.click(await findByRole('button', { name: 'Show' }));
-		await fireEvent.click(await findByRole('button', { name: 'Good' }));
-		// After rating recA (id=100), prodA is buried → effective total drops to 2
-		expect(await findByText('2 / 2')).toBeTruthy();
 	});
 
 	it('does not bury non-siblings with different collocation ids', async () => {
@@ -308,6 +318,17 @@ describe('review/+page.svelte', () => {
 			const badge = await findByText('learning');
 			expect(badge).toBeTruthy();
 			expect(badge.className).toContain('state-learning');
+		});
+
+		it('refetches queue stats after rating a card', async () => {
+			const item = makeReviewQueueItem({ id: 1, text: 'okno', direction: 'recognition' });
+			mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
+			const callsBefore = mockFetchQueueStats.mock.calls.length;
+			const { findByRole } = render(ReviewPage);
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			await fireEvent.click(await findByRole('button', { name: 'Good' }));
+			// Should have refetched stats at least once after rating
+			expect(mockFetchQueueStats.mock.calls.length).toBeGreaterThan(callsBefore);
 		});
 	});
 });

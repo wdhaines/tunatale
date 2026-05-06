@@ -52,9 +52,11 @@ test('review page loads (with backend)', async ({ page, request }) => {
 
 	await page.goto('/review');
 	// With backend reachable, should resolve past "Loading" to either done or queue
-	await expect(
-		page.getByText(/Done for today|[0-9]+ \/ [0-9]+/)
-	).toBeVisible({ timeout: 10000 });
+	// Wait for either "Done for today" or a card (Show button) to appear
+	await Promise.race([
+		page.getByText(/Done for today/).waitFor({ state: 'visible', timeout: 10000 }),
+		page.getByRole('button', { name: 'Show' }).waitFor({ state: 'visible', timeout: 10000 }),
+	]);
 });
 
 test('bad curriculum URL shows error boundary', async ({ page }) => {
