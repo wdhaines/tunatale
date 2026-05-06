@@ -361,11 +361,12 @@ async def get_stats(request: Request):
 async def get_queue_stats(request: Request):
     db = request.app.state.srs_db
     today = datetime.date.today()
+    now = datetime.datetime.now(tz=datetime.UTC)
     cap, source = resolve_daily_new_cap(db)
     _, fsrs_source = resolve_fsrs_params(db)
     return {
         "new": min(cap, db.count_new_available()),
-        "learning": db.count_learning_due(today),
+        "learning": db.count_learning_due(now),
         "review": db.count_review_due(today),
         "daily_new_cap": cap,
         "cap_source": source,

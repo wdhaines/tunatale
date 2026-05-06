@@ -1,6 +1,6 @@
 """SRS database tests."""
 
-from datetime import date, timedelta
+from datetime import UTC, date, timedelta
 
 import pytest
 
@@ -873,9 +873,43 @@ class TestQueueStatHelpers:
     )
     def test_count_learning_due_includes_relearning(self, collocations, due_offset, expected_learning):
         db = SRSDatabase(":memory:")
+        from datetime import datetime
+
+        now = datetime.now(tz=UTC)
         for text, rec_state, prod_state in collocations:
             self._seed(db, text, rec_state, prod_state, due_offset_days=due_offset)
-        assert db.count_learning_due(date.today()) == expected_learning
+        # For learning cards with due_date = today, due_at is None (legacy) so they count
+        assert db.count_learning_due(now) == expected_learning
+
+    def test_count_learning_due_excludes_future_due_at(self):
+        """Learning cards with due_at in the future should NOT be counted (sub-day steps).
+
+        Bug: count_learning_due only checked due_date (date), so a learning card
+        with due_at = now + 60s (1-minute step) was counted immediately.
+        Fix: also filter by due_at <= now for learning/relearning cards.
+        """
+        from datetime import datetime
+
+        db = SRSDatabase(":memory:")
+        # Seed a learning card
+        self._seed(db, "hvala", SRSState.LEARNING, SRSState.LEARNING, due_offset_days=0)
+        # Get the collocation and set due_at to future (simulating a 1-minute step just rated)
+        item = db.get_collocation("hvala")
+        now = datetime.now(tz=UTC)
+        future_due_at = now + timedelta(minutes=1)
+        for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
+            ds = item.directions[direction]
+            ds.due_at = future_due_at
+            db.update_direction(item.guid, direction, ds)
+        # Should NOT count cards with due_at in future
+        assert db.count_learning_due(now) == 0
+        # After due_at passes, should count
+        past_due_at = now - timedelta(seconds=1)
+        for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
+            ds = item.directions[direction]
+            ds.due_at = past_due_at
+            db.update_direction(item.guid, direction, ds)
+        assert db.count_learning_due(now) == 2
 
     @pytest.mark.parametrize(
         "collocations,due_offset,expected_review",
