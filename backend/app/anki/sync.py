@@ -652,8 +652,17 @@ class AnkiSync:
                 elif local_dir.dirty_fsrs:
                     # TunaTale's grade is the latest event. Preserve local FSRS,
                     # let push flush. (anki_card_id / anki_due / last_synced_at refresh.)
+                    # Still apply Anki's bury/suspend state if present — these are
+                    # manual user actions that must win regardless of timestamp.
+                    if card_rec.queue == -1:
+                        new_state = SRSState.SUSPENDED
+                    elif card_rec.queue in (-2, -3):
+                        new_state = SRSState.BURIED
+                    else:
+                        new_state = local_dir.state
                     new_dir_state = replace(
                         local_dir,
+                        state=new_state,
                         anki_card_id=card_rec.anki_card_id,
                         anki_due=card_rec.anki_due,
                         last_synced_at=datetime.now(UTC).isoformat(),

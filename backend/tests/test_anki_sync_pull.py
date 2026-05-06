@@ -6,6 +6,8 @@ import json
 import sqlite3
 from dataclasses import replace
 from datetime import UTC, date, timedelta
+from datetime import datetime as _dt
+from datetime import time as _time
 
 import httpx
 import pytest
@@ -768,3 +770,185 @@ class TestAnkiSyncConstructor:
             assert "_writer is required" in str(e)
         else:
             raise AssertionError("Expected ValueError")
+
+
+# ── Regression: bury/suspend not mirrored when dirty_fsrs=True ──────────────
+
+
+class TestDirtyFsrsBuriedSyncRegression:
+    """Regression tests for sync bug (S3.4): Anki bury/suspend state not mirrored
+    when local direction had dirty_fsrs=True (TunaTale's grade was "newer" by timestamp).
+
+    Realistic scenario: User rates direction A in TunaTale (dirty_fsrs=True), then
+    in Anki rates A again AND Anki buries that same direction. On sync, TunaTale's
+    timestamp wins for FSRS data, but Anki's bury state must still be applied.
+
+    Fix: sync_pull now applies Anki's bury/suspend state even when local dirty_fsrs
+    wins on FSRS data.
+    """
+
+    def test_buried_state_mirrored_when_same_direction_dirty_fsrs(self):
+        """Most realistic bug scenario: same direction is dirty in TT AND buried in Anki.
+
+        User rated recognition in TunaTale (dirty_fsrs=True), then in Anki rated it
+        again and Anki buried it (queue=-2). On sync, TT's timestamp wins for FSRS,
+        but Anki's bury state must still be applied.
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        # Only recognition is dirty (rated in TunaTale) with newer timestamp
+        recent_review = _dt.combine(date.today(), _time.min, tzinfo=UTC)
+        ds_rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=5.0,
+            difficulty=4.5,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=True,
+            last_review=recent_review,
+            last_review_time_ms=5000,  # TunaTale's review is newer
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds_rec)
+
+        # Production is clean (already synced, not dirty)
+        ds_prod = DirectionState(
+            direction=Direction.PRODUCTION,
+            due_date=date.today(),
+            stability=5.0,
+            difficulty=4.5,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=False,
+        )
+        db.update_direction(guid, Direction.PRODUCTION, ds_prod)
+
+        # Anki: recognition was rated then buried (queue=-2), production is review-ready
+        cards = [
+            make_card_record(
+                anki_card_id=90010,
+                ord=0,
+                queue=-2,  # buried in Anki after rating
+                reps=5,
+                stability=10.0,
+                difficulty=4.0,
+                last_review_ms=1000,  # older than TunaTale's
+            ),
+            make_card_record(
+                anki_card_id=90011,
+                ord=1,
+                queue=2,  # review-ready
+                reps=5,
+                stability=10.0,
+                difficulty=4.0,
+                last_review_ms=2000,
+            ),
+        ]
+        records = [make_note_record(anki_guid=guid, cards=cards)]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert report.directions_updated == 2
+
+        updated = db.get_collocation_by_guid(guid)
+        # Recognition: was dirty, Anki buried it → BURIED state applied despite dirty_fsrs
+        assert updated.directions[Direction.RECOGNITION].state == SRSState.BURIED
+        # Production: clean direction, synced normally
+        assert updated.directions[Direction.PRODUCTION].state == SRSState.REVIEW
+
+    def test_suspended_state_mirrored_when_same_direction_dirty_fsrs(self):
+        """Same as above but with suspended (queue=-1) instead of buried."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        # Recognition is dirty in TunaTale
+        recent_review = _dt.combine(date.today(), _time.min, tzinfo=UTC)
+        ds_rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=5.0,
+            difficulty=4.5,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=True,
+            last_review=recent_review,
+            last_review_time_ms=5000,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds_rec)
+
+        # Anki: recognition suspended (queue=-1)
+        cards = [
+            make_card_record(
+                anki_card_id=90010,
+                ord=0,
+                queue=-1,  # suspended in Anki
+                reps=5,
+                last_review_ms=1000,
+            ),
+        ]
+        records = [make_note_record(anki_guid=guid, cards=cards)]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        updated = db.get_collocation_by_guid(guid)
+        # Despite dirty_fsrs, Anki's suspend state is applied
+        assert updated.directions[Direction.RECOGNITION].state == SRSState.SUSPENDED
+
+    def test_count_review_due_not_inflated_by_buried_direction(self):
+        """Regression: count_review_due should not count buried directions.
+
+        When a direction is buried in Anki (queue=-2) but TT has it as REVIEW
+        with dirty_fsrs, the fix ensures the buried state is mirrored, so
+        count_review_due won't overcount.
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        today = date.today()
+
+        # Recognition is dirty and has due_date <= today (would be counted as review-due)
+        recent_review = _dt.combine(today, _time.min, tzinfo=UTC)
+        ds_rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=today,
+            stability=5.0,
+            difficulty=4.5,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=True,
+            last_review=recent_review,
+            last_review_time_ms=5000,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds_rec)
+
+        # Production is clean, also due today
+        ds_prod = DirectionState(
+            direction=Direction.PRODUCTION,
+            due_date=today,
+            stability=5.0,
+            difficulty=4.5,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=False,
+        )
+        db.update_direction(guid, Direction.PRODUCTION, ds_prod)
+
+        # Simulate Anki sync: recognition got buried, production stays review
+        cards = [
+            make_card_record(anki_card_id=90010, ord=0, queue=-2, due_date=today, last_review_ms=1000),
+            make_card_record(anki_card_id=90011, ord=1, queue=2, due_date=today, last_review_ms=2000),
+        ]
+        records = [make_note_record(anki_guid=guid, cards=cards)]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        updated = db.get_collocation_by_guid(guid)
+        assert updated.directions[Direction.RECOGNITION].state == SRSState.BURIED
+        assert updated.directions[Direction.PRODUCTION].state == SRSState.REVIEW
+
+        # Only 1 direction should be counted as review-due (not the buried one)
+        review_count = sum(1 for d in updated.directions.values() if d.state == SRSState.REVIEW and d.due_date <= today)
+        assert review_count == 1  # Only production, not buried recognition
