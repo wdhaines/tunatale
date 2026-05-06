@@ -461,6 +461,32 @@ class TestParseFsrsData:
         )
         assert state.last_review == datetime.combine(date(2026, 4, 29), time.min, tzinfo=UTC)
 
+    def test_parse_fsrs_data_last_review_none_when_reps_zero(self):
+        """Bug fix: when reps=0, last_review must be None regardless of queue.
+
+        Previously, a card with queue=2 (review) and reps=0 would get state=NEW
+        but last_review would still be computed from due/ivl, creating an invalid
+        state (NEW with last_review set).
+        """
+        col_crt = 1388836800
+        # Card with queue=2 (review queue) but reps=0 (no reviews done)
+        # This happens when Anki's reps field is out of sync with revlog
+        state = parse_fsrs_data(
+            card_id=6,
+            ord=0,
+            data_str="",  # no JSON → fallback
+            queue=2,
+            reps=0,  # reps=0 but queue=2
+            lapses=0,
+            col_crt=col_crt,
+            due_raw=4501,
+            ivl=3,
+        )
+        # State should be NEW
+        assert state.state == SRSState.NEW
+        # last_review must be None (invariant: NEW implies last_review IS NULL)
+        assert state.last_review is None
+
 
 class TestExtractL2:
     def test_extracts_from_class_slovene(self):
@@ -492,6 +518,35 @@ class TestExtractL2FromFields:
 
     def test_empty_list_returns_empty(self):
         assert extract_l2_from_fields([]) == ""
+
+    def test_phonics_note_returns_slovene_answer_not_english_question(self):
+        """Phonics notes have English questions without class='slovene' and Slovene answers.
+
+        Bug: extract_l2_from_fields returns the English question (Field 0) because
+        extract_l2() falls back to stripped HTML text when no class='slovene' is found.
+        This causes word_count > 8 and the note gets skipped in import_seed.py.
+
+        Fix: prefer fields with class='slovene', or use field position for inverse layouts.
+        """
+        # Simulate a phonics note: Field 0 = English question, Field 1 = Slovene answer
+        fields = [
+            "What phoneme does unstressed <b>e before</b> the stressed syllable represent?",
+            "[sound:sl_beseda.mp3]/ɛ/ = [ɛ] — open-mid front<br><br><i>besêda</i> [bɛˈseːda]",
+        ]
+        result = extract_l2_from_fields(fields)
+        # Should NOT return the English question (10 words)
+        assert "What phoneme" not in result, (
+            f"Bug: extract_l2_from_fields returned English question instead of Slovene answer: {result!r}"
+        )
+        # Should return something with Slovene/IPA content
+        assert len(result.split()) <= 8, f"Returned text has too many words ({len(result.split())}): {result!r}"
+
+    def test_dictionary_stress_diacritic_counts_as_slovene(self):
+        # Slovene dictionaries mark stress with diacritics (besêda, oblákov)
+        # that aren't in the basic čšž set. They should still score positively
+        # so the L2 field wins over an English gloss.
+        fields = ["before the stressed syllable", "besêda"]
+        assert extract_l2_from_fields(fields) == "besêda"
 
 
 class TestListMediaRefs:

@@ -321,25 +321,33 @@ class TestSkipsNonVocabNotes:
         from tests.conftest import build_minimal_anki_db
 
         db_path = build_minimal_anki_db(tmp_path)
+        # Note: Field 0 is an English question, Field 1 is the Slovene answer.
+        # With the fix, extract_l2_from_fields now correctly returns Field 1 (Slovene answer)
+        # instead of Field 0 (English question), so the note gets imported, not skipped.
         self._update_note_flds(
             db_path,
             1001,
             "What are the three possible values of written e in Slovene?\x1fsome answer",
         )
         result = _run(db_path, tmp_path)
-        assert result["new_parents"] == 4
+        # Note is now imported (not skipped) because we extract the correct L2 field
+        assert result["new_parents"] == 5  # 5 notes imported (including the updated one)
 
     def test_long_l2_text_count_is_reported(self, tmp_path):
         from tests.conftest import build_minimal_anki_db
 
         db_path = build_minimal_anki_db(tmp_path)
+        # With the fix, the note is imported (not skipped) because extract_l2_from_fields
+        # now correctly returns the Slovene answer from Field 1
         self._update_note_flds(
             db_path,
             1001,
             "What are the three possible values of written e in Slovene?\x1fsome answer",
         )
         result = _run(db_path, tmp_path)
-        assert result["skipped_non_vocab"] == 1
+        # Note is imported, not skipped
+        assert result["skipped_non_vocab"] == 0
+        assert result["new_parents"] == 5
 
     def test_empty_l2_text_note_is_skipped(self, tmp_path):
         """Note whose every field yields empty L2 extraction is skipped."""

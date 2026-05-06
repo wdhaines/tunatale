@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 11
+CURRENT_VERSION = 12
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -429,6 +429,26 @@ def migrate_v10_to_v11(conn: sqlite3.Connection) -> None:
     _set_version(conn, 11)
 
 
+def migrate_v11_to_v12(conn: sqlite3.Connection) -> None:
+    """Repair invariant: state='new' implies last_review IS NULL.
+
+    Companion fix to ``parse_fsrs_data`` (sqlite_reader.py) which previously
+    synthesized ``last_review`` from due/ivl even when reps=0. Anki cards in
+    queue=2 with reps=0 (e.g. from FSRS imports or raw uploads) leaked through
+    that path and produced rows with state='new' AND last_review set, which
+    then displayed wrong review-count widgets.
+
+    The Python-side fix prevents new occurrences. This migration repairs any
+    existing rows. Idempotent: matches 0 rows on the second run.
+    """
+    conn.execute(
+        "UPDATE collocation_directions "
+        "SET last_review = NULL "
+        "WHERE state = 'new' AND last_review IS NOT NULL AND reps = 0"
+    )
+    _set_version(conn, 12)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -441,6 +461,7 @@ _MIGRATIONS = {
     8: migrate_v8_to_v9,
     9: migrate_v9_to_v10,
     10: migrate_v10_to_v11,
+    11: migrate_v11_to_v12,
 }
 
 

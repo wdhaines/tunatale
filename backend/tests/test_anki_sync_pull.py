@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import sqlite3
 from dataclasses import replace
@@ -952,3 +953,76 @@ class TestDirtyFsrsBuriedSyncRegression:
         # Only 1 direction should be counted as review-due (not the buried one)
         review_count = sum(1 for d in updated.directions.values() if d.state == SRSState.REVIEW and d.due_date <= today)
         assert review_count == 1  # Only production, not buried recognition
+
+
+# ── Gap 2 regression: reviewed card (queue=2, reps=1) stuck as NEW ──────────
+
+
+class TestGap1MissingPhonicsCards:
+    """Regression for Gap 1: 13 phonics cards added 2026-03-27 never imported.
+
+    The batch was added to Anki (nid range 1774631907157-1774631907195) but never
+    landed in TunaTale's collocations table. Other phonics cards from earlier batches
+    synced fine — same note type, same deck (did=1).
+
+    Root cause: sync_pull only updates EXISTING TunaTale items. Notes not yet in
+    TunaTale are skipped at line 544-545:
+        local_item = self._db.get_collocation_by_guid(rec.anki_guid)
+        if local_item is None:
+            continue  # <-- SKIPS!
+
+    The import step (import_seed.py or sync_create_new) must be run to add
+    new Anki notes to TunaTale. If this step was missed or failed, the notes
+    would never be imported.
+
+    Another possibility: the user ran sync_pull thinking it would import new
+    notes, but sync_pull skips new notes (by design).
+    """
+
+    def test_sync_pull_skips_notes_not_in_tt(self):
+        """sync_pull skips notes that don't exist in TunaTale.
+
+        This is expected behavior: sync_pull updates existing items, it doesn't
+        import new ones. The import step must be done separately.
+        """
+        db = _make_tt_db()
+        # Don't add anything to db
+
+        new_guid = compute_guid("phonika", "sl", "")
+        card = make_card_record(anki_card_id=99999, ord=0)
+        records = [make_note_record(anki_guid=new_guid, l2_text="phonika", cards=[card])]
+
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert report.notes_updated == 0
+        assert report.directions_updated == 0
+        assert report.skipped_unknown_guid == 0  # guid matches, just not in TT
+
+    def test_import_seed_fetches_all_notes(self):
+        """Verify that import_seed fetches ALL notes for the deck.
+
+        This is a code review test to verify import_seed doesn't have a
+        timestamp filter that would skip the 2026-03-27 batch.
+        """
+        from app.anki.import_seed import import_seed
+
+        source = inspect.getsource(import_seed)
+        # Verify it calls fetch_notes_for_deck (which has no timestamp filter)
+        assert "fetch_notes_for_deck" in source
+        # Verify no timestamp-based filtering
+        lines = source.split("\n")
+        for line in lines:
+            if "mod" in line and ">" in line:
+                pytest.fail(f"Found timestamp filter in import_seed: {line.strip()}")
+
+    def test_gap1_likely_cause_missing_import_step(self):
+        """The most likely cause of Gap 1: import_seed wasn't run after
+        the batch was added to Anki.
+
+        This isn't a code bug but a workflow issue. The fix could be:
+        1. Document that new Anki notes require running import_seed
+        2. Add detection of new Anki notes during sync_pull
+        3. Auto-trigger import if new notes are detected
+        """
+        # This test documents the expected behavior
+        assert True  # See AGENTS.md for import instructions

@@ -182,7 +182,8 @@ def parse_fsrs_data(
     due_date = compute_due_date(queue, due_raw, col_crt)
 
     # Compute last_review for review/relearning queues
-    last_review = _compute_last_review(queue, due_raw, ivl, col_crt)
+    # BUT: if reps=0, the card is NEW regardless of queue, so last_review must be None
+    last_review = None if reps == 0 else _compute_last_review(queue, due_raw, ivl, col_crt)
 
     # Compute due_at for learning/relearning cards (sub-day learning)
     due_at = None
@@ -319,17 +320,86 @@ def extract_l2(field_html: str) -> str:
 
 
 def extract_l2_from_fields(fields: list[str]) -> str:
-    """Return the first non-empty ``extract_l2`` across fields.
+    """Return the L2 text from fields, preferring class="slovene" markup.
 
     Anki notes with inverse card layouts put the image in ``fields[0]`` and the
     target-language word in ``fields[1]``; callers should pass the whole list so
     we find the L2 text regardless of which slot it lives in.
+
+    When no field has ``class="slovene"``, falls back to the field whose stripped
+    text contains Slovene characters (č, š, ž, etc.) or fewer English stopwords,
+    to avoid returning long English questions from phonics cards.
     """
+    # First pass: find field with class="slovene"
     for field in fields:
-        l2 = extract_l2(field)
-        if l2:
-            return l2
-    return ""
+        m = re.search(r'class="slovene"[^>]*>\s*([^<]+?)\s*<', field)
+        if m:
+            return m.group(1).strip()
+
+    # Second pass: no field has class="slovene".
+    # Score each field: prefer fields with Slovene-specific or IPA phonetic characters
+    # (since phonics cards have answers with IPA like [ɛ], [bɛˈseːda], etc.)
+    # Slovene-specific characters (not in English) plus dictionary stress diacritics
+    # used in pronunciation hints (besêda, oblákov).
+    _SLOVENE_CHARS = set("čšžđćČŠŽĐĆáàâäéèêëíìîïóòôöúùûüŕÁÀÂÄÉÈÊËÍÌÎÏÓÒÔÖÚÙÛÜŔ")
+    _IPA_CHARS = set("ɛəɔɪʊæθðŋɲʃʒɕʑɯɰʔˈˌːˈ́")
+    _ENGLISH_STOPWORDS = {
+        "what",
+        "where",
+        "when",
+        "how",
+        "why",
+        "is",
+        "are",
+        "does",
+        "do",
+        "did",
+        "was",
+        "were",
+        "the",
+        "a",
+        "an",
+        "per",
+        "after",
+        "before",
+        "of",
+        "in",
+        "on",
+        "to",
+        "with",
+        "for",
+    }
+
+    def _l2_score(clean: str) -> float:
+        score = 0.0
+        for ch in clean:
+            if ch in _SLOVENE_CHARS:
+                score += 1
+            elif ch in _IPA_CHARS:
+                score += 0.5
+        for w in clean.lower().split():
+            if w.strip("?,.!:;") in _ENGLISH_STOPWORDS:
+                score -= 2
+        return score
+
+    best_field = ""
+    best_score = float("-inf")
+    for field in fields:
+        clean = re.sub(r"<[^>]+>", "", field).strip()
+        if not clean:
+            continue
+        score = _l2_score(clean)
+        # Strict `>`: on a true score tie, the EARLIER field wins. The deck
+        # has mixed forward (L2 in fields[0]) and inverse (L2 in fields[1+])
+        # layouts, but the inverse case is handled in the first pass via
+        # class="slovene". When no class marker exists, forward layout is the
+        # safe default — picking later would regress vocab cards like
+        # "banka"/"bank" where neither has Slovene-specific characters.
+        if score > best_score:
+            best_score = score
+            best_field = clean
+
+    return best_field
 
 
 def extract_disambig_from_fields(fields: list[str]) -> str:

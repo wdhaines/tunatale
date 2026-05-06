@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 11
+        assert CURRENT_VERSION == 12
 
     def test_migrates_from_v1_to_v2(self):
         from app.srs.migrations import migrate_v1_to_v2
@@ -734,7 +734,7 @@ class TestMigrateV5ToV6:
         conn = _make_v1_conn()
         _insert(conn, "banka")
         migrate(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 11
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
         cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
         assert "anki_due" in cols
         assert "left" in cols
@@ -802,7 +802,7 @@ class TestMigrationV6ToV7:
         conn = _make_v1_conn()
         _insert(conn, "banka")
         migrate(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 11
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
 
 
 class TestMigrationV6ToV7Detailed:
@@ -1119,3 +1119,62 @@ class TestMigrateV10ToV11:
         migrate_v10_to_v11(conn)
         migrate_v10_to_v11(conn)  # second call should not raise
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 11
+
+
+class TestMigrateV11ToV12:
+    """Tests for migration from v11 to v12 (repair state='new' + last_review invariant)."""
+
+    def _make_v11_conn(self):
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            CREATE TABLE collocation_directions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                collocation_id INTEGER NOT NULL,
+                direction TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'new',
+                reps INTEGER NOT NULL DEFAULT 0,
+                last_review TEXT
+            )
+        """)
+        conn.execute("PRAGMA user_version = 11")
+        conn.commit()
+        return conn
+
+    def test_clears_last_review_on_invariant_violations(self):
+        from app.srs.migrations import migrate_v11_to_v12
+
+        conn = self._make_v11_conn()
+        # Bad row: state=new with last_review set and reps=0 — the bug pattern.
+        conn.execute(
+            "INSERT INTO collocation_directions (collocation_id, direction, state, reps, last_review) "
+            "VALUES (1, 'production', 'new', 0, '2026-05-05T12:00:00+00:00')"
+        )
+        # Healthy review row — must be untouched.
+        conn.execute(
+            "INSERT INTO collocation_directions (collocation_id, direction, state, reps, last_review) "
+            "VALUES (2, 'production', 'review', 1, '2026-05-05T12:00:00+00:00')"
+        )
+        # Healthy new row — must be untouched.
+        conn.execute(
+            "INSERT INTO collocation_directions (collocation_id, direction, state, reps, last_review) "
+            "VALUES (3, 'production', 'new', 0, NULL)"
+        )
+
+        migrate_v11_to_v12(conn)
+
+        rows = {r["collocation_id"]: r for r in conn.execute("SELECT * FROM collocation_directions")}
+        assert rows[1]["last_review"] is None  # repaired
+        assert rows[2]["last_review"] == "2026-05-05T12:00:00+00:00"  # untouched
+        assert rows[3]["last_review"] is None  # untouched
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+
+    def test_idempotent_v11_to_v12(self):
+        from app.srs.migrations import migrate_v11_to_v12
+
+        conn = self._make_v11_conn()
+        migrate_v11_to_v12(conn)
+        migrate_v11_to_v12(conn)  # second call must not raise or change state
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
