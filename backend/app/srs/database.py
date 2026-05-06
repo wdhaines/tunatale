@@ -1226,26 +1226,21 @@ class SRSDatabase:
                 (today.isoformat(), *_NON_REVIEWABLE_STATES),
             ).fetchone()[0]
 
-    def count_learning_due(self, now: datetime) -> int:
-        """Count learning+relearning directions due (Anki red bucket).
+    def count_learning_due(self, today: date) -> int:
+        """Count learning+relearning directions in today's queue (Anki red bucket).
 
-        Filters by due_at <= now (sub-day precision) to avoid counting
-        cards whose learning step hasn't elapsed yet. For legacy rows that
-        have no due_at populated, falls back to due_date <= today.
+        Matches Anki deck-browser semantics: includes cards whose learning
+        step hasn't elapsed yet (the in-countdown cards). The /review-queue
+        endpoint is the place that filters by due_at — the badge count is
+        a different question from "what to show next".
         """
-        today = now.date()
         with self._get_conn() as conn:
             return conn.execute(
                 """
                 SELECT COUNT(*) FROM collocation_directions
-                WHERE state IN ('learning', 'relearning')
-                  AND (
-                    (due_at IS NOT NULL AND due_at <= ?)
-                    OR
-                    (due_at IS NULL AND due_date <= ?)
-                  )
+                WHERE state IN ('learning', 'relearning') AND due_date <= ?
                 """,
-                (now.isoformat(), today.isoformat()),
+                (today.isoformat(),),
             ).fetchone()[0]
 
     def count_review_due(self, today: date) -> int:

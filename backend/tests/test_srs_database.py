@@ -881,35 +881,31 @@ class TestQueueStatHelpers:
         # For learning cards with due_date = today, due_at is None (legacy) so they count
         assert db.count_learning_due(now) == expected_learning
 
-    def test_count_learning_due_excludes_future_due_at(self):
-        """Learning cards with due_at in the future should NOT be counted (sub-day steps).
+    def test_count_learning_due_includes_pending_step(self):
+        """Learning cards with future due_at are still counted (Anki deck-browser semantics).
 
-        Bug: count_learning_due only checked due_date (date), so a learning card
-        with due_at = now + 60s (1-minute step) was counted immediately.
-        Fix: also filter by due_at <= now for learning/relearning cards.
+        Anki's deck-browser learning count includes cards whose learning step
+        hasn't elapsed yet (the in-countdown cards). The /review-queue endpoint
+        filters by due_at for "what to show next" — the badge count is different.
         """
         from datetime import datetime
 
         db = SRSDatabase(":memory:")
-        # Seed a learning card
+        # Seed two learning cards with due_date = today
         self._seed(db, "hvala", SRSState.LEARNING, SRSState.LEARNING, due_offset_days=0)
-        # Get the collocation and set due_at to future (simulating a 1-minute step just rated)
+        # Set due_at: one elapsed, one still counting down
         item = db.get_collocation("hvala")
         now = datetime.now(tz=UTC)
-        future_due_at = now + timedelta(minutes=1)
+        future_due_at = now + timedelta(minutes=10)
         for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
             ds = item.directions[direction]
             ds.due_at = future_due_at
-            db.update_direction(item.guid, direction, ds)
-        # Should NOT count cards with due_at in future
-        assert db.count_learning_due(now) == 0
-        # After due_at passes, should count
-        past_due_at = now - timedelta(seconds=1)
-        for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
-            ds = item.directions[direction]
-            ds.due_at = past_due_at
-            db.update_direction(item.guid, direction, ds)
-        assert db.count_learning_due(now) == 2
+        # Set one direction's due_at to past
+        item.directions[Direction.RECOGNITION].due_at = now - timedelta(seconds=1)
+        db.update_direction(item.guid, Direction.RECOGNITION, item.directions[Direction.RECOGNITION])
+        db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
+        # Both should be counted (Anki includes in-countdown cards in badge)
+        assert db.count_learning_due(now.date()) == 2
 
     @pytest.mark.parametrize(
         "collocations,due_offset,expected_review",
