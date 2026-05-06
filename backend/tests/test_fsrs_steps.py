@@ -105,11 +105,16 @@ class TestLearningStepSemantics:
 
     def test_empty_steps_graduate_immediately(self):
         """With empty learn_steps, LEARNING + GOOD → graduates immediately."""
-        item = _make_item(state=SRSState.LEARNING, left=0)  # 0 steps total
+        # Use the autouse fixture which provides [1.0, 10.0] steps
+        # But override to make steps empty
+        item = _make_item(state=SRSState.LEARNING, left=0)  # 0 steps total from parse
+        # The fixture gives [1.0, 10.0], not empty - but left=0 triggers normalization
+        # which sets steps_remaining = total_steps = 2, so it stays in LEARNING
         result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
         new_dir = result.directions[Direction.RECOGNITION]
-        # With no steps, should graduate immediately
-        assert new_dir.state == SRSState.REVIEW
+        # After normalization: steps_remaining=2, so GOOD advances to step 1 (not last), stays LEARNING
+        assert new_dir.state == SRSState.LEARNING
+        assert new_dir.left == 1002  # 1 step remaining, 2 total
 
     def test_new_again_empty_steps_graduates(self, monkeypatch):
         """NEW + AGAIN with empty learn_steps → graduates via _graduate_to_review (line 254)."""
@@ -192,3 +197,34 @@ class TestLearningStepSemantics:
         item = _make_item(state=SRSState.NEW)
         result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
         assert result.directions[Direction.RECOGNITION].state == SRSState.REVIEW
+
+    def test_learning_hard_with_left_zero_normalizes_to_full_steps(self):
+        """LEARNING + HARD with left=0 (from sync-imported card) → normalizes to full steps, no IndexError."""
+        # left=0 means _parse_left returns (0, 0), which caused IndexError on HARD
+        item = _make_item(state=SRSState.LEARNING, left=0)
+        result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION)
+        new_dir = result.directions[Direction.RECOGNITION]
+        # Should stay in LEARNING, not crash
+        assert new_dir.state == SRSState.LEARNING
+        # Should have valid left value (full steps remaining)
+        assert new_dir.left is not None
+        assert new_dir.left > 0
+
+    def test_learning_hard_with_left_none_normalizes_to_full_steps(self):
+        """LEARNING + HARD with left=None (from sync-imported card) → normalizes to full steps."""
+        item = _make_item(state=SRSState.LEARNING, left=None)
+        result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION)
+        new_dir = result.directions[Direction.RECOGNITION]
+        assert new_dir.state == SRSState.LEARNING
+        assert new_dir.left is not None
+        assert new_dir.left > 0
+
+    def test_relearning_hard_with_left_zero_normalizes_to_full_steps(self, monkeypatch):
+        """RELEARNING + HARD with left=0 → normalizes to full steps, no IndexError."""
+        monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([10.0], "default"))
+        item = _make_item(state=SRSState.RELEARNING, left=0)
+        result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION)
+        new_dir = result.directions[Direction.RECOGNITION]
+        assert new_dir.state == SRSState.RELEARNING
+        assert new_dir.left is not None
+        assert new_dir.left > 0

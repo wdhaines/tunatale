@@ -372,6 +372,10 @@ def _schedule_with_steps(
         return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
 
     total_steps = len(steps)
+    # Normalize: if steps_remaining is 0, None-derived, or out of range,
+    # treat as fresh entry with full steps (heals sync-imported cards with bad left values)
+    if total_steps > 0 and (steps_remaining <= 0 or steps_remaining > total_steps):
+        steps_remaining = total_steps
 
     if rating == Rating.AGAIN:
         # Reset to step 0 (all steps remaining)
