@@ -1437,3 +1437,26 @@ class TestLearningStepFeedback:
         # This card should be in the queue (due_at is in the past)
         card_in_queue = any(q["text"] == "test_past" for q in queue)
         assert card_in_queue, "Learning card with past due_at should be in queue"
+
+    async def test_easy_on_new_card_graduates_to_review(self, api_app_state):
+        """Rating Easy on NEW card graduates immediately to REVIEW (left=None, due_at=None)."""
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+
+        # Create a new card
+        unit = SyntacticUnit(text="test_graduate", translation="test", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="test_graduate", limit=1)
+        row_id, item, _ = rows[0]
+
+        # Rate Easy (should graduate to REVIEW immediately)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(f"/api/srs/items/{row_id}/direction/recognition/feedback", json={"rating": "easy"})
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # Should return review state without left or due_at
+        assert data["new_state"] == "review"
+        assert "left" not in data, "Response should not include left for review cards"
+        assert "due_at" not in data, "Response should not include due_at for review cards"

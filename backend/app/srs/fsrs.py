@@ -151,13 +151,15 @@ def schedule(
     can later push the change.
 
     Implements Anki-parity learning steps:
-    - NEW + AGAIN → LEARNING (step 0)
-    - NEW + anything else → REVIEW (FSRS init)
+    - NEW + AGAIN/HARD → LEARNING (step 0)
+    - NEW + GOOD → LEARNING (step 1) or graduate if 1-step deck
+    - NEW + EASY → graduate immediately to REVIEW (FSRS init at EASY weights)
     - LEARNING/RELEARNING + AGAIN → reset to step 0
-    - LEARNING/RELEARNING + HARD → same step (or step 0 if already there)
-    - LEARNING/RELEARNING + GOOD → next step (or graduate if last step)
+    - LEARNING/RELEARNING + HARD → same step
+    - LEARNING/RELEARNING + GOOD → next step, or graduate if last
     - LEARNING/RELEARNING + EASY → graduate immediately
-    - REVIEW + AGAIN → RELEARNING (step 0 of relearn steps)
+    - REVIEW + AGAIN → RELEARNING (step 0)
+    - REVIEW + HARD/GOOD/EASY → REVIEW (FSRS interval)
     """
     if review_date is None:
         review_date = date.today()
@@ -178,17 +180,11 @@ def schedule(
     if prev.state in (SRSState.LEARNING, SRSState.RELEARNING):
         return _schedule_with_steps(item, prev, rating, review_date, direction, params, time_ms, now, last_review_dt)
 
-    # Original logic for NEW and REVIEW states (without learning steps)
+    # Handle NEW state with learning steps (Anki parity)
     if prev.state == SRSState.NEW:
-        new_stability = _init_stability(rating, w)
-        new_difficulty = _init_difficulty(rating, w)
-        new_reps = 1
-        new_lapses = prev.lapses
-        if rating == Rating.AGAIN:
-            # NEW + AGAIN → LEARNING (start learning steps)
-            return _schedule_new_again(item, prev, direction, time_ms, now, last_review_dt)
-        else:
-            new_state = SRSState.REVIEW
+        return _schedule_new(item, prev, rating, direction, time_ms, now, last_review_dt, params)
+
+    # REVIEW state logic
     else:
         # REVIEW state
         last = prev.last_review or last_review_dt
@@ -236,27 +232,41 @@ def schedule(
     )
 
 
-def _schedule_new_again(
+def _schedule_new(
     item: SRSItem,
     prev: DirectionState,
+    rating: Rating,
     direction: Direction,
     time_ms: int,
     now: datetime,
     last_review_dt: datetime,
+    params: FSRSParams = DEFAULT_FSRS5_PARAMS,
 ) -> SRSItem:
-    """Handle NEW + AGAIN: start learning steps."""
+    """NEW + any rating: walk learn_steps like Anki.
+
+    AGAIN/HARD → step 0; GOOD → step 1 (or graduate if last); EASY → graduate immediately.
+    """
     from dataclasses import replace
 
+    if rating == Rating.EASY:
+        return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
+
     steps = _get_steps_for_state(SRSState.LEARNING)
-
     if not steps:
-        # Empty steps = graduate immediately (same as Anki)
-        return _graduate_to_review(item, prev, Rating.AGAIN, direction, time_ms, now, last_review_dt)
+        return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
 
-    # Start at step 0
     total_steps = len(steps)
-    new_left = _pack_left(total_steps, total_steps)  # All steps remaining
-    new_due_at = now + timedelta(minutes=steps[0])
+    if rating == Rating.GOOD:
+        # Advance to step 1; graduate if only one step total
+        if total_steps == 1:
+            return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
+        step_index = 1
+    else:  # AGAIN or HARD: stay at step 0
+        step_index = 0
+
+    new_steps_remaining = total_steps - step_index
+    new_left = _pack_left(new_steps_remaining, total_steps)
+    new_due_at = now + timedelta(minutes=steps[step_index])
 
     new_dir = replace(
         prev,
@@ -269,7 +279,7 @@ def _schedule_new_again(
         last_review=last_review_dt,
         last_review_time_ms=time_ms,
         dirty_fsrs=True,
-        last_rating=Rating.AGAIN.value,
+        last_rating=rating.value,
     )
     new_directions = dict(item.directions)
     new_directions[direction] = new_dir
@@ -308,7 +318,7 @@ def _schedule_review_again(
 
     if not steps:
         # Empty steps = graduate immediately (same as Anki)
-        return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt)
+        return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
 
     # Start at step 0 of relearning
     total_steps = len(steps)
@@ -359,7 +369,7 @@ def _schedule_with_steps(
 
     if not steps:
         # Empty steps list = graduate immediately
-        return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt)
+        return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
 
     total_steps = len(steps)
 
@@ -409,7 +419,7 @@ def _schedule_with_steps(
 
         if current_step_index >= len(steps) - 1:
             # On last step, graduate!
-            return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt)
+            return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
 
         # Move to next step
         next_step_index = current_step_index + 1
@@ -432,7 +442,7 @@ def _schedule_with_steps(
 
     else:  # Rating.EASY
         # Graduate immediately
-        return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt)
+        return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
 
     new_directions = dict(item.directions)
     new_directions[direction] = new_dir
@@ -452,12 +462,12 @@ def _graduate_to_review(
     time_ms: int,
     now: datetime,
     last_review_dt: datetime,
+    params: FSRSParams = DEFAULT_FSRS5_PARAMS,
 ) -> SRSItem:
     """Graduate from LEARNING/RELEARNING to REVIEW with FSRS init."""
     from dataclasses import replace
 
-    w = DEFAULT_FSRS5_PARAMS.weights
-    params = DEFAULT_FSRS5_PARAMS
+    w = params.weights
 
     if prev.state == SRSState.NEW:
         new_stability = _init_stability(rating, w)

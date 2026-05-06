@@ -52,6 +52,7 @@ class _FakeWriter:
         self.write_revlog_calls: list[dict[str, Any]] = []
         self.suspend_calls: list[list[int]] = []
         self.unsuspend_calls: list[list[int]] = []
+        self.set_learning_state_calls: list[tuple[int, int, int, int]] = []
 
     def update_note_fields(self, note_id: int, fields: dict) -> None:
         pass
@@ -74,6 +75,9 @@ class _FakeWriter:
 
     def set_specific_value_of_card(self, card_id: int, keys: list[str], new_values: list[str]) -> None:
         pass
+
+    def set_learning_state(self, card_id: int, left: int, due_timestamp: int, type_: int) -> None:
+        self.set_learning_state_calls.append((card_id, left, due_timestamp, type_))
 
 
 class TestTunaTaleGradeOnlyPushesNormally:

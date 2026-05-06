@@ -30,6 +30,9 @@ test('review flow: seed items, drill through queue, complete', async ({ page, re
 
 	// Queue has 6 items (3 words × 2 directions), but client-side sibling burying skips
 	// the second direction of each word once one direction is rated. So 3 effective reviews.
+	// With NEW+GOOD now going to LEARNING step 1 (due_at = now + 10min), those cards
+	// won't reappear in the queue until due_at passes. To complete the review flow in this
+	// test, we use EASY which graduates immediately to REVIEW.
 	// Progress sequence: 1/6 (start) → 2/5 (after 1st rate, 1 sibling buried)
 	// → 3/4 (after 2nd rate, 2 siblings buried) → done.
 	const expectedReviews = 3;
@@ -40,7 +43,8 @@ test('review flow: seed items, drill through queue, complete', async ({ page, re
 	for (let i = 0; i < expectedReviews; i++) {
 		await expect(page.getByRole('button', { name: 'Show' })).toBeVisible();
 		await page.getByRole('button', { name: 'Show' }).click();
-		await page.getByRole('button', { name: 'Good' }).click();
+		// Use EASY to graduate immediately (NEW+EASY → REVIEW, card won't reappear)
+		await page.getByRole('button', { name: 'Easy' }).click();
 		if (i < expectedReviews - 1) {
 			const nextNum = i + 2;
 			const nextDenom = totalShown - (i + 1);

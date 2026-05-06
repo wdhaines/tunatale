@@ -156,3 +156,39 @@ class TestLearningStepSemantics:
         new_dir = result.directions[Direction.RECOGNITION]
         assert new_dir.state == SRSState.REVIEW
         assert new_dir.stability > 0  # Confirms lines 471-472 were hit
+
+    def test_new_hard_goes_to_learning_step_0(self):
+        """NEW + HARD → LEARNING state at step 0."""
+        item = _make_item(state=SRSState.NEW)
+        result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION)
+        new_dir = result.directions[Direction.RECOGNITION]
+        assert new_dir.state == SRSState.LEARNING
+        assert new_dir.left == 2002  # step 0 of 2 total
+
+    def test_new_good_advances_to_learning_step_1(self):
+        """NEW + GOOD → LEARNING state at step 1."""
+        item = _make_item(state=SRSState.NEW)
+        result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
+        new_dir = result.directions[Direction.RECOGNITION]
+        assert new_dir.state == SRSState.LEARNING
+        assert new_dir.left == 1002  # step 1 of 2 total
+
+    def test_new_easy_graduates_immediately(self):
+        """NEW + EASY → graduates immediately to REVIEW."""
+        item = _make_item(state=SRSState.NEW)
+        result = schedule(item, Rating.EASY, direction=Direction.RECOGNITION)
+        new_dir = result.directions[Direction.RECOGNITION]
+        assert new_dir.state == SRSState.REVIEW
+        assert new_dir.left is None
+        assert new_dir.stability > 0  # FSRS init ran
+
+    def test_new_good_with_single_step_graduates(self, monkeypatch):
+        """NEW + GOOD with single step deck → graduates immediately."""
+        # Override the autouse fixture: 1-step deck means GOOD = graduate
+        monkeypatch.setattr(
+            "app.srs.queue_stats.resolve_learning_steps",
+            lambda db=None: ([1.0], "default"),
+        )
+        item = _make_item(state=SRSState.NEW)
+        result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
+        assert result.directions[Direction.RECOGNITION].state == SRSState.REVIEW

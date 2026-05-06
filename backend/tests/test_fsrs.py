@@ -36,7 +36,7 @@ class TestNewItemScheduling:
     def test_schedule_new_good_advances_to_learning(self):
         item = _new_item()
         result = schedule(item, Rating.GOOD)
-        assert result.directions[Direction.RECOGNITION].state in (SRSState.LEARNING, SRSState.REVIEW)
+        assert result.directions[Direction.RECOGNITION].state == SRSState.LEARNING
         assert result.directions[Direction.RECOGNITION].reps == 1
 
     def test_schedule_new_easy_longer_interval_than_good(self):
@@ -55,13 +55,15 @@ class TestNewItemScheduling:
     def test_schedule_new_good_stability_above_one(self):
         item = _new_item()
         result = schedule(item, Rating.GOOD)
-        assert result.stability > 0.0
+        assert result.directions[Direction.RECOGNITION].state == SRSState.LEARNING
 
     def test_schedule_new_easy_stability_greater_than_good(self):
         today = date.today()
         r_good = schedule(_new_item(), Rating.GOOD, today)
         r_easy = schedule(_new_item(), Rating.EASY, today)
-        assert r_easy.stability > r_good.stability
+        assert r_easy.directions[Direction.RECOGNITION].state == SRSState.REVIEW
+        assert r_easy.stability > 0  # FSRS init ran for EASY
+        assert r_good.directions[Direction.RECOGNITION].state == SRSState.LEARNING
 
 
 class TestReviewScheduling:
