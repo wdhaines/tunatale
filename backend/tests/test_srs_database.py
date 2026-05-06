@@ -834,42 +834,28 @@ class TestQueueStatHelpers:
             db.update_direction(item.guid, direction, ds)
 
     @pytest.mark.parametrize(
-        "collocations,expected",
+        "collocations,due_offset,expected_new,expected_due",
         [
-            ([("hvala", SRSState.NEW, SRSState.NEW)], 2),
-            ([("hvala", SRSState.SUSPENDED, SRSState.NEW)], 1),
-            ([("hvala", SRSState.NEW, SRSState.SUSPENDED)], 1),
-            ([("hvala", SRSState.NEW, SRSState.NEW), ("banka", SRSState.NEW, SRSState.REVIEW)], 3),
+            ([("hvala", SRSState.NEW, SRSState.NEW)], 0, 2, 0),
+            ([("hvala", SRSState.SUSPENDED, SRSState.NEW)], 0, 1, 0),
+            ([("hvala", SRSState.NEW, SRSState.SUSPENDED)], 0, 1, 0),
+            ([("hvala", SRSState.NEW, SRSState.NEW), ("banka", SRSState.NEW, SRSState.REVIEW)], 0, 3, 1),
+            ([], 0, 0, 0),
+            ([("hvala", SRSState.REVIEW, SRSState.REVIEW)], 0, 0, 2),
+            ([("hvala", SRSState.REVIEW, SRSState.REVIEW)], 1, 0, 0),
+            ([("hvala", SRSState.SUSPENDED, SRSState.SUSPENDED)], 0, 0, 0),
+            ([("hvala", SRSState.KNOWN, SRSState.KNOWN)], 0, 0, 0),
+            ([("hvala", SRSState.BURIED, SRSState.BURIED)], 0, 0, 0),
+            ([("hvala", SRSState.REVIEW, SRSState.NEW)], 0, 1, 1),
+            ([("hvala", SRSState.REVIEW, SRSState.REVIEW), ("banka", SRSState.REVIEW, SRSState.SUSPENDED)], 0, 0, 3),
         ],
     )
-    def test_count_new_available(self, collocations, expected):
-        db = SRSDatabase(":memory:")
-        for text, rec_state, prod_state in collocations:
-            self._seed(db, text, rec_state, prod_state)
-        assert db.count_new_available() == expected
-
-    def test_count_new_available_returns_zero_when_empty(self):
-        db = SRSDatabase(":memory:")
-        assert db.count_new_available() == 0
-
-    @pytest.mark.parametrize(
-        "collocations,due_offset,expected",
-        [
-            ([("hvala", SRSState.REVIEW, SRSState.REVIEW)], 0, 2),
-            ([("hvala", SRSState.REVIEW, SRSState.REVIEW)], 1, 0),
-            ([("hvala", SRSState.NEW, SRSState.NEW)], 0, 0),
-            ([("hvala", SRSState.SUSPENDED, SRSState.SUSPENDED)], 0, 0),
-            ([("hvala", SRSState.KNOWN, SRSState.KNOWN)], 0, 0),
-            ([("hvala", SRSState.BURIED, SRSState.BURIED)], 0, 0),
-            ([("hvala", SRSState.REVIEW, SRSState.NEW)], 0, 1),
-            ([("hvala", SRSState.REVIEW, SRSState.REVIEW), ("banka", SRSState.REVIEW, SRSState.SUSPENDED)], 0, 3),
-        ],
-    )
-    def test_count_due_today_total(self, collocations, due_offset, expected):
+    def test_queue_stats(self, collocations, due_offset, expected_new, expected_due):
         db = SRSDatabase(":memory:")
         for text, rec_state, prod_state in collocations:
             self._seed(db, text, rec_state, prod_state, due_offset_days=due_offset)
-        assert db.count_due_today_total(date.today()) == expected
+        assert db.count_new_available() == expected_new
+        assert db.count_due_today_total(date.today()) == expected_due
 
 
 class TestGetAudioFilename:
