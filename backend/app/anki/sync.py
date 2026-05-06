@@ -336,12 +336,30 @@ class OfflineWriter:
         self._bump_col(ts)
         self._conn.commit()
 
-    def set_learning_state(self, card_id: int, left: int, due_at: int) -> None:
-        """Update a learning/relearning card's left and due (absolute timestamp for queue=1)."""
+    def set_learning_state(self, card_id: int, left: int, due_at: int, *, type_: int = 1) -> None:
+        """Update a learning/relearning card's left, due, queue, type.
+
+        ``type_``: 1 for LEARNING (new card walking through learn_steps),
+        3 for RELEARNING (review card lapsed and walking through relearn_steps).
+        ``queue`` is always 1 (intra-day learning queue) — Anki uses queue=3 only
+        when the next step is ≥1 day, which TunaTale doesn't currently emit.
+
+        Suspended cards (queue=-1) keep their suspension; left/due/type/mod still
+        update so the card resumes correctly when later unsuspended.
+        """
         ts = int(_time.time())
         self._conn.execute(
-            "UPDATE cards SET left = ?, due = ?, mod = ?, usn = -1 WHERE id = ?",
-            (left, due_at, ts, card_id),
+            """
+            UPDATE cards
+            SET left = ?,
+                due = ?,
+                queue = CASE WHEN queue = -1 THEN queue ELSE 1 END,
+                type = ?,
+                mod = ?,
+                usn = -1
+            WHERE id = ?
+            """,
+            (left, due_at, type_, ts, card_id),
         )
         self._bump_col(ts)
         self._conn.commit()
@@ -737,9 +755,10 @@ class AnkiSync:
                     and ds.left is not None
                     and ds.due_at is not None
                 ):
-                    # Convert due_at to timestamp for queue=1 (learning) or queue=3 (relearning)
+                    # queue=1 for both; type=1 for first-time LEARNING, type=3 for RELEARNING (lapse)
                     due_timestamp = int(ds.due_at.timestamp())
-                    self._writer.set_learning_state(ds.anki_card_id, ds.left, due_timestamp)
+                    type_ = 3 if ds.state == SRSState.RELEARNING else 1
+                    self._writer.set_learning_state(ds.anki_card_id, ds.left, due_timestamp, type_=type_)
                 else:
                     # Review/new cards: use set_due_date (days since col_crt)
                     self._writer.set_due_date([ds.anki_card_id], days_str)

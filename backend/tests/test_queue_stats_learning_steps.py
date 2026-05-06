@@ -96,6 +96,24 @@ def _make_modern_anki_conn_with_steps(deck_name="0. Slovene", learn_steps=None, 
     return conn
 
 
+class TestProtoFieldNumbers:
+    """Pin field numbers to Anki's deck_config.proto.
+
+    Regression: previously _LEARN_STEPS_FIELD=2 / _RELEARN_STEPS_FIELD=3 read
+    relearn_steps as learn_steps and FSRS-weight bytes as relearn_steps. The
+    cache cached `[10.0]` under "learn_steps" and 17 floats under "relearn_steps",
+    which made every learning rating compute _pack_left(17, 17)=17017 and
+    corrupted 7 Anki cards. See: anki/proto/deck_config.proto
+    `repeated float learn_steps = 1; repeated float relearn_steps = 2;`
+    """
+
+    def test_learn_steps_field_is_1(self):
+        assert _LEARN_STEPS_FIELD == 1
+
+    def test_relearn_steps_field_is_2(self):
+        assert _RELEARN_STEPS_FIELD == 2
+
+
 class TestResolveLearningSteps:
     """Tests for resolve_learning_steps and resolve_relearning_steps."""
 

@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime, time, timedelta
 import pytest
 
 from app.anki.sqlite_reader import (
+    compute_due_date,
     extract_l2,
     extract_l2_from_fields,
     fetch_cards_for_notes,
@@ -17,6 +18,58 @@ from app.anki.sqlite_reader import (
     read_fsrs_state_for_cards,
 )
 from app.models.srs_item import Direction, SRSState
+
+
+class TestComputeDueDate:
+    """Tests for compute_due_date overflow handling."""
+
+    def test_queue_2_normal_days(self):
+        """queue 2: due_raw is days since col_crt."""
+        col_crt = 1388836800  # 2014-01-04
+        # due_raw=10 means 10 days after col_crt
+        result = compute_due_date(queue=2, due_raw=10, col_crt=col_crt)
+        expected = date(2014, 1, 14)
+        assert result == expected
+
+    def test_queue_3_normal_days(self):
+        """queue 3: due_raw is days since col_crt."""
+        col_crt = 1388836800
+        result = compute_due_date(queue=3, due_raw=5, col_crt=col_crt)
+        expected = date(2014, 1, 9)
+        assert result == expected
+
+    def test_overflow_large_due_raw(self):
+        """Large due_raw values (Unix timestamps) are detected by heuristic."""
+        col_crt = 1388836800
+        # due_raw=1777999998 is a Unix timestamp (seconds), not days
+        result = compute_due_date(queue=2, due_raw=1777999998, col_crt=col_crt)
+        # 1777999998 seconds since epoch = 2026-05-05
+        expected = date(2026, 5, 5)
+        assert result == expected
+
+    def test_queue_2_due_raw_as_days(self):
+        """Normal queue=2: due_raw is days since col_crt."""
+        col_crt = 1388836800  # 2014-01-04
+        result = compute_due_date(queue=2, due_raw=4503, col_crt=col_crt)
+        # 4503 days after 2014-01-04 = 2026-05-04
+        expected = date(2026, 5, 4)
+        assert result == expected
+
+    def test_queue_1_unix_timestamp(self):
+        """queue 1: due_raw is absolute Unix timestamp."""
+        result = compute_due_date(queue=1, due_raw=1777999998, col_crt=0)
+        expected = date(2026, 5, 5)  # 1777999998 seconds = 2026-05-05 12:53:18
+        assert result == expected
+
+    def test_queue_0_fallback_to_today(self):
+        """queue 0: fall back to today."""
+        result = compute_due_date(queue=0, due_raw=999, col_crt=0)
+        assert result == date.today()
+
+    def test_queue_minus_1_suspended(self):
+        """queue -1: suspended, fall back to today."""
+        result = compute_due_date(queue=-1, due_raw=0, col_crt=0)
+        assert result == date.today()
 
 
 class TestFindDeckId:

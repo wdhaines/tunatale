@@ -41,8 +41,17 @@ def compute_due_date(queue: int, due_raw: int, col_crt: int) -> date:
     queue 2/3 (review/day-learn): due_raw is days since col.crt epoch.
     queue 1 (learning): due_raw is an absolute unix timestamp (seconds).
     queue 0 (new) or -1 (suspended): due_raw is a queue position — fall back to today.
+
+    Database corruption: some queue=2/3 cards have Unix timestamps in due_raw
+    instead of days since col.crt. Detect this by checking if the value is too large
+    to be days since col.crt (i.e., it's a Unix timestamp).
     """
     if queue in (2, 3):
+        # Heuristic: if due_raw looks like a Unix timestamp (seconds since epoch),
+        # treat it as such. Otherwise, treat as days since col.crt.
+        # Unix timestamp for year 2000 ≈ 946684800
+        if due_raw > 1000000000:  # Likely a Unix timestamp in seconds
+            return datetime.fromtimestamp(due_raw).date()
         return date.fromtimestamp(col_crt) + timedelta(days=due_raw)
     if queue == 1:
         return datetime.fromtimestamp(due_raw).date()
