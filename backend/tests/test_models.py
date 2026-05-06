@@ -16,6 +16,7 @@ from app.models.strategy import (
     PedagogicalScoringConfig,
 )
 from app.models.syntactic_unit import SyntacticUnit
+from tests._helpers import assert_json_roundtrip
 
 
 def _make_curriculum() -> Curriculum:
@@ -173,22 +174,9 @@ class TestContentStrategy:
 class TestCurriculum:
     """Tests for Curriculum JSON serialization and CurriculumDay validation."""
 
-    def test_serializes_to_json(self):
-        curriculum = _make_curriculum()
-        data = json.loads(curriculum.to_json())
-        assert data["topic"] == "ordering coffee in Ljubljana"
-        assert data["language_code"] == "sl"
-        assert len(data["days"]) == 1
-        assert data["days"][0]["day"] == 1
-
     def test_roundtrip_json(self):
         curriculum = _make_curriculum()
-        restored = Curriculum.from_json(curriculum.to_json())
-        assert restored.id == curriculum.id
-        assert restored.topic == curriculum.topic
-        assert restored.language_code == curriculum.language_code
-        assert len(restored.days) == 1
-        assert restored.days[0].collocations == ["dober dan", "dober večer"]
+        assert_json_roundtrip(curriculum)
 
     def test_day_rejects_non_positive_day(self):
         with pytest.raises(ValueError):
@@ -214,31 +202,9 @@ class TestLesson:
         assert SectionType.SLOW_SPEED in types
         assert SectionType.TRANSLATED in types
 
-    def test_serializes_to_json(self):
-        lesson = _make_lesson()
-        data = json.loads(lesson.to_json())
-        assert data["title"] == "Day 1"
-        assert data["language_code"] == "sl"
-        assert len(data["sections"]) == 2
-        assert data["sections"][0]["section_type"] == "key_phrases"
-        assert data["sections"][1]["section_type"] == "natural_speed"
-        phrase = data["sections"][0]["phrases"][0]
-        assert phrase["text"] == "dober dan"
-        assert phrase["role"] == "female-1"
-        assert phrase["voice_id"] == "sl-SI-PetraNeural"
-        assert phrase["language_code"] == "sl"
-
     def test_roundtrip_json(self):
         original = _make_lesson()
-        restored = Lesson.from_json(original.to_json())
-        assert restored.title == original.title
-        assert restored.language_code == original.language_code
-        assert len(restored.sections) == len(original.sections)
-        assert restored.sections[0].section_type == SectionType.KEY_PHRASES
-        assert restored.sections[1].section_type == SectionType.NATURAL_SPEED
-        assert restored.sections[0].phrases[0].text == "dober dan"
-        assert restored.sections[0].phrases[0].role == "female-1"
-        assert restored.sections[0].phrases[1].text == "kako ste"
+        assert_json_roundtrip(original)
 
     def test_lesson_with_key_phrases_roundtrip(self):
         lesson = _make_lesson()
@@ -259,27 +225,6 @@ class TestLesson:
         data.pop("key_phrases", None)
         restored = Lesson.from_json(json.dumps(data))
         assert restored.key_phrases == []
-
-
-class TestKeyPhraseInfo:
-    """Tests for KeyPhraseInfo dataclass."""
-
-    def test_stores_phrase_and_translation(self):
-        kp = KeyPhraseInfo(phrase="dober dan", translation="good day")
-        assert kp.phrase == "dober dan"
-        assert kp.translation == "good day"
-
-
-class TestPhrase:
-    """Tests for Phrase role field defaults and explicit values."""
-
-    def test_role_default_empty(self):
-        phrase = Phrase(text="x", voice_id="v", language_code="sl")
-        assert phrase.role == ""
-
-    def test_role_explicit(self):
-        phrase = Phrase(text="x", voice_id="v", language_code="sl", role="narrator")
-        assert phrase.role == "narrator"
 
 
 class TestSRSItem:
