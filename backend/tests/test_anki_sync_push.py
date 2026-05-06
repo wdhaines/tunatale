@@ -16,6 +16,7 @@ from app.anki.sync import (
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
+from tests.conftest import make_card_record, make_note_record
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
@@ -87,8 +88,8 @@ class FakeWriter:
     def set_due_date(self, card_ids: list[int], days: str) -> None:
         self.calls.append(("set_due_date", list(card_ids), days))
 
-    def set_learning_state(self, card_id: int, left: int, due_at: int) -> None:
-        self.calls.append(("set_learning_state", card_id, left, due_at))
+    def set_learning_state(self, card_id: int, left: int, due_at: int, *, type_: int = 1) -> None:
+        self.calls.append(("set_learning_state", card_id, left, due_at, type_))
 
     def write_revlog(
         self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_, preferred_id=None
@@ -339,6 +340,35 @@ class TestOfflineWriter:
         row = conn.execute("SELECT queue, due FROM cards WHERE id=90010").fetchone()
         assert row["queue"] == -1  # still suspended
         assert row["due"] == 205
+
+    def test_set_learning_state_writes_queue_and_type_for_relearning(self):
+        """REVIEW → RELEARNING push must flip queue=2,type=2 → queue=1,type=3.
+
+        Regression: previously only updated left/due, leaving queue=2 — the next
+        sync_pull then read a queue=2 card with a unix-timestamp due, which
+        crashed compute_due_date with OverflowError on real Anki collections.
+        """
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, queue=2, card_type=2, due=4500, ivl=10)
+        writer = OfflineWriter(conn)
+        writer.set_learning_state(90010, left=1001, due_at=1778000000, type_=3)
+
+        row = conn.execute("SELECT queue, type, left, due, usn, mod FROM cards WHERE id=90010").fetchone()
+        assert row["queue"] == 1, "RELEARNING must set queue=1 (intra-day learning queue)"
+        assert row["type"] == 3, "RELEARNING must set type=3 (Anki's lapse type)"
+        assert row["left"] == 1001
+        assert row["due"] == 1778000000
+        assert row["usn"] == -1
+
+    def test_set_learning_state_preserves_suspension(self):
+        """Suspended cards (queue=-1) must NOT be unsuspended by set_learning_state."""
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, queue=-1, card_type=2)
+        writer = OfflineWriter(conn)
+        writer.set_learning_state(90010, left=1001, due_at=1778000000, type_=3)
+
+        row = conn.execute("SELECT queue, type FROM cards WHERE id=90010").fetchone()
+        assert row["queue"] == -1, "suspension must be preserved"
 
 
 # ── TestSyncPush ──────────────────────────────────────────────────────────────
@@ -672,8 +702,6 @@ class TestOfflineOrdering:
 
     def test_push_before_pull_dirty_direction_gets_revlog(self):
         """Push-then-pull sequence fires write_revlog even when pull would anki_wins."""
-        from app.anki.sync import CardRecord, NoteRecord
-
         db = _make_tt_db()
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         _mark_direction_dirty(db, guid, reps=3, stability=10.5, anki_card_id=rec_cid)
@@ -681,29 +709,15 @@ class TestOfflineOrdering:
         # Reader returns fsrs_known=True — in pull-first order this clears dirty_fsrs
         class OrderedFakeReader:
             def get_note_records(self):
-                return [
-                    NoteRecord(
-                        anki_note_id=9001,
-                        anki_guid=guid,
-                        l2_text="banka",
-                        translation="bank",
-                        disambig_key="",
-                        mod=0,
-                        cards=[
-                            CardRecord(
-                                anki_card_id=rec_cid,
-                                ord=0,
-                                queue=2,
-                                reps=5,
-                                lapses=0,
-                                stability=15.0,
-                                difficulty=4.5,
-                                due_date=date.today() + timedelta(days=15),
-                                fsrs_known=True,
-                            )
-                        ],
-                    )
-                ]
+                card = make_card_record(
+                    anki_card_id=rec_cid,
+                    ord=0,
+                    reps=5,
+                    stability=15.0,
+                    difficulty=4.5,
+                    due_date=date.today() + timedelta(days=15),
+                )
+                return [make_note_record(anki_guid=guid, cards=[card])]
 
         writer = FakeWriter()
         sync = AnkiSync(db=db, _reader=OrderedFakeReader(), _writer=writer)
@@ -723,37 +737,21 @@ class TestOfflineOrdering:
         Previously pull cleared dirty_fsrs (anki_wins), causing push to skip
         the row. Now pull preserves dirty rows, so pull-before-push also works.
         """
-        from app.anki.sync import CardRecord, NoteRecord
-
         db = _make_tt_db()
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         _mark_direction_dirty(db, guid, reps=3, stability=10.5, anki_card_id=rec_cid)
 
         class OrderedFakeReader:
             def get_note_records(self):
-                return [
-                    NoteRecord(
-                        anki_note_id=9001,
-                        anki_guid=guid,
-                        l2_text="banka",
-                        translation="bank",
-                        disambig_key="",
-                        mod=0,
-                        cards=[
-                            CardRecord(
-                                anki_card_id=rec_cid,
-                                ord=0,
-                                queue=2,
-                                reps=5,
-                                lapses=0,
-                                stability=15.0,
-                                difficulty=4.5,
-                                due_date=date.today() + timedelta(days=15),
-                                fsrs_known=True,
-                            )
-                        ],
-                    )
-                ]
+                card = make_card_record(
+                    anki_card_id=rec_cid,
+                    ord=0,
+                    reps=5,
+                    stability=15.0,
+                    difficulty=4.5,
+                    due_date=date.today() + timedelta(days=15),
+                )
+                return [make_note_record(anki_guid=guid, cards=[card])]
 
         writer = FakeWriter()
         sync = AnkiSync(db=db, _reader=OrderedFakeReader(), _writer=writer)
@@ -821,36 +819,23 @@ class TestPushLearningCardLeftAndDue:
         """Create a fake reader that returns a single card record."""
         from datetime import date, timedelta
 
-        from app.anki.sync import CardRecord, NoteRecord
-
         class FakeReader:
-            def get_note_records(self):
-                return [
-                    NoteRecord(
-                        anki_note_id=9001,
-                        anki_guid=guid,
-                        l2_text="banka",
-                        translation="bank",
-                        disambig_key="",
-                        mod=0,
-                        cards=[
-                            CardRecord(
-                                anki_card_id=rec_cid,
-                                ord=0,
-                                queue=queue,
-                                reps=1,
-                                lapses=0,
-                                stability=1.0,
-                                difficulty=5.0,
-                                due_date=date.today() + timedelta(days=1),
-                                fsrs_known=True,
-                                left=left,
-                            )
-                        ],
-                    )
-                ]
+            def __init__(self, records):
+                self._records = records
 
-        return FakeReader()
+            def get_note_records(self):
+                return self._records
+
+        card = make_card_record(
+            anki_card_id=rec_cid,
+            ord=0,
+            queue=queue,
+            reps=1,
+            stability=1.0,
+            difficulty=5.0,
+            due_date=date.today() + timedelta(days=1),
+        )
+        return FakeReader([make_note_record(anki_guid=guid, cards=[card])])
 
     def test_push_learning_good_advances_step(self, tmp_path):
         """Pushing a LEARNING+GOOD grade writes correct left and due (seconds)."""

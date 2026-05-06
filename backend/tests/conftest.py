@@ -4,9 +4,14 @@ import contextlib
 import json
 import os
 import sqlite3
+from datetime import date
 from pathlib import Path
 
 import pytest
+
+from app.anki.sync import CardRecord, NoteRecord
+
+pytest.register_assert_rewrite("tests.conftest")
 
 
 @pytest.fixture(autouse=True)
@@ -48,6 +53,66 @@ def srs_db():
 
     with SRSDatabase(":memory:") as db:
         yield db
+
+
+def make_card_record(
+    *,
+    anki_card_id: int = 90010,
+    ord: int = 0,
+    queue: int = 2,
+    reps: int = 5,
+    lapses: int = 0,
+    stability: float = 5.0,
+    difficulty: float = 4.5,
+    due_date: date | None = None,
+    fsrs_known: bool = True,
+    **overrides,
+) -> CardRecord:
+    """Create a CardRecord with sensible defaults for sync tests."""
+    if due_date is None:
+        due_date = date.today()
+    return CardRecord(
+        anki_card_id=anki_card_id,
+        ord=ord,
+        queue=queue,
+        reps=reps,
+        lapses=lapses,
+        stability=stability,
+        difficulty=difficulty,
+        due_date=due_date,
+        fsrs_known=fsrs_known,
+        **overrides,
+    )
+
+
+def make_note_record(
+    *,
+    anki_note_id: int = 9001,
+    anki_guid: str | None = None,
+    l2_text: str = "banka",
+    translation: str = "bank",
+    disambig_key: str = "",
+    mod: int = 0,
+    cards: list | None = None,
+    **overrides,
+) -> NoteRecord:
+    """Create a NoteRecord with sensible defaults for sync tests."""
+    from app.common.guid import compute_guid
+
+    if anki_guid is None:
+        anki_guid = compute_guid(l2_text, "sl", disambig_key)
+    if cards is None:
+        cards = [make_card_record()]
+    return NoteRecord(
+        anki_note_id=anki_note_id,
+        anki_guid=anki_guid,
+        l2_text=l2_text,
+        translation=translation,
+        disambig_key=disambig_key,
+        mod=mod,
+        cards=cards,
+        **overrides,
+    )
 
 
 def build_minimal_anki_db(
