@@ -80,6 +80,40 @@ class TestQueueStats:
         assert data["review"] == 2  # word2: 2 directions in REVIEW
         assert data["new"] == 0
 
+    async def test_queue_stats_learning_count_includes_future_due_date(self, api_app_state):
+        """Anki parity: queue=1 cards stay in the Learning badge regardless of
+        due_date. After Good on a learning card the FSRS engine schedules a 10-min
+        step, which can roll due_date past UTC midnight to tomorrow. Anki still
+        counts that card; TunaTale must too.
+        """
+        from datetime import date, timedelta
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        unit = SyntacticUnit(text="future_learn", translation="t", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation("future_learn")
+
+        # FSRS-engine output after Good late at night: due_date jumped to tomorrow.
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.LEARNING,
+            due_date=today + timedelta(days=1),
+            stability=0.5,
+            difficulty=5.0,
+            reps=2,
+            lapses=0,
+            left=1002,
+        )
+        db.update_direction(item.guid, Direction.RECOGNITION, ds)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/queue-stats")
+        assert resp.status_code == 200
+        assert resp.json()["learning"] == 1, "future-due learning card must still count"
+
     async def test_queue_stats_learning_includes_relearning(self, api_app_state):
         """Test that RELEARNING states are counted in learning bucket."""
         from datetime import date
@@ -1347,8 +1381,12 @@ class TestLearningStatePriority:
         assert learning_queue[1]["text"] == "clovek"
         assert learning_queue[2]["text"] == "dekle"
 
-    async def test_learning_bucket_respects_bury_review(self, api_app_state):
-        """Bury review should still work after the learning/review split."""
+    async def test_learning_bucket_bypasses_bury_review(self, api_app_state):
+        """Anki parity: queue=1 cards are NOT subject to sibling-bury within
+        the same day. A production-LEARNING card must surface in TunaTale's
+        queue even when its recognition sibling was reviewed today (which
+        would normally bury the collocation under bury_review=True).
+        """
         from datetime import date
 
         from app.models.syntactic_unit import SyntacticUnit
@@ -1356,13 +1394,11 @@ class TestLearningStatePriority:
         db = api_app_state
         today = date.today()
 
-        # Create a collocation with both directions: recognition=reviewed today, production=learning
         unit = SyntacticUnit(text="bury_test", translation="test", word_count=1, difficulty=1, source="test")
         db.add_collocation(unit, language_code="sl")
         rows, _ = db.list_collocations(search="bury_test", limit=1)
         row_id, item, _ = rows[0]
 
-        # Recognition reviewed today (triggers bury)
         rec_dir = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.REVIEW,
@@ -1371,7 +1407,6 @@ class TestLearningStatePriority:
         )
         db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
 
-        # Production in learning state (should be buried)
         prod_dir = DirectionState(
             direction=Direction.PRODUCTION,
             state=SRSState.LEARNING,
@@ -1380,7 +1415,6 @@ class TestLearningStatePriority:
         )
         db.update_direction_by_id(row_id, Direction.PRODUCTION, prod_dir)
 
-        # Enable bury_review
         db.set_anki_state_cache("bury_review", "True")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1388,11 +1422,12 @@ class TestLearningStatePriority:
         assert resp.status_code == 200
         queue = resp.json()["queue"]
 
-        # Production should be buried (check direction-specific state)
         prod_in_queue = [
             q for q in queue if q["direction"] == "production" and q["directions"]["production"]["state"] == "learning"
         ]
-        assert len(prod_in_queue) == 0
+        assert len(prod_in_queue) == 1, (
+            "production-LEARNING must remain visible — Anki's queue=1 dispatcher does not honour sibling-bury"
+        )
 
     async def test_learning_bucket_orders_by_anki_due_when_present(self, api_app_state):
         """Regression for ženska/dojenček: when anki_due is set (queue=1 sub-day timestamp),
@@ -1489,8 +1524,15 @@ class TestLearningStepFeedback:
         due_at = datetime.fromisoformat(data["due_at"])
         assert due_at > datetime.now(UTC), "due_at should be in the future"
 
-    async def test_learning_card_excluded_from_queue_when_due_at_future(self, api_app_state):
-        """Learning card with future due_at should not appear in review queue."""
+    async def test_learning_card_appears_in_queue_when_due_at_future(self, api_app_state):
+        """Learning card with future due_at must still appear in queue (Anki parity).
+
+        Anki's deck-overview "Learning" count includes every queue=1 card regardless
+        of when its next step is due — the dispatcher orders them but they never
+        disappear from the bucket. TunaTale used to filter them out, which is why
+        rating Good on every learning card emptied TunaTale's queue while Anki
+        still showed N remaining.
+        """
         from datetime import UTC, datetime, timedelta
 
         from app.models.srs_item import Direction, DirectionState, SRSState
@@ -1498,7 +1540,6 @@ class TestLearningStepFeedback:
 
         db = api_app_state
 
-        # Create a learning card with future due_at
         unit = SyntacticUnit(text="test_future", translation="test", word_count=1, difficulty=1, source="test")
         db.add_collocation(unit, language_code="sl")
         rows, _ = db.list_collocations(search="test_future", limit=1)
@@ -1511,21 +1552,198 @@ class TestLearningStepFeedback:
             due_date=now.date(),
             stability=1.0,
             left=1002,
-            due_at=now + timedelta(minutes=10),  # Future due_at
+            due_at=now + timedelta(minutes=10),
             dirty_fsrs=True,
             last_rating=3,
         )
         db.update_direction_by_id(row_id, Direction.RECOGNITION, dstate)
 
-        # Check that the card is NOT in the queue
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/srs/review-queue")
         assert resp.status_code == 200
         queue = resp.json()["queue"]
 
-        # This card should not be in the queue (due_at is in the future)
-        card_in_queue = any(q["text"] == "test_future" for q in queue)
-        assert not card_in_queue, "Learning card with future due_at should not be in queue"
+        assert any(q["text"] == "test_future" for q in queue), (
+            "Learning card with future due_at must remain in the queue (Anki parity)"
+        )
+
+    async def test_learning_card_with_due_date_in_future_still_in_queue(self, api_app_state):
+        """Regression: a LEARNING card with `due_date > today` (e.g. UTC midnight
+        crossed when FSRS added a 10-minute step late at night local time) must
+        still appear in the queue.
+
+        get_due_items filters by due_date <= today, which is right for REVIEW
+        cards but wrong for queue=1 — Anki's learning dispatcher uses the per-
+        card due_at timestamp, not the daily due_date bucket.
+        """
+        from datetime import UTC, date, datetime, timedelta
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        now = datetime.now(UTC)
+
+        unit = SyntacticUnit(text="glasbilo_t", translation="instrument", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="glasbilo_t", limit=1)
+        row_id, _, _ = rows[0]
+
+        db.update_direction_by_id(
+            row_id,
+            Direction.PRODUCTION,
+            DirectionState(
+                direction=Direction.PRODUCTION,
+                state=SRSState.LEARNING,
+                due_date=today + timedelta(days=1),  # FSRS rolled past local midnight
+                stability=0.2,
+                left=1002,
+                due_at=now + timedelta(minutes=10),
+                last_review=now,
+                reps=3,
+                lapses=0,
+                dirty_fsrs=True,
+                last_rating=3,
+            ),
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        queue = resp.json()["queue"]
+
+        assert any(q.get("text") == "glasbilo_t" and q.get("state") == "learning" for q in queue), (
+            "LEARNING card with due_date>today must remain visible — the daily-bucket "
+            "filter is for REVIEW cards, not queue=1"
+        )
+
+    async def test_learning_card_survives_sibling_bury_after_grade(self, api_app_state):
+        """Regression: Anki's queue=1 dispatcher ignores sibling-bury, so a card
+        in LEARNING with a future due_at stays in the bucket even when its own
+        last_review=today places its collocation_id in buried.
+
+        Concretely: user grades a card "Good" → it advances to step 2 (future due_at)
+        and last_review is set to today. list_collocations_reviewed_today now
+        contains this collocation. The bury_review filter must NOT remove the
+        learning card from the queue.
+        """
+        from datetime import UTC, date, datetime, timedelta
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        now = datetime.now(UTC)
+
+        unit = SyntacticUnit(text="glasbilo_t", translation="instrument", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="glasbilo_t", limit=1)
+        row_id, _, _ = rows[0]
+
+        # Production: just graded → LEARNING, future due_at, last_review=today.
+        db.update_direction_by_id(
+            row_id,
+            Direction.PRODUCTION,
+            DirectionState(
+                direction=Direction.PRODUCTION,
+                state=SRSState.LEARNING,
+                due_date=today,
+                stability=0.2,
+                left=1002,
+                due_at=now + timedelta(minutes=10),
+                last_review=now,
+                reps=3,
+                lapses=0,
+                dirty_fsrs=True,
+                last_rating=3,
+            ),
+        )
+        # Recognition: anything reviewable so the collocation makes it into `due`.
+        db.update_direction_by_id(
+            row_id,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.REVIEW,
+                due_date=today,
+                stability=5.0,
+                difficulty=5.0,
+                reps=4,
+                lapses=0,
+                last_review=now - timedelta(days=1),
+            ),
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        queue = resp.json()["queue"]
+
+        learning = [q for q in queue if q.get("text") == "glasbilo_t" and q.get("state") == "learning"]
+        assert learning, (
+            "production-LEARNING with future due_at must survive sibling-bury "
+            "even when last_review=today puts the collocation in the buried set"
+        )
+
+    async def test_learning_card_past_due_at_sorts_before_future_due_at(self, api_app_state):
+        """Within the learning bucket, soonest-due (or already-due) cards come first."""
+        from datetime import UTC, datetime, timedelta
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        now = datetime.now(UTC)
+
+        # past-due card
+        db.add_collocation(
+            SyntacticUnit(text="learn_past", translation="t", word_count=1, difficulty=1, source="test"),
+            language_code="sl",
+        )
+        past_id = db.list_collocations(search="learn_past", limit=1)[0][0][0]
+        db.update_direction_by_id(
+            past_id,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.LEARNING,
+                due_date=now.date(),
+                stability=1.0,
+                left=1002,
+                due_at=now - timedelta(minutes=1),
+                dirty_fsrs=True,
+                last_rating=3,
+            ),
+        )
+
+        # future-due card
+        db.add_collocation(
+            SyntacticUnit(text="learn_future", translation="t", word_count=1, difficulty=1, source="test"),
+            language_code="sl",
+        )
+        future_id = db.list_collocations(search="learn_future", limit=1)[0][0][0]
+        db.update_direction_by_id(
+            future_id,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.LEARNING,
+                due_date=now.date(),
+                stability=1.0,
+                left=1002,
+                due_at=now + timedelta(minutes=10),
+                dirty_fsrs=True,
+                last_rating=3,
+            ),
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        queue = resp.json()["queue"]
+
+        idx_past = next(i for i, q in enumerate(queue) if q["text"] == "learn_past")
+        idx_future = next(i for i, q in enumerate(queue) if q["text"] == "learn_future")
+        assert idx_past < idx_future, "past-due learning card must sort before future-due"
 
     async def test_learning_card_appears_in_queue_when_due_at_past(self, api_app_state):
         """Learning card with past due_at should appear in review queue."""

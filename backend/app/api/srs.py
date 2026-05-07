@@ -365,7 +365,7 @@ async def get_queue_stats(request: Request):
     _, fsrs_source = resolve_fsrs_params(db)
     return {
         "new": min(cap, db.count_new_available()),
-        "learning": db.count_learning_due(today),
+        "learning": db.count_learning(),
         "review": db.count_review_due(today),
         "daily_new_cap": cap,
         "cap_source": source,
@@ -667,39 +667,35 @@ async def get_review_queue(request: Request) -> dict:
     # 3. Extract learning-state cards (Anki queue=1 behavior: they go first).
     #    Also remove any new cards whose collocation has a learning direction.
     #    Filter by due_at: only include cards with due_at <= now (or None for legacy).
-    now = datetime.datetime.now(datetime.UTC)
-
-    def _has_future_learning(item: SRSItem) -> bool:
-        """Check if ANY direction is LEARNING with future due_at."""
-        for dir_enum in [Direction.RECOGNITION, Direction.PRODUCTION]:
-            ds = item.directions[dir_enum]
-            if ds.state == SRSState.LEARNING and ds.due_at is not None and ds.due_at > now:
-                return True
-        return False
-
-    learning_cards = [
-        t
-        for t in due
-        if t[1].directions[t[3]].state == SRSState.LEARNING
-        and (t[1].directions[t[3]].due_at is None or t[1].directions[t[3]].due_at <= now)
+    # Anki parity for queue=1: pull learning cards via a dedicated query that
+    # ignores due_date. The daily-bucket filter (`due_date <= today`) is correct
+    # for REVIEW cards but excludes any LEARNING card whose 10-minute step
+    # crossed UTC midnight (so due_date=tomorrow even though the user is still
+    # on today). It also bypasses the bury_review filter — Anki's queue=1
+    # dispatcher does not honour sibling-bury within the same day.
+    learning_rec = db.get_learning_items(direction=Direction.RECOGNITION)
+    learning_prod = db.get_learning_items(direction=Direction.PRODUCTION)
+    learning_cards: list[tuple[int, SRSItem, str, Direction]] = [
+        (row_id, item, lang, Direction.RECOGNITION) for row_id, item, lang in learning_rec
     ]
-    # Non-learning due cards (exclude LEARNING tuples AND cards where ANY direction has future learning due_at)
-    nonlearning_due = [
-        t for t in due if t[1].directions[t[3]].state != SRSState.LEARNING and not _has_future_learning(t[1])
-    ]
+    learning_cards.extend((row_id, item, lang, Direction.PRODUCTION) for row_id, item, lang in learning_prod)
 
-    # Also filter learning cards from new_combined (they shouldn't appear if due_at is in the future)
+    # The non-learning pool is whatever the daily due-date query returned, minus
+    # any rows whose state somehow resolved to LEARNING (defensive — get_due_items
+    # already excludes 'buried'/'suspended').
+    nonlearning_due = [t for t in due if t[1].directions[t[3]].state != SRSState.LEARNING]
+
     learning_collocation_ids = {t[0] for t in learning_cards}
     nonlearning_new = [t for t in new_combined if t[0] not in learning_collocation_ids]
-    # Filter out cards where ANY direction has future learning due_at
-    filtered_new = [t for t in nonlearning_new if not _has_future_learning(t[1])]
-    nonlearning_new = filtered_new
 
-    # Sort learning cards by anki_due ASC (the sub-day unix timestamp Anki uses for queue=1
-    # dispatch). Fall back to stability ASC when anki_due is missing (e.g. AnkiConnect-only
-    # sync without collection_path). NULL anki_due sorts last within the bucket.
+    # Sort learning cards by TT's `due_at` (authoritative after a fresh grade,
+    # before sync has refreshed Anki's `anki_due`). Fall back to anki_due, then
+    # stability, then anki_card_id, then row id for stable order.
+    _SENTINEL_FUTURE = datetime.datetime.max.replace(tzinfo=datetime.UTC)
     learning_cards.sort(
         key=lambda t: (
+            t[1].directions[t[3]].due_at is None,
+            t[1].directions[t[3]].due_at or _SENTINEL_FUTURE,
             t[1].directions[t[3]].anki_due is None,
             t[1].directions[t[3]].anki_due or 0,
             t[1].directions[t[3]].stability,

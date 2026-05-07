@@ -114,6 +114,9 @@ _DIR_COLUMNS = (
 
 # States that should never surface in the due queue regardless of due_date.
 _NON_REVIEWABLE_STATES = ("new", "suspended", "known", "buried")
+# States that count as "in the learning bucket" (Anki queue=1 / queue=3).
+# Shared by get_learning_items (review queue) and count_learning (badge).
+_LEARNING_STATES = ("learning", "relearning")
 
 
 class SRSDatabase:
@@ -556,6 +559,33 @@ class SRSDatabase:
                 ORDER BY d.due_date ASC, d.stability ASC NULLS LAST, d.anki_card_id ASC NULLS LAST, c.id ASC
                 """,
                 (direction.value, as_of.isoformat(), *_NON_REVIEWABLE_STATES),
+            ).fetchall()
+            return [(r["id"], self._row_to_item(conn, r), r["language_code"]) for r in rows]
+
+    def get_learning_items(
+        self,
+        direction: Direction = Direction.RECOGNITION,
+    ) -> list[tuple[int, SRSItem, str]]:
+        """Return all rows in LEARNING/RELEARNING state for the given direction.
+
+        Unlike get_due_items, this does NOT filter by due_date — Anki's queue=1
+        dispatcher operates on per-card due_at (sub-day) and surfaces every
+        learning card regardless of which calendar day its due_date lands on.
+        Important when the FSRS engine schedules a 10-min step that crosses UTC
+        midnight: due_date jumps to tomorrow but the user is still on today.
+        """
+        placeholders = ",".join("?" * len(_LEARNING_STATES))
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT c.* FROM collocations c
+                JOIN collocation_directions d ON d.collocation_id = c.id
+                WHERE d.direction = ?
+                  AND d.state IN ({placeholders})
+                ORDER BY d.due_at ASC NULLS LAST, d.anki_due ASC NULLS LAST,
+                         d.stability ASC NULLS LAST, d.anki_card_id ASC NULLS LAST, c.id ASC
+                """,
+                (direction.value, *_LEARNING_STATES),
             ).fetchall()
             return [(r["id"], self._row_to_item(conn, r), r["language_code"]) for r in rows]
 
@@ -1226,21 +1256,19 @@ class SRSDatabase:
                 (today.isoformat(), *_NON_REVIEWABLE_STATES),
             ).fetchone()[0]
 
-    def count_learning_due(self, today: date) -> int:
-        """Count learning+relearning directions in today's queue (Anki red bucket).
+    def count_learning(self) -> int:
+        """Count every learning/relearning direction (Anki red badge).
 
-        Matches Anki deck-browser semantics: includes cards whose learning
-        step hasn't elapsed yet (the in-countdown cards). The /review-queue
-        endpoint is the place that filters by due_at — the badge count is
-        a different question from "what to show next".
+        Matches Anki deck-browser semantics exactly: every queue=1 card is
+        counted, regardless of due_date or whether the next step has elapsed.
+        This is the same filter as `get_learning_items` — the count and the
+        list must agree.
         """
+        placeholders = ",".join("?" * len(_LEARNING_STATES))
         with self._get_conn() as conn:
             return conn.execute(
-                """
-                SELECT COUNT(*) FROM collocation_directions
-                WHERE state IN ('learning', 'relearning') AND due_date <= ?
-                """,
-                (today.isoformat(),),
+                f"SELECT COUNT(*) FROM collocation_directions WHERE state IN ({placeholders})",
+                _LEARNING_STATES,
             ).fetchone()[0]
 
     def count_review_due(self, today: date) -> int:

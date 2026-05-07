@@ -866,20 +866,21 @@ class TestQueueStatHelpers:
             ([("hvala", SRSState.LEARNING, SRSState.RELEARNING)], 0, 2),
             ([("hvala", SRSState.NEW, SRSState.LEARNING)], 0, 1),
             ([("hvala", SRSState.LEARNING, SRSState.LEARNING), ("banka", SRSState.REVIEW, SRSState.NEW)], 0, 2),
-            ([("hvala", SRSState.LEARNING, SRSState.LEARNING)], 1, 0),  # future due date
+            # Anki parity: queue=1 cards stay in the badge regardless of due_date.
+            # FSRS scheduling a 10-min step late at night will roll due_date to
+            # tomorrow; Anki still counts them.
+            ([("hvala", SRSState.LEARNING, SRSState.LEARNING)], 1, 2),
             ([("hvala", SRSState.SUSPENDED, SRSState.SUSPENDED)], 0, 0),
             ([], 0, 0),
         ],
     )
-    def test_count_learning_due_includes_relearning(self, collocations, due_offset, expected_learning):
+    def test_count_learning_includes_relearning(self, collocations, due_offset, expected_learning):
         db = SRSDatabase(":memory:")
         for text, rec_state, prod_state in collocations:
             self._seed(db, text, rec_state, prod_state, due_offset_days=due_offset)
-        # _seed uses date.today() (local TZ); count_learning_due must compare in the same TZ,
-        # otherwise a datetime around midnight UTC string-compares against the date column wrong.
-        assert db.count_learning_due(date.today()) == expected_learning
+        assert db.count_learning() == expected_learning
 
-    def test_count_learning_due_includes_pending_step(self):
+    def test_count_learning_includes_pending_step(self):
         """Learning cards with future due_at are still counted (Anki deck-browser semantics).
 
         Anki's deck-browser learning count includes cards whose learning step
@@ -889,21 +890,17 @@ class TestQueueStatHelpers:
         from datetime import datetime
 
         db = SRSDatabase(":memory:")
-        # Seed two learning cards with due_date = today
         self._seed(db, "hvala", SRSState.LEARNING, SRSState.LEARNING, due_offset_days=0)
-        # Set due_at: one elapsed, one still counting down
         item = db.get_collocation("hvala")
         now = datetime.now(tz=UTC)
         future_due_at = now + timedelta(minutes=10)
         for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
             ds = item.directions[direction]
             ds.due_at = future_due_at
-        # Set one direction's due_at to past
         item.directions[Direction.RECOGNITION].due_at = now - timedelta(seconds=1)
         db.update_direction(item.guid, Direction.RECOGNITION, item.directions[Direction.RECOGNITION])
         db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
-        # Both should be counted (Anki includes in-countdown cards in badge)
-        assert db.count_learning_due(now.date()) == 2
+        assert db.count_learning() == 2
 
     @pytest.mark.parametrize(
         "collocations,due_offset,expected_review",
