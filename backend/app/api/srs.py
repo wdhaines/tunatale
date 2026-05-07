@@ -545,43 +545,33 @@ async def suspend_item(item_id: int, body: SuspendRequest, request: Request):
     return _item_to_dict(row_id, item, lang)
 
 
-def _merge_by_due_then_retrievability(
+def _merge_by_retrievability_ascending(
     rec: list[tuple[int, SRSItem, str]],
     prod: list[tuple[int, SRSItem, str]],
     today: datetime.date,
 ) -> list[tuple[int, SRSItem, str, Direction]]:
-    """Merge two pre-sorted lists by (due_date ASC, retrievability ASC, anki_card_id NULLS LAST, c.id)."""
+    """Sort the combined due pool by retrievability ascending.
+
+    Mirrors Anki's SortOrder::RetrievabilityAscending: every card with
+    due_date <= today competes in one flat pool, ordered by R alone. An overdue
+    but well-remembered card sits behind a today-due card the user is about to
+    forget. Tie-break: anki_card_id (NULLS LAST), then row_id.
+    """
     from app.srs.fsrs import compute_retrievability
 
-    def _key(rec_or_prod: tuple[int, SRSItem, str], direction: Direction) -> tuple:
-        row_id, item, lang = rec_or_prod
+    combined: list[tuple[int, SRSItem, str, Direction]] = [
+        (row_id, item, lang, Direction.RECOGNITION) for row_id, item, lang in rec
+    ]
+    combined.extend((row_id, item, lang, Direction.PRODUCTION) for row_id, item, lang in prod)
+
+    def _key(t: tuple[int, SRSItem, str, Direction]) -> tuple:
+        row_id, item, _, direction = t
         dstate = item.directions[direction]
         r = compute_retrievability(dstate, today)
-        return (dstate.due_date, r, dstate.anki_card_id is None, dstate.anki_card_id or 0, row_id)
+        return (r, dstate.anki_card_id is None, dstate.anki_card_id or 0, row_id)
 
-    result: list[tuple[int, SRSItem, str, Direction]] = []
-    i, j = 0, 0
-    while i < len(rec) or j < len(prod):
-        if j >= len(prod):
-            row_id, item, lang = rec[i]
-            result.append((row_id, item, lang, Direction.RECOGNITION))
-            i += 1
-        elif i >= len(rec):
-            row_id, item, lang = prod[j]
-            result.append((row_id, item, lang, Direction.PRODUCTION))
-            j += 1
-        else:
-            rid_r, item_r, lang_r = rec[i]
-            rid_p, item_p, lang_p = prod[j]
-            key_r = _key(rec[i], Direction.RECOGNITION)
-            key_p = _key(prod[j], Direction.PRODUCTION)
-            if key_r <= key_p:
-                result.append((rid_r, item_r, lang_r, Direction.RECOGNITION))
-                i += 1
-            else:
-                result.append((rid_p, item_p, lang_p, Direction.PRODUCTION))
-                j += 1
-    return result
+    combined.sort(key=_key)
+    return combined
 
 
 def _merge_by_anki_due_then_id(
@@ -658,10 +648,10 @@ async def get_review_queue(request: Request) -> dict:
 
     buried = db.list_collocations_reviewed_today(today)
 
-    # 1. Due review cards: recognition + production interleaved by due_date/retrievability
+    # 1. Due review cards: recognition + production pooled and sorted by retrievability ASC
     due_rec = db.get_due_items(today, Direction.RECOGNITION)
     due_prod = db.get_due_items(today, Direction.PRODUCTION)
-    due = _merge_by_due_then_retrievability(due_rec, due_prod, today)
+    due = _merge_by_retrievability_ascending(due_rec, due_prod, today)
 
     if bury_review:
         due = [t for t in due if t[0] not in buried]

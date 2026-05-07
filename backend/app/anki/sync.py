@@ -115,6 +115,10 @@ class CardRecord:
     # state instead of overwriting it with the placeholder values above.
     fsrs_known: bool = True
     card_type: int = 0  # Anki's cards.type (0=New, 1=Learn, 2=Review, 3=Relearn)
+    # Required to mirror Anki's queue=1 learning state. Without these, a graded
+    # card resumes through the FSRS REVIEW branch and graduates prematurely.
+    left: int | None = None
+    due_at: datetime | None = None
 
 
 @dataclass
@@ -212,6 +216,8 @@ class OfflineReader:
                     anki_due=c.fsrs_state.anki_due,
                     last_review=c.fsrs_state.last_review,
                     last_review_ms=last_revlog_ms.get(c.id),
+                    left=c.fsrs_state.left,
+                    due_at=c.fsrs_state.due_at,
                 )
                 for c in cards_by_note.get(note.id, [])
             ]
@@ -633,6 +639,8 @@ class AnkiSync:
                         last_review_time_ms=local_dir.last_review_time_ms,  # preserve duration
                         last_synced_at=datetime.now(UTC).isoformat(),
                         last_rating=local_dir.last_rating,  # preserve for push revlog
+                        left=card_rec.left,
+                        due_at=card_rec.due_at,
                     )
                     conflict = SyncConflict(
                         guid=guid,
@@ -657,19 +665,78 @@ class AnkiSync:
                     # let push flush. (anki_card_id / anki_due / last_synced_at refresh.)
                     # Still apply Anki's bury/suspend state if present — these are
                     # manual user actions that must win regardless of timestamp.
+                    anki_in_learning = card_rec.queue in (1, 3)
+                    local_in_learning = local_dir.state in (SRSState.LEARNING, SRSState.RELEARNING)
+
                     if card_rec.queue == -1:
-                        new_state = SRSState.SUSPENDED
+                        new_dir_state = replace(
+                            local_dir,
+                            state=SRSState.SUSPENDED,
+                            anki_card_id=card_rec.anki_card_id,
+                            anki_due=card_rec.anki_due,
+                            last_synced_at=datetime.now(UTC).isoformat(),
+                        )
                     elif card_rec.queue in (-2, -3):
-                        new_state = SRSState.BURIED
+                        new_dir_state = replace(
+                            local_dir,
+                            state=SRSState.BURIED,
+                            anki_card_id=card_rec.anki_card_id,
+                            anki_due=card_rec.anki_due,
+                            last_synced_at=datetime.now(UTC).isoformat(),
+                        )
+                    elif anki_in_learning and not local_in_learning:
+                        # State-class divergence: Anki has the card mid-learning but
+                        # the local grade graduated it. The local grade was applied
+                        # against a stale prior state (the missing-left/due_at bug);
+                        # preserving and pushing it would erase Anki's learning step.
+                        # Defer to Anki, drop the local grade, surface a conflict.
+                        new_state = (
+                            SRSState.RELEARNING
+                            if (card_rec.queue == 3 or card_rec.card_type == 3)
+                            else SRSState.LEARNING
+                        )
+                        new_dir_state = DirectionState(
+                            direction=direction,
+                            due_date=card_rec.due_date,
+                            stability=card_rec.stability,
+                            difficulty=card_rec.difficulty,
+                            reps=card_rec.reps,
+                            lapses=card_rec.lapses,
+                            state=new_state,
+                            dirty_fsrs=False,
+                            anki_card_id=card_rec.anki_card_id,
+                            anki_due=card_rec.anki_due,
+                            last_review=card_rec.last_review,
+                            last_synced_at=datetime.now(UTC).isoformat(),
+                            left=card_rec.left,
+                            due_at=card_rec.due_at,
+                        )
+                        conflict = SyncConflict(
+                            guid=guid,
+                            direction=direction.value,
+                            field="state_class",
+                            local_value=local_dir.state.value,
+                            remote_value=new_state.value,
+                            resolution="anki_wins_state_class_divergence",
+                        )
+                        report.conflicts.append(conflict)
+                        if not dry_run:
+                            self._db.record_sync_conflict(
+                                guid=guid,
+                                direction=direction.value,
+                                field="state_class",
+                                local=local_dir.state.value,
+                                remote=new_state.value,
+                                resolution="anki_wins_state_class_divergence",
+                            )
                     else:
-                        new_state = local_dir.state
-                    new_dir_state = replace(
-                        local_dir,
-                        state=new_state,
-                        anki_card_id=card_rec.anki_card_id,
-                        anki_due=card_rec.anki_due,
-                        last_synced_at=datetime.now(UTC).isoformat(),
-                    )
+                        new_dir_state = replace(
+                            local_dir,
+                            state=local_dir.state,
+                            anki_card_id=card_rec.anki_card_id,
+                            anki_due=card_rec.anki_due,
+                            last_synced_at=datetime.now(UTC).isoformat(),
+                        )
                 elif card_rec.fsrs_known:
                     if card_rec.queue == -1:
                         new_state = SRSState.SUSPENDED
@@ -697,6 +764,8 @@ class AnkiSync:
                         anki_due=card_rec.anki_due,
                         last_review=card_rec.last_review,
                         last_synced_at=datetime.now(UTC).isoformat(),
+                        left=card_rec.left,
+                        due_at=card_rec.due_at,
                     )
                 else:
                     # fsrs_known=False and not dirty_fsrs: apply basic queue mapping
@@ -726,6 +795,8 @@ class AnkiSync:
                         anki_due=card_rec.anki_due,
                         last_review=card_rec.last_review,
                         last_synced_at=datetime.now(UTC).isoformat(),
+                        left=card_rec.left,
+                        due_at=card_rec.due_at,
                     )
                 if _direction_differs(local_dir, new_dir_state):
                     if not dry_run:

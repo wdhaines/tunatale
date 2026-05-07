@@ -577,24 +577,26 @@ class TestReviewQueue:
             syntactic_unit=unit, directions={direction: dir_state, opposite: opposite_state}, guid="g", anki_note_id=1
         )
 
-    # --- Tests for _merge_by_due_then_retrievability ---
+    # --- Tests for _merge_by_retrievability_ascending ---
     async def test_merge_retrievability_empty_inputs(self, api_app_state):
         from datetime import date
 
-        from app.api.srs import _merge_by_due_then_retrievability
+        from app.api.srs import _merge_by_retrievability_ascending
 
-        result = _merge_by_due_then_retrievability([], [], date.today())
+        result = _merge_by_retrievability_ascending([], [], date.today())
         assert result == []
 
-    async def test_merge_retrievability_orders_by_retrievability_within_same_due_date(self, api_app_state):
-        """Exact regression from plan: prašič-rec (s=0.4) vs vlak-prod (s=0.086) vs prašič-prod (s=0.5, due next day)."""
+    async def test_merge_retrievability_orders_by_retrievability_alone(self, api_app_state):
+        """Sort key is R only; due_date does not influence position. Mirrors Anki's
+        SortOrder::RetrievabilityAscending — the daily pool is one flat list keyed on R.
+        """
         from datetime import date
 
-        from app.api.srs import _merge_by_due_then_retrievability
+        from app.api.srs import _merge_by_retrievability_ascending
 
         today = date(2026, 5, 2)
 
-        # prašič recognition: s=0.4, due=2026-05-01, anki=1766
+        # prašič recognition: s=0.4, due=2026-05-01
         prasic_rec = self._make_item(
             date(2026, 5, 1),
             1766,
@@ -602,7 +604,7 @@ class TestReviewQueue:
             stability=0.4,
             last_review=date(2026, 5, 1),
         )
-        # vlak production: s=0.086, due=2026-05-01, anki=1777
+        # vlak production: s=0.086, due=2026-05-01
         vlak_prod = self._make_item(
             date(2026, 5, 1),
             1777,
@@ -610,7 +612,7 @@ class TestReviewQueue:
             stability=0.086,
             last_review=date(2026, 5, 1),
         )
-        # prašič production: s=0.5, due=2026-05-02, anki=1767
+        # prašič production: s=0.5, due=2026-05-02 (today, but highest stability → highest R)
         prasic_prod = self._make_item(
             date(2026, 5, 2),
             1767,
@@ -622,19 +624,56 @@ class TestReviewQueue:
         rec = [(1, prasic_rec, "sl")]
         prod = [(2, vlak_prod, "sl"), (3, prasic_prod, "sl")]
 
-        result = _merge_by_due_then_retrievability(rec, prod, today)
-        # Expected: vlak-prod (lowest R), prašič-rec (next R), prašič-prod (due next day)
-        assert result[0][3] == Direction.PRODUCTION  # vlak-prod
-        assert result[0][1].directions[Direction.PRODUCTION].stability == 0.086
-        assert result[1][3] == Direction.RECOGNITION  # prašič-rec
-        assert result[1][1].directions[Direction.RECOGNITION].stability == 0.4
-        assert result[2][3] == Direction.PRODUCTION  # prašič-prod (due 2026-05-02)
+        result = _merge_by_retrievability_ascending(rec, prod, today)
+        # Lowest R first regardless of due_date
+        assert result[0][1].directions[Direction.PRODUCTION].stability == 0.086  # vlak-prod
+        assert result[1][1].directions[Direction.RECOGNITION].stability == 0.4  # prašič-rec
+        assert result[2][1].directions[Direction.PRODUCTION].stability == 0.5  # prašič-prod
+
+    async def test_merge_retrievability_overdue_high_R_loses_to_today_low_R(self, api_app_state):
+        """Regression: rama (overdue 2 days, R=0.84) must NOT come before navijač
+        (due today, R=0.07). TunaTale used to bucket by due_date first and surfaced
+        the well-remembered overdue card, while Anki's retrievability-ascending
+        order picked the nearly-forgotten today card.
+        """
+        from datetime import date
+
+        from app.api.srs import _merge_by_retrievability_ascending
+
+        today = date(2026, 5, 6)
+
+        # rama recognition: due 2 days ago, well-remembered (R≈0.84)
+        rama_rec = self._make_item(
+            date(2026, 5, 4),
+            1775264032302,
+            Direction.RECOGNITION,
+            stability=3.368,
+            last_review=date(2026, 4, 30),
+        )
+        # navijač production: due today, nearly forgotten (R≈0.07)
+        navijac_prod = self._make_item(
+            date(2026, 5, 6),
+            1775264031967,
+            Direction.PRODUCTION,
+            stability=0.001,
+            last_review=date(2026, 5, 5),
+        )
+
+        rec = [(1, rama_rec, "hr")]
+        prod = [(2, navijac_prod, "hr")]
+
+        result = _merge_by_retrievability_ascending(rec, prod, today)
+        # navijač (R≈0.07) must come first, even though rama is more overdue
+        assert result[0][3] == Direction.PRODUCTION
+        assert result[0][0] == 2  # navijač row
+        assert result[1][3] == Direction.RECOGNITION
+        assert result[1][0] == 1  # rama row
 
     async def test_merge_retrievability_null_stability_sorts_last(self, api_app_state):
         """Directions with null stability (R=1.0) sort after those with real stability."""
         from datetime import date
 
-        from app.api.srs import _merge_by_due_then_retrievability
+        from app.api.srs import _merge_by_retrievability_ascending
 
         today = date(2026, 5, 2)
 
@@ -658,7 +697,7 @@ class TestReviewQueue:
         rec = [(1, item_null, "sl")]
         prod = [(2, item_low, "sl")]
 
-        result = _merge_by_due_then_retrievability(rec, prod, today)
+        result = _merge_by_retrievability_ascending(rec, prod, today)
         # item_low (stability=0.086, R < 1.0) comes first
         assert result[0][3] == Direction.PRODUCTION
         assert result[1][3] == Direction.RECOGNITION
@@ -1195,15 +1234,15 @@ class TestMergeUsesRealRetrievabilityWhenLastReviewPopulated:
         assert resp.status_code == 200
         queue = resp.json()["queue"]
 
-        # With last_review populated, check retrievability ordering
-        # izgled (due 2 days ago) comes first due to due_date, then sreda (due today)
+        # Pure retrievability-ascending order — due_date does not bucket the pool.
+        # sreda  R≈0.065 (s=0.001, 1d elapsed)
+        # vozov. R≈0.092 (s=0.002, 1d elapsed)
+        # izgled R≈0.833 (s=2.131, 4d elapsed) — overdue but well-remembered, sorts last
         assert len(queue) >= 3
-        # The first item should be overdue (izgled due 2 days ago)
-        assert queue[0]["text"] == "izgled"
-        # Among same-day-due items, sreda (R=0.065) should come before vozovnica (R=0.092)
         sreda_idx = next(i for i, q in enumerate(queue) if q["text"] == "sreda")
         voz_idx = next(i for i, q in enumerate(queue) if q["text"] == "vozovnica")
-        assert sreda_idx < voz_idx, "sreda should come before vozovnica (lower R)"
+        izgled_idx = next(i for i, q in enumerate(queue) if q["text"] == "izgled")
+        assert sreda_idx < voz_idx < izgled_idx
 
 
 class TestLearningStatePriority:

@@ -415,6 +415,210 @@ class TestSyncPull:
         updated = db.get_collocation_by_guid(guid)
         assert updated.directions[Direction.RECOGNITION].state == SRSState.SUSPENDED
 
+    def test_pull_propagates_left_and_due_at_for_queue1_learning(self):
+        """Regression: when Anki has a card in queue=1 (LEARNING/RELEARNING),
+        sync_pull must carry the per-card learning-step counter (`left`) and
+        sub-day due timestamp (`due_at`) into TunaTale's mirror. Without these
+        fields the FSRS engine has no way to resume Anki's learning sequence
+        and a subsequent grade misclassifies the card as REVIEW.
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        future_due_at = _dt.now(UTC) + timedelta(minutes=10)
+        # left=1002 = (steps_remaining=1, total_steps=2): 2-step learn, on step 2.
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            queue=1,
+            card_type=1,
+            reps=3,
+            lapses=0,
+            stability=0.5,
+            difficulty=8.0,
+            left=1002,
+            due_at=future_due_at,
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        rec = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert rec.state == SRSState.LEARNING
+        assert rec.left == 1002, "pull must propagate Anki's `left` step counter"
+        assert rec.due_at is not None, "pull must propagate Anki's sub-day `due_at`"
+        assert abs((rec.due_at - future_due_at).total_seconds()) < 1
+
+    def test_pull_propagates_left_and_due_at_for_queue1_relearning(self):
+        """Same contract as the LEARNING case, but for RELEARNING (type=3)."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        future_due_at = _dt.now(UTC) + timedelta(minutes=10)
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            queue=1,
+            card_type=3,  # Relearn
+            reps=12,
+            lapses=2,
+            stability=1.5,
+            difficulty=9.0,
+            left=1001,  # 1-step relearn, on step 1
+            due_at=future_due_at,
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        rec = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert rec.state == SRSState.RELEARNING
+        assert rec.left == 1001
+        assert rec.due_at is not None
+
+    def test_dirty_fsrs_state_class_divergence_anki_wins(self):
+        """Regression: when local is dirty in REVIEW but Anki has the card in
+        queue=1 (LEARNING/RELEARNING), Anki's view wins for state/left/due_at
+        and the dirty grade is discarded.
+
+        Background: a stale TT mirror (missing left/due_at) lets the FSRS engine
+        graduate a card on Good that Anki considers mid-learning. Preserving that
+        local REVIEW state and pushing it to Anki would erase Anki's correct
+        learning step. Surface as a conflict so the next session can re-grade.
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        # Local: dirty REVIEW with low stability (the post-bug graduation residue).
+        item = db.get_collocation_by_guid(guid)
+        ds_dirty = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=item.directions[Direction.RECOGNITION].due_date,
+            stability=0.10,
+            difficulty=9.8,
+            reps=21,
+            lapses=0,
+            state=SRSState.REVIEW,
+            last_review=_dt.now(UTC),
+            dirty_fsrs=True,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds_dirty)
+
+        # Anki: queue=1 LEARNING with left/due_at populated.
+        future_due_at = _dt.now(UTC) + timedelta(minutes=10)
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            queue=1,
+            card_type=1,
+            reps=21,
+            lapses=0,
+            stability=0.017,
+            difficulty=9.83,
+            left=1002,
+            due_at=future_due_at,
+            last_review=_dt.now(UTC) - timedelta(minutes=20),
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        rec = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert rec.state == SRSState.LEARNING, "Anki's queue=1 must override local REVIEW"
+        assert rec.left == 1002
+        assert rec.due_at is not None
+        assert rec.dirty_fsrs is False, "the local grade is discarded, not pushed"
+        # Conflict surfaced so the divergence is visible
+        assert any(c.field == "state_class" and c.resolution.startswith("anki_wins") for c in report.conflicts), (
+            report.conflicts
+        )
+
+    def test_dirty_fsrs_state_class_divergence_dry_run_no_db_write(self):
+        """dry_run=True must surface the conflict in the report but not write to the DB."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        item = db.get_collocation_by_guid(guid)
+        ds_dirty = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=item.directions[Direction.RECOGNITION].due_date,
+            stability=0.10,
+            difficulty=9.8,
+            reps=21,
+            lapses=0,
+            state=SRSState.REVIEW,
+            last_review=_dt.now(UTC),
+            dirty_fsrs=True,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds_dirty)
+
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            queue=1,
+            card_type=1,
+            reps=21,
+            lapses=0,
+            stability=0.017,
+            difficulty=9.83,
+            left=1002,
+            due_at=_dt.now(UTC) + timedelta(minutes=10),
+            last_review=_dt.now(UTC) - timedelta(minutes=20),
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull(dry_run=True)
+
+        # Report surfaces the conflict
+        assert any(c.field == "state_class" for c in report.conflicts)
+        # DB unchanged: no conflict row written, mirror still REVIEW + dirty
+        assert db.list_sync_conflicts() == []
+        rec = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert rec.state == SRSState.REVIEW
+        assert rec.dirty_fsrs is True
+
+    def test_dirty_fsrs_local_learning_state_preserved_when_anki_also_learning(self):
+        """When local is dirty in LEARNING and Anki also has queue=1, the
+        local grade wins (current behaviour) — no state-class divergence.
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        item = db.get_collocation_by_guid(guid)
+        local_due_at = _dt.now(UTC) + timedelta(minutes=10)
+        ds_dirty = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=item.directions[Direction.RECOGNITION].due_date,
+            stability=0.5,
+            difficulty=8.0,
+            reps=4,
+            lapses=0,
+            state=SRSState.LEARNING,
+            left=1002,
+            due_at=local_due_at,
+            last_review=_dt.now(UTC),
+            dirty_fsrs=True,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds_dirty)
+
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            queue=1,
+            card_type=1,
+            reps=3,
+            lapses=0,
+            stability=0.4,
+            difficulty=8.0,
+            left=2002,  # Anki's pre-grade view: still on step 1
+            due_at=_dt.now(UTC) - timedelta(minutes=5),
+            last_review=_dt.now(UTC) - timedelta(minutes=10),
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        rec = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert rec.state == SRSState.LEARNING
+        assert rec.left == 1002, "local left preserved (TT's grade is the latest event)"
+        assert rec.dirty_fsrs is True
+        assert rec.stability == 0.5
+
 
 # ── B15: diff-before-write in sync_pull ───────────────────────────────────────
 
