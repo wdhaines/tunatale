@@ -895,7 +895,10 @@ class TestQueueStatsEndpoint:
             )
         app.state.srs_db = db
 
-        with patch("app.api.srs.resolve_daily_new_cap", return_value=(3, "default")):
+        with (
+            patch("app.api.srs.resolve_daily_new_cap", return_value=(3, "default")),
+            patch("app.api.srs.count_anki_introduced_today", return_value=0),
+        ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/api/srs/queue-stats")
 

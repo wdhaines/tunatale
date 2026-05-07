@@ -6,7 +6,8 @@ import json
 import logging
 import sqlite3
 import struct
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from app.config import settings
@@ -266,6 +267,38 @@ def _read_new_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int
 
     # Modern format: deck_config table with protobuf BLOBs
     return _read_new_per_day_from_deck_config_table(conn, deck_name)
+
+
+def count_anki_introduced_today(today: date, collection_path: Path | None = None) -> int:
+    """Count cards whose *first* revlog entry in Anki is on or after `today`.
+
+    This is Anki's definition of "new today": when a card transitions out of NEW
+    (Again/Hard/Good/Easy on a fresh card), Anki writes a revlog row, and the
+    deck's newToday counter increments. We mirror it by counting the rows whose
+    earliest revlog `id` (millis-since-epoch) is past local-midnight today.
+
+    TT mirror state is unreliable as a source for this — TT and Anki dual-grade
+    the same card and the resulting `cards.reps` (and TT's `reps` mirror) is no
+    longer 1 after the second grade, so a reps-based heuristic misses everything
+    except single-graded new cards.
+
+    Returns 0 if the collection cannot be opened (Anki not configured / file
+    missing). Read-only mode with `immutable=1` is safe while Anki is running.
+    """
+    path = collection_path if collection_path is not None else settings.anki_collection_path
+    if not path.exists():
+        return 0
+    start_ms = int(datetime.combine(today, time.min).timestamp() * 1000)
+    try:
+        with sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True) as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM (SELECT cid FROM revlog GROUP BY cid HAVING MIN(id) >= ?)",
+                (start_ms,),
+            ).fetchone()
+            return int(row[0]) if row else 0
+    except sqlite3.Error as exc:
+        _log.warning("count_anki_introduced_today: failed to read revlog: %s", exc)
+        return 0
 
 
 def refresh_daily_new_cap(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:

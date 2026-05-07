@@ -80,6 +80,56 @@ class TestQueueStats:
         assert data["review"] == 2  # word2: 2 directions in REVIEW
         assert data["new"] == 0
 
+    async def test_queue_stats_new_decrements_via_anki_revlog(self, monkeypatch, tmp_path, api_app_state):
+        """Anki-parity "new today": badge subtracts the Anki-revlog count of
+        cards whose first revlog entry is today. Without this, TunaTale shows
+        `min(cap, pool)` which never moves while Anki ticks 27 → 26 → 25.
+        """
+        import sqlite3 as _sqlite3
+        from datetime import date, datetime, time
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+
+        # Cap=2, pool=5 — pool > cap so `min(cap, pool)` never moves on its own.
+        db.set_anki_state_cache("daily_new_cap", "2")
+        for i in range(5):
+            unit = SyntacticUnit(text=f"new_{i}", translation="t", word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+
+        # Stub Anki collection: empty revlog → 0 introduced.
+        anki_path = tmp_path / "collection.anki2"
+        conn = _sqlite3.connect(str(anki_path))
+        conn.execute(
+            "CREATE TABLE revlog (id INTEGER, cid INTEGER, usn INTEGER, ease INTEGER, "
+            "ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)"
+        )
+        conn.commit()
+        conn.close()
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "anki_collection_path", anki_path)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/queue-stats")
+        assert resp.json()["new"] == 2  # cap - 0
+
+        # Now simulate "user introduced 1 new card today" by writing a revlog row.
+        today_ms = int(datetime.combine(today, time(14, 0)).timestamp() * 1000)
+        conn = _sqlite3.connect(str(anki_path))
+        conn.execute(
+            "INSERT INTO revlog VALUES (?, ?, 0, 3, 1, 1, 0, 0, 0)",
+            (today_ms, 4242),
+        )
+        conn.commit()
+        conn.close()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/queue-stats")
+        assert resp.json()["new"] == 1, "Anki revlog drives the badge — first-entry-today counts"
+
     async def test_queue_stats_learning_count_includes_future_due_date(self, api_app_state):
         """Anki parity: queue=1 cards stay in the Learning badge regardless of
         due_date. After Good on a learning card the FSRS engine schedules a 10-min

@@ -687,3 +687,97 @@ class TestResolveBuryReview:
         val, source = resolve_bury_review(db)
         assert val is True
         assert source == "default"
+
+
+class TestCountAnkiIntroducedToday:
+    """count_anki_introduced_today: count cards whose first revlog entry is today.
+
+    The Anki revlog is the source of truth — TT's mirrored `reps` is unreliable
+    because TT and Anki dual-grade the same card.
+    """
+
+    def _make_collection(self, tmp_path, revlog_rows):
+        path = tmp_path / "collection.anki2"
+        conn = sqlite3.connect(str(path))
+        conn.execute(
+            "CREATE TABLE revlog (id INTEGER, cid INTEGER, usn INTEGER, ease INTEGER, "
+            "ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)"
+        )
+        for cid, ts_ms, type_ in revlog_rows:
+            conn.execute(
+                "INSERT INTO revlog VALUES (?, ?, 0, 3, 1, 1, 0, 0, ?)",
+                (ts_ms, cid, type_),
+            )
+        conn.commit()
+        conn.close()
+        return path
+
+    def test_counts_cards_with_first_entry_today(self, tmp_path):
+        from datetime import date, time
+
+        from app.srs.queue_stats import count_anki_introduced_today
+
+        today = date.today()
+        yesterday = today - timedelta(days=1)
+        today_ms = int(datetime.combine(today, time(14, 0)).timestamp() * 1000)
+        yesterday_ms = int(datetime.combine(yesterday, time(14, 0)).timestamp() * 1000)
+
+        rows = [
+            # card 100: first entry yesterday → does NOT count today
+            (100, yesterday_ms, 0),
+            (100, today_ms, 0),  # second entry today; first is yesterday
+            # card 200: first entry today → counts
+            (200, today_ms, 0),
+            # card 300: first entry today, multiple grades today → counts once
+            (300, today_ms, 0),
+            (300, today_ms + 1000, 0),
+            (300, today_ms + 2000, 0),
+        ]
+        path = self._make_collection(tmp_path, rows)
+        assert count_anki_introduced_today(today, collection_path=path) == 2
+
+    def test_returns_zero_when_collection_missing(self, tmp_path):
+        from datetime import date
+
+        from app.srs.queue_stats import count_anki_introduced_today
+
+        missing = tmp_path / "nope.anki2"
+        assert count_anki_introduced_today(date.today(), collection_path=missing) == 0
+
+    def test_returns_zero_when_revlog_table_missing(self, tmp_path):
+        """A file that exists but lacks the `revlog` table (unlikely but defensive)
+        should not propagate sqlite errors — return 0 and log.
+        """
+        from datetime import date
+
+        from app.srs.queue_stats import count_anki_introduced_today
+
+        path = tmp_path / "broken.anki2"
+        conn = sqlite3.connect(str(path))
+        conn.execute("CREATE TABLE col (id INTEGER)")
+        conn.commit()
+        conn.close()
+        assert count_anki_introduced_today(date.today(), collection_path=path) == 0
+
+    def test_works_while_anki_is_open(self, tmp_path):
+        """`mode=ro&immutable=1` URI mode does not need the exclusive lock,
+        so the count is readable even while Anki holds the file open.
+        """
+        from datetime import date, time
+
+        from app.srs.queue_stats import count_anki_introduced_today
+
+        today = date.today()
+        today_ms = int(datetime.combine(today, time(14, 0)).timestamp() * 1000)
+        path = self._make_collection(tmp_path, [(42, today_ms, 0)])
+
+        # Hold an exclusive-ish handle (simulating Anki); the read-only call
+        # with immutable=1 must still succeed.
+        holder = sqlite3.connect(str(path))
+        try:
+            holder.execute("BEGIN")
+            holder.execute("INSERT INTO revlog VALUES (?, ?, 0, 3, 1, 1, 0, 0, 0)", (today_ms + 5, 99))
+            assert count_anki_introduced_today(today, collection_path=path) == 1
+        finally:
+            holder.rollback()
+            holder.close()

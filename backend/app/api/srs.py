@@ -19,6 +19,7 @@ from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, schedule
 from app.srs.lemmatizer import LowercaseLemmatizer
 from app.srs.queue_stats import (
+    count_anki_introduced_today,
     resolve_bury_new,
     resolve_bury_review,
     resolve_daily_new_cap,
@@ -363,8 +364,13 @@ async def get_queue_stats(request: Request):
     today = datetime.date.today()
     cap, source = resolve_daily_new_cap(db)
     _, fsrs_source = resolve_fsrs_params(db)
+    # Source of truth for "new today" is Anki's revlog: count cards whose first
+    # revlog entry is on or after today. TT's mirrored `reps` is unreliable
+    # here because dual-grading bumps reps past 1 before we can detect.
+    introduced_today = count_anki_introduced_today(today)
+    remaining_quota = max(0, cap - introduced_today)
     return {
-        "new": min(cap, db.count_new_available()),
+        "new": min(remaining_quota, db.count_new_available()),
         "learning": db.count_learning(),
         "review": db.count_review_due(today),
         "daily_new_cap": cap,
