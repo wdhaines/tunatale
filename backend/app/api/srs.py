@@ -640,6 +640,7 @@ async def get_review_queue(request: Request) -> dict:
     """
     db = request.app.state.srs_db
     today = datetime.date.today()
+    now = datetime.datetime.now(datetime.UTC)
 
     cap, _ = resolve_daily_new_cap(db)
     spread, _ = resolve_new_spread(db)
@@ -705,6 +706,18 @@ async def get_review_queue(request: Request) -> dict:
         ),
     )
 
+    # Split learning into ready (past-due / null due_at) vs pending (future).
+    # Anki parity: while a learning card's step timer is still ticking, the
+    # dispatcher serves review cards instead of waking the user up early.
+    ready_learning: list[tuple[int, SRSItem, str, Direction]] = []
+    pending_learning: list[tuple[int, SRSItem, str, Direction]] = []
+    for t in learning_cards:
+        ds = t[1].directions[t[3]]
+        if ds.due_at is None or ds.due_at <= now:
+            ready_learning.append(t)
+        else:
+            pending_learning.append(t)
+
     # 4. Apply newSpread to nonlearning cards only
     if spread == 1:  # new_after_review
         ordered = nonlearning_due + nonlearning_new
@@ -713,7 +726,8 @@ async def get_review_queue(request: Request) -> dict:
     else:  # 0 = mix: interleave one new every N reviews
         ordered = _spread_mix(nonlearning_due, nonlearning_new)
 
-    # 5. Prepend learning cards (always first, matching Anki's queue=1 dispatcher)
-    ordered = learning_cards + ordered
+    # 5. Ready learning first (Anki queue=1 priority), then reviews/new,
+    #    then pending learning (cards waiting on their step timer).
+    ordered = ready_learning + ordered + pending_learning
 
     return {"queue": [_queue_item_to_dict(*t, db) for t in ordered]}

@@ -1567,6 +1567,92 @@ class TestLearningStepFeedback:
             "Learning card with future due_at must remain in the queue (Anki parity)"
         )
 
+    async def test_future_due_learning_sorts_after_reviews(self, api_app_state):
+        """Anki parity: when a learning card's next step is in the future,
+        Anki serves review cards while the timer ticks. TunaTale must do the
+        same — pending-step learning cards sit *behind* due reviews, not in
+        front of them. Past-due learning still gets priority.
+        """
+        from datetime import UTC, date, datetime, timedelta
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        now = datetime.now(UTC)
+
+        # 1) past-due learning (priority — must come first)
+        db.add_collocation(
+            SyntacticUnit(text="past_learn", translation="t", word_count=1, difficulty=1, source="test"),
+            language_code="sl",
+        )
+        past_id = db.list_collocations(search="past_learn", limit=1)[0][0][0]
+        db.update_direction_by_id(
+            past_id,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.LEARNING,
+                due_date=today,
+                stability=0.5,
+                left=1002,
+                due_at=now - timedelta(minutes=1),
+            ),
+        )
+
+        # 2) due review (must come before any future-due learning)
+        db.add_collocation(
+            SyntacticUnit(text="due_review", translation="t", word_count=1, difficulty=1, source="test"),
+            language_code="sl",
+        )
+        review_id = db.list_collocations(search="due_review", limit=1)[0][0][0]
+        db.update_direction_by_id(
+            review_id,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.REVIEW,
+                due_date=today,
+                stability=5.0,
+                difficulty=5.0,
+                reps=4,
+                lapses=0,
+                last_review=now - timedelta(days=1),
+            ),
+        )
+
+        # 3) future-due learning (must come last — serve only after the timer elapses)
+        db.add_collocation(
+            SyntacticUnit(text="future_learn", translation="t", word_count=1, difficulty=1, source="test"),
+            language_code="sl",
+        )
+        future_id = db.list_collocations(search="future_learn", limit=1)[0][0][0]
+        db.update_direction_by_id(
+            future_id,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.LEARNING,
+                due_date=today,
+                stability=0.5,
+                left=1002,
+                due_at=now + timedelta(minutes=10),
+            ),
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        queue = resp.json()["queue"]
+
+        idx_past = next(i for i, q in enumerate(queue) if q["text"] == "past_learn")
+        idx_review = next(i for i, q in enumerate(queue) if q["text"] == "due_review")
+        idx_future = next(i for i, q in enumerate(queue) if q["text"] == "future_learn")
+        assert idx_past < idx_review < idx_future, (
+            f"expected past-learning < review < future-learning, got "
+            f"past={idx_past}, review={idx_review}, future={idx_future}"
+        )
+
     async def test_learning_card_with_due_date_in_future_still_in_queue(self, api_app_state):
         """Regression: a LEARNING card with `due_date > today` (e.g. UTC midnight
         crossed when FSRS added a 10-minute step late at night local time) must
