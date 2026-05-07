@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
 from httpx import ASGITransport, AsyncClient
 
@@ -68,8 +69,9 @@ class TestQueueStats:
             )
             db.update_direction(item2.guid, direction, ds)
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/srs/queue-stats")
+        with patch("app.api.srs.count_anki_review_remaining_today", return_value=None):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.get("/api/srs/queue-stats")
 
         assert resp.status_code == 200
         data = resp.json()
@@ -189,8 +191,9 @@ class TestQueueStats:
             )
             db.update_direction(item.guid, direction, ds)
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/srs/queue-stats")
+        with patch("app.api.srs.count_anki_review_remaining_today", return_value=None):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.get("/api/srs/queue-stats")
 
         assert resp.status_code == 200
         data = resp.json()

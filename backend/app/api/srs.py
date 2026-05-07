@@ -20,6 +20,7 @@ from app.srs.fsrs import Rating, schedule
 from app.srs.lemmatizer import LowercaseLemmatizer
 from app.srs.queue_stats import (
     count_anki_introduced_today,
+    count_anki_review_remaining_today,
     resolve_bury_new,
     resolve_bury_review,
     resolve_daily_new_cap,
@@ -369,10 +370,14 @@ async def get_queue_stats(request: Request):
     # here because dual-grading bumps reps past 1 before we can detect.
     introduced_today = count_anki_introduced_today(today)
     remaining_quota = max(0, cap - introduced_today)
+    # Prefer Anki's deck-overview review count (mirrors sibling burying +
+    # RemainingLimits cap). Fall back to TT mirror when Anki is unavailable.
+    anki_review = count_anki_review_remaining_today()
+    review_count = anki_review if anki_review is not None else db.count_review_due(today)
     return {
         "new": min(remaining_quota, db.count_new_available()),
         "learning": db.count_learning(),
-        "review": db.count_review_due(today),
+        "review": review_count,
         "daily_new_cap": cap,
         "cap_source": source,
         "fsrs_source": fsrs_source,

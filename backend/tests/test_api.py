@@ -898,6 +898,7 @@ class TestQueueStatsEndpoint:
         with (
             patch("app.api.srs.resolve_daily_new_cap", return_value=(3, "default")),
             patch("app.api.srs.count_anki_introduced_today", return_value=0),
+            patch("app.api.srs.count_anki_review_remaining_today", return_value=124),
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/api/srs/queue-stats")
@@ -922,6 +923,28 @@ class TestQueueStatsEndpoint:
         data = response.json()
         assert data["cap_source"] == "anki"
         assert data["daily_new_cap"] == 30
+
+    async def test_queue_stats_review_falls_back_when_anki_unavailable(self):
+        """When count_anki_review_remaining_today returns None, fall back to db.count_review_due."""
+        from unittest.mock import patch
+
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(":memory:")
+        app.state.srs_db = db
+
+        # Mock db.count_review_due to return 42
+        with (
+            patch("app.api.srs.resolve_daily_new_cap", return_value=(20, "default")),
+            patch("app.api.srs.count_anki_introduced_today", return_value=0),
+            patch("app.api.srs.count_anki_review_remaining_today", return_value=None),
+            patch.object(db, "count_review_due", return_value=42),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.get("/api/srs/queue-stats")
+
+        data = response.json()
+        assert data["review"] == 42  # Falls back to TT mirror count
 
 
 class TestTranscriptEndpoint:
