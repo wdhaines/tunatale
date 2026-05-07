@@ -66,6 +66,7 @@ def make_card_record(
     difficulty: float = 4.5,
     due_date: date | None = None,
     fsrs_known: bool = True,
+    card_type: int = 0,  # Anki's cards.type (0=New, 1=Learn, 2=Review, 3=Relearn)
     **overrides,
 ) -> CardRecord:
     """Create a CardRecord with sensible defaults for sync tests."""
@@ -77,6 +78,7 @@ def make_card_record(
         queue=queue,
         reps=reps,
         lapses=lapses,
+        card_type=card_type,
         stability=stability,
         difficulty=difficulty,
         due_date=due_date,

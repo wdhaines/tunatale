@@ -114,6 +114,7 @@ class CardRecord:
     # FSRS stability/difficulty/due_date — sync_pull then preserves local FSRS
     # state instead of overwriting it with the placeholder values above.
     fsrs_known: bool = True
+    card_type: int = 0  # Anki's cards.type (0=New, 1=Learn, 2=Review, 3=Relearn)
 
 
 @dataclass
@@ -204,6 +205,7 @@ class OfflineReader:
                     queue=c.queue,
                     reps=c.reps,
                     lapses=c.lapses,
+                    card_type=c.card_type,
                     stability=c.fsrs_state.stability,
                     difficulty=c.fsrs_state.difficulty,
                     due_date=c.fsrs_state.due_date,
@@ -608,7 +610,8 @@ class AnkiSync:
                     elif card_rec.queue in (-2, -3):
                         new_state = SRSState.BURIED
                     elif card_rec.queue == 1:
-                        new_state = SRSState.LEARNING
+                        # Distinguish Learn (type=1) vs Relearn (type=3)
+                        new_state = SRSState.RELEARNING if card_rec.card_type == 3 else SRSState.LEARNING
                     elif card_rec.queue == 3:
                         new_state = SRSState.RELEARNING
                     elif card_rec.reps == 0:
@@ -673,7 +676,8 @@ class AnkiSync:
                     elif card_rec.queue in (-2, -3):
                         new_state = SRSState.BURIED
                     elif card_rec.queue == 1:
-                        new_state = SRSState.LEARNING
+                        # Distinguish Learn (type=1) vs Relearn (type=3)
+                        new_state = SRSState.RELEARNING if card_rec.card_type == 3 else SRSState.LEARNING
                     elif card_rec.queue == 3:
                         new_state = SRSState.RELEARNING
                     elif card_rec.reps == 0:
@@ -701,7 +705,8 @@ class AnkiSync:
                     elif card_rec.queue in (-2, -3):
                         new_state = SRSState.BURIED
                     elif card_rec.queue == 1:
-                        new_state = SRSState.LEARNING
+                        # Distinguish Learn (type=1) vs Relearn (type=3)
+                        new_state = SRSState.RELEARNING if card_rec.card_type == 3 else SRSState.LEARNING
                     elif card_rec.queue == 3:
                         new_state = SRSState.RELEARNING
                     elif card_rec.reps == 0:

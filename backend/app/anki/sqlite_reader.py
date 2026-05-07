@@ -31,6 +31,7 @@ class AnkiCard:
     queue: int
     reps: int
     lapses: int
+    card_type: int  # Anki's cards.type (0=New, 1=Learn, 2=Review, 3=Relearn)
     direction: Direction
     fsrs_state: DirectionState
 
@@ -113,14 +114,14 @@ def fetch_cards_for_notes(
     col_crt: int = int(col_row[0]) if col_row else 0
 
     placeholders = ",".join("?" * len(note_ids))
-    # Also select `left` column for learning step tracking
+    # Also select `left` and `type` columns for learning step tracking
     rows = conn.execute(
-        f"SELECT id, nid, did, ord, queue, reps, lapses, data, due, ivl, IFNULL(left, 0) FROM cards WHERE nid IN ({placeholders})",
+        f"SELECT id, nid, did, ord, queue, reps, lapses, data, due, ivl, IFNULL(left,0), type FROM cards WHERE nid IN ({placeholders})",
         note_ids,
     ).fetchall()
     cards = []
     for r in rows:
-        card_id, note_id, deck_id, ord_, queue, reps, lapses, data_str, due_raw, ivl, left_val = (
+        card_id, note_id, deck_id, ord_, queue, reps, lapses, data_str, due_raw, ivl, left_val, card_type = (
             r[0],
             r[1],
             r[2],
@@ -132,6 +133,7 @@ def fetch_cards_for_notes(
             r[8] or 0,
             r[9] or 0,
             r[10] or 0,
+            r[11] or 0,
         )
         fsrs = parse_fsrs_data(
             card_id=card_id,
@@ -145,6 +147,7 @@ def fetch_cards_for_notes(
             due_raw=due_raw,
             ivl=ivl,
             left=left_val,
+            card_type=card_type,
         )
         direction = Direction.RECOGNITION if ord_ == 0 else Direction.PRODUCTION
         cards.append(
@@ -156,6 +159,7 @@ def fetch_cards_for_notes(
                 queue=queue,
                 reps=reps,
                 lapses=lapses,
+                card_type=card_type,
                 direction=direction,
                 fsrs_state=fsrs,
             )
@@ -175,6 +179,7 @@ def parse_fsrs_data(
     due_raw: int = 0,
     ivl: int = 0,
     left: int = 0,
+    card_type: int = 0,
 ) -> DirectionState:
     """Parse FSRS state from cards.data JSON. Falls back to NEW on missing/malformed data."""
 
@@ -201,7 +206,9 @@ def parse_fsrs_data(
     elif queue in (-2, -3):
         state = SRSState.BURIED
     elif queue == 1:
-        state = SRSState.LEARNING
+        # Anki uses queue=1 for both Learn and Relearn; distinguish by card_type
+        # card_type=1 (Learn) -> LEARNING, card_type=3 (Relearn) -> RELEARNING
+        state = SRSState.RELEARNING if card_type == 3 else SRSState.LEARNING
     elif queue == 3:
         state = SRSState.RELEARNING
     elif reps == 0:

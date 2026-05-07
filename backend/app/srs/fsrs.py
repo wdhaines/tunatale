@@ -129,10 +129,9 @@ def _get_steps_for_state(state: SRSState) -> tuple[list[float], str]:
     from app.srs.queue_stats import resolve_learning_steps, resolve_relearning_steps
 
     if state == SRSState.RELEARNING:
-        steps, _ = resolve_relearning_steps()
+        return resolve_relearning_steps()
     else:
-        steps, _ = resolve_learning_steps()
-    return steps
+        return resolve_learning_steps()
 
 
 def schedule(
@@ -251,7 +250,7 @@ def _schedule_new(
     if rating == Rating.EASY:
         return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
 
-    steps = _get_steps_for_state(SRSState.LEARNING)
+    steps, _ = _get_steps_for_state(SRSState.LEARNING)
     if not steps:
         return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
 
@@ -314,7 +313,7 @@ def _schedule_review_again(
     new_stability = _next_stability_lapse(prev.difficulty, prev.stability, r, w)
     new_difficulty = _next_difficulty(prev.difficulty, rating, w)
 
-    steps = _get_steps_for_state(SRSState.RELEARNING)
+    steps, _ = _get_steps_for_state(SRSState.RELEARNING)
 
     if not steps:
         # Empty steps = graduate immediately (same as Anki)
@@ -364,7 +363,7 @@ def _schedule_with_steps(
     """Handle LEARNING/RELEARNING with step semantics."""
     from dataclasses import replace
 
-    steps = _get_steps_for_state(prev.state)
+    steps, _ = _get_steps_for_state(prev.state)
     steps_remaining, total_steps = _parse_left(prev.left)
 
     if not steps:
@@ -420,9 +419,14 @@ def _schedule_with_steps(
     elif rating == Rating.GOOD:
         # Advance to next step, or graduate if this was the last step
         current_step_index = total_steps - steps_remaining
-
         if current_step_index >= len(steps) - 1:
-            # On last step, graduate!
+            # On last step: graduate to REVIEW
+            # Anki's 0.5-day short-term rule only applies when relearn_steps is empty
+            # or fsrs_short_term_with_steps_enabled is true (relearning.rs:119-130):
+            #   ctx.fsrs_allow_short_term
+            #     && (ctx.fsrs_short_term_with_steps_enabled || ctx.relearn_steps.is_empty())
+            #     && interval < 0.5
+            # For non-empty relearn_steps (the common case), we graduate directly.
             return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
 
         # Move to next step
@@ -501,7 +505,7 @@ def _graduate_to_review(
         due_at=None,  # No longer need sub-day precision
         left=None,  # No longer in learning
         reps=prev.reps + 1,
-        lapses=prev.lapses + (1 if prev.state == SRSState.RELEARNING else 0),
+        # prev.lapses already reflects the post-lapse count from the prior REVIEW+AGAIN rating
         state=SRSState.REVIEW,
         last_review=last_review_dt,
         last_review_time_ms=time_ms,

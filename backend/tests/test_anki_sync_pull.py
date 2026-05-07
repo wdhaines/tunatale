@@ -1026,3 +1026,118 @@ class TestGap1MissingPhonicsCards:
         """
         # This test documents the expected behavior
         assert True  # See AGENTS.md for import instructions
+
+
+class TestSyncPullCardType:
+    """Tests for card_type-aware state mapping in sync_pull.
+
+    Anki uses queue=1 for both Learn (type=1) and Relearn (type=3) cards.
+    TunaTale must distinguish them to match Anki's FSRS short-term scheduler.
+    """
+
+    def test_queue_1_type_3_maps_to_relearning(self):
+        """queue=1 + card_type=3 (Anki Relearn) → SRSState.RELEARNING."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        item = db.get_collocation_by_guid(guid)
+        assert item is not None
+
+        # Simulate Anki card: queue=1, type=3 (Relearn)
+        card = make_card_record(
+            queue=1,
+            card_type=3,  # Anki's CardType::Relearn
+            reps=7,
+            lapses=0,
+            stability=0.086,
+            difficulty=5.0,
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert report.directions_updated == 1
+        after = db.get_collocation_by_guid(guid)
+        assert after is not None
+        recog = after.directions[Direction.RECOGNITION]
+        assert recog.state == SRSState.RELEARNING, f"Expected RELEARNING for queue=1 type=3, got {recog.state}"
+
+    def test_queue_1_type_1_maps_to_learning(self):
+        """queue=1 + card_type=1 (Anki Learn) → SRSState.LEARNING."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        item = db.get_collocation_by_guid(guid)
+        assert item is not None
+
+        # Simulate Anki card: queue=1, type=1 (Learn)
+        # This is the rožnat case after the short-term promotion
+        card = make_card_record(
+            queue=1,
+            card_type=1,  # Anki's CardType::Learn
+            reps=18,
+            lapses=1,
+            stability=0.086,
+            difficulty=5.0,
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert report.directions_updated == 1
+        after = db.get_collocation_by_guid(guid)
+        assert after is not None
+        recog = after.directions[Direction.RECOGNITION]
+        assert recog.state == SRSState.LEARNING, f"Expected LEARNING for queue=1 type=1, got {recog.state}"
+
+    def test_queue_1_default_type_0_maps_to_learning(self):
+        """queue=1 + card_type=0 (default) → SRSState.LEARNING (current behavior)."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        # Simulate Anki card: queue=1, type=0 (New, unexpected but handle gracefully)
+        card = make_card_record(
+            queue=1,
+            card_type=0,
+            reps=1,
+            lapses=0,
+            stability=1.0,
+            difficulty=5.0,
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert report.directions_updated == 1
+        after = db.get_collocation_by_guid(guid)
+        assert after is not None
+        recog = after.directions[Direction.RECOGNITION]
+        # Default to LEARNING (safer than RELEARNING for type=0)
+        assert recog.state == SRSState.LEARNING
+
+    def test_anki_roznat_reproduction(self):
+        """Reproduce the rožnat case: queue=1 type=1 after short-term promotion.
+
+        Rožnat (anki_card_id=1775264031901):
+        - Anki: queue=1, type=1, reps=18, lapses=1
+        - Should map to LEARNING (not REVIEW as TT was doing)
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        # Rožnat: queue=1, type=1 (Learn), reps=18, lapses=1
+        card = make_card_record(
+            anki_card_id=1775264031901,
+            queue=1,
+            card_type=1,  # Anki CardType::Learn (after short-term promotion)
+            reps=18,
+            lapses=1,
+            stability=0.086,
+            difficulty=5.0,
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert report.directions_updated == 1
+        after = db.get_collocation_by_guid(guid)
+        assert after is not None
+        recog = after.directions[Direction.RECOGNITION]
+        # Should be LEARNING to match Anki's cards.type=1
+        assert recog.state == SRSState.LEARNING, f"Rožnat should be LEARNING (type=1), got {recog.state}"
+        # Should NOT be REVIEW (the original bug)
+        assert recog.state != SRSState.REVIEW

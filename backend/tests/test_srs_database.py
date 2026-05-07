@@ -873,13 +873,11 @@ class TestQueueStatHelpers:
     )
     def test_count_learning_due_includes_relearning(self, collocations, due_offset, expected_learning):
         db = SRSDatabase(":memory:")
-        from datetime import datetime
-
-        now = datetime.now(tz=UTC)
         for text, rec_state, prod_state in collocations:
             self._seed(db, text, rec_state, prod_state, due_offset_days=due_offset)
-        # For learning cards with due_date = today, due_at is None (legacy) so they count
-        assert db.count_learning_due(now) == expected_learning
+        # _seed uses date.today() (local TZ); count_learning_due must compare in the same TZ,
+        # otherwise a datetime around midnight UTC string-compares against the date column wrong.
+        assert db.count_learning_due(date.today()) == expected_learning
 
     def test_count_learning_due_includes_pending_step(self):
         """Learning cards with future due_at are still counted (Anki deck-browser semantics).

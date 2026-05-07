@@ -611,7 +611,7 @@ class TestLeftAndDueAtFromCards:
     def _make_db(self, tmp_path, cards_rows):
         """Create a minimal Anki DB with given cards rows.
 
-        cards_rows: list of (id, nid, did, ord, queue, reps, lapses, data, due, ivl, left)
+        cards_rows: list of (id, nid, did, ord, queue, reps, lapses, data, due, ivl, left, type)
         """
         path = tmp_path / "collection.anki2"
         conn = sqlite3.connect(str(path))
@@ -629,11 +629,12 @@ class TestLeftAndDueAtFromCards:
                 data TEXT,
                 due INTEGER,
                 ivl INTEGER,
-                left INTEGER
+                left INTEGER,
+                type INTEGER
             )"""
         )
         conn.executemany(
-            "INSERT INTO cards (id, nid, did, ord, queue, reps, lapses, data, due, ivl, left) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO cards (id, nid, did, ord, queue, reps, lapses, data, due, ivl, left, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             cards_rows,
         )
         conn.commit()
@@ -647,7 +648,7 @@ class TestLeftAndDueAtFromCards:
         due_ts = int(datetime.datetime(2024, 1, 1, 10, 0, 0, tzinfo=datetime.UTC).timestamp())
         db_path = self._make_db(
             tmp_path,
-            [(1, 1001, 12345, 0, 1, 1, 0, '{"s": 5.0, "d": 5.0}', due_ts, 0, 2002)],
+            [(1, 1001, 12345, 0, 1, 1, 0, '{"s": 5.0, "d": 5.0}', due_ts, 0, 2002, 0)],
         )
         conn = sqlite3.connect(db_path)
         cards = fetch_cards_for_notes(conn, [1001])
@@ -668,7 +669,7 @@ class TestLeftAndDueAtFromCards:
         # due=5 means 2024-01-06
         db_path = self._make_db(
             tmp_path,
-            [(2, 1002, 12345, 0, 3, 5, 1, '{"s": 3.0, "d": 6.0}', 5, 2, 1001)],
+            [(2, 1002, 12345, 0, 3, 5, 1, '{"s": 3.0, "d": 6.0}', 5, 2, 1001, 0)],
         )
         conn = sqlite3.connect(db_path)
         cards = fetch_cards_for_notes(conn, [1002])
@@ -687,7 +688,7 @@ class TestLeftAndDueAtFromCards:
         """queue=0 (new): left may be present but due_at is None (not a learning card)."""
         db_path = self._make_db(
             tmp_path,
-            [(3, 1003, 12345, 0, 0, 0, 0, "", 0, 0, 0)],
+            [(3, 1003, 12345, 0, 0, 0, 0, "", 0, 0, 0, 0)],
         )
         conn = sqlite3.connect(db_path)
         cards = fetch_cards_for_notes(conn, [1003])
@@ -701,7 +702,7 @@ class TestLeftAndDueAtFromCards:
         """queue=2 (review): left ignored, due_at is None (not sub-day learning)."""
         db_path = self._make_db(
             tmp_path,
-            [(4, 1004, 12345, 0, 2, 10, 1, '{"s": 100.0, "d": 3.0}', 50, 50, 0)],
+            [(4, 1004, 12345, 0, 2, 10, 1, '{"s": 100.0, "d": 3.0}', 50, 50, 0, 0)],
         )
         conn = sqlite3.connect(db_path)
         cards = fetch_cards_for_notes(conn, [1004])

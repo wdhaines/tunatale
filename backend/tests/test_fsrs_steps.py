@@ -153,14 +153,14 @@ class TestLearningStepSemantics:
         assert new_dir.state == SRSState.REVIEW
 
     def test_graduate_from_relearning_uses_next_stability_lapse(self, monkeypatch):
-        """RELEARNING → REVIEW via _graduate_to_review hits lines 471-472."""
+        """RELEARNING + GOOD (last step) → REVIEW, FSRS stability_lapse applied."""
         monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([1.0], "default"))
         # Start in RELEARNING with 1 step, rate GOOD to graduate
         item = _make_item(state=SRSState.RELEARNING, left=1001)
         result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
         new_dir = result.directions[Direction.RECOGNITION]
         assert new_dir.state == SRSState.REVIEW
-        assert new_dir.stability > 0  # Confirms lines 471-472 were hit
+        assert new_dir.stability > 0  # Confirms FSRS next_stability_lapse was applied
 
     def test_new_hard_goes_to_learning_step_0(self):
         """NEW + HARD → LEARNING state at step 0."""
