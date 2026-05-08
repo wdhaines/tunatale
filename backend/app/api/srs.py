@@ -743,6 +743,31 @@ async def get_review_queue(request: Request) -> dict:
     learning_collocation_ids = {t[0] for t in learning_cards}
     nonlearning_new = [t for t in new_combined if t[0] not in learning_collocation_ids]
 
+    # Anki-parity proactive sibling bury (rslib/.../queue/builder/gathering.rs).
+    # As Anki gathers cards in priority order — intraday learning, then due
+    # reviews (retrievability-asc), then new — it tracks the note id of every
+    # card it adds. A later card whose note is already in the queue gets buried
+    # if the relevant flag is on. We mirror it on collocation_id (TT's note
+    # equivalent). Distinct from `buried = list_collocations_reviewed_today` and
+    # `count_anki_review_remaining_today`'s SQL `COUNT(DISTINCT nid)` — those
+    # answer different questions (past actions / count badge) at different layers.
+    seen_collocation_ids: set[int] = set(learning_collocation_ids)
+
+    def _bury_siblings_in_queue(
+        cards: list[tuple[int, SRSItem, str, Direction]],
+        bury_when_seen: bool,
+    ) -> list[tuple[int, SRSItem, str, Direction]]:
+        survivors: list[tuple[int, SRSItem, str, Direction]] = []
+        for t in cards:
+            if t[0] in seen_collocation_ids and bury_when_seen:
+                continue
+            seen_collocation_ids.add(t[0])
+            survivors.append(t)
+        return survivors
+
+    nonlearning_due = _bury_siblings_in_queue(nonlearning_due, bury_review)
+    nonlearning_new = _bury_siblings_in_queue(nonlearning_new, bury_new)
+
     # Sort learning cards by TT's `due_at` (authoritative after a fresh grade,
     # before sync has refreshed Anki's `anki_due`). Fall back to anki_due, then
     # stability, then anki_card_id, then row id for stable order.

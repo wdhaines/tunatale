@@ -475,6 +475,120 @@ class TestReviewQueue:
         # Verify the endpoint works with spread=2
         assert isinstance(queue, list)
 
+    async def test_proactive_sibling_bury_drops_lower_priority_review(self, api_app_state):
+        """Two due-review siblings: the lower-priority one is buried, matching
+        Anki's gather_cards proactive sibling bury (rslib/.../gathering.rs).
+        """
+        from datetime import date
+
+        from app.models.srs_item import DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        # Both directions in REVIEW state, both due today, but recognition is
+        # the more urgent (lower stability → lower retrievability).
+        unit = SyntacticUnit(text="oblačilo", translation="garment", word_count=1, difficulty=1, source="t")
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="oblačilo", limit=1)
+        row_id, _, _ = rows[0]
+        db.update_direction_by_id(
+            row_id,
+            Direction.RECOGNITION,
+            DirectionState(direction=Direction.RECOGNITION, due_date=today, state=SRSState.REVIEW, stability=0.05),
+        )
+        db.update_direction_by_id(
+            row_id,
+            Direction.PRODUCTION,
+            DirectionState(direction=Direction.PRODUCTION, due_date=today, state=SRSState.REVIEW, stability=10.0),
+        )
+        db.set_anki_state_cache("bury_review", "True")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+        # Only one direction of oblačilo should be present.
+        oblacilo = [q for q in queue if q["text"] == "oblačilo"]
+        assert len(oblacilo) == 1
+        # The more urgent (recognition) survives; production sibling is buried.
+        assert oblacilo[0]["direction"] == "recognition"
+
+    async def test_proactive_sibling_bury_drops_new_when_review_sibling_present(self, api_app_state):
+        """A review's sibling new card is buried under bury_new=true.
+
+        Mirrors Anki: bury_new=true buries new cards whose note already has a
+        higher-priority card in the queue. govedina-like case.
+        """
+        from datetime import date
+
+        from app.models.srs_item import DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        unit = SyntacticUnit(text="govedina_t", translation="beef", word_count=1, difficulty=1, source="t")
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="govedina_t", limit=1)
+        row_id, _, _ = rows[0]
+        # Recognition is REVIEW (in queue today); production is NEW (would be
+        # in the new pool but should be buried as a sibling).
+        db.update_direction_by_id(
+            row_id,
+            Direction.RECOGNITION,
+            DirectionState(direction=Direction.RECOGNITION, due_date=today, state=SRSState.REVIEW, stability=0.025),
+        )
+        db.update_direction_by_id(
+            row_id,
+            Direction.PRODUCTION,
+            DirectionState(direction=Direction.PRODUCTION, due_date=today, state=SRSState.NEW),
+        )
+        db.set_anki_state_cache("bury_new", "True")
+        db.set_anki_state_cache("bury_review", "True")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+        govedina = [q for q in queue if q["text"] == "govedina_t"]
+        assert len(govedina) == 1
+        assert govedina[0]["direction"] == "recognition"
+        assert govedina[0]["state"] == "review"
+
+    async def test_proactive_sibling_bury_disabled_keeps_dup_review(self, api_app_state):
+        """With bury_review=false, both review siblings stay in the queue."""
+        from datetime import date
+
+        from app.models.srs_item import DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        unit = SyntacticUnit(text="majica_t", translation="shirt", word_count=1, difficulty=1, source="t")
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="majica_t", limit=1)
+        row_id, _, _ = rows[0]
+        db.update_direction_by_id(
+            row_id,
+            Direction.RECOGNITION,
+            DirectionState(direction=Direction.RECOGNITION, due_date=today, state=SRSState.REVIEW, stability=0.1),
+        )
+        db.update_direction_by_id(
+            row_id,
+            Direction.PRODUCTION,
+            DirectionState(direction=Direction.PRODUCTION, due_date=today, state=SRSState.REVIEW, stability=0.2),
+        )
+        db.set_anki_state_cache("bury_review", "False")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+        majica = [q for q in queue if q["text"] == "majica_t"]
+        assert len(majica) == 2
+        directions = {q["direction"] for q in majica}
+        assert directions == {"recognition", "production"}
+
     async def test_review_queue_does_not_duplicate_relearning_cards(self, api_app_state):
         """Relearning cards must appear exactly once in the queue (not in both learning and nonlearning)."""
         from datetime import UTC, date, datetime
@@ -751,7 +865,7 @@ class TestReviewQueue:
         from datetime import date
 
         from app.api.srs import _merge_by_retrievability_ascending
-        from app.models.srs_item import DirectionState, SRSItem, SRSState
+        from app.models.srs_item import DirectionState, SRSState
         from app.models.syntactic_unit import SyntacticUnit
 
         today = date.today()
