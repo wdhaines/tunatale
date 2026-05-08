@@ -821,9 +821,9 @@ class TestSRSEndpoints:
         assert response.status_code == 200
         assert db.count_collocations() == 1
 
-    async def test_listen_skips_rating_when_lemma_collides_without_lemma_field(self):
-        """If a pre-existing row has the same text as a lemma but lemma=NULL,
-        get_collocation_by_lemma returns None → if item is not None: False branch (124->113)."""
+    async def test_listen_lemma_auto_filled_on_single_word_collocation(self):
+        """Single-word collocations now auto-fill lemma = casefolded text,
+        so get_collocation_by_lemma finds the pre-existing row and no duplicate is created."""
         from app.models.syntactic_unit import SyntacticUnit
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
@@ -841,7 +841,7 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
-        # Pre-insert with text="banka" but lemma=None (lemma column stays NULL)
+        # Pre-insert with text="banka" — lemma is auto-filled by add_collocation
         db.add_collocation(SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus"))
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
@@ -852,9 +852,9 @@ class TestSRSEndpoints:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
         assert response.status_code == 200
-        # Row still exists but was not rated (INSERT OR IGNORE left lemma=NULL)
         assert db.count_collocations() == 1
-        assert db.get_collocation_by_lemma("banka") is None
+        # Lemma was auto-filled, so the pre-existing row is found
+        assert db.get_collocation_by_lemma("banka") is not None
 
 
 class TestQueueStatsEndpoint:

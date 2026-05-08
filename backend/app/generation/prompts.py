@@ -121,9 +121,12 @@ Respond with ONLY a JSON object matching this schema (no markdown fences, no pre
   ]
 }}
 
-The "dialogue_glosses" array must contain one entry per unique word that appears in the dialogue
-lines, giving its lowercase base form (lemma) and a concise English translation. This enables
-word-level hover translations in the learning UI.
+The "dialogue_glosses" array MUST contain an entry for EVERY unique word that appears
+in the dialogue lines — including articles, prepositions, pronouns, auxiliary verbs,
+proper names, interjections, and all other words. If a word appears in any dialogue line
+in any scene, it must have a gloss entry. No exceptions. Give each word's lowercase base
+form (lemma) and a concise English translation. This enables word-level hover translations
+in the learning UI.
 
 **SCENE HEADER FORMAT**
 - All scene labels must be in English, describing location/time/situation

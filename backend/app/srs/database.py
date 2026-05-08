@@ -238,7 +238,11 @@ class SRSDatabase:
         """Insert a new collocation; if it already exists, backfill an empty translation.
 
         New rows get both recognition and production direction rows (defaults).
+        Single-word units without an explicit lemma get lemma = casefolded text
+        so that get_collocation_by_lemma_with_id lookups succeed.
         """
+        if unit.lemma is None and unit.word_count == 1:
+            unit.lemma = unit.text.casefold()
         disambig = unit.disambig_key
         guid = compute_guid(unit.text, language_code, disambig)
         today = date.today().isoformat()
@@ -250,7 +254,7 @@ class SRSDatabase:
                      source, corpus_frequency, lemma, guid, disambig_key, grammar, note,
                      source_sentence, source_lesson_id, source_line_index)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(text, disambig_key) DO UPDATE SET
+                ON CONFLICT(guid) DO UPDATE SET
                     translation = CASE
                         WHEN excluded.translation != '' AND collocations.translation = ''
                         THEN excluded.translation
@@ -276,8 +280,8 @@ class SRSDatabase:
                 ),
             )
             row = conn.execute(
-                "SELECT id FROM collocations WHERE text = ? AND disambig_key = ?",
-                (unit.text, disambig),
+                "SELECT id FROM collocations WHERE guid = ?",
+                (guid,),
             ).fetchone()
             coll_id = row["id"]
             for direction in (Direction.RECOGNITION, Direction.PRODUCTION):

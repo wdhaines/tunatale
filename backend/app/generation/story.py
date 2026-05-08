@@ -17,8 +17,42 @@ from app.models.curriculum import CurriculumDay
 from app.models.language import Language
 from app.models.lesson import KeyPhraseInfo, Lesson
 from app.models.strategy import ContentStrategy
+from app.srs.lemmatizer import LowercaseLemmatizer
+from app.srs.tokenizer import tokenize
 
 logger = logging.getLogger(__name__)
+
+_FILL_SYSTEM = "You are a concise translation assistant. Return ONLY valid JSON."
+_FILL_PROMPT_TEMPLATE = """\
+Translate these {language_name} words to concise English.
+Return a JSON object mapping each word to its translation: {{"word": "translation", ...}}
+
+Words to translate:
+{word_list}"""
+
+
+def _extract_all_lemmas(data: dict, language: Language) -> set[str]:
+    """Extract all unique lemmas from all scene dialogue lines.
+
+    Uses the same lemmatizer pipeline as extract_transcript so the keyspace
+    stays in sync when a real lemmatizer (e.g. stanza) replaces the default.
+    """
+    lemmatizer = LowercaseLemmatizer()
+    lemmas: set[str] = set()
+    for scene in data.get("scenes", []):
+        for line in scene.get("lines", []):
+            for surface in tokenize(line.get("text", "")):
+                lemmas.add(lemmatizer.lemmatize(surface, language.code))
+    return lemmas
+
+
+def _strip_fences(raw: str) -> str:
+    """Strip markdown code fences from an LLM response."""
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*\n?", "", raw)
+        raw = re.sub(r"\n?```\s*$", "", raw)
+        raw = raw.strip()
+    return raw
 
 
 class StoryGenerationError(Exception):
@@ -67,16 +101,35 @@ class StoryGenerator:
 
         logger.info("Generating story for day %d (%s)", curriculum_day.day, strategy.value)
         raw = await self._llm.complete(user_prompt, system_prompt=system_prompt, temperature=0.7, max_tokens=4096)
-        return self._parse_response(raw, language=language)
+        data = self._parse_json(raw)
+        lesson = self._parse_response(data, language=language)
 
-    def _parse_response(self, raw: str, language: Language) -> Lesson:
-        # Strip markdown code fences (model sometimes wraps JSON in ```json...```)
-        if raw.startswith("```"):
-            raw = re.sub(r"^```(?:json)?\s*\n?", "", raw)
-            raw = re.sub(r"\n?```\s*$", "", raw)
-            raw = raw.strip()
+        # Auto-fill any dialogue glosses missing from the LLM response
         try:
-            data = json.loads(raw)
+            all_lemmas = _extract_all_lemmas(data, language)
+            token_glosses = lesson.generation_metadata.get("token_glosses", {})
+            missing = all_lemmas - set(token_glosses.keys())
+            if missing:
+                logger.info("Filling %d missing dialogue glosses: %s", len(missing), sorted(missing))
+                word_list = "\n".join(f"- {w}" for w in sorted(missing))
+                prompt = _FILL_PROMPT_TEMPLATE.format(language_name=language.name, word_list=word_list)
+                fill_raw = await self._llm.complete(prompt, system_prompt=_FILL_SYSTEM, temperature=0.1, max_tokens=2048)
+                fill_raw = _strip_fences(fill_raw)
+                fill_glosses = json.loads(fill_raw.strip())
+                filled = {k: v for k, v in fill_glosses.items() if k in missing and v}
+                token_glosses.update(filled)
+                lesson.generation_metadata["token_glosses"] = token_glosses
+                logger.info("Filled %d/%d missing glosses", len(filled), len(missing))
+        except Exception as exc:
+            logger.warning("Failed to fill missing dialogue glosses: %s", exc)
+
+        return lesson
+
+    @staticmethod
+    def _parse_json(raw: str) -> dict:
+        raw = _strip_fences(raw)
+        try:
+            return json.loads(raw)
         except json.JSONDecodeError as e:
             logger.error(
                 "LLM returned unparseable response (len=%d): %r",
@@ -85,6 +138,7 @@ class StoryGenerator:
             )
             raise StoryGenerationError(f"LLM returned invalid JSON: {e}") from e
 
+    def _parse_response(self, data: dict, language: Language) -> Lesson:
         key_phrases = data.get("key_phrases", [])
         scenes = data.get("scenes", [])
         title = data.get("title", "Lesson")

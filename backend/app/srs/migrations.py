@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 14
+CURRENT_VERSION = 15
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -467,6 +467,20 @@ def migrate_v12_to_v13(conn: sqlite3.Connection) -> None:
     _set_version(conn, 13)
 
 
+def migrate_v14_to_v15(conn: sqlite3.Connection) -> None:
+    """Fill lemma for single-word rows that lack it.
+
+    Existing rows imported before lemma was tracked have lemma=NULL, which
+    breaks get_collocation_by_lemma_with_id lookups in transcript extraction.
+    The casefold() normalization matches compute_guid() and add_collocation().
+    """
+    conn.execute(
+        "UPDATE collocations SET lemma = CASE WHEN word_count = 1 THEN LOWER(text) ELSE lemma END "
+        "WHERE lemma IS NULL",
+    )
+    _set_version(conn, 15)
+
+
 def migrate_v13_to_v14(conn: sqlite3.Connection) -> None:
     """Add `anki_card_mod` to collocation_directions.
 
@@ -495,6 +509,7 @@ _MIGRATIONS = {
     11: migrate_v11_to_v12,
     12: migrate_v12_to_v13,
     13: migrate_v13_to_v14,
+    14: migrate_v14_to_v15,
 }
 
 

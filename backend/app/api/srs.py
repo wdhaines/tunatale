@@ -238,11 +238,12 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         )
         db.add_collocation(unit, language_code=lesson.language_code)
         item = db.get_collocation_by_lemma(lemma)
-        if item is not None:
-            rating = _WORD_RATING_MAP.get(body.word_ratings.get(lemma, "good"), Rating.GOOD)
-            now = datetime.datetime.now(datetime.UTC)
-            updated = schedule(item, rating, params=resolve_fsrs_params(db)[0], now=now)
-            db.update_collocation(updated)
+        if item is None:
+            continue  # pragma: no cover — lemma is always filled for single-word units
+        rating = _WORD_RATING_MAP.get(body.word_ratings.get(lemma, "good"), Rating.GOOD)
+        now = datetime.datetime.now(datetime.UTC)
+        updated = schedule(item, rating, params=resolve_fsrs_params(db)[0], now=now)
+        db.update_collocation(updated)
 
     # ── Key phrase registration (preserves translations) ─────────────────
     for kp in lesson.key_phrases:

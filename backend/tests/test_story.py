@@ -22,6 +22,11 @@ def _make_curriculum_day() -> CurriculumDay:
     )
 
 
+def _mock_fill_response() -> str:
+    """Response for the auto-fill LLM call: maps missing lemmas to translations."""
+    return json.dumps({"dober": "good", "dan": "day", "prosim": "please", "kavo": "coffee"})
+
+
 def _mock_story_response(include_glosses: bool = False) -> str:
     data = {
         "title": "Ordering Coffee",
@@ -52,7 +57,7 @@ def _mock_story_response(include_glosses: bool = False) -> str:
 @pytest.fixture
 def mock_llm():
     client = MagicMock()
-    client.complete = AsyncMock(return_value=_mock_story_response())
+    client.complete = AsyncMock(side_effect=[_mock_story_response(), _mock_fill_response()])
     return client
 
 
@@ -126,7 +131,7 @@ class TestStoryGeneration:
     async def test_generate_uses_system_prompt(self, generator, language, mock_llm):
         day = _make_curriculum_day()
         await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
-        call_kwargs = mock_llm.complete.call_args
+        call_kwargs = mock_llm.complete.call_args_list[0]
         assert call_kwargs.kwargs.get("system_prompt") is not None or (
             len(call_kwargs.args) > 1 and call_kwargs.args[1] is not None
         )
@@ -150,60 +155,129 @@ class TestStoryGeneration:
         assert glosses.get("dober") == "good"
         assert glosses.get("dan") == "day"
 
-    async def test_dialogue_glosses_absent_gives_empty_dict(self, language):
-        # Response without dialogue_glosses should still produce valid lesson
+    async def test_dialogue_glosses_absent_auto_fills(self, language):
+        # Response without dialogue_glosses should auto-fill via a follow-up LLM call
         client = MagicMock()
-        client.complete = AsyncMock(return_value=_mock_story_response(include_glosses=False))
+        client.complete = AsyncMock(side_effect=[
+            _mock_story_response(include_glosses=False),
+            _mock_fill_response(),
+        ])
         gen = StoryGenerator(llm_client=client)
         day = _make_curriculum_day()
         lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
         glosses = lesson.generation_metadata.get("token_glosses", {})
+        assert glosses != {}
+        assert glosses.get("dober") == "good"
+        assert glosses.get("kavo") == "coffee"
+        # Should have been called twice: once for story, once for fill
+        assert client.complete.call_count == 2
+
+    async def test_dialogue_glosses_fill_stray_keys_filtered(self, language):
+        # LLM fill response containing extra keys should be filtered to only missing lemmas
+        client = MagicMock()
+        client.complete = AsyncMock(side_effect=[
+            _mock_story_response(include_glosses=False),
+            json.dumps({"dober": "good", "dan": "day", "EXTRA": "nope", "": "blank"}),
+        ])
+        gen = StoryGenerator(llm_client=client)
+        day = _make_curriculum_day()
+        lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        glosses = lesson.generation_metadata.get("token_glosses", {})
+        assert glosses.get("dober") == "good"
+        assert glosses.get("dan") == "day"
+        assert "EXTRA" not in glosses
+        assert "" not in glosses
+
+    async def test_dialogue_glosses_auto_fill_error_does_not_crash(self, language):
+        # If the auto-fill LLM call fails (bad JSON, etc.), the lesson is still returned
+        client = MagicMock()
+        client.complete = AsyncMock(side_effect=[
+            _mock_story_response(include_glosses=False),
+            "not valid json",
+        ])
+        gen = StoryGenerator(llm_client=client)
+        day = _make_curriculum_day()
+        lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        assert isinstance(lesson, Lesson)
+        # Glosses should remain empty (the fill failed)
+        glosses = lesson.generation_metadata.get("token_glosses", {})
         assert glosses == {}
 
-    async def test_parse_response_strips_markdown_fences(self, language):
+    async def test_dialogue_glosses_partial_coverage_auto_fills_only_missing(self, language):
+        # When only some lemmas have glosses, auto-fill fetches only the missing ones
+        client = MagicMock()
+        # Story response: glosses for "dober" and "dan" but NOT "prosim" or "kavo"
+        story = json.loads(_mock_story_response(include_glosses=True))
+        story["dialogue_glosses"] = [
+            {"lemma": "dober", "translation": "good"},
+            {"lemma": "dan", "translation": "day"},
+        ]
+        client.complete = AsyncMock(side_effect=[
+            json.dumps(story),
+            json.dumps({"prosim": "please", "kavo": "coffee"}),
+        ])
+        gen = StoryGenerator(llm_client=client)
+        day = _make_curriculum_day()
+        lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        glosses = lesson.generation_metadata.get("token_glosses", {})
+        assert glosses.get("dober") == "good"
+        assert glosses.get("dan") == "day"
+        assert glosses.get("prosim") == "please"
+        assert glosses.get("kavo") == "coffee"
+        assert client.complete.call_count == 2
+
+    async def test_dialogue_glosses_present_skips_fill(self, language):
+        # When glosses already cover all lemmas, no auto-fill call is made
+        client = MagicMock()
+        client.complete = AsyncMock(return_value=_mock_story_response(include_glosses=True))
+        gen = StoryGenerator(llm_client=client)
+        day = _make_curriculum_day()
+        lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        glosses = lesson.generation_metadata.get("token_glosses", {})
+        assert glosses.get("dober") == "good"
+        assert glosses.get("kavo") == "coffee"
+        assert client.complete.call_count == 1  # only one LLM call
+
+    async def test_parse_json_strips_markdown_fences(self, language):
         """Model sometimes wraps JSON in ```json...``` fences — parser should handle it."""
-        from app.generation.story import StoryGenerationError  # noqa: F401
-
-        generator = StoryGenerator(llm_client=MagicMock())
         fenced = f"```json\n{_mock_story_response()}\n```"
-        lesson = generator._parse_response(fenced, language=language)
-        assert lesson.title == "Ordering Coffee"
+        data = StoryGenerator._parse_json(fenced)
+        assert data["title"] == "Ordering Coffee"
 
-    async def test_parse_response_strips_bare_fences(self, language):
+    async def test_parse_json_strips_bare_fences(self, language):
         """Model sometimes uses ``` without a language tag."""
-        generator = StoryGenerator(llm_client=MagicMock())
         fenced = f"```\n{_mock_story_response()}\n```"
-        lesson = generator._parse_response(fenced, language=language)
-        assert lesson.title == "Ordering Coffee"
+        data = StoryGenerator._parse_json(fenced)
+        assert data["title"] == "Ordering Coffee"
 
-    async def test_parse_response_raises_when_key_phrases_and_scenes_both_empty(self, language):
+    async def test_parse_response_validates_key_phrases_and_scenes(self, language):
         import json
 
         from app.generation.story import StoryGenerationError
 
         generator = StoryGenerator(llm_client=MagicMock())
-        raw = json.dumps({"title": "Empty", "key_phrases": [], "scenes": []})
+        data = {"title": "Empty", "key_phrases": [], "scenes": []}
         with pytest.raises(StoryGenerationError, match="missing"):
-            generator._parse_response(raw, language=language)
+            generator._parse_response(data, language=language)
 
     async def test_generate_passes_cefr_level_in_user_prompt(self, generator, language, mock_llm):
         day = _make_curriculum_day()
         await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, cefr_level="B1")
-        call_kwargs = mock_llm.complete.call_args
+        call_kwargs = mock_llm.complete.call_args_list[0]
         user_prompt = call_kwargs.args[0] if call_kwargs.args else call_kwargs.kwargs.get("prompt", "")
         assert "B1" in user_prompt
 
     async def test_generate_default_cefr_level_is_a2(self, generator, language, mock_llm):
         day = _make_curriculum_day()
         await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
-        call_kwargs = mock_llm.complete.call_args
+        call_kwargs = mock_llm.complete.call_args_list[0]
         user_prompt = call_kwargs.args[0] if call_kwargs.args else call_kwargs.kwargs.get("prompt", "")
         assert "A2" in user_prompt
 
     async def test_generate_system_prompt_contains_slovene_style_notes(self, generator, language, mock_llm):
         day = _make_curriculum_day()
         await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
-        call_kwargs = mock_llm.complete.call_args
+        call_kwargs = mock_llm.complete.call_args_list[0]
         system_prompt = call_kwargs.kwargs.get("system_prompt", "")
         # Style notes for Slovene must include the izvinite/oprostite guardrail
         assert "oprostite" in system_prompt.lower()

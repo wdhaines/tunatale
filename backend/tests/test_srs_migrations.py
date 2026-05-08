@@ -73,7 +73,34 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 14
+        assert CURRENT_VERSION == 15
+
+    def test_migrates_v14_to_v15_fills_null_lemma(self, tmp_path):
+        """v15 fills lemma for single-word rows that have lemma=NULL."""
+        import sqlite3
+
+        from app.srs.migrations import _set_version, migrate_v14_to_v15
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE collocations ("
+            "id INTEGER PRIMARY KEY, text TEXT, word_count INTEGER, lemma TEXT)"
+        )
+        conn.execute("INSERT INTO collocations (text, word_count, lemma) VALUES ('banka', 1, NULL)")
+        conn.execute("INSERT INTO collocations (text, word_count, lemma) VALUES ('dober dan', 2, NULL)")
+        _set_version(conn, 14)
+
+        migrate_v14_to_v15(conn)
+
+        rows = {r["text"]: r["lemma"] for r in conn.execute("SELECT text, lemma FROM collocations").fetchall()}
+        assert rows["banka"] == "banka"  # single-word: filled
+        assert rows["dober dan"] is None  # multi-word: left as NULL
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 15
+
+        # Idempotent
+        migrate_v14_to_v15(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 15
 
     def test_migrates_v13_to_v14_adds_anki_card_mod(self, tmp_path):
         """v14 adds anki_card_mod to mirror Anki's cards.mod for fnvhash tiebreak."""
