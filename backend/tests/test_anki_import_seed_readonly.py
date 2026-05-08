@@ -109,6 +109,30 @@ class TestNoAnkiMutation:
         assert len(backups) == 1
 
 
+class TestLemmaPopulation:
+    """Step 1 fix: Anki-imported single-word cards get lemma = lowercased text."""
+
+    def test_single_word_card_gets_lemma_on_import(self, tmp_path):
+        """Importing a single-word Anki note populates lemma for that card."""
+        import sqlite3 as sq3
+
+        from app.srs.database import SRSDatabase
+        from tests.conftest import build_minimal_anki_db
+
+        db_path = build_minimal_anki_db(tmp_path)
+        # Change note 1001 to "zdravo" so we can assert get_collocation_by_lemma
+        conn = sq3.connect(str(db_path))
+        conn.execute("UPDATE notes SET flds = ?, sfld = ? WHERE id = 1001", ("zdravo\x1fhello", "zdravo"))
+        conn.commit()
+        conn.close()
+
+        _run(db_path, tmp_path)
+        db = SRSDatabase(str(tmp_path / "tunatale.db"))
+        item = db.get_collocation_by_lemma("zdravo")
+        assert item is not None
+        assert item.syntactic_unit.text == "zdravo"
+
+
 class TestDryRun:
     def test_dry_run_rolls_back_tunatale_writes(self, fake_anki_db, tmp_path):
         _run(fake_anki_db, tmp_path, dry_run=True)

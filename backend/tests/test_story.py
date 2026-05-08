@@ -158,10 +158,12 @@ class TestStoryGeneration:
     async def test_dialogue_glosses_absent_auto_fills(self, language):
         # Response without dialogue_glosses should auto-fill via a follow-up LLM call
         client = MagicMock()
-        client.complete = AsyncMock(side_effect=[
-            _mock_story_response(include_glosses=False),
-            _mock_fill_response(),
-        ])
+        client.complete = AsyncMock(
+            side_effect=[
+                _mock_story_response(include_glosses=False),
+                _mock_fill_response(),
+            ]
+        )
         gen = StoryGenerator(llm_client=client)
         day = _make_curriculum_day()
         lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
@@ -175,10 +177,12 @@ class TestStoryGeneration:
     async def test_dialogue_glosses_fill_stray_keys_filtered(self, language):
         # LLM fill response containing extra keys should be filtered to only missing lemmas
         client = MagicMock()
-        client.complete = AsyncMock(side_effect=[
-            _mock_story_response(include_glosses=False),
-            json.dumps({"dober": "good", "dan": "day", "EXTRA": "nope", "": "blank"}),
-        ])
+        client.complete = AsyncMock(
+            side_effect=[
+                _mock_story_response(include_glosses=False),
+                json.dumps({"dober": "good", "dan": "day", "EXTRA": "nope", "": "blank"}),
+            ]
+        )
         gen = StoryGenerator(llm_client=client)
         day = _make_curriculum_day()
         lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
@@ -191,10 +195,12 @@ class TestStoryGeneration:
     async def test_dialogue_glosses_auto_fill_error_does_not_crash(self, language):
         # If the auto-fill LLM call fails (bad JSON, etc.), the lesson is still returned
         client = MagicMock()
-        client.complete = AsyncMock(side_effect=[
-            _mock_story_response(include_glosses=False),
-            "not valid json",
-        ])
+        client.complete = AsyncMock(
+            side_effect=[
+                _mock_story_response(include_glosses=False),
+                "not valid json",
+            ]
+        )
         gen = StoryGenerator(llm_client=client)
         day = _make_curriculum_day()
         lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
@@ -212,10 +218,12 @@ class TestStoryGeneration:
             {"lemma": "dober", "translation": "good"},
             {"lemma": "dan", "translation": "day"},
         ]
-        client.complete = AsyncMock(side_effect=[
-            json.dumps(story),
-            json.dumps({"prosim": "please", "kavo": "coffee"}),
-        ])
+        client.complete = AsyncMock(
+            side_effect=[
+                json.dumps(story),
+                json.dumps({"prosim": "please", "kavo": "coffee"}),
+            ]
+        )
         gen = StoryGenerator(llm_client=client)
         day = _make_curriculum_day()
         lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
@@ -251,8 +259,6 @@ class TestStoryGeneration:
         assert data["title"] == "Ordering Coffee"
 
     async def test_parse_response_validates_key_phrases_and_scenes(self, language):
-        import json
-
         from app.generation.story import StoryGenerationError
 
         generator = StoryGenerator(llm_client=MagicMock())

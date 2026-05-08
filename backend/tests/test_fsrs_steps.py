@@ -273,3 +273,56 @@ class TestLearningStepSemantics:
         assert new_dir.state == SRSState.RELEARNING
         assert new_dir.left is not None
         assert new_dir.left > 0
+
+    # ── Hard-on-first-step parity with Anki ──────────────────────────────────
+    # Anki's rslib (scheduler/states/learning.rs) special-cases Hard on the
+    # first step when the deck has ≥2 steps: the delay is the average of the
+    # first two steps, not the current step. With learn_steps=[1, 10] this
+    # yields 5.5 min, matching the empirically-observed revlog `ivl=-330` on
+    # cards graded Hard on a fresh learning step.
+
+    def test_new_hard_first_step_uses_avg_of_first_two_steps(self):
+        """NEW + HARD with [1, 10] → due_at = now + 5.5 min (not 1 min)."""
+        item = _make_item(state=SRSState.NEW)
+        now = datetime.now(UTC)
+        result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION, now=now)
+        new_dir = result.directions[Direction.RECOGNITION]
+        delay_sec = (new_dir.due_at - now).total_seconds()
+        assert delay_sec == pytest.approx(5.5 * 60, abs=1.0)
+
+    def test_learning_hard_first_step_uses_avg_of_first_two_steps(self):
+        """LEARNING + HARD on first step (left=2) with [1, 10] → due_at = now + 5.5 min.
+
+        Direct regression for the kuhinja/koruza divergence: TT was scheduling
+        Hard at +60 s while Anki scheduled at +330 s, putting the two queues
+        out of agreement after the user pressed Hard on a fresh learn card.
+        """
+        item = _make_item(state=SRSState.LEARNING, left=2)
+        now = datetime.now(UTC)
+        result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION, now=now)
+        new_dir = result.directions[Direction.RECOGNITION]
+        delay_sec = (new_dir.due_at - now).total_seconds()
+        assert delay_sec == pytest.approx(5.5 * 60, abs=1.0)
+
+    def test_learning_hard_later_step_uses_current_step(self):
+        """LEARNING + HARD on second step (left=1) with [1, 10] → due_at = now + 10 min.
+
+        The avg-of-first-two rule only applies to the first step. On any later
+        step, Hard keeps the current step's delay.
+        """
+        item = _make_item(state=SRSState.LEARNING, left=1)
+        now = datetime.now(UTC)
+        result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION, now=now)
+        new_dir = result.directions[Direction.RECOGNITION]
+        delay_sec = (new_dir.due_at - now).total_seconds()
+        assert delay_sec == pytest.approx(10 * 60, abs=1.0)
+
+    def test_new_hard_single_step_uses_step_zero(self, monkeypatch):
+        """NEW + HARD with single-step deck → due_at = now + step[0], no averaging."""
+        monkeypatch.setattr("app.srs.queue_stats.resolve_learning_steps", lambda db=None: ([10.0], "default"))
+        item = _make_item(state=SRSState.NEW)
+        now = datetime.now(UTC)
+        result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION, now=now)
+        new_dir = result.directions[Direction.RECOGNITION]
+        delay_sec = (new_dir.due_at - now).total_seconds()
+        assert delay_sec == pytest.approx(10 * 60, abs=1.0)

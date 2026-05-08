@@ -165,11 +165,12 @@ def import_seed(
             unit = SyntacticUnit(
                 text=l2_text,
                 translation=translation,
-                word_count=len(l2_text.split()),
+                word_count=word_count,
                 difficulty=1,
                 source="anki",
                 frequency=0,
                 disambig_key=disambig,
+                lemma=l2_text.lower() if word_count == 1 else None,
             )
             note_cards = card_map.get(note.id, [])
             directions = _build_directions(note_cards, note.id)

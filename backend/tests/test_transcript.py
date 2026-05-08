@@ -278,3 +278,17 @@ class TestWordTokenEnrichment:
         result = extract_transcript(lesson, self.db, self.lemmatizer)
         word = result.dialogue_lines[0].words[0]
         assert word.collocation_translation is None
+
+    def test_transcript_word_matches_existing_lowercase_card(self):
+        """Sentence-initial 'Zdravo' matches existing 'zdravo' card via lemma lookup."""
+        unit = SyntacticUnit(
+            text="zdravo", translation="hello", word_count=1, difficulty=1, source="llm", lemma="zdravo"
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        lesson = _make_lesson([("female-1", "Zdravo!")])
+        transcript = extract_transcript(lesson, self.db, self.lemmatizer)
+        word = transcript.dialogue_lines[0].words[0]
+        assert word.surface == "Zdravo"
+        assert word.lemma == "zdravo"
+        assert word.srs_state == "new"
+        assert word.srs_item_id is not None

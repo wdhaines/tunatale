@@ -564,14 +564,19 @@ def _derive_revlog_shape(
     else:
         type_ = 1
 
-    if ds.state == SRSState.LEARNING:
-        step_min = _step_minutes_from_left(ds.left, learn_steps)
-        new_ivl = -int(round(step_min * 60)) if step_min is not None else stability_days
-    elif ds.state == SRSState.RELEARNING:
-        step_min = _step_minutes_from_left(ds.left, relearn_steps)
-        if step_min is None and relearn_steps:
-            step_min = relearn_steps[0]
-        new_ivl = -int(round(step_min * 60)) if step_min is not None else stability_days
+    if ds.state in (SRSState.LEARNING, SRSState.RELEARNING):
+        # Prefer the actual delay we computed (due_at - last_review) so the
+        # revlog ivl reflects rating-specific cases like Hard-on-first-step,
+        # which doesn't equal `steps[step_index]`. Fall back to step-based
+        # decoding for legacy rows missing due_at/last_review.
+        if ds.due_at is not None and ds.last_review is not None:
+            new_ivl = -int(round((ds.due_at - ds.last_review).total_seconds()))
+        else:
+            steps = learn_steps if ds.state == SRSState.LEARNING else relearn_steps
+            step_min = _step_minutes_from_left(ds.left, steps)
+            if step_min is None and ds.state == SRSState.RELEARNING and relearn_steps:
+                step_min = relearn_steps[0]
+            new_ivl = -int(round(step_min * 60)) if step_min is not None else stability_days
     else:
         new_ivl = stability_days
 

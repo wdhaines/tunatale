@@ -83,10 +83,7 @@ class TestMigrations:
 
         conn = sqlite3.connect(str(tmp_path / "test.db"))
         conn.row_factory = sqlite3.Row
-        conn.execute(
-            "CREATE TABLE collocations ("
-            "id INTEGER PRIMARY KEY, text TEXT, word_count INTEGER, lemma TEXT)"
-        )
+        conn.execute("CREATE TABLE collocations (id INTEGER PRIMARY KEY, text TEXT, word_count INTEGER, lemma TEXT)")
         conn.execute("INSERT INTO collocations (text, word_count, lemma) VALUES ('banka', 1, NULL)")
         conn.execute("INSERT INTO collocations (text, word_count, lemma) VALUES ('dober dan', 2, NULL)")
         _set_version(conn, 14)

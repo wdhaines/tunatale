@@ -281,7 +281,13 @@ def _schedule_new(
 
     # total_remaining = steps left until graduation = total_steps - step_index
     new_left = _pack_left(total_steps - step_index)
-    new_due_at = now + timedelta(minutes=steps[step_index])
+    # Anki's Hard-on-first-step delay = avg of first two steps when ≥2 steps;
+    # Again uses step[0] verbatim. See _schedule_with_steps for the same rule.
+    if rating == Rating.HARD and step_index == 0 and total_steps > 1:
+        delay_min = (steps[0] + steps[1]) / 2
+    else:
+        delay_min = steps[step_index]
+    new_due_at = now + timedelta(minutes=delay_min)
 
     new_dir = replace(
         prev,
@@ -424,8 +430,16 @@ def _schedule_with_steps(
 
     elif rating == Rating.HARD:
         # Stay on same step — total_remaining unchanged.
+        # Anki's rslib special-cases Hard on the first step of a multi-step
+        # deck: the delay is the average of the first two steps, not the
+        # current step (rslib/src/scheduler/states/learning.rs). Empirically
+        # confirmed by revlog `ivl=-330` for Hard on a [1, 10] first step.
         new_left = _pack_left(total_remaining)
-        new_due_at = now + timedelta(minutes=steps[current_step_index])
+        if current_step_index == 0 and len(steps) > 1:
+            delay_min = (steps[0] + steps[1]) / 2
+        else:
+            delay_min = steps[current_step_index]
+        new_due_at = now + timedelta(minutes=delay_min)
 
         new_dir = replace(
             prev,

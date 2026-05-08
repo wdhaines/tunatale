@@ -40,6 +40,21 @@ class TestCRUD:
         srs_db.add_collocation(_unit("banka", "financial institution"), language_code="sl")
         assert srs_db.get_collocation("banka").syntactic_unit.translation == "bank"
 
+    def test_add_collocation_case_variant_upserts_no_error(self, srs_db):
+        """Adding a case variant of an existing word upserts (does not raise IntegrityError)."""
+        srs_db.add_collocation(
+            SyntacticUnit(text="zdravo", translation="hello", word_count=1, difficulty=1, source="corpus"),
+            language_code="sl",
+        )
+        # Must not raise IntegrityError:
+        srs_db.add_collocation(
+            SyntacticUnit(text="Zdravo", translation="", word_count=1, difficulty=1, source="corpus"),
+            language_code="sl",
+        )
+        # Still exactly one row:
+        rows, total = srs_db.list_collocations(search="zdravo")
+        assert total == 1
+
     def test_backfill_translations_updates_empty_rows(self, srs_db):
         """backfill_translations fills in empty translations from a gloss map."""
         srs_db.add_collocation(_unit("banka", ""), language_code="sl")

@@ -113,7 +113,9 @@ class StoryGenerator:
                 logger.info("Filling %d missing dialogue glosses: %s", len(missing), sorted(missing))
                 word_list = "\n".join(f"- {w}" for w in sorted(missing))
                 prompt = _FILL_PROMPT_TEMPLATE.format(language_name=language.name, word_list=word_list)
-                fill_raw = await self._llm.complete(prompt, system_prompt=_FILL_SYSTEM, temperature=0.1, max_tokens=2048)
+                fill_raw = await self._llm.complete(
+                    prompt, system_prompt=_FILL_SYSTEM, temperature=0.1, max_tokens=2048
+                )
                 fill_raw = _strip_fences(fill_raw)
                 fill_glosses = json.loads(fill_raw.strip())
                 filled = {k: v for k, v in fill_glosses.items() if k in missing and v}

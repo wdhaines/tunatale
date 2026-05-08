@@ -1053,6 +1053,37 @@ class TestRevlogShapeHelpers:
         _type_, _ivl, last_ivl = _derive_revlog_shape(ds, [1.0, 10.0], [10.0])
         assert last_ivl == 4
 
+    def test_derive_shape_uses_due_at_minus_last_review_for_learning_ivl(self):
+        """Hard-on-first-step parity: revlog ivl must reflect the actual delay
+        applied (due_at - last_review), not just the current step's duration.
+
+        Anki's rslib uses (steps[0] + steps[1]) / 2 = 5.5 min for Hard on the
+        first learning step with [1, 10]. The revlog should record ivl=-330,
+        not -60. This catches the kuhinja regression where TT wrote -60 to
+        revlog while Anki wrote -330 for the same grade.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        from app.anki.sync import _derive_revlog_shape
+
+        last_review = datetime(2026, 5, 8, 17, 5, 28, tzinfo=UTC)
+        due_at = last_review + timedelta(seconds=330)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=1.7,
+            state=SRSState.LEARNING,
+            left=2,
+            due_at=due_at,
+            last_review=last_review,
+            prior_state=SRSState.LEARNING,
+            prior_left=2,
+        )
+        type_, ivl, last_ivl = _derive_revlog_shape(ds, [1.0, 10.0], [10.0])
+        assert type_ == 0
+        assert ivl == -330
+        assert last_ivl == -60
+
 
 # ── B14: offline ordering regression ─────────────────────────────────────────
 

@@ -475,8 +475,7 @@ def migrate_v14_to_v15(conn: sqlite3.Connection) -> None:
     The casefold() normalization matches compute_guid() and add_collocation().
     """
     conn.execute(
-        "UPDATE collocations SET lemma = CASE WHEN word_count = 1 THEN LOWER(text) ELSE lemma END "
-        "WHERE lemma IS NULL",
+        "UPDATE collocations SET lemma = CASE WHEN word_count = 1 THEN LOWER(text) ELSE lemma END WHERE lemma IS NULL",
     )
     _set_version(conn, 15)
 
