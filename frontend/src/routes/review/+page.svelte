@@ -36,17 +36,33 @@
 
 	function reapDeferred() {
 		// Anki parity: called only after `index` has advanced past the just-rated
-		// card. Ready deferred cards splice at `index` so they become the next
-		// current — mirroring Anki's intraday_now bucket (served before main).
+		// card. Ready deferred cards surface in due_at order, interleaved with
+		// any earlier-due learning cards already in queue[index..]. Each ready
+		// card finds its splice position past the run of learning cards whose
+		// due_at is earlier than its own — mirroring Anki's intraday_now bucket
+		// which is sorted by `due` ascending (rslib/.../queue/builder/...).
 		const now = Date.now();
 		const ready = deferred.filter(d => d.dueAt <= now);
 		if (ready.length === 0) return;
 		deferred = deferred.filter(d => d.dueAt > now);
-		queue = [
-			...queue.slice(0, index),
-			...ready.map(d => ({ item: d.item, direction: d.direction })),
-			...queue.slice(index),
-		];
+		const sortedReady = [...ready].sort((a, b) => a.dueAt - b.dueAt);
+		for (const r of sortedReady) {
+			let splicePos = index;
+			while (splicePos < queue.length) {
+				const q = queue[splicePos];
+				const isLearning = q.item.state === 'learning' || q.item.state === 'relearning';
+				if (!isLearning) break;
+				const rawDueAt = q.item.directions?.[q.direction]?.due_at;
+				const qDueAt = rawDueAt ? Date.parse(rawDueAt) : Infinity;
+				if (qDueAt > r.dueAt) break;
+				splicePos++;
+			}
+			queue = [
+				...queue.slice(0, splicePos),
+				{ item: r.item, direction: r.direction },
+				...queue.slice(splicePos),
+			];
+		}
 		refreshStats();
 	}
 

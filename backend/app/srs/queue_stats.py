@@ -171,11 +171,24 @@ def count_anki_review_remaining_today(deck_name: str | None = None, collection_p
                 if bury_raw is not None:
                     bury_reviews = bool(bury_raw)
 
-        # Count review cards due today (queue=2, due <= today_col_day)
+        # Count review cards due today (queue=2, due <= today_col_day).
+        # Anki gathers intraday-learning before reviews (rslib/.../queue/builder/
+        # gathering.rs:14-21) and tracks each card's note in `seen_note_ids`. With
+        # `bury_reviews=true`, a queue=2 due card whose note is already in that
+        # set is pre-buried via add_due_card and never enters the user's review
+        # pool. Mirror it: when bury is on, exclude any review-due card whose
+        # note has a sibling currently in queue=1.
         if bury_reviews:
             row = conn.execute(
-                "SELECT COUNT(DISTINCT nid) FROM cards WHERE did=? AND queue=2 AND due<=?",
-                (did, today_col_day),
+                """
+                SELECT COUNT(DISTINCT nid)
+                FROM cards
+                WHERE did=? AND queue=2 AND due<=?
+                  AND nid NOT IN (
+                      SELECT nid FROM cards WHERE did=? AND queue=1
+                  )
+                """,
+                (did, today_col_day, did),
             ).fetchone()
         else:
             row = conn.execute(

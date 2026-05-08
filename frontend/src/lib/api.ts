@@ -124,6 +124,8 @@ export interface DirectionState {
 	lapses: number;
 	last_review: string | null;
 	anki_card_id: number | null;
+	due_at?: string;
+	left?: number;
 }
 
 export interface SRSItemDetail {

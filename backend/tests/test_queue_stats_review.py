@@ -257,6 +257,75 @@ def test_bury_reviews_from_deck_config(tmp_path):
     assert result == 5
 
 
+def test_bury_reviews_subtracts_cross_queue_learning_siblings(tmp_path):
+    """Anki gathers intraday-learning before reviews, adding their note IDs to
+    seen_note_ids. When add_due_card hits a review whose note is already seen
+    AND bury_reviews=true, it pre-buries the review and never adds it to the
+    pool (rslib/.../queue/builder/gathering.rs:136-154).
+
+    Setup: 5 notes × 2 cards = 10 cards.
+      • 4 notes: both cards in queue=2 (queue=review).
+      • 1 note: ord=0 in queue=2, ord=1 in queue=1 (learning sibling).
+    Expected with bury_reviews=true: 5 distinct queue=2 nids minus the 1 with
+    a learning sibling → 4.
+    """
+    today = 100
+    deck_id = 12345
+    cards = []
+    # First 4 notes: both cards in queue=2
+    for i in range(4):
+        nid = 1000 + i
+        for ord_ in range(2):
+            cid = nid * 10 + ord_
+            cards.append((cid, nid, deck_id, ord_, 0, 0, 2, 2, today, 21, 2500, 5, 0, 0, 0, 0, 0, ""))
+    # 5th note: ord=0 in queue=2, ord=1 in queue=1 (learning)
+    nid = 1004
+    cards.append((nid * 10 + 0, nid, deck_id, 0, 0, 0, 2, 2, today, 21, 2500, 5, 0, 0, 0, 0, 0, ""))
+    # queue=1 learning: due is a unix timestamp (any value)
+    cards.append((nid * 10 + 1, nid, deck_id, 1, 0, 0, 1, 1, 1700000000, 0, 0, 1, 0, 1001, 0, 0, 0, ""))
+
+    db_path = build_review_test_db(
+        tmp_path,
+        num_notes=5,
+        cards_per_note=2,
+        bury_reviews=True,
+        deck_id=deck_id,
+        review_cards=cards,
+    )
+    with patch("app.srs.queue_stats._compute_today_col_day", return_value=today):
+        result = count_anki_review_remaining_today(collection_path=db_path)
+    assert result == 4, f"Expected 4 (5 distinct review-due nids minus 1 with learning sibling), got {result}"
+
+
+def test_no_bury_does_not_subtract_learning_siblings(tmp_path):
+    """When bury_reviews=false, the learning-sibling subtraction must NOT apply.
+    Same fixture as above but bury_reviews=false → all 9 review-state cards
+    are served (4 notes × 2 cards + 1 note × 1 card)."""
+    today = 100
+    deck_id = 12345
+    cards = []
+    for i in range(4):
+        nid = 1000 + i
+        for ord_ in range(2):
+            cid = nid * 10 + ord_
+            cards.append((cid, nid, deck_id, ord_, 0, 0, 2, 2, today, 21, 2500, 5, 0, 0, 0, 0, 0, ""))
+    nid = 1004
+    cards.append((nid * 10 + 0, nid, deck_id, 0, 0, 0, 2, 2, today, 21, 2500, 5, 0, 0, 0, 0, 0, ""))
+    cards.append((nid * 10 + 1, nid, deck_id, 1, 0, 0, 1, 1, 1700000000, 0, 0, 1, 0, 1001, 0, 0, 0, ""))
+
+    db_path = build_review_test_db(
+        tmp_path,
+        num_notes=5,
+        cards_per_note=2,
+        bury_reviews=False,
+        deck_id=deck_id,
+        review_cards=cards,
+    )
+    with patch("app.srs.queue_stats._compute_today_col_day", return_value=today):
+        result = count_anki_review_remaining_today(collection_path=db_path)
+    assert result == 9, f"Expected 9 (raw queue=2 due count), got {result}"
+
+
 def test_deck_config_no_bury_field(tmp_path):
     """When deck_config has no field 28, bury_reviews defaults to False."""
     db_path = build_review_test_db(tmp_path, num_notes=5, cards_per_note=2, bury_reviews=False)

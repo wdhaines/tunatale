@@ -498,6 +498,78 @@ describe('review/+page.svelte', () => {
 
 		// ── learning-first ordering after topUpQueue ──────────────────────
 
+		it('reapDeferred respects due_at order vs earlier-due learning cards in queue', async () => {
+			// Anki parity: when a deferred card's timer elapses, it surfaces in
+			// due_at order with other learning cards already in the queue. A
+			// freshly-discovered earlier-due learning card (e.g. teden, due 02:36)
+			// must come before a recently-deferred later-due card (e.g. žlica,
+			// due 13:43) — not the other way round.
+			vi.useFakeTimers();
+			const t0 = Date.parse('2026-05-08T13:42:00Z');
+			vi.setSystemTime(t0);
+
+			// Initial queue: žlica (a learning card with stale earlier-than-now
+			// due_at) plus a dummy review card to advance through.
+			const zlica = makeReviewQueueItem({
+				id: 1, text: 'žlica', state: 'learning', direction: 'production',
+				directions: {
+					recognition: { state: 'new', due_date: '2026-05-08', stability: 1, difficulty: 5, reps: 0, lapses: 0, last_review: null, anki_card_id: null },
+					production: { state: 'learning', due_date: '2026-05-08', stability: 0.3, difficulty: 5, reps: 1, lapses: 0, last_review: '2026-05-08T13:00:00Z', anki_card_id: 100, due_at: '2026-05-08T13:00:00Z' },
+				},
+			});
+			const dummy = makeReviewQueueItem({ id: 2, text: 'dummy', state: 'review', direction: 'recognition' });
+			// teden — a learning card with an EARLIER due_at than žlica's deferred dueAt
+			const teden = makeReviewQueueItem({
+				id: 3, text: 'teden', state: 'relearning', direction: 'recognition',
+				directions: {
+					recognition: { state: 'relearning', due_date: '2026-05-07', stability: 0.1, difficulty: 5, reps: 1, lapses: 1, last_review: '2026-05-08T02:36:14Z', anki_card_id: 200, due_at: '2026-05-08T02:36:14Z' },
+					production: { state: 'new', due_date: '2026-05-08', stability: 1, difficulty: 5, reps: 0, lapses: 0, last_review: null, anki_card_id: null },
+				},
+			});
+
+			mockFetchReviewQueue
+				.mockResolvedValueOnce({ queue: [zlica, dummy] })
+				.mockResolvedValueOnce({ queue: [zlica, dummy, teden] }); // topUp brings teden
+
+			mockFetchQueueStats
+				.mockResolvedValueOnce({ new: 0, learning: 1, review: 1, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' })
+				.mockResolvedValueOnce({ new: 0, learning: 2, review: 1, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' })
+				.mockResolvedValueOnce({ new: 0, learning: 2, review: 0, daily_new_cap: 20, cap_source: 'default', fsrs_source: 'default' });
+
+			// Rate žlica AGAIN → due_at = t0+60s (deferred); dummy GOOD (review)
+			mockSubmitDrill
+				.mockResolvedValueOnce({
+					new_due_date: '2026-05-08', new_state: 'learning',
+					due_at: new Date(t0 + 60_000).toISOString(), left: 1002,
+				})
+				.mockResolvedValueOnce({ new_due_date: '2026-05-09', new_state: 'review' });
+
+			const { findByRole, findByText } = render(ReviewPage);
+
+			// Rate žlica AGAIN → goes to deferred
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			await fireEvent.click(await findByRole('button', { name: 'Again' }));
+
+			// Now on dummy
+			expect(await findByText('dummy')).toBeTruthy();
+
+			// Advance past žlica's 60s deferred timer
+			vi.advanceTimersByTime(60_000 + 100);
+
+			// Rate dummy GOOD → triggers refreshStats (learning=2 > local=1)
+			// → topUpQueue brings teden into queue
+			// → reapDeferred fires for žlica
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			await fireEvent.click(await findByRole('button', { name: 'Good' }));
+
+			// teden's due_at (02:36) is earlier than žlica's deferred dueAt (13:43).
+			// Anki would serve teden first. Buggy behavior: žlica appears (because
+			// reapDeferred splices at queue[index] without considering due_at order).
+			expect(await findByText('teden')).toBeTruthy();
+
+			vi.useRealTimers();
+		}, 10000);
+
 		it('inserts server learning cards before remaining review cards after topUpQueue', async () => {
 			// Initial queue: two review cards, no learning
 			const reviewA = makeReviewQueueItem({ id: 1, text: 'okno', translation: 'window', direction: 'recognition', state: 'review' });
