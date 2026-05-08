@@ -445,13 +445,63 @@ def _read_new_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int
     return _read_new_per_day_from_deck_config_table(conn, deck_name)
 
 
-def count_anki_introduced_today(today: date, collection_path: Path | None = None) -> int:
+def _read_rollover_hour(conn: sqlite3.Connection) -> int:
+    """Read Anki's `rollover` setting (hour of day, 0-23) — when "today" begins.
+
+    Modern Anki stores it JSON-encoded in `config` table (key='rollover');
+    legacy collections store it in `col.conf` JSON. Defaults to 4 (Anki's
+    own default) when neither is present or parseable. See Anki rslib
+    `scheduler/timing.rs::sched_timing_today`.
+    """
+    try:
+        row = conn.execute("SELECT val FROM config WHERE KEY = 'rollover'").fetchone()
+        if row and row[0] is not None:
+            try:
+                val = json.loads(bytes(row[0]) if isinstance(row[0], (bytes, memoryview)) else row[0])
+                if isinstance(val, int) and 0 <= val <= 23:
+                    return val
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        row = conn.execute("SELECT conf FROM col").fetchone()
+        if row and row[0]:
+            try:
+                conf = json.loads(row[0])
+                val = conf.get("rollover")
+                if isinstance(val, int) and 0 <= val <= 23:
+                    return val
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                pass
+    except sqlite3.OperationalError:
+        pass
+
+    return 4
+
+
+def count_anki_introduced_today(
+    today: date,
+    collection_path: Path | None = None,
+    deck_name: str | None = None,
+) -> int:
     """Count cards whose *first* revlog entry in Anki is on or after `today`.
 
     This is Anki's definition of "new today": when a card transitions out of NEW
     (Again/Hard/Good/Easy on a fresh card), Anki writes a revlog row, and the
     deck's newToday counter increments. We mirror it by counting the rows whose
-    earliest revlog `id` (millis-since-epoch) is past local-midnight today.
+    earliest revlog `id` (millis-since-epoch) is past Anki's day boundary —
+    `today` at the configured rollover hour in the user's local timezone, not
+    local-midnight (Anki's default rollover is 4, so a grade made at 02:00
+    local belongs to *yesterday*, not today).
+
+    When `deck_name` is supplied, the count is scoped to cards in that deck.
+    This (a) excludes activity in unrelated decks (Tagalog, Norwegian, …) and
+    (b) drops orphan revlog rows whose `cid` no longer points at a `cards`
+    row — both of which Anki's own deck-scoped counter ignores. Without this
+    filter, a single orphan grade silently shaves one off TT's daily quota
+    relative to Anki's. Defaults to the configured `settings.anki_deck_name`.
 
     TT mirror state is unreliable as a source for this — TT and Anki dual-grade
     the same card and the resulting `cards.reps` (and TT's `reps` mirror) is no
@@ -464,13 +514,30 @@ def count_anki_introduced_today(today: date, collection_path: Path | None = None
     path = collection_path if collection_path is not None else settings.anki_collection_path
     if not path.exists():
         return 0
-    start_ms = int(datetime.combine(today, dt_time.min).timestamp() * 1000)
+    deck = deck_name if deck_name is not None else getattr(settings, "anki_deck_name", None)
     try:
         with sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True) as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM (SELECT cid FROM revlog GROUP BY cid HAVING MIN(id) >= ?)",
-                (start_ms,),
-            ).fetchone()
+            from app.anki.sqlite_reader import find_deck_id
+
+            rollover = _read_rollover_hour(conn)
+            start_ms = int(datetime.combine(today, dt_time(rollover, 0)).timestamp() * 1000)
+            deck_id = find_deck_id(conn, deck) if deck else None
+            if deck_id is not None:
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*) FROM (
+                      SELECT r.cid FROM revlog r
+                      JOIN cards c ON c.id = r.cid AND c.did = ?
+                      GROUP BY r.cid HAVING MIN(r.id) >= ?
+                    )
+                    """,
+                    (deck_id, start_ms),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM (SELECT cid FROM revlog GROUP BY cid HAVING MIN(id) >= ?)",
+                    (start_ms,),
+                ).fetchone()
             return int(row[0]) if row else 0
     except sqlite3.Error as exc:
         _log.warning("count_anki_introduced_today: failed to read revlog: %s", exc)

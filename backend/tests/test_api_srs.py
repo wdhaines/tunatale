@@ -101,16 +101,23 @@ class TestQueueStats:
             unit = SyntacticUnit(text=f"new_{i}", translation="t", word_count=1, difficulty=1, source="test")
             db.add_collocation(unit, language_code="sl")
 
-        # Stub Anki collection: empty revlog → 0 introduced.
+        # Stub Anki collection: empty revlog → 0 introduced. Real Anki has
+        # col/decks/cards too; the deck-scoped count needs them present.
         anki_path = tmp_path / "collection.anki2"
         conn = _sqlite3.connect(str(anki_path))
+        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, decks TEXT)")
+        conn.execute("CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.execute("CREATE TABLE cards (id INTEGER PRIMARY KEY, did INTEGER)")
         conn.execute(
             "CREATE TABLE revlog (id INTEGER, cid INTEGER, usn INTEGER, ease INTEGER, "
             "ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)"
         )
+        conn.execute("INSERT INTO col (id, decks) VALUES (1, '{}')")
+        from app.config import settings
+
+        conn.execute("INSERT INTO decks (id, name) VALUES (1, ?)", (settings.anki_deck_name,))
         conn.commit()
         conn.close()
-        from app.config import settings
 
         monkeypatch.setattr(settings, "anki_collection_path", anki_path)
 
@@ -118,9 +125,11 @@ class TestQueueStats:
             resp = await client.get("/api/srs/queue-stats")
         assert resp.json()["new"] == 2  # cap - 0
 
-        # Now simulate "user introduced 1 new card today" by writing a revlog row.
+        # Now simulate "user introduced 1 new card today" by writing a revlog row
+        # for a card that lives in our deck.
         today_ms = int(datetime.combine(today, time(14, 0)).timestamp() * 1000)
         conn = _sqlite3.connect(str(anki_path))
+        conn.execute("INSERT INTO cards (id, did) VALUES (?, 1)", (4242,))
         conn.execute(
             "INSERT INTO revlog VALUES (?, ?, 0, 3, 1, 1, 0, 0, 0)",
             (today_ms, 4242),
@@ -1223,13 +1232,20 @@ class TestReviewQueue:
             db.add_collocation(unit, language_code="sl")
 
         # Stub Anki collection: one revlog row from today → introduced_today=1.
+        # The deck-scoped count needs col/decks/cards alongside revlog.
         anki_path = tmp_path / "collection.anki2"
         today_ms = int(datetime.combine(date.today(), time(14, 0)).timestamp() * 1000)
         conn = _sqlite3.connect(str(anki_path))
+        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, decks TEXT)")
+        conn.execute("CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.execute("CREATE TABLE cards (id INTEGER PRIMARY KEY, did INTEGER)")
         conn.execute(
             "CREATE TABLE revlog (id INTEGER, cid INTEGER, usn INTEGER, ease INTEGER, "
             "ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)"
         )
+        conn.execute("INSERT INTO col (id, decks) VALUES (1, '{}')")
+        conn.execute("INSERT INTO decks (id, name) VALUES (1, ?)", (settings.anki_deck_name,))
+        conn.execute("INSERT INTO cards (id, did) VALUES (?, 1)", (4242,))
         conn.execute("INSERT INTO revlog VALUES (?, ?, 0, 3, 1, 1, 0, 0, 0)", (today_ms, 4242))
         conn.commit()
         conn.close()
