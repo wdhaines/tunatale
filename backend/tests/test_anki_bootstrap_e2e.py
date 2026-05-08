@@ -3,7 +3,9 @@
 Exercises the full Stage 2 pipeline on a synthetic Anki collection and
 verifies the structural invariants that Stage 3 sync depends on:
 
-  - Every imported collocation has exactly 2 direction rows.
+  - Every imported collocation has 1 or 2 direction rows, matching the
+    Anki notetype's template count (single-template notes like the
+    "Basic" notetype produce only a recognition direction).
   - Every GUID in TunaTale matches compute_guid(text, lang).
   - All imported notes have anki_note_id set.
   - GUID continuity: the Anki notes.guid written by backfill_guids matches
@@ -104,9 +106,13 @@ class TestBootstrapE2E:
     def test_import_creates_expected_parents(self, pipeline_result):
         _, tt_db_path, results = pipeline_result
         assert results["new_parents"] >= 7  # at minimum 7 vocab items (excluding skipped)
-        assert results["new_parents"] == results["new_directions"] // 2
+        # Every parent has 1 or 2 directions (single-template notes contribute 1).
+        assert results["new_parents"] <= results["new_directions"] <= results["new_parents"] * 2
 
-    def test_every_parent_has_two_direction_rows(self, pipeline_result):
+    def test_every_parent_has_one_or_two_direction_rows(self, pipeline_result):
+        """Paired notetypes get both directions; single-template notes
+        (recognition- or production-only singletons surfaced by merge_dupes)
+        get just the one their Anki card backs."""
         _, tt_db_path, _ = pipeline_result
         conn = sqlite3.connect(tt_db_path)
         try:
@@ -122,7 +128,7 @@ class TestBootstrapE2E:
             conn.close()
         assert len(rows) > 0
         for row_id, dir_count in rows:
-            assert dir_count == 2, f"collocation id={row_id} has {dir_count} direction rows (expected 2)"
+            assert dir_count in (1, 2), f"collocation id={row_id} has {dir_count} direction rows (expected 1 or 2)"
 
     def test_guid_matches_compute_guid(self, pipeline_result):
         """Every TunaTale GUID equals compute_guid(text, language_code, disambig_key)."""

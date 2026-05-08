@@ -73,7 +73,65 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 15
+        assert CURRENT_VERSION == 16
+
+    def test_migrates_v15_to_v16_deletes_phantom_directions(self, tmp_path):
+        """v16 deletes direction rows that were auto-filled by the pre-fix
+        _build_directions when the Anki notetype had no card at that ord
+        (e.g. phonics on the "Basic" notetype). User-added rows pending
+        their first sync are preserved.
+        """
+        import sqlite3
+
+        from app.srs.migrations import _set_version, migrate_v15_to_v16
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE collocations (id INTEGER PRIMARY KEY, text TEXT, anki_note_id INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE collocation_directions ("
+            "collocation_id INTEGER, direction TEXT, anki_card_id INTEGER, "
+            "reps INTEGER DEFAULT 0, dirty_fsrs INTEGER DEFAULT 0, state TEXT DEFAULT 'new', "
+            "PRIMARY KEY (collocation_id, direction))"
+        )
+        # Phonics-style: synced from Anki, only recognition card, phantom production row.
+        conn.execute("INSERT INTO collocations (id, text, anki_note_id) VALUES (1, 'How is č pronounced?', 1001)")
+        conn.execute("INSERT INTO collocation_directions VALUES (1, 'recognition', 1001, 1, 0, 'review')")
+        conn.execute("INSERT INTO collocation_directions VALUES (1, 'production', NULL, 0, 0, 'new')")
+        # User-added: not yet synced, both directions phantom-looking but legitimate.
+        conn.execute("INSERT INTO collocations (id, text, anki_note_id) VALUES (2, 'krava', NULL)")
+        conn.execute("INSERT INTO collocation_directions VALUES (2, 'recognition', NULL, 0, 0, 'new')")
+        conn.execute("INSERT INTO collocation_directions VALUES (2, 'production', NULL, 0, 0, 'new')")
+        # Synced, reviewed: must NOT be deleted even though anki_card_id IS NULL.
+        # (Edge case: shouldn't happen in practice but the safety filter covers it.)
+        conn.execute("INSERT INTO collocations (id, text, anki_note_id) VALUES (3, 'dober dan', 1002)")
+        conn.execute("INSERT INTO collocation_directions VALUES (3, 'recognition', NULL, 5, 0, 'review')")
+        # Synced, dirty (pending push): must NOT be deleted.
+        conn.execute("INSERT INTO collocations (id, text, anki_note_id) VALUES (4, 'svinjina', 1003)")
+        conn.execute("INSERT INTO collocation_directions VALUES (4, 'recognition', NULL, 0, 1, 'new')")
+        _set_version(conn, 15)
+
+        migrate_v15_to_v16(conn)
+
+        survivors = {
+            (r["collocation_id"], r["direction"])
+            for r in conn.execute(
+                "SELECT collocation_id, direction FROM collocation_directions"
+            ).fetchall()
+        }
+        assert (1, "production") not in survivors  # phantom — deleted
+        assert (1, "recognition") in survivors  # has anki_card_id — kept
+        assert (2, "recognition") in survivors  # user-added — kept
+        assert (2, "production") in survivors  # user-added — kept
+        assert (3, "recognition") in survivors  # has reps>0 — kept
+        assert (4, "recognition") in survivors  # dirty_fsrs=1 — kept
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 16
+
+        # Idempotent
+        migrate_v15_to_v16(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 16
 
     def test_migrates_v14_to_v15_fills_null_lemma(self, tmp_path):
         """v15 fills lemma for single-word rows that have lemma=NULL."""

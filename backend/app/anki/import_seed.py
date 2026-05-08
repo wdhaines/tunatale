@@ -38,19 +38,17 @@ def _build_directions(
     cards: list[AnkiCard],
     note_id: int,
 ) -> dict[Direction, DirectionState]:
-    """Build a {Direction: DirectionState} map from the cards for one note."""
-    from datetime import date
+    """Build a {Direction: DirectionState} map from the cards for one note.
 
+    Only directions that have an actual card in Anki are returned. Single-
+    template notetypes (e.g. Anki's "Basic" used for phonics) only ever have
+    a recognition card, and TT used to invent a phantom production direction
+    with `anki_card_id=None` for them — polluting the learning count and
+    leaving orphan rows the sync layer couldn't reconcile.
+    """
     directions: dict[Direction, DirectionState] = {}
     for card in cards:
         directions[card.direction] = card.fsrs_state
-
-    # Ensure both directions exist (default to NEW if a card is missing)
-    today = date.today()
-    for d in (Direction.RECOGNITION, Direction.PRODUCTION):
-        if d not in directions:
-            directions[d] = DirectionState(direction=d, due_date=today)
-
     return directions
 
 

@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 15
+CURRENT_VERSION = 16
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -493,6 +493,38 @@ def migrate_v13_to_v14(conn: sqlite3.Connection) -> None:
     _set_version(conn, 14)
 
 
+def migrate_v15_to_v16(conn: sqlite3.Connection) -> None:
+    """Delete phantom direction rows left over from the auto-fill bug.
+
+    Pre-fix `_build_directions` invented a default DirectionState for any
+    direction whose Anki notetype had no template at that ord — most visibly
+    for phonics on the "Basic" notetype, which produced production-side
+    rows with `anki_card_id IS NULL` per import. The fix removes the auto-
+    fill; this migration sweeps up the residue.
+
+    Safe-to-delete criteria (intersection of all):
+      - direction has `anki_card_id IS NULL` (no Anki card backs this row)
+      - parent collocation has `anki_note_id IS NOT NULL` (synced from Anki,
+        so the missing card is not "pending creation")
+      - `reps = 0` and `dirty_fsrs = 0` (no review history, no pending push)
+
+    User-added rows awaiting their first sync_create_new (`anki_note_id IS
+    NULL`) are preserved.
+    """
+    conn.execute(
+        """
+        DELETE FROM collocation_directions
+        WHERE anki_card_id IS NULL
+          AND reps = 0
+          AND dirty_fsrs = 0
+          AND collocation_id IN (
+            SELECT id FROM collocations WHERE anki_note_id IS NOT NULL
+          )
+        """,
+    )
+    _set_version(conn, 16)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -509,6 +541,7 @@ _MIGRATIONS = {
     12: migrate_v12_to_v13,
     13: migrate_v13_to_v14,
     14: migrate_v14_to_v15,
+    15: migrate_v15_to_v16,
 }
 
 

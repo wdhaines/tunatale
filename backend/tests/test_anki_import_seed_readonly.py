@@ -188,8 +188,16 @@ class TestGuidCollisionSkip:
 
 
 class TestMissingCardDirection:
-    def test_note_with_only_recognition_card_gets_default_production(self, tmp_path):
-        """A note missing a production card gets a default NEW DirectionState."""
+    def test_note_with_only_recognition_card_creates_only_recognition_direction(self, tmp_path):
+        """A note with only a recognition card in Anki must produce only a
+        recognition direction in TT — no phantom production row.
+
+        Regression: TT used to default-fill the missing direction with a NEW
+        DirectionState, which polluted the learning/relearning count for any
+        single-template notetype (e.g. phonics on the "Basic" notetype) and
+        left orphan rows with `anki_card_id IS NULL` that downstream sync
+        could never clean up.
+        """
         import sqlite3 as sq3
 
         from tests.conftest import build_minimal_anki_db
@@ -202,11 +210,13 @@ class TestMissingCardDirection:
 
         _run(db_path, tmp_path)
         with closing(sq3.connect(str(tmp_path / "tunatale.db"))) as tdb:
-            row = tdb.execute(
-                "SELECT state FROM collocation_directions WHERE direction='production'"
-                " AND collocation_id = (SELECT id FROM collocations WHERE text='banka')"
-            ).fetchone()
-        assert row[0] == "new"
+            tdb.row_factory = sq3.Row
+            rows = tdb.execute(
+                "SELECT direction FROM collocation_directions"
+                " WHERE collocation_id = (SELECT id FROM collocations WHERE text='banka')"
+            ).fetchall()
+        directions = {r["direction"] for r in rows}
+        assert directions == {"recognition"}, f"Expected only recognition, got {directions}"
 
 
 class TestSettingsDefaults:
