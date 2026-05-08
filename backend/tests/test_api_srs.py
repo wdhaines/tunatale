@@ -475,6 +475,62 @@ class TestReviewQueue:
         # Verify the endpoint works with spread=2
         assert isinstance(queue, list)
 
+    async def test_review_queue_does_not_duplicate_relearning_cards(self, api_app_state):
+        """Relearning cards must appear exactly once in the queue (not in both learning and nonlearning)."""
+        from datetime import UTC, date, datetime
+
+        db = api_app_state
+        today = date.today()
+        past_due_at = datetime(2020, 1, 1, tzinfo=UTC)
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        unit = SyntacticUnit(text="relearn_dup_test", translation="rdt", word_count=2, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+
+        rows, _ = db.list_collocations(search="relearn_dup_test", limit=1)
+        row_id, item, _ = rows[0]
+
+        # Set RECOGNITION to RELEARNING with past due_at
+        rec_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.RELEARNING,
+            due_date=today,
+            due_at=past_due_at,
+            stability=1.0,
+            difficulty=5.0,
+            reps=5,
+            lapses=2,
+        )
+        db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
+
+        # Set PRODUCTION to RELEARNING with past due_at
+        prod_dir = DirectionState(
+            direction=Direction.PRODUCTION,
+            state=SRSState.RELEARNING,
+            due_date=today,
+            due_at=past_due_at,
+            stability=1.0,
+            difficulty=5.0,
+            reps=5,
+            lapses=2,
+        )
+        db.update_direction_by_id(row_id, Direction.PRODUCTION, prod_dir)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        data = resp.json()
+        queue = data["queue"]
+
+        # Each (id, direction) pair must appear exactly once
+        pairs = [(q["id"], q["direction"]) for q in queue]
+        from collections import Counter
+
+        counts = Counter(pairs)
+        duplicates = {k: v for k, v in counts.items() if v > 1}
+        assert duplicates == {}, f"Relearning cards duplicated: {duplicates}"
+
     async def test_bury_review_enabled(self, api_app_state):
         """Test that bury_review=True removes sibling reviews from queue."""
         from datetime import date

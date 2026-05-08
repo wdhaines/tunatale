@@ -695,7 +695,7 @@ async def get_review_queue(request: Request) -> dict:
     # The non-learning pool is whatever the daily due-date query returned, minus
     # any rows whose state somehow resolved to LEARNING (defensive — get_due_items
     # already excludes 'buried'/'suspended').
-    nonlearning_due = [t for t in due if t[1].directions[t[3]].state != SRSState.LEARNING]
+    nonlearning_due = [t for t in due if t[1].directions[t[3]].state not in (SRSState.LEARNING, SRSState.RELEARNING)]
 
     learning_collocation_ids = {t[0] for t in learning_cards}
     nonlearning_new = [t for t in new_combined if t[0] not in learning_collocation_ids]

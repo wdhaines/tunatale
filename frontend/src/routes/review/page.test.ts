@@ -360,6 +360,49 @@ describe('review/+page.svelte', () => {
 			dateNowSpy.mockRestore();
 		});
 
+		it('resurfaces deferred card immediately after current, not at end of queue', async () => {
+			vi.useFakeTimers();
+			const t0 = Date.parse('2026-05-04T10:00:00Z');
+			vi.setSystemTime(t0);
+
+			// Card 1 will be deferred; cards 2,3,4 are review cards that follow
+			const dueAt = new Date(t0 + 60_000).toISOString(); // +60s
+			mockSubmitDrill.mockResolvedValue({
+				new_due_date: '2026-05-06', new_state: 'learning',
+				due_at: dueAt, left: 1002,
+			});
+
+			const item1 = makeReviewQueueItem({ id: 1, text: 'okno', translation: 'window', direction: 'recognition' });
+			const item2 = makeReviewQueueItem({ id: 3, text: 'hiša', translation: 'house', direction: 'recognition' });
+			const item3 = makeReviewQueueItem({ id: 4, text: 'miza', translation: 'table', direction: 'recognition' });
+			const item4 = makeReviewQueueItem({ id: 5, text: 'stol', translation: 'chair', direction: 'recognition' });
+			mockFetchReviewQueue.mockResolvedValue({ queue: [item1, item2, item3, item4] });
+
+			const { findByRole, findByText } = render(ReviewPage);
+
+			// Rate card 1 (okno) → AGAIN → deferred with future dueAt
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			await fireEvent.click(await findByRole('button', { name: 'Again' }));
+
+			// Card 2 (hiša) should now be current
+			expect(await findByText('hiša')).toBeTruthy();
+
+			// Advance past dueAt so deferred card is ready
+			vi.advanceTimersByTime(60_000 + 100);
+
+			// Rate card 2 (hiša) → this triggers reapDeferred which should
+			// insert the deferred okno right after current (hiša), NOT at end
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			await fireEvent.click(await findByRole('button', { name: 'Good' }));
+
+			// After rating hiša, the next card should be okno (deferred resurfaced),
+			// NOT miza (which would be next if deferred was appended to end)
+			expect(await findByText('okno')).toBeTruthy();
+			expect(screen.queryByText('miza')).toBeNull();
+
+			vi.useRealTimers();
+		}, 10000);
+
 		it('displays state badge with correct text and class', async () => {
 			const item = makeReviewQueueItem({ id: 1, text: 'okno', state: 'learning', direction: 'recognition' });
 			mockFetchReviewQueue.mockResolvedValue({ queue: [item] });

@@ -110,6 +110,9 @@ _DIR_COLUMNS = (
     "last_rating",
     "left",
     "due_at",
+    "prior_state",
+    "prior_left",
+    "prior_stability",
 )
 
 # States that should never surface in the due queue regardless of due_date.
@@ -341,7 +344,10 @@ class SRSDatabase:
                     last_synced_at = ?,
                     last_rating = ?,
                     left = ?,
-                    due_at = ?
+                    due_at = ?,
+                    prior_state = ?,
+                    prior_left = ?,
+                    prior_stability = ?
                 WHERE collocation_id = ? AND direction = ?
                 """,
                 (
@@ -360,6 +366,9 @@ class SRSDatabase:
                     state.last_rating,
                     state.left,
                     state.due_at.isoformat() if state.due_at else None,
+                    state.prior_state.value if state.prior_state is not None else None,
+                    state.prior_left,
+                    state.prior_stability,
                     row["id"],
                     direction.value,
                 ),
@@ -410,6 +419,7 @@ class SRSDatabase:
             due_at = None
             if row["due_at"] is not None:
                 due_at = datetime.fromisoformat(row["due_at"])
+            prior_state_raw = row["prior_state"]
             directions[d] = DirectionState(
                 direction=d,
                 due_date=date.fromisoformat(row["due_date"]),
@@ -427,6 +437,9 @@ class SRSDatabase:
                 last_rating=row["last_rating"],
                 left=row["left"],
                 due_at=due_at,
+                prior_state=SRSState(prior_state_raw) if prior_state_raw else None,
+                prior_left=row["prior_left"],
+                prior_stability=row["prior_stability"],
             )
         return directions
 
@@ -1119,6 +1132,7 @@ class SRSDatabase:
                 due_at = None
                 if row["due_at"] is not None:
                     due_at = datetime.fromisoformat(row["due_at"])
+                prior_state_raw = row["prior_state"]
                 ds = DirectionState(
                     direction=d,
                     due_date=date.fromisoformat(row["due_date"]),
@@ -1135,6 +1149,9 @@ class SRSDatabase:
                     last_rating=row["last_rating"],
                     left=row["left"],
                     due_at=due_at,
+                    prior_state=SRSState(prior_state_raw) if prior_state_raw else None,
+                    prior_left=row["prior_left"],
+                    prior_stability=row["prior_stability"],
                 )
                 result.append((row["guid"], d, ds))
         return result
@@ -1184,6 +1201,7 @@ class SRSDatabase:
                 due_at = None
                 if row["due_at"] is not None:
                     due_at = datetime.fromisoformat(row["due_at"])
+                prior_state_raw = row["prior_state"]
                 ds = DirectionState(
                     direction=d,
                     due_date=date.fromisoformat(row["due_date"]),
@@ -1200,6 +1218,9 @@ class SRSDatabase:
                     last_rating=row["last_rating"],
                     left=row["left"],
                     due_at=due_at,
+                    prior_state=SRSState(prior_state_raw) if prior_state_raw else None,
+                    prior_left=row["prior_left"],
+                    prior_stability=row["prior_stability"],
                 )
                 result.append((row["guid"], d, ds))
         return result
@@ -1231,7 +1252,10 @@ class SRSDatabase:
                 UPDATE collocation_directions SET
                     dirty_fsrs = 0,
                     last_rating = NULL,
-                    last_synced_at = ?
+                    last_synced_at = ?,
+                    prior_state = NULL,
+                    prior_left = NULL,
+                    prior_stability = NULL
                 WHERE collocation_id = ? AND direction = ?
                 """,
                 (datetime.now(UTC).isoformat(), row["id"], direction.value),

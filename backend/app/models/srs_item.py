@@ -67,6 +67,12 @@ class DirectionState:
     last_rating: int | None = None
     left: int | None = None
     due_at: datetime | None = None
+    # Prior-grade snapshot used to construct a correct Anki revlog row at
+    # push time. Set by `app.srs.fsrs.schedule` before each `replace`,
+    # cleared by `mark_direction_clean` once the row has been pushed.
+    prior_state: SRSState | None = None
+    prior_left: int | None = None
+    prior_stability: float | None = None
 
 
 class SRSItem:

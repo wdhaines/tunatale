@@ -39,7 +39,11 @@
 		const ready = deferred.filter(d => d.dueAt <= now);
 		if (ready.length === 0) return;
 		deferred = deferred.filter(d => d.dueAt > now);
-		queue = [...queue, ...ready.map(d => ({ item: d.item, direction: d.direction }))];
+		queue = [
+			...queue.slice(0, index + 1),
+			...ready.map(d => ({ item: d.item, direction: d.direction })),
+			...queue.slice(index + 1),
+		];
 		refreshStats();
 	}
 

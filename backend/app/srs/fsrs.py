@@ -220,6 +220,9 @@ def schedule(
         last_review_time_ms=time_ms,
         dirty_fsrs=True,
         last_rating=rating.value,
+        prior_state=prev.state,
+        prior_left=prev.left,
+        prior_stability=prev.stability,
     )
     new_directions = dict(item.directions)
     new_directions[direction] = new_dir
@@ -279,6 +282,9 @@ def _schedule_new(
         last_review_time_ms=time_ms,
         dirty_fsrs=True,
         last_rating=rating.value,
+        prior_state=prev.state,
+        prior_left=prev.left,
+        prior_stability=prev.stability,
     )
     new_directions = dict(item.directions)
     new_directions[direction] = new_dir
@@ -338,6 +344,9 @@ def _schedule_review_again(
         last_review_time_ms=time_ms,
         dirty_fsrs=True,
         last_rating=rating.value,
+        prior_state=prev.state,
+        prior_left=prev.left,
+        prior_stability=prev.stability,
     )
     new_directions = dict(item.directions)
     new_directions[direction] = new_dir
@@ -393,6 +402,9 @@ def _schedule_with_steps(
             last_review_time_ms=time_ms,
             dirty_fsrs=True,
             last_rating=rating.value,
+            prior_state=prev.state,
+            prior_left=prev.left,
+            prior_stability=prev.stability,
         )
 
     elif rating == Rating.HARD:
@@ -414,6 +426,9 @@ def _schedule_with_steps(
             last_review_time_ms=time_ms,
             dirty_fsrs=True,
             last_rating=rating.value,
+            prior_state=prev.state,
+            prior_left=prev.left,
+            prior_stability=prev.stability,
         )
 
     elif rating == Rating.GOOD:
@@ -446,6 +461,9 @@ def _schedule_with_steps(
             last_review_time_ms=time_ms,
             dirty_fsrs=True,
             last_rating=rating.value,
+            prior_state=prev.state,
+            prior_left=prev.left,
+            prior_stability=prev.stability,
         )
 
     else:  # Rating.EASY
@@ -511,6 +529,9 @@ def _graduate_to_review(
         last_review_time_ms=time_ms,
         dirty_fsrs=True,
         last_rating=rating.value,
+        prior_state=prev.state,
+        prior_left=prev.left,
+        prior_stability=prev.stability,
     )
     new_directions = dict(item.directions)
     new_directions[direction] = new_dir

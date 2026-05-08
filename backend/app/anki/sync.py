@@ -27,6 +27,7 @@ from app.anki.sqlite_reader import (
 from app.common.guid import compute_guid
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.srs.database import SRSDatabase
+from app.srs.queue_stats import resolve_learning_steps, resolve_relearning_steps
 
 KNOWN_ANKI_SCHEMA_VER = 18
 
@@ -510,6 +511,84 @@ def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool
     )
 
 
+def _step_minutes_from_left(left: int | None, steps: list[float]) -> float | None:
+    """Decode TunaTale's `left` (steps_remaining*1000 + total_steps) into the
+    current step's duration in minutes. Returns None when `left`/`steps` is
+    missing or out of range.
+    """
+    if not left or not steps:
+        return None
+    steps_remaining = left // 1000
+    total_steps = left % 1000
+    if total_steps <= 0 or steps_remaining <= 0:
+        return None
+    step_index = total_steps - steps_remaining
+    if step_index < 0 or step_index >= len(steps):
+        return None
+    return steps[step_index]
+
+
+def _derive_revlog_shape(
+    ds: DirectionState,
+    learn_steps: list[float],
+    relearn_steps: list[float],
+) -> tuple[int, int, int]:
+    """Compute (type_, ivl, last_ivl) for a revlog row reflecting the actual
+    transition. Anki encodes sub-day intervals as negative seconds (e.g. -60
+    for 1 min, -600 for 10 min) and day-scale intervals as positive ints.
+
+    `revlog.type`: 0=Learning, 1=Review, 2=Relearning. The type recorded is
+    determined by the queue the card was *in* at rating time — i.e. the prior
+    state, not the new state.
+    """
+    stability_days = max(1, round(ds.stability))
+
+    if ds.prior_state is None:
+        # Pre-migration row: keep the legacy positive-ivl shape so the rating
+        # at least lands in revlog. Future grades populate prior_state and use
+        # the precise transition mapping below.
+        if ds.state == SRSState.LEARNING:
+            type_ = 0
+        elif ds.state == SRSState.RELEARNING:
+            type_ = 2
+        else:
+            type_ = 1
+        return (type_, stability_days, stability_days)
+
+    if ds.prior_state in (SRSState.NEW, SRSState.LEARNING):
+        type_ = 0
+    elif ds.prior_state == SRSState.RELEARNING:
+        type_ = 2
+    else:
+        type_ = 1
+
+    if ds.state == SRSState.LEARNING:
+        step_min = _step_minutes_from_left(ds.left, learn_steps)
+        new_ivl = -int(round(step_min * 60)) if step_min is not None else stability_days
+    elif ds.state == SRSState.RELEARNING:
+        step_min = _step_minutes_from_left(ds.left, relearn_steps)
+        if step_min is None and relearn_steps:
+            step_min = relearn_steps[0]
+        new_ivl = -int(round(step_min * 60)) if step_min is not None else stability_days
+    else:
+        new_ivl = stability_days
+
+    if ds.prior_state == SRSState.NEW:
+        last_ivl = 0
+    elif ds.prior_state == SRSState.LEARNING:
+        prior_step_min = _step_minutes_from_left(ds.prior_left, learn_steps)
+        last_ivl = -int(round(prior_step_min * 60)) if prior_step_min is not None else 0
+    elif ds.prior_state == SRSState.RELEARNING:
+        prior_step_min = _step_minutes_from_left(ds.prior_left, relearn_steps)
+        last_ivl = -int(round(prior_step_min * 60)) if prior_step_min is not None else 0
+    elif ds.prior_state == SRSState.REVIEW:
+        last_ivl = max(1, round(ds.prior_stability)) if ds.prior_stability is not None else stability_days
+    else:
+        last_ivl = stability_days
+
+    return (type_, new_ivl, last_ivl)
+
+
 class AnkiSync:
     """Orchestrate bidirectional sync between TunaTale and Anki."""
 
@@ -849,7 +928,9 @@ class AnkiSync:
                     self._writer.set_due_date([ds.anki_card_id], days_str)
 
                 if ds.reps > 0:
-                    ivl = max(1, round(ds.stability))
+                    learn_steps, _ = resolve_learning_steps(self._db)
+                    relearn_steps, _ = resolve_relearning_steps(self._db)
+                    type_, ivl, last_ivl = _derive_revlog_shape(ds, learn_steps, relearn_steps)
                     ease = ds.last_rating if ds.last_rating is not None else 3
                     factor = max(1300, min(13000, round(ds.difficulty * 1000)))
                     # Use last_review timestamp for revlog ID
@@ -858,10 +939,10 @@ class AnkiSync:
                         cid=ds.anki_card_id,
                         ease=ease,
                         ivl=ivl,
-                        last_ivl=ivl,
+                        last_ivl=last_ivl,
                         factor=factor,
                         time_ms=ds.last_review_time_ms,
-                        type_=2,
+                        type_=type_,
                         preferred_id=preferred_id,
                     )
                 if force_fsrs:
@@ -884,7 +965,9 @@ class AnkiSync:
                 continue
             if not dry_run:
                 if ds.reps > 0:
-                    ivl = max(1, round(ds.stability))
+                    learn_steps, _ = resolve_learning_steps(self._db)
+                    relearn_steps, _ = resolve_relearning_steps(self._db)
+                    type_, ivl, last_ivl = _derive_revlog_shape(ds, learn_steps, relearn_steps)
                     ease = ds.last_rating if ds.last_rating is not None else 3
                     factor = max(1300, min(13000, round(ds.difficulty * 1000)))
                     preferred_id = int(ds.last_review.timestamp() * 1000) if ds.last_review else None
@@ -892,10 +975,10 @@ class AnkiSync:
                         cid=ds.anki_card_id,
                         ease=ease,
                         ivl=ivl,
-                        last_ivl=ivl,
+                        last_ivl=last_ivl,
                         factor=factor,
                         time_ms=ds.last_review_time_ms,
-                        type_=2,
+                        type_=type_,
                         preferred_id=preferred_id,
                     )
                 # Clear last_rating so it doesn't re-fire next sync

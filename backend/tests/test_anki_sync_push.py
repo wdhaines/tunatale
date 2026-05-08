@@ -690,6 +690,366 @@ class TestSyncPushEase:
         assert ease == 3
 
 
+# ── B6: revlog (type, ivl, lastIvl) reflects the actual transition ───────────
+
+
+class TestSyncPushRevlogTransitions:
+    """Push must emit revlog rows whose (type, ivl, lastIvl) match the
+    transition the user just made — not a hardcoded type=2 with positive ivl.
+
+    The piščanec scenario: a Review card lapsed (Again) into the relearning
+    queue. Anki's UI later sees a 1-min step that has no preceding revlog row,
+    so the next rating computes against a fictional prior state. We fix this
+    by stashing prior_state on the DirectionState at grade time and deriving
+    correct revlog values at push time.
+
+    Anki's RevlogReviewKind: 0=Learning, 1=Review, 2=Relearning.
+    Anki's ivl encoding: positive integer = days; negative integer = -seconds.
+    """
+
+    def test_review_again_writes_review_revlog_with_negative_step_ivl(self):
+        """REVIEW + Again → RELEARNING: type=1, ivl=-(relearn_step_min*60), lastIvl≈prior stability days."""
+        from datetime import datetime as dt
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=0.5,  # post-lapse stability (small)
+            difficulty=5.5,
+            reps=4,
+            lapses=1,
+            state=SRSState.RELEARNING,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=1,  # Again
+            left=1001,
+            due_at=dt.now(UTC) + timedelta(minutes=10),
+            prior_state=SRSState.REVIEW,
+            prior_left=None,
+            prior_stability=10.0,  # was a 10-day Review card
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        revlog_calls = [c for c in writer.calls if c[0] == "write_revlog"]
+        assert len(revlog_calls) == 1
+        _, _cid, ease, ivl, last_ivl, _factor, _time_ms, type_, _pref = revlog_calls[0]
+        assert ease == 1
+        assert type_ == 1, f"REVIEW→RELEARNING uses Review revlog kind (1), got {type_}"
+        assert ivl == -600, f"expected -(10*60)=-600, got {ivl}"
+        assert last_ivl == 10, f"expected last_ivl=prior stability days=10, got {last_ivl}"
+
+    def test_review_good_writes_review_revlog_with_positive_ivl(self):
+        """REVIEW + Good → REVIEW: type=1, ivl=stability_days, lastIvl=prior_stability_days."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=15),
+            stability=15.3,  # post-good stability (grew)
+            difficulty=4.8,
+            reps=5,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            prior_state=SRSState.REVIEW,
+            prior_stability=10.0,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        revlog_calls = [c for c in writer.calls if c[0] == "write_revlog"]
+        assert len(revlog_calls) == 1
+        _, _cid, _ease, ivl, last_ivl, _f, _t, type_, _p = revlog_calls[0]
+        assert type_ == 1
+        assert ivl == 15
+        assert last_ivl == 10
+
+    def test_learning_step_advance_writes_learning_revlog(self):
+        """LEARNING(step0, left=2002) + Good → LEARNING(step1, left=1002): type=0, ivl=-600, lastIvl=-60."""
+        from datetime import datetime as dt
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=1.0,
+            difficulty=5.0,
+            reps=2,
+            lapses=0,
+            state=SRSState.LEARNING,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=3,  # Good
+            left=1002,  # 1 of 2 steps remaining → at step 1 (10min)
+            due_at=dt.now(UTC) + timedelta(minutes=10),
+            prior_state=SRSState.LEARNING,
+            prior_left=2002,  # was at step 0 (1min step)
+            prior_stability=1.0,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        revlog_calls = [c for c in writer.calls if c[0] == "write_revlog"]
+        assert len(revlog_calls) == 1
+        _, _cid, ease, ivl, last_ivl, _f, _t, type_, _p = revlog_calls[0]
+        assert ease == 3
+        assert type_ == 0, f"learning step revlog uses kind=0, got {type_}"
+        assert ivl == -600, f"new step is 10min → -600, got {ivl}"
+        assert last_ivl == -60, f"prior step was 1min → -60, got {last_ivl}"
+
+    def test_new_to_learning_writes_learning_revlog_with_zero_last_ivl(self):
+        """NEW + Good → LEARNING(step1): type=0, ivl=-(step1_min*60), lastIvl=0."""
+        from datetime import datetime as dt
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=1.0,
+            difficulty=5.0,
+            reps=1,
+            lapses=0,
+            state=SRSState.LEARNING,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            left=1002,
+            due_at=dt.now(UTC) + timedelta(minutes=10),
+            prior_state=SRSState.NEW,
+            prior_left=None,
+            prior_stability=1.0,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        revlog_calls = [c for c in writer.calls if c[0] == "write_revlog"]
+        assert len(revlog_calls) == 1
+        _, _cid, _ease, ivl, last_ivl, _f, _t, type_, _p = revlog_calls[0]
+        assert type_ == 0
+        assert ivl == -600
+        assert last_ivl == 0, f"NEW→LEARNING has no prior step → lastIvl=0, got {last_ivl}"
+
+    def test_learning_graduation_writes_learning_revlog_with_positive_ivl(self):
+        """LEARNING(last step) + Good → REVIEW: type=0, ivl=stability_days, lastIvl=-(prior_step_min*60)."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=4),
+            stability=4.0,
+            difficulty=5.0,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            left=None,
+            due_at=None,
+            prior_state=SRSState.LEARNING,
+            prior_left=1002,  # was at step 1 (10min) — this is the last step
+            prior_stability=1.0,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        revlog_calls = [c for c in writer.calls if c[0] == "write_revlog"]
+        assert len(revlog_calls) == 1
+        _, _cid, _ease, ivl, last_ivl, _f, _t, type_, _p = revlog_calls[0]
+        assert type_ == 0, f"graduation from learning uses kind=0, got {type_}"
+        assert ivl == 4, f"new ivl=stability days=4, got {ivl}"
+        assert last_ivl == -600, f"prior step was 10min → -600, got {last_ivl}"
+
+    def test_relearning_again_writes_relearning_revlog(self):
+        """RELEARNING + Again (restart) → RELEARNING: type=2, ivl=-(relearn_step*60), lastIvl=-(prior_step*60)."""
+        from datetime import datetime as dt
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=0.3,
+            difficulty=6.0,
+            reps=5,
+            lapses=2,
+            state=SRSState.RELEARNING,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=1,
+            left=1001,  # 1 of 1 step remaining
+            due_at=dt.now(UTC) + timedelta(minutes=10),
+            prior_state=SRSState.RELEARNING,
+            prior_left=1001,
+            prior_stability=0.5,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        revlog_calls = [c for c in writer.calls if c[0] == "write_revlog"]
+        assert len(revlog_calls) == 1
+        _, _cid, _ease, ivl, last_ivl, _f, _t, type_, _p = revlog_calls[0]
+        assert type_ == 2, f"relearning→relearning uses kind=2, got {type_}"
+        assert ivl == -600
+        assert last_ivl == -600
+
+    def test_unknown_prior_state_falls_back_to_legacy_review_shape(self):
+        """prior_state=None (pre-migration row): keep old positive-ivl shape so legacy tests still hold."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        _mark_direction_dirty(db, guid, reps=3, stability=10.5, last_rating=3)
+        # _mark_direction_dirty doesn't set prior_state → defaults to None
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        revlog_calls = [c for c in writer.calls if c[0] == "write_revlog"]
+        assert len(revlog_calls) == 1
+        _, _cid, _ease, ivl, last_ivl, _f, _t, _type, _p = revlog_calls[0]
+        # Legacy fallback: positive ivl=stability_days (banker's rounding: 10.5 → 10)
+        assert ivl == 10
+        assert last_ivl == 10
+
+    def test_schedule_then_push_review_again_emits_relearn_step(self):
+        """End-to-end: schedule(REVIEW, AGAIN) → DB → push writes type=1, ivl=-600."""
+        from dataclasses import replace as dc_replace
+
+        from app.models.srs_item import Rating
+        from app.srs.fsrs import schedule as fsrs_schedule
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+
+        item = db.get_collocation_by_guid(guid)
+        old_rec = item.directions[Direction.RECOGNITION]
+        seeded = dc_replace(old_rec, reps=3, stability=10.0, state=SRSState.REVIEW)
+        db.update_direction(guid, Direction.RECOGNITION, seeded)
+
+        item = db.get_collocation_by_guid(guid)
+        updated_item = fsrs_schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION)
+        new_rec = updated_item.directions[Direction.RECOGNITION]
+        assert new_rec.state == SRSState.RELEARNING
+        assert new_rec.prior_state == SRSState.REVIEW, "schedule() must stash prior_state"
+        db.update_direction(guid, Direction.RECOGNITION, new_rec)
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        revlog_calls = [c for c in writer.calls if c[0] == "write_revlog"]
+        assert len(revlog_calls) == 1
+        _, _cid, ease, ivl, last_ivl, _f, _t, type_, _p = revlog_calls[0]
+        assert ease == 1
+        assert type_ == 1
+        assert ivl == -600
+        assert last_ivl == 10  # round(10.0)
+
+
+# ── B6: helper functions (branch coverage for _step_minutes_from_left and _derive_revlog_shape) ──
+
+
+class TestRevlogShapeHelpers:
+    def test_step_minutes_from_left_returns_none_for_missing_inputs(self):
+        from app.anki.sync import _step_minutes_from_left
+
+        assert _step_minutes_from_left(None, [1.0, 10.0]) is None
+        assert _step_minutes_from_left(0, [1.0, 10.0]) is None
+        assert _step_minutes_from_left(2002, []) is None
+
+    def test_step_minutes_from_left_returns_none_for_zero_packed_fields(self):
+        from app.anki.sync import _step_minutes_from_left
+
+        # total_steps == 0 (lower 3 digits are zero)
+        assert _step_minutes_from_left(2000, [1.0, 10.0]) is None
+
+    def test_step_minutes_from_left_returns_none_for_out_of_range_step_index(self):
+        from app.anki.sync import _step_minutes_from_left
+
+        # left=1003 → steps_remaining=1, total_steps=3, step_index=2; only 2 steps configured
+        assert _step_minutes_from_left(1003, [1.0, 10.0]) is None
+
+    def test_derive_shape_falls_back_for_legacy_learning_state(self):
+        """prior_state=None + state=LEARNING uses Learning revlog kind (0)."""
+        from app.anki.sync import _derive_revlog_shape
+
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=2.0,
+            state=SRSState.LEARNING,
+            prior_state=None,
+        )
+        type_, ivl, last_ivl = _derive_revlog_shape(ds, [1.0, 10.0], [10.0])
+        assert type_ == 0
+        assert ivl == 2
+        assert last_ivl == 2
+
+    def test_derive_shape_falls_back_for_legacy_relearning_state(self):
+        """prior_state=None + state=RELEARNING uses Relearning revlog kind (2)."""
+        from app.anki.sync import _derive_revlog_shape
+
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=2.0,
+            state=SRSState.RELEARNING,
+            prior_state=None,
+        )
+        type_, ivl, last_ivl = _derive_revlog_shape(ds, [1.0, 10.0], [10.0])
+        assert type_ == 2
+
+    def test_derive_shape_relearning_with_unparseable_left_falls_back_to_first_step(self):
+        """state=RELEARNING with left=None still produces -relearn_steps[0]*60 ivl."""
+        from app.anki.sync import _derive_revlog_shape
+
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=0.5,
+            state=SRSState.RELEARNING,
+            left=None,
+            prior_state=SRSState.REVIEW,
+            prior_stability=5.0,
+        )
+        type_, ivl, last_ivl = _derive_revlog_shape(ds, [1.0, 10.0], [10.0])
+        assert type_ == 1
+        assert ivl == -600  # fallback to relearn_steps[0]
+        assert last_ivl == 5
+
+    def test_derive_shape_unexpected_prior_state_uses_fallback_last_ivl(self):
+        """A prior_state outside the four known transitions (e.g. BURIED) falls
+        through to the stability-based last_ivl branch."""
+        from app.anki.sync import _derive_revlog_shape
+
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=4.0,
+            state=SRSState.REVIEW,
+            prior_state=SRSState.BURIED,
+        )
+        _type_, _ivl, last_ivl = _derive_revlog_shape(ds, [1.0, 10.0], [10.0])
+        assert last_ivl == 4
+
+
 # ── B14: offline ordering regression ─────────────────────────────────────────
 
 

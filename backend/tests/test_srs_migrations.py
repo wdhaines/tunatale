@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 12
+        assert CURRENT_VERSION == 13
 
     def test_migrates_from_v1_to_v2(self):
         from app.srs.migrations import migrate_v1_to_v2
@@ -734,7 +734,7 @@ class TestMigrateV5ToV6:
         conn = _make_v1_conn()
         _insert(conn, "banka")
         migrate(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_VERSION
         cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
         assert "anki_due" in cols
         assert "left" in cols
@@ -802,7 +802,7 @@ class TestMigrationV6ToV7:
         conn = _make_v1_conn()
         _insert(conn, "banka")
         migrate(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_VERSION
 
 
 class TestMigrationV6ToV7Detailed:
@@ -1178,3 +1178,50 @@ class TestMigrateV11ToV12:
         migrate_v11_to_v12(conn)
         migrate_v11_to_v12(conn)  # second call must not raise or change state
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+
+
+class TestMigrateV12ToV13:
+    """Tests for migration from v12 to v13 (add prior_state/prior_left/prior_stability)."""
+
+    def _make_v12_conn(self):
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            CREATE TABLE collocation_directions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                collocation_id INTEGER NOT NULL,
+                direction TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'new',
+                reps INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        conn.execute("PRAGMA user_version = 12")
+        conn.commit()
+        return conn
+
+    def test_adds_prior_state_columns(self):
+        from app.srs.migrations import migrate_v12_to_v13
+
+        conn = self._make_v12_conn()
+        migrate_v12_to_v13(conn)
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
+        assert "prior_state" in cols
+        assert "prior_left" in cols
+        assert "prior_stability" in cols
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
+
+    def test_idempotent_v12_to_v13(self):
+        """Re-running the migration on a partially-migrated DB skips the existing columns."""
+        from app.srs.migrations import migrate_v12_to_v13
+
+        conn = self._make_v12_conn()
+        migrate_v12_to_v13(conn)
+        migrate_v12_to_v13(conn)  # second call exercises the column-already-exists branches
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
+        assert "prior_state" in cols
+        assert "prior_left" in cols
+        assert "prior_stability" in cols
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 13

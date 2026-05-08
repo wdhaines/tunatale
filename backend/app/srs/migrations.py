@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 12
+CURRENT_VERSION = 13
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -449,6 +449,24 @@ def migrate_v11_to_v12(conn: sqlite3.Connection) -> None:
     _set_version(conn, 12)
 
 
+def migrate_v12_to_v13(conn: sqlite3.Connection) -> None:
+    """Add prior_state, prior_left, prior_stability to collocation_directions.
+
+    These columns snapshot the pre-grade direction state so the Anki sync push
+    can emit a revlog row whose (type, ivl, lastIvl) reflect the actual
+    transition (e.g. REVIEW + Again → RELEARNING with a 10-min step). Without
+    them, push falls back to a hardcoded type=2/positive-ivl shape that leaves
+    Anki unable to reconstruct the user's prior step on the next UI rating.
+    """
+    if not _column_exists(conn, "collocation_directions", "prior_state"):
+        conn.execute("ALTER TABLE collocation_directions ADD COLUMN prior_state TEXT")
+    if not _column_exists(conn, "collocation_directions", "prior_left"):
+        conn.execute("ALTER TABLE collocation_directions ADD COLUMN prior_left INTEGER")
+    if not _column_exists(conn, "collocation_directions", "prior_stability"):
+        conn.execute("ALTER TABLE collocation_directions ADD COLUMN prior_stability REAL")
+    _set_version(conn, 13)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -462,6 +480,7 @@ _MIGRATIONS = {
     9: migrate_v9_to_v10,
     10: migrate_v10_to_v11,
     11: migrate_v11_to_v12,
+    12: migrate_v12_to_v13,
 }
 
 
