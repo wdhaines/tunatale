@@ -1198,6 +1198,50 @@ class TestReviewQueue:
         assert new_items[0]["text"] == "null_b"
         assert new_items[1]["text"] == "null_a"
 
+    async def test_review_queue_subtracts_introduced_today_from_cap(self, monkeypatch, tmp_path, api_app_state):
+        """Anki parity: the new-card budget for the queue is `cap - new_studied`.
+        /queue-stats already subtracts via count_anki_introduced_today; /review-queue
+        previously took the full cap, so after the user introduced N new cards
+        Anki served (cap - N) but TT kept serving up to cap — drifting the
+        Intersperser ratio and the queue head from mid-session onward.
+        """
+        import sqlite3 as _sqlite3
+        from datetime import date, datetime, time
+
+        from app.config import settings
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+
+        # Cap=2, pool=5. Without subtraction, /review-queue serves 2 new.
+        # Disable sibling-bury so the assertion isolates the cap arithmetic
+        # (otherwise both directions of one collocation collapse into one slot).
+        db.set_anki_state_cache("daily_new_cap", "2")
+        db.set_anki_state_cache("bury_new", "False")
+        for i in range(5):
+            unit = SyntacticUnit(text=f"new_{i}", translation="t", word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+
+        # Stub Anki collection: one revlog row from today → introduced_today=1.
+        anki_path = tmp_path / "collection.anki2"
+        today_ms = int(datetime.combine(date.today(), time(14, 0)).timestamp() * 1000)
+        conn = _sqlite3.connect(str(anki_path))
+        conn.execute(
+            "CREATE TABLE revlog (id INTEGER, cid INTEGER, usn INTEGER, ease INTEGER, "
+            "ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)"
+        )
+        conn.execute("INSERT INTO revlog VALUES (?, ?, 0, 3, 1, 1, 0, 0, 0)", (today_ms, 4242))
+        conn.commit()
+        conn.close()
+        monkeypatch.setattr(settings, "anki_collection_path", anki_path)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        new_items = [q for q in resp.json()["queue"] if q["state"] == "new"]
+        # cap - introduced_today = 2 - 1 = 1
+        assert len(new_items) == 1, f"Expected 1 new (cap=2 - introduced=1), got {len(new_items)}"
+
     # --- Additional tests for _spread_mix ---
     async def test_spread_mix_empty_news_returns_reviews(self, api_app_state):
         from app.api.srs import _spread_mix

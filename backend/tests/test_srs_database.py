@@ -337,6 +337,35 @@ class TestReviewedToday:
         assert len(result) == 1
         assert row_id in result
 
+    def test_matches_when_last_review_is_iso_datetime(self, srs_db):
+        """FSRS scheduling writes last_review as an ISO datetime (e.g.
+        '2026-05-08T00:00:00+00:00'). The query must still find these rows
+        when called with today's date — otherwise sibling-bury silently fails
+        for everything graded through the FSRS code path."""
+        from datetime import datetime
+
+        srs_db.add_collocation(_unit("word_d"), language_code="sl")
+        rows, _ = srs_db.list_collocations(search="word_d", limit=1)
+        row_id, item, _ = rows[0]
+        today = date.today()
+        last_review_dt = datetime.combine(today, datetime.min.time(), tzinfo=UTC)
+
+        orig = item.directions[Direction.RECOGNITION]
+        new_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=today,
+            stability=orig.stability,
+            difficulty=orig.difficulty,
+            reps=orig.reps,
+            lapses=orig.lapses,
+            last_review=last_review_dt,
+        )
+        srs_db.update_direction_by_id(row_id, Direction.RECOGNITION, new_dir)
+
+        result = srs_db.list_collocations_reviewed_today(today)
+        assert row_id in result
+
     def test_count_collocations(self, srs_db):
         assert srs_db.count_collocations() == 0
         srs_db.add_collocation(_unit("dober dan"), language_code="sl")

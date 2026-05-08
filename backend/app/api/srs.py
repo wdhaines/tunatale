@@ -701,6 +701,13 @@ async def get_review_queue(request: Request) -> dict:
     bury_new, _ = resolve_bury_new(db)
     bury_review, _ = resolve_bury_review(db)
 
+    # Anki parity: the new-card budget for the queue is `cap - new_studied`,
+    # not `cap`. /queue-stats already subtracts via count_anki_introduced_today;
+    # the queue itself must too, otherwise the Intersperser ratio (R+1)/(N+1)
+    # diverges from Anki's mid-session and the queue head drifts.
+    introduced_today = count_anki_introduced_today(today)
+    new_quota = max(0, cap - introduced_today)
+
     buried = db.list_collocations_reviewed_today(today)
 
     # 1. Due review cards: recognition + production pooled and sorted by retrievability ASC
@@ -711,13 +718,14 @@ async def get_review_queue(request: Request) -> dict:
     if bury_review:
         due = [t for t in due if t[0] not in buried]
 
-    # 2. New cards: respect cap across BOTH directions, sibling-buried, ordered by anki_due then anki_card_id
-    new_rec = db.get_new_items(direction=Direction.RECOGNITION, limit=cap)
-    new_prod = db.get_new_items(direction=Direction.PRODUCTION, limit=cap)
+    # 2. New cards: respect quota (cap minus already-introduced-today) across
+    # BOTH directions, sibling-buried, ordered by anki_due then anki_card_id.
+    new_rec = db.get_new_items(direction=Direction.RECOGNITION, limit=new_quota)
+    new_prod = db.get_new_items(direction=Direction.PRODUCTION, limit=new_quota)
     new_combined = _merge_by_anki_due_then_id(new_rec, new_prod)
     if bury_new:
         new_combined = [t for t in new_combined if t[0] not in buried]
-    new_combined = new_combined[:cap]
+    new_combined = new_combined[:new_quota]
 
     # 3. Extract learning-state cards (Anki queue=1 behavior: they go first).
     #    Also remove any new cards whose collocation has a learning direction.

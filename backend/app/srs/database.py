@@ -635,9 +635,12 @@ class SRSDatabase:
 
     def list_collocations_reviewed_today(self, today: date) -> set[int]:
         """Return set of collocation IDs whose recognition OR production direction was reviewed today."""
+        # last_review is stored either as a date-only string ('2026-05-08') or
+        # as a tz-aware ISO datetime ('2026-05-08T00:00:00+00:00') depending on
+        # the write site. sqlite's date() coerces both into 'YYYY-MM-DD'.
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT DISTINCT collocation_id FROM collocation_directions WHERE last_review = ?",
+                "SELECT DISTINCT collocation_id FROM collocation_directions WHERE date(last_review) = ?",
                 (today.isoformat(),),
             ).fetchall()
             return {r[0] for r in rows}
