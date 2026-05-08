@@ -630,7 +630,8 @@ class TestLeftAndDueAtFromCards:
                 due INTEGER,
                 ivl INTEGER,
                 left INTEGER,
-                type INTEGER
+                type INTEGER,
+                mod INTEGER DEFAULT 0
             )"""
         )
         conn.executemany(

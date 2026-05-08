@@ -556,6 +556,26 @@ async def suspend_item(item_id: int, body: SuspendRequest, request: Request):
     return _item_to_dict(row_id, item, lang)
 
 
+_FNV_OFFSET_BASIS_64 = 0xCBF29CE484222325
+_FNV_PRIME_64 = 0x100000001B3
+
+
+def _fnv1a_64_i64(*args: int) -> int:
+    """Compute Anki's `fnvhash(args...)` over the i64 little-endian bytes.
+
+    Mirrors rslib/src/storage/sqlite.rs:add_fnvhash_function — FNV-1a 64-bit
+    hash, fed each i64 argument as 8 little-endian bytes via `write_i64`.
+    Returned as a Python int in the signed-i64 range so direct comparison
+    matches SQLite's `ORDER BY fnvhash(...)` ordering.
+    """
+    h = _FNV_OFFSET_BASIS_64
+    for a in args:
+        for byte in (a & 0xFFFFFFFFFFFFFFFF).to_bytes(8, "little"):
+            h ^= byte
+            h = (h * _FNV_PRIME_64) & 0xFFFFFFFFFFFFFFFF
+    return h - (1 << 64) if h >= (1 << 63) else h
+
+
 def _merge_by_retrievability_ascending(
     rec: list[tuple[int, SRSItem, str]],
     prod: list[tuple[int, SRSItem, str]],
@@ -566,7 +586,10 @@ def _merge_by_retrievability_ascending(
     Mirrors Anki's SortOrder::RetrievabilityAscending: every card with
     due_date <= today competes in one flat pool, ordered by R alone. An overdue
     but well-remembered card sits behind a today-due card the user is about to
-    forget. Tie-break: anki_card_id (NULLS LAST), then row_id.
+    forget. Tie-break matches Anki exactly: `fnvhash(anki_card_id, anki_card_mod)`
+    appended after the primary sort (rslib/src/storage/card/mod.rs:897). When
+    either field is missing, fall back to anki_card_id then row_id so the order
+    stays deterministic but no longer claims Anki parity.
     """
     from app.srs.fsrs import compute_retrievability
 
@@ -579,7 +602,10 @@ def _merge_by_retrievability_ascending(
         row_id, item, _, direction = t
         dstate = item.directions[direction]
         r = compute_retrievability(dstate, today)
-        return (r, dstate.anki_card_id is None, dstate.anki_card_id or 0, row_id)
+        if dstate.anki_card_id is not None and dstate.anki_card_mod is not None:
+            return (r, 0, _fnv1a_64_i64(dstate.anki_card_id, dstate.anki_card_mod), 0)
+        # Fallback for rows that haven't been synced from Anki yet.
+        return (r, 1, dstate.anki_card_id or 0, row_id)
 
     combined.sort(key=_key)
     return combined
@@ -611,22 +637,39 @@ def _spread_mix(
     reviews: list[tuple[int, SRSItem, str, Direction]],
     news: list[tuple[int, SRSItem, str, Direction]],
 ) -> list[tuple[int, SRSItem, str, Direction]]:
-    """Interleave news into reviews at a ratio approximating Anki's mix."""
-    if not news or not reviews:
-        return reviews + news
-    ratio = max(1, len(reviews) // len(news))
+    """Interleave news into reviews matching Anki's Intersperser exactly.
+
+    Port of rslib/src/scheduler/queue/builder/intersperser.rs. Uses the
+    continuous ratio (one_len + 1) / (two_len + 1) so the first item comes from
+    the longer iter when populations are imbalanced, and items are distributed
+    evenly between the start and end. For 10 reviews + 2 news the first new
+    appears at position 3, not position 5 like a floor-ratio approach.
+    """
+    if not news:
+        return list(reviews)
+    if not reviews:
+        return list(news)
+    one_len = len(reviews)
+    two_len = len(news)
+    ratio = (one_len + 1) / (two_len + 1)
+    one_idx = 0
+    two_idx = 0
     result: list[tuple[int, SRSItem, str, Direction]] = []
-    review_idx = 0
-    new_idx = 0
-    while review_idx < len(reviews) or new_idx < len(news):
-        # Emit `ratio` reviews, then one new
-        for _ in range(ratio):
-            if review_idx < len(reviews):
-                result.append(reviews[review_idx])
-                review_idx += 1
-        if new_idx < len(news):
-            result.append(news[new_idx])
-            new_idx += 1
+    while one_idx < one_len or two_idx < two_len:
+        if one_idx < one_len and two_idx < two_len:
+            relative_idx2 = (two_idx + 1) * ratio
+            if relative_idx2 < (one_idx + 1):
+                result.append(news[two_idx])
+                two_idx += 1
+            else:
+                result.append(reviews[one_idx])
+                one_idx += 1
+        elif one_idx < one_len:
+            result.append(reviews[one_idx])
+            one_idx += 1
+        else:
+            result.append(news[two_idx])
+            two_idx += 1
     return result
 
 

@@ -73,7 +73,31 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 13
+        assert CURRENT_VERSION == 14
+
+    def test_migrates_v13_to_v14_adds_anki_card_mod(self, tmp_path):
+        """v14 adds anki_card_mod to mirror Anki's cards.mod for fnvhash tiebreak."""
+        import sqlite3
+
+        from app.srs.migrations import _column_exists, _set_version, migrate_v13_to_v14
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.execute(
+            "CREATE TABLE collocation_directions ("
+            "collocation_id INTEGER, direction TEXT, "
+            "anki_card_id INTEGER, anki_due INTEGER)"
+        )
+        _set_version(conn, 13)
+        assert not _column_exists(conn, "collocation_directions", "anki_card_mod")
+
+        migrate_v13_to_v14(conn)
+
+        assert _column_exists(conn, "collocation_directions", "anki_card_mod")
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 14
+
+        # Idempotent
+        migrate_v13_to_v14(conn)
+        assert _column_exists(conn, "collocation_directions", "anki_card_mod")
 
     def test_migrates_from_v1_to_v2(self):
         from app.srs.migrations import migrate_v1_to_v2

@@ -34,6 +34,7 @@ class AnkiCard:
     card_type: int  # Anki's cards.type (0=New, 1=Learn, 2=Review, 3=Relearn)
     direction: Direction
     fsrs_state: DirectionState
+    mod: int = 0  # Anki's cards.mod — needed for fnvhash(id, mod) sort tiebreak
 
 
 def compute_due_date(queue: int, due_raw: int, col_crt: int) -> date:
@@ -116,12 +117,12 @@ def fetch_cards_for_notes(
     placeholders = ",".join("?" * len(note_ids))
     # Also select `left` and `type` columns for learning step tracking
     rows = conn.execute(
-        f"SELECT id, nid, did, ord, queue, reps, lapses, data, due, ivl, IFNULL(left,0), type FROM cards WHERE nid IN ({placeholders})",
+        f"SELECT id, nid, did, ord, queue, reps, lapses, data, due, ivl, IFNULL(left,0), type, mod FROM cards WHERE nid IN ({placeholders})",
         note_ids,
     ).fetchall()
     cards = []
     for r in rows:
-        card_id, note_id, deck_id, ord_, queue, reps, lapses, data_str, due_raw, ivl, left_val, card_type = (
+        card_id, note_id, deck_id, ord_, queue, reps, lapses, data_str, due_raw, ivl, left_val, card_type, card_mod = (
             r[0],
             r[1],
             r[2],
@@ -134,6 +135,7 @@ def fetch_cards_for_notes(
             r[9] or 0,
             r[10] or 0,
             r[11] or 0,
+            r[12] or 0,
         )
         fsrs = parse_fsrs_data(
             card_id=card_id,
@@ -162,6 +164,7 @@ def fetch_cards_for_notes(
                 card_type=card_type,
                 direction=direction,
                 fsrs_state=fsrs,
+                mod=card_mod,
             )
         )
     return cards

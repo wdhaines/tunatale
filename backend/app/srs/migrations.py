@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 13
+CURRENT_VERSION = 14
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -467,6 +467,19 @@ def migrate_v12_to_v13(conn: sqlite3.Connection) -> None:
     _set_version(conn, 13)
 
 
+def migrate_v13_to_v14(conn: sqlite3.Connection) -> None:
+    """Add `anki_card_mod` to collocation_directions.
+
+    Mirrors Anki's `cards.mod` so the review-queue sort can match Anki's
+    secondary tiebreak under RetrievabilityAscending: `fnvhash(id, mod)`.
+    Without it, two cards with identical FSRS state diverge in head-of-queue
+    order between TT and Anki. Populated by sync_pull from cards.mod.
+    """
+    if not _column_exists(conn, "collocation_directions", "anki_card_mod"):
+        conn.execute("ALTER TABLE collocation_directions ADD COLUMN anki_card_mod INTEGER")
+    _set_version(conn, 14)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -481,6 +494,7 @@ _MIGRATIONS = {
     10: migrate_v10_to_v11,
     11: migrate_v11_to_v12,
     12: migrate_v12_to_v13,
+    13: migrate_v13_to_v14,
 }
 
 

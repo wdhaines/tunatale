@@ -109,6 +109,7 @@ class CardRecord:
     difficulty: float
     due_date: date
     anki_due: int | None = None
+    anki_card_mod: int | None = None
     last_review: datetime | None = None
     last_review_ms: int | None = None
     # False when the source (e.g. AnkiConnect cardsInfo) does not reliably expose
@@ -215,6 +216,7 @@ class OfflineReader:
                     difficulty=c.fsrs_state.difficulty,
                     due_date=c.fsrs_state.due_date,
                     anki_due=c.fsrs_state.anki_due,
+                    anki_card_mod=c.mod,
                     last_review=c.fsrs_state.last_review,
                     last_review_ms=last_revlog_ms.get(c.id),
                     left=c.fsrs_state.left,
@@ -713,6 +715,7 @@ class AnkiSync:
                         state=new_state,
                         dirty_fsrs=False,  # cleared so push won't overwrite Anki
                         anki_card_id=card_rec.anki_card_id,
+                        anki_card_mod=card_rec.anki_card_mod,
                         anki_due=card_rec.anki_due,
                         last_review=local_dir.last_review,  # preserve TunaTale's timestamp for revlog ID
                         last_review_time_ms=local_dir.last_review_time_ms,  # preserve duration
@@ -752,6 +755,7 @@ class AnkiSync:
                             local_dir,
                             state=SRSState.SUSPENDED,
                             anki_card_id=card_rec.anki_card_id,
+                            anki_card_mod=card_rec.anki_card_mod,
                             anki_due=card_rec.anki_due,
                             last_synced_at=datetime.now(UTC).isoformat(),
                         )
@@ -760,6 +764,7 @@ class AnkiSync:
                             local_dir,
                             state=SRSState.BURIED,
                             anki_card_id=card_rec.anki_card_id,
+                            anki_card_mod=card_rec.anki_card_mod,
                             anki_due=card_rec.anki_due,
                             last_synced_at=datetime.now(UTC).isoformat(),
                         )
@@ -784,6 +789,7 @@ class AnkiSync:
                             state=new_state,
                             dirty_fsrs=False,
                             anki_card_id=card_rec.anki_card_id,
+                            anki_card_mod=card_rec.anki_card_mod,
                             anki_due=card_rec.anki_due,
                             last_review=card_rec.last_review,
                             last_synced_at=datetime.now(UTC).isoformat(),
@@ -813,6 +819,7 @@ class AnkiSync:
                             local_dir,
                             state=local_dir.state,
                             anki_card_id=card_rec.anki_card_id,
+                            anki_card_mod=card_rec.anki_card_mod,
                             anki_due=card_rec.anki_due,
                             last_synced_at=datetime.now(UTC).isoformat(),
                         )
@@ -840,6 +847,7 @@ class AnkiSync:
                         state=new_state,
                         dirty_fsrs=False,
                         anki_card_id=card_rec.anki_card_id,
+                        anki_card_mod=card_rec.anki_card_mod,
                         anki_due=card_rec.anki_due,
                         last_review=card_rec.last_review,
                         last_synced_at=datetime.now(UTC).isoformat(),
@@ -871,6 +879,7 @@ class AnkiSync:
                         state=new_state,
                         dirty_fsrs=False,
                         anki_card_id=card_rec.anki_card_id,
+                        anki_card_mod=card_rec.anki_card_mod,
                         anki_due=card_rec.anki_due,
                         last_review=card_rec.last_review,
                         last_synced_at=datetime.now(UTC).isoformat(),

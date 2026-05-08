@@ -691,6 +691,110 @@ class TestReviewQueue:
         result = _spread_mix(reviews, news)
         assert len(result) == 8
 
+    async def test_spread_mix_matches_anki_intersperser_3_3(self, api_app_state):
+        """Anki Intersperser([1,2,3], [11,22,33]) yields [1,11,2,22,3,33]."""
+        from app.api.srs import _spread_mix
+
+        reviews = [(i, "R", "sl", Direction.RECOGNITION) for i in range(3)]
+        news = [(i, "N", "sl", Direction.PRODUCTION) for i in range(3)]
+        tags = [t[1] for t in _spread_mix(reviews, news)]
+        assert tags == ["R", "N", "R", "N", "R", "N"]
+
+    async def test_spread_mix_matches_anki_intersperser_3_2(self, api_app_state):
+        """Anki Intersperser([1,2,3], [11,22]) yields [1,11,2,22,3]."""
+        from app.api.srs import _spread_mix
+
+        reviews = [(i, "R", "sl", Direction.RECOGNITION) for i in range(3)]
+        news = [(i, "N", "sl", Direction.PRODUCTION) for i in range(2)]
+        tags = [t[1] for t in _spread_mix(reviews, news)]
+        assert tags == ["R", "N", "R", "N", "R"]
+
+    async def test_spread_mix_starts_with_longer_iter(self, api_app_state):
+        """When news outnumber reviews, Anki Intersperser starts from the news side.
+
+        Intersperser([1,2,3], [11,22,33,44,55,66]) = [11,1,22,33,2,44,55,3,66].
+        """
+        from app.api.srs import _spread_mix
+
+        reviews = [(i, "R", "sl", Direction.RECOGNITION) for i in range(3)]
+        news = [(i, "N", "sl", Direction.PRODUCTION) for i in range(6)]
+        tags = [t[1] for t in _spread_mix(reviews, news)]
+        assert tags == ["N", "R", "N", "N", "R", "N", "N", "R", "N"]
+
+    async def test_fnv1a_64_matches_anki_for_known_pair(self, api_app_state):
+        """Anki's fnvhash(id, mod) over revija/vadba production cards.
+
+        Both cards share mod=1778078218; their hashes determine Anki's tiebreak
+        when retrievability is identical. Anki shows vadba first because its
+        hash is the smaller signed i64. Verifies the FNV-1a-64 port exactly.
+        """
+        from app.api.srs import _fnv1a_64_i64
+
+        revija = _fnv1a_64_i64(1775264032053, 1778078218)
+        vadba = _fnv1a_64_i64(1775264032065, 1778078218)
+        assert revija == 2230325772437798989
+        assert vadba == -542033352715009175
+        assert vadba < revija
+
+    async def test_fnv1a_64_zero_args_returns_offset_basis(self, api_app_state):
+        """Empty input returns FNV-1a's 64-bit offset basis, cast to signed i64."""
+        from app.api.srs import _fnv1a_64_i64
+
+        # 0xcbf29ce484222325 - 2**64
+        assert _fnv1a_64_i64() == -3750763034362895579
+
+    async def test_retrievability_tie_breaks_by_fnvhash_anki_parity(self, api_app_state):
+        """When two due directions tie on retrievability, the one with the
+        smaller fnvhash(anki_card_id, anki_card_mod) sorts first — matching
+        Anki's `ORDER BY ... retrievability asc, fnvhash(id, mod)`.
+        """
+        from datetime import date
+
+        from app.api.srs import _merge_by_retrievability_ascending
+        from app.models.srs_item import DirectionState, SRSItem, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+
+        today = date.today()
+
+        def _make(text: str, cid: int, mod: int) -> tuple[int, SRSItem, str]:
+            unit = SyntacticUnit(text=text, translation=text, word_count=1, difficulty=1, source="t")
+            ds = DirectionState(
+                direction=Direction.PRODUCTION,
+                due_date=today,
+                stability=0.021,
+                difficulty=9.421,
+                reps=8,
+                lapses=0,
+                state=SRSState.REVIEW,
+                last_review=None,
+                anki_card_id=cid,
+                anki_card_mod=mod,
+            )
+            item = SRSItem(syntactic_unit=unit, directions={Direction.PRODUCTION: ds})
+            return (1 if text == "revija" else 2, item, "sl")
+
+        rec: list = []
+        prod = [_make("revija", 1775264032053, 1778078218), _make("vadba", 1775264032065, 1778078218)]
+        result = _merge_by_retrievability_ascending(rec, prod, today)
+        # vadba has the smaller fnvhash → first under ASC (matches Anki)
+        assert result[0][1].syntactic_unit.text == "vadba"
+        assert result[1][1].syntactic_unit.text == "revija"
+
+    async def test_spread_mix_injects_news_early_when_reviews_dominate(self, api_app_state):
+        """With 10 reviews and 2 news, Anki injects the first new card at position 3
+        (0-indexed), not position 5 like TT's old floor-ratio algorithm.
+
+        Anki Intersperser uses a continuous (one_len+1)/(two_len+1) ratio, so the
+        first new appears earlier in long review queues — matching what the user
+        observes in Anki when a new card surfaces while TT is still on a review.
+        """
+        from app.api.srs import _spread_mix
+
+        reviews = [(i, "R", "sl", Direction.RECOGNITION) for i in range(10)]
+        news = [(i, "N", "sl", Direction.PRODUCTION) for i in range(2)]
+        tags = [t[1] for t in _spread_mix(reviews, news)]
+        assert tags == ["R", "R", "R", "N", "R", "R", "R", "R", "N", "R", "R", "R"]
+
     # --- Helper for merge tests ---
     def _make_item(self, due, anki_id, direction, anki_due=None, stability=1.0, last_review=None):
         """Build a minimal SRSItem with both directions populated for merge testing."""
@@ -996,14 +1100,24 @@ class TestReviewQueue:
         assert result == news
 
     async def test_spread_mix_more_news_than_reviews(self, api_app_state):
+        # Anki parity: when news outnumber reviews, Intersperser starts from
+        # the longer iter (news). For 2 reviews + 5 news → [N, R, N, N, R, N, N].
         from app.api.srs import _spread_mix
 
         reviews = [(i, None, "sl", Direction.RECOGNITION) for i in range(2)]
         news = [(i, None, "sl", Direction.PRODUCTION) for i in range(5)]
         result = _spread_mix(reviews, news)
         assert len(result) == 7
-        assert result[0][3] == Direction.RECOGNITION
-        assert result[1][3] == Direction.PRODUCTION
+        directions = [t[3] for t in result]
+        assert directions == [
+            Direction.PRODUCTION,
+            Direction.RECOGNITION,
+            Direction.PRODUCTION,
+            Direction.PRODUCTION,
+            Direction.RECOGNITION,
+            Direction.PRODUCTION,
+            Direction.PRODUCTION,
+        ]
 
     async def test_review_queue_excludes_own_buried_direction(self, api_app_state):
         """Buried directions must not appear in /api/srs/review-queue."""

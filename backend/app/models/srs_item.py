@@ -62,6 +62,9 @@ class DirectionState:
     last_review_time_ms: int = 0
     anki_card_id: int | None = None
     anki_due: int | None = None
+    # Anki's `cards.mod` (modification timestamp). Used as the secondary sort
+    # key under RetrievabilityAscending — Anki tiebreaks via `fnvhash(id, mod)`.
+    anki_card_mod: int | None = None
     dirty_fsrs: bool = False
     last_synced_at: str | None = None
     last_rating: int | None = None
