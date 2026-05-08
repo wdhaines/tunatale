@@ -35,16 +35,29 @@
 	}
 
 	function reapDeferred() {
+		// Anki parity: called only after `index` has advanced past the just-rated
+		// card. Ready deferred cards splice at `index` so they become the next
+		// current — mirroring Anki's intraday_now bucket (served before main).
 		const now = Date.now();
 		const ready = deferred.filter(d => d.dueAt <= now);
 		if (ready.length === 0) return;
 		deferred = deferred.filter(d => d.dueAt > now);
 		queue = [
-			...queue.slice(0, index + 1),
+			...queue.slice(0, index),
 			...ready.map(d => ({ item: d.item, direction: d.direction })),
-			...queue.slice(index + 1),
+			...queue.slice(index),
 		];
 		refreshStats();
+	}
+
+	function drainDeferredAtTail() {
+		// Anki parity: when main is empty, intraday_ahead cards are served at the
+		// tail of the iter even before their step elapses. Append all remaining
+		// deferred so the user is never stuck staring at a blank done state.
+		if (index >= queue.length && deferred.length > 0) {
+			queue = [...queue, ...deferred.map(d => ({ item: d.item, direction: d.direction }))];
+			deferred = [];
+		}
 	}
 
 	async function refreshStats() {
@@ -76,15 +89,6 @@
 			// Silently ignore - queue fetch failed, will retry on next refresh
 		}
 	}
-
-	// Wake-up timer: when deferred cards exist, schedule a timeout for the soonest dueAt
-	$effect(() => {
-		if (deferred.length === 0) return;
-		const wakeAt = Math.min(...deferred.map(d => d.dueAt));
-		const delay = Math.max(0, wakeAt - Date.now());
-		const t = setTimeout(() => reapDeferred(), delay);
-		return () => clearTimeout(t);
-	});
 
 	onMount(async () => {
 		try {
@@ -122,6 +126,7 @@
 				deferred = [...deferred, { item, direction, dueAt }];
 				index = nextNonBuriedIndex(index + 1);
 				reapDeferred();
+				drainDeferredAtTail();
 				// Refresh stats on deferred branch too
 				await refreshStats();
 				return;
@@ -131,6 +136,7 @@
 		buriedCollocationIds = new Set(buriedCollocationIds).add(item.id);
 		index = nextNonBuriedIndex(index + 1);
 		reapDeferred();
+		drainDeferredAtTail();
 		// Refetch queue stats to update the widget in real-time
 		await refreshStats();
 	}

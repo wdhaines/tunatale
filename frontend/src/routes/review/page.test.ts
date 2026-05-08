@@ -265,27 +265,64 @@ describe('review/+page.svelte', () => {
 			expect(await findByText('hiša')).toBeTruthy();
 		});
 
-		it('wakes up deferred card via timer when it is the only card', async () => {
+		it('surfaces deferred card when queue is exhausted, regardless of dueAt', async () => {
+			// Anki parity: when the main queue is empty, intraday_ahead cards are
+			// served at the tail of the iter even before their step elapses. So a
+			// deferred card with dueAt in the future surfaces immediately when
+			// nothing else is left to rate — no wall-clock timer needed.
 			vi.useFakeTimers();
-			const dueAt = Date.now() + 60_000; // +60s
+			const t0 = Date.parse('2026-05-04T10:00:00Z');
+			vi.setSystemTime(t0);
+
+			const dueAt = new Date(t0 + 60_000).toISOString(); // +60s, in the future
 			mockSubmitDrill.mockResolvedValue({
 				new_due_date: '2026-05-06', new_state: 'learning',
-				due_at: new Date(dueAt).toISOString(), left: 1002,
+				due_at: dueAt, left: 1002,
 			});
 			const item = makeReviewQueueItem({ id: 1, text: 'okno', translation: 'window', direction: 'recognition' });
 			mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
-			const { findByRole, queryByText, findByText } = render(ReviewPage);
+			const { findByRole, findByText } = render(ReviewPage);
 
-			// Rate AGAIN → card deferred
 			await fireEvent.click(await findByRole('button', { name: 'Show' }));
 			await fireEvent.click(await findByRole('button', { name: 'Again' }));
 
-			// Card should NOT be on screen yet (still deferred)
-			expect(queryByText('okno')).toBeNull();
+			// No timer advance — card surfaces because queue exhausted.
+			expect(await findByText('okno')).toBeTruthy();
 
-			// Advance past dueAt
+			vi.useRealTimers();
+		});
+
+		it('does not surface deferred card before next rating, even after dueAt passes', async () => {
+			// Anki parity: current_learning_cutoff only advances at answer time.
+			// While the user idles, the deferred card stays in intraday_ahead and
+			// does not interrupt the current card.
+			vi.useFakeTimers();
+			const t0 = Date.parse('2026-05-04T10:00:00Z');
+			vi.setSystemTime(t0);
+
+			const dueAt = new Date(t0 + 60_000).toISOString();
+			mockSubmitDrill.mockResolvedValue({
+				new_due_date: '2026-05-06', new_state: 'learning',
+				due_at: dueAt, left: 1002,
+			});
+			const item1 = makeReviewQueueItem({ id: 1, text: 'okno', translation: 'window', direction: 'recognition' });
+			const item2 = makeReviewQueueItem({ id: 3, text: 'hiša', translation: 'house', direction: 'recognition' });
+			const item3 = makeReviewQueueItem({ id: 4, text: 'miza', translation: 'table', direction: 'recognition' });
+			mockFetchReviewQueue.mockResolvedValue({ queue: [item1, item2, item3] });
+
+			const { findByRole, findByText, queryByText } = render(ReviewPage);
+
+			// Rate okno AGAIN → defer; hiša becomes current.
+			await fireEvent.click(await findByRole('button', { name: 'Show' }));
+			await fireEvent.click(await findByRole('button', { name: 'Again' }));
+			expect(await findByText('hiša')).toBeTruthy();
+
+			// Advance the wall clock past dueAt without rating anything.
 			vi.advanceTimersByTime(60_000 + 100);
-			await vi.waitFor(() => expect(findByText('okno')).toBeTruthy());
+
+			// Idle time alone must not surface the deferred card. hiša still current.
+			expect(await findByText('hiša')).toBeTruthy();
+			expect(queryByText('okno')).toBeNull();
 
 			vi.useRealTimers();
 		});
