@@ -79,4 +79,105 @@ describe('QueueStatsWidget', () => {
 		});
 		expect(zeroCount).toBe(3);
 	});
+
+	it('underlines new when currentState is new', () => {
+		const stats: QueueStats = {
+			new: 30,
+			learning: 16,
+			review: 164,
+			daily_new_cap: 30,
+			cap_source: 'default',
+			fsrs_source: 'default'
+		};
+
+		const { container } = render(QueueStatsWidget, { stats, currentState: 'new' });
+
+		const newSpan = container.querySelector('.new');
+		const learningSpan = container.querySelector('.learning');
+		const reviewSpan = container.querySelector('.review');
+
+		expect(newSpan?.classList.contains('underlined')).toBe(true);
+		expect(learningSpan?.classList.contains('underlined')).toBe(false);
+		expect(reviewSpan?.classList.contains('underlined')).toBe(false);
+	});
+
+	it('underlines learning when currentState is learning', () => {
+		const stats: QueueStats = {
+			new: 30,
+			learning: 16,
+			review: 164,
+			daily_new_cap: 30,
+			cap_source: 'default',
+			fsrs_source: 'default'
+		};
+
+		const { container } = render(QueueStatsWidget, { stats, currentState: 'learning' });
+
+		const newSpan = container.querySelector('.new');
+		const learningSpan = container.querySelector('.learning');
+		const reviewSpan = container.querySelector('.review');
+
+		expect(newSpan?.classList.contains('underlined')).toBe(false);
+		expect(learningSpan?.classList.contains('underlined')).toBe(true);
+		expect(reviewSpan?.classList.contains('underlined')).toBe(false);
+	});
+
+	it('underlines learning when currentState is relearning', () => {
+		const stats: QueueStats = {
+			new: 30,
+			learning: 16,
+			review: 164,
+			daily_new_cap: 30,
+			cap_source: 'default',
+			fsrs_source: 'default'
+		};
+
+		const { container } = render(QueueStatsWidget, { stats, currentState: 'relearning' });
+
+		const learningSpan = container.querySelector('.learning');
+
+		expect(learningSpan?.classList.contains('underlined')).toBe(true);
+	});
+
+	it('underlines review when currentState is review', () => {
+		const stats: QueueStats = {
+			new: 30,
+			learning: 16,
+			review: 164,
+			daily_new_cap: 30,
+			cap_source: 'default',
+			fsrs_source: 'default'
+		};
+
+		const { container } = render(QueueStatsWidget, { stats, currentState: 'review' });
+
+		const newSpan = container.querySelector('.new');
+		const learningSpan = container.querySelector('.learning');
+		const reviewSpan = container.querySelector('.review');
+
+		expect(newSpan?.classList.contains('underlined')).toBe(false);
+		expect(learningSpan?.classList.contains('underlined')).toBe(false);
+		expect(reviewSpan?.classList.contains('underlined')).toBe(true);
+	});
+
+	it('underlines nothing when currentState is null', () => {
+		const stats: QueueStats = {
+			new: 30,
+			learning: 16,
+			review: 164,
+			daily_new_cap: 30,
+			cap_source: 'default',
+			fsrs_source: 'default'
+		};
+
+		const { container } = render(QueueStatsWidget, { stats, currentState: null });
+
+		const newSpan = container.querySelector('.new');
+		const learningSpan = container.querySelector('.learning');
+		const reviewSpan = container.querySelector('.review');
+
+		expect(newSpan?.classList.contains('underlined')).toBe(false);
+		expect(learningSpan?.classList.contains('underlined')).toBe(false);
+		expect(reviewSpan?.classList.contains('underlined')).toBe(false);
+	});
 });

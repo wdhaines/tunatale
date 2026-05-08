@@ -1,15 +1,15 @@
 <script lang="ts">
 	import type { QueueStats } from '$lib/api';
 
-	let { stats }: { stats: QueueStats } = $props();
+	let { stats, currentState = null }: { stats: QueueStats; currentState?: string | null } = $props();
 </script>
 
 <span class="queue-stats">
-	<span class="new">{stats.new}</span>
+	<span class="new" class:underlined={currentState === 'new'}>{stats.new}</span>
 	<span class="separator">+</span>
-	<span class="learning">{stats.learning}</span>
+	<span class="learning" class:underlined={currentState === 'learning' || currentState === 'relearning'}>{stats.learning}</span>
 	<span class="separator">+</span>
-	<span class="review">{stats.review}</span>
+	<span class="review" class:underlined={currentState === 'review'}>{stats.review}</span>
 </span>
 
 <style>
@@ -23,6 +23,9 @@
 
 	.learning {
 		color: #dc2626;
+	}
+
+	.underlined {
 		text-decoration: underline;
 		text-underline-offset: 2px;
 	}

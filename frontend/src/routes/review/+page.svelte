@@ -147,7 +147,7 @@
 
 	{#if stats}
 		<p class="stats">
-			<QueueStatsWidget {stats} />
+			<QueueStatsWidget {stats} currentState={current?.item?.state} />
 			{#if stats.cap_source !== 'cache'}
 				<span class="source"> ({stats.cap_source})</span>
 			{/if}
