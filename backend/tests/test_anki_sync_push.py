@@ -774,7 +774,11 @@ class TestSyncPushRevlogTransitions:
         assert last_ivl == 10
 
     def test_learning_step_advance_writes_learning_revlog(self):
-        """LEARNING(step0, left=2002) + Good → LEARNING(step1, left=1002): type=0, ivl=-600, lastIvl=-60."""
+        """LEARNING(step0, left=2) + Good → LEARNING(step1, left=1): type=0, ivl=-600, lastIvl=-60.
+
+        Anki encoding: low 3 digits = total_remaining; idx = total_steps - total_remaining.
+        For learn_steps=[1m, 10m]: total_remaining=2 → step 0 (1m); total_remaining=1 → step 1 (10m).
+        """
         from datetime import datetime as dt
 
         db = _make_tt_db()
@@ -790,10 +794,10 @@ class TestSyncPushRevlogTransitions:
             dirty_fsrs=True,
             anki_card_id=rec_cid,
             last_rating=3,  # Good
-            left=1002,  # 1 of 2 steps remaining → at step 1 (10min)
+            left=1,  # total_remaining=1 → idx=1 (10min step)
             due_at=dt.now(UTC) + timedelta(minutes=10),
             prior_state=SRSState.LEARNING,
-            prior_left=2002,  # was at step 0 (1min step)
+            prior_left=2,  # total_remaining=2 → idx=0 (1min step)
             prior_stability=1.0,
         )
         db.update_direction(guid, Direction.RECOGNITION, ds)
@@ -826,7 +830,7 @@ class TestSyncPushRevlogTransitions:
             dirty_fsrs=True,
             anki_card_id=rec_cid,
             last_rating=3,
-            left=1002,
+            left=1,  # total_remaining=1 → idx=1 (10min step)
             due_at=dt.now(UTC) + timedelta(minutes=10),
             prior_state=SRSState.NEW,
             prior_left=None,
@@ -862,7 +866,7 @@ class TestSyncPushRevlogTransitions:
             left=None,
             due_at=None,
             prior_state=SRSState.LEARNING,
-            prior_left=1002,  # was at step 1 (10min) — this is the last step
+            prior_left=1,  # total_remaining=1 → idx=1 (10min step, last)
             prior_stability=1.0,
         )
         db.update_direction(guid, Direction.RECOGNITION, ds)
@@ -1227,9 +1231,9 @@ class TestPushLearningCardLeftAndDue:
                 data TEXT
             )"""
         )
-        # Card: learning state, left=2002 (2 steps remaining of 2 total)
+        # Card: learning state, left=2 (Anki encoding: total_remaining=2 → step 0)
         conn.execute(
-            "INSERT INTO cards VALUES (90010, 9001, 123, 0, 0, 0, 1, 1, 1704103200, 0, 0, 1, 0, 2002, 0, 0, 0, '{}')"
+            "INSERT INTO cards VALUES (90010, 9001, 123, 0, 0, 0, 1, 1, 1704103200, 0, 0, 1, 0, 2, 0, 0, 0, '{}')"
         )
         # Create revlog table (required by sync_push)
         conn.execute(
@@ -1262,7 +1266,7 @@ class TestPushLearningCardLeftAndDue:
         assert item is not None
         rec_state = item.directions[Direction.RECOGNITION]
 
-        # Set up the learning state with left=2002
+        # Set up the learning state at step 0 (Anki encoding: total_remaining=2 → left=2)
         now = dt.now(UTC)
         rec_state = DirectionState(
             direction=Direction.RECOGNITION,
@@ -1273,21 +1277,21 @@ class TestPushLearningCardLeftAndDue:
             lapses=0,
             state=SRSState.LEARNING,
             anki_card_id=rec_cid,
-            left=2002,
+            left=2,
             due_at=now + timedelta(minutes=1),  # Step 0: 1 minute
             dirty_fsrs=True,
             last_rating=3,
         )
         db.update_direction(guid, Direction.RECOGNITION, rec_state)
 
-        # Re-fetch so item reflects the LEARNING+left=2002 state we just wrote
+        # Re-fetch so item reflects the LEARNING+left=2 state we just wrote
         item = db.get_collocation("banka")
         assert item is not None
 
-        # schedule() with GOOD on step 0 of 2-step deck → advance to step 1 (left=1002)
+        # schedule() with GOOD on step 0 of 2-step deck → advance to step 1 (left=1)
         result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
         new_state = result.directions[Direction.RECOGNITION]
-        assert new_state.left == 1002, f"Expected left=1002 after GOOD, got {new_state.left}"
+        assert new_state.left == 1, f"Expected left=1 (total_remaining=1) after GOOD, got {new_state.left}"
 
         # Write the post-GOOD state back so sync_push has something to push
         db.update_direction(guid, Direction.RECOGNITION, new_state)
@@ -1295,7 +1299,7 @@ class TestPushLearningCardLeftAndDue:
         # Push to Anki
         conn = sqlite3.connect(str(db_path))
         writer = OfflineWriter(conn)
-        reader = self._make_fake_reader(guid, rec_cid, queue=1, left=2002)
+        reader = self._make_fake_reader(guid, rec_cid, queue=1, left=2)
         sync = AnkiSync(db=db, _reader=reader, _writer=writer)
         sync.sync_push()
         conn.close()
@@ -1305,10 +1309,10 @@ class TestPushLearningCardLeftAndDue:
         row = conn.execute("SELECT left, due, queue FROM cards WHERE id = 90010").fetchone()
         conn.close()
 
-        # After GOOD on step 0 of 2: should advance to step 1, left=1002
+        # After GOOD on step 0 of 2: total_remaining decrements to 1 → left=1
         assert row is not None, "Card row should exist"
         new_left, new_due, new_queue = row
-        assert new_left == 1002, f"Expected left=1002 after advancing step, got {new_left}"
+        assert new_left == 1, f"Expected left=1 after advancing step, got {new_left}"
         assert new_queue == 1, f"Expected queue=1 (still learning), got {new_queue}"
         # due should be an absolute timestamp (seconds) for queue=1
         assert new_due > 1704067200, f"Expected due as absolute timestamp, got {new_due}"

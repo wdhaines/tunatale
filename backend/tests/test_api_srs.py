@@ -1827,7 +1827,7 @@ class TestLearningStepFeedback:
         rows, _ = db.list_collocations(search="test_learning", limit=1)
         row_id, item, _ = rows[0]
 
-        # Set up learning state with 2 steps remaining (left=2002)
+        # Set up learning state at step 0 (Anki encoding: total_remaining=2 → left=2)
         from app.models.srs_item import Direction, DirectionState, SRSState
 
         now = datetime.now(UTC)
@@ -1836,14 +1836,14 @@ class TestLearningStepFeedback:
             state=SRSState.LEARNING,
             due_date=now.date(),
             stability=1.0,
-            left=2002,
+            left=2,
             due_at=now + timedelta(minutes=1),  # Step 0: 1 minute
             dirty_fsrs=True,
             last_rating=3,
         )
         db.update_direction_by_id(row_id, Direction.RECOGNITION, dstate)
 
-        # Rate Good (should advance to step 1, left=1002)
+        # Rate Good (should advance to step 1: total_remaining decrements to 1)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(f"/api/srs/items/{row_id}/direction/recognition/feedback", json={"rating": "good"})
         assert resp.status_code == 200
@@ -1853,7 +1853,7 @@ class TestLearningStepFeedback:
         assert data["new_state"] == "learning"
         assert "due_at" in data, "Response should include due_at for learning cards"
         assert "left" in data, "Response should include left for learning cards"
-        assert data["left"] == 1002, f"Expected left=1002 after GOOD, got {data.get('left')}"
+        assert data["left"] == 1, f"Expected left=1 (total_remaining=1) after GOOD, got {data.get('left')}"
 
         # Parse due_at and verify it's in the future
         from datetime import datetime

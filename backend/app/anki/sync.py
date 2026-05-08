@@ -514,19 +514,19 @@ def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool
 
 
 def _step_minutes_from_left(left: int | None, steps: list[float]) -> float | None:
-    """Decode TunaTale's `left` (steps_remaining*1000 + total_steps) into the
-    current step's duration in minutes. Returns None when `left`/`steps` is
-    missing or out of range.
+    """Decode Anki's `cards.left` to the current step's duration in minutes.
+
+    Anki encodes `left = today_left * 1000 + total_remaining`; the low 3 digits
+    drive state. Step index = `len(steps) - total_remaining` (matches
+    rslib/.../states/steps.rs:23 `get_index`). Returns None when `left`/`steps`
+    is missing or out of range.
     """
     if not left or not steps:
         return None
-    steps_remaining = left // 1000
-    total_steps = left % 1000
-    if total_steps <= 0 or steps_remaining <= 0:
+    total_remaining = left % 1000
+    if total_remaining <= 0 or total_remaining > len(steps):
         return None
-    step_index = total_steps - steps_remaining
-    if step_index < 0 or step_index >= len(steps):
-        return None
+    step_index = len(steps) - total_remaining
     return steps[step_index]
 
 

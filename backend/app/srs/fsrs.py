@@ -107,18 +107,31 @@ def _next_stability_lapse(d: float, s: float, r: float, w: tuple[float, ...]) ->
     return w[11] * d ** (-w[12]) * ((s + 1) ** w[13] - 1) * math.exp((1 - r) * w[14])
 
 
-def _parse_left(left: int | None) -> tuple[int, int]:
-    """Parse Anki's left field into (steps_remaining, total_steps)."""
-    if left is None or left == 0:
-        return (0, 0)
-    steps_remaining = left // 1000
-    total_steps = left % 1000
-    return (steps_remaining, total_steps)
+def _parse_left(left: int | None) -> int:
+    """Decode Anki's `cards.left` to total_remaining steps.
+
+    Anki stores left as `today_left * 1000 + total_remaining`. Only the low 3
+    digits drive the state machine — `Card::remaining_steps()` in
+    rslib/src/card/mod.rs:218 always returns `self.remaining_steps % 1000`.
+    The high digits are a queue-bookkeeping count for "how many more times
+    today" and don't change which learn step the card is on.
+
+    Returns 0 for None / 0, which the caller treats as "no left tracked yet"
+    (typically a fresh entry, normalized to total_steps = full count).
+    """
+    if not left:
+        return 0
+    return left % 1000
 
 
-def _pack_left(steps_remaining: int, total_steps: int) -> int:
-    """Pack steps_remaining and total_steps into Anki's left format (steps_remaining * 1000 + total_steps)."""
-    return steps_remaining * 1000 + total_steps
+def _pack_left(total_remaining: int) -> int:
+    """Encode total_remaining steps into Anki's `cards.left` format.
+
+    Modern Anki writes the count directly (no `today_left` prefix); the legacy
+    `today_left * 1000 + total_remaining` form is still accepted on read but
+    not produced. Anki's `Card.remaining_steps % 1000` decodes both.
+    """
+    return total_remaining
 
 
 def _get_steps_for_state(state: SRSState) -> tuple[list[float], str]:
@@ -266,8 +279,8 @@ def _schedule_new(
     else:  # AGAIN or HARD: stay at step 0
         step_index = 0
 
-    new_steps_remaining = total_steps - step_index
-    new_left = _pack_left(new_steps_remaining, total_steps)
+    # total_remaining = steps left until graduation = total_steps - step_index
+    new_left = _pack_left(total_steps - step_index)
     new_due_at = now + timedelta(minutes=steps[step_index])
 
     new_dir = replace(
@@ -325,9 +338,9 @@ def _schedule_review_again(
         # Empty steps = graduate immediately (same as Anki)
         return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
 
-    # Start at step 0 of relearning
+    # Start at step 0 of relearning: total_remaining = full count
     total_steps = len(steps)
-    new_left = _pack_left(total_steps, total_steps)
+    new_left = _pack_left(total_steps)
     new_due_at = now + timedelta(minutes=steps[0])
 
     new_dir = replace(
@@ -373,22 +386,24 @@ def _schedule_with_steps(
     from dataclasses import replace
 
     steps, _ = _get_steps_for_state(prev.state)
-    steps_remaining, total_steps = _parse_left(prev.left)
 
     if not steps:
         # Empty steps list = graduate immediately
         return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
 
     total_steps = len(steps)
-    # Normalize: if steps_remaining is 0, None-derived, or out of range,
-    # treat as fresh entry with full steps (heals sync-imported cards with bad left values)
-    if total_steps > 0 and (steps_remaining <= 0 or steps_remaining > total_steps):
-        steps_remaining = total_steps
+    total_remaining = _parse_left(prev.left)
+    # Heal cards with absent or out-of-range `left` (legacy data, sync gaps):
+    # treat as fresh entry with all steps still ahead.
+    if total_remaining <= 0 or total_remaining > total_steps:
+        total_remaining = total_steps
+    # Anki's step index for the CURRENT card (rslib/.../states/steps.rs:23):
+    # idx = total_steps - total_remaining. idx=0 means first step.
+    current_step_index = total_steps - total_remaining
 
     if rating == Rating.AGAIN:
         # Reset to step 0 (all steps remaining)
-        new_steps_remaining = total_steps
-        new_left = _pack_left(new_steps_remaining, total_steps)
+        new_left = _pack_left(total_steps)
         new_due_at = now + timedelta(minutes=steps[0])
 
         new_dir = replace(
@@ -408,12 +423,9 @@ def _schedule_with_steps(
         )
 
     elif rating == Rating.HARD:
-        # Stay on same step
-        current_step_index = total_steps - steps_remaining
-        step_index = current_step_index  # Stay on same step
-        new_steps_remaining = steps_remaining  # Unchanged
-        new_left = _pack_left(new_steps_remaining, total_steps)
-        new_due_at = now + timedelta(minutes=steps[step_index])
+        # Stay on same step — total_remaining unchanged.
+        new_left = _pack_left(total_remaining)
+        new_due_at = now + timedelta(minutes=steps[current_step_index])
 
         new_dir = replace(
             prev,
@@ -432,22 +444,19 @@ def _schedule_with_steps(
         )
 
     elif rating == Rating.GOOD:
-        # Advance to next step, or graduate if this was the last step
-        current_step_index = total_steps - steps_remaining
-        if current_step_index >= len(steps) - 1:
+        # Advance one step. Anki's good_delay_secs returns None when the next
+        # index is past the last step, which is exactly the graduation case
+        # (rslib/.../states/steps.rs:68). Equivalent: total_remaining == 1.
+        if total_remaining <= 1:
             # On last step: graduate to REVIEW
             # Anki's 0.5-day short-term rule only applies when relearn_steps is empty
-            # or fsrs_short_term_with_steps_enabled is true (relearning.rs:119-130):
-            #   ctx.fsrs_allow_short_term
-            #     && (ctx.fsrs_short_term_with_steps_enabled || ctx.relearn_steps.is_empty())
-            #     && interval < 0.5
-            # For non-empty relearn_steps (the common case), we graduate directly.
+            # or fsrs_short_term_with_steps_enabled is true (relearning.rs:119-130);
+            # for non-empty relearn_steps (the common case), we graduate directly.
             return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
 
-        # Move to next step
+        # Decrement total_remaining; advance to next step.
         next_step_index = current_step_index + 1
-        new_steps_remaining = total_steps - next_step_index
-        new_left = _pack_left(new_steps_remaining, total_steps)
+        new_left = _pack_left(total_remaining - 1)
         new_due_at = now + timedelta(minutes=steps[next_step_index])
 
         new_dir = replace(
