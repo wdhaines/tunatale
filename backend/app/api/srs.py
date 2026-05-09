@@ -69,26 +69,35 @@ def _item_to_dict(
     image_url: str | None = None,
     audio_url: str | None = None,
 ) -> dict:
-    """Serialize an SRSItem to a response dict."""
+    """Serialize an SRSItem to a response dict.
+
+    Single-template Anki notes (e.g., Basic phonics) have no production
+    direction after migration v15→v16 — emit `null` rather than fabricating
+    one. The flat back-compat shims fall back to recognition when present.
+    """
+    rec = item.directions.get(Direction.RECOGNITION)
+    prod = item.directions.get(Direction.PRODUCTION)
+    flat: dict[str, object] = {
+        "state": rec.state.value if rec else SRSState.NEW.value,
+        "due_date": rec.due_date.isoformat() if rec else None,
+        "stability": rec.stability if rec else 1.0,
+        "difficulty": rec.difficulty if rec else 5.0,
+        "reps": rec.reps if rec else 0,
+        "lapses": rec.lapses if rec else 0,
+        "last_review": rec.last_review.isoformat() if rec and rec.last_review else None,
+    }
     return {
         "id": row_id,
         "text": item.syntactic_unit.text,
         "translation": item.syntactic_unit.translation,
         "word_count": item.syntactic_unit.word_count,
-        # Flat recognition shims (back-compat)
-        "state": item.state.value,
-        "due_date": item.due_date.isoformat(),
-        "stability": item.stability,
-        "difficulty": item.difficulty,
-        "reps": item.reps,
-        "lapses": item.lapses,
-        "last_review": item.last_review.isoformat() if item.last_review else None,
+        **flat,
         "language_code": language_code,
         "guid": item.guid,
         "anki_note_id": item.anki_note_id,
         "directions": {
-            "recognition": _direction_to_dict(item.directions[Direction.RECOGNITION]),
-            "production": _direction_to_dict(item.directions[Direction.PRODUCTION]),
+            "recognition": _direction_to_dict(rec) if rec else None,
+            "production": _direction_to_dict(prod) if prod else None,
         },
         "image_url": image_url,
         "audio_url": audio_url,
@@ -247,6 +256,8 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
     # ── Key phrase registration (preserves translations) ─────────────────
     for kp in lesson.key_phrases:
+        if db.get_collocation(kp.phrase) is not None:
+            continue  # idempotent — already registered from a prior listen
         unit = SyntacticUnit(
             text=kp.phrase,
             translation=kp.translation,

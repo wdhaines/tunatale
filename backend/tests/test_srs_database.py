@@ -353,17 +353,18 @@ class TestReviewedToday:
         assert row_id in result
 
     def test_matches_when_last_review_is_iso_datetime(self, srs_db):
-        """FSRS scheduling writes last_review as an ISO datetime (e.g.
-        '2026-05-08T00:00:00+00:00'). The query must still find these rows
-        when called with today's date — otherwise sibling-bury silently fails
-        for everything graded through the FSRS code path."""
+        """FSRS scheduling writes last_review as an ISO datetime. The query must
+        still find rows graded through the FSRS code path — otherwise sibling-
+        bury silently fails. Use `datetime.now(UTC)` (the actual production
+        write site) which is by construction inside today's local-day window.
+        """
         from datetime import datetime
 
         srs_db.add_collocation(_unit("word_d"), language_code="sl")
         rows, _ = srs_db.list_collocations(search="word_d", limit=1)
         row_id, item, _ = rows[0]
         today = date.today()
-        last_review_dt = datetime.combine(today, datetime.min.time(), tzinfo=UTC)
+        last_review_dt = datetime.now(UTC)
 
         orig = item.directions[Direction.RECOGNITION]
         new_dir = DirectionState(
@@ -385,6 +386,64 @@ class TestReviewedToday:
         assert srs_db.count_collocations() == 0
         srs_db.add_collocation(_unit("dober dan"), language_code="sl")
         assert srs_db.count_collocations() == 1
+
+    def test_buckets_by_local_day_when_review_crosses_utc_midnight(self, srs_db, monkeypatch):
+        """Regression: a card reviewed at 23:30 local must bucket into today's
+        local day even when its UTC date is tomorrow.
+
+        SQLite's `date(last_review)` returns the UTC date of the stored ISO
+        timestamp. Comparing that against `today.isoformat()` (a local date)
+        misfires whenever local-midnight and UTC-midnight straddle the review
+        moment, silently mis-burying / un-burying siblings near midnight.
+        Force tz=PDT so the bug is deterministic regardless of host tz.
+        """
+        import time
+        from datetime import datetime
+
+        monkeypatch.setenv("TZ", "America/Los_Angeles")
+        time.tzset()
+
+        srs_db.add_collocation(_unit("late_evening"), language_code="sl")
+        rows, _ = srs_db.list_collocations(search="late_evening", limit=1)
+        late_id, late_item, _ = rows[0]
+        srs_db.add_collocation(_unit("early_morning"), language_code="sl")
+        rows, _ = srs_db.list_collocations(search="early_morning", limit=1)
+        early_id, early_item, _ = rows[0]
+
+        today_local = date(2026, 5, 8)
+        # 23:30 PDT on May 8 = 06:30 UTC on May 9. UTC date = May 9, local date = May 8.
+        late_utc = datetime(2026, 5, 9, 6, 30, tzinfo=UTC)
+        # 00:30 PDT on May 8 = 07:30 UTC on May 8. Both UTC and local date = May 8 here,
+        # so this case is the control — should match in any tz.
+        early_utc = datetime(2026, 5, 8, 7, 30, tzinfo=UTC)
+
+        for row_id, item, last_review in (
+            (late_id, late_item, late_utc),
+            (early_id, early_item, early_utc),
+        ):
+            orig = item.directions[Direction.RECOGNITION]
+            srs_db.update_direction_by_id(
+                row_id,
+                Direction.RECOGNITION,
+                DirectionState(
+                    direction=Direction.RECOGNITION,
+                    state=SRSState.REVIEW,
+                    due_date=today_local,
+                    stability=orig.stability,
+                    difficulty=orig.difficulty,
+                    reps=orig.reps,
+                    lapses=orig.lapses,
+                    last_review=last_review,
+                ),
+            )
+
+        result = srs_db.list_collocations_reviewed_today(today_local)
+        assert late_id in result, "late-evening review must bucket into local today"
+        assert early_id in result, "morning review must bucket into local today"
+
+        # And NOT into adjacent days
+        assert late_id not in srs_db.list_collocations_reviewed_today(today_local + timedelta(days=1))
+        assert early_id not in srs_db.list_collocations_reviewed_today(today_local - timedelta(days=1))
 
 
 class TestViolations:

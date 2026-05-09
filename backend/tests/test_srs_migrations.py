@@ -87,9 +87,7 @@ class TestMigrations:
 
         conn = sqlite3.connect(str(tmp_path / "test.db"))
         conn.row_factory = sqlite3.Row
-        conn.execute(
-            "CREATE TABLE collocations (id INTEGER PRIMARY KEY, text TEXT, anki_note_id INTEGER)"
-        )
+        conn.execute("CREATE TABLE collocations (id INTEGER PRIMARY KEY, text TEXT, anki_note_id INTEGER)")
         conn.execute(
             "CREATE TABLE collocation_directions ("
             "collocation_id INTEGER, direction TEXT, anki_card_id INTEGER, "
@@ -117,9 +115,7 @@ class TestMigrations:
 
         survivors = {
             (r["collocation_id"], r["direction"])
-            for r in conn.execute(
-                "SELECT collocation_id, direction FROM collocation_directions"
-            ).fetchall()
+            for r in conn.execute("SELECT collocation_id, direction FROM collocation_directions").fetchall()
         }
         assert (1, "production") not in survivors  # phantom — deleted
         assert (1, "recognition") in survivors  # has anki_card_id — kept

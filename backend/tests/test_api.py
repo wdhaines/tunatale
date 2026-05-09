@@ -856,6 +856,120 @@ class TestSRSEndpoints:
         # Lemma was auto-filled, so the pre-existing row is found
         assert db.get_collocation_by_lemma("banka") is not None
 
+    async def test_listen_auto_added_cards_have_null_anki_note_id(self):
+        """Auto-added key_phrase collocations have anki_note_id IS NULL and appear in list_items_without_anki_note."""
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[],
+            key_phrases=[
+                KeyPhraseInfo(phrase="dober dan", translation="good day"),
+                KeyPhraseInfo(phrase="prosim kavo", translation="a coffee please"),
+            ],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        items_without_anki = db.list_items_without_anki_note()
+        assert len(items_without_anki) == 2
+        for _guid, item in items_without_anki:
+            assert item.anki_note_id is None
+
+    async def test_listen_key_phrases_state_is_new_on_first_listen(self):
+        """Key phrases get state=NEW on first listen — no FSRS grade (soft exposure only)."""
+        from app.models.srs_item import SRSState
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[],
+            key_phrases=[KeyPhraseInfo(phrase="dober dan", translation="good day")],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        item = db.get_collocation("dober dan")
+        assert item is not None
+        assert item.state == SRSState.NEW
+        assert item.reps == 0
+
+    async def test_listen_key_phrases_do_not_duplicate_on_relisten(self):
+        """Second listen with same key_phrases does not create duplicate collocations."""
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[],
+            key_phrases=[
+                KeyPhraseInfo(phrase="dober dan", translation="good day"),
+                KeyPhraseInfo(phrase="prosim kavo", translation="a coffee please"),
+            ],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            first = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            second = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert db.count_collocations() == 2
+
+    async def test_listen_empty_word_ratings_does_not_crash(self):
+        """Explicitly verify that word_ratings={} (as sent by the frontend) works."""
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[],
+            key_phrases=[KeyPhraseInfo(phrase="dober dan", translation="good day")],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/listen",
+                json={"lesson_id": "lesson-1", "word_ratings": {}},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["registered"] == 1
+
 
 class TestQueueStatsEndpoint:
     """Tests for GET /api/srs/queue-stats."""

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -638,14 +638,29 @@ class SRSDatabase:
         self.update_direction(row["guid"], direction, state)
 
     def list_collocations_reviewed_today(self, today: date) -> set[int]:
-        """Return set of collocation IDs whose recognition OR production direction was reviewed today."""
-        # last_review is stored either as a date-only string ('2026-05-08') or
-        # as a tz-aware ISO datetime ('2026-05-08T00:00:00+00:00') depending on
-        # the write site. sqlite's date() coerces both into 'YYYY-MM-DD'.
+        """Return set of collocation IDs reviewed during the local day `today`.
+
+        last_review is stored as a tz-aware UTC ISO datetime by FSRS write
+        paths, but legacy migrations preserved date-only strings ('YYYY-MM-DD')
+        from the pre-direction schema. We bucket by the *local* day:
+
+        - Datetimes: range-compare against UTC bounds of the local day.
+          (`date(last_review)` returns the UTC date, which mis-buckets reviews
+          near midnight whenever local and UTC dates differ — e.g., 23:30 PDT =
+          06:30 UTC next day.)
+        - Legacy date-only: direct equality with the local-day ISO date.
+        """
+        local_tz = datetime.now().astimezone().tzinfo
+        start_utc = datetime.combine(today, time(0), tzinfo=local_tz).astimezone(UTC)
+        end_utc = datetime.combine(today + timedelta(days=1), time(0), tzinfo=local_tz).astimezone(UTC)
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT DISTINCT collocation_id FROM collocation_directions WHERE date(last_review) = ?",
-                (today.isoformat(),),
+                """
+                SELECT DISTINCT collocation_id FROM collocation_directions
+                WHERE (length(last_review) > 10 AND last_review >= ? AND last_review < ?)
+                   OR (length(last_review) = 10 AND last_review = ?)
+                """,
+                (start_utc.isoformat(), end_utc.isoformat(), today.isoformat()),
             ).fetchall()
             return {r[0] for r in rows}
 

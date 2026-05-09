@@ -111,6 +111,7 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 
 		await waitFor(() => {
 			expect(mockMarkAsListened).toHaveBeenCalledWith('l1', {});
+			expect(mockGetTranscript).toHaveBeenCalledWith('l1');
 			expect(listenedStore.add).toHaveBeenCalledWith('l1');
 		});
 	});

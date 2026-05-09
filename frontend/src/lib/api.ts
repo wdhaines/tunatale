@@ -144,8 +144,10 @@ export interface SRSItemDetail {
 	guid?: string | null;
 	anki_note_id?: number | null;
 	directions?: {
-		recognition: DirectionState;
-		production: DirectionState;
+		// Either side can be null for single-template Anki notetypes (e.g. Basic
+		// phonics, ord=0 only) where the matching card doesn't exist.
+		recognition: DirectionState | null;
+		production: DirectionState | null;
 	};
 	image_url?: string | null;
 	audio_url?: string | null;

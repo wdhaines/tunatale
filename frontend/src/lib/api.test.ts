@@ -352,7 +352,7 @@ describe('TunaTaleAPI', () => {
 			expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/due?direction=recognition`);
 			expect(result).toHaveLength(1);
 			expect(result[0].id).toBe(1);
-			expect(result[0].directions?.recognition.state).toBe('review');
+			expect(result[0].directions?.recognition?.state).toBe('review');
 		});
 
 		it('fetchDue supports any direction', async () => {

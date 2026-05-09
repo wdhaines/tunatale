@@ -87,6 +87,34 @@ class TestListItems:
         assert data["items"][0]["text"] == "a"
         assert data["items"][0]["state"] == "review"
 
+    async def test_list_items_handles_single_template_note_without_production(self):
+        """Single-template Anki notes (e.g., Basic phonics, ord=0 only) have no
+        production-direction row after the v15→v16 migration in d306311.
+        Serializing them must not crash with KeyError(Direction.PRODUCTION) —
+        the response should expose recognition normally and `production: null`.
+        """
+        db = _db()
+        db.add_collocation(_unit("phonics_a", "ah"), language_code="sl")
+        rows, _ = db.list_collocations(search="phonics_a", limit=1)
+        coll_id = rows[0][0]
+        # Simulate post-migration state: drop the phantom production row.
+        with db._get_conn() as conn:
+            conn.execute(
+                "DELETE FROM collocation_directions WHERE collocation_id = ? AND direction = 'production'",
+                (coll_id,),
+            )
+            db._commit(conn)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/items", params={"search": "phonics_a"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        item = data["items"][0]
+        assert item["directions"]["recognition"] is not None
+        assert item["directions"]["production"] is None
+
 
 class TestPatchItem:
     """Tests for PATCH /api/srs/items/{id}."""

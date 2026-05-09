@@ -706,8 +706,7 @@ class TestCountAnkiIntroducedToday:
         conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, decks TEXT)")
         conn.execute("CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT)")
         conn.execute(
-            "CREATE TABLE cards (id INTEGER PRIMARY KEY, did INTEGER, queue INTEGER DEFAULT 0, "
-            "type INTEGER DEFAULT 0)"
+            "CREATE TABLE cards (id INTEGER PRIMARY KEY, did INTEGER, queue INTEGER DEFAULT 0, type INTEGER DEFAULT 0)"
         )
         conn.execute(
             "CREATE TABLE revlog (id INTEGER, cid INTEGER, usn INTEGER, ease INTEGER, "
@@ -799,7 +798,12 @@ class TestCountAnkiIntroducedToday:
             holder.close()
 
     def _make_collection_with_cards_and_decks(
-        self, tmp_path, *, decks: list[tuple[int, str]], cards: list[tuple[int, int]], revlog_rows: list[tuple[int, int, int]]
+        self,
+        tmp_path,
+        *,
+        decks: list[tuple[int, str]],
+        cards: list[tuple[int, int]],
+        revlog_rows: list[tuple[int, int, int]],
     ):
         """Build a more realistic fake collection.
 
@@ -813,8 +817,7 @@ class TestCountAnkiIntroducedToday:
         conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, decks TEXT)")
         conn.execute("CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT)")
         conn.execute(
-            "CREATE TABLE cards (id INTEGER PRIMARY KEY, did INTEGER, queue INTEGER DEFAULT 0, "
-            "type INTEGER DEFAULT 0)"
+            "CREATE TABLE cards (id INTEGER PRIMARY KEY, did INTEGER, queue INTEGER DEFAULT 0, type INTEGER DEFAULT 0)"
         )
         conn.execute(
             "CREATE TABLE revlog (id INTEGER, cid INTEGER, usn INTEGER, ease INTEGER, "
@@ -887,7 +890,7 @@ class TestCountAnkiIntroducedToday:
 
         Mirrors Anki rslib `scheduler/timing.rs::sched_timing_today`.
         """
-        from datetime import date, datetime, time, timedelta
+        from datetime import date, datetime, time
 
         from app.srs.queue_stats import count_anki_introduced_today
 
@@ -955,3 +958,103 @@ class TestCountAnkiIntroducedToday:
             return
         # 02:00 grade falls before the default 4 AM rollover → not today.
         assert count_anki_introduced_today(today, collection_path=path, deck_name="0. Slovene") == 0
+
+    def test_counts_globally_when_deck_name_blank(self, tmp_path):
+        """Empty deck_name → fall through to the unscoped revlog count."""
+        from datetime import date, time
+
+        from app.srs.queue_stats import count_anki_introduced_today
+
+        today = date.today()
+        today_ms = int(datetime.combine(today, time(14, 0)).timestamp() * 1000)
+        path = self._make_collection(tmp_path, [(100, today_ms, 0), (200, today_ms, 0)])
+        # deck_name="" is truthy-as-arg (so settings default is skipped) but
+        # falsy in the `if deck` guard, so the deck-scoped JOIN is bypassed.
+        assert count_anki_introduced_today(today, collection_path=path, deck_name="") == 2
+
+
+class TestReadRolloverHour:
+    """`_read_rollover_hour` parses Anki's `rollover` setting from either the
+    modern `config` table or legacy `col.conf` JSON. Malformed values must
+    fall through silently to the next source / the default of 4."""
+
+    def test_invalid_json_in_config_table_falls_through_to_col_conf(self):
+        """Modern `config.val` blob that isn't valid JSON → caught, fall through."""
+        from app.srs.queue_stats import _read_rollover_hour
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE config (KEY TEXT PRIMARY KEY, val BLOB)")
+        # Garbage bytes — not valid JSON.
+        conn.execute("INSERT INTO config (KEY, val) VALUES ('rollover', ?)", (b"\xff\xfe not json",))
+        conn.execute("CREATE TABLE col (conf TEXT)")
+        conn.execute("INSERT INTO col (conf) VALUES (?)", ('{"rollover": 6}',))
+        conn.commit()
+        # Modern path raises → falls through to col.conf and returns 6.
+        assert _read_rollover_hour(conn) == 6
+
+    def test_invalid_json_in_config_table_falls_through_to_default(self):
+        """If neither source yields a valid int, return the Anki default (4)."""
+        from app.srs.queue_stats import _read_rollover_hour
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE config (KEY TEXT PRIMARY KEY, val BLOB)")
+        conn.execute("INSERT INTO config (KEY, val) VALUES ('rollover', ?)", (b"not json",))
+        conn.commit()
+        # No col table at all → both paths swallow errors → default.
+        assert _read_rollover_hour(conn) == 4
+
+    def test_col_conf_with_non_dict_json_falls_through_to_default(self):
+        """`col.conf` parses as JSON but isn't a dict → AttributeError on .get → default."""
+        from app.srs.queue_stats import _read_rollover_hour
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE col (conf TEXT)")
+        # Valid JSON, but a string — `.get('rollover')` will raise AttributeError.
+        conn.execute("INSERT INTO col (conf) VALUES (?)", ('"not a dict"',))
+        conn.commit()
+        assert _read_rollover_hour(conn) == 4
+
+    def test_col_conf_with_invalid_json_falls_through_to_default(self):
+        """`col.conf` that isn't valid JSON at all → JSONDecodeError → default."""
+        from app.srs.queue_stats import _read_rollover_hour
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE col (conf TEXT)")
+        conn.execute("INSERT INTO col (conf) VALUES (?)", ("{not valid json",))
+        conn.commit()
+        assert _read_rollover_hour(conn) == 4
+
+    def test_no_rollover_row_in_config_table_falls_through(self):
+        """`config` table exists but has no 'rollover' key → row is None, fall through."""
+        from app.srs.queue_stats import _read_rollover_hour
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE config (KEY TEXT PRIMARY KEY, val BLOB)")
+        # No 'rollover' row inserted.
+        conn.execute("CREATE TABLE col (conf TEXT)")
+        conn.execute("INSERT INTO col (conf) VALUES (?)", ('{"rollover": 7}',))
+        conn.commit()
+        assert _read_rollover_hour(conn) == 7
+
+    def test_out_of_range_rollover_in_config_table_falls_through(self):
+        """`config.val` parses as JSON but isn't an int in [0, 23] → fall through."""
+        from app.srs.queue_stats import _read_rollover_hour
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE config (KEY TEXT PRIMARY KEY, val BLOB)")
+        # Valid JSON, but 99 is out of [0, 23].
+        conn.execute("INSERT INTO config (KEY, val) VALUES ('rollover', ?)", (b"99",))
+        conn.execute("CREATE TABLE col (conf TEXT)")
+        conn.execute("INSERT INTO col (conf) VALUES (?)", ('{"rollover": 5}',))
+        conn.commit()
+        assert _read_rollover_hour(conn) == 5
+
+    def test_empty_col_conf_falls_through_to_default(self):
+        """`col.conf` empty string → row[0] falsy, skip parsing, return default."""
+        from app.srs.queue_stats import _read_rollover_hour
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE col (conf TEXT)")
+        conn.execute("INSERT INTO col (conf) VALUES (?)", ("",))
+        conn.commit()
+        assert _read_rollover_hour(conn) == 4
