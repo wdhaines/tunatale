@@ -1099,3 +1099,38 @@ class TestLearningCutoff:
         advance_learning_cutoff(db, older)  # must not move cutoff backwards
 
         assert resolve_learning_cutoff(db, fallback=datetime(1970, 1, 1, tzinfo=UTC)) == newer
+
+
+class TestSessionMainQueueCache:
+    """Helpers for the frozen main-queue cache."""
+
+    def test_returns_none_when_cache_missing(self):
+        from datetime import date
+
+        from app.srs.database import SRSDatabase
+        from app.srs.queue_stats import get_session_main_queue
+
+        db = SRSDatabase(":memory:")
+        assert get_session_main_queue(db, date.today()) is None
+
+    def test_returns_none_on_corrupt_cache(self):
+        from datetime import date
+
+        from app.srs.database import SRSDatabase
+        from app.srs.queue_stats import get_session_main_queue
+
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("session_main_queue", "not-json")
+        assert get_session_main_queue(db, date.today()) is None
+
+    def test_round_trips(self):
+        from datetime import date
+
+        from app.srs.database import SRSDatabase
+        from app.srs.queue_stats import get_session_main_queue, set_session_main_queue
+
+        db = SRSDatabase(":memory:")
+        today = date.today()
+        items = [(1, "recognition"), (2, "production"), (3, "recognition")]
+        set_session_main_queue(db, today, items)
+        assert get_session_main_queue(db, today) == items

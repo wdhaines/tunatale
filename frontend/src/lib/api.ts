@@ -326,8 +326,9 @@ export class TunaTaleAPI {
 		return this.request('/api/srs/queue-stats');
 	}
 
-	async fetchReviewQueue(): Promise<{ queue: ReviewQueueItem[] }> {
-		return this.request('/api/srs/review-queue');
+	async fetchReviewQueue(opts: { sessionStart?: boolean } = {}): Promise<{ queue: ReviewQueueItem[] }> {
+		const path = opts.sessionStart ? '/api/srs/review-queue?session_start=1' : '/api/srs/review-queue';
+		return this.request(path);
 	}
 
 	async markAsListened(

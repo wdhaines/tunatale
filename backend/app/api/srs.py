@@ -22,12 +22,14 @@ from app.srs.queue_stats import (
     advance_learning_cutoff,
     count_anki_introduced_today,
     count_anki_review_remaining_today,
+    get_session_main_queue,
     resolve_bury_new,
     resolve_bury_review,
     resolve_daily_new_cap,
     resolve_fsrs_params,
     resolve_learning_cutoff,
     resolve_new_spread,
+    set_session_main_queue,
 )
 from app.srs.tokenizer import tokenize
 from app.srs.transcript import extract_transcript
@@ -706,15 +708,25 @@ def _queue_item_to_dict(row_id: int, item: SRSItem, lang: str, direction: Direct
 
 
 @router.get("/review-queue", status_code=200)
-async def get_review_queue(request: Request) -> dict:
+async def get_review_queue(request: Request, session_start: bool = False) -> dict:
     """Return the entire ordered review queue in one shot.
 
     Implements Anki's queue construction: combined new-card cap across directions,
     sibling burying, and newSpread ordering.
+
+    `session_start=1` is the deck-open analog: it advances `learning_cutoff` to
+    `now` so any learning card whose timer has elapsed since the last grade jumps
+    into `ready_learning`. Frontend passes it on page mount (= deck open). Other
+    callers (per-grade refetch, polling) leave it false to preserve the frozen
+    cutoff between grades. Mirrors Anki's `update_learning_cutoff_and_count`
+    being called at queue build time (rslib scheduler/queue/builder/mod.rs:222).
     """
     db = request.app.state.srs_db
     today = datetime.date.today()
     now = datetime.datetime.now(datetime.UTC)
+
+    if session_start:
+        advance_learning_cutoff(db, now)
 
     cap, _ = resolve_daily_new_cap(db)
     spread, _ = resolve_new_spread(db)
@@ -836,14 +848,42 @@ async def get_review_queue(request: Request) -> dict:
 
     # 4. Apply newSpread to nonlearning cards only
     if spread == 1:  # new_after_review
-        ordered = nonlearning_due + nonlearning_new
+        live_main = nonlearning_due + nonlearning_new
     elif spread == 2:  # new_before_review
-        ordered = nonlearning_new + nonlearning_due
+        live_main = nonlearning_new + nonlearning_due
     else:  # 0 = mix: interleave one new every N reviews
-        ordered = _spread_mix(nonlearning_due, nonlearning_new)
+        live_main = _spread_mix(nonlearning_due, nonlearning_new)
+
+    # Anki parity: freeze the main queue per day. Anki builds `main` once at
+    # deck-open and pops the head as cards are graded — it does NOT re-run the
+    # intersperser on every grade. Without this freeze, TT recomputes the order
+    # on every poll and always serves the lowest-R review next, diverging from
+    # Anki whenever the intersperser would have placed a new card mid-sequence
+    # (e.g. with 109 reviews + 30 new, Anki's intersperser puts the first new
+    # card at position 3 — TT must surface it at that position too, not just
+    # whenever counts shift).
+    cached_order = get_session_main_queue(db, today)
+    key_to_tuple = {(t[0], t[3].value): t for t in live_main}
+    if cached_order is None:
+        ordered_main = live_main
+        set_session_main_queue(db, today, [(t[0], t[3].value) for t in live_main])
+    else:
+        seen_keys: set[tuple[int, str]] = set()
+        ordered_main = []
+        for cid, dir_str in cached_order:
+            key = (cid, dir_str)
+            if key in seen_keys or key not in key_to_tuple:
+                continue
+            seen_keys.add(key)
+            ordered_main.append(key_to_tuple[key])
+        # Append any live cards not in the cache — handles mid-day additions
+        # (new collocations imported, sync brought formerly-buried cards back, etc.)
+        for t in live_main:
+            if (t[0], t[3].value) not in seen_keys:
+                ordered_main.append(t)
 
     # 5. Ready learning first (Anki queue=1 priority), then reviews/new,
     #    then pending learning (cards waiting on their step timer).
-    ordered = ready_learning + ordered + pending_learning
+    ordered = ready_learning + ordered_main + pending_learning
 
     return {"queue": [_queue_item_to_dict(*t, db) for t in ordered]}

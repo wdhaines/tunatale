@@ -1053,18 +1053,22 @@ class TestRevlogShapeHelpers:
         _type_, _ivl, last_ivl = _derive_revlog_shape(ds, [1.0, 10.0], [10.0])
         assert last_ivl == 4
 
-    def test_derive_shape_uses_due_at_minus_last_review_for_learning_ivl(self):
-        """Hard-on-first-step parity: revlog ivl must reflect the actual delay
-        applied (due_at - last_review), not just the current step's duration.
+    def test_derive_shape_hard_on_first_step_uses_avg_of_first_two_steps(self):
+        """Hard-on-first-step parity: revlog ivl reflects the avg-of-first-two-steps
+        delay Anki applies, not the per-step value.
 
         Anki's rslib uses (steps[0] + steps[1]) / 2 = 5.5 min for Hard on the
         first learning step with [1, 10]. The revlog should record ivl=-330,
         not -60. This catches the kuhinja regression where TT wrote -60 to
         revlog while Anki wrote -330 for the same grade.
+
+        After the fuzz port, this is decoded from `left` + `last_rating` rather
+        than `due_at - last_review` (which now includes Anki's positive fuzz).
         """
         from datetime import UTC, datetime, timedelta
 
         from app.anki.sync import _derive_revlog_shape
+        from app.models.srs_item import Rating
 
         last_review = datetime(2026, 5, 8, 17, 5, 28, tzinfo=UTC)
         due_at = last_review + timedelta(seconds=330)
@@ -1073,9 +1077,10 @@ class TestRevlogShapeHelpers:
             due_date=date.today(),
             stability=1.7,
             state=SRSState.LEARNING,
-            left=2,
+            left=2,  # all steps remaining = at step 0
             due_at=due_at,
             last_review=last_review,
+            last_rating=Rating.HARD.value,
             prior_state=SRSState.LEARNING,
             prior_left=2,
         )

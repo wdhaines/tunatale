@@ -613,6 +613,12 @@ describe('TunaTaleAPI', () => {
 			expect(result).toEqual({ queue });
 		});
 
+		it('appends session_start=1 when sessionStart is true', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ queue: [] })));
+			await api.fetchReviewQueue({ sessionStart: true });
+			expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/review-queue?session_start=1`);
+		});
+
 		it('throws on non-ok response', async () => {
 			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockFail('Service Unavailable')));
 			await expect(api.fetchReviewQueue()).rejects.toThrow('Service Unavailable');

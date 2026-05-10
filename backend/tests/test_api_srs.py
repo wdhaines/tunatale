@@ -2045,6 +2045,317 @@ class TestLearningStatePriority:
         )
 
 
+class TestSessionMainQueueFreeze:
+    """Anki parity: `main` (review+new spread mix) is built once per day and frozen.
+
+    Subsequent /review-queue calls return the cached order, filtered to remove
+    cards no longer in the live due-pool (graded today, suspended, etc.).
+    Without the freeze, TT recomputes the intersperser on every poll and always
+    serves the lowest-R review next — diverging from Anki whenever the
+    intersperser would have placed a new card mid-sequence.
+    """
+
+    async def test_two_consecutive_calls_return_same_order_when_state_unchanged(self, api_app_state):
+        """The frozen main queue must not reorder between calls when underlying state is stable."""
+        from datetime import date
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        # Two reviews with very different retrievabilities — the lower-R one would
+        # jump to the head if we recomputed instead of using the cached order.
+        review_high_r = SyntacticUnit(text="high_r", translation="hr", word_count=1, difficulty=1, source="test")
+        review_low_r = SyntacticUnit(text="low_r", translation="lr", word_count=1, difficulty=1, source="test")
+        db.add_collocation(review_high_r, language_code="sl")
+        db.add_collocation(review_low_r, language_code="sl")
+        rows_h, _ = db.list_collocations(search="high_r", limit=1)
+        row_h, _, _ = rows_h[0]
+        rows_l, _ = db.list_collocations(search="low_r", limit=1)
+        row_l, _, _ = rows_l[0]
+        db.update_direction_by_id(
+            row_h,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.REVIEW,
+                due_date=today,
+                stability=100.0,
+                anki_card_id=1,
+            ),
+        )
+        db.update_direction_by_id(
+            row_l,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.REVIEW,
+                due_date=today,
+                stability=0.05,
+                anki_card_id=2,
+            ),
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r1 = await client.get("/api/srs/review-queue")
+            r2 = await client.get("/api/srs/review-queue")
+        order1 = [(q["id"], q["direction"]) for q in r1.json()["queue"]]
+        order2 = [(q["id"], q["direction"]) for q in r2.json()["queue"]]
+        assert order1 == order2, "second call must return the cached frozen order"
+
+    async def test_intersperser_position_is_preserved_after_grading_head(self, api_app_state):
+        """Anki regression (bogat/jabolko): after grading the first few reviews from the
+        frozen main queue, the next card must be whatever the intersperser placed at the
+        next position — even if it's a new card sitting between higher-R reviews.
+        """
+        from datetime import date, timedelta
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+
+        # 4 reviews + 1 new. Intersperser ratio=(4+1)/(1+1)=2.5; the new card
+        # lands at position 2: [rev0, rev1, new0, rev2, rev3].
+        # rev0..rev3 have monotonically rising stability so rev0 is lowest-R
+        # (front of the review sub-queue). After grading rev0 + rev1 a rebuild
+        # would surface rev2 next; the frozen cache must serve new0 instead.
+        review_specs = [
+            ("rev0", 0.01, 1001),
+            ("rev1", 0.05, 1002),
+            ("rev2", 0.10, 1003),
+            ("rev3", 0.20, 1004),
+        ]
+        for text, stab, anki_id in review_specs:
+            unit = SyntacticUnit(text=text, translation=f"t_{text}", word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+            rows, _ = db.list_collocations(search=text, limit=1)
+            row_id, _, _ = rows[0]
+            db.update_direction_by_id(
+                row_id,
+                Direction.RECOGNITION,
+                DirectionState(
+                    direction=Direction.RECOGNITION,
+                    state=SRSState.REVIEW,
+                    due_date=today,
+                    stability=stab,
+                    anki_card_id=anki_id,
+                ),
+            )
+
+        new_unit = SyntacticUnit(text="new0", translation="t_new0", word_count=1, difficulty=1, source="test")
+        db.add_collocation(new_unit, language_code="sl")
+        rows_n, _ = db.list_collocations(search="new0", limit=1)
+        row_new, _, _ = rows_n[0]
+        db.update_direction_by_id(
+            row_new,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.NEW,
+                due_date=today,
+                anki_card_id=2001,
+                anki_due=1,
+            ),
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r1 = await client.get("/api/srs/review-queue")
+            order1 = [q["text"] for q in r1.json()["queue"]]
+            assert order1[:5] == ["rev0", "rev1", "new0", "rev2", "rev3"], (
+                f"intersperser should place new card at position 2 with 4 reviews + 1 new; got {order1[:5]}"
+            )
+
+            # Grade rev0 + rev1 by transitioning them out of the due-pool.
+            for text, _, anki_id in review_specs[:2]:
+                rows, _ = db.list_collocations(search=text, limit=1)
+                row_id, _, _ = rows[0]
+                db.update_direction_by_id(
+                    row_id,
+                    Direction.RECOGNITION,
+                    DirectionState(
+                        direction=Direction.RECOGNITION,
+                        state=SRSState.REVIEW,
+                        due_date=today + timedelta(days=10),
+                        stability=10.0,
+                        anki_card_id=anki_id,
+                    ),
+                )
+
+            # Live rebuild of (rev2, rev3, new0) would put rev2 first (lowest R).
+            # Frozen cache must serve new0 first — its position in the original
+            # frozen sequence — matching Anki's "main is built once and popped".
+            r2 = await client.get("/api/srs/review-queue")
+            order2 = [q["text"] for q in r2.json()["queue"]]
+            assert order2[0] == "new0", (
+                f"After grading positions 0-1, next must be new0 (frozen position 2), "
+                f"not the rebuild-surfaced rev2. Got order: {order2}"
+            )
+
+    async def test_cache_invalidates_when_day_changes(self, api_app_state):
+        """A stale cache from a previous day must not leak into today's queue."""
+        import json
+        from datetime import date, timedelta
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+
+        # Pre-populate a cache from yesterday containing a stale card key.
+        yesterday = today - timedelta(days=1)
+        db.set_anki_state_cache(
+            "session_main_queue",
+            json.dumps({"day": yesterday.isoformat(), "items": [{"cid": 99999, "dir": "recognition"}]}),
+        )
+
+        unit = SyntacticUnit(text="fresh_card", translation="fc", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="fresh_card", limit=1)
+        row_id, _, _ = rows[0]
+        db.update_direction_by_id(
+            row_id,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.REVIEW,
+                due_date=today,
+                stability=1.0,
+                anki_card_id=42,
+            ),
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        order = [q["text"] for q in resp.json()["queue"]]
+        assert "fresh_card" in order, "stale yesterday-cache must be discarded; today's queue must rebuild"
+
+        # Cache should now be keyed on today.
+        cached_row = db.get_anki_state_cache("session_main_queue")
+        assert cached_row is not None
+        assert json.loads(cached_row[0])["day"] == today.isoformat()
+
+    async def test_session_start_advances_learning_cutoff_to_now(self, api_app_state):
+        """Regression for orodje vs bogat: page mount must advance the cutoff so
+        learning cards whose timer expired during the user's idle period jump back
+        into `ready_learning` (mirrors Anki advancing `current_learning_cutoff` at
+        every deck-open via `update_learning_cutoff_and_count`).
+
+        Without `session_start=1`, the cutoff stays frozen at the last grade and a
+        learning card with `due_at` even seconds past the stale cutoff sits in
+        pending_learning at the tail — while Anki, which rebuilt at restart,
+        surfaces it at the head.
+        """
+        from datetime import UTC, date, datetime, timedelta
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        now = datetime.now(UTC)
+
+        # Stale cutoff from "earlier today" — before the learning card became due.
+        stale_cutoff = now - timedelta(minutes=10)
+        db.set_anki_state_cache("learning_cutoff", stale_cutoff.isoformat())
+
+        # Learning card: due_at is past `now` but FUTURE relative to the stale cutoff.
+        # With the stale cutoff this card is `pending_learning`; only after the
+        # session_start advance does it become `ready_learning`.
+        unit_lc = SyntacticUnit(text="late_learn", translation="trans", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit_lc, language_code="sl")
+        rows, _ = db.list_collocations(search="late_learn", limit=1)
+        lc_row, _, _ = rows[0]
+        db.update_direction_by_id(
+            lc_row,
+            Direction.PRODUCTION,
+            DirectionState(
+                direction=Direction.PRODUCTION,
+                state=SRSState.LEARNING,
+                due_date=today,
+                stability=1.0,
+                due_at=now - timedelta(minutes=1),  # past `now`, future vs stale cutoff
+                anki_card_id=42,
+            ),
+        )
+        # A review card so the queue has both candidates.
+        unit_rev = SyntacticUnit(text="rev_card", translation="rev", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit_rev, language_code="sl")
+        rows_r, _ = db.list_collocations(search="rev_card", limit=1)
+        rev_row, _, _ = rows_r[0]
+        db.update_direction_by_id(
+            rev_row,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.REVIEW,
+                due_date=today,
+                stability=1.0,
+                anki_card_id=43,
+            ),
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            # Without session_start: stale cutoff → learning card pending → review first.
+            r1 = await client.get("/api/srs/review-queue")
+            order1 = [q["text"] for q in r1.json()["queue"]]
+            rev_idx = order1.index("rev_card")
+            late_idx = order1.index("late_learn")
+            assert rev_idx < late_idx, f"with stale cutoff, learning card stays pending at tail; got {order1}"
+
+            # With session_start=1: cutoff advances to ~now → learning card is ready.
+            r2 = await client.get("/api/srs/review-queue?session_start=1")
+            order2 = [q["text"] for q in r2.json()["queue"]]
+            assert order2[0] == "late_learn", f"after session_start, learning card must be at head; got {order2}"
+
+    async def test_live_card_not_in_cache_appended_at_tail(self, api_app_state):
+        """Cards that join the due-pool mid-day (sync, manual unbury, new
+        collocation imported) must be appended to the cached order, not dropped.
+        """
+        import json
+        from datetime import date
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+
+        # Seed the cache with two known card keys (both for collocations we'll add).
+        unit_a = SyntacticUnit(text="card_a", translation="ta", word_count=1, difficulty=1, source="test")
+        unit_b = SyntacticUnit(text="card_b", translation="tb", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit_a, language_code="sl")
+        db.add_collocation(unit_b, language_code="sl")
+        rows_a, _ = db.list_collocations(search="card_a", limit=1)
+        row_a, _, _ = rows_a[0]
+        rows_b, _ = db.list_collocations(search="card_b", limit=1)
+        row_b, _, _ = rows_b[0]
+        for row_id, anki_id in [(row_a, 100), (row_b, 200)]:
+            db.update_direction_by_id(
+                row_id,
+                Direction.RECOGNITION,
+                DirectionState(
+                    direction=Direction.RECOGNITION,
+                    state=SRSState.REVIEW,
+                    due_date=today,
+                    stability=1.0,
+                    anki_card_id=anki_id,
+                ),
+            )
+
+        # Cache pretends only card_a was in the original frozen order.
+        db.set_anki_state_cache(
+            "session_main_queue",
+            json.dumps({"day": today.isoformat(), "items": [{"cid": row_a, "dir": "recognition"}]}),
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        order = [q["text"] for q in resp.json()["queue"]]
+        # card_a comes first (cached position 0); card_b appended at the tail.
+        assert order.index("card_a") < order.index("card_b"), (
+            f"cached card_a must come before tail-appended card_b; got {order}"
+        )
+
+
 class TestLearningStepFeedback:
     """Tests for feedback returning learning state with due_at, and queue filtering."""
 

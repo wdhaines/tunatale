@@ -10,6 +10,36 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
 from app.models.srs_item import Direction, DirectionState, Rating, SRSItem, SRSState
+from app.srs._anki_rng import ChaCha12Rng, random_range_u32
+
+
+def _learning_step_fuzz_seconds(anki_card_id: int | None, reps: int, step_seconds: int) -> int:
+    """Anki-parity in-seconds learning fuzz, bit-exact with Anki's RNG.
+
+    Returns `step_seconds + uniform_int[0, min(0.25 * step_seconds, 300))`,
+    sampled via the same `StdRng::seed_from_u64(seed) → random_range(low..high)`
+    chain Anki uses at `learning_ivl_with_fuzz` (rslib/.../answering/learning.rs).
+    Seed is `(anki_card_id or 0) + reps` mod 2^64 — same as `get_fuzz_seed_for_id_and_reps`
+    (rslib/.../answering/mod.rs:642). The bit-exact port lives in `_anki_rng.py`.
+
+    Without bit-exact RNG parity, lockstep-grading TT vs Anki diverges by up to
+    0.25*step on every learning grade because Python's RNG ≠ Rust's even with
+    the same seed. With it, TT's `due_at` matches Anki's `cards.due` to the second.
+    """
+    upper_offset = min(int(step_seconds * 0.25), 300)
+    if upper_offset <= 0:
+        return step_seconds
+    seed = ((anki_card_id or 0) + reps) & 0xFFFFFFFFFFFFFFFF
+    rng = ChaCha12Rng(seed)
+    return step_seconds + random_range_u32(rng, 0, upper_offset)
+
+
+def _due_at_after_step(now: datetime, prev: DirectionState, delay_min: float) -> datetime:
+    """Schedule a learning-step due_at with Anki-parity fuzz applied to the step."""
+    step_seconds = int(round(delay_min * 60))
+    fuzzed = _learning_step_fuzz_seconds(prev.anki_card_id, prev.reps, step_seconds)
+    return now + timedelta(seconds=fuzzed)
+
 
 # FSRS-5 default parameters (w vector, 19 values)
 _DEFAULT_WEIGHTS: tuple[float, ...] = (
@@ -287,7 +317,7 @@ def _schedule_new(
         delay_min = (steps[0] + steps[1]) / 2
     else:
         delay_min = steps[step_index]
-    new_due_at = now + timedelta(minutes=delay_min)
+    new_due_at = _due_at_after_step(now, prev, delay_min)
 
     new_dir = replace(
         prev,
@@ -347,7 +377,7 @@ def _schedule_review_again(
     # Start at step 0 of relearning: total_remaining = full count
     total_steps = len(steps)
     new_left = _pack_left(total_steps)
-    new_due_at = now + timedelta(minutes=steps[0])
+    new_due_at = _due_at_after_step(now, prev, steps[0])
 
     new_dir = replace(
         prev,
@@ -410,7 +440,7 @@ def _schedule_with_steps(
     if rating == Rating.AGAIN:
         # Reset to step 0 (all steps remaining)
         new_left = _pack_left(total_steps)
-        new_due_at = now + timedelta(minutes=steps[0])
+        new_due_at = _due_at_after_step(now, prev, steps[0])
 
         new_dir = replace(
             prev,
@@ -439,7 +469,7 @@ def _schedule_with_steps(
             delay_min = (steps[0] + steps[1]) / 2
         else:
             delay_min = steps[current_step_index]
-        new_due_at = now + timedelta(minutes=delay_min)
+        new_due_at = _due_at_after_step(now, prev, delay_min)
 
         new_dir = replace(
             prev,
@@ -471,7 +501,7 @@ def _schedule_with_steps(
         # Decrement total_remaining; advance to next step.
         next_step_index = current_step_index + 1
         new_left = _pack_left(total_remaining - 1)
-        new_due_at = now + timedelta(minutes=steps[next_step_index])
+        new_due_at = _due_at_after_step(now, prev, steps[next_step_index])
 
         new_dir = replace(
             prev,

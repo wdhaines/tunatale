@@ -21,11 +21,11 @@
 	let current = $derived(queue[0]);
 	let done = $derived(!loading && !error && queue.length === 0);
 
-	async function refreshFromServer() {
+	async function refreshFromServer(sessionStart = false) {
 		try {
 			const [queueStats, queueData] = await Promise.all([
 				api.fetchQueueStats(),
-				api.fetchReviewQueue(),
+				api.fetchReviewQueue({ sessionStart }),
 			]);
 			stats = queueStats;
 			queue = queueData.queue.map(item => ({ item, direction: item.direction }));
@@ -35,7 +35,10 @@
 	}
 
 	onMount(async () => {
-		await refreshFromServer();
+		// Page mount = "deck open" in Anki terms — advance the server's learning
+		// cutoff so any learning card past-due since the last grade lands in the
+		// ready bucket. Per-grade refetches keep the cutoff frozen.
+		await refreshFromServer(true);
 		loading = false;
 	});
 

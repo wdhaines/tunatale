@@ -282,16 +282,17 @@ class TestLearningStepSemantics:
     # cards graded Hard on a fresh learning step.
 
     def test_new_hard_first_step_uses_avg_of_first_two_steps(self):
-        """NEW + HARD with [1, 10] → due_at = now + 5.5 min (not 1 min)."""
+        """NEW + HARD with [1, 10] → due_at = now + 5.5 min (plus Anki-parity fuzz)."""
         item = _make_item(state=SRSState.NEW)
         now = datetime.now(UTC)
         result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION, now=now)
         new_dir = result.directions[Direction.RECOGNITION]
         delay_sec = (new_dir.due_at - now).total_seconds()
-        assert delay_sec == pytest.approx(5.5 * 60, abs=1.0)
+        # 5.5min = 330s. Anki fuzz upper = min(int(330*0.25), 300) = 82.
+        assert 330 <= delay_sec < 330 + 82, f"Hard avg-of-first-two with fuzz must land in [330, 412); got {delay_sec}"
 
     def test_learning_hard_first_step_uses_avg_of_first_two_steps(self):
-        """LEARNING + HARD on first step (left=2) with [1, 10] → due_at = now + 5.5 min.
+        """LEARNING + HARD on first step (left=2) with [1, 10] → due_at = now + 5.5 min (+ fuzz).
 
         Direct regression for the kuhinja/koruza divergence: TT was scheduling
         Hard at +60 s while Anki scheduled at +330 s, putting the two queues
@@ -302,10 +303,10 @@ class TestLearningStepSemantics:
         result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION, now=now)
         new_dir = result.directions[Direction.RECOGNITION]
         delay_sec = (new_dir.due_at - now).total_seconds()
-        assert delay_sec == pytest.approx(5.5 * 60, abs=1.0)
+        assert 330 <= delay_sec < 330 + 82, f"Hard avg-of-first-two with fuzz must land in [330, 412); got {delay_sec}"
 
     def test_learning_hard_later_step_uses_current_step(self):
-        """LEARNING + HARD on second step (left=1) with [1, 10] → due_at = now + 10 min.
+        """LEARNING + HARD on second step (left=1) with [1, 10] → due_at = now + 10 min (+ fuzz).
 
         The avg-of-first-two rule only applies to the first step. On any later
         step, Hard keeps the current step's delay.
@@ -315,14 +316,114 @@ class TestLearningStepSemantics:
         result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION, now=now)
         new_dir = result.directions[Direction.RECOGNITION]
         delay_sec = (new_dir.due_at - now).total_seconds()
-        assert delay_sec == pytest.approx(10 * 60, abs=1.0)
+        # 10min = 600s. Anki fuzz upper = min(int(600*0.25), 300) = 150.
+        assert 600 <= delay_sec < 600 + 150, f"Hard later-step with fuzz must land in [600, 750); got {delay_sec}"
 
     def test_new_hard_single_step_uses_step_zero(self, monkeypatch):
-        """NEW + HARD with single-step deck → due_at = now + step[0], no averaging."""
+        """NEW + HARD with single-step deck → due_at = now + step[0] (+ fuzz), no averaging."""
         monkeypatch.setattr("app.srs.queue_stats.resolve_learning_steps", lambda db=None: ([10.0], "default"))
         item = _make_item(state=SRSState.NEW)
         now = datetime.now(UTC)
         result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION, now=now)
         new_dir = result.directions[Direction.RECOGNITION]
         delay_sec = (new_dir.due_at - now).total_seconds()
-        assert delay_sec == pytest.approx(10 * 60, abs=1.0)
+        assert 600 <= delay_sec < 600 + 150, f"single-step Hard with fuzz must land in [600, 750); got {delay_sec}"
+
+
+class TestLearningStepFuzz:
+    """Anki parity: in-seconds learning steps get a positive uniform fuzz of
+    `[0, min(0.25 * step_secs, 300))` so two cards graded "Again" at the same
+    instant don't bunch up at exactly step+0s. Without fuzz, TT's `due_at`
+    falls a fraction of a second before Anki's, and the next grade's cutoff
+    can land between them — TT surfaces the card, Anki doesn't. Mirrors
+    rslib/.../answering/learning.rs:learning_ivl_with_fuzz.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _default_steps(self, monkeypatch):
+        monkeypatch.setattr("app.srs.queue_stats.resolve_learning_steps", lambda db=None: ([1.0, 10.0], "default"))
+        monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([10.0], "default"))
+
+    def test_again_60s_step_due_at_falls_in_anki_fuzz_range(self):
+        """For a 60s step, Anki schedules due in [60, 75) — TT must too."""
+        now = datetime.now(UTC)
+        item = _make_item(state=SRSState.NEW)
+        # Override anki_card_id so the seed is deterministic-but-nontrivial.
+        item.directions[Direction.RECOGNITION] = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=now.date(),
+            state=SRSState.NEW,
+            anki_card_id=12345,
+            reps=3,
+        )
+        result = schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION, now=now)
+        delay_sec = (result.directions[Direction.RECOGNITION].due_at - now).total_seconds()
+        # 60s base + uniform [0, min(0.25*60, 300)) = 60s + [0, 15) = [60, 75)
+        assert 60 <= delay_sec < 75, f"60s step + fuzz must land in [60, 75); got {delay_sec}s"
+
+    def test_fuzz_is_deterministic_per_card_and_reps(self):
+        """Same (anki_card_id, reps) → same due_at. Mirrors Anki's deterministic
+        seed so re-running a sync doesn't shift schedules."""
+        now = datetime.now(UTC)
+
+        def grade_once() -> float:
+            item = _make_item(state=SRSState.NEW)
+            item.directions[Direction.RECOGNITION] = DirectionState(
+                direction=Direction.RECOGNITION,
+                due_date=now.date(),
+                state=SRSState.NEW,
+                anki_card_id=98765,
+                reps=7,
+            )
+            r = schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION, now=now)
+            return (r.directions[Direction.RECOGNITION].due_at - now).total_seconds()
+
+        assert grade_once() == grade_once(), "fuzz must be deterministic per (card_id, reps)"
+
+    def test_fuzz_differs_when_reps_changes(self):
+        """Different reps → likely different fuzz (not strictly required but helps
+        spread successive lapses on the same card)."""
+        now = datetime.now(UTC)
+
+        def grade_with_reps(reps: int) -> float:
+            item = _make_item(state=SRSState.NEW)
+            item.directions[Direction.RECOGNITION] = DirectionState(
+                direction=Direction.RECOGNITION,
+                due_date=now.date(),
+                state=SRSState.NEW,
+                anki_card_id=42,
+                reps=reps,
+            )
+            r = schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION, now=now)
+            return (r.directions[Direction.RECOGNITION].due_at - now).total_seconds()
+
+        # With a 15-value range and different seeds, at least one of these pairs differs.
+        results = {grade_with_reps(r) for r in range(20)}
+        assert len(results) > 1, f"fuzz should produce variety across reps; got {results}"
+
+    def test_long_step_caps_fuzz_at_300s(self):
+        """For a 1200s+ step, Anki caps fuzz at 300s. TT must match."""
+        now = datetime.now(UTC)
+        # Override learning steps to a single 30-minute (1800s) step.
+        # 0.25 * 1800 = 450 → capped at 300. Range: [1800, 2100).
+        item = _make_item(state=SRSState.NEW)
+        item.directions[Direction.RECOGNITION] = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=now.date(),
+            state=SRSState.NEW,
+            anki_card_id=999,
+            reps=1,
+        )
+        # Use the existing 1m/10m default; check the 10m step via a Good on first step
+        # (transitions to step 1 = 10m). 0.25 * 600 = 150 → range [600, 750).
+        item.directions[Direction.RECOGNITION] = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=now.date(),
+            state=SRSState.LEARNING,
+            left=2,  # 2 steps total, currently at step 0
+            anki_card_id=999,
+            reps=1,
+        )
+        result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION, now=now)
+        delay_sec = (result.directions[Direction.RECOGNITION].due_at - now).total_seconds()
+        assert 600 <= delay_sec < 750, f"10m step + capped fuzz must land in [600, 750); got {delay_sec}s"

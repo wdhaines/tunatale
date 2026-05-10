@@ -743,6 +743,43 @@ def advance_learning_cutoff(db: SRSDatabase, when: datetime) -> None:
     db.set_anki_state_cache(_LEARNING_CUTOFF_KEY, when.isoformat())
 
 
+_SESSION_MAIN_QUEUE_KEY = "session_main_queue"
+
+
+def get_session_main_queue(db: SRSDatabase, today: date) -> list[tuple[int, str]] | None:
+    """Return the cached frozen main-queue order (review+new mix) if it was built today.
+
+    Mirrors Anki's behavior of building `main` once at deck-open and popping from
+    the head as cards are graded — the intersperser order does not change between
+    grades. Without this freeze, TT recomputes the order on every `/review-queue`
+    call and always serves the lowest-R review next, diverging from Anki whenever
+    the intersperser would have placed a new card mid-sequence.
+
+    Returns a list of `(collocation_id, direction_str)` keys in build-time order,
+    or None if no cache exists for today (caller should build and cache).
+    """
+    row = db.get_anki_state_cache(_SESSION_MAIN_QUEUE_KEY)
+    if row is None:
+        return None
+    try:
+        data = json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if data.get("day") != today.isoformat():
+        return None
+    items = data.get("items", [])
+    return [(int(item["cid"]), str(item["dir"])) for item in items]
+
+
+def set_session_main_queue(db: SRSDatabase, today: date, items: list[tuple[int, str]]) -> None:
+    """Cache the frozen main-queue order keyed by today's date."""
+    payload = {
+        "day": today.isoformat(),
+        "items": [{"cid": cid, "dir": d} for cid, d in items],
+    }
+    db.set_anki_state_cache(_SESSION_MAIN_QUEUE_KEY, json.dumps(payload))
+
+
 def refresh_fsrs_params(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
     """Read FSRS params from collection.anki2 and write them to the cache."""
     # Check if decks table exists (modern Anki format)

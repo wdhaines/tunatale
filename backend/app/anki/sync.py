@@ -25,7 +25,7 @@ from app.anki.sqlite_reader import (
     find_deck_id,
 )
 from app.common.guid import compute_guid
-from app.models.srs_item import Direction, DirectionState, SRSState
+from app.models.srs_item import Direction, DirectionState, Rating, SRSState
 from app.srs.database import SRSDatabase
 from app.srs.queue_stats import resolve_learning_steps, resolve_relearning_steps
 
@@ -575,18 +575,24 @@ def _derive_revlog_shape(
         type_ = 1
 
     if ds.state in (SRSState.LEARNING, SRSState.RELEARNING):
-        # Prefer the actual delay we computed (due_at - last_review) so the
-        # revlog ivl reflects rating-specific cases like Hard-on-first-step,
-        # which doesn't equal `steps[step_index]`. Fall back to step-based
-        # decoding for legacy rows missing due_at/last_review.
-        if ds.due_at is not None and ds.last_review is not None:
-            new_ivl = -int(round((ds.due_at - ds.last_review).total_seconds()))
-        else:
-            steps = learn_steps if ds.state == SRSState.LEARNING else relearn_steps
-            step_min = _step_minutes_from_left(ds.left, steps)
-            if step_min is None and ds.state == SRSState.RELEARNING and relearn_steps:
-                step_min = relearn_steps[0]
-            new_ivl = -int(round(step_min * 60)) if step_min is not None else stability_days
+        # Anki's revlog records the **unfuzzed** step (e.g. -60 for a 1m step,
+        # -330 for Hard-on-first-step's 5.5m avg) — not `due_at - last_review`,
+        # which would include the up-to-25%-of-step fuzz applied at scheduling
+        # time. Decode the base step from `left` + steps; override for
+        # Hard-on-first-step where Anki uses `(steps[0] + steps[1]) / 2`.
+        steps = learn_steps if ds.state == SRSState.LEARNING else relearn_steps
+        step_min = _step_minutes_from_left(ds.left, steps)
+        if step_min is None and ds.state == SRSState.RELEARNING and relearn_steps:
+            step_min = relearn_steps[0]
+        if (
+            step_min is not None
+            and ds.last_rating == Rating.HARD.value
+            and ds.left is not None
+            and (ds.left % 1000) == len(steps)
+            and len(steps) > 1
+        ):
+            step_min = (steps[0] + steps[1]) / 2
+        new_ivl = -int(round(step_min * 60)) if step_min is not None else stability_days
     else:
         new_ivl = stability_days
 

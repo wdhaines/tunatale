@@ -287,6 +287,19 @@ describe('review/+page.svelte', () => {
 		expect(mockFetchQueueStats.mock.calls.length).toBeGreaterThan(statsCallsBefore);
 	});
 
+	it('mount call passes sessionStart=true; grade refetch does not', async () => {
+		// Anki parity: page mount = "deck open", advances the server-side cutoff.
+		// Subsequent per-grade refetches must keep the cutoff frozen between grades.
+		const item = makeReviewQueueItem({ id: 1, text: 'okno', direction: 'recognition' });
+		mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
+		const { findByRole } = render(ReviewPage);
+		await findByRole('button', { name: 'Show' });
+		expect(mockFetchReviewQueue).toHaveBeenNthCalledWith(1, { sessionStart: true });
+		await fireEvent.click(await findByRole('button', { name: 'Show' }));
+		await fireEvent.click(await findByRole('button', { name: 'Good' }));
+		expect(mockFetchReviewQueue).toHaveBeenNthCalledWith(2, { sessionStart: false });
+	});
+
 	it('graduated card (server omits it) does not resurface', async () => {
 		mockSubmitDrill.mockResolvedValue({ new_due_date: '2026-04-25', new_state: 'review' });
 		const item = makeReviewQueueItem({ id: 1, text: 'okno', direction: 'recognition' });
