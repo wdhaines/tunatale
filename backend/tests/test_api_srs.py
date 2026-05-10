@@ -1731,8 +1731,13 @@ class TestLearningStatePriority:
         else:
             assert first_item["directions"]["recognition"]["state"] == "learning"
 
-    async def test_learning_bucket_orders_by_stability_then_anki_card_id(self, api_app_state):
-        """Learning cards should order by stability ASC, then anki_card_id ASC."""
+    async def test_learning_bucket_orders_by_anki_card_id_when_due_unset(self, api_app_state):
+        """Learning cards with no due_at and no anki_due fall through to anki_card_id ASC.
+
+        Mirrors Anki's `(reps==0, due)` sort + SQLite stable scan order on `cards.id`.
+        Stability is NOT in the key (regression: TT used to insert stability between
+        anki_due and anki_card_id, which diverged from Anki when two cards shared due).
+        """
         from datetime import date
 
         from app.models.syntactic_unit import SyntacticUnit
@@ -1740,11 +1745,13 @@ class TestLearningStatePriority:
         db = api_app_state
         today = date.today()
 
-        # Create three learning cards with different stability values
+        # Anki-card-id ordering: lower id should come first.
+        # Stabilities are assigned out-of-order on purpose so the test would fail if
+        # the sort key still considered stability.
         cards = [
-            ("mnozica", 300, 0.01),  # lowest stability
-            ("clovek", 301, 0.05),  # middle stability
-            ("dekle", 302, 0.26),  # highest stability
+            ("mnozica", 300, 0.26),  # lowest id, highest stability
+            ("clovek", 301, 0.01),  # middle id, lowest stability
+            ("dekle", 302, 0.05),  # highest id, middle stability
         ]
         for text, anki_id, stability in cards:
             unit = SyntacticUnit(text=text, translation=f"trans_{text}", word_count=1, difficulty=1, source="test")
@@ -1868,6 +1875,174 @@ class TestLearningStatePriority:
         zenska_idx = next(i for i, q in enumerate(queue) if q["text"] == "zenska")
         dojencek_idx = next(i for i, q in enumerate(queue) if q["text"] == "dojencek")
         assert zenska_idx < dojencek_idx, "ženska (earlier anki_due) must come before dojenček"
+
+    async def test_learning_bucket_tied_due_orders_by_anki_card_id_not_stability(self, api_app_state):
+        """Regression for vrh/srajca: when two queue=1 cards share the same `due_at` AND the
+        same `anki_due` (sub-day epoch second), Anki tiebreaks by `cards.id` ASC (its SQL has
+        no ORDER BY, so SQLite's stable scan order — effectively rowid/id — wins). TT must
+        match: lower `anki_card_id` first, regardless of stability.
+
+        Pre-fix bug: TT inserted `stability` between `anki_due` and `anki_card_id`, so the
+        less-stable card jumped ahead even when Anki showed the lower-id card first.
+        """
+        from datetime import UTC, date, datetime
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        # Both cards lapsed in the same review session: identical due_at, identical anki_due.
+        shared_due_at = datetime(2026, 5, 9, 2, 11, 16, tzinfo=UTC)
+        shared_anki_due = 1778292676
+
+        # Lower anki_card_id has HIGHER stability — opposite of TT's old "lower stability wins" tiebreak,
+        # so without the fix TT would surface the high-id (low-stability) card first.
+        cards = [
+            ("srajca", 1775264031875, 0.861),  # lower id, higher stability — Anki shows this first
+            ("vrh", 1775264032476, 0.659),  # higher id, lower stability
+        ]
+        for text, anki_id, stability in cards:
+            unit = SyntacticUnit(text=text, translation=f"trans_{text}", word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+            rows, _ = db.list_collocations(search=text, limit=1)
+            row_id, item, _ = rows[0]
+            dstate = DirectionState(
+                direction=Direction.PRODUCTION,
+                state=SRSState.RELEARNING,
+                due_date=today,
+                stability=stability,
+                anki_card_id=anki_id,
+                anki_due=shared_anki_due,
+                due_at=shared_due_at,
+            )
+            db.update_direction_by_id(row_id, Direction.PRODUCTION, dstate)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+
+        srajca_idx = next(i for i, q in enumerate(queue) if q["text"] == "srajca")
+        vrh_idx = next(i for i, q in enumerate(queue) if q["text"] == "vrh")
+        assert srajca_idx < vrh_idx, (
+            "srajca (lower anki_card_id) must come before vrh — Anki tiebreaks queue=1 by cards.id, not stability"
+        )
+
+    async def test_learning_card_due_after_cutoff_does_not_preempt(self, api_app_state):
+        """Regression for svetilka/jabolko: TT must mirror Anki's frozen-cutoff semantics.
+
+        Anki snapshots `current_learning_cutoff` at grade time and only advances it on the
+        next grade event. A learning card whose timer expires *between* grades must NOT
+        preempt the currently-displayed card (a new/review). It only surfaces after the
+        next grade advances the cutoff.
+
+        Pre-fix bug: TT used live `now` for the ready/pending split, so a learning card
+        ticking past-due mid-session jumped ahead of the new card Anki was still showing.
+        """
+        from datetime import UTC, date, datetime, timedelta
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        now = datetime.now(UTC)
+
+        # Cutoff is 5 minutes ago — simulates "user graded a card 5 min ago, hasn't graded since".
+        cutoff = now - timedelta(minutes=5)
+        db.set_anki_state_cache("learning_cutoff", cutoff.isoformat())
+
+        # Learning card: due_at is 1 minute ago (past `now`) but FUTURE relative to cutoff.
+        # At cutoff time, this card was 4 minutes away from due. Anki's frozen cutoff has
+        # not advanced, so it must remain pending.
+        learning_due_at = now - timedelta(minutes=1)
+        unit_lc = SyntacticUnit(text="late_learn", translation="trans", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit_lc, language_code="sl")
+        rows, _ = db.list_collocations(search="late_learn", limit=1)
+        lc_row_id, _, _ = rows[0]
+        db.update_direction_by_id(
+            lc_row_id,
+            Direction.PRODUCTION,
+            DirectionState(
+                direction=Direction.PRODUCTION,
+                state=SRSState.LEARNING,
+                due_date=today,
+                stability=1.0,
+                due_at=learning_due_at,
+                anki_card_id=42,
+            ),
+        )
+
+        # New card: should be served first because the learning card is still pending vs cutoff.
+        unit_new = SyntacticUnit(text="newcard", translation="trans", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit_new, language_code="sl")
+        rows, _ = db.list_collocations(search="newcard", limit=1)
+        new_row_id, _, _ = rows[0]
+        db.update_direction_by_id(
+            new_row_id,
+            Direction.PRODUCTION,
+            DirectionState(
+                direction=Direction.PRODUCTION,
+                state=SRSState.NEW,
+                due_date=today,
+                anki_card_id=43,
+                anki_due=1,
+            ),
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+
+        new_idx = next(i for i, q in enumerate(queue) if q["text"] == "newcard")
+        learn_idx = next(i for i, q in enumerate(queue) if q["text"] == "late_learn")
+        assert new_idx < learn_idx, (
+            "new card must come before learning card whose due_at is past `now` but future "
+            "relative to the frozen cutoff — Anki does not preempt the displayed card"
+        )
+
+    async def test_feedback_advances_learning_cutoff(self, api_app_state):
+        """Grading any card must advance `learning_cutoff` to ~now, mirroring Anki's
+        update_learning_cutoff_and_count call after each answer.
+        """
+        from datetime import UTC, date, datetime, timedelta
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+
+        # Stale cutoff far in the past.
+        stale_cutoff = datetime(2020, 1, 1, tzinfo=UTC)
+        db.set_anki_state_cache("learning_cutoff", stale_cutoff.isoformat())
+
+        unit = SyntacticUnit(text="grade_test", translation="trans", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="grade_test", limit=1)
+        row_id, _, _ = rows[0]
+        db.update_direction_by_id(
+            row_id,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.REVIEW,
+                due_date=today,
+                stability=1.0,
+            ),
+        )
+
+        before = datetime.now(UTC)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(f"/api/srs/items/{row_id}/direction/recognition/feedback", json={"rating": "good"})
+        assert resp.status_code == 200
+
+        cached = db.get_anki_state_cache("learning_cutoff")
+        assert cached is not None, "feedback endpoint must populate learning_cutoff cache"
+        cached_at = datetime.fromisoformat(cached[0])
+        assert cached_at >= before - timedelta(seconds=1), (
+            f"learning_cutoff ({cached_at.isoformat()}) must be ≥ pre-grade `now` ({before.isoformat()}) — "
+            f"not the stale value {stale_cutoff.isoformat()}"
+        )
 
 
 class TestLearningStepFeedback:

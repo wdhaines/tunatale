@@ -1083,6 +1083,83 @@ class SRSDatabase:
                 )
             self._commit(conn)
 
+    def list_anki_card_ids(self) -> set[int]:
+        """Return all anki_card_ids currently linked on directions.
+
+        Used by sync to diff against the Anki collection's live cards and detect
+        orphans (TT rows pointing at cards that no longer exist in Anki).
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT anki_card_id FROM collocation_directions WHERE anki_card_id IS NOT NULL"
+            ).fetchall()
+            return {row["anki_card_id"] for row in rows}
+
+    def reset_orphaned_anki_ids(
+        self,
+        *,
+        live_card_ids: set[int],
+        live_note_ids: set[int],
+    ) -> tuple[list[tuple[str, str]], list[str]]:
+        """Clear anki_card_id / anki_note_id on rows whose Anki target is gone.
+
+        Behaviour:
+        - For each direction with `anki_card_id NOT IN live_card_ids`: set
+          `anki_card_id`, `anki_card_mod`, `anki_due`, `last_synced_at` to NULL.
+          If the row has `reps > 0`, also set `dirty_fsrs = 1` so the next
+          `sync_push` rewrites the FSRS state (force_fsrs) and a revlog entry
+          onto the freshly-created Anki card.
+        - For each collocation with `anki_note_id NOT IN live_note_ids`: clear
+          `anki_note_id` and `last_synced_at`. The next `sync_create_new` then
+          creates a fresh Anki note.
+
+        Returns (direction_resets, note_resets) where direction_resets is a list
+        of (guid, direction_str) and note_resets is a list of guid.
+        """
+        direction_resets: list[tuple[str, str]] = []
+        note_resets: list[str] = []
+        with self._get_conn() as conn:
+            dir_rows = conn.execute(
+                """
+                SELECT c.guid, d.direction, d.anki_card_id, d.collocation_id, d.reps
+                FROM collocation_directions d
+                JOIN collocations c ON c.id = d.collocation_id
+                WHERE d.anki_card_id IS NOT NULL
+                """,
+            ).fetchall()
+            for row in dir_rows:
+                if row["anki_card_id"] in live_card_ids:
+                    continue
+                make_dirty = row["reps"] > 0
+                conn.execute(
+                    """
+                    UPDATE collocation_directions SET
+                      anki_card_id = NULL,
+                      anki_card_mod = NULL,
+                      anki_due = NULL,
+                      last_synced_at = NULL,
+                      dirty_fsrs = CASE WHEN ? THEN 1 ELSE dirty_fsrs END
+                    WHERE collocation_id = ? AND direction = ?
+                    """,
+                    (1 if make_dirty else 0, row["collocation_id"], row["direction"]),
+                )
+                direction_resets.append((row["guid"], row["direction"]))
+
+            note_rows = conn.execute(
+                "SELECT id, guid, anki_note_id FROM collocations WHERE anki_note_id IS NOT NULL"
+            ).fetchall()
+            for row in note_rows:
+                if row["anki_note_id"] in live_note_ids:
+                    continue
+                conn.execute(
+                    "UPDATE collocations SET anki_note_id = NULL, last_synced_at = NULL WHERE id = ?",
+                    (row["id"],),
+                )
+                note_resets.append(row["guid"])
+
+            self._commit(conn)
+        return direction_resets, note_resets
+
     def add_media(
         self,
         collocation_id: int,

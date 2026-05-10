@@ -912,6 +912,54 @@ class TestSyncPullWritesLastReviewToDb:
         item = db.get_collocation("banka")
         assert item.directions[Direction.RECOGNITION].last_review == expected_last_review
 
+    def test_sync_pull_advances_learning_cutoff_from_revlog_ms(self):
+        """sync_pull must advance learning_cutoff to the most recent Anki revlog timestamp.
+
+        Without this, an Anki-only grading session would leave TT's cutoff frozen at
+        the last *TT* grade, so intraday-learning cards that ticked past-due during
+        the Anki session would never become eligible until TT itself recorded a grade.
+        """
+        from datetime import datetime as _dt
+
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        # Stale local cutoff: simulate a TT grade from earlier today.
+        stale_cutoff = _dt(2026, 5, 9, 10, 0, 0, tzinfo=UTC)
+        db.set_anki_state_cache("learning_cutoff", stale_cutoff.isoformat())
+
+        # Anki revlog row for this card is 3 hours newer than the stale cutoff.
+        anki_grade_ms = int(_dt(2026, 5, 9, 13, 0, 0, tzinfo=UTC).timestamp() * 1000)
+        card = make_card_record(anki_card_id=90010, ord=0, reps=6, last_review_ms=anki_grade_ms)
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        cached = db.get_anki_state_cache("learning_cutoff")
+        assert cached is not None
+        cached_at = _dt.fromisoformat(cached[0])
+        assert cached_at == _dt.fromtimestamp(anki_grade_ms / 1000, UTC), (
+            f"cutoff must advance to the latest ingested revlog ts, got {cached_at.isoformat()}"
+        )
+
+    def test_sync_pull_dry_run_does_not_advance_learning_cutoff(self):
+        """Dry-run sync_pull must not mutate the cache."""
+        from datetime import datetime as _dt
+
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        original_cutoff = _dt(2026, 5, 9, 10, 0, 0, tzinfo=UTC)
+        db.set_anki_state_cache("learning_cutoff", original_cutoff.isoformat())
+
+        anki_grade_ms = int(_dt(2026, 5, 9, 13, 0, 0, tzinfo=UTC).timestamp() * 1000)
+        card = make_card_record(anki_card_id=90010, ord=0, reps=6, last_review_ms=anki_grade_ms)
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull(dry_run=True)
+
+        cached = db.get_anki_state_cache("learning_cutoff")
+        assert cached is not None
+        assert _dt.fromisoformat(cached[0]) == original_cutoff
+
 
 class TestDirectionDiffersDetectsLastReviewTransition:
     def test_direction_differs_detects_last_review_transition(self):

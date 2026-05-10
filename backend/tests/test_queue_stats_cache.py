@@ -1058,3 +1058,44 @@ class TestReadRolloverHour:
         conn.execute("INSERT INTO col (conf) VALUES (?)", ("",))
         conn.commit()
         assert _read_rollover_hour(conn) == 4
+
+
+class TestLearningCutoff:
+    """resolve_learning_cutoff / advance_learning_cutoff helpers."""
+
+    def test_resolve_returns_fallback_when_cache_missing(self):
+        from datetime import UTC, datetime
+
+        from app.srs.database import SRSDatabase
+        from app.srs.queue_stats import resolve_learning_cutoff
+
+        db = SRSDatabase(":memory:")
+        fallback = datetime(2026, 5, 9, 18, 0, tzinfo=UTC)
+        assert resolve_learning_cutoff(db, fallback=fallback) == fallback
+
+    def test_resolve_returns_fallback_on_corrupt_cache(self):
+        from datetime import UTC, datetime
+
+        from app.srs.database import SRSDatabase
+        from app.srs.queue_stats import resolve_learning_cutoff
+
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("learning_cutoff", "not-a-timestamp")
+        fallback = datetime(2026, 5, 9, 18, 0, tzinfo=UTC)
+        assert resolve_learning_cutoff(db, fallback=fallback) == fallback
+
+    def test_advance_is_monotonic(self):
+        """A stale `when` (older than the cached value) is silently ignored."""
+        from datetime import UTC, datetime
+
+        from app.srs.database import SRSDatabase
+        from app.srs.queue_stats import advance_learning_cutoff, resolve_learning_cutoff
+
+        db = SRSDatabase(":memory:")
+        newer = datetime(2026, 5, 9, 18, 0, tzinfo=UTC)
+        older = datetime(2026, 5, 9, 17, 0, tzinfo=UTC)
+
+        advance_learning_cutoff(db, newer)
+        advance_learning_cutoff(db, older)  # must not move cutoff backwards
+
+        assert resolve_learning_cutoff(db, fallback=datetime(1970, 1, 1, tzinfo=UTC)) == newer

@@ -705,6 +705,44 @@ def resolve_bury_review(db: SRSDatabase | None = None) -> tuple[bool, str]:
     return (True, "default")
 
 
+_LEARNING_CUTOFF_KEY = "learning_cutoff"
+
+
+def resolve_learning_cutoff(db: SRSDatabase, fallback: datetime) -> datetime:
+    """Return the snapshot time used to split learning cards into ready vs pending buckets.
+
+    Mirrors Anki's `current_learning_cutoff` (rslib scheduler/queue/mod.rs): a frozen
+    timestamp that only advances on grade events (and on sync ingest of remote revlogs).
+    Between grades, intraday-learning cards whose due timer expires are NOT preempted
+    into the head of the queue — they remain pending until the next grade advances the
+    cutoff. Without this snapshot, TT recomputes ready/pending against live `now` on every
+    poll and surfaces past-due learning cards mid-screen, diverging from Anki.
+
+    `fallback` is used when no cutoff is cached (no grades or sync ingests yet); typical
+    callers pass the current UTC time.
+    """
+    row = db.get_anki_state_cache(_LEARNING_CUTOFF_KEY)
+    if row is None:
+        return fallback
+    value_str, _ = row
+    try:
+        return datetime.fromisoformat(value_str)
+    except (ValueError, TypeError):
+        return fallback
+
+
+def advance_learning_cutoff(db: SRSDatabase, when: datetime) -> None:
+    """Advance the cached learning cutoff to `when`, never moving it backwards.
+
+    Called from the feedback endpoint after each grade and from sync ingest after each
+    Anki revlog row is applied locally. Idempotent: a stale `when` is silently ignored.
+    """
+    row = db.get_anki_state_cache(_LEARNING_CUTOFF_KEY)
+    if row is not None and when <= datetime.fromisoformat(row[0]):
+        return
+    db.set_anki_state_cache(_LEARNING_CUTOFF_KEY, when.isoformat())
+
+
 def refresh_fsrs_params(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
     """Read FSRS params from collection.anki2 and write them to the cache."""
     # Check if decks table exists (modern Anki format)

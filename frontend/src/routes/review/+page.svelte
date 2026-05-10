@@ -7,106 +7,21 @@
 	import DrillCard from '$lib/components/DrillCard.svelte';
 
 	type QueueItem = { item: ReviewQueueItem; direction: 'recognition' | 'production' };
-	type DeferredCard = QueueItem & { dueAt: number };
 
 	let queue: QueueItem[] = $state([]);
-	let index = $state(0);
 	let loading = $state(true);
 	let error = $state('');
 	let reviewed = $state(0);
 	let stats = $state<QueueStats | null>(null);
-	let buriedCollocationIds: Set<number> = $state(new Set());
-	let deferred: DeferredCard[] = $state([]);
 
-	let current = $derived(queue[index]);
-	let done = $derived(!loading && !error && index >= queue.length && deferred.length === 0);
+	// The server is the source of truth: every grade refetches /review-queue and
+	// /queue-stats so the local view tracks the server's authoritative ordering
+	// (cutoff-aware ready/pending split, sibling burying, newSpread). The user
+	// always sees queue[0]; we never mutate the queue locally between fetches.
+	let current = $derived(queue[0]);
+	let done = $derived(!loading && !error && queue.length === 0);
 
-	function nextNonBuriedIndex(start: number): number {
-		let i = start;
-		while (i < queue.length && buriedCollocationIds.has(queue[i].item.id)) {
-			i++;
-		}
-		return i;
-	}
-
-	function localLearningCount(): number {
-		const remaining = queue.slice(index).filter(q => q.item.state === 'learning' || q.item.state === 'relearning');
-		return remaining.length + deferred.length;
-	}
-
-	function reapDeferred() {
-		// Anki parity: called only after `index` has advanced past the just-rated
-		// card. Ready deferred cards surface in due_at order, interleaved with
-		// any earlier-due learning cards already in queue[index..]. Each ready
-		// card finds its splice position past the run of learning cards whose
-		// due_at is earlier than its own — mirroring Anki's intraday_now bucket
-		// which is sorted by `due` ascending (rslib/.../queue/builder/...).
-		const now = Date.now();
-		const ready = deferred.filter(d => d.dueAt <= now);
-		if (ready.length === 0) return;
-		deferred = deferred.filter(d => d.dueAt > now);
-		const sortedReady = [...ready].sort((a, b) => a.dueAt - b.dueAt);
-		for (const r of sortedReady) {
-			let splicePos = index;
-			while (splicePos < queue.length) {
-				const q = queue[splicePos];
-				const isLearning = q.item.state === 'learning' || q.item.state === 'relearning';
-				if (!isLearning) break;
-				const rawDueAt = q.item.directions?.[q.direction]?.due_at;
-				const qDueAt = rawDueAt ? Date.parse(rawDueAt) : Infinity;
-				if (qDueAt > r.dueAt) break;
-				splicePos++;
-			}
-			queue = [
-				...queue.slice(0, splicePos),
-				{ item: r.item, direction: r.direction },
-				...queue.slice(splicePos),
-			];
-		}
-		refreshStats();
-	}
-
-	function drainDeferredAtTail() {
-		// Anki parity: when main is empty, intraday_ahead cards are served at the
-		// tail of the iter even before their step elapses. Append all remaining
-		// deferred so the user is never stuck staring at a blank done state.
-		if (index >= queue.length && deferred.length > 0) {
-			queue = [...queue, ...deferred.map(d => ({ item: d.item, direction: d.direction }))];
-			deferred = [];
-		}
-	}
-
-	async function refreshStats() {
-		try {
-			stats = await api.fetchQueueStats();
-			// If server has more learning cards than we have locally, top up
-			if (stats.learning > localLearningCount()) {
-				await topUpQueue();
-			}
-		} catch {
-			// Silently ignore - widget will show stale data
-		}
-	}
-
-	async function topUpQueue() {
-		try {
-			const data = await api.fetchReviewQueue();
-			const existingKeys = new Set(queue.map(q => `${q.item.id}:${q.direction}`));
-			const newItems = data.queue
-				.map(item => ({ item, direction: item.direction as 'recognition' | 'production' }))
-				.filter(q => !existingKeys.has(`${q.item.id}:${q.direction}`));
-			if (newItems.length > 0) {
-				// Preserve learning-first ordering: splice learning cards right after current index
-				const newLearning = newItems.filter(q => q.item.state === 'learning' || q.item.state === 'relearning');
-				const newOther = newItems.filter(q => !newLearning.includes(q));
-				queue = [...queue.slice(0, index + 1), ...newLearning, ...queue.slice(index + 1), ...newOther];
-			}
-		} catch {
-			// Silently ignore - queue fetch failed, will retry on next refresh
-		}
-	}
-
-	onMount(async () => {
+	async function refreshFromServer() {
 		try {
 			const [queueStats, queueData] = await Promise.all([
 				api.fetchQueueStats(),
@@ -114,47 +29,26 @@
 			]);
 			stats = queueStats;
 			queue = queueData.queue.map(item => ({ item, direction: item.direction }));
-			// Top up if server has more learning cards than we have locally
-			if (stats.learning > localLearningCount()) {
-				await topUpQueue();
-			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
-		} finally {
-			loading = false;
 		}
+	}
+
+	onMount(async () => {
+		await refreshFromServer();
+		loading = false;
 	});
 
 	async function rate(rating: 'again' | 'hard' | 'good' | 'easy', timeMs: number) {
 		const { item, direction } = current;
-		let resp;
 		try {
-			resp = await api.submitDrill(item.id, direction, rating, timeMs);
+			await api.submitDrill(item.id, direction, rating, timeMs);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 			return;
 		}
 		reviewed += 1;
-
-		if (resp.new_state === 'learning' && resp.due_at) {
-			const dueAt = Date.parse(resp.due_at);
-			if (dueAt > Date.now()) {
-				deferred = [...deferred, { item, direction, dueAt }];
-				index = nextNonBuriedIndex(index + 1);
-				reapDeferred();
-				drainDeferredAtTail();
-				// Refresh stats on deferred branch too
-				await refreshStats();
-				return;
-			}
-		}
-
-		buriedCollocationIds = new Set(buriedCollocationIds).add(item.id);
-		index = nextNonBuriedIndex(index + 1);
-		reapDeferred();
-		drainDeferredAtTail();
-		// Refetch queue stats to update the widget in real-time
-		await refreshStats();
+		await refreshFromServer();
 	}
 </script>
 
@@ -187,7 +81,7 @@
 		<p class="badge">{current.direction === 'recognition' ? 'Recognition' : 'Production'}</p>
 		<p class="badge state-{current.item.state}">{current.item.state}</p>
 		<section class="card-section">
-			{#key index}
+			{#key reviewed}
 				<DrillCard item={current.item} direction={current.direction} onRate={rate} />
 			{/key}
 		</section>

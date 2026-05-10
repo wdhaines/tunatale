@@ -54,6 +54,16 @@ class DuplicateNoteError(Exception):
         self.note_id = note_id
 
 
+class OrphanThresholdExceededError(Exception):
+    """Refuse to reset Anki ids when too many TT rows look orphaned.
+
+    Trips when >25% of linked directions reference card_ids that are not in
+    the live Anki collection — usually a sign the configured deck path is
+    pointing at the wrong file, in which case wholesale ID reset would erase
+    the user's actual sync state.
+    """
+
+
 class ForceFsrsNotAcknowledgedError(Exception):
     """--force-fsrs requires a one-time acknowledgement file."""
 
@@ -619,9 +629,50 @@ class AnkiSync:
         else:
             raise ValueError("_writer is required")
 
+        # Populated by detect_and_reset_orphans; consumed by sync_push to force
+        # FSRS state onto cards that were just recreated.
+        self._recovered_directions: set[tuple[str, str]] = set()
+
+    def detect_and_reset_orphans(self) -> tuple[int, int]:
+        """Reset TT pointers to Anki cards/notes that no longer exist.
+
+        Runs at the top of a sync (before sync_create_new). Diffs the TT mirror
+        against the live Anki collection — if a TT direction's `anki_card_id`
+        is not in `live_card_ids`, the card was deleted ("Empty Cards", manual
+        delete, or wiped by a force-full-download from AnkiWeb). Reset clears
+        the dead pointer and (if `reps > 0`) flips `dirty_fsrs=1` so the next
+        push writes a fresh revlog and force-FSRS into the recreated card.
+
+        Aborts with `OrphanThresholdExceededError` when the orphan ratio
+        exceeds 25% — usually a sign of a misconfigured `anki_collection_path`.
+
+        Returns (direction_resets, note_resets) counts.
+        """
+        records = self._reader.get_note_records()
+        live_note_ids = {r.anki_note_id for r in records}
+        live_card_ids = {c.anki_card_id for r in records for c in r.cards}
+
+        tt_card_ids = self._db.list_anki_card_ids()
+        if tt_card_ids:
+            orphan_count = len(tt_card_ids - live_card_ids)
+            if orphan_count / len(tt_card_ids) > 0.25:
+                raise OrphanThresholdExceededError(
+                    f"Refusing to reset {orphan_count} orphaned anki_card_ids "
+                    f"({orphan_count / len(tt_card_ids):.0%} of {len(tt_card_ids)}). "
+                    f"Check that anki_collection_path points at the right deck."
+                )
+
+        dir_resets, note_resets = self._db.reset_orphaned_anki_ids(
+            live_card_ids=live_card_ids,
+            live_note_ids=live_note_ids,
+        )
+        self._recovered_directions = {(guid, direction) for guid, direction in dir_resets}
+        return len(dir_resets), len(note_resets)
+
     def sync_pull(self, dry_run: bool = False) -> PullReport:
         """Pull Anki → TunaTale. Returns a PullReport summarising changes."""
         report = PullReport()
+        max_revlog_ms = 0  # tracked to advance the learning cutoff after Anki-side grades
 
         for rec in self._reader.get_note_records():
             # Primary: stable pointer set by sync_create_new. Handles duplicate
@@ -692,6 +743,8 @@ class AnkiSync:
                 # Compute timestamps for conflict resolution
                 local_last_ms = int(local_dir.last_review.timestamp() * 1000) if local_dir.last_review else 0
                 anki_last_ms = card_rec.last_review_ms or 0
+                if anki_last_ms > max_revlog_ms:
+                    max_revlog_ms = anki_last_ms
 
                 if local_dir.dirty_fsrs and anki_last_ms > local_last_ms:
                     # Anki's review is newer than TunaTale's pending grade.
@@ -896,6 +949,14 @@ class AnkiSync:
                         self._db.update_direction(guid, direction, new_dir_state)
                     report.directions_updated += 1
 
+        # Anki parity: advance the learning cutoff to the most recent Anki revlog
+        # timestamp ingested. Without this, an Anki-only grading session would leave
+        # TT's cutoff frozen at the last *TT* grade, and intraday-learning cards that
+        # ticked past-due during the Anki session would never become eligible.
+        if not dry_run and max_revlog_ms > 0:
+            from app.srs.queue_stats import advance_learning_cutoff
+
+            advance_learning_cutoff(self._db, datetime.fromtimestamp(max_revlog_ms / 1000, UTC))
         return report
 
     def sync_push(self, dry_run: bool = False, force_fsrs: bool = False) -> PushReport:
@@ -917,9 +978,15 @@ class AnkiSync:
             report.notes_pushed += 1
 
         # First loop: dirty directions (TunaTale's grade is latest)
+        recovered = self._recovered_directions
         for guid, direction, ds in self._db.list_dirty():
             if ds.anki_card_id is None:
                 continue
+            # Recovery: when detect_and_reset_orphans cleared this direction's
+            # anki_card_id earlier in the run and sync_create_new just minted a
+            # fresh one, force_fsrs writes the TT-side stability/difficulty into
+            # the new card's data JSON regardless of the global flag.
+            row_force_fsrs = force_fsrs or (guid, direction.value) in recovered
             days_str = str(max(0, (ds.due_date - date.today()).days))
             if not dry_run:
                 if ds.state == SRSState.SUSPENDED:
@@ -959,7 +1026,7 @@ class AnkiSync:
                         type_=type_,
                         preferred_id=preferred_id,
                     )
-                if force_fsrs:
+                if row_force_fsrs:
                     schema_ok = self._anki_col_ver is None or self._anki_col_ver <= KNOWN_ANKI_SCHEMA_VER
                     if schema_ok:
                         ivl_val = max(1, round(ds.stability))

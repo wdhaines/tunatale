@@ -472,6 +472,109 @@ class TestFileBased:
         assert db.get_collocation("dober dan") is not None
 
 
+class TestOrphanReset:
+    """Tests for list_anki_card_ids and reset_orphaned_anki_ids."""
+
+    def _link(self, srs_db, text: str, *, note_id: int, rec_cid: int, prod_cid: int):
+        srs_db.add_collocation(_unit(text, text + "_t"), language_code="sl")
+        item = srs_db.get_collocation(text)
+        srs_db.set_anki_ids(
+            item.guid,
+            note_id,
+            {Direction.RECOGNITION: rec_cid, Direction.PRODUCTION: prod_cid},
+        )
+        return item.guid
+
+    def test_list_anki_card_ids_returns_all_non_null(self, srs_db):
+        self._link(srs_db, "a", note_id=10, rec_cid=100, prod_cid=101)
+        self._link(srs_db, "b", note_id=11, rec_cid=110, prod_cid=111)
+        # Add a row with no anki ids set
+        srs_db.add_collocation(_unit("c", "ct"), language_code="sl")
+
+        ids = srs_db.list_anki_card_ids()
+        assert ids == {100, 101, 110, 111}
+
+    def test_reset_clears_card_id_when_missing_from_live_set(self, srs_db):
+        guid_a = self._link(srs_db, "a", note_id=10, rec_cid=100, prod_cid=101)
+        guid_b = self._link(srs_db, "b", note_id=11, rec_cid=110, prod_cid=111)
+
+        # Live: only b's note + cards exist; a is fully orphaned.
+        dir_resets, note_resets = srs_db.reset_orphaned_anki_ids(
+            live_card_ids={110, 111},
+            live_note_ids={11},
+        )
+
+        assert (guid_a, "recognition") in dir_resets
+        assert (guid_a, "production") in dir_resets
+        assert (guid_b, "recognition") not in dir_resets
+        assert guid_a in note_resets
+        assert guid_b not in note_resets
+
+        # Verify state: a's card_ids/note_id are NULL, b's preserved.
+        item_a = srs_db.get_collocation("a")
+        item_b = srs_db.get_collocation("b")
+        assert item_a.anki_note_id is None
+        assert item_a.directions[Direction.RECOGNITION].anki_card_id is None
+        assert item_a.directions[Direction.PRODUCTION].anki_card_id is None
+        assert item_b.anki_note_id == 11
+        assert item_b.directions[Direction.RECOGNITION].anki_card_id == 110
+
+    def test_reset_clears_only_card_id_when_note_still_live(self, srs_db):
+        """If the note exists in Anki but a card was deleted (rare, e.g. ord
+        removed from notetype), only the card_id resets — the note linkage stays."""
+        guid_a = self._link(srs_db, "a", note_id=10, rec_cid=100, prod_cid=101)
+        # Live: note 10 exists, but production card 101 is gone.
+        dir_resets, note_resets = srs_db.reset_orphaned_anki_ids(
+            live_card_ids={100},
+            live_note_ids={10},
+        )
+
+        assert dir_resets == [(guid_a, "production")]
+        assert note_resets == []
+        item_a = srs_db.get_collocation("a")
+        assert item_a.anki_note_id == 10
+        assert item_a.directions[Direction.RECOGNITION].anki_card_id == 100
+        assert item_a.directions[Direction.PRODUCTION].anki_card_id is None
+
+    def test_reset_marks_dirty_fsrs_for_rows_with_reps(self, srs_db):
+        """A reset row with reps>0 has TT-side state worth preserving — flip
+        dirty_fsrs=1 so sync_push processes it (force_fsrs writes cards.data
+        on the freshly-created Anki card)."""
+        guid_a = self._link(srs_db, "a", note_id=10, rec_cid=100, prod_cid=101)
+        # Bump recognition reps
+        item = srs_db.get_collocation("a")
+        rec = item.directions[Direction.RECOGNITION]
+        rec.reps = 3
+        rec.state = SRSState.LEARNING
+        rec.dirty_fsrs = False
+        srs_db.update_direction(guid_a, Direction.RECOGNITION, rec)
+
+        srs_db.reset_orphaned_anki_ids(live_card_ids=set(), live_note_ids=set())
+
+        item_after = srs_db.get_collocation("a")
+        rec_after = item_after.directions[Direction.RECOGNITION]
+        prod_after = item_after.directions[Direction.PRODUCTION]
+        assert rec_after.dirty_fsrs is True, "reps>0 reset row should be dirty"
+        assert prod_after.dirty_fsrs is False, "reps==0 reset row stays clean"
+
+    def test_reset_clears_last_synced_at(self, srs_db):
+        """Reset rows lose their last_synced_at — the new Anki card has no sync
+        history yet."""
+        from datetime import UTC, datetime
+
+        guid_a = self._link(srs_db, "a", note_id=10, rec_cid=100, prod_cid=101)
+        # Set last_synced_at
+        item = srs_db.get_collocation("a")
+        rec = item.directions[Direction.RECOGNITION]
+        rec.last_synced_at = datetime.now(UTC).isoformat()
+        srs_db.update_direction(guid_a, Direction.RECOGNITION, rec)
+
+        srs_db.reset_orphaned_anki_ids(live_card_ids=set(), live_note_ids=set())
+
+        item_after = srs_db.get_collocation("a")
+        assert item_after.directions[Direction.RECOGNITION].last_synced_at is None
+
+
 class TestAdminMutations:
     """Tests for admin mutation methods."""
 

@@ -32,7 +32,7 @@ async def trigger_sync(request: Request, dry_run: bool = False):
     """
     from app.anki import model_discovery
     from app.anki.safety import AnkiRunningError, safe_open
-    from app.anki.sync import AnkiSync, OfflineReader, OfflineWriter
+    from app.anki.sync import AnkiSync, OfflineReader, OfflineWriter, OrphanThresholdExceededError
     from app.config import settings
 
     db = request.app.state.srs_db
@@ -56,6 +56,14 @@ async def trigger_sync(request: Request, dry_run: bool = False):
                 )
 
             sync = AnkiSync(db=db, _reader=reader, _writer=writer, _anki_col_ver=col_ver)
+
+            # Self-healing: detect TT rows that point at Anki cards/notes that
+            # no longer exist (deleted from Anki, lost to a force-full-download,
+            # etc). Reset those pointers so sync_create_new recreates them, and
+            # arm `_recovered_directions` so sync_push force_fsrs the rebuild.
+            # Must run BEFORE create_new and push for the recovery to land in
+            # this same sync invocation.
+            sync.detect_and_reset_orphans()
 
             async def _media_fn(word, english, *, used_image_urls):
                 return await fetch_card_media(
@@ -92,6 +100,8 @@ async def trigger_sync(request: Request, dry_run: bool = False):
             status_code=409,
             detail="Close Anki to sync — TunaTale needs exclusive access to collection.anki2.",
         ) from exc
+    except OrphanThresholdExceededError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     media_result = _refresh_media_if_not_dry_run(dry_run)
     media_updated = media_result.get("updated_media", 0)

@@ -120,6 +120,33 @@ class TestSyncOfflineEndpoint:
         assert data["directions_pulled"] == 4
         assert data["dry_run"] is False
 
+    async def test_409_when_orphan_threshold_exceeded(self, monkeypatch):
+        """When detect_and_reset_orphans aborts (likely a misconfigured deck
+        path), the endpoint surfaces a 409 instead of letting the exception
+        bubble up as a 500."""
+        from app.anki.sync import OrphanThresholdExceededError
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
+        monkeypatch.setattr(settings, "anki_collection_path", "/fake/collection.anki2")
+
+        conn = _make_minimal_anki_conn()
+        monkeypatch.setattr("app.anki.safety.safe_open", _make_fake_safe_open(conn))
+
+        def fake_detect(self):
+            raise OrphanThresholdExceededError(
+                "Refusing to reset 50 orphaned anki_card_ids (50% of 100). "
+                "Check that anki_collection_path points at the right deck."
+            )
+
+        monkeypatch.setattr("app.anki.sync.AnkiSync.detect_and_reset_orphans", fake_detect)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post("/api/anki/sync")
+
+        assert response.status_code == 409
+        assert "orphan" in response.json()["detail"].lower()
+
     async def test_409_when_model_name_empty_and_not_discoverable(self, monkeypatch):
         from app.config import settings
 

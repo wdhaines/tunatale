@@ -19,12 +19,14 @@ from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, schedule
 from app.srs.lemmatizer import LowercaseLemmatizer
 from app.srs.queue_stats import (
+    advance_learning_cutoff,
     count_anki_introduced_today,
     count_anki_review_remaining_today,
     resolve_bury_new,
     resolve_bury_review,
     resolve_daily_new_cap,
     resolve_fsrs_params,
+    resolve_learning_cutoff,
     resolve_new_spread,
 )
 from app.srs.tokenizer import tokenize
@@ -182,6 +184,12 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
     now = datetime.datetime.now(datetime.UTC)
     updated = schedule(item, rating, direction=dir_enum, params=fsrs_params, time_ms=body.time_ms, now=now)
     db.update_direction_by_id(item_id, dir_enum, updated.directions[dir_enum])
+    # Anki parity: advance the learning cutoff at grade time. The next /review-queue
+    # call uses this snapshot (not live `now`) to decide which queue=1 cards are
+    # ready, so a learning card whose timer expired between this grade and the
+    # previous one becomes eligible — but a card that ticks past-due *after* this
+    # grade stays pending until the next grade.
+    advance_learning_cutoff(db, now)
 
     new_dir = updated.directions[dir_enum]
     response = {
@@ -789,8 +797,14 @@ async def get_review_queue(request: Request) -> dict:
     nonlearning_new = _bury_siblings_in_queue(nonlearning_new, bury_new)
 
     # Sort learning cards by TT's `due_at` (authoritative after a fresh grade,
-    # before sync has refreshed Anki's `anki_due`). Fall back to anki_due, then
-    # stability, then anki_card_id, then row id for stable order.
+    # before sync has refreshed Anki's `anki_due`), then anki_due, then
+    # anki_card_id ASC, then row id. Anki's queue=1 sort is `(reps==0, due)`
+    # only (rslib scheduler/queue/learning.rs cmp_by_reps_then_due); the
+    # underlying SQL has no ORDER BY, so SQLite's stable scan order — effectively
+    # cards.id ASC — is the de-facto final tiebreak. We mirror that with
+    # anki_card_id; stability is intentionally NOT in the key because two cards
+    # lapsed in the same review session share `due_at`/`anki_due` to the second,
+    # and Anki ignores stability for ordering.
     _SENTINEL_FUTURE = datetime.datetime.max.replace(tzinfo=datetime.UTC)
     learning_cards.sort(
         key=lambda t: (
@@ -798,7 +812,6 @@ async def get_review_queue(request: Request) -> dict:
             t[1].directions[t[3]].due_at or _SENTINEL_FUTURE,
             t[1].directions[t[3]].anki_due is None,
             t[1].directions[t[3]].anki_due or 0,
-            t[1].directions[t[3]].stability,
             t[1].directions[t[3]].anki_card_id is None,
             t[1].directions[t[3]].anki_card_id or 0,
             t[0],
@@ -806,13 +819,17 @@ async def get_review_queue(request: Request) -> dict:
     )
 
     # Split learning into ready (past-due / null due_at) vs pending (future).
-    # Anki parity: while a learning card's step timer is still ticking, the
-    # dispatcher serves review cards instead of waking the user up early.
+    # Anki parity: compare due_at against a frozen `cutoff` (Anki's
+    # `current_learning_cutoff`), not live `now`. The cutoff is initialized to
+    # `now` on first call and only advances on grade events / sync ingest, so a
+    # learning card whose timer expires *between* grades stays pending until the
+    # next grade — matching Anki's "card on screen is sticky" behavior.
+    cutoff = resolve_learning_cutoff(db, fallback=now)
     ready_learning: list[tuple[int, SRSItem, str, Direction]] = []
     pending_learning: list[tuple[int, SRSItem, str, Direction]] = []
     for t in learning_cards:
         ds = t[1].directions[t[3]]
-        if ds.due_at is None or ds.due_at <= now:
+        if ds.due_at is None or ds.due_at <= cutoff:
             ready_learning.append(t)
         else:
             pending_learning.append(t)
