@@ -43,6 +43,7 @@ See `.claude/rules/` for detailed guidance:
 - `tdd.md` — red-green-refactor workflow, step ordering
 - `environment.md` — secrets, venv, Groq setup
 - `anki-sync.md` — USN/sync protocol; required reading before touching `backend/app/anki/`
+- `anki-queue-parity.md` — TT↔Anki queue/badge parity principles + divergence playbook; read before touching `backend/app/api/srs.py`, `backend/app/srs/fsrs.py`, `backend/app/srs/queue_stats.py`, or `backend/app/anki/sync.py`. Full layer-by-layer history at `docs/anki-parity-layers.md` (reference only, not auto-loaded).
 
 ## Key Design Decisions
 
