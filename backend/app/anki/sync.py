@@ -598,6 +598,21 @@ def _anki_step_ahead(anki_left: int | None, local_left: int | None) -> bool:
     return anki_tr > 0 and local_tr > 0 and anki_tr < local_tr
 
 
+def _queue_to_state(queue: int, card_type: int, reps: int) -> SRSState:
+    """Map Anki's (queue, type, reps) tuple to TT's SRSState."""
+    if queue == -1:
+        return SRSState.SUSPENDED
+    if queue in (-2, -3):
+        return SRSState.BURIED
+    if queue == 1:
+        return SRSState.RELEARNING if card_type == 3 else SRSState.LEARNING
+    if queue == 3:
+        return SRSState.RELEARNING
+    if reps == 0:
+        return SRSState.NEW
+    return SRSState.REVIEW
+
+
 def _step_minutes_from_left(left: int | None, steps: list[float]) -> float | None:
     """Decode Anki's `cards.left` to the current step's duration in minutes.
 
@@ -853,19 +868,7 @@ class AnkiSync:
                     # Anki's review is newer than TunaTale's pending grade.
                     # Anki wins for cards.due/ivl/factor. TunaTale's grade still
                     # becomes a revlog row in Anki (push will handle it).
-                    if card_rec.queue == -1:
-                        new_state = SRSState.SUSPENDED
-                    elif card_rec.queue in (-2, -3):
-                        new_state = SRSState.BURIED
-                    elif card_rec.queue == 1:
-                        # Distinguish Learn (type=1) vs Relearn (type=3)
-                        new_state = SRSState.RELEARNING if card_rec.card_type == 3 else SRSState.LEARNING
-                    elif card_rec.queue == 3:
-                        new_state = SRSState.RELEARNING
-                    elif card_rec.reps == 0:
-                        new_state = SRSState.NEW
-                    else:
-                        new_state = SRSState.REVIEW
+                    new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
                     new_dir_state = DirectionState(
                         direction=direction,
                         due_date=card_rec.due_date,
@@ -1107,19 +1110,7 @@ class AnkiSync:
                             last_synced_at=datetime.now(UTC).isoformat(),
                         )
                 elif card_rec.fsrs_known:
-                    if card_rec.queue == -1:
-                        new_state = SRSState.SUSPENDED
-                    elif card_rec.queue in (-2, -3):
-                        new_state = SRSState.BURIED
-                    elif card_rec.queue == 1:
-                        # Distinguish Learn (type=1) vs Relearn (type=3)
-                        new_state = SRSState.RELEARNING if card_rec.card_type == 3 else SRSState.LEARNING
-                    elif card_rec.queue == 3:
-                        new_state = SRSState.RELEARNING
-                    elif card_rec.reps == 0:
-                        new_state = SRSState.NEW
-                    else:
-                        new_state = SRSState.REVIEW
+                    new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
                     new_dir_state = DirectionState(
                         direction=direction,
                         due_date=card_rec.due_date,
@@ -1144,20 +1135,7 @@ class AnkiSync:
                         due_at=card_rec.due_at,
                     )
                 else:
-                    # fsrs_known=False and not dirty_fsrs: apply basic queue mapping
-                    if card_rec.queue == -1:
-                        new_state = SRSState.SUSPENDED
-                    elif card_rec.queue in (-2, -3):
-                        new_state = SRSState.BURIED
-                    elif card_rec.queue == 1:
-                        # Distinguish Learn (type=1) vs Relearn (type=3)
-                        new_state = SRSState.RELEARNING if card_rec.card_type == 3 else SRSState.LEARNING
-                    elif card_rec.queue == 3:
-                        new_state = SRSState.RELEARNING
-                    elif card_rec.reps == 0:
-                        new_state = SRSState.NEW
-                    else:
-                        new_state = SRSState.REVIEW
+                    new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
                     new_dir_state = DirectionState(
                         direction=direction,
                         due_date=card_rec.due_date,
