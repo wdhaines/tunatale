@@ -6,8 +6,7 @@ import json
 import logging
 import sqlite3
 import struct
-from datetime import UTC, date, datetime, timedelta, timezone
-from pathlib import Path
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from app.config import settings
@@ -25,68 +24,6 @@ _FSRS5_WEIGHTS_FIELD = 5  # LEN-delimited packed f32; 19 floats for FSRS-5
 _DESIRED_RETENTION_FIELD = 40  # FIXED32 float
 
 
-def _register_unicase(conn: sqlite3.Connection) -> None:
-    """Register the unicase collation so queries against Anki's COLLATE unicase columns work."""
-
-    def _unicase(a: str, b: str) -> int:
-        af, bf = a.casefold(), b.casefold()
-        return (af > bf) - (af < bf)
-
-    conn.create_collation("unicase", _unicase)
-
-
-def _compute_today_col_day(
-    conn: sqlite3.Connection,
-    now: datetime | None = None,
-    local_offset_minutes_west: int | None = None,
-) -> int:
-    """Compute today's col-day integer matching Anki's actual algorithm.
-
-    Mirrors `scheduler/timing.rs::sched_timing_today_v2_new`: local-date
-    subtraction between collection-creation date and now's date, minus 1
-    when the local rollover hour hasn't been passed today.
-
-    The naive `(now - crt) // 86400` formula breaks when `col.crt` is at
-    noon UTC (Anki's default) and `now` falls in the morning UTC window —
-    the fractional remainder is < 1.0 so floor undercounts by one. It also
-    ignores the configured rollover hour entirely.
-
-    `now` / `local_offset_minutes_west` are for tests. In production they
-    default to current wall-clock and the system's local timezone.
-    """
-    row = conn.execute("SELECT crt FROM col LIMIT 1").fetchone()
-    if row is None:
-        return 0
-    crt = row[0]
-    rollover = _read_rollover_hour(conn)
-
-    if now is None:
-        now = datetime.now(UTC)
-    if local_offset_minutes_west is None:
-        # System local-vs-UTC offset, expressed Anki-style (minutes WEST of UTC).
-        local_tz = datetime.now().astimezone().tzinfo
-        # tzinfo.utcoffset(now) returns east-of-UTC; Anki uses west-of-UTC.
-        utcoffset = local_tz.utcoffset(now.replace(tzinfo=None)) if local_tz else timedelta(0)
-        local_offset_minutes_west = -int(utcoffset.total_seconds() // 60) if utcoffset else 0
-
-    # Build a fixed offset for Anki-style local time.
-    fixed_offset = timezone(timedelta(minutes=-local_offset_minutes_west))
-    now_local = now.astimezone(fixed_offset)
-    crt_local = datetime.fromtimestamp(crt, tz=UTC).astimezone(fixed_offset)
-
-    days = (now_local.date() - crt_local.date()).days
-    rollover_today_local = now_local.replace(hour=rollover, minute=0, second=0, microsecond=0)
-    if now_local < rollover_today_local:
-        days -= 1
-    return max(0, days)
-
-
-def _read_did_for_deck(conn: sqlite3.Connection, deck_name: str) -> int | None:
-    """Return the deck ID for the given deck name, or None if not found."""
-    row = conn.execute("SELECT id FROM decks WHERE name = ?", (deck_name,)).fetchone()
-    return row[0] if row is not None else None
-
-
 def _read_conf_id_for_deck(conn: sqlite3.Connection, deck_name: str) -> int | None:
     """Return the conf_id for the given deck name, or None if not found.
 
@@ -102,156 +39,6 @@ def _read_conf_id_for_deck(conn: sqlite3.Connection, deck_name: str) -> int | No
         return None
 
     return _pb_find_varint_field(normal_kind_bytes, 1)
-
-
-def _read_review_caps(conn: sqlite3.Connection, conf_id: int) -> tuple[int, bool] | None:
-    """Return (reviews_per_day, new_cards_ignore_review_limit) from deck_config blob.
-
-    Fields in DeckConfig.Config protobuf:
-      - field 10 (VARINT) = reviews_per_day (default 9999)
-      - field 7 (VARINT/bool) = new_cards_ignore_review_limit (default False)
-
-    Returns None if the config blob cannot be read.
-    """
-    config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
-    if config_row is None or not config_row[0]:
-        return None
-
-    config_blob = bytes(config_row[0]) if isinstance(config_row[0], memoryview) else config_row[0]
-
-    reviews_per_day = _pb_find_varint_field(config_blob, 10)
-    if reviews_per_day is None:
-        reviews_per_day = 9999
-
-    ignore_limit = _pb_find_varint_field(config_blob, 7)
-    new_cards_ignore_review_limit = bool(ignore_limit) if ignore_limit is not None else False
-
-    return (reviews_per_day, new_cards_ignore_review_limit)
-
-
-def _read_today_studied_counts(conn: sqlite3.Connection, did: int, today_col_day: int) -> tuple[int, int]:
-    """Return (new_studied, review_studied) for today from decks.common blob.
-
-    Reads DeckCommon protobuf (stored in decks.common blob):
-      - field 3 (VARINT) = last_day_studied
-      - field 4 (VARINT) = new_studied
-      - field 5 (VARINT) = review_studied
-
-    If last_day_studied != today_col_day, returns (0, 0) (rollover).
-    """
-    row = conn.execute("SELECT common FROM decks WHERE id = ?", (did,)).fetchone()
-    if row is None or not row[0]:
-        return (0, 0)
-
-    common_blob = bytes(row[0]) if isinstance(row[0], memoryview) else row[0]
-
-    last_day = _pb_find_varint_field(common_blob, 3)
-    new_studied = _pb_find_varint_field(common_blob, 4) or 0
-    review_studied = _pb_find_varint_field(common_blob, 5) or 0
-
-    if last_day is None or last_day != today_col_day:
-        return (0, 0)
-
-    return (new_studied, review_studied)
-
-
-def count_anki_review_remaining_today(deck_name: str | None = None, collection_path: Path | None = None) -> int | None:
-    """Count reviews remaining today, matching Anki's deck-overview badge.
-
-    Mirrors Anki's queue-builder logic:
-      1. Apply sibling burying (COUNT(DISTINCT nid)) when bury_reviews=true
-      2. Apply RemainingLimits cap (reviews_per_day - studied_today)
-
-    Returns None (not 0) when the Anki collection is missing/unreadable, so
-    callers can distinguish "Anki unavailable" from "0 reviews remaining".
-
-    Uses read-only mode with immutable=1, safe while Anki is running.
-    """
-    path = collection_path if collection_path is not None else settings.anki_collection_path
-    if path is None or not path.exists():
-        return None
-
-    conn = None
-    try:
-        conn = sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True)
-        _register_unicase(conn)
-
-        # Check required tables exist
-        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-        if "col" not in tables or "decks" not in tables or "cards" not in tables:
-            return None
-
-        deck = deck_name or settings.anki_deck_name
-        if not deck:
-            return None
-
-        # Resolve deck ID
-        did = _read_did_for_deck(conn, deck)
-        if did is None:
-            return None
-
-        # Compute today's col-day using Anki's formula: (now - crt) // 86400
-        today_col_day = _compute_today_col_day(conn)
-
-        # Check if bury_reviews is enabled (DeckConfig.Config field 28)
-        bury_reviews = False
-        conf_id = _read_conf_id_for_deck(conn, deck)
-        if conf_id is not None:
-            config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
-            if config_row is not None and config_row[0]:
-                config_blob = bytes(config_row[0]) if isinstance(config_row[0], memoryview) else config_row[0]
-                bury_raw = _pb_find_varint_field(config_blob, 28)
-                if bury_raw is not None:
-                    bury_reviews = bool(bury_raw)
-
-        # Count review cards due today (queue=2, due <= today_col_day).
-        # Anki gathers intraday-learning before reviews (rslib/.../queue/builder/
-        # gathering.rs:14-21) and tracks each card's note in `seen_note_ids`. With
-        # `bury_reviews=true`, a queue=2 due card whose note is already in that
-        # set is pre-buried via add_due_card and never enters the user's review
-        # pool. Mirror it: when bury is on, exclude any review-due card whose
-        # note has a sibling currently in queue=1.
-        if bury_reviews:
-            row = conn.execute(
-                """
-                SELECT COUNT(DISTINCT nid)
-                FROM cards
-                WHERE did=? AND queue=2 AND due<=?
-                  AND nid NOT IN (
-                      SELECT nid FROM cards WHERE did=? AND queue=1
-                  )
-                """,
-                (did, today_col_day, did),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM cards WHERE did=? AND queue=2 AND due<=?",
-                (did, today_col_day),
-            ).fetchone()
-        pool_count = row[0] if row is not None else 0
-
-        # Apply RemainingLimits cap
-        if conf_id is not None:
-            caps = _read_review_caps(conn, conf_id)
-            if caps is not None:
-                reviews_per_day, ignore_limit = caps
-                new_studied, review_studied = _read_today_studied_counts(conn, did, today_col_day)
-
-                review_limit = reviews_per_day - review_studied
-                if not ignore_limit:
-                    review_limit -= new_studied
-                review_limit = max(review_limit, 0)
-                return min(pool_count, review_limit)
-
-        # No conf_id or caps: return raw pool count
-        return pool_count
-
-    except sqlite3.Error as exc:
-        _log.warning("count_anki_review_remaining_today: failed to read collection: %s", exc)
-        return None
-    finally:
-        if conn is not None:
-            conn.close()
 
 
 def _pb_read_varint(data: bytes, pos: int) -> tuple[int, int]:
@@ -476,42 +263,6 @@ def _read_new_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int
 
     # Modern format: deck_config table with protobuf BLOBs
     return _read_new_per_day_from_deck_config_table(conn, deck_name)
-
-
-def _read_rollover_hour(conn: sqlite3.Connection) -> int:
-    """Read Anki's `rollover` setting (hour of day, 0-23) — when "today" begins.
-
-    Modern Anki stores it JSON-encoded in `config` table (key='rollover');
-    legacy collections store it in `col.conf` JSON. Defaults to 4 (Anki's
-    own default) when neither is present or parseable. See Anki rslib
-    `scheduler/timing.rs::sched_timing_today`.
-    """
-    try:
-        row = conn.execute("SELECT val FROM config WHERE KEY = 'rollover'").fetchone()
-        if row and row[0] is not None:
-            try:
-                val = json.loads(bytes(row[0]) if isinstance(row[0], (bytes, memoryview)) else row[0])
-                if isinstance(val, int) and 0 <= val <= 23:
-                    return val
-            except (json.JSONDecodeError, TypeError, ValueError):
-                pass
-    except sqlite3.OperationalError:
-        pass
-
-    try:
-        row = conn.execute("SELECT conf FROM col").fetchone()
-        if row and row[0]:
-            try:
-                conf = json.loads(row[0])
-                val = conf.get("rollover")
-                if isinstance(val, int) and 0 <= val <= 23:
-                    return val
-            except (json.JSONDecodeError, AttributeError, TypeError):
-                pass
-    except sqlite3.OperationalError:
-        pass
-
-    return 4
 
 
 def refresh_daily_new_cap(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
