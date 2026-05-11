@@ -2291,6 +2291,177 @@ class TestLearningStatePriority:
         )
 
 
+class TestJustGradedLearningCollapse:
+    """Anki parity: when a learning card is graded and main is empty, the just-
+    graded card's queue position is shifted past the next-soonest pending card
+    so the user doesn't see the same card immediately. Mirrors Anki's
+    `requeue_learning_entry` collapse in rslib/scheduler/queue/learning.rs:94-113.
+    Without this, TT shows the just-graded card again because its `due_at` is
+    still the smallest among pending learning cards.
+    """
+
+    async def test_just_graded_card_yields_to_next_pending_when_main_empty(self, api_app_state):
+        """Two pending learning cards. Head was just graded (last_review ==
+        cutoff). With main empty, queue must serve the OTHER card first.
+        """
+        from datetime import UTC, date, datetime, timedelta
+
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.queue_stats import advance_learning_cutoff
+
+        db = api_app_state
+        today = date.today()
+        now = datetime.now(UTC)
+
+        # Pin the learning cutoff at `now` (simulates the grade event).
+        advance_learning_cutoff(db, now)
+
+        # Two pending learning cards: srebro (just graded, head) and družina.
+        for text, due_offset_min, last_review in [
+            ("srebro", 1, now),  # just graded → last_review == cutoff
+            ("družina", 9, now - timedelta(hours=1)),  # graded earlier
+        ]:
+            unit = SyntacticUnit(text=text, translation="t", word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+            rows, _ = db.list_collocations(search=text, limit=1)
+            row_id = rows[0][0]
+            db.update_direction_by_id(
+                row_id,
+                Direction.RECOGNITION,
+                DirectionState(
+                    direction=Direction.RECOGNITION,
+                    state=SRSState.LEARNING,
+                    due_date=today + timedelta(days=1),
+                    stability=0.5,
+                    difficulty=8.0,
+                    reps=2,
+                    lapses=0,
+                    left=1001,
+                    due_at=now + timedelta(minutes=due_offset_min),
+                    last_review=last_review,
+                    anki_card_id=100 + due_offset_min,
+                ),
+            )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        queue = resp.json()["queue"]
+        # Without collapse: queue[0] = srebro. With collapse: queue[0] = družina.
+        assert queue[0]["text"] == "družina", (
+            f"just-graded srebro must yield to družina (Anki's collapse); got {queue[0]['text']}"
+        )
+        assert queue[1]["text"] == "srebro"
+
+    async def test_collapse_does_not_fire_when_head_was_not_just_graded(self, api_app_state):
+        """Outer condition (main empty, ≥2 pending) holds, but inner check
+        fails because the head's last_review doesn't match the cutoff (no
+        recent grade). Order stays as-sorted by due_at.
+        """
+        from datetime import UTC, date, datetime, timedelta
+
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.queue_stats import advance_learning_cutoff
+
+        db = api_app_state
+        today = date.today()
+        now = datetime.now(UTC)
+        # Cutoff is "now", but no card has last_review matching it.
+        advance_learning_cutoff(db, now)
+
+        for text, due_offset_min in [("first", 1), ("second", 9)]:
+            unit = SyntacticUnit(text=text, translation="t", word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+            rows, _ = db.list_collocations(search=text, limit=1)
+            db.update_direction_by_id(
+                rows[0][0],
+                Direction.RECOGNITION,
+                DirectionState(
+                    direction=Direction.RECOGNITION,
+                    state=SRSState.LEARNING,
+                    due_date=today + timedelta(days=1),
+                    stability=0.5,
+                    difficulty=8.0,
+                    reps=2,
+                    lapses=0,
+                    left=1001,
+                    due_at=now + timedelta(minutes=due_offset_min),
+                    last_review=now - timedelta(hours=1),  # NOT just graded
+                    anki_card_id=100 + due_offset_min,
+                ),
+            )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        queue = resp.json()["queue"]
+        assert queue[0]["text"] == "first"
+        assert queue[1]["text"] == "second"
+
+    async def test_collapse_does_not_fire_when_main_is_nonempty(self, api_app_state):
+        """When main has cards, the collapse must NOT fire — main is served
+        next, so the just-graded card stays in pending naturally."""
+        from datetime import UTC, date, datetime, timedelta
+
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.queue_stats import advance_learning_cutoff
+
+        db = api_app_state
+        today = date.today()
+        now = datetime.now(UTC)
+        advance_learning_cutoff(db, now)
+
+        # One due review (populates main).
+        unit_rev = SyntacticUnit(text="rev_card", translation="t", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit_rev, language_code="sl")
+        rows, _ = db.list_collocations(search="rev_card", limit=1)
+        db.update_direction_by_id(
+            rows[0][0],
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.REVIEW,
+                due_date=today,
+                stability=1.0,
+                reps=5,
+                anki_card_id=500,
+            ),
+        )
+
+        # Two pending learning cards, head just graded.
+        for text, due_offset_min, last_review in [
+            ("srebro", 1, now),
+            ("družina", 9, now - timedelta(hours=1)),
+        ]:
+            unit = SyntacticUnit(text=text, translation="t", word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+            rows, _ = db.list_collocations(search=text, limit=1)
+            db.update_direction_by_id(
+                rows[0][0],
+                Direction.RECOGNITION,
+                DirectionState(
+                    direction=Direction.RECOGNITION,
+                    state=SRSState.LEARNING,
+                    due_date=today + timedelta(days=1),
+                    stability=0.5,
+                    difficulty=8.0,
+                    reps=2,
+                    lapses=0,
+                    left=1001,
+                    due_at=now + timedelta(minutes=due_offset_min),
+                    last_review=last_review,
+                    anki_card_id=100 + due_offset_min,
+                ),
+            )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        queue = resp.json()["queue"]
+        # main has rev_card, served first. Then pending in natural order: srebro, družina.
+        # No collapse because main wasn't empty.
+        srebro_idx = next(i for i, c in enumerate(queue) if c["text"] == "srebro")
+        druzina_idx = next(i for i, c in enumerate(queue) if c["text"] == "družina")
+        assert srebro_idx < druzina_idx, "with main non-empty, pending order stays srebro→družina (no collapse)"
+
+
 class TestSessionMainQueueFreeze:
     """Anki parity: `main` (review+new spread mix) is built once per day and frozen.
 

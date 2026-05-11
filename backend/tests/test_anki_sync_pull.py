@@ -851,6 +851,54 @@ class TestSyncPull:
         rec = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
         assert rec.prior_state == SRSState.NEW, "self-heal must infer prior_state='new'"
 
+    def test_pull_self_heals_when_prior_state_is_learning_but_intro_was_today(self):
+        """Broader self-heal: a card introduced today that later graduated
+        (LEARNING→REVIEW) loses prior_state='new' from the old grade-endpoint
+        behavior. On re-sync, when Anki's first revlog for the card is today
+        AND state isn't NEW, restore prior_state='new' regardless of the
+        current value. Matches Anki's `newToday` counter (sticky for the day).
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        item = db.get_collocation_by_guid(guid)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=item.directions[Direction.RECOGNITION].due_date,
+            stability=2.0,
+            difficulty=5.0,
+            reps=4,
+            lapses=0,
+            state=SRSState.REVIEW,
+            prior_state=SRSState.LEARNING,  # graduated today, lost the intro marker
+            last_review=_dt.now(UTC) - timedelta(hours=1),
+            anki_card_id=90010,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        today_local_midnight_ms = int(
+            _dt.combine(date.today(), _time(0), tzinfo=_dt.now().astimezone().tzinfo).astimezone(UTC).timestamp() * 1000
+        )
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            queue=2,
+            card_type=2,
+            reps=4,
+            lapses=0,
+            stability=2.0,
+            difficulty=5.0,
+            last_review=_dt.now(UTC) - timedelta(hours=1),
+            first_review_ms=today_local_midnight_ms + 3_600_000,  # 1h after midnight
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        rec = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert rec.prior_state == SRSState.NEW, (
+            "self-heal must restore prior_state='new' for cards introduced today, "
+            "regardless of subsequent same-day transitions that lost the marker"
+        )
+
     def test_pull_self_heal_skipped_when_first_revlog_is_before_today(self):
         """Self-heal must not falsely set prior_state='new' on a card whose
         introduction happened on a previous day."""

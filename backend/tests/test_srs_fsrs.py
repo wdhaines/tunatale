@@ -430,15 +430,17 @@ class TestPriorStateStickyNew:
         assert rec.state == SRSState.LEARNING
         assert rec.prior_state == SRSState.NEW
 
-    def test_graduate_from_learning_with_prior_new_records_learning(self):
-        """When the state class DOES change (LEARNING → REVIEW on graduation),
-        prior_state captures the state we just left, not the older NEW. The
-        introduced-today counter still finds the card via last_review=today
-        AND prior_state matching the right set — only prior_state='new' is
-        the special sticky case for counting."""
-        # Card with only one learning step → Good graduates immediately.
+    def test_graduate_from_learning_with_prior_new_preserves_new(self):
+        """LEARNING→REVIEW graduation must preserve `prior_state='new'` when
+        the card was introduced today. Anki's `newToday` counter increments
+        on first grade and never decrements during the day — TT must match
+        that or the new-card badge undercounts. Anki's revlog `type` for
+        a graduation grade is 0 (Learning) whether prior is 'new' or
+        'learning', so keeping 'new' is safe for revlog and required for
+        the introduced-today badge.
+        """
         item = self._make_learning_item(prior_state=SRSState.NEW)
-        # Force left to a state where Good graduates: total_remaining=1.
+        # Force left to total_remaining=1 → Good graduates immediately.
         rec = item.directions[Direction.RECOGNITION]
         from dataclasses import replace as _replace
 
@@ -446,8 +448,47 @@ class TestPriorStateStickyNew:
         result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
         rec_after = result.directions[Direction.RECOGNITION]
         assert rec_after.state == SRSState.REVIEW, "graduated"
-        assert rec_after.prior_state == SRSState.LEARNING, (
-            "on a real state-class transition, prior_state must record the state we just left"
+        assert rec_after.prior_state == SRSState.NEW, (
+            "introduced-today marker must survive graduation so the new-card badge keeps the card"
+        )
+
+    def test_lapse_releases_sticky_new(self):
+        """REVIEW→RELEARNING (lapse) must release sticky-NEW so the revlog
+        records `prior_state='review'` → Anki revlog `type=1` (Review),
+        which is what the lapse grade event actually was. Edge case: card
+        introduced + graduated + lapsed all in the same day. The badge will
+        lose this card after the lapse, but revlog correctness wins.
+        """
+        from app.models.syntactic_unit import SyntacticUnit
+
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus")
+        rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            prior_state=SRSState.NEW,  # introduced + graduated today
+            due_date=date.today(),
+            stability=2.0,
+            difficulty=8.0,
+            reps=3,
+            lapses=0,
+            anki_card_id=100,
+        )
+        prod = DirectionState(
+            direction=Direction.PRODUCTION,
+            state=SRSState.NEW,
+            due_date=date.today(),
+            anki_card_id=101,
+        )
+        item = SRSItem(
+            syntactic_unit=unit,
+            directions={Direction.RECOGNITION: rec, Direction.PRODUCTION: prod},
+            guid="g",
+        )
+        result = schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION)
+        rec_after = result.directions[Direction.RECOGNITION]
+        assert rec_after.state == SRSState.RELEARNING, "lapsed"
+        assert rec_after.prior_state == SRSState.REVIEW, (
+            "lapse must capture the immediate-previous state for revlog type=1, overriding sticky-NEW"
         )
 
     def test_relearning_step_grade_does_not_become_sticky_new(self):

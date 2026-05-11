@@ -197,17 +197,24 @@ def _pack_left(total_remaining: int) -> int:
 def _grade_prior_state(prev: DirectionState, new_state: SRSState) -> SRSState:
     """Compute `prior_state` for a graded direction.
 
-    Sticky-NEW semantic: when a card was introduced today (`prior_state='new'`
-    set by sync's NEW→graded transition or by an in-session first-grade), keep
-    `prior_state='new'` across subsequent same-state-class grades. Otherwise
-    `prior_state` captures the immediately-previous state — what Anki's revlog
-    records via `_derive_revlog_shape`.
+    Sticky-NEW semantic: when a card was introduced today
+    (`prior_state='new'` set by sync's NEW→graded transition or by an
+    in-session first grade), keep `prior_state='new'` across every grade
+    on the card's intro arc — learning steps **and** graduation to REVIEW.
+    Anki's `newToday` counter increments on first grade and never
+    decrements during the day; `count_new_introduced_today` must mirror
+    that, which requires the marker to survive the LEARNING→REVIEW
+    transition.
 
-    Without sticky-NEW, grading a learning card whose `prior_state` is `'new'`
-    would overwrite it to `'learning'` and remove the card from
-    `count_new_introduced_today`, making the new-card badge rebound upward.
+    The only release is REVIEW→RELEARNING (a lapse). The lapse revlog
+    must record `prior_state='review'` so Anki's `revlog.type` is 1
+    (Review). After a lapse, the card has effectively "left" its intro
+    arc — losing the marker here is acceptable; revlog correctness wins.
+
+    For all other transitions, `prior_state` captures the immediately-
+    previous state — what `_derive_revlog_shape` needs for revlog `type`.
     """
-    if new_state == prev.state and prev.prior_state == SRSState.NEW:
+    if prev.prior_state == SRSState.NEW and new_state != SRSState.RELEARNING:
         return SRSState.NEW
     return prev.state
 

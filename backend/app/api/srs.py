@@ -923,6 +923,29 @@ async def get_review_queue(request: Request, session_start: bool = False) -> dic
                 if dstate.state == SRSState.NEW:
                     ordered_main.append(t)
 
+    # Anki parity "collapse" (rslib/.../queue/learning.rs:94-113): when main
+    # is empty and the head of pending_learning was just graded
+    # (last_review == cutoff), shift it past the next-soonest pending card so
+    # the user doesn't see the same card immediately after grading. Anki does
+    # this in `requeue_learning_entry` by bumping the entry's `due` to
+    # `next.due + 1s`; we swap positions for the same effect since we rebuild
+    # the queue from disk each request.
+    if not ordered_main and len(pending_learning) >= 2:
+        head_t = pending_learning[0]
+        next_t = pending_learning[1]
+        head_ds = head_t[1].directions[head_t[3]]
+        next_ds = next_t[1].directions[next_t[3]]
+        cutoff_ahead = cutoff + datetime.timedelta(seconds=1200)
+        if (
+            head_ds.last_review == cutoff
+            and head_ds.due_at is not None
+            and head_ds.due_at <= cutoff_ahead
+            and next_ds.due_at is not None
+            and next_ds.due_at >= head_ds.due_at
+            and next_ds.due_at + datetime.timedelta(seconds=1) < cutoff_ahead
+        ):
+            pending_learning[0], pending_learning[1] = pending_learning[1], pending_learning[0]
+
     # 5. Ready learning first (Anki queue=1 priority), then reviews/new,
     #    then pending learning (cards waiting on their step timer).
     ordered = ready_learning + ordered_main + pending_learning

@@ -566,16 +566,20 @@ def _resolve_prior_state(
     within-state grade), preserve `local_dir.prior_state` so earlier transition
     bookkeeping isn't clobbered.
 
-    Self-heal: if state matches and `prior_state` is None but Anki's first
-    revlog for this card is today, infer the NEW→graded transition happened
-    today. Recovers data lost to a pre-fix sync that didn't write prior_state.
+    Self-heal: if Anki's first revlog for this card is today AND the card
+    isn't currently in NEW state, force `prior_state='new'` regardless of
+    the current value. This covers two cases:
+      1. Pre-fix data where sync_pull didn't write prior_state at all.
+      2. Cards introduced today that later graduated to REVIEW the same day —
+         the LEARNING→REVIEW transition can clobber 'new' in the grade
+         endpoint; this restores it. Matches Anki's `newToday` counter
+         (sticky for the day, never decremented).
     """
     if new_state != local_dir.state:
         return local_dir.state
 
     if (
-        local_dir.prior_state is None
-        and new_state != SRSState.NEW
+        new_state != SRSState.NEW
         and first_review_ms is not None
         and today_start_ms is not None
         and first_review_ms >= today_start_ms
