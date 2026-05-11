@@ -869,6 +869,19 @@ class AnkiSync:
                 if local_dir is None:
                     continue
 
+                def _prior(
+                    local_dir: DirectionState,
+                    new_state: SRSState,
+                    _first_review_ms: int = card_rec.first_review_ms,
+                    _today_start_ms: int = today_start_ms,
+                ) -> SRSState | None:
+                    return _resolve_prior_state(
+                        local_dir,
+                        new_state,
+                        first_review_ms=_first_review_ms,
+                        today_start_ms=_today_start_ms,
+                    )
+
                 # Compute timestamps for conflict resolution
                 local_last_ms = int(local_dir.last_review.timestamp() * 1000) if local_dir.last_review else 0
                 anki_last_ms = card_rec.last_review_ms or 0
@@ -900,12 +913,7 @@ class AnkiSync:
                         reps=card_rec.reps,
                         lapses=card_rec.lapses,
                         state=new_state,
-                        prior_state=_resolve_prior_state(
-                            local_dir,
-                            new_state,
-                            first_review_ms=card_rec.first_review_ms,
-                            today_start_ms=today_start_ms,
-                        ),
+                        prior_state=_prior(local_dir, new_state),
                         dirty_fsrs=False,  # cleared so push won't overwrite Anki
                         anki_card_id=card_rec.anki_card_id,
                         anki_card_mod=card_rec.anki_card_mod,
@@ -939,12 +947,7 @@ class AnkiSync:
                         new_dir_state = replace(
                             local_dir,
                             state=SRSState.SUSPENDED,
-                            prior_state=_resolve_prior_state(
-                                local_dir,
-                                SRSState.SUSPENDED,
-                                first_review_ms=card_rec.first_review_ms,
-                                today_start_ms=today_start_ms,
-                            ),
+                            prior_state=_prior(local_dir, SRSState.SUSPENDED),
                             anki_card_id=card_rec.anki_card_id,
                             anki_card_mod=card_rec.anki_card_mod,
                             anki_due=card_rec.anki_due,
@@ -954,12 +957,7 @@ class AnkiSync:
                         new_dir_state = replace(
                             local_dir,
                             state=SRSState.BURIED,
-                            prior_state=_resolve_prior_state(
-                                local_dir,
-                                SRSState.BURIED,
-                                first_review_ms=card_rec.first_review_ms,
-                                today_start_ms=today_start_ms,
-                            ),
+                            prior_state=_prior(local_dir, SRSState.BURIED),
                             anki_card_id=card_rec.anki_card_id,
                             anki_card_mod=card_rec.anki_card_mod,
                             anki_due=card_rec.anki_due,
@@ -984,12 +982,7 @@ class AnkiSync:
                             reps=card_rec.reps,
                             lapses=card_rec.lapses,
                             state=new_state,
-                            prior_state=_resolve_prior_state(
-                                local_dir,
-                                new_state,
-                                first_review_ms=card_rec.first_review_ms,
-                                today_start_ms=today_start_ms,
-                            ),
+                            prior_state=_prior(local_dir, new_state),
                             dirty_fsrs=False,
                             anki_card_id=card_rec.anki_card_id,
                             anki_card_mod=card_rec.anki_card_mod,
@@ -1023,12 +1016,7 @@ class AnkiSync:
                             reps=card_rec.reps,
                             lapses=card_rec.lapses,
                             state=SRSState.REVIEW,
-                            prior_state=_resolve_prior_state(
-                                local_dir,
-                                SRSState.REVIEW,
-                                first_review_ms=card_rec.first_review_ms,
-                                today_start_ms=today_start_ms,
-                            ),
+                            prior_state=_prior(local_dir, SRSState.REVIEW),
                             dirty_fsrs=False,
                             anki_card_id=card_rec.anki_card_id,
                             anki_card_mod=card_rec.anki_card_mod,
@@ -1062,12 +1050,7 @@ class AnkiSync:
                             lapses=card_rec.lapses,
                             left=card_rec.left,
                             due_at=card_rec.due_at,
-                            prior_state=_resolve_prior_state(
-                                local_dir,
-                                local_dir.state,
-                                first_review_ms=card_rec.first_review_ms,
-                                today_start_ms=today_start_ms,
-                            ),
+                            prior_state=_prior(local_dir, local_dir.state),
                             dirty_fsrs=False,
                             anki_card_id=card_rec.anki_card_id,
                             anki_card_mod=card_rec.anki_card_mod,
@@ -1089,12 +1072,7 @@ class AnkiSync:
                         new_dir_state = replace(
                             local_dir,
                             state=local_dir.state,
-                            prior_state=_resolve_prior_state(
-                                local_dir,
-                                local_dir.state,
-                                first_review_ms=card_rec.first_review_ms,
-                                today_start_ms=today_start_ms,
-                            ),
+                            prior_state=_prior(local_dir, local_dir.state),
                             anki_card_id=card_rec.anki_card_id,
                             anki_card_mod=card_rec.anki_card_mod,
                             anki_due=card_rec.anki_due,
@@ -1110,12 +1088,7 @@ class AnkiSync:
                         reps=card_rec.reps,
                         lapses=card_rec.lapses,
                         state=new_state,
-                        prior_state=_resolve_prior_state(
-                            local_dir,
-                            new_state,
-                            first_review_ms=card_rec.first_review_ms,
-                            today_start_ms=today_start_ms,
-                        ),
+                        prior_state=_prior(local_dir, new_state),
                         dirty_fsrs=False,
                         anki_card_id=card_rec.anki_card_id,
                         anki_card_mod=card_rec.anki_card_mod,
@@ -1135,12 +1108,7 @@ class AnkiSync:
                         reps=card_rec.reps,
                         lapses=card_rec.lapses,
                         state=new_state,
-                        prior_state=_resolve_prior_state(
-                            local_dir,
-                            new_state,
-                            first_review_ms=card_rec.first_review_ms,
-                            today_start_ms=today_start_ms,
-                        ),
+                        prior_state=_prior(local_dir, new_state),
                         dirty_fsrs=False,
                         anki_card_id=card_rec.anki_card_id,
                         anki_card_mod=card_rec.anki_card_mod,
