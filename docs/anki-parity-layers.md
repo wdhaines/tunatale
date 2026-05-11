@@ -330,3 +330,19 @@ When adding a new layer to this file:
 - Then the fix mechanism (one paragraph).
 - Then files touched (one line).
 - Cross-link any layer it interacts with.
+
+---
+
+## Cleanup pass (post-Layer 23)
+
+After 23 layers, swept for dead code and duplication. Behavior unchanged.
+
+**Removed:**
+- `count_anki_review_remaining_today` + `_compute_today_col_day` + `test_queue_stats_review.py` — orphaned after Layer 8a swapped the review badge to TT-state.
+- `_factor_to_fsrs_difficulty` (sync.py) — no production callers.
+- `_spread_mix` `ratio_override` parameter — Layer 9 → Layer 14 reversal residue.
+
+**Refactored (behavior-neutral):**
+- Extracted `_queue_to_state(queue, card_type, reps) → SRSState` helper; replaced 3 duplicate blocks in `sync_pull`.
+- Extracted `AnkiSync._record_conflict(...)` method; replaced 5 sites.
+- Wrapped 9 `_resolve_prior_state` call sites in a local closure inside `sync_pull` so the kwargs are captured once.
