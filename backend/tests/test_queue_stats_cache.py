@@ -689,294 +689,21 @@ class TestResolveBuryReview:
         assert source == "default"
 
 
-class TestCountAnkiIntroducedToday:
-    """count_anki_introduced_today: count cards whose first revlog entry is today.
-
-    The Anki revlog is the source of truth — TT's mirrored `reps` is unreliable
-    because TT and Anki dual-grade the same card.
-    """
-
-    def _make_collection(self, tmp_path, revlog_rows):
-        path = tmp_path / "collection.anki2"
-        conn = sqlite3.connect(str(path))
-        # Real Anki collections always have col, decks, and cards. The
-        # deck-scoped count needs them present and self-consistent (every
-        # revlog cid corresponds to a card in the configured deck) so the
-        # JOIN succeeds and these legacy tests keep their original meaning.
-        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, decks TEXT)")
-        conn.execute("CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT)")
-        conn.execute(
-            "CREATE TABLE cards (id INTEGER PRIMARY KEY, did INTEGER, queue INTEGER DEFAULT 0, type INTEGER DEFAULT 0)"
-        )
-        conn.execute(
-            "CREATE TABLE revlog (id INTEGER, cid INTEGER, usn INTEGER, ease INTEGER, "
-            "ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)"
-        )
-        conn.execute("INSERT INTO col (id, decks) VALUES (1, '{}')")
-        conn.execute("INSERT INTO decks (id, name) VALUES (1, '0. Slovene')")
-        seen: set[int] = set()
-        for cid, ts_ms, type_ in revlog_rows:
-            if cid not in seen:
-                conn.execute("INSERT INTO cards (id, did) VALUES (?, 1)", (cid,))
-                seen.add(cid)
-            conn.execute(
-                "INSERT INTO revlog VALUES (?, ?, 0, 3, 1, 1, 0, 0, ?)",
-                (ts_ms, cid, type_),
-            )
-        conn.commit()
-        conn.close()
-        return path
-
-    def test_counts_cards_with_first_entry_today(self, tmp_path):
-        from datetime import date, time
-
-        from app.srs.queue_stats import count_anki_introduced_today
-
-        today = date.today()
-        yesterday = today - timedelta(days=1)
-        today_ms = int(datetime.combine(today, time(14, 0)).timestamp() * 1000)
-        yesterday_ms = int(datetime.combine(yesterday, time(14, 0)).timestamp() * 1000)
-
-        rows = [
-            # card 100: first entry yesterday → does NOT count today
-            (100, yesterday_ms, 0),
-            (100, today_ms, 0),  # second entry today; first is yesterday
-            # card 200: first entry today → counts
-            (200, today_ms, 0),
-            # card 300: first entry today, multiple grades today → counts once
-            (300, today_ms, 0),
-            (300, today_ms + 1000, 0),
-            (300, today_ms + 2000, 0),
-        ]
-        path = self._make_collection(tmp_path, rows)
-        assert count_anki_introduced_today(today, collection_path=path) == 2
-
-    def test_returns_zero_when_collection_missing(self, tmp_path):
-        from datetime import date
-
-        from app.srs.queue_stats import count_anki_introduced_today
-
-        missing = tmp_path / "nope.anki2"
-        assert count_anki_introduced_today(date.today(), collection_path=missing) == 0
-
-    def test_returns_zero_when_revlog_table_missing(self, tmp_path):
-        """A file that exists but lacks the `revlog` table (unlikely but defensive)
-        should not propagate sqlite errors — return 0 and log.
-        """
-        from datetime import date
-
-        from app.srs.queue_stats import count_anki_introduced_today
-
-        path = tmp_path / "broken.anki2"
-        conn = sqlite3.connect(str(path))
-        conn.execute("CREATE TABLE col (id INTEGER)")
-        conn.commit()
-        conn.close()
-        assert count_anki_introduced_today(date.today(), collection_path=path) == 0
-
-    def test_works_while_anki_is_open(self, tmp_path):
-        """`mode=ro&immutable=1` URI mode does not need the exclusive lock,
-        so the count is readable even while Anki holds the file open.
-        """
-        from datetime import date, time
-
-        from app.srs.queue_stats import count_anki_introduced_today
-
-        today = date.today()
-        today_ms = int(datetime.combine(today, time(14, 0)).timestamp() * 1000)
-        path = self._make_collection(tmp_path, [(42, today_ms, 0)])
-
-        # Hold an exclusive-ish handle (simulating Anki); the read-only call
-        # with immutable=1 must still succeed.
-        holder = sqlite3.connect(str(path))
-        try:
-            holder.execute("BEGIN")
-            holder.execute("INSERT INTO revlog VALUES (?, ?, 0, 3, 1, 1, 0, 0, 0)", (today_ms + 5, 99))
-            assert count_anki_introduced_today(today, collection_path=path) == 1
-        finally:
-            holder.rollback()
-            holder.close()
-
-    def _make_collection_with_cards_and_decks(
-        self,
-        tmp_path,
-        *,
-        decks: list[tuple[int, str]],
-        cards: list[tuple[int, int]],
-        revlog_rows: list[tuple[int, int, int]],
-    ):
-        """Build a more realistic fake collection.
-
-        - decks: list of (deck_id, deck_name)
-        - cards: list of (card_id, deck_id)
-        - revlog_rows: list of (cid, ts_ms, type)
-        """
-        path = tmp_path / "collection.anki2"
-        conn = sqlite3.connect(str(path))
-        # Minimal schemas matching what queue_stats uses
-        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, decks TEXT)")
-        conn.execute("CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT)")
-        conn.execute(
-            "CREATE TABLE cards (id INTEGER PRIMARY KEY, did INTEGER, queue INTEGER DEFAULT 0, type INTEGER DEFAULT 0)"
-        )
-        conn.execute(
-            "CREATE TABLE revlog (id INTEGER, cid INTEGER, usn INTEGER, ease INTEGER, "
-            "ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)"
-        )
-        # Populate decks via the modern table; col.decks JSON stays empty so
-        # find_deck_id falls through to the table lookup.
-        conn.execute("INSERT INTO col (id, decks) VALUES (1, '{}')")
-        for did, name in decks:
-            conn.execute("INSERT INTO decks (id, name) VALUES (?, ?)", (did, name))
-        for cid, did in cards:
-            conn.execute("INSERT INTO cards (id, did) VALUES (?, ?)", (cid, did))
-        for cid, ts_ms, type_ in revlog_rows:
-            conn.execute(
-                "INSERT INTO revlog VALUES (?, ?, 0, 3, 1, 0, 0, 0, ?)",
-                (ts_ms, cid, type_),
-            )
-        conn.commit()
-        conn.close()
-        return path
-
-    def test_deck_filter_excludes_orphan_revlog_rows(self, tmp_path):
-        """Revlog rows for deleted cards (no row in `cards`) must NOT count.
-
-        Field regression: a Slovene-deck user reviewed an unrelated card today
-        that was later deleted. TT's count picked up the orphan revlog entry
-        and reported 1 introduction; Anki (which scopes to the active deck and
-        so excludes the orphan) reported 0. This caused TT's remaining-new
-        quota to be off by one for the rest of the day.
-        """
-        from datetime import date, time
-
-        from app.srs.queue_stats import count_anki_introduced_today
-
-        today = date.today()
-        today_ms = int(datetime.combine(today, time(14, 0)).timestamp() * 1000)
-
-        # cid 100 exists in target deck; cid 999 is an orphan (no card row).
-        path = self._make_collection_with_cards_and_decks(
-            tmp_path,
-            decks=[(1, "0. Slovene")],
-            cards=[(100, 1)],
-            revlog_rows=[(100, today_ms, 0), (999, today_ms + 100, 0)],
-        )
-        assert count_anki_introduced_today(today, collection_path=path, deck_name="0. Slovene") == 1
-
-    def test_deck_filter_excludes_other_decks(self, tmp_path):
-        """Revlog rows for cards in other decks must NOT count toward the
-        active deck's introduction tally."""
-        from datetime import date, time
-
-        from app.srs.queue_stats import count_anki_introduced_today
-
-        today = date.today()
-        today_ms = int(datetime.combine(today, time(14, 0)).timestamp() * 1000)
-        path = self._make_collection_with_cards_and_decks(
-            tmp_path,
-            decks=[(1, "0. Slovene"), (2, "1. Norwegian")],
-            cards=[(100, 1), (200, 2)],
-            revlog_rows=[(100, today_ms, 0), (200, today_ms + 50, 0)],
-        )
-        # Only the Slovene grade should count, even though both are "today".
-        assert count_anki_introduced_today(today, collection_path=path, deck_name="0. Slovene") == 1
-
-    def test_day_boundary_uses_rollover_hour(self, tmp_path):
-        """Anki's "today" starts at the user's `rollover` hour (default 4),
-        not local-midnight. A grade made at 02:00 local belongs to *yesterday*
-        for any rollover ≥ 3. TT must apply the same boundary or it'll
-        double-count grades made between midnight and rollover.
-
-        Mirrors Anki rslib `scheduler/timing.rs::sched_timing_today`.
-        """
-        from datetime import date, datetime, time
-
-        from app.srs.queue_stats import count_anki_introduced_today
-
-        today = date.today()
-        # Two grades for distinct cards on `today`'s date:
-        #   02:00 local (before rollover=4) → counts toward yesterday in Anki
-        #   05:00 local (after  rollover=4) → counts toward today
-        early_ms = int(datetime.combine(today, time(2, 0)).timestamp() * 1000)
-        late_ms = int(datetime.combine(today, time(5, 0)).timestamp() * 1000)
-
-        path = tmp_path / "collection.anki2"
-        conn = sqlite3.connect(str(path))
-        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, decks TEXT)")
-        conn.execute("CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT)")
-        conn.execute("CREATE TABLE cards (id INTEGER PRIMARY KEY, did INTEGER)")
-        conn.execute("CREATE TABLE config (KEY TEXT PRIMARY KEY, usn INTEGER, mtime_secs INTEGER, val BLOB)")
-        conn.execute(
-            "CREATE TABLE revlog (id INTEGER, cid INTEGER, usn INTEGER, ease INTEGER, "
-            "ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)"
-        )
-        conn.execute("INSERT INTO col (id, decks) VALUES (1, '{}')")
-        conn.execute("INSERT INTO decks (id, name) VALUES (1, '0. Slovene')")
-        conn.execute("INSERT INTO cards (id, did) VALUES (1, 1), (2, 1)")
-        # Anki's modern config table stores rollover JSON-encoded ('4' = number 4).
-        conn.execute("INSERT INTO config (KEY, usn, mtime_secs, val) VALUES ('rollover', 0, 0, ?)", (b"4",))
-        conn.execute("INSERT INTO revlog VALUES (?, 1, 0, 3, 1, 0, 0, 0, 0)", (early_ms,))
-        conn.execute("INSERT INTO revlog VALUES (?, 2, 0, 3, 1, 0, 0, 0, 0)", (late_ms,))
-        conn.commit()
-        conn.close()
-
-        # Only the 05:00 grade is "today" under rollover=4.
-        # (Skip on days where the harness wall-clock crosses the boundary mid-test.)
-        if datetime.now() < datetime.combine(today, time(4, 0)):
-            return
-        assert count_anki_introduced_today(today, collection_path=path, deck_name="0. Slovene") == 1
-
-    def test_day_boundary_default_rollover_when_config_missing(self, tmp_path):
-        """If the `config` table has no `rollover` key, default to Anki's
-        4 AM rollover. (Defensive: collections may predate the modern table.)
-        """
-        from datetime import date, datetime, time
-
-        from app.srs.queue_stats import count_anki_introduced_today
-
-        today = date.today()
-        early_ms = int(datetime.combine(today, time(2, 0)).timestamp() * 1000)
-
-        path = tmp_path / "collection.anki2"
-        conn = sqlite3.connect(str(path))
-        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, decks TEXT, conf TEXT)")
-        conn.execute("CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT)")
-        conn.execute("CREATE TABLE cards (id INTEGER PRIMARY KEY, did INTEGER)")
-        conn.execute(
-            "CREATE TABLE revlog (id INTEGER, cid INTEGER, usn INTEGER, ease INTEGER, "
-            "ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)"
-        )
-        conn.execute("INSERT INTO col (id, decks, conf) VALUES (1, '{}', '{}')")
-        conn.execute("INSERT INTO decks (id, name) VALUES (1, '0. Slovene')")
-        conn.execute("INSERT INTO cards (id, did) VALUES (1, 1)")
-        conn.execute("INSERT INTO revlog VALUES (?, 1, 0, 3, 1, 0, 0, 0, 0)", (early_ms,))
-        conn.commit()
-        conn.close()
-
-        if datetime.now() < datetime.combine(today, time(4, 0)):
-            return
-        # 02:00 grade falls before the default 4 AM rollover → not today.
-        assert count_anki_introduced_today(today, collection_path=path, deck_name="0. Slovene") == 0
-
-    def test_counts_globally_when_deck_name_blank(self, tmp_path):
-        """Empty deck_name → fall through to the unscoped revlog count."""
-        from datetime import date, time
-
-        from app.srs.queue_stats import count_anki_introduced_today
-
-        today = date.today()
-        today_ms = int(datetime.combine(today, time(14, 0)).timestamp() * 1000)
-        path = self._make_collection(tmp_path, [(100, today_ms, 0), (200, today_ms, 0)])
-        # deck_name="" is truthy-as-arg (so settings default is skipped) but
-        # falsy in the `if deck` guard, so the deck-scoped JOIN is bypassed.
-        assert count_anki_introduced_today(today, collection_path=path, deck_name="") == 2
-
-
 class TestReadRolloverHour:
     """`_read_rollover_hour` parses Anki's `rollover` setting from either the
     modern `config` table or legacy `col.conf` JSON. Malformed values must
     fall through silently to the next source / the default of 4."""
+
+    def test_valid_rollover_in_config_table_returned(self):
+        """Modern Anki: `config[rollover]` parses as int in [0, 23] → returned directly."""
+        from app.srs.queue_stats import _read_rollover_hour
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE config (KEY TEXT PRIMARY KEY, val BLOB)")
+        # JSON-encoded int 6 (Anki stores the rollover hour this way).
+        conn.execute("INSERT INTO config (KEY, val) VALUES ('rollover', ?)", (b"6",))
+        conn.commit()
+        assert _read_rollover_hour(conn) == 6
 
     def test_invalid_json_in_config_table_falls_through_to_col_conf(self):
         """Modern `config.val` blob that isn't valid JSON → caught, fall through."""
@@ -1134,3 +861,130 @@ class TestSessionMainQueueCache:
         items = [(1, "recognition"), (2, "production"), (3, "recognition")]
         set_session_main_queue(db, today, items)
         assert get_session_main_queue(db, today) == items
+
+    def test_clear_session_main_queue_removes_cache(self):
+        """clear_session_main_queue wipes the cache row so the next call rebuilds.
+
+        Mirrors Anki's `clear_queues_if_day_changed` (queue/mod.rs:277) and the
+        rebuild gate on sync / deck-config change (queue/mod.rs:211-215).
+        """
+        from datetime import date
+
+        from app.srs.database import SRSDatabase
+        from app.srs.queue_stats import (
+            clear_session_main_queue,
+            get_session_main_queue,
+            set_session_main_queue,
+        )
+
+        db = SRSDatabase(":memory:")
+        today = date.today()
+        set_session_main_queue(db, today, [(1, "recognition")])
+        assert get_session_main_queue(db, today) == [(1, "recognition")]
+
+        clear_session_main_queue(db)
+        assert get_session_main_queue(db, today) is None
+
+    def test_clear_session_main_queue_is_idempotent(self):
+        """Clearing an already-empty cache does not raise."""
+        from app.srs.database import SRSDatabase
+        from app.srs.queue_stats import clear_session_main_queue
+
+        db = SRSDatabase(":memory:")
+        clear_session_main_queue(db)  # no-op, must not raise
+        clear_session_main_queue(db)  # double-clear, must not raise
+
+
+class TestComputeTodayColDay:
+    """`_compute_today_col_day` must match Anki's actual algorithm
+    (scheduler/timing.rs::sched_timing_today_v2_new): local-date subtraction
+    between collection-creation date and now's date, minus 1 if the local
+    rollover hour hasn't passed today.
+
+    The naive `(now - crt) // 86400` formula breaks when:
+      - `col.crt` is at noon UTC (Anki's default) and `now` falls between
+        midnight UTC and noon UTC → fractional days < N.0, floor = N-1,
+        but the local date has already rolled to day N.
+      - The local rollover hour is non-zero (Anki default is 4 AM local) and
+        the user is reviewing after rollover but before noon UTC.
+    """
+
+    def _make_conn_with_crt(self, crt_seconds: int, rollover_hour: int = 4):
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE col (crt INTEGER, conf TEXT)")
+        conn.execute("INSERT INTO col (crt, conf) VALUES (?, ?)", (crt_seconds, f'{{"rollover": {rollover_hour}}}'))
+        return conn
+
+    def test_noon_utc_crt_with_morning_review_returns_correct_col_day(self):
+        """Regression for the off-by-one: crt at 2014-01-04 12:00 UTC and now at
+        2026-05-11 11:40 UTC (EDT user reviewing 07:40 local, after 04:00
+        rollover). Naive (now-crt)/86400 = 4509.99 → floor 4509. Correct = 4510.
+        """
+        from datetime import UTC, datetime
+
+        from app.srs.queue_stats import _compute_today_col_day
+
+        crt = int(datetime(2014, 1, 4, 12, 0, 0, tzinfo=UTC).timestamp())
+        conn = self._make_conn_with_crt(crt, rollover_hour=4)
+        # Now: 2026-05-11 11:40 UTC = 07:40 EDT — past EDT 04:00 rollover.
+        now = datetime(2026, 5, 11, 11, 40, 0, tzinfo=UTC)
+        col_day = _compute_today_col_day(conn, now=now, local_offset_minutes_west=240)
+        assert col_day == 4510, f"EDT user post-rollover: expected col_day=4510, got {col_day}"
+
+    def test_before_rollover_returns_previous_col_day(self):
+        """Before local rollover hour, we're still in yesterday's Anki day."""
+        from datetime import UTC, datetime
+
+        from app.srs.queue_stats import _compute_today_col_day
+
+        crt = int(datetime(2014, 1, 4, 12, 0, 0, tzinfo=UTC).timestamp())
+        conn = self._make_conn_with_crt(crt, rollover_hour=4)
+        # 2026-05-11 06:00 UTC = 02:00 EDT — BEFORE 04:00 rollover. Anki day is still 5/10.
+        now = datetime(2026, 5, 11, 6, 0, 0, tzinfo=UTC)
+        col_day = _compute_today_col_day(conn, now=now, local_offset_minutes_west=240)
+        assert col_day == 4509, f"EDT user pre-rollover: expected col_day=4509, got {col_day}"
+
+    def test_after_rollover_returns_today_col_day(self):
+        """After local rollover hour, we're in today's Anki day."""
+        from datetime import UTC, datetime
+
+        from app.srs.queue_stats import _compute_today_col_day
+
+        crt = int(datetime(2014, 1, 4, 12, 0, 0, tzinfo=UTC).timestamp())
+        conn = self._make_conn_with_crt(crt, rollover_hour=4)
+        # 22:00 UTC May 11 = 18:00 EDT — well past rollover.
+        now = datetime(2026, 5, 11, 22, 0, 0, tzinfo=UTC)
+        col_day = _compute_today_col_day(conn, now=now, local_offset_minutes_west=240)
+        assert col_day == 4510, f"EDT user well past rollover: expected col_day=4510, got {col_day}"
+
+    def test_utc_user_naive_path_still_works(self):
+        """For UTC users with 0-hour rollover, the simple formula gives right answer."""
+        from datetime import UTC, datetime
+
+        from app.srs.queue_stats import _compute_today_col_day
+
+        crt = int(datetime(2014, 1, 4, 0, 0, 0, tzinfo=UTC).timestamp())
+        conn = self._make_conn_with_crt(crt, rollover_hour=0)
+        now = datetime(2026, 5, 11, 12, 0, 0, tzinfo=UTC)
+        col_day = _compute_today_col_day(conn, now=now, local_offset_minutes_west=0)
+        # Days from 2014-01-04 to 2026-05-11 = 4510. Rollover 0 means current day counts.
+        assert col_day == 4510
+
+    def test_defaults_use_wall_clock_and_system_tz(self):
+        """Sanity check the default-arg path: omitting `now` and
+        `local_offset_minutes_west` runs the production code that reads
+        `datetime.now(UTC)` and the system's local timezone offset. Just
+        verify the result is a non-negative integer for a freshly-created
+        collection (crt = now).
+        """
+        import time
+
+        from app.srs.queue_stats import _compute_today_col_day
+
+        crt = int(time.time())  # collection created "just now"
+        conn = self._make_conn_with_crt(crt, rollover_hour=4)
+        result = _compute_today_col_day(conn)
+        assert isinstance(result, int)
+        assert result >= 0

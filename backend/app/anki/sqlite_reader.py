@@ -224,6 +224,18 @@ def parse_fsrs_data(
             data = json.loads(data_str)
             stability = float(data["s"])
             difficulty = float(data["d"])
+            # `lrt` (last_review_time, seconds since epoch) is Anki's authoritative
+            # FSRS-scheduler-effective last-review timestamp, used by Anki's own
+            # `extract_fsrs_retrievability` SQL function (rslib/src/storage/sqlite.rs).
+            # For cards graded multiple times in one session (Again → relearning
+            # step → graduate), `lrt` sticks to the FSRS-touched grade while
+            # MAX(revlog.id) per card advances on every step. Using lrt is what
+            # makes TT's R-asc order match Anki's. Fall back to the day-level
+            # `_compute_last_review` value when lrt is absent (pre-FSRS cards).
+            lrt_seconds = data.get("lrt")
+            resolved_last_review = (
+                datetime.fromtimestamp(lrt_seconds, tz=UTC) if lrt_seconds is not None else last_review
+            )
             return DirectionState(
                 direction=direction,
                 due_date=due_date,
@@ -234,7 +246,7 @@ def parse_fsrs_data(
                 state=state,
                 anki_card_id=card_id,
                 anki_due=due_raw,
-                last_review=last_review,
+                last_review=resolved_last_review,
                 left=left if left != 0 else None,
                 due_at=due_at,
             )

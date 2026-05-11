@@ -114,6 +114,32 @@ class TestOfflineReader:
         conn.close()
         assert records == []
 
+    def test_card_record_carries_first_and_last_revlog_ms(self, fake_anki_db):
+        """OfflineReader must expose MIN(revlog.id) (`first_review_ms`) and
+        MAX(revlog.id) (`last_review_ms`) for each card with revlog history,
+        feeding sync_pull's prior_state self-heal (Fix 4b)."""
+        conn = sqlite3.connect(str(fake_anki_db))
+        # Pick the first card of the first note; seed revlog rows.
+        notes_row = conn.execute("SELECT id FROM notes LIMIT 1").fetchone()
+        card_row = conn.execute("SELECT id FROM cards WHERE nid=? LIMIT 1", (notes_row[0],)).fetchone()
+        cid = card_row[0]
+        # Two revlog rows; the smaller id should land in first_review_ms.
+        conn.execute(
+            "INSERT INTO revlog VALUES (?, ?, 0, 3, 1, 1, 2500, 1200, 0)",
+            (1_700_000_000_000, cid),
+        )
+        conn.execute(
+            "INSERT INTO revlog VALUES (?, ?, 0, 3, 10, 1, 2500, 1200, 1)",
+            (1_700_000_500_000, cid),
+        )
+        conn.commit()
+
+        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        conn.close()
+        target_card = next(c for r in records for c in r.cards if c.anki_card_id == cid)
+        assert target_card.first_review_ms == 1_700_000_000_000
+        assert target_card.last_review_ms == 1_700_000_500_000
+
     def test_note_record_fields(self, fake_anki_db):
         """NoteRecord exposes anki_note_id, anki_guid, mod."""
         conn = sqlite3.connect(str(fake_anki_db))
@@ -619,6 +645,419 @@ class TestSyncPull:
         assert rec.dirty_fsrs is True
         assert rec.stability == 0.5
 
+    def test_direction_differs_detects_left_change(self):
+        """Fix 1: when every sync-relevant field matches except `left`, the diff
+        must return True so the row gets updated. Without this, Anki's step
+        progress on a card whose other fields happen to match TT's is silently
+        dropped.
+        """
+        base = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.LEARNING,
+            due_date=date.today(),
+            stability=0.5,
+            difficulty=8.0,
+            reps=3,
+            lapses=0,
+            anki_card_id=100,
+            anki_due=0,
+            last_review=_dt.now(UTC),
+            left=1002,
+            dirty_fsrs=False,
+        )
+        assert _direction_differs(base, replace(base, left=1001)) is True
+
+    def test_direction_differs_detects_due_at_change(self):
+        """Fix 1: `due_at` shifting (e.g. a fresh fuzzed step from Anki) must
+        register as a difference even when state, reps, and last_review match.
+        """
+        now = _dt.now(UTC)
+        base = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.LEARNING,
+            due_date=date.today(),
+            stability=0.5,
+            difficulty=8.0,
+            reps=3,
+            lapses=0,
+            anki_card_id=100,
+            anki_due=0,
+            last_review=now,
+            left=1001,
+            due_at=now + timedelta(minutes=10),
+            dirty_fsrs=False,
+        )
+        assert _direction_differs(base, replace(base, due_at=now + timedelta(minutes=15))) is True
+
+    def test_dirty_fsrs_both_learning_anki_step_ahead_anki_wins(self):
+        """Fix 2: when both apps have the card in LEARNING but Anki has graded
+        it more times (smaller total_remaining), sync_pull must take Anki's
+        left/due_at and clear dirty_fsrs so the subsequent push doesn't write
+        TT's stale view back over Anki's progress.
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        item = db.get_collocation_by_guid(guid)
+        # TT: dirty LEARNING, total_remaining=2 (left=1002).
+        ds_dirty = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=item.directions[Direction.RECOGNITION].due_date,
+            stability=0.4,
+            difficulty=8.0,
+            reps=3,
+            lapses=0,
+            state=SRSState.LEARNING,
+            left=1002,
+            due_at=_dt.now(UTC) + timedelta(minutes=1),
+            last_review=_dt.now(UTC),
+            dirty_fsrs=True,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds_dirty)
+
+        # Anki: LEARNING, total_remaining=1 (left=1001). Anki has graded the
+        # card one more time than TT, so Anki is further along the steps.
+        anki_due_at = _dt.now(UTC) + timedelta(minutes=10)
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            queue=1,
+            card_type=1,
+            reps=4,
+            lapses=0,
+            stability=0.4,
+            difficulty=8.0,
+            left=1001,
+            due_at=anki_due_at,
+            last_review=_dt.now(UTC) - timedelta(seconds=30),
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        rec = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert rec.left == 1001, "Anki's smaller total_remaining must win — Anki has graded it more times"
+        assert rec.reps == 4
+        assert rec.dirty_fsrs is False, "drop dirty_fsrs so push doesn't revert Anki's progress"
+        assert any(c.field == "step_progress" for c in report.conflicts), report.conflicts
+
+    def test_pull_sets_prior_state_when_anki_transitions_card_out_of_new(self):
+        """Fix 4: when TT has a card in NEW and Anki has graded it (queue 0→1
+        or 0→2), sync_pull must record `prior_state='new'` on the merged
+        direction. `count_new_introduced_today` filters by `prior_state='new'`
+        — without this write, the new badge over-counts (TT thinks "0
+        introduced today" while Anki shows N).
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        # banka starts in NEW state by default.
+        item = db.get_collocation_by_guid(guid)
+        assert item.directions[Direction.RECOGNITION].state == SRSState.NEW
+
+        # Anki has graded the card today → queue=1 LEARNING.
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            queue=1,
+            card_type=1,
+            reps=1,
+            lapses=0,
+            stability=0.5,
+            difficulty=8.0,
+            left=1001,
+            due_at=_dt.now(UTC) + timedelta(minutes=10),
+            last_review=_dt.now(UTC) - timedelta(minutes=1),
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        rec = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert rec.state == SRSState.LEARNING
+        assert rec.prior_state == SRSState.NEW, "must record the NEW→LEARNING transition"
+
+    def test_pull_sets_prior_state_when_anki_graduates_new_directly_to_review(self):
+        """Same Fix 4 contract for the rarer NEW→REVIEW transition (e.g. Easy
+        on a fresh card with the FSRS short-term path).
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            queue=2,
+            card_type=2,
+            reps=1,
+            lapses=0,
+            stability=3.0,
+            difficulty=5.0,
+            last_review=_dt.now(UTC) - timedelta(minutes=1),
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        rec = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert rec.state == SRSState.REVIEW
+        assert rec.prior_state == SRSState.NEW
+
+    def test_pull_self_heals_null_prior_state_from_anki_first_revlog_today(self):
+        """Fix 4b: re-sync recovers an existing TT row whose prior_state is None
+        (synced before the going-forward fix landed). When TT and Anki agree on
+        state but Anki's first revlog for that card is today, infer the
+        NEW→graded transition happened today and set prior_state='new'. Without
+        this, the new-card badge stays stuck for the rest of the day.
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        item = db.get_collocation_by_guid(guid)
+        # Stale TT state: LEARNING with prior_state=None (pre-fix sync result).
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=item.directions[Direction.RECOGNITION].due_date,
+            stability=0.5,
+            difficulty=8.0,
+            reps=3,
+            lapses=0,
+            state=SRSState.LEARNING,
+            prior_state=None,
+            left=1001,
+            due_at=_dt.now(UTC) + timedelta(minutes=10),
+            last_review=_dt.now(UTC) - timedelta(minutes=30),
+            anki_card_id=90010,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        # Anki record with same state but a first revlog from today.
+        today_local_midnight_ms = int(
+            _dt.combine(date.today(), _time(0), tzinfo=_dt.now().astimezone().tzinfo).astimezone(UTC).timestamp() * 1000
+        )
+        first_revlog_today = today_local_midnight_ms + 60_000  # 1m past midnight local
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            queue=1,
+            card_type=1,
+            reps=3,
+            lapses=0,
+            stability=0.5,
+            difficulty=8.0,
+            left=1001,
+            due_at=_dt.now(UTC) + timedelta(minutes=10),
+            last_review=_dt.now(UTC) - timedelta(minutes=30),
+            first_review_ms=first_revlog_today,
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        rec = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert rec.prior_state == SRSState.NEW, "self-heal must infer prior_state='new'"
+
+    def test_pull_self_heal_skipped_when_first_revlog_is_before_today(self):
+        """Self-heal must not falsely set prior_state='new' on a card whose
+        introduction happened on a previous day."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        item = db.get_collocation_by_guid(guid)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=item.directions[Direction.RECOGNITION].due_date,
+            stability=2.0,
+            difficulty=5.0,
+            reps=5,
+            lapses=0,
+            state=SRSState.REVIEW,
+            prior_state=None,
+            last_review=_dt.now(UTC) - timedelta(days=2),
+            anki_card_id=90010,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        # First revlog was 3 days ago.
+        first_revlog_old = int((_dt.now(UTC) - timedelta(days=3)).timestamp() * 1000)
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            queue=2,
+            card_type=2,
+            reps=5,
+            lapses=0,
+            stability=2.0,
+            difficulty=5.0,
+            last_review=_dt.now(UTC) - timedelta(days=2),
+            first_review_ms=first_revlog_old,
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        rec = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert rec.prior_state is None, "do not back-date introductions older than today"
+
+    def test_pull_preserves_prior_state_when_state_unchanged(self):
+        """No state transition → don't overwrite prior_state. (Otherwise repeated
+        syncs would clobber the value set by an earlier transition / TT grade.)
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        item = db.get_collocation_by_guid(guid)
+        # Seed a REVIEW direction with an existing prior_state.
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=item.directions[Direction.RECOGNITION].due_date,
+            stability=2.0,
+            difficulty=5.0,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            prior_state=SRSState.NEW,
+            last_review=_dt.now(UTC) - timedelta(hours=2),
+            anki_card_id=90010,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        # Anki returns matching review state — no transition.
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            queue=2,
+            card_type=2,
+            reps=3,
+            lapses=0,
+            stability=2.0,
+            difficulty=5.0,
+            last_review=_dt.now(UTC) - timedelta(hours=2),
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        rec = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert rec.state == SRSState.REVIEW
+        assert rec.prior_state == SRSState.NEW, "prior_state must be preserved across no-op syncs"
+
+    def test_dirty_fsrs_step_progress_dry_run_no_db_write(self):
+        """dry_run=True surfaces the step_progress conflict in the report but
+        does not write the conflict row or mutate the direction."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        item = db.get_collocation_by_guid(guid)
+        ds_dirty = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=item.directions[Direction.RECOGNITION].due_date,
+            stability=0.4,
+            difficulty=8.0,
+            reps=3,
+            lapses=0,
+            state=SRSState.LEARNING,
+            left=1002,
+            due_at=_dt.now(UTC) + timedelta(minutes=1),
+            last_review=_dt.now(UTC),
+            dirty_fsrs=True,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds_dirty)
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            queue=1,
+            card_type=1,
+            reps=4,
+            lapses=0,
+            stability=0.4,
+            difficulty=8.0,
+            left=1001,
+            due_at=_dt.now(UTC) + timedelta(minutes=10),
+            last_review=_dt.now(UTC) - timedelta(seconds=30),
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull(dry_run=True)
+
+        assert any(c.field == "step_progress" for c in report.conflicts)
+        assert db.list_sync_conflicts() == []
+        rec = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert rec.left == 1002, "dry_run must not mutate"
+        assert rec.dirty_fsrs is True
+
+    def test_dirty_fsrs_local_learning_anki_review_dry_run_no_db_write(self):
+        """dry_run=True surfaces the inverse state-class divergence conflict
+        without writing the conflict row or mutating the direction."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        item = db.get_collocation_by_guid(guid)
+        ds_dirty = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=item.directions[Direction.RECOGNITION].due_date,
+            stability=0.4,
+            difficulty=8.0,
+            reps=4,
+            lapses=0,
+            state=SRSState.LEARNING,
+            left=1001,
+            due_at=_dt.now(UTC) + timedelta(minutes=10),
+            last_review=_dt.now(UTC),
+            dirty_fsrs=True,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds_dirty)
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            queue=2,
+            card_type=2,
+            reps=5,
+            lapses=0,
+            stability=1.5,
+            difficulty=8.0,
+            last_review=_dt.now(UTC) - timedelta(seconds=30),
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull(dry_run=True)
+
+        assert any(c.field == "state_class" for c in report.conflicts)
+        assert db.list_sync_conflicts() == []
+        rec = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert rec.state == SRSState.LEARNING, "dry_run must not mutate"
+        assert rec.dirty_fsrs is True
+
+    def test_dirty_fsrs_local_learning_anki_review_anki_wins(self):
+        """Fix 2 (symmetric): when TT has the card in LEARNING (dirty) but Anki
+        has graduated it to REVIEW (queue=2), Anki has more progress. Defer to
+        Anki and clear dirty — same shape as the existing state_class branch,
+        just inverted state-class direction.
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        item = db.get_collocation_by_guid(guid)
+        ds_dirty = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=item.directions[Direction.RECOGNITION].due_date,
+            stability=0.4,
+            difficulty=8.0,
+            reps=4,
+            lapses=0,
+            state=SRSState.LEARNING,
+            left=1001,
+            due_at=_dt.now(UTC) + timedelta(minutes=10),
+            last_review=_dt.now(UTC),
+            dirty_fsrs=True,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds_dirty)
+
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            queue=2,
+            card_type=2,
+            reps=5,
+            lapses=0,
+            stability=1.5,
+            difficulty=8.0,
+            last_review=_dt.now(UTC) - timedelta(seconds=30),
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        rec = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert rec.state == SRSState.REVIEW
+        assert rec.dirty_fsrs is False
+        assert any(c.field == "state_class" for c in report.conflicts), report.conflicts
+
 
 # ── B15: diff-before-write in sync_pull ───────────────────────────────────────
 
@@ -912,6 +1351,61 @@ class TestSyncPullWritesLastReviewToDb:
         item = db.get_collocation("banka")
         assert item.directions[Direction.RECOGNITION].last_review == expected_last_review
 
+    def test_sync_pull_uses_card_rec_last_review_directly(self):
+        """sync_pull writes `card_rec.last_review` straight through. That value
+        is already FSRS-correct (cards.data.lrt → precise UTC datetime, or
+        day-level midnight UTC fallback for pre-FSRS cards). Even when a more
+        recent revlog ms is available (e.g. learning-step grades after a lapse),
+        it must NOT override the FSRS-effective lrt timestamp — Anki's
+        `extract_fsrs_retrievability` uses lrt, so mirroring lrt is what makes
+        R-asc match. Earlier preference for MAX(revlog.id) here caused the
+        svetilka-vs-kopalnica head-card divergence.
+        """
+        from datetime import datetime as _dt
+
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        # Simulates the lrt-derived value parse_fsrs_data would populate.
+        lrt_dt = _dt(2026, 5, 10, 20, 56, 41, tzinfo=UTC)
+        # Later revlog ms (from a relearning-step grade after the lapse) — must
+        # not be preferred over lrt.
+        later_revlog_ms = int(_dt(2026, 5, 11, 1, 32, 37, tzinfo=UTC).timestamp() * 1000)
+
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            reps=5,
+            last_review=lrt_dt,
+            last_review_ms=later_revlog_ms,
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        item = db.get_collocation("banka")
+        stored = item.directions[Direction.RECOGNITION].last_review
+        assert stored == lrt_dt, (
+            f"sync_pull must use card_rec.last_review (lrt-derived), not revlog ms; got {stored.isoformat()}"
+        )
+
+    def test_sync_pull_writes_day_level_last_review_for_pre_fsrs_cards(self):
+        """For pre-FSRS cards (cards.data has no lrt), parse_fsrs_data populates
+        card_rec.last_review with the day-level midnight UTC value. sync_pull
+        passes it through unchanged.
+        """
+        from datetime import datetime as _dt
+
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        day_level_ts = _dt(2024, 1, 11, 0, 0, 0, tzinfo=UTC)
+        card = make_card_record(anki_card_id=90010, ord=0, reps=5, last_review=day_level_ts, last_review_ms=None)
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].last_review == day_level_ts
+
     def test_sync_pull_advances_learning_cutoff_from_revlog_ms(self):
         """sync_pull must advance learning_cutoff to the most recent Anki revlog timestamp.
 
@@ -959,6 +1453,60 @@ class TestSyncPullWritesLastReviewToDb:
         cached = db.get_anki_state_cache("learning_cutoff")
         assert cached is not None
         assert _dt.fromisoformat(cached[0]) == original_cutoff
+
+
+class TestSyncPullInvalidatesSessionMainQueue:
+    """sync_pull must invalidate the frozen session_main_queue cache on completion.
+
+    Mirrors Anki's `requires_study_queue_rebuild` for sync (queue/mod.rs:211-215):
+    Anki rebuilds its review queue after sync round-trip. TT mirrors by clearing
+    the cache so the next /review-queue rebuilds from current state — otherwise
+    a card whose Anki-side state transitioned (e.g. learning→review post-graduation
+    yesterday, ingested today via sync) stays at its stale cached position instead
+    of moving to its current R-asc spot.
+    """
+
+    def test_sync_pull_clears_session_main_queue_on_completion(self):
+        """Non-dry-run sync_pull wipes session_main_queue so next call rebuilds."""
+        from datetime import date
+
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        # Seed a stale cache from earlier today.
+        today = date.today()
+        from app.srs.queue_stats import set_session_main_queue
+
+        set_session_main_queue(db, today, [(1, "recognition"), (2, "production")])
+        assert db.get_anki_state_cache("session_main_queue") is not None
+
+        # Sync ingests a card record (state may or may not change).
+        card = make_card_record(anki_card_id=90010, ord=0, reps=5, stability=7.5, difficulty=4.8)
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        # Cache row must be gone — Anki rebuilds on sync, TT mirrors by invalidating.
+        assert db.get_anki_state_cache("session_main_queue") is None
+
+    def test_sync_pull_dry_run_does_not_clear_session_main_queue(self):
+        """Dry-run must not mutate the cache."""
+        from datetime import date
+
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        today = date.today()
+        from app.srs.queue_stats import set_session_main_queue
+
+        items = [(1, "recognition")]
+        set_session_main_queue(db, today, items)
+
+        card = make_card_record(anki_card_id=90010, ord=0, reps=5)
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull(dry_run=True)
+
+        from app.srs.queue_stats import get_session_main_queue
+
+        assert get_session_main_queue(db, today) == items
 
 
 class TestDirectionDiffersDetectsLastReviewTransition:

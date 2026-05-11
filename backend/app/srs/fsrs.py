@@ -88,18 +88,48 @@ def _forgetting_curve(elapsed_days: float, stability: float) -> float:
     return (1 + FACTOR * elapsed_days / stability) ** DECAY
 
 
-def compute_retrievability(direction_state: DirectionState, today: date) -> float:
+def compute_retrievability(
+    direction_state: DirectionState,
+    today: date,
+    now: datetime | None = None,
+) -> float:
     """Return retrievability (0-1) for a direction_state, handling edge cases.
 
     Null stability or null last_review → return 1.0 (sorts last among due cards).
+
+    Mirrors Anki's `extract_fsrs_retrievability` (rslib storage/sqlite.rs):
+      - When cards.data has `lrt` (FSRS-effective last-review timestamp,
+        precise to seconds), Anki uses `now - lrt` in seconds → fractional days.
+        TT detects this via a non-midnight time-of-day on `last_review`.
+      - When cards.data lacks `lrt` (older cards / pre-FSRS migration), Anki
+        falls back to `(today_col_day - (due - ivl)) * 86400` → INTEGER days.
+        TT mirrors via `(today - last_review.date()).days` when last_review
+        is at midnight UTC (the marker that `parse_fsrs_data` set day-level).
+    Using fractional days for non-lrt cards produced a slightly smaller R than
+    Anki (e.g. 0.706 vs 0.723), flipping R-asc order against Anki's.
     """
     stability = direction_state.stability
     last_review = direction_state.last_review
     if stability is None or last_review is None:
         return 1.0
-    # Handle both date and datetime for last_review
-    last_review_date = last_review.date() if isinstance(last_review, datetime) else last_review
-    elapsed = max(0, (today - last_review_date).days)
+    if isinstance(last_review, datetime):
+        # Detect day-level fallback values (midnight UTC, no sub-day component).
+        # `parse_fsrs_data` sets these via `_compute_last_review` when cards.data
+        # has no `lrt` field — Anki itself uses integer-day elapsed for these.
+        is_day_level = (
+            last_review.hour == 0
+            and last_review.minute == 0
+            and last_review.second == 0
+            and last_review.microsecond == 0
+        )
+        if is_day_level:
+            elapsed = max(0, (today - last_review.date()).days)
+        else:
+            ref_now = now if now is not None else datetime.now(UTC)
+            elapsed_seconds = (ref_now - last_review).total_seconds()
+            elapsed = max(0.0, elapsed_seconds / 86400.0)
+    else:
+        elapsed = max(0, (today - last_review).days)
     return _forgetting_curve(elapsed, stability)
 
 
@@ -162,6 +192,24 @@ def _pack_left(total_remaining: int) -> int:
     not produced. Anki's `Card.remaining_steps % 1000` decodes both.
     """
     return total_remaining
+
+
+def _grade_prior_state(prev: DirectionState, new_state: SRSState) -> SRSState:
+    """Compute `prior_state` for a graded direction.
+
+    Sticky-NEW semantic: when a card was introduced today (`prior_state='new'`
+    set by sync's NEW→graded transition or by an in-session first-grade), keep
+    `prior_state='new'` across subsequent same-state-class grades. Otherwise
+    `prior_state` captures the immediately-previous state — what Anki's revlog
+    records via `_derive_revlog_shape`.
+
+    Without sticky-NEW, grading a learning card whose `prior_state` is `'new'`
+    would overwrite it to `'learning'` and remove the card from
+    `count_new_introduced_today`, making the new-card badge rebound upward.
+    """
+    if new_state == prev.state and prev.prior_state == SRSState.NEW:
+        return SRSState.NEW
+    return prev.state
 
 
 def _get_steps_for_state(state: SRSState) -> tuple[list[float], str]:
@@ -263,7 +311,7 @@ def schedule(
         last_review_time_ms=time_ms,
         dirty_fsrs=True,
         last_rating=rating.value,
-        prior_state=prev.state,
+        prior_state=_grade_prior_state(prev, new_state),
         prior_left=prev.left,
         prior_stability=prev.stability,
     )
@@ -331,7 +379,7 @@ def _schedule_new(
         last_review_time_ms=time_ms,
         dirty_fsrs=True,
         last_rating=rating.value,
-        prior_state=prev.state,
+        prior_state=_grade_prior_state(prev, SRSState.LEARNING),
         prior_left=prev.left,
         prior_stability=prev.stability,
     )
@@ -393,7 +441,7 @@ def _schedule_review_again(
         last_review_time_ms=time_ms,
         dirty_fsrs=True,
         last_rating=rating.value,
-        prior_state=prev.state,
+        prior_state=_grade_prior_state(prev, SRSState.RELEARNING),
         prior_left=prev.left,
         prior_stability=prev.stability,
     )
@@ -453,7 +501,7 @@ def _schedule_with_steps(
             last_review_time_ms=time_ms,
             dirty_fsrs=True,
             last_rating=rating.value,
-            prior_state=prev.state,
+            prior_state=_grade_prior_state(prev, prev.state),
             prior_left=prev.left,
             prior_stability=prev.stability,
         )
@@ -482,7 +530,7 @@ def _schedule_with_steps(
             last_review_time_ms=time_ms,
             dirty_fsrs=True,
             last_rating=rating.value,
-            prior_state=prev.state,
+            prior_state=_grade_prior_state(prev, prev.state),
             prior_left=prev.left,
             prior_stability=prev.stability,
         )
@@ -514,7 +562,7 @@ def _schedule_with_steps(
             last_review_time_ms=time_ms,
             dirty_fsrs=True,
             last_rating=rating.value,
-            prior_state=prev.state,
+            prior_state=_grade_prior_state(prev, prev.state),
             prior_left=prev.left,
             prior_stability=prev.stability,
         )
@@ -582,7 +630,7 @@ def _graduate_to_review(
         last_review_time_ms=time_ms,
         dirty_fsrs=True,
         last_rating=rating.value,
-        prior_state=prev.state,
+        prior_state=_grade_prior_state(prev, SRSState.REVIEW),
         prior_left=prev.left,
         prior_stability=prev.stability,
     )

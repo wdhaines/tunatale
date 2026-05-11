@@ -1409,6 +1409,59 @@ class SRSDatabase:
                 (today.isoformat(),),
             ).fetchone()[0]
 
+    def count_review_due_collocations(self, today: date) -> int:
+        """Count distinct collocations with at least one review-state direction
+        due today and not yet graded today (in any direction).
+
+        Anki's `bury_reviews=true` removes a note from today's review pool as
+        soon as any sibling is graded — the un-graded sibling goes to queue=-2
+        until tomorrow. Mirror that: exclude collocations whose `last_review`
+        for any direction falls within today's local day. This way the badge
+        decrements by 1 when *any* direction of a dual-template note is graded
+        (not 2), matching Anki's deck-overview count exactly when both apps
+        share the same data.
+        """
+        local_tz = datetime.now().astimezone().tzinfo
+        start_utc = datetime.combine(today, time(0), tzinfo=local_tz).astimezone(UTC)
+        end_utc = datetime.combine(today + timedelta(days=1), time(0), tzinfo=local_tz).astimezone(UTC)
+        with self._get_conn() as conn:
+            return conn.execute(
+                """
+                SELECT COUNT(DISTINCT cd.collocation_id) FROM collocation_directions cd
+                WHERE cd.due_date <= ? AND cd.state = 'review'
+                  AND cd.collocation_id NOT IN (
+                    SELECT collocation_id FROM collocation_directions
+                    WHERE (length(last_review) > 10 AND last_review >= ? AND last_review < ?)
+                       OR (length(last_review) = 10 AND last_review = ?)
+                  )
+                """,
+                (today.isoformat(), start_utc.isoformat(), end_utc.isoformat(), today.isoformat()),
+            ).fetchone()[0]
+
+    def count_new_introduced_today(self, today: date) -> int:
+        """Count distinct collocations whose first grade today moved them out of NEW.
+
+        Used to reconstruct session-start counts for the intersperser ratio
+        without reading collection.anki2. Captures both TT grades and Anki
+        grades that have been synced (sync writes `prior_state` and `last_review`).
+        """
+        local_tz = datetime.now().astimezone().tzinfo
+        start_utc = datetime.combine(today, time(0), tzinfo=local_tz).astimezone(UTC)
+        end_utc = datetime.combine(today + timedelta(days=1), time(0), tzinfo=local_tz).astimezone(UTC)
+        with self._get_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(DISTINCT collocation_id) FROM collocation_directions
+                WHERE prior_state = 'new'
+                  AND (
+                    (length(last_review) > 10 AND last_review >= ? AND last_review < ?)
+                    OR (length(last_review) = 10 AND last_review = ?)
+                  )
+                """,
+                (start_utc.isoformat(), end_utc.isoformat(), today.isoformat()),
+            ).fetchone()
+            return row[0] if row else 0
+
     def count_due_collocations(
         self,
         as_of: date,
@@ -1489,6 +1542,12 @@ class SRSDatabase:
         if row is None:
             return None
         return (row["value"], row["updated_at"])
+
+    def delete_anki_state_cache(self, key: str) -> None:
+        """Remove the cache row for `key` (idempotent — no-op when absent)."""
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM anki_state_cache WHERE key = ?", (key,))
+            self._commit(conn)
 
     def set_dirty_fields(self, guid: str, fields_str: str) -> None:
         """Set dirty_fields for the collocation identified by guid."""

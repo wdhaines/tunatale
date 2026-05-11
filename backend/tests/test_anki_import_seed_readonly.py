@@ -404,6 +404,37 @@ class TestSkipsNonVocabNotes:
         assert result["new_parents"] == 5
         assert result["skipped_non_vocab"] == 0
 
+    def test_long_reference_question_is_imported(self, tmp_path):
+        """Reference/Q&A notes with >8-word English questions used to be
+        skipped as 'non-vocab'. They're legitimate cards the user wants in
+        TT — same notetype as the imported 7-word phonics questions, just
+        with a longer prompt. Regression for the missing 'u̯ / w / ʍ glide
+        family' phonics note (12 words).
+
+        Production fields reproduce the bug: field 0 wins L2 extraction
+        (IPA chars u̯/ʍ outweigh the field-1 stopword-heavy answer), giving
+        a 12-word l2_text that the old `1 <= word_count <= 8` filter rejected.
+        """
+        from tests.conftest import build_minimal_anki_db
+
+        db_path = build_minimal_anki_db(tmp_path)
+        # Verbatim production fields from anki_note_id=1774631907182.
+        field_0 = "What is the <b>u̯ / w / ʍ</b> glide family in Slovene?"
+        field_1 = (
+            "All are back rounded glides written as <b>v</b> (or arising from <b>l</b>). "
+            "Position determines which:<br><br>"
+            "[u̯] — after a vowel (word-final or before consonant)<br>"
+            "[w] — word-initial before voiced consonant<br>"
+            "[ʍ] — word-initial before voiceless consonant"
+        )
+        self._update_note_flds(db_path, 1001, f"{field_0}\x1f{field_1}")
+        result = _run(db_path, tmp_path)
+        assert result["new_parents"] == 5, (
+            f"12-word reference question must be imported, not skipped; "
+            f"got new_parents={result['new_parents']}, skipped={result.get('skipped_non_vocab')}"
+        )
+        assert result["skipped_non_vocab"] == 0
+
 
 class TestCLI:
     def test_cli_dry_run_prints_dry_run(self, fake_anki_db, tmp_path, monkeypatch, capsys):

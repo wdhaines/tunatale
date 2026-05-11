@@ -266,6 +266,61 @@ class TestParseFsrsData:
         )
         assert state.direction == Direction.PRODUCTION
 
+    def test_data_lrt_drives_last_review(self):
+        """cards.data.lrt is Anki's authoritative FSRS-scheduler-effective
+        last-review timestamp. It's used by Anki's `extract_fsrs_retrievability`
+        SQL function (rslib/src/storage/sqlite.rs:334) to compute R. TT must
+        mirror this rather than using MAX(revlog.id) per card — for cards graded
+        multiple times in a session (lapse + relearning step + graduate), `lrt`
+        sticks to the last FSRS-touched grade while MAX(revlog.id) advances on
+        every learning step. Using MAX(revlog.id) produces a shorter elapsed
+        time → higher R → wrong R-asc position.
+        """
+        from datetime import UTC, datetime
+
+        # lrt is stored in seconds in cards.data
+        lrt_seconds = 1778446601  # 2026-05-10 20:56:41 UTC
+        state = parse_fsrs_data(
+            card_id=99,
+            ord=0,
+            data_str=json.dumps({"s": 0.04, "d": 5.0, "lrt": lrt_seconds}),
+            queue=2,
+            reps=5,
+            lapses=0,
+            col_crt=1388836800,
+            due_raw=4510,
+            ivl=1,
+        )
+        assert state.last_review == datetime.fromtimestamp(lrt_seconds, tz=UTC), (
+            f"cards.data.lrt must drive last_review; got {state.last_review}"
+        )
+
+    def test_missing_lrt_falls_back_to_day_level_last_review(self):
+        """When cards.data has no `lrt` field (older Anki versions or pre-FSRS
+        cards), preserve the existing day-level `_compute_last_review` value
+        derived from due-raw / ivl.
+        """
+        state = parse_fsrs_data(
+            card_id=99,
+            ord=0,
+            data_str=json.dumps({"s": 5.0, "d": 5.0}),  # no lrt
+            queue=2,
+            reps=5,
+            lapses=0,
+            col_crt=1704067200,
+            due_raw=10,
+            ivl=2,
+        )
+        # day-level: midnight UTC of (col_crt + due - ivl) days
+        from datetime import UTC, datetime, time, timedelta
+
+        expected = datetime.combine(
+            datetime.fromtimestamp(1704067200, tz=UTC).date() + timedelta(days=8),
+            time.min,
+            tzinfo=UTC,
+        )
+        assert state.last_review == expected
+
     def test_queue_2_card_due_date_uses_col_crt(self):
         """queue=2 (review): due_date = date.fromtimestamp(col_crt) + timedelta(days=due_raw)."""
         col_crt = 1704067200  # 2024-01-01 00:00:00 UTC

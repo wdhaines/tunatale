@@ -93,13 +93,17 @@ class TestSyntacticUnit:
         assert unit.text == "dober dan"
         assert unit.word_count == 2
 
-    @pytest.mark.parametrize("wc", [0, 9])
+    @pytest.mark.parametrize("wc", [-1, 0])
     def test_rejects_invalid_word_count(self, wc):
         with pytest.raises(ValueError, match="word_count"):
             SyntacticUnit(text="x", translation="y", word_count=wc, difficulty=1, source="corpus")
 
-    @pytest.mark.parametrize("wc", [1, 8])
+    @pytest.mark.parametrize("wc", [1, 8, 12, 50])
     def test_accepts_boundary_word_counts(self, wc):
+        """Long word counts must be accepted — reference/Q&A Anki notes can
+        produce 12+ word L2 extractions when the front field is a long English
+        question. The upper bound was removed; only word_count < 1 is rejected.
+        """
         unit = SyntacticUnit(text="x", translation="y", word_count=wc, difficulty=1, source="corpus")
         assert unit.word_count == wc
 

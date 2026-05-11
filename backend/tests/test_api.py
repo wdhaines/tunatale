@@ -1009,11 +1009,7 @@ class TestQueueStatsEndpoint:
             )
         app.state.srs_db = db
 
-        with (
-            patch("app.api.srs.resolve_daily_new_cap", return_value=(3, "default")),
-            patch("app.api.srs.count_anki_introduced_today", return_value=0),
-            patch("app.api.srs.count_anki_review_remaining_today", return_value=124),
-        ):
+        with patch("app.api.srs.resolve_daily_new_cap", return_value=(3, "default")):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/api/srs/queue-stats")
 
@@ -1038,8 +1034,9 @@ class TestQueueStatsEndpoint:
         assert data["cap_source"] == "anki"
         assert data["daily_new_cap"] == 30
 
-    async def test_queue_stats_review_falls_back_when_anki_unavailable(self):
-        """When count_anki_review_remaining_today returns None, fall back to db.count_review_due."""
+    async def test_queue_stats_review_uses_tt_distinct_collocation_count(self):
+        """Review badge is driven by TT's distinct-collocation count
+        (sibling-buried equivalent of Anki's COUNT(DISTINCT nid))."""
         from unittest.mock import patch
 
         from app.srs.database import SRSDatabase
@@ -1047,18 +1044,15 @@ class TestQueueStatsEndpoint:
         db = SRSDatabase(":memory:")
         app.state.srs_db = db
 
-        # Mock db.count_review_due to return 42
         with (
             patch("app.api.srs.resolve_daily_new_cap", return_value=(20, "default")),
-            patch("app.api.srs.count_anki_introduced_today", return_value=0),
-            patch("app.api.srs.count_anki_review_remaining_today", return_value=None),
-            patch.object(db, "count_review_due", return_value=42),
+            patch.object(db, "count_review_due_collocations", return_value=42),
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/api/srs/queue-stats")
 
         data = response.json()
-        assert data["review"] == 42  # Falls back to TT mirror count
+        assert data["review"] == 42
 
 
 class TestTranscriptEndpoint:

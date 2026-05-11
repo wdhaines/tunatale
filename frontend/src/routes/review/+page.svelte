@@ -42,6 +42,20 @@
 		loading = false;
 	});
 
+	$effect(() => {
+		// /queue-stats reads Anki's collection.anki2 live, so the badge stays
+		// fresh as the user grades in Anki — but only if we actually refetch.
+		// Mid-session tab refocus is not a "deck open" event, so leave the
+		// learning cutoff frozen (sessionStart=false).
+		const onVisibility = () => {
+			if (document.visibilityState === 'visible') {
+				refreshFromServer(false);
+			}
+		};
+		document.addEventListener('visibilitychange', onVisibility);
+		return () => document.removeEventListener('visibilitychange', onVisibility);
+	});
+
 	async function rate(rating: 'again' | 'hard' | 'good' | 'easy', timeMs: number) {
 		const { item, direction } = current;
 		try {

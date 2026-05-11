@@ -20,8 +20,6 @@ from app.srs.fsrs import Rating, schedule
 from app.srs.lemmatizer import LowercaseLemmatizer
 from app.srs.queue_stats import (
     advance_learning_cutoff,
-    count_anki_introduced_today,
-    count_anki_review_remaining_today,
     get_session_main_queue,
     resolve_bury_new,
     resolve_bury_review,
@@ -387,15 +385,19 @@ async def get_queue_stats(request: Request):
     today = datetime.date.today()
     cap, source = resolve_daily_new_cap(db)
     _, fsrs_source = resolve_fsrs_params(db)
-    # Source of truth for "new today" is Anki's revlog: count cards whose first
-    # revlog entry is on or after today. TT's mirrored `reps` is unreliable
-    # here because dual-grading bumps reps past 1 before we can detect.
-    introduced_today = count_anki_introduced_today(today)
+    # "Introduced today" is reconstructed from TT state (`prior_state='new'` +
+    # `last_review` today): captures TT-side grades immediately and synced Anki
+    # grades after the next sync. No live `collection.anki2` read on the
+    # request path — sync is the cross-app alignment moment.
+    introduced_today = db.count_new_introduced_today(today)
     remaining_quota = max(0, cap - introduced_today)
-    # Prefer Anki's deck-overview review count (mirrors sibling burying +
-    # RemainingLimits cap). Fall back to TT mirror when Anki is unavailable.
-    anki_review = count_anki_review_remaining_today()
-    review_count = anki_review if anki_review is not None else db.count_review_due(today)
+    # Badge tracks TT's view directly so every TT grade visibly decrements
+    # the count (the graded card's due_date moves into the future and drops
+    # out of `count_review_due_collocations`). Cross-app catch-up happens at
+    # sync time: sync_pull updates TT's due_dates from Anki, so after sync
+    # the count reflects Anki's grades too. Tab-visibility refetch (added in
+    # the same layer) keeps the badge fresh between syncs as TT state mutates.
+    review_count = db.count_review_due_collocations(today)
     return {
         "new": min(remaining_quota, db.count_new_available()),
         "learning": db.count_learning(),
@@ -658,6 +660,7 @@ def _merge_by_anki_due_then_id(
 def _spread_mix(
     reviews: list[tuple[int, SRSItem, str, Direction]],
     news: list[tuple[int, SRSItem, str, Direction]],
+    ratio_override: tuple[int, int] | None = None,
 ) -> list[tuple[int, SRSItem, str, Direction]]:
     """Interleave news into reviews matching Anki's Intersperser exactly.
 
@@ -666,6 +669,14 @@ def _spread_mix(
     the longer iter when populations are imbalanced, and items are distributed
     evenly between the start and end. For 10 reviews + 2 news the first new
     appears at position 3, not position 5 like a floor-ratio approach.
+
+    `ratio_override` lets callers supply (R_start, N_start) — the counts Anki
+    would have used at session-start before today's grades depleted the pools.
+    Anki builds its queue once at deck-open and the intersperser ratio is fixed
+    from then on; without the override, TT's mid-day build computes the ratio
+    from current remaining counts and serves new cards at tighter spacing than
+    Anki. Override is ignored if either component is non-positive (so callers
+    can pass conservative defaults without special-casing).
     """
     if not news:
         return list(reviews)
@@ -673,7 +684,10 @@ def _spread_mix(
         return list(news)
     one_len = len(reviews)
     two_len = len(news)
-    ratio = (one_len + 1) / (two_len + 1)
+    if ratio_override is not None and ratio_override[0] > 0 and ratio_override[1] > 0:
+        ratio = (ratio_override[0] + 1) / (ratio_override[1] + 1)
+    else:
+        ratio = (one_len + 1) / (two_len + 1)
     one_idx = 0
     two_idx = 0
     result: list[tuple[int, SRSItem, str, Direction]] = []
@@ -734,10 +748,10 @@ async def get_review_queue(request: Request, session_start: bool = False) -> dic
     bury_review, _ = resolve_bury_review(db)
 
     # Anki parity: the new-card budget for the queue is `cap - new_studied`,
-    # not `cap`. /queue-stats already subtracts via count_anki_introduced_today;
-    # the queue itself must too, otherwise the Intersperser ratio (R+1)/(N+1)
-    # diverges from Anki's mid-session and the queue head drifts.
-    introduced_today = count_anki_introduced_today(today)
+    # not `cap`. Reconstructed from TT state (`prior_state='new'` + today's
+    # `last_review`); without this subtraction the Intersperser ratio
+    # (R+1)/(N+1) diverges from Anki's mid-session and the queue head drifts.
+    introduced_today = db.count_new_introduced_today(today)
     new_quota = max(0, cap - introduced_today)
 
     buried = db.list_collocations_reviewed_today(today)
@@ -752,12 +766,18 @@ async def get_review_queue(request: Request, session_start: bool = False) -> dic
 
     # 2. New cards: respect quota (cap minus already-introduced-today) across
     # BOTH directions, sibling-buried, ordered by anki_due then anki_card_id.
-    new_rec = db.get_new_items(direction=Direction.RECOGNITION, limit=new_quota)
-    new_prod = db.get_new_items(direction=Direction.PRODUCTION, limit=new_quota)
+    # Pull more than `new_quota` so that sibling-bury (applied below at the
+    # proactive-bury step) doesn't leave us under quota — Anki's `add_new_card`
+    # iterates the entire pool, skipping sibling-buried cards and only
+    # decrementing the limit on successful adds (gathering.rs:157-169). The
+    # final cap is applied AFTER proactive sibling-bury so we end up with
+    # exactly `new_quota` non-buried collocations in the new bucket.
+    _NEW_OVERFETCH = max(new_quota * 4, new_quota + 50)
+    new_rec = db.get_new_items(direction=Direction.RECOGNITION, limit=_NEW_OVERFETCH)
+    new_prod = db.get_new_items(direction=Direction.PRODUCTION, limit=_NEW_OVERFETCH)
     new_combined = _merge_by_anki_due_then_id(new_rec, new_prod)
     if bury_new:
         new_combined = [t for t in new_combined if t[0] not in buried]
-    new_combined = new_combined[:new_quota]
 
     # 3. Extract learning-state cards (Anki queue=1 behavior: they go first).
     #    Also remove any new cards whose collocation has a learning direction.
@@ -788,9 +808,7 @@ async def get_review_queue(request: Request, session_start: bool = False) -> dic
     # reviews (retrievability-asc), then new — it tracks the note id of every
     # card it adds. A later card whose note is already in the queue gets buried
     # if the relevant flag is on. We mirror it on collocation_id (TT's note
-    # equivalent). Distinct from `buried = list_collocations_reviewed_today` and
-    # `count_anki_review_remaining_today`'s SQL `COUNT(DISTINCT nid)` — those
-    # answer different questions (past actions / count badge) at different layers.
+    # equivalent).
     seen_collocation_ids: set[int] = set(learning_collocation_ids)
 
     def _bury_siblings_in_queue(
@@ -807,6 +825,9 @@ async def get_review_queue(request: Request, session_start: bool = False) -> dic
 
     nonlearning_due = _bury_siblings_in_queue(nonlearning_due, bury_review)
     nonlearning_new = _bury_siblings_in_queue(nonlearning_new, bury_new)
+    # Final cap: only `new_quota` distinct collocations may be introduced today
+    # (matches Anki's RemainingLimits decrement after each successful add).
+    nonlearning_new = nonlearning_new[:new_quota]
 
     # Sort learning cards by TT's `due_at` (authoritative after a fresh grade,
     # before sync has refreshed Anki's `anki_due`), then anki_due, then
@@ -852,6 +873,17 @@ async def get_review_queue(request: Request, session_start: bool = False) -> dic
     elif spread == 2:  # new_before_review
         live_main = nonlearning_new + nonlearning_due
     else:  # 0 = mix: interleave one new every N reviews
+        # Anki parity: the intersperser ratio uses the *current* pool sizes,
+        # matching what Anki sees when it rebuilds at sync completion (per
+        # `requires_study_queue_rebuild`, scheduler/queue/mod.rs:211-215).
+        # Anki's gather phase (gathering.rs) gathers cards that are *currently*
+        # queue=2 due≤today — graded-today cards have moved out of queue=2 and
+        # aren't counted. So `_spread_mix`'s natural list-length ratio
+        # `(one_len+1)/(two_len+1)` matches Anki's intersperser inputs exactly
+        # at the moment of rebuild. (An earlier override that added
+        # reviewed_today to R_start was based on the wrong model — that "Anki
+        # built once at session start with the full pool", which is false when
+        # sync triggers a rebuild.)
         live_main = _spread_mix(nonlearning_due, nonlearning_new)
 
     # Anki parity: freeze the main queue per day. Anki builds `main` once at
@@ -876,11 +908,20 @@ async def get_review_queue(request: Request, session_start: bool = False) -> dic
                 continue
             seen_keys.add(key)
             ordered_main.append(key_to_tuple[key])
-        # Append any live cards not in the cache — handles mid-day additions
-        # (new collocations imported, sync brought formerly-buried cards back, etc.)
+        # Anki parity for mid-day latecomers: only NEW-state cards may be
+        # tail-appended (mid-day imports via /listen — a TT-only UX allowance).
+        # REVIEW-state cards joining live_main without being in the cache are
+        # state transitions (learning→review graduation, formerly buried→active);
+        # Anki drops these from today's queue entirely
+        # (rslib scheduler/queue/learning.rs:60-77 — maybe_requeue_learning_card
+        # returns None for non-intraday-learning cards). The legitimate path for
+        # review-state changes is cache invalidation on sync / deck-config change,
+        # which rebuilds the frozen order from current state on the next call.
         for t in live_main:
             if (t[0], t[3].value) not in seen_keys:
-                ordered_main.append(t)
+                dstate = t[1].directions[t[3]]
+                if dstate.state == SRSState.NEW:
+                    ordered_main.append(t)
 
     # 5. Ready learning first (Anki queue=1 priority), then reviews/new,
     #    then pending learning (cards waiting on their step timer).

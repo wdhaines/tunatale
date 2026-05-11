@@ -6,9 +6,7 @@ import json
 import logging
 import sqlite3
 import struct
-import time
-from datetime import UTC, date, datetime, timedelta
-from datetime import time as dt_time
+from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -37,15 +35,50 @@ def _register_unicase(conn: sqlite3.Connection) -> None:
     conn.create_collation("unicase", _unicase)
 
 
-def _compute_today_col_day(conn: sqlite3.Connection) -> int:
-    """Compute today's col-day integer from col.crt, matching Anki's formula.
+def _compute_today_col_day(
+    conn: sqlite3.Connection,
+    now: datetime | None = None,
+    local_offset_minutes_west: int | None = None,
+) -> int:
+    """Compute today's col-day integer matching Anki's actual algorithm.
 
-    Anki's actual formula: col_day = (now - col.crt) / 86400
+    Mirrors `scheduler/timing.rs::sched_timing_today_v2_new`: local-date
+    subtraction between collection-creation date and now's date, minus 1
+    when the local rollover hour hasn't been passed today.
+
+    The naive `(now - crt) // 86400` formula breaks when `col.crt` is at
+    noon UTC (Anki's default) and `now` falls in the morning UTC window —
+    the fractional remainder is < 1.0 so floor undercounts by one. It also
+    ignores the configured rollover hour entirely.
+
+    `now` / `local_offset_minutes_west` are for tests. In production they
+    default to current wall-clock and the system's local timezone.
     """
     row = conn.execute("SELECT crt FROM col LIMIT 1").fetchone()
     if row is None:
         return 0
-    return int((time.time() - row[0]) // 86400)
+    crt = row[0]
+    rollover = _read_rollover_hour(conn)
+
+    if now is None:
+        now = datetime.now(UTC)
+    if local_offset_minutes_west is None:
+        # System local-vs-UTC offset, expressed Anki-style (minutes WEST of UTC).
+        local_tz = datetime.now().astimezone().tzinfo
+        # tzinfo.utcoffset(now) returns east-of-UTC; Anki uses west-of-UTC.
+        utcoffset = local_tz.utcoffset(now.replace(tzinfo=None)) if local_tz else timedelta(0)
+        local_offset_minutes_west = -int(utcoffset.total_seconds() // 60) if utcoffset else 0
+
+    # Build a fixed offset for Anki-style local time.
+    fixed_offset = timezone(timedelta(minutes=-local_offset_minutes_west))
+    now_local = now.astimezone(fixed_offset)
+    crt_local = datetime.fromtimestamp(crt, tz=UTC).astimezone(fixed_offset)
+
+    days = (now_local.date() - crt_local.date()).days
+    rollover_today_local = now_local.replace(hour=rollover, minute=0, second=0, microsecond=0)
+    if now_local < rollover_today_local:
+        days -= 1
+    return max(0, days)
 
 
 def _read_did_for_deck(conn: sqlite3.Connection, deck_name: str) -> int | None:
@@ -481,69 +514,6 @@ def _read_rollover_hour(conn: sqlite3.Connection) -> int:
     return 4
 
 
-def count_anki_introduced_today(
-    today: date,
-    collection_path: Path | None = None,
-    deck_name: str | None = None,
-) -> int:
-    """Count cards whose *first* revlog entry in Anki is on or after `today`.
-
-    This is Anki's definition of "new today": when a card transitions out of NEW
-    (Again/Hard/Good/Easy on a fresh card), Anki writes a revlog row, and the
-    deck's newToday counter increments. We mirror it by counting the rows whose
-    earliest revlog `id` (millis-since-epoch) is past Anki's day boundary —
-    `today` at the configured rollover hour in the user's local timezone, not
-    local-midnight (Anki's default rollover is 4, so a grade made at 02:00
-    local belongs to *yesterday*, not today).
-
-    When `deck_name` is supplied, the count is scoped to cards in that deck.
-    This (a) excludes activity in unrelated decks (Tagalog, Norwegian, …) and
-    (b) drops orphan revlog rows whose `cid` no longer points at a `cards`
-    row — both of which Anki's own deck-scoped counter ignores. Without this
-    filter, a single orphan grade silently shaves one off TT's daily quota
-    relative to Anki's. Defaults to the configured `settings.anki_deck_name`.
-
-    TT mirror state is unreliable as a source for this — TT and Anki dual-grade
-    the same card and the resulting `cards.reps` (and TT's `reps` mirror) is no
-    longer 1 after the second grade, so a reps-based heuristic misses everything
-    except single-graded new cards.
-
-    Returns 0 if the collection cannot be opened (Anki not configured / file
-    missing). Read-only mode with `immutable=1` is safe while Anki is running.
-    """
-    path = collection_path if collection_path is not None else settings.anki_collection_path
-    if not path.exists():
-        return 0
-    deck = deck_name if deck_name is not None else getattr(settings, "anki_deck_name", None)
-    try:
-        with sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True) as conn:
-            from app.anki.sqlite_reader import find_deck_id
-
-            rollover = _read_rollover_hour(conn)
-            start_ms = int(datetime.combine(today, dt_time(rollover, 0)).timestamp() * 1000)
-            deck_id = find_deck_id(conn, deck) if deck else None
-            if deck_id is not None:
-                row = conn.execute(
-                    """
-                    SELECT COUNT(*) FROM (
-                      SELECT r.cid FROM revlog r
-                      JOIN cards c ON c.id = r.cid AND c.did = ?
-                      GROUP BY r.cid HAVING MIN(r.id) >= ?
-                    )
-                    """,
-                    (deck_id, start_ms),
-                ).fetchone()
-            else:
-                row = conn.execute(
-                    "SELECT COUNT(*) FROM (SELECT cid FROM revlog GROUP BY cid HAVING MIN(id) >= ?)",
-                    (start_ms,),
-                ).fetchone()
-            return int(row[0]) if row else 0
-    except sqlite3.Error as exc:
-        _log.warning("count_anki_introduced_today: failed to read revlog: %s", exc)
-        return 0
-
-
 def refresh_daily_new_cap(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
     """Read the new-per-day cap from collection.anki2 and write it to the cache."""
     cap = _read_new_per_day_from_anki(conn, deck_name)
@@ -778,6 +748,17 @@ def set_session_main_queue(db: SRSDatabase, today: date, items: list[tuple[int, 
         "items": [{"cid": cid, "dir": d} for cid, d in items],
     }
     db.set_anki_state_cache(_SESSION_MAIN_QUEUE_KEY, json.dumps(payload))
+
+
+def clear_session_main_queue(db: SRSDatabase) -> None:
+    """Invalidate the frozen main-queue cache so the next /review-queue rebuilds.
+
+    Mirrors Anki's `requires_study_queue_rebuild` (queue/mod.rs:211-215) which
+    flags a rebuild on sync completion, deck-config change, deck switch, and
+    options changes. TT call sites: sync_pull (post-ingest), deck-config writes.
+    Idempotent — safe to call when no cache exists.
+    """
+    db.delete_anki_state_cache(_SESSION_MAIN_QUEUE_KEY)
 
 
 def refresh_fsrs_params(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:

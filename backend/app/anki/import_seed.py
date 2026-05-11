@@ -113,12 +113,11 @@ def import_seed(
         for note in notes:
             l2_text = extract_l2_from_fields(note.fields)
             word_count = len(l2_text.split())
-            if not 1 <= word_count <= 8:
-                # Post-merge the deck can hold reference/pronunciation Q&A
-                # notes whose front field is a long English question — the L2
-                # extractor returns that verbatim. Skip anything outside the
-                # collocation range instead of crashing on SyntacticUnit's
-                # word_count check.
+            if word_count < 1:
+                # Extractor returned empty/whitespace — nothing to import.
+                # Reference/Q&A notes with long English questions are now
+                # imported as-is (no upper bound); only genuinely empty L2
+                # text falls into the skipped-non-vocab bucket.
                 print(
                     f"SKIP non-vocab: nid={note.id} words={word_count} text={l2_text[:60]!r}",
                     flush=True,

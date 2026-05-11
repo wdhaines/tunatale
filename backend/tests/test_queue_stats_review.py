@@ -123,6 +123,23 @@ def test_returns_none_when_collection_missing():
     assert result is None
 
 
+def test_register_unicase_collation_compares_case_folded():
+    """Sanity test for the unicase collation helper — real Anki collections
+    declare ``COLLATE unicase`` on ``decks.name`` etc., so any SELECT … WHERE
+    name = ? against the real schema invokes the registered Python collation.
+    Verify it case-folds correctly so e.g. 'SLOVENE' matches 'slovene'.
+    """
+    from app.srs.queue_stats import _register_unicase
+
+    conn = sqlite3.connect(":memory:")
+    _register_unicase(conn)
+    conn.execute("CREATE TABLE t (name TEXT COLLATE unicase)")
+    conn.execute("INSERT INTO t VALUES ('Slovene')")
+    row = conn.execute("SELECT name FROM t WHERE name = 'SLOVENE'").fetchone()
+    assert row is not None and row[0] == "Slovene"
+    conn.close()
+
+
 def test_no_bury_returns_raw_pool(tmp_path):
     """Pool of 10 cards across 5 notes, bury_reviews=false → returns 10."""
     db_path = build_review_test_db(tmp_path, num_notes=5, cards_per_note=2, bury_reviews=False)
@@ -399,7 +416,11 @@ def test_studied_counters_zero_when_last_day_mismatch(tmp_path):
 
 
 def test_compute_today_col_day_actual_formula(tmp_path):
-    """Test that _compute_today_col_day uses (now - crt) // 86400."""
+    """Test that _compute_today_col_day matches Anki's actual algorithm
+    (scheduler/timing.rs::sched_timing_today_v2_new): local-date diff minus 1
+    when local rollover hour hasn't been passed.
+    """
+    from datetime import UTC, datetime
 
     from app.srs.queue_stats import _compute_today_col_day
 
@@ -407,12 +428,12 @@ def test_compute_today_col_day_actual_formula(tmp_path):
     db_path = build_review_test_db(tmp_path, num_notes=0, col_crt=crt)
     conn = sqlite3.connect(str(db_path))
 
-    # Mock time.time() to return a known value
-    fixed_now = crt + (100 * 86400) + 3600  # 100 days + 1 hour after crt
-    with patch("app.srs.queue_stats.time.time", return_value=fixed_now):
-        result = _compute_today_col_day(conn)
+    # 100 days + 1 hour after crt, EDT (-240 min west), rollover defaults to 4 in test DB?
+    # The test DB doesn't set rollover; default fallback is 4 AM. Use UTC offset 0 so
+    # the rollover hour comparison is straightforward against UTC midnight (4 AM UTC).
+    fixed_now = datetime.fromtimestamp(crt + (100 * 86400) + 3600 * 5, tz=UTC)  # 5 AM UTC, past 4 AM rollover
+    result = _compute_today_col_day(conn, now=fixed_now, local_offset_minutes_west=0)
 
-    # Should be (now - crt) // 86400 = 100
     assert result == 100
     conn.close()
 

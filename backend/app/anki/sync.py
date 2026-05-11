@@ -12,7 +12,7 @@ import re
 import sqlite3
 import time as _time
 from dataclasses import dataclass, field, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 
 from app.anki.anki_connect import AnkiConnectClient
@@ -122,6 +122,10 @@ class CardRecord:
     anki_card_mod: int | None = None
     last_review: datetime | None = None
     last_review_ms: int | None = None
+    # MIN(revlog.id) for this card. Used by sync_pull to detect the
+    # NEW→graded transition when local_dir.prior_state is None (a record
+    # written before prior_state was set during sync; self-heal on re-sync).
+    first_review_ms: int | None = None
     # False when the source (e.g. AnkiConnect cardsInfo) does not reliably expose
     # FSRS stability/difficulty/due_date — sync_pull then preserves local FSRS
     # state instead of overwriting it with the placeholder values above.
@@ -197,13 +201,16 @@ class OfflineReader:
         # Fetch last review timestamp from revlog for each card
         cid_list = [c.id for c in cards]
         last_revlog_ms: dict[int, int] = {}
+        first_revlog_ms: dict[int, int] = {}
         if cid_list:  # pragma: no branch
             placeholders = ",".join("?" * len(cid_list))
             rows = self._conn.execute(
-                f"SELECT cid, MAX(id) FROM revlog WHERE cid IN ({placeholders}) GROUP BY cid",
+                f"SELECT cid, MIN(id), MAX(id) FROM revlog WHERE cid IN ({placeholders}) GROUP BY cid",
                 cid_list,
             ).fetchall()
-            last_revlog_ms = {cid: ms for cid, ms in rows}
+            for cid, min_ms, max_ms in rows:
+                first_revlog_ms[cid] = min_ms
+                last_revlog_ms[cid] = max_ms
 
         cards_by_note: dict[int, list] = {}
         for c in cards:
@@ -229,6 +236,7 @@ class OfflineReader:
                     anki_card_mod=c.mod,
                     last_review=c.fsrs_state.last_review,
                     last_review_ms=last_revlog_ms.get(c.id),
+                    first_review_ms=first_revlog_ms.get(c.id),
                     left=c.fsrs_state.left,
                     due_at=c.fsrs_state.due_at,
                 )
@@ -356,6 +364,19 @@ class OfflineWriter:
         )
         self._bump_col(ts)
         self._conn.commit()
+
+    def get_current_card_state(self, card_id: int) -> dict | None:
+        """Return Anki's current `queue`/`type`/`left` for the card, or None
+        if the card doesn't exist. Used by sync_push (Fix 3) to skip writes
+        when Anki has more progress than TT for the same card.
+        """
+        row = self._conn.execute(
+            "SELECT queue, type, IFNULL(left, 0) FROM cards WHERE id = ?",
+            (card_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {"queue": row[0], "type": row[1], "left": row[2]}
 
     def set_learning_state(self, card_id: int, left: int, due_at: int, *, type_: int = 1) -> None:
         """Update a learning/relearning card's left, due, queue, type.
@@ -506,8 +527,10 @@ class OfflineWriter:
 def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool:
     """Return True only if a sync-relevant field changed between local and candidate.
 
-    Excludes last_synced_at and last_rating from the comparison
-    so benign timestamp updates don't trigger a spurious write.
+    Excludes last_synced_at and last_rating from the comparison so benign
+    timestamp updates don't trigger a spurious write. Includes `left` and
+    `due_at` so step-state advances on learning cards aren't silently skipped
+    when the merge picked up Anki's value but other fields happened to match.
     """
     return (
         local.state != candidate.state
@@ -520,7 +543,63 @@ def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool
         or local.anki_card_id != candidate.anki_card_id
         or local.anki_due != candidate.anki_due
         or local.last_review != candidate.last_review
+        or local.left != candidate.left
+        or local.due_at != candidate.due_at
+        or local.prior_state != candidate.prior_state
     )
+
+
+def _resolve_prior_state(
+    local_dir: DirectionState,
+    new_state: SRSState,
+    *,
+    first_review_ms: int | None = None,
+    today_start_ms: int | None = None,
+) -> SRSState | None:
+    """Return the `prior_state` to write on a sync-merged direction.
+
+    On a state-class transition (e.g. NEW → LEARNING after Anki graded a fresh
+    card), `prior_state` captures the local-side state before the transition so
+    later queries can identify the event — most importantly
+    `count_new_introduced_today`, which filters by `prior_state='new'` to mirror
+    Anki's `newToday` counter. When state is unchanged (a no-op sync, or
+    within-state grade), preserve `local_dir.prior_state` so earlier transition
+    bookkeeping isn't clobbered.
+
+    Self-heal: if state matches and `prior_state` is None but Anki's first
+    revlog for this card is today, infer the NEW→graded transition happened
+    today. Recovers data lost to a pre-fix sync that didn't write prior_state.
+    """
+    if new_state != local_dir.state:
+        return local_dir.state
+
+    if (
+        local_dir.prior_state is None
+        and new_state != SRSState.NEW
+        and first_review_ms is not None
+        and today_start_ms is not None
+        and first_review_ms >= today_start_ms
+    ):
+        return SRSState.NEW
+
+    return local_dir.prior_state
+
+
+def _anki_step_ahead(anki_left: int | None, local_left: int | None) -> bool:
+    """Return True iff Anki's `total_remaining` is strictly less than TT's.
+
+    Anki encodes `left = today_left * 1000 + total_remaining`; only the low 3
+    digits drive the state machine (rslib/.../card/mod.rs:218). A smaller
+    `total_remaining` in Anki means Anki has graded the card more times — it's
+    further along the learning steps than TT. Used by sync_pull (Fix 2) and
+    sync_push (Fix 3) to defer to whichever app has more progress.
+
+    Returns False when either value is missing or zero — there's no "ahead"
+    relationship to compare against.
+    """
+    anki_tr = (anki_left or 0) % 1000
+    local_tr = (local_left or 0) % 1000
+    return anki_tr > 0 and local_tr > 0 and anki_tr < local_tr
 
 
 def _step_minutes_from_left(left: int | None, steps: list[float]) -> float | None:
@@ -680,6 +759,16 @@ class AnkiSync:
         report = PullReport()
         max_revlog_ms = 0  # tracked to advance the learning cutoff after Anki-side grades
 
+        # Local-today's UTC start, used to infer `prior_state='new'` for cards
+        # whose first revlog is today but TT lost the transition (synced before
+        # sync_pull learned to write prior_state).
+        today_start_ms = int(
+            datetime.combine(date.today(), time(0), tzinfo=datetime.now().astimezone().tzinfo)
+            .astimezone(UTC)
+            .timestamp()
+            * 1000
+        )
+
         for rec in self._reader.get_note_records():
             # Primary: stable pointer set by sync_create_new. Handles duplicate
             # computed-guid homonyms by ignoring the un-linked orphan Anki notes.
@@ -752,6 +841,18 @@ class AnkiSync:
                 if anki_last_ms > max_revlog_ms:
                     max_revlog_ms = anki_last_ms
 
+                # `card_rec.last_review` is the FSRS-scheduler-effective timestamp
+                # — populated from cards.data.lrt by `parse_fsrs_data` when
+                # available, else day-level via `_compute_last_review`. This is
+                # what Anki's `extract_fsrs_retrievability` SQL uses for R, so
+                # mirroring it gives R-asc parity. The earlier Layer-10
+                # preference for MAX(revlog.id) per card was wrong: for cards
+                # graded multiple times in one session (Again → relearning step
+                # → Hard), revlog-max advances on every step while lrt sticks
+                # to the FSRS-touched grade, producing shorter elapsed → higher
+                # R → wrong R-asc position.
+                resolved_last_review = card_rec.last_review
+
                 if local_dir.dirty_fsrs and anki_last_ms > local_last_ms:
                     # Anki's review is newer than TunaTale's pending grade.
                     # Anki wins for cards.due/ivl/factor. TunaTale's grade still
@@ -777,6 +878,12 @@ class AnkiSync:
                         reps=card_rec.reps,
                         lapses=card_rec.lapses,
                         state=new_state,
+                        prior_state=_resolve_prior_state(
+                            local_dir,
+                            new_state,
+                            first_review_ms=card_rec.first_review_ms,
+                            today_start_ms=today_start_ms,
+                        ),
                         dirty_fsrs=False,  # cleared so push won't overwrite Anki
                         anki_card_id=card_rec.anki_card_id,
                         anki_card_mod=card_rec.anki_card_mod,
@@ -818,6 +925,12 @@ class AnkiSync:
                         new_dir_state = replace(
                             local_dir,
                             state=SRSState.SUSPENDED,
+                            prior_state=_resolve_prior_state(
+                                local_dir,
+                                SRSState.SUSPENDED,
+                                first_review_ms=card_rec.first_review_ms,
+                                today_start_ms=today_start_ms,
+                            ),
                             anki_card_id=card_rec.anki_card_id,
                             anki_card_mod=card_rec.anki_card_mod,
                             anki_due=card_rec.anki_due,
@@ -827,6 +940,12 @@ class AnkiSync:
                         new_dir_state = replace(
                             local_dir,
                             state=SRSState.BURIED,
+                            prior_state=_resolve_prior_state(
+                                local_dir,
+                                SRSState.BURIED,
+                                first_review_ms=card_rec.first_review_ms,
+                                today_start_ms=today_start_ms,
+                            ),
                             anki_card_id=card_rec.anki_card_id,
                             anki_card_mod=card_rec.anki_card_mod,
                             anki_due=card_rec.anki_due,
@@ -851,11 +970,17 @@ class AnkiSync:
                             reps=card_rec.reps,
                             lapses=card_rec.lapses,
                             state=new_state,
+                            prior_state=_resolve_prior_state(
+                                local_dir,
+                                new_state,
+                                first_review_ms=card_rec.first_review_ms,
+                                today_start_ms=today_start_ms,
+                            ),
                             dirty_fsrs=False,
                             anki_card_id=card_rec.anki_card_id,
                             anki_card_mod=card_rec.anki_card_mod,
                             anki_due=card_rec.anki_due,
-                            last_review=card_rec.last_review,
+                            last_review=resolved_last_review,
                             last_synced_at=datetime.now(UTC).isoformat(),
                             left=card_rec.left,
                             due_at=card_rec.due_at,
@@ -878,10 +1003,108 @@ class AnkiSync:
                                 remote=new_state.value,
                                 resolution="anki_wins_state_class_divergence",
                             )
+                    elif local_in_learning and card_rec.queue == 2:
+                        # Inverse state-class divergence: local thinks LEARNING but
+                        # Anki has already graduated (queue=2). Anki has more
+                        # progress; TT's pending grade is stale. Same shape as
+                        # the previous branch — Anki wins, drop dirty, surface a
+                        # conflict so the divergence is visible.
+                        new_dir_state = DirectionState(
+                            direction=direction,
+                            due_date=card_rec.due_date,
+                            stability=card_rec.stability,
+                            difficulty=card_rec.difficulty,
+                            reps=card_rec.reps,
+                            lapses=card_rec.lapses,
+                            state=SRSState.REVIEW,
+                            prior_state=_resolve_prior_state(
+                                local_dir,
+                                SRSState.REVIEW,
+                                first_review_ms=card_rec.first_review_ms,
+                                today_start_ms=today_start_ms,
+                            ),
+                            dirty_fsrs=False,
+                            anki_card_id=card_rec.anki_card_id,
+                            anki_card_mod=card_rec.anki_card_mod,
+                            anki_due=card_rec.anki_due,
+                            last_review=resolved_last_review,
+                            last_synced_at=datetime.now(UTC).isoformat(),
+                            left=card_rec.left,
+                            due_at=card_rec.due_at,
+                        )
+                        conflict = SyncConflict(
+                            guid=guid,
+                            direction=direction.value,
+                            field="state_class",
+                            local_value=local_dir.state.value,
+                            remote_value=SRSState.REVIEW.value,
+                            resolution="anki_wins_state_class_divergence",
+                        )
+                        report.conflicts.append(conflict)
+                        if not dry_run:
+                            self._db.record_sync_conflict(
+                                guid=guid,
+                                direction=direction.value,
+                                field="state_class",
+                                local=local_dir.state.value,
+                                remote=SRSState.REVIEW.value,
+                                resolution="anki_wins_state_class_divergence",
+                            )
+                    elif anki_in_learning and local_in_learning and _anki_step_ahead(card_rec.left, local_dir.left):
+                        # Both in learning, but Anki has graded the card more
+                        # times than TT (smaller total_remaining). Take Anki's
+                        # left/due_at + FSRS state; clear dirty_fsrs so push
+                        # doesn't write TT's stale view back over Anki's
+                        # progress. Surface as a "step_progress" conflict.
+                        new_dir_state = replace(
+                            local_dir,
+                            stability=card_rec.stability,
+                            difficulty=card_rec.difficulty,
+                            reps=card_rec.reps,
+                            lapses=card_rec.lapses,
+                            left=card_rec.left,
+                            due_at=card_rec.due_at,
+                            prior_state=_resolve_prior_state(
+                                local_dir,
+                                local_dir.state,
+                                first_review_ms=card_rec.first_review_ms,
+                                today_start_ms=today_start_ms,
+                            ),
+                            dirty_fsrs=False,
+                            anki_card_id=card_rec.anki_card_id,
+                            anki_card_mod=card_rec.anki_card_mod,
+                            anki_due=card_rec.anki_due,
+                            last_review=resolved_last_review,
+                            last_synced_at=datetime.now(UTC).isoformat(),
+                        )
+                        conflict = SyncConflict(
+                            guid=guid,
+                            direction=direction.value,
+                            field="step_progress",
+                            local_value=str(local_dir.left),
+                            remote_value=str(card_rec.left),
+                            resolution="anki_wins_step_progress",
+                        )
+                        report.conflicts.append(conflict)
+                        if not dry_run:
+                            self._db.record_sync_conflict(
+                                guid=guid,
+                                direction=direction.value,
+                                field="step_progress",
+                                local=str(local_dir.left),
+                                remote=str(card_rec.left),
+                                resolution="anki_wins_step_progress",
+                            )
                     else:
                         new_dir_state = replace(
                             local_dir,
                             state=local_dir.state,
+                            prior_state=_resolve_prior_state(
+                                local_dir,
+                                local_dir.state,
+                                first_review_ms=card_rec.first_review_ms,
+                                today_start_ms=today_start_ms,
+                            ),
                             anki_card_id=card_rec.anki_card_id,
                             anki_card_mod=card_rec.anki_card_mod,
                             anki_due=card_rec.anki_due,
@@ -909,11 +1132,17 @@ class AnkiSync:
                         reps=card_rec.reps,
                         lapses=card_rec.lapses,
                         state=new_state,
+                        prior_state=_resolve_prior_state(
+                            local_dir,
+                            new_state,
+                            first_review_ms=card_rec.first_review_ms,
+                            today_start_ms=today_start_ms,
+                        ),
                         dirty_fsrs=False,
                         anki_card_id=card_rec.anki_card_id,
                         anki_card_mod=card_rec.anki_card_mod,
                         anki_due=card_rec.anki_due,
-                        last_review=card_rec.last_review,
+                        last_review=resolved_last_review,
                         last_synced_at=datetime.now(UTC).isoformat(),
                         left=card_rec.left,
                         due_at=card_rec.due_at,
@@ -941,11 +1170,17 @@ class AnkiSync:
                         reps=card_rec.reps,
                         lapses=card_rec.lapses,
                         state=new_state,
+                        prior_state=_resolve_prior_state(
+                            local_dir,
+                            new_state,
+                            first_review_ms=card_rec.first_review_ms,
+                            today_start_ms=today_start_ms,
+                        ),
                         dirty_fsrs=False,
                         anki_card_id=card_rec.anki_card_id,
                         anki_card_mod=card_rec.anki_card_mod,
                         anki_due=card_rec.anki_due,
-                        last_review=card_rec.last_review,
+                        last_review=resolved_last_review,
                         last_synced_at=datetime.now(UTC).isoformat(),
                         left=card_rec.left,
                         due_at=card_rec.due_at,
@@ -963,6 +1198,16 @@ class AnkiSync:
             from app.srs.queue_stats import advance_learning_cutoff
 
             advance_learning_cutoff(self._db, datetime.fromtimestamp(max_revlog_ms / 1000, UTC))
+
+        # Anki parity: invalidate the frozen session_main_queue on sync completion.
+        # Anki's `requires_study_queue_rebuild` (rslib scheduler/queue/mod.rs:211-215)
+        # forces a queue rebuild after sync round-trip; without mirroring this, a card
+        # whose Anki-side state transitioned (e.g. learning→review post-graduation)
+        # stays at its stale cached position instead of moving to its current R-asc spot.
+        if not dry_run:
+            from app.srs.queue_stats import clear_session_main_queue
+
+            clear_session_main_queue(self._db)
         return report
 
     def sync_push(self, dry_run: bool = False, force_fsrs: bool = False) -> PushReport:
@@ -1006,10 +1251,36 @@ class AnkiSync:
                     and ds.left is not None
                     and ds.due_at is not None
                 ):
-                    # queue=1 for both; type=1 for first-time LEARNING, type=3 for RELEARNING (lapse)
-                    due_timestamp = int(ds.due_at.timestamp())
-                    type_ = 3 if ds.state == SRSState.RELEARNING else 1
-                    self._writer.set_learning_state(ds.anki_card_id, ds.left, due_timestamp, type_=type_)
+                    # Fix 3: defer to Anki if Anki is further along. Push runs
+                    # before pull in the sync flow, so without this guard a
+                    # stale TT view would clobber Anki's correct step state /
+                    # graduation. The matching pull-side defense (Fix 2) then
+                    # carries Anki's view into TT and clears dirty_fsrs.
+                    anki_now = (
+                        self._writer.get_current_card_state(ds.anki_card_id)
+                        if hasattr(self._writer, "get_current_card_state")
+                        else None
+                    )
+                    anki_ahead = False
+                    if anki_now is not None:
+                        if anki_now["queue"] == 2:
+                            anki_ahead = True  # graduated
+                        elif anki_now["queue"] in (1, 3) and _anki_step_ahead(anki_now["left"], ds.left):
+                            anki_ahead = True
+
+                    if not anki_ahead:
+                        # queue=1 for both; type=1 for LEARNING, type=3 for RELEARNING (lapse)
+                        due_timestamp = int(ds.due_at.timestamp())
+                        type_ = 3 if ds.state == SRSState.RELEARNING else 1
+                        self._writer.set_learning_state(ds.anki_card_id, ds.left, due_timestamp, type_=type_)
+                    else:
+                        # Skip both the card update and the revlog: TT's grade
+                        # is being discarded in favour of Anki's. mark_direction_clean
+                        # at end of loop drops the dirty flag so we don't keep
+                        # retrying.
+                        self._db.mark_direction_clean(guid, direction)
+                        report.directions_pushed += 1
+                        continue
                 else:
                     # Review/new cards: use set_due_date (days since col_crt)
                     self._writer.set_due_date([ds.anki_card_id], days_str)

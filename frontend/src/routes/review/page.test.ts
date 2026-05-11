@@ -348,4 +348,60 @@ describe('review/+page.svelte', () => {
 		expect(badge).toBeTruthy();
 		expect(badge.className).toContain('state-learning');
 	});
+
+	// ── tab-visibility refetch ─────────────────────────────────────────────
+	// /queue-stats reads Anki's collection.anki2 directly each call, so it stays
+	// fresh as the user grades in Anki — but the widget only sees those numbers
+	// if the page refetches. Without a visibility hook, switching back to the TT
+	// tab after grading in Anki shows the stale mount-time counts.
+
+	it('refetches stats and queue when the tab becomes visible again', async () => {
+		const item = makeReviewQueueItem({ id: 1, text: 'okno', direction: 'recognition' });
+		mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
+		render(ReviewPage);
+		// Wait for mount fetch to settle.
+		await screen.findByText('okno');
+		const statsCallsBefore = mockFetchQueueStats.mock.calls.length;
+		const queueCallsBefore = mockFetchReviewQueue.mock.calls.length;
+
+		// Simulate tab regaining focus after a stint in Anki.
+		Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+		document.dispatchEvent(new Event('visibilitychange'));
+		// Let the async refetch settle.
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(mockFetchQueueStats.mock.calls.length).toBeGreaterThan(statsCallsBefore);
+		expect(mockFetchReviewQueue.mock.calls.length).toBeGreaterThan(queueCallsBefore);
+	});
+
+	it('visibility refetch does not advance learning cutoff (sessionStart=false)', async () => {
+		// Mid-session tab refocus is not a "deck open" — must not advance the
+		// server's frozen learning cutoff, which would surface past-due learning
+		// cards mid-screen and diverge from Anki.
+		const item = makeReviewQueueItem({ id: 1, text: 'okno', direction: 'recognition' });
+		mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
+		render(ReviewPage);
+		await screen.findByText('okno');
+
+		Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+		document.dispatchEvent(new Event('visibilitychange'));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		const lastCall = mockFetchReviewQueue.mock.calls.at(-1);
+		expect(lastCall).toEqual([{ sessionStart: false }]);
+	});
+
+	it('does not refetch when the tab transitions to hidden', async () => {
+		const item = makeReviewQueueItem({ id: 1, text: 'okno', direction: 'recognition' });
+		mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
+		render(ReviewPage);
+		await screen.findByText('okno');
+		const statsCallsBefore = mockFetchQueueStats.mock.calls.length;
+
+		Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+		document.dispatchEvent(new Event('visibilitychange'));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(mockFetchQueueStats.mock.calls.length).toBe(statsCallsBefore);
+	});
 });

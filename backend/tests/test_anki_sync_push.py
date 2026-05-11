@@ -75,6 +75,10 @@ class FakeWriter:
 
     def __init__(self) -> None:
         self.calls: list[tuple] = []
+        # Tests populate this to simulate Anki's current state for guard checks.
+        # Maps card_id → {"queue": int, "type": int, "left": int}. Returning None
+        # for an absent key tells push "no current state; proceed normally."
+        self.current_states: dict[int, dict] = {}
 
     def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
         self.calls.append(("update_note_fields", note_id, fields))
@@ -95,6 +99,9 @@ class FakeWriter:
         self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_, preferred_id=None
     ) -> None:
         self.calls.append(("write_revlog", cid, ease, ivl, last_ivl, factor, time_ms, type_, preferred_id))
+
+    def get_current_card_state(self, card_id: int) -> dict | None:
+        return self.current_states.get(card_id)
 
     def action_names(self) -> list[str]:
         return [c[0] for c in self.calls]
@@ -596,6 +603,144 @@ class TestSyncPush:
         assert db.get_dirty_fields(guid) == "translation"
         dirty = db.list_dirty()
         assert len(dirty) == 1
+
+
+# ── TestSyncPushGuardsAgainstAnkiAhead (Fix 3) ────────────────────────────────
+
+
+class TestSyncPushGuardsAgainstAnkiAhead:
+    """Fix 3: push must not overwrite Anki when Anki has more progress than TT.
+
+    Background: between syncs, the user may grade the same card more times in
+    Anki than in TT (or vice versa). On the next sync, push would unconditionally
+    write TT's `left`/state to Anki, erasing whatever step-progress or graduation
+    Anki had recorded. push now consults `writer.get_current_card_state` first
+    and skips the write when Anki is ahead. The matching divergence is resolved
+    by sync_pull (Fix 2), which takes Anki's state.
+    """
+
+    def test_push_skips_learning_write_when_anki_graduated(self):
+        from datetime import datetime as _dt
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=1),
+            state=SRSState.LEARNING,
+            left=1001,
+            due_at=_dt.now(UTC) + timedelta(minutes=10),
+            reps=3,
+            anki_card_id=rec_cid,
+            dirty_fsrs=True,
+            last_rating=3,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        # Anki has the card in REVIEW (graduated) while TT was offline.
+        writer.current_states[rec_cid] = {"queue": 2, "type": 2, "left": 0}
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert not any(c[0] == "set_learning_state" for c in writer.calls)
+        # The local grade is discarded; no revlog so we don't double-count.
+        assert not any(c[0] == "write_revlog" for c in writer.calls)
+
+    def test_push_skips_learning_write_when_anki_further_along(self):
+        from datetime import datetime as _dt
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=1),
+            state=SRSState.LEARNING,
+            left=1002,  # TT: total_remaining=2 (first of 2 steps)
+            due_at=_dt.now(UTC) + timedelta(minutes=1),
+            reps=3,
+            anki_card_id=rec_cid,
+            dirty_fsrs=True,
+            last_rating=3,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        writer.current_states[rec_cid] = {"queue": 1, "type": 1, "left": 1001}  # Anki: tr=1
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert not any(c[0] == "set_learning_state" for c in writer.calls)
+
+    def test_push_proceeds_when_anki_state_matches_tt(self):
+        """Anki on the same step → push writes normally (TT's update is benign
+        even if a no-op)."""
+        from datetime import datetime as _dt
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=1),
+            state=SRSState.LEARNING,
+            left=1001,
+            due_at=_dt.now(UTC) + timedelta(minutes=10),
+            reps=3,
+            anki_card_id=rec_cid,
+            dirty_fsrs=True,
+            last_rating=3,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        writer.current_states[rec_cid] = {"queue": 1, "type": 1, "left": 1001}
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert any(c[0] == "set_learning_state" for c in writer.calls)
+
+    def test_push_proceeds_when_anki_is_behind_tt(self):
+        """When Anki has more total_remaining (is BEHIND TT), TT wins as before
+        — push proceeds normally."""
+        from datetime import datetime as _dt
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=1),
+            state=SRSState.LEARNING,
+            left=1001,
+            due_at=_dt.now(UTC) + timedelta(minutes=10),
+            reps=3,
+            anki_card_id=rec_cid,
+            dirty_fsrs=True,
+            last_rating=3,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        writer.current_states[rec_cid] = {"queue": 1, "type": 1, "left": 1002}  # Anki behind
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert any(c[0] == "set_learning_state" for c in writer.calls)
+
+    def test_offline_writer_get_current_card_state_returns_queue_type_left(self):
+        """OfflineWriter must expose Anki's current queue/type/left for the
+        push-side guard. Reading goes through the writer's own connection
+        (used during a sync_push transaction)."""
+        anki_conn = _make_anki_full_db()
+        # Insert a card with a known state.
+        anki_conn.execute(
+            "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, lapses, left, odue, odid, flags, data) "
+            "VALUES (90010, 9001, 1, 0, 0, -1, 1, 1, 1, 0, 2500, 3, 0, 1001, 0, 0, 0, '')"
+        )
+        anki_conn.commit()
+        writer = OfflineWriter(anki_conn)
+        state = writer.get_current_card_state(90010)
+        assert state == {"queue": 1, "type": 1, "left": 1001}
+
+    def test_offline_writer_get_current_card_state_unknown_card_id(self):
+        anki_conn = _make_anki_full_db()
+        writer = OfflineWriter(anki_conn)
+        assert writer.get_current_card_state(99999) is None
 
 
 # ── TestDrainPendingRevlog ────────────────────────────────────────────────────
