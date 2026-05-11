@@ -1054,44 +1054,6 @@ class TestReviewQueue:
         tags = [t[1] for t in _spread_mix(reviews, news)]
         assert tags == ["N", "R", "N", "N", "R", "N", "N", "R", "N"]
 
-    async def test_spread_mix_uses_ratio_override_when_provided(self, api_app_state):
-        """Anki parity for mid-day TT builds: the intersperser ratio must come
-        from start-of-day counts, not current remaining counts. Without the
-        override, R=10 N=2 yields ratio 11/3=3.67 → first new at position 3.
-        With start-of-day counts (R_start=20, N_start=20 — most reviews graded
-        in Anki this morning, cap 20), ratio drops to 21/21=1.0 → first new at
-        position 1. The override path must use the latter so TT places new
-        cards at Anki's session-start spacing.
-        """
-        from app.api.srs import _spread_mix
-
-        reviews = [(i, "R", "sl", Direction.RECOGNITION) for i in range(10)]
-        news = [(i, "N", "sl", Direction.PRODUCTION) for i in range(2)]
-
-        # Default: ratio derived from list lengths.
-        default_tags = [t[1] for t in _spread_mix(reviews, news)]
-        # First new must come within the first 5 positions but past pos 1.
-        assert default_tags[0] == "R"
-        assert default_tags[1] == "R"
-
-        # Override: pretend start-of-day was 20 reviews + 20 news.
-        override_tags = [t[1] for t in _spread_mix(reviews, news, ratio_override=(20, 20))]
-        # Ratio 21/21=1.0 → first new at position 1 (after 1 review).
-        assert override_tags[:4] == ["R", "N", "R", "N"], (
-            f"start-of-day ratio must space news every ~1 review; got {override_tags[:4]}"
-        )
-
-    async def test_spread_mix_ratio_override_falls_back_when_zero(self, api_app_state):
-        """Defensive: an override of (0, 0) should not produce a div-by-zero or
-        bogus order — fall back to the list-length ratio.
-        """
-        from app.api.srs import _spread_mix
-
-        reviews = [(i, "R", "sl", Direction.RECOGNITION) for i in range(3)]
-        news = [(i, "N", "sl", Direction.PRODUCTION) for i in range(3)]
-        tags = [t[1] for t in _spread_mix(reviews, news, ratio_override=(0, 0))]
-        assert tags == ["R", "N", "R", "N", "R", "N"]
-
     async def test_fnv1a_64_matches_anki_for_known_pair(self, api_app_state):
         """Anki's fnvhash(id, mod) over revija/vadba production cards.
 

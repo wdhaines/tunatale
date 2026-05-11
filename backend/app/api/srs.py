@@ -660,7 +660,6 @@ def _merge_by_anki_due_then_id(
 def _spread_mix(
     reviews: list[tuple[int, SRSItem, str, Direction]],
     news: list[tuple[int, SRSItem, str, Direction]],
-    ratio_override: tuple[int, int] | None = None,
 ) -> list[tuple[int, SRSItem, str, Direction]]:
     """Interleave news into reviews matching Anki's Intersperser exactly.
 
@@ -669,14 +668,6 @@ def _spread_mix(
     the longer iter when populations are imbalanced, and items are distributed
     evenly between the start and end. For 10 reviews + 2 news the first new
     appears at position 3, not position 5 like a floor-ratio approach.
-
-    `ratio_override` lets callers supply (R_start, N_start) — the counts Anki
-    would have used at session-start before today's grades depleted the pools.
-    Anki builds its queue once at deck-open and the intersperser ratio is fixed
-    from then on; without the override, TT's mid-day build computes the ratio
-    from current remaining counts and serves new cards at tighter spacing than
-    Anki. Override is ignored if either component is non-positive (so callers
-    can pass conservative defaults without special-casing).
     """
     if not news:
         return list(reviews)
@@ -684,10 +675,7 @@ def _spread_mix(
         return list(news)
     one_len = len(reviews)
     two_len = len(news)
-    if ratio_override is not None and ratio_override[0] > 0 and ratio_override[1] > 0:
-        ratio = (ratio_override[0] + 1) / (ratio_override[1] + 1)
-    else:
-        ratio = (one_len + 1) / (two_len + 1)
+    ratio = (one_len + 1) / (two_len + 1)
     one_idx = 0
     two_idx = 0
     result: list[tuple[int, SRSItem, str, Direction]] = []
