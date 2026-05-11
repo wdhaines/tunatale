@@ -765,6 +765,37 @@ class AnkiSync:
         self._recovered_directions = {(guid, direction) for guid, direction in dir_resets}
         return len(dir_resets), len(note_resets)
 
+    def _record_conflict(
+        self,
+        report: PullReport,
+        *,
+        guid: str,
+        direction: str | None,
+        field: str,
+        local: str,
+        remote: str,
+        resolution: str,
+        dry_run: bool,
+    ) -> None:
+        conflict = SyncConflict(
+            guid=guid,
+            direction=direction,
+            field=field,
+            local_value=local,
+            remote_value=remote,
+            resolution=resolution,
+        )
+        report.conflicts.append(conflict)
+        if not dry_run:
+            self._db.record_sync_conflict(
+                guid=guid,
+                direction=direction,
+                field=field,
+                local=local,
+                remote=remote,
+                resolution=resolution,
+            )
+
     def sync_pull(self, dry_run: bool = False) -> PullReport:
         """Pull Anki → TunaTale. Returns a PullReport summarising changes."""
         report = PullReport()
@@ -811,24 +842,16 @@ class AnkiSync:
             if rec.translation != local_translation:
                 note_changed = True
                 if "translation" in dirty_set:
-                    conflict = SyncConflict(
+                    self._record_conflict(
+                        report,
                         guid=guid,
                         direction=None,
                         field="translation",
-                        local_value=local_translation,
-                        remote_value=rec.translation,
+                        local=local_translation,
+                        remote=rec.translation,
                         resolution="anki_wins",
+                        dry_run=dry_run,
                     )
-                    report.conflicts.append(conflict)
-                    if not dry_run:
-                        self._db.record_sync_conflict(
-                            guid=guid,
-                            direction=None,
-                            field="translation",
-                            local=local_translation,
-                            remote=rec.translation,
-                            resolution="anki_wins",
-                        )
                     new_dirty_fields.discard("translation")
 
             if note_changed:
@@ -894,24 +917,16 @@ class AnkiSync:
                         left=card_rec.left,
                         due_at=card_rec.due_at,
                     )
-                    conflict = SyncConflict(
+                    self._record_conflict(
+                        report,
                         guid=guid,
                         direction=direction.value,
                         field="schedule",
-                        local_value=str(local_dir.last_review),
-                        remote_value=str(card_rec.last_review),
+                        local=str(local_dir.last_review),
+                        remote=str(card_rec.last_review),
                         resolution="anki_wins_by_timestamp",
+                        dry_run=dry_run,
                     )
-                    report.conflicts.append(conflict)
-                    if not dry_run:
-                        self._db.record_sync_conflict(
-                            guid=guid,
-                            direction=direction.value,
-                            field="schedule",
-                            local=str(local_dir.last_review),
-                            remote=str(card_rec.last_review),
-                            resolution="anki_wins_by_timestamp",
-                        )
                 elif local_dir.dirty_fsrs:
                     # TunaTale's grade is the latest event. Preserve local FSRS,
                     # let push flush. (anki_card_id / anki_due / last_synced_at refresh.)
@@ -984,24 +999,16 @@ class AnkiSync:
                             left=card_rec.left,
                             due_at=card_rec.due_at,
                         )
-                        conflict = SyncConflict(
+                        self._record_conflict(
+                            report,
                             guid=guid,
                             direction=direction.value,
                             field="state_class",
-                            local_value=local_dir.state.value,
-                            remote_value=new_state.value,
+                            local=local_dir.state.value,
+                            remote=new_state.value,
                             resolution="anki_wins_state_class_divergence",
+                            dry_run=dry_run,
                         )
-                        report.conflicts.append(conflict)
-                        if not dry_run:
-                            self._db.record_sync_conflict(
-                                guid=guid,
-                                direction=direction.value,
-                                field="state_class",
-                                local=local_dir.state.value,
-                                remote=new_state.value,
-                                resolution="anki_wins_state_class_divergence",
-                            )
                     elif local_in_learning and card_rec.queue == 2:
                         # Inverse state-class divergence: local thinks LEARNING but
                         # Anki has already graduated (queue=2). Anki has more
@@ -1031,24 +1038,16 @@ class AnkiSync:
                             left=card_rec.left,
                             due_at=card_rec.due_at,
                         )
-                        conflict = SyncConflict(
+                        self._record_conflict(
+                            report,
                             guid=guid,
                             direction=direction.value,
                             field="state_class",
-                            local_value=local_dir.state.value,
-                            remote_value=SRSState.REVIEW.value,
+                            local=local_dir.state.value,
+                            remote=SRSState.REVIEW.value,
                             resolution="anki_wins_state_class_divergence",
+                            dry_run=dry_run,
                         )
-                        report.conflicts.append(conflict)
-                        if not dry_run:
-                            self._db.record_sync_conflict(
-                                guid=guid,
-                                direction=direction.value,
-                                field="state_class",
-                                local=local_dir.state.value,
-                                remote=SRSState.REVIEW.value,
-                                resolution="anki_wins_state_class_divergence",
-                            )
                     elif anki_in_learning and local_in_learning and _anki_step_ahead(card_rec.left, local_dir.left):
                         # Both in learning, but Anki has graded the card more
                         # times than TT (smaller total_remaining). Take Anki's
@@ -1076,24 +1075,16 @@ class AnkiSync:
                             last_review=resolved_last_review,
                             last_synced_at=datetime.now(UTC).isoformat(),
                         )
-                        conflict = SyncConflict(
+                        self._record_conflict(
+                            report,
                             guid=guid,
                             direction=direction.value,
                             field="step_progress",
-                            local_value=str(local_dir.left),
-                            remote_value=str(card_rec.left),
+                            local=str(local_dir.left),
+                            remote=str(card_rec.left),
                             resolution="anki_wins_step_progress",
+                            dry_run=dry_run,
                         )
-                        report.conflicts.append(conflict)
-                        if not dry_run:
-                            self._db.record_sync_conflict(
-                                guid=guid,
-                                direction=direction.value,
-                                field="step_progress",
-                                local=str(local_dir.left),
-                                remote=str(card_rec.left),
-                                resolution="anki_wins_step_progress",
-                            )
                     else:
                         new_dir_state = replace(
                             local_dir,
