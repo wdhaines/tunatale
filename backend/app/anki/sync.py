@@ -38,14 +38,6 @@ def _safe_stem(word: str, prefix: str) -> str:
     return f"{prefix}_{sanitized}"
 
 
-def _factor_to_fsrs_difficulty(factor: int) -> float:
-    """Map Anki ease factor (1300 hardest .. 3500+ easiest) to FSRS difficulty (10 .. 1).
-
-    Linear approximation: factor=1300→10.0; factor=2500 (neutral)→4.5; factor=3500→1.0.
-    """
-    return max(1.0, min(10.0, (3500 - factor) / 220))
-
-
 class DuplicateNoteError(Exception):
     """Raised by OfflineWriter.create_note when the note guid already exists."""
 

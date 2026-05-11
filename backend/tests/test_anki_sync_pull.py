@@ -1253,24 +1253,6 @@ def test_queue_to_state_mapping(fsrs_known, queue, reps, expected_state):
     assert updated.directions[Direction.RECOGNITION].state == expected_state
 
 
-# ── _factor_to_fsrs_difficulty ────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "factor,expected",
-    [
-        (2500, pytest.approx(4.545, abs=0.01)),
-        (1300, 10.0),
-        (3500, 1.0),
-        (1450, pytest.approx(9.318, abs=0.01)),
-    ],
-)
-def test_factor_to_fsrs_difficulty(factor, expected):
-    from app.anki.sync import _factor_to_fsrs_difficulty
-
-    assert _factor_to_fsrs_difficulty(factor) == expected
-
-
 # ── _discover_today_anki_day ──────────────────────────────────────────────────
 
 
