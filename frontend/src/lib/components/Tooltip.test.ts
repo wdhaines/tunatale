@@ -50,11 +50,39 @@ describe('Tooltip', () => {
 		expect(getByRole('tooltip').textContent).toContain('Known');
 	});
 
-	it('renders readable state label for "suspended" as "Ignored"', () => {
+	it('renders readable state label for "suspended" as "Suspended"', () => {
 		const { getByRole } = render(TooltipTest, {
 			props: { translation: null, state: 'suspended', childText: 'zdravo' }
 		});
-		expect(getByRole('tooltip').textContent).toContain('Ignored');
+		expect(getByRole('tooltip').textContent).toContain('Suspended');
+	});
+
+	it('shows "click to untrack" hint for known state', () => {
+		const { getByRole } = render(TooltipTest, {
+			props: { translation: null, state: 'known', childText: 'zdravo' }
+		});
+		expect(getByRole('tooltip').textContent).toContain('click to untrack');
+	});
+
+	it('shows "click to restore" hint for suspended state', () => {
+		const { getByRole } = render(TooltipTest, {
+			props: { translation: null, state: 'suspended', childText: 'zdravo' }
+		});
+		expect(getByRole('tooltip').textContent).toContain('click to restore');
+	});
+
+	it('shows "click to start learning" hint for new state', () => {
+		const { getByRole } = render(TooltipTest, {
+			props: { translation: null, state: 'new', childText: 'zdravo' }
+		});
+		expect(getByRole('tooltip').textContent).toContain('click to start learning');
+	});
+
+	it('shows "click to mark known" hint for learning state', () => {
+		const { getByRole } = render(TooltipTest, {
+			props: { translation: null, state: 'learning', childText: 'zdravo' }
+		});
+		expect(getByRole('tooltip').textContent).toContain('click to mark known');
 	});
 
 	it('renders no tooltip when both translation and state are null', () => {

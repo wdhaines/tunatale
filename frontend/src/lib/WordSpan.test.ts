@@ -65,11 +65,11 @@ describe('WordSpan', () => {
 		await expect(fireEvent.click(getByRole('button'))).resolves.not.toThrow();
 	});
 
-	it('shows word-new class for unknown srs_state', () => {
+	it('shows word-unknown class for unknown srs_state', () => {
 		const { getByRole } = render(WordSpan, {
 			props: { word: makeWordToken({ srs_state: 'unknown' }) }
 		});
-		expect(getByRole('button').className).toContain('word-new');
+		expect(getByRole('button').className).toContain('word-unknown');
 	});
 
 	it('shows word-new class for new srs_state', () => {

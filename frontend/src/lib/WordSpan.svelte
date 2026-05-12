@@ -50,11 +50,13 @@
 			? 'word-known'
 			: word.srs_state === 'suspended'
 				? 'word-ignored'
-				: word.srs_state === 'learning' || word.srs_state === 'relearning'
-					? 'word-learning'
-					: word.srs_state === 'review'
-						? 'word-review'
-						: 'word-new'
+				: word.srs_state === 'unknown'
+					? 'word-unknown'
+					: word.srs_state === 'learning' || word.srs_state === 'relearning'
+						? 'word-learning'
+						: word.srs_state === 'review'
+							? 'word-review'
+							: 'word-new'
 	);
 
 	// Show tooltip when: not inside a collocation, OR alt-hover mode is active
@@ -99,6 +101,11 @@
 	}
 	.word-new {
 		color: #2563eb;
+	}
+	.word-unknown {
+		color: #818cf8;
+		text-decoration: underline dotted;
+		text-underline-offset: 2px;
 	}
 	.word-learning {
 		color: #ca8a04;

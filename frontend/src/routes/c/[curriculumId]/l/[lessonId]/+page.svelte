@@ -91,7 +91,11 @@
 				itemId = created.id;
 			}
 
-			await api.setSRSItemState(itemId, nextState);
+			if (nextState === 'ignored') {
+				await api.untrackSRSItem(itemId);
+			} else {
+				await api.setSRSItemState(itemId, nextState);
+			}
 			transcript = await api.getLessonTranscript(data.lesson.id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -106,7 +110,11 @@
 		error = '';
 		try {
 			const nextState = STATE_CYCLE[current_state] ?? 'learning';
-			await api.setSRSItemState(span_id, nextState);
+			if (nextState === 'ignored') {
+				await api.untrackSRSItem(span_id);
+			} else {
+				await api.setSRSItemState(span_id, nextState);
+			}
 			transcript = await api.getLessonTranscript(data.lesson.id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);

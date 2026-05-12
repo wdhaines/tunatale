@@ -543,6 +543,24 @@ describe('TunaTaleAPI', () => {
 			expect(result.state).toBe('known');
 		});
 
+		it('untrackSRSItem calls POST /api/srs/items/:id/untrack and returns deleted action', async () => {
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk({ action: 'deleted' })));
+			const result = await api.untrackSRSItem(3);
+			expect(fetch).toHaveBeenCalledWith(
+				`${BASE}/api/srs/items/3/untrack`,
+				expect.objectContaining({ method: 'POST' })
+			);
+			expect(result).toEqual({ action: 'deleted' });
+		});
+
+		it('untrackSRSItem returns suspended action with item detail', async () => {
+			const suspendedItem = { action: 'suspended' as const, item: { id: 3, text: 'zdravo', state: 'suspended', due_date: '2026-04-14', stability: 1.0, difficulty: 5.0, reps: 0, lapses: 0, last_review: null, language_code: 'sl' } };
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOk(suspendedItem)));
+			const result = await api.untrackSRSItem(3);
+			expect(result.action).toBe('suspended');
+			expect((result as { action: 'suspended'; item: { state: string } }).item.state).toBe('suspended');
+		});
+
 		it('syncWithAnki calls POST /api/anki/sync?dry_run=false by default', async () => {
 			const payload = {
 				created: 2,

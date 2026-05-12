@@ -15,9 +15,19 @@
 		relearning: 'Relearning',
 		review: 'Review',
 		known: 'Known',
-		suspended: 'Ignored'
+		suspended: 'Suspended'
+	};
+	const STATE_HINTS: Record<string, string> = {
+		unknown: 'click to start learning',
+		new: 'click to start learning',
+		learning: 'click to mark known',
+		review: 'click to mark known',
+		relearning: 'click to mark known',
+		known: 'click to untrack',
+		suspended: 'click to restore'
 	};
 	const stateLabel = $derived(state ? (STATE_LABELS[state] ?? state) : null);
+	const hint = $derived(state ? (STATE_HINTS[state] ?? null) : null);
 	const hasContent = $derived(Boolean(translation || stateLabel));
 </script>
 
@@ -26,7 +36,7 @@
 	{#if hasContent}
 		<span class="tt" role="tooltip" aria-hidden="false">
 			{#if translation}<span class="tt-translation">{translation}</span>{/if}
-			{#if stateLabel}<span class="tt-state tt-state-{state}">{stateLabel}</span>{/if}
+			{#if stateLabel}<span class="tt-state tt-state-{state}">{stateLabel}{#if hint}<span class="tt-hint"> · {hint}</span>{/if}</span>{/if}
 		</span>
 	{/if}
 </span>
@@ -63,5 +73,8 @@
 		margin-left: 6px;
 		opacity: 0.75;
 		font-size: 11px;
+	}
+	.tt-hint {
+		font-style: italic;
 	}
 </style>

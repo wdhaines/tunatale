@@ -7,7 +7,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.main import app
 from app.models.language import Language
-from app.models.srs_item import SRSState
+from app.models.srs_item import Direction, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 from app.storage.store import ContentStore
@@ -367,6 +367,9 @@ class TestSetState:
         assert response.status_code == 200
         data = response.json()
         assert data["state"] == "known"
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
+        assert item.directions[Direction.PRODUCTION].dirty_fsrs is True
 
     async def test_set_state_to_ignored_maps_to_suspended(self):
         db = _db()
@@ -382,6 +385,8 @@ class TestSetState:
         assert data["state"] == "suspended"
 
     async def test_set_state_to_learning(self):
+        from datetime import date
+
         db = _db()
         db.add_collocation(_unit("banka", "bank"), language_code="sl")
         rows, _ = db.list_collocations()
@@ -391,7 +396,13 @@ class TestSetState:
             response = await client.post(f"/api/srs/items/{row_id}/state", json={"state": "learning"})
 
         assert response.status_code == 200
-        assert response.json()["state"] == "learning"
+        data = response.json()
+        assert data["state"] == "learning"
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.LEARNING
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
+        assert item.directions[Direction.PRODUCTION].dirty_fsrs is True
+        assert item.directions[Direction.RECOGNITION].due_date == date.today()
 
     async def test_set_state_to_new(self):
         db = _db()
@@ -403,7 +414,10 @@ class TestSetState:
             response = await client.post(f"/api/srs/items/{row_id}/state", json={"state": "new"})
 
         assert response.status_code == 200
-        assert response.json()["state"] == "new"
+        data = response.json()
+        assert data["state"] == "new"
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
 
     async def test_set_state_unknown_id_returns_404(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -439,6 +453,51 @@ class TestSetState:
         assert due_resp.status_code == 200
         due_texts = [i["text"] for i in due_resp.json()["due"]]
         assert "banka" not in due_texts
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
+
+
+class TestUntrack:
+    """Tests for POST /api/srs/items/{id}/untrack."""
+
+    async def test_untrack_never_synced_deletes(self):
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/api/srs/items/{row_id}/untrack")
+            assert response.status_code == 200
+            assert response.json() == {"action": "deleted"}
+
+        assert db.get_collocation_by_id(row_id) is None
+
+    async def test_untrack_synced_row_suspends(self):
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+        with db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET anki_note_id = 12345 WHERE id = ?", (row_id,))
+            conn.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/api/srs/items/{row_id}/untrack")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["action"] == "suspended"
+        assert data["item"]["state"] == "suspended"
+
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.SUSPENDED
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
+
+    async def test_untrack_nonexistent_returns_404(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/items/9999/untrack")
+        assert response.status_code == 404
 
 
 class TestResetSuspend:

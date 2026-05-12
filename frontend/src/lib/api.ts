@@ -403,6 +403,10 @@ export class TunaTaleAPI {
 		});
 	}
 
+	async untrackSRSItem(id: number): Promise<{ action: 'deleted' } | { action: 'suspended'; item: SRSItemDetail }> {
+		return this.request(`/api/srs/items/${id}/untrack`, { method: 'POST' });
+	}
+
 	async syncWithAnki(dryRun = false): Promise<AnkiSyncResult> {
 		return this.request(`/api/anki/sync?dry_run=${dryRun}`, { method: 'POST' });
 	}

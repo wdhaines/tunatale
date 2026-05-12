@@ -257,6 +257,33 @@ class TestDueQueries:
         # word_a (stability=0.086) should come before word_b (stability=0.4)
         assert texts.index("word_a") < texts.index("word_b")
 
+    def test_set_state_by_id_marks_both_directions_dirty(self, srs_db):
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        srs_db.set_state_by_id(row_id, SRSState.KNOWN)
+        item = srs_db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
+        assert item.directions[Direction.PRODUCTION].dirty_fsrs is True
+
+    def test_set_state_by_id_marks_single_direction_dirty(self, srs_db):
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        srs_db.set_state_by_id(row_id, SRSState.LEARNING, direction=Direction.RECOGNITION)
+        item = srs_db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
+        assert item.directions[Direction.PRODUCTION].dirty_fsrs is False
+
+    def test_set_state_by_id_with_mark_dirty_false_does_not_mark_dirty(self, srs_db):
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        srs_db.set_state_by_id(row_id, SRSState.KNOWN, mark_dirty=False)
+        item = srs_db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is False
+        assert item.directions[Direction.PRODUCTION].dirty_fsrs is False
+
     def test_get_due_items_excludes_buried_state(self, srs_db):
         """Buried directions must not appear in get_due_items even if due_date <= today."""
         today = date.today()
@@ -842,6 +869,78 @@ class TestSuspended:
 
         retrieved = srs_db.get_collocation("nasvidenje")
         assert retrieved.state == SRSState.SUSPENDED
+
+    def test_set_suspended_true_marks_dirty(self, srs_db):
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        srs_db.set_suspended(row_id, True)
+        item = srs_db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
+        assert item.directions[Direction.PRODUCTION].dirty_fsrs is True
+
+
+class TestPromoteToLearning:
+    """Tests for promote_to_learning helper."""
+
+    def test_promote_both_directions(self, srs_db):
+        from datetime import date
+
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        srs_db.promote_to_learning(row_id)
+        item = srs_db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.LEARNING
+        assert item.directions[Direction.PRODUCTION].state == SRSState.LEARNING
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
+        assert item.directions[Direction.PRODUCTION].dirty_fsrs is True
+        assert item.directions[Direction.RECOGNITION].due_date == date.today()
+        assert item.directions[Direction.RECOGNITION].last_review is not None
+
+    def test_promote_single_direction(self, srs_db):
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        srs_db.promote_to_learning(row_id, direction=Direction.RECOGNITION)
+        item = srs_db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.LEARNING
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
+        assert item.directions[Direction.PRODUCTION].state == SRSState.NEW
+        assert item.directions[Direction.PRODUCTION].dirty_fsrs is False
+
+
+class TestUntrackCollocation:
+    """Tests for untrack_collocation helper."""
+
+    def test_untrack_never_synced_deletes_row(self, srs_db):
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        result = srs_db.untrack_collocation(row_id)
+        assert result == {"action": "deleted"}
+        assert srs_db.get_collocation_by_id(row_id) is None
+        assert srs_db.get_collocation("banka") is None
+
+    def test_untrack_synced_row_suspends(self, srs_db):
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        with srs_db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET anki_note_id = 12345 WHERE id = ?", (row_id,))
+            conn.commit()
+        result = srs_db.untrack_collocation(row_id)
+        assert result["action"] == "suspended"
+        item = srs_db.get_collocation("banka")
+        assert item is not None
+        assert item.directions[Direction.RECOGNITION].state == SRSState.SUSPENDED
+        assert item.directions[Direction.PRODUCTION].state == SRSState.SUSPENDED
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
+        assert item.directions[Direction.PRODUCTION].dirty_fsrs is True
+
+    def test_untrack_nonexistent_id_noop(self, srs_db):
+        result = srs_db.untrack_collocation(9999)
+        assert result == {"action": "deleted"}
 
 
 class TestLemmaSupport:

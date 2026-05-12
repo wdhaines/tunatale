@@ -744,6 +744,38 @@ class SRSDatabase:
             self._commit(conn)
         return len(texts)
 
+    def untrack_collocation(self, row_id: int) -> dict[str, str]:
+        """Remove a collocation from the user's learning queue.
+
+        If the row was never pushed to Anki (anki_note_id IS NULL), delete it
+        outright (cascade deletes both direction rows). Otherwise suspend both
+        directions and mark dirty_fsrs=1 so the next Anki push suspends the card.
+
+        Returns {"action": "deleted"} or {"action": "suspended"}.
+        """
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT anki_note_id FROM collocations WHERE id = ?", (row_id,)).fetchone()
+            if row is None:
+                return {"action": "deleted"}
+            if row["anki_note_id"] is None:
+                conn.execute(
+                    "DELETE FROM violations WHERE collocation_text = (SELECT text FROM collocations WHERE id = ?)",
+                    (row_id,),
+                )
+                conn.execute("DELETE FROM collocations WHERE id = ?", (row_id,))
+                self._commit(conn)
+                return {"action": "deleted"}
+            conn.execute(
+                "UPDATE collocation_directions SET state = 'suspended', dirty_fsrs = 1 WHERE collocation_id = ?",
+                (row_id,),
+            )
+            conn.execute(
+                "UPDATE collocations SET updated_at = datetime('now') WHERE id = ?",
+                (row_id,),
+            )
+            self._commit(conn)
+            return {"action": "suspended"}
+
     def reset_collocation(self, row_id: int, direction: Direction | None = None) -> None:
         """Reset FSRS scheduling for one or both directions of a collocation."""
         today = date.today().isoformat()
@@ -779,18 +811,63 @@ class SRSDatabase:
         row_id: int,
         state: SRSState,
         direction: Direction | None = None,
+        *,
+        mark_dirty: bool = True,
     ) -> None:
         """Set the state of a collocation directly, bypassing FSRS scheduling."""
+        dirty_clause = ", dirty_fsrs = 1" if mark_dirty else ""
         with self._get_conn() as conn:
             if direction is None:
                 conn.execute(
-                    "UPDATE collocation_directions SET state = ? WHERE collocation_id = ?",
+                    f"UPDATE collocation_directions SET state = ?{dirty_clause} WHERE collocation_id = ?",
                     (state.value, row_id),
                 )
             else:
                 conn.execute(
-                    "UPDATE collocation_directions SET state = ? WHERE collocation_id = ? AND direction = ?",
+                    f"UPDATE collocation_directions SET state = ?{dirty_clause} WHERE collocation_id = ? AND direction = ?",
                     (state.value, row_id, direction.value),
+                )
+            conn.execute(
+                "UPDATE collocations SET updated_at = datetime('now') WHERE id = ?",
+                (row_id,),
+            )
+            self._commit(conn)
+
+    def promote_to_learning(
+        self,
+        row_id: int,
+        direction: Direction | None = None,
+    ) -> None:
+        """Set state to LEARNING with today's due_date and a fresh last_review.
+
+        This is NOT an FSRS grade event — no revlog row is written. The caller
+        is responsible for ensuring the collocation exists.
+
+        Note: `left` and `due_at` are left as NULL, so sync_push routes to
+        set_due_date (the new/review branch at sync.py:1219), not to
+        set_learning_state. Anki receives "due today" without learning-step
+        metadata — TunaTale shows LEARNING, Anki treats it as effectively new.
+        This matches the "no FSRS grade" intent but creates a silent asymmetry
+        between TT and Anki views.
+        """
+        today = date.today().isoformat()
+        now = datetime.now(UTC)
+        now_ms = int(now.timestamp() * 1000)
+        now_iso = now.isoformat()
+        with self._get_conn() as conn:
+            if direction is None:
+                conn.execute(
+                    "UPDATE collocation_directions SET state = 'learning',"
+                    " due_date = ?, last_review = ?, last_review_time_ms = ?,"
+                    " dirty_fsrs = 1 WHERE collocation_id = ?",
+                    (today, now_iso, now_ms, row_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE collocation_directions SET state = 'learning',"
+                    " due_date = ?, last_review = ?, last_review_time_ms = ?,"
+                    " dirty_fsrs = 1 WHERE collocation_id = ? AND direction = ?",
+                    (today, now_iso, now_ms, row_id, direction.value),
                 )
             conn.execute(
                 "UPDATE collocations SET updated_at = datetime('now') WHERE id = ?",

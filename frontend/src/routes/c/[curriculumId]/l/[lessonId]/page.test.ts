@@ -11,6 +11,7 @@ vi.mock('$lib/api', () => ({
 		markAsListened: vi.fn(),
 		createSRSItem: vi.fn(),
 		setSRSItemState: vi.fn(),
+		untrackSRSItem: vi.fn(),
 		syncWithAnki: vi.fn(),
 		audioUrl: vi.fn((id: string) => `/api/audio/${id}`)
 	}
@@ -32,6 +33,7 @@ const mockGetTranscript = vi.mocked(api.getLessonTranscript);
 const mockMarkAsListened = vi.mocked(api.markAsListened);
 const mockCreateSRSItem = vi.mocked(api.createSRSItem);
 const mockSetSRSItemState = vi.mocked(api.setSRSItemState);
+const mockUntrackSRSItem = vi.mocked(api.untrackSRSItem);
 const mockSyncWithAnki = vi.mocked(api.syncWithAnki);
 
 const curriculum = { id: 'cid-1', topic: 'Coffee', language_code: 'sl', days: 3 };
@@ -340,6 +342,32 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 		});
 	});
 
+	it('clicking a word in known state calls untrackSRSItem', async () => {
+		const transcriptWithWord = {
+			lesson_id: 'l1',
+			key_phrases: [],
+			dialogue_lines: [
+				{
+					role: 'Petra',
+					words: [{ surface: 'zdravo', lemma: 'zdravo', srs_state: 'known' as const, srs_item_id: 42, translation: null, collocation_span_id: null, collocation_start: false, collocation_srs_state: null, collocation_lemma: null, collocation_translation: null }]
+				}
+			]
+		};
+		mockUntrackSRSItem.mockResolvedValue({ action: 'deleted' });
+		mockGetTranscript.mockResolvedValue(transcriptWithWord);
+
+		const { findByRole } = render(Page, {
+			props: { data: { curriculum, lesson, audio, transcript: transcriptWithWord } }
+		});
+
+		await fireEvent.click(await findByRole('button', { name: 'zdravo' }));
+
+		await waitFor(() => {
+			expect(mockUntrackSRSItem).toHaveBeenCalledWith(42);
+		});
+		expect(mockSetSRSItemState).not.toHaveBeenCalled();
+	});
+
 	describe('collocation click', () => {
 		const transcriptWithCollocation = {
 			lesson_id: 'l1',
@@ -419,6 +447,34 @@ describe('/c/[curriculumId]/l/[lessonId] page', () => {
 			await waitFor(() => {
 				expect(mockSetSRSItemState).toHaveBeenCalledWith(77, 'learning');
 			});
+		});
+
+		it('clicking a collocation in known state calls untrackSRSItem', async () => {
+			const transcriptKnownColl = {
+				...transcriptWithCollocation,
+				dialogue_lines: [
+					{
+						role: 'Petra',
+						words: transcriptWithCollocation.dialogue_lines[0].words.map((w) => ({
+							...w,
+							collocation_srs_state: 'known'
+						}))
+					}
+				]
+			};
+			mockUntrackSRSItem.mockResolvedValue({ action: 'deleted' });
+			mockGetTranscript.mockResolvedValue(transcriptKnownColl);
+
+			const { container } = render(Page, {
+				props: { data: { curriculum, lesson, audio, transcript: transcriptKnownColl } }
+			});
+
+			await fireEvent.click(container.querySelector('.collocation-span') as HTMLElement);
+
+			await waitFor(() => {
+				expect(mockUntrackSRSItem).toHaveBeenCalledWith(77);
+			});
+			expect(mockSetSRSItemState).not.toHaveBeenCalled();
 		});
 
 		it('shows error when collocation state update fails', async () => {

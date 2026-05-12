@@ -559,9 +559,24 @@ async def set_item_state(item_id: int, body: SetStateRequest, request: Request):
     db = request.app.state.srs_db
     if db.get_collocation_by_id(item_id) is None:
         raise HTTPException(status_code=404, detail="Item not found")
-    db.set_state_by_id(item_id, _STATE_MAP[body.state])
+    if body.state == "learning":
+        db.promote_to_learning(item_id)
+    else:
+        db.set_state_by_id(item_id, _STATE_MAP[body.state])
     row_id, item, lang = db.get_collocation_by_id(item_id)
     return _item_to_dict(row_id, item, lang)
+
+
+@router.post("/items/{item_id}/untrack", status_code=200)
+async def untrack_item(item_id: int, request: Request):
+    db = request.app.state.srs_db
+    if db.get_collocation_by_id(item_id) is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    result = db.untrack_collocation(item_id)
+    if result["action"] == "deleted":
+        return {"action": "deleted"}
+    row_id, item, lang = db.get_collocation_by_id(item_id)
+    return {"action": "suspended", "item": _item_to_dict(row_id, item, lang)}
 
 
 @router.post("/items/{item_id}/suspend", status_code=200)
