@@ -798,6 +798,89 @@ def _queue_item_to_dict(row_id: int, item: SRSItem, lang: str, direction: Direct
     return base
 
 
+def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
+    """Build the post-spread `live_main` order from current DB state.
+
+    Layer 29: exposed as a module-level function so `sync_pull` can eagerly
+    rebuild the freeze immediately on sync completion, instead of waiting for
+    the next `/review-queue` request. Anki rebuilds its queue at session
+    open / sync; mirroring the rebuild moment keeps the first-new-card position
+    aligned across apps right after sync.
+
+    Mirrors the body of `get_review_queue` up through the spread step. Does NOT
+    apply the cache reconciliation, the learning cards, or the collapse hack —
+    those live in the route handler where the response is shaped.
+    """
+    today = datetime.date.today()
+
+    db.unbury_if_needed(today)
+
+    cap, _ = resolve_daily_new_cap(db)
+    spread, _ = resolve_new_spread(db)
+    bury_new, _ = resolve_bury_new(db)
+    bury_review, _ = resolve_bury_review(db)
+
+    introduced_today = db.count_new_introduced_today(today)
+    new_quota = max(0, cap - introduced_today)
+    buried = db.list_collocations_reviewed_today(today)
+
+    due_rec = db.get_due_items(today, Direction.RECOGNITION)
+    due_prod = db.get_due_items(today, Direction.PRODUCTION)
+    due = _merge_by_retrievability_ascending(due_rec, due_prod, today)
+    if bury_review:
+        due = [t for t in due if t[0] not in buried]
+
+    _NEW_OVERFETCH = max(new_quota * 4, new_quota + 50)
+    new_rec = db.get_new_items(direction=Direction.RECOGNITION, limit=_NEW_OVERFETCH)
+    new_prod = db.get_new_items(direction=Direction.PRODUCTION, limit=_NEW_OVERFETCH)
+    new_combined = _merge_directions(new_rec, new_prod)
+    if bury_new:
+        new_combined = [t for t in new_combined if t[0] not in buried]
+
+    learning_rec = db.get_learning_items(direction=Direction.RECOGNITION)
+    learning_prod = db.get_learning_items(direction=Direction.PRODUCTION)
+    learning_collocation_ids = {row_id for row_id, _, _ in learning_rec}
+    learning_collocation_ids.update(row_id for row_id, _, _ in learning_prod)
+
+    nonlearning_due = [t for t in due if t[1].directions[t[3]].state not in (SRSState.LEARNING, SRSState.RELEARNING)]
+    nonlearning_new = [t for t in new_combined if t[0] not in learning_collocation_ids]
+
+    seen_collocation_ids: set[int] = set(learning_collocation_ids)
+
+    def _bury(cards, when):
+        survivors = []
+        for t in cards:
+            if t[0] in seen_collocation_ids and when:
+                continue
+            seen_collocation_ids.add(t[0])
+            survivors.append(t)
+        return survivors
+
+    nonlearning_due = _bury(nonlearning_due, bury_review)
+    nonlearning_new = _bury(nonlearning_new, bury_new)
+    nonlearning_new.sort(key=lambda t: 0 if t[3] == Direction.RECOGNITION else 1)
+    nonlearning_new = nonlearning_new[:new_quota]
+
+    if spread == 1:
+        return nonlearning_due + nonlearning_new
+    if spread == 2:
+        return nonlearning_new + nonlearning_due
+    return _spread_mix(nonlearning_due, nonlearning_new)
+
+
+def build_and_freeze_main_queue(db) -> None:
+    """Compute live_main and write it to session_main_queue cache.
+
+    Called by sync_pull post-ingest so the freeze moment is at sync completion,
+    matching when Anki rebuilds its own queue. Without this, TT freezes on the
+    first /review-queue request after sync — which can be much later, with a
+    different pool state, causing drift on the very-first-new-card position.
+    """
+    today = datetime.date.today()
+    live_main = _compute_live_main(db)
+    set_session_main_queue(db, today, [(t[0], t[3].value) for t in live_main])
+
+
 @router.get("/review-queue", status_code=200)
 async def get_review_queue(request: Request, session_start: bool = False) -> dict:
     """Return the entire ordered review queue in one shot.
@@ -816,105 +899,23 @@ async def get_review_queue(request: Request, session_start: bool = False) -> dic
     today = datetime.date.today()
     now = datetime.datetime.now(datetime.UTC)
 
-    # Anki parity: run the daily unbury sweep before reading any queue state.
-    # Idempotent within a local day (cached via anki_state_cache['last_unbury_day']).
-    db.unbury_if_needed(today)
-
     if session_start:
         advance_learning_cutoff(db, now)
 
-    cap, _ = resolve_daily_new_cap(db)
-    spread, _ = resolve_new_spread(db)
-    bury_new, _ = resolve_bury_new(db)
-    bury_review, _ = resolve_bury_review(db)
+    # Build live_main via the shared helper (also called by sync_pull eager
+    # rebuild). The unbury sweep runs inside _compute_live_main.
+    live_main = _compute_live_main(db)
 
-    # Anki parity: the new-card budget for the queue is `cap - new_studied`,
-    # not `cap`. Reconstructed from TT state (`prior_state='new'` + today's
-    # `last_review`); without this subtraction the Intersperser ratio
-    # (R+1)/(N+1) diverges from Anki's mid-session and the queue head drifts.
-    introduced_today = db.count_new_introduced_today(today)
-    new_quota = max(0, cap - introduced_today)
-
-    buried = db.list_collocations_reviewed_today(today)
-
-    # 1. Due review cards: recognition + production pooled and sorted by retrievability ASC
-    due_rec = db.get_due_items(today, Direction.RECOGNITION)
-    due_prod = db.get_due_items(today, Direction.PRODUCTION)
-    due = _merge_by_retrievability_ascending(due_rec, due_prod, today)
-
-    if bury_review:
-        due = [t for t in due if t[0] not in buried]
-
-    # 2. New cards: respect quota (cap minus already-introduced-today) across
-    # BOTH directions, sibling-buried, ordered by anki_due then anki_card_id.
-    # Pull more than `new_quota` so that sibling-bury (applied below at the
-    # proactive-bury step) doesn't leave us under quota — Anki's `add_new_card`
-    # iterates the entire pool, skipping sibling-buried cards and only
-    # decrementing the limit on successful adds (gathering.rs:157-169). The
-    # final cap is applied AFTER proactive sibling-bury so we end up with
-    # exactly `new_quota` non-buried collocations in the new bucket.
-    _NEW_OVERFETCH = max(new_quota * 4, new_quota + 50)
-    new_rec = db.get_new_items(direction=Direction.RECOGNITION, limit=_NEW_OVERFETCH)
-    new_prod = db.get_new_items(direction=Direction.PRODUCTION, limit=_NEW_OVERFETCH)
-    new_combined = _merge_directions(new_rec, new_prod)
-    if bury_new:
-        new_combined = [t for t in new_combined if t[0] not in buried]
-
-    # 3. Extract learning-state cards (Anki queue=1 behavior: they go first).
-    #    Also remove any new cards whose collocation has a learning direction.
-    #    Filter by due_at: only include cards with due_at <= now (or None for legacy).
-    # Anki parity for queue=1: pull learning cards via a dedicated query that
-    # ignores due_date. The daily-bucket filter (`due_date <= today`) is correct
-    # for REVIEW cards but excludes any LEARNING card whose 10-minute step
-    # crossed UTC midnight (so due_date=tomorrow even though the user is still
-    # on today). It also bypasses the bury_review filter — Anki's queue=1
-    # dispatcher does not honour sibling-bury within the same day.
+    # Learning cards live alongside main — gather them separately so they can
+    # surface as queue=1 (ready) at the head and queue=1-future (pending) at
+    # the tail. Anki's queue dispatcher dispatches intraday-learning first
+    # (queue/mod.rs:149-157).
     learning_rec = db.get_learning_items(direction=Direction.RECOGNITION)
     learning_prod = db.get_learning_items(direction=Direction.PRODUCTION)
     learning_cards: list[tuple[int, SRSItem, str, Direction]] = [
         (row_id, item, lang, Direction.RECOGNITION) for row_id, item, lang in learning_rec
     ]
     learning_cards.extend((row_id, item, lang, Direction.PRODUCTION) for row_id, item, lang in learning_prod)
-
-    # The non-learning pool is whatever the daily due-date query returned, minus
-    # any rows whose state somehow resolved to LEARNING (defensive — get_due_items
-    # already excludes 'buried'/'suspended').
-    nonlearning_due = [t for t in due if t[1].directions[t[3]].state not in (SRSState.LEARNING, SRSState.RELEARNING)]
-
-    learning_collocation_ids = {t[0] for t in learning_cards}
-    nonlearning_new = [t for t in new_combined if t[0] not in learning_collocation_ids]
-
-    # Anki-parity proactive sibling bury (rslib/.../queue/builder/gathering.rs).
-    # As Anki gathers cards in priority order — intraday learning, then due
-    # reviews (retrievability-asc), then new — it tracks the note id of every
-    # card it adds. A later card whose note is already in the queue gets buried
-    # if the relevant flag is on. We mirror it on collocation_id (TT's note
-    # equivalent).
-    seen_collocation_ids: set[int] = set(learning_collocation_ids)
-
-    def _bury_siblings_in_queue(
-        cards: list[tuple[int, SRSItem, str, Direction]],
-        bury_when_seen: bool,
-    ) -> list[tuple[int, SRSItem, str, Direction]]:
-        survivors: list[tuple[int, SRSItem, str, Direction]] = []
-        for t in cards:
-            if t[0] in seen_collocation_ids and bury_when_seen:
-                continue
-            seen_collocation_ids.add(t[0])
-            survivors.append(t)
-        return survivors
-
-    nonlearning_due = _bury_siblings_in_queue(nonlearning_due, bury_review)
-    nonlearning_new = _bury_siblings_in_queue(nonlearning_new, bury_new)
-    # Anki-parity Template stable sort over the post-bury new pool
-    # (rslib `queue/builder/sorting.rs:14-36`, NewCardSortOrder::Template).
-    # Gather order — anki_due DESC inside each ord group — is preserved by the
-    # stable sort, so the head of the new bucket is the highest-due card whose
-    # surviving sibling sits in ord=0.
-    nonlearning_new.sort(key=lambda t: 0 if t[3] == Direction.RECOGNITION else 1)
-    # Final cap: only `new_quota` distinct collocations may be introduced today
-    # (matches Anki's RemainingLimits decrement after each successful add).
-    nonlearning_new = nonlearning_new[:new_quota]
 
     # Sort learning cards by TT's `due_at` (authoritative after a fresh grade,
     # before sync has refreshed Anki's `anki_due`), then anki_due, then
@@ -954,24 +955,7 @@ async def get_review_queue(request: Request, session_start: bool = False) -> dic
         else:
             pending_learning.append(t)
 
-    # 4. Apply newSpread to nonlearning cards only
-    if spread == 1:  # new_after_review
-        live_main = nonlearning_due + nonlearning_new
-    elif spread == 2:  # new_before_review
-        live_main = nonlearning_new + nonlearning_due
-    else:  # 0 = mix: interleave one new every N reviews
-        # Anki parity: the intersperser ratio uses the *current* pool sizes,
-        # matching what Anki sees when it rebuilds at sync completion (per
-        # `requires_study_queue_rebuild`, scheduler/queue/mod.rs:211-215).
-        # Anki's gather phase (gathering.rs) gathers cards that are *currently*
-        # queue=2 due≤today — graded-today cards have moved out of queue=2 and
-        # aren't counted. So `_spread_mix`'s natural list-length ratio
-        # `(one_len+1)/(two_len+1)` matches Anki's intersperser inputs exactly
-        # at the moment of rebuild. (An earlier override that added
-        # reviewed_today to R_start was based on the wrong model — that "Anki
-        # built once at session start with the full pool", which is false when
-        # sync triggers a rebuild.)
-        live_main = _spread_mix(nonlearning_due, nonlearning_new)
+    # `live_main` was computed above by `_compute_live_main` (spread already applied).
 
     # Anki parity: freeze the main queue per day. Anki builds `main` once at
     # deck-open and pops the head as cards are graded — it does NOT re-run the

@@ -412,6 +412,18 @@ TT did this in three separated steps (`get_new_items(REC)`, `get_new_items(PROD)
 
 ---
 
+## Layer 29 — Eager session_main_queue rebuild at sync_pull
+
+**Trigger.** Mid-session, the user reported TT serving a review card (`krožnik`) while Anki served a new card (`zdravo`) at the same position in their progress. Both apps had near-identical pools (TT: 136 reviews + 28 new; Anki: 133 + 28). The cause: TT and Anki froze their queues at *different moments*. Anki rebuilds at session open; TT's `sync_pull` previously only *cleared* `session_main_queue`, deferring the rebuild to the next `/review-queue` request. If hours passed between sync and the next request, the pool shifted and the frozen orders diverged by a slot or two — enough to make the first-new card land on different positions of the spread.
+
+**Fix.** `sync_pull` now eagerly rebuilds the cache via `build_and_freeze_main_queue(db)` immediately after `clear_session_main_queue`. The freeze moment is the sync moment, matching Anki's `requires_study_queue_rebuild`. Extracted `_compute_live_main(db)` from inside `get_review_queue` so the rebuild logic has one home (deduped: route handler and sync_pull both call it).
+
+**Files.** `backend/app/api/srs.py` (new `_compute_live_main` + `build_and_freeze_main_queue`; `get_review_queue` refactored to call the helper), `backend/app/anki/sync.py:1257-1267` (sync_pull now calls build + freeze), `backend/tests/test_anki_sync_pull.py` (updated `test_sync_pull_clears_…` to `test_sync_pull_rebuilds_…` reflecting the new contract).
+
+**Aftermath / lesson.** The stale-cache trap from Layer 28's aftermath is now eliminated for the sync_pull path. Deploy-time stale cache (cache held in DB across backend restart) is still a concern — `clear_session_main_queue` from a manual diagnostic remains the right escape hatch when reasoning about ordering bugs against an old freeze. Documented in principle 2 of `.claude/rules/anki-queue-parity.md`.
+
+---
+
 ## Cleanup pass (post-Layer 23)
 
 After 23 layers, swept for dead code and duplication. Behavior unchanged.

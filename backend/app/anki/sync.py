@@ -1254,15 +1254,19 @@ class AnkiSync:
 
             advance_learning_cutoff(self._db, datetime.fromtimestamp(max_revlog_ms / 1000, UTC))
 
-        # Anki parity: invalidate the frozen session_main_queue on sync completion.
-        # Anki's `requires_study_queue_rebuild` (rslib scheduler/queue/mod.rs:211-215)
-        # forces a queue rebuild after sync round-trip; without mirroring this, a card
-        # whose Anki-side state transitioned (e.g. learning→review post-graduation)
-        # stays at its stale cached position instead of moving to its current R-asc spot.
+        # Anki parity: invalidate AND eagerly rebuild the frozen session_main_queue
+        # on sync completion. Anki's `requires_study_queue_rebuild` (rslib
+        # scheduler/queue/mod.rs:211-215) forces a queue rebuild after sync round-trip;
+        # mirroring it lazily (clear-only, rebuild-on-next-request) means TT freezes
+        # at a different moment than Anki's session-open rebuild, leading to off-by-N
+        # drift on the first-new-card position. The eager rebuild aligns the freeze
+        # moments. Layer 29.
         if not dry_run:
+            from app.api.srs import build_and_freeze_main_queue
             from app.srs.queue_stats import clear_session_main_queue
 
             clear_session_main_queue(self._db)
+            build_and_freeze_main_queue(self._db)
         return report
 
     def sync_push(self, dry_run: bool = False, force_fsrs: bool = False) -> PushReport:

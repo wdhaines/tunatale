@@ -1496,27 +1496,86 @@ class TestSyncPullInvalidatesSessionMainQueue:
     of moving to its current R-asc spot.
     """
 
-    def test_sync_pull_clears_session_main_queue_on_completion(self):
-        """Non-dry-run sync_pull wipes session_main_queue so next call rebuilds."""
+    def test_sync_pull_rebuilds_session_main_queue_on_completion(self):
+        """Layer 29: non-dry-run sync_pull EAGERLY REBUILDS session_main_queue —
+        the stale placeholder is replaced with a freshly computed order so the
+        freeze moment matches Anki's session-open rebuild."""
         from datetime import date
 
         db = _make_tt_db()
         guid = _add_banka(db)
 
-        # Seed a stale cache from earlier today.
+        # Seed a stale cache from earlier today with bogus row ids.
         today = date.today()
-        from app.srs.queue_stats import set_session_main_queue
+        from app.srs.queue_stats import get_session_main_queue, set_session_main_queue
 
-        set_session_main_queue(db, today, [(1, "recognition"), (2, "production")])
-        assert db.get_anki_state_cache("session_main_queue") is not None
+        set_session_main_queue(db, today, [(9999, "recognition"), (8888, "production")])
 
         # Sync ingests a card record (state may or may not change).
         card = make_card_record(anki_card_id=90010, ord=0, reps=5, stability=7.5, difficulty=4.8)
         records = [make_note_record(anki_guid=guid, cards=[card])]
         AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
 
-        # Cache row must be gone — Anki rebuilds on sync, TT mirrors by invalidating.
-        assert db.get_anki_state_cache("session_main_queue") is None
+        # Cache must hold the rebuilt order — the bogus placeholders are gone.
+        cached = get_session_main_queue(db, today)
+        assert cached is not None, "sync_pull must rebuild, not just clear"
+        assert (9999, "recognition") not in cached
+        assert (8888, "production") not in cached
+
+    def test_sync_pull_rebuilds_session_main_queue_eagerly(self):
+        """sync_pull must REBUILD session_main_queue (not just clear) so the
+        cached order reflects the pool at sync time. Otherwise TT's first /review-
+        queue request can happen long after sync, freezing a queue from a different
+        pool moment than Anki's session-start rebuild."""
+        from datetime import date
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = _make_tt_db()
+        # Add one review-state card and one new-state card. After sync, the
+        # cache should hold a non-empty rebuilt order.
+        today = date.today()
+        for txt in ("rev_card", "new_card"):
+            db.add_collocation(
+                SyntacticUnit(text=txt, translation="t", word_count=1, difficulty=1, source="test"),
+                language_code="sl",
+            )
+        rows, _ = db.list_collocations(search="rev_card", limit=1)
+        row_id, _, _ = rows[0]
+        db.update_direction_by_id(
+            row_id,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.REVIEW,
+                due_date=today,
+                stability=1.0,
+                reps=5,
+                anki_card_id=100,
+            ),
+        )
+
+        # Seed stale cache and let sync_pull run.
+        from app.srs.queue_stats import set_session_main_queue
+
+        set_session_main_queue(db, today, [(9999, "recognition")])
+
+        guid = _add_banka(db)
+        card = make_card_record(anki_card_id=90010, ord=0, reps=5, stability=7.5, difficulty=4.8)
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        # Cache must now hold the freshly rebuilt order, not be empty and not be
+        # the stale placeholder.
+        from app.srs.queue_stats import get_session_main_queue
+
+        cached = get_session_main_queue(db, today)
+        assert cached is not None, "sync_pull should eagerly rebuild — not leave the cache empty"
+        # The stale (9999, "recognition") placeholder must be gone.
+        assert (9999, "recognition") not in cached
+        # rev_card's row_id should be in the rebuilt order (it's the only review).
+        assert (row_id, "recognition") in cached
 
     def test_sync_pull_dry_run_does_not_clear_session_main_queue(self):
         """Dry-run must not mutate the cache."""
