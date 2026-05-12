@@ -1,6 +1,7 @@
 <script lang="ts">
 	import WordSpan from '$lib/WordSpan.svelte';
 	import Tooltip from './Tooltip.svelte';
+	import { api } from '$lib/api';
 	import type { LessonDetail, TranscriptData, WordToken } from '$lib/api';
 	import { buildScenes, fallbackScenes } from '$lib/transcriptScenes';
 
@@ -50,6 +51,16 @@
 	let selection = $state<{ lineIndex: number; startIdx: number; endIdx: number } | null>(null);
 	let dragAnchor = $state<{ lineIndex: number; wordIdx: number } | null>(null);
 	let pendingTranslation = $state('');
+
+	let translateLoading = $state(false);
+	let translateError = $state('');
+
+	// Add-phrase section state
+	let showAddPhrase = $state(false);
+	let addPhraseText = $state('');
+	let addPhraseTranslation = $state('');
+	let addPhraseLoading = $state(false);
+	let addPhraseError = $state('');
 
 	// Progressive-disclosure toggles for variations
 	let showSlow = $state(false);
@@ -184,6 +195,55 @@
 	function cancelPhrase() {
 		selectionMode = false;
 		resetSelection();
+	}
+
+	async function fetchTranslation(lineIndex: number) {
+		if (!selection || !lesson) return;
+		const text = transcript.dialogue_lines[lineIndex].words
+			.slice(selection.startIdx, selection.endIdx + 1)
+			.map((w: WordToken) => w.surface)
+			.join(' ');
+		translateLoading = true;
+		translateError = '';
+		try {
+			const { translation } = await api.translateTerm(text, lesson.language_code);
+			pendingTranslation = translation;
+		} catch {
+			translateError = 'Translation failed. Check connection and try again.';
+		} finally {
+			translateLoading = false;
+		}
+	}
+
+	async function fetchAddPhraseTranslation() {
+		if (!addPhraseText.trim() || !lesson) return;
+		addPhraseLoading = true;
+		addPhraseError = '';
+		try {
+			const { translation } = await api.translateTerm(addPhraseText.trim(), lesson.language_code);
+			addPhraseTranslation = translation;
+		} catch {
+			addPhraseError = 'Translation failed. Check connection and try again.';
+		} finally {
+			addPhraseLoading = false;
+		}
+	}
+
+	function submitAddPhrase() {
+		if (!addPhraseText.trim()) return;
+		const text = addPhraseText.trim();
+		const word_count = text.split(/\s+/).length;
+		onCreatePhrase?.({
+			text,
+			word_count,
+			translation: addPhraseTranslation,
+			lineIndex: -1, // sentinel: not from transcript; handler tolerates
+			startIdx: -1,  // sentinel: not from transcript; handler tolerates
+			endIdx: -1,    // sentinel: not from transcript; handler tolerates
+		});
+		addPhraseText = '';
+		addPhraseTranslation = '';
+		showAddPhrase = false;
 	}
 
 	function collocationClassFor(state: string): string {
@@ -388,14 +448,45 @@
 								placeholder="translation (optional)"
 								bind:value={pendingTranslation}
 							/>
+							<button
+								class="phrase-translate-btn"
+								onclick={() => fetchTranslation(lineIndex)}
+								disabled={translateLoading}
+								title="Translate with AI"
+							>{translateLoading ? '…' : '✨'}</button>
 							<button class="confirm-create" onclick={() => confirmPhrase(lineIndex, line.words)}>Create</button>
 							<button class="confirm-cancel" onclick={cancelPhrase}>Cancel</button>
+							{#if translateError}
+								<span class="phrase-error">{translateError}</span>
+							{/if}
 						</div>
 					{/if}
 				{/each}
 			{/each}
 		</div>
 	{/if}
+
+	<div class="add-phrase-section">
+		<button class="add-phrase-toggle" onclick={() => (showAddPhrase = !showAddPhrase)}>
+			Add phrase… {showAddPhrase ? '▴' : '▾'}
+		</button>
+		{#if showAddPhrase}
+			<div class="add-phrase-form">
+				<input class="add-phrase-text" type="text" placeholder="phrase text" bind:value={addPhraseText} />
+				<input class="add-phrase-translation" type="text" placeholder="translation" bind:value={addPhraseTranslation} />
+				<button
+					class="add-phrase-translate-btn"
+					onclick={fetchAddPhraseTranslation}
+					disabled={addPhraseLoading || !addPhraseText.trim()}
+					title="Translate with AI"
+				>{addPhraseLoading ? '…' : '✨'}</button>
+				<button class="add-phrase-create" onclick={submitAddPhrase} disabled={!addPhraseText.trim()}>Create</button>
+				{#if addPhraseError}
+					<span class="phrase-error">{addPhraseError}</span>
+				{/if}
+			</div>
+		{/if}
+	</div>
 
 	<div class="listen-footer">
 		<button
@@ -638,6 +729,19 @@
 		padding: 0.15rem 0.4rem;
 		font-size: 0.85rem;
 	}
+	.phrase-translate-btn {
+		padding: 0.2rem 0.4rem;
+		background: transparent;
+		border: 1px solid var(--color-border, #e5e7eb);
+		border-radius: 3px;
+		cursor: pointer;
+		font-size: 0.85rem;
+		line-height: 1;
+	}
+	.phrase-translate-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
 	.confirm-create {
 		padding: 0.2rem 0.6rem;
 		background: var(--color-primary, #2563eb);
@@ -654,6 +758,77 @@
 		border-radius: 3px;
 		cursor: pointer;
 		font-size: 0.8rem;
+	}
+
+	.phrase-error {
+		color: var(--color-danger, #dc2626);
+		font-size: 0.75rem;
+		flex-basis: 100%;
+	}
+	.add-phrase-section {
+		margin-top: 1rem;
+		padding: 0.5rem 0;
+		border-top: 1px solid var(--color-border, #e5e7eb);
+	}
+	.add-phrase-toggle {
+		font-size: 0.8rem;
+		padding: 0.3rem 0.75rem;
+		background: transparent;
+		border: 1px solid var(--color-border, #e5e7eb);
+		border-radius: 4px;
+		cursor: pointer;
+		color: var(--color-muted, #6b7280);
+	}
+	.add-phrase-toggle:hover {
+		border-color: var(--color-primary, #2563eb);
+		color: var(--color-primary, #2563eb);
+	}
+	.add-phrase-form {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.5rem 0.75rem;
+		margin-top: 0.4rem;
+		background: rgba(99, 102, 241, 0.06);
+		border: 1px solid rgba(99, 102, 241, 0.2);
+		border-radius: 4px;
+		font-size: 0.875rem;
+	}
+	.add-phrase-form input {
+		flex: 1;
+		border: 1px solid var(--color-border, #e5e7eb);
+		border-radius: 3px;
+		padding: 0.25rem 0.4rem;
+		font-size: 0.85rem;
+	}
+	.add-phrase-form button {
+		margin-top: 0;
+	}
+	.add-phrase-create {
+		padding: 0.2rem 0.6rem;
+		background: var(--color-primary, #2563eb);
+		color: white;
+		border: none;
+		border-radius: 3px;
+		cursor: pointer;
+		font-size: 0.8rem;
+	}
+	.add-phrase-create:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.add-phrase-translate-btn {
+		padding: 0.2rem 0.4rem;
+		background: transparent;
+		border: 1px solid var(--color-border, #e5e7eb);
+		border-radius: 3px;
+		cursor: pointer;
+		font-size: 0.85rem;
+		line-height: 1;
+	}
+	.add-phrase-translate-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	@media (max-width: 640px) {

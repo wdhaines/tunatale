@@ -4,7 +4,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent, waitFor } from '@testing-library/svelte';
 import Transcript from './Transcript.svelte';
+import { api } from '$lib/api';
 import type { LessonDetail, TranscriptData } from '$lib/api';
+
+vi.mock('$lib/api', () => ({
+	api: { translateTerm: vi.fn() }
+}));
 
 const baseTranscript: TranscriptData = {
 	lesson_id: 'l1',
@@ -971,6 +976,262 @@ describe('Transcript', () => {
 			expect(onCreatePhrase).toHaveBeenCalledWith(
 				expect.objectContaining({ translation: 'city centre' })
 			);
+		});
+
+		it('✨ button calls api.translateTerm and fills the translation input', async () => {
+			const mockTranslate = vi.mocked(api.translateTerm).mockResolvedValue({ translation: 'in the city centre' });
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptForDrag, lesson: { id: 'l1', title: 't', language_code: 'sl', key_phrases: [], sections: [] } })
+			});
+
+			const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+			const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+			await fireEvent.pointerDown(centruSpan);
+			await fireEvent.pointerMove(mestaSpan);
+			await fireEvent.pointerUp(mestaSpan);
+
+			const translateBtn = container.querySelector('.phrase-translate-btn') as HTMLElement;
+			expect(translateBtn).toBeTruthy();
+			await fireEvent.click(translateBtn);
+
+			await waitFor(() => {
+				const input = container.querySelector('.phrase-translation-input') as HTMLInputElement;
+				expect(input.value).toBe('in the city centre');
+			});
+		});
+
+		it('✨ button is disabled while loading', async () => {
+			let resolvePromise: (v: { translation: string }) => void;
+			const pending = new Promise<{ translation: string }>((resolve) => { resolvePromise = resolve; });
+			vi.mocked(api.translateTerm).mockReturnValue(pending);
+
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptForDrag, lesson: { id: 'l1', title: 't', language_code: 'sl', key_phrases: [], sections: [] } })
+			});
+
+			const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+			const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+			await fireEvent.pointerDown(centruSpan);
+			await fireEvent.pointerMove(mestaSpan);
+			await fireEvent.pointerUp(mestaSpan);
+
+			const translateBtn = container.querySelector('.phrase-translate-btn') as HTMLElement;
+			await fireEvent.click(translateBtn);
+
+			expect(translateBtn.hasAttribute('disabled')).toBe(true);
+			expect(translateBtn.textContent).toBe('…');
+
+			resolvePromise!({ translation: 'in the city centre' });
+		});
+
+		it('✨ button error shows error message and does not change translation input', async () => {
+			vi.mocked(api.translateTerm).mockRejectedValue(new Error('LLM error'));
+
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptForDrag, lesson: { id: 'l1', title: 't', language_code: 'sl', key_phrases: [], sections: [] } })
+			});
+
+			const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+			const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+			await fireEvent.pointerDown(centruSpan);
+			await fireEvent.pointerMove(mestaSpan);
+			await fireEvent.pointerUp(mestaSpan);
+
+			const translateBtn = container.querySelector('.phrase-translate-btn') as HTMLElement;
+			await fireEvent.click(translateBtn);
+
+			await waitFor(() => {
+				const input = container.querySelector('.phrase-translation-input') as HTMLInputElement;
+				expect(input.value).toBe('');
+				const errorEl = container.querySelector('.phrase-error');
+				expect(errorEl).toBeTruthy();
+				expect(errorEl!.textContent).toContain('Translation failed');
+			});
+		});
+
+		it('✨ after successful translate, edit then Create includes edited value', async () => {
+			vi.mocked(api.translateTerm).mockResolvedValue({ translation: 'in the city centre' });
+			const onCreatePhrase = vi.fn();
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptForDrag, onCreatePhrase, lesson: { id: 'l1', title: 't', language_code: 'sl', key_phrases: [], sections: [] } })
+			});
+
+			const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+			const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+			await fireEvent.pointerDown(centruSpan);
+			await fireEvent.pointerMove(mestaSpan);
+			await fireEvent.pointerUp(mestaSpan);
+
+			await fireEvent.click(container.querySelector('.phrase-translate-btn') as HTMLElement);
+			await waitFor(() => {
+				const input = container.querySelector('.phrase-translation-input') as HTMLInputElement;
+				expect(input.value).toBe('in the city centre');
+			});
+
+			const translationInput = container.querySelector('.phrase-translation-input') as HTMLInputElement;
+			await fireEvent.input(translationInput, { target: { value: 'custom edit' } });
+
+			await fireEvent.click(container.querySelector('.phrase-confirm-bar button.confirm-create') as HTMLElement);
+
+			expect(onCreatePhrase).toHaveBeenCalledWith(
+				expect.objectContaining({ translation: 'custom edit' })
+			);
+		});
+	});
+
+	describe('add-phrase collapsed section', () => {
+		const transcriptEmpty: TranscriptData = {
+			lesson_id: 'l1',
+			key_phrases: [],
+			dialogue_lines: []
+		};
+
+		it('does not show add-phrase form by default', () => {
+			const { container } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptEmpty, lesson: { id: 'l1', title: 't', language_code: 'sl', key_phrases: [], sections: [] } })
+			});
+			expect(container.querySelector('.add-phrase-form')).toBeFalsy();
+		});
+
+		it('shows add-phrase form after toggling', async () => {
+			const { container, getByText } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptEmpty, lesson: { id: 'l1', title: 't', language_code: 'sl', key_phrases: [], sections: [] } })
+			});
+			const toggle = getByText(/Add phrase/);
+			await fireEvent.click(toggle);
+			expect(container.querySelector('.add-phrase-form')).toBeTruthy();
+			expect(container.querySelector('.add-phrase-form input')).toBeTruthy();
+		});
+
+		it('toggle button expands and collapses', async () => {
+			const { container, getByText } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptEmpty, lesson: { id: 'l1', title: 't', language_code: 'sl', key_phrases: [], sections: [] } })
+			});
+			const toggle = getByText(/Add phrase/);
+			await fireEvent.click(toggle);
+			expect(container.querySelector('.add-phrase-form')).toBeTruthy();
+			await fireEvent.click(toggle);
+			expect(container.querySelector('.add-phrase-form')).toBeFalsy();
+		});
+
+		it('typing text and clicking Create calls onCreatePhrase with correct args', async () => {
+			const onCreatePhrase = vi.fn();
+			const { container, getByText } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptEmpty, onCreatePhrase, lesson: { id: 'l1', title: 't', language_code: 'sl', key_phrases: [], sections: [] } })
+			});
+			await fireEvent.click(getByText(/Add phrase/));
+
+			const textInput = container.querySelector('.add-phrase-text') as HTMLInputElement;
+			await fireEvent.input(textInput, { target: { value: 'good morning sunshine' } });
+
+			const translationInput = container.querySelector('.add-phrase-translation') as HTMLInputElement;
+			await fireEvent.input(translationInput, { target: { value: 'dobro jutro sonce' } });
+
+			await fireEvent.click(container.querySelector('.add-phrase-create') as HTMLElement);
+
+			expect(onCreatePhrase).toHaveBeenCalledWith(
+				expect.objectContaining({
+					text: 'good morning sunshine',
+					word_count: 3,
+					translation: 'dobro jutro sonce',
+					lineIndex: -1,
+					startIdx: -1,
+					endIdx: -1,
+				})
+			);
+		});
+
+		it('✨ translate button works in add-phrase form', async () => {
+			vi.mocked(api.translateTerm).mockResolvedValue({ translation: 'dobro jutro sonce' });
+			const { container, getByText } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptEmpty, lesson: { id: 'l1', title: 't', language_code: 'sl', key_phrases: [], sections: [] } })
+			});
+			await fireEvent.click(getByText(/Add phrase/));
+
+			const textInput = container.querySelector('.add-phrase-text') as HTMLInputElement;
+			await fireEvent.input(textInput, { target: { value: 'good morning sunshine' } });
+
+			const translateBtn = container.querySelector('.add-phrase-translate-btn') as HTMLElement;
+			await fireEvent.click(translateBtn);
+
+			await waitFor(() => {
+				const translationInput = container.querySelector('.add-phrase-translation') as HTMLInputElement;
+				expect(translationInput.value).toBe('dobro jutro sonce');
+			});
+		});
+
+		it('✨ translate error in add-phrase form shows error message', async () => {
+			vi.mocked(api.translateTerm).mockRejectedValue(new Error('LLM error'));
+			const { container, getByText } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptEmpty, lesson: { id: 'l1', title: 't', language_code: 'sl', key_phrases: [], sections: [] } })
+			});
+			await fireEvent.click(getByText(/Add phrase/));
+
+			const textInput = container.querySelector('.add-phrase-text') as HTMLInputElement;
+			await fireEvent.input(textInput, { target: { value: 'good morning' } });
+
+			const translateBtn = container.querySelector('.add-phrase-translate-btn') as HTMLElement;
+			await fireEvent.click(translateBtn);
+
+			await waitFor(() => {
+				const errorEl = container.querySelector('.add-phrase-form .phrase-error');
+				expect(errorEl).toBeTruthy();
+				expect(errorEl!.textContent).toContain('Translation failed');
+			});
+		});
+
+		it('Create with empty text does not call onCreatePhrase', async () => {
+			const onCreatePhrase = vi.fn();
+			const { container, getByText } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptEmpty, onCreatePhrase, lesson: { id: 'l1', title: 't', language_code: 'sl', key_phrases: [], sections: [] } })
+			});
+			await fireEvent.click(getByText(/Add phrase/));
+
+			const createBtn = container.querySelector('.add-phrase-create') as HTMLElement;
+			await fireEvent.click(createBtn);
+			expect(onCreatePhrase).not.toHaveBeenCalled();
+		});
+
+		it('Create with whitespace-only text does not call onCreatePhrase', async () => {
+			const onCreatePhrase = vi.fn();
+			const { container, getByText } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptEmpty, onCreatePhrase, lesson: { id: 'l1', title: 't', language_code: 'sl', key_phrases: [], sections: [] } })
+			});
+			await fireEvent.click(getByText(/Add phrase/));
+
+			const textInput = container.querySelector('.add-phrase-text') as HTMLInputElement;
+			await fireEvent.input(textInput, { target: { value: '   ' } });
+
+			const createBtn = container.querySelector('.add-phrase-create') as HTMLElement;
+			await fireEvent.click(createBtn);
+			expect(onCreatePhrase).not.toHaveBeenCalled();
+		});
+
+		it('Create button is disabled when text is empty', async () => {
+			const { container, getByText } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptEmpty, lesson: { id: 'l1', title: 't', language_code: 'sl', key_phrases: [], sections: [] } })
+			});
+			await fireEvent.click(getByText(/Add phrase/));
+
+			const createBtn = container.querySelector('.add-phrase-create') as HTMLButtonElement;
+			expect(createBtn.disabled).toBe(true);
+		});
+
+		it('Create resets form and collapses section on success', async () => {
+			const onCreatePhrase = vi.fn();
+			const { container, getByText } = render(Transcript, {
+				props: defaultProps({ transcript: transcriptEmpty, onCreatePhrase, lesson: { id: 'l1', title: 't', language_code: 'sl', key_phrases: [], sections: [] } })
+			});
+			await fireEvent.click(getByText(/Add phrase/));
+
+			const textInput = container.querySelector('.add-phrase-text') as HTMLInputElement;
+			await fireEvent.input(textInput, { target: { value: 'good morning' } });
+			const translationInput = container.querySelector('.add-phrase-translation') as HTMLInputElement;
+			await fireEvent.input(translationInput, { target: { value: 'dobro jutro' } });
+
+			await fireEvent.click(container.querySelector('.add-phrase-create') as HTMLElement);
+
+			expect(container.querySelector('.add-phrase-form')).toBeFalsy();
 		});
 	});
 });

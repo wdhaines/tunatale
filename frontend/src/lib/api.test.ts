@@ -597,6 +597,24 @@ describe('TunaTaleAPI', () => {
 			);
 		});
 
+		it('translateTerm calls POST /api/srs/translate with text and language_code', async () => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockResolvedValue(mockOk({ translation: 'in the city centre' }))
+			);
+
+			const result = await api.translateTerm('centru mesta', 'sl');
+
+			expect(fetch).toHaveBeenCalledWith(
+				`${BASE}/api/srs/translate`,
+				expect.objectContaining({
+					method: 'POST',
+					body: JSON.stringify({ text: 'centru mesta', language_code: 'sl' })
+				})
+			);
+			expect(result.translation).toBe('in the city centre');
+		});
+
 	});
 
 	describe('fetchQueueStats', () => {

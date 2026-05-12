@@ -704,3 +704,60 @@ class TestTranslateMissing:
 
         assert response.status_code == 200
         assert db.get_collocation("zdravo").syntactic_unit.translation == "hello"
+
+
+class TestTranslate:
+    """Tests for POST /api/srs/translate."""
+
+    async def test_translate_returns_llm_translation(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value="in the city centre")
+        app.state.llm = mock_llm
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/translate",
+                json={"text": "centru mesta", "language_code": "sl"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "translation" in data
+        assert data["translation"] == "in the city centre"
+        mock_llm.complete.assert_awaited_once()
+
+    async def test_translate_empty_text_returns_422(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/translate",
+                json={"text": "", "language_code": "sl"},
+            )
+        assert response.status_code == 422
+
+    async def test_translate_blank_text_returns_422(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/translate",
+                json={"text": "   ", "language_code": "sl"},
+            )
+        assert response.status_code == 422
+
+    async def test_translate_invalid_language_code_returns_422(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/translate",
+                json={"text": "centru mesta", "language_code": "invalid"},
+            )
+        assert response.status_code == 422
+        data = response.json()
+        assert "language_code" in data["detail"]
+
+    async def test_translate_llm_not_configured_returns_503(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/translate",
+                json={"text": "centru mesta", "language_code": "sl"},
+            )
+        assert response.status_code == 503

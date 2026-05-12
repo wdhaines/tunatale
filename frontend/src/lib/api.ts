@@ -403,6 +403,14 @@ export class TunaTaleAPI {
 		});
 	}
 
+	async translateTerm(text: string, language_code: string): Promise<{ translation: string }> {
+		return this.request("/api/srs/translate", {
+			method: "POST",
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ text, language_code }),
+		});
+	}
+
 	async untrackSRSItem(id: number): Promise<{ action: 'deleted' } | { action: 'suspended'; item: SRSItemDetail }> {
 		return this.request(`/api/srs/items/${id}/untrack`, { method: 'POST' });
 	}

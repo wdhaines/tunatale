@@ -321,6 +321,11 @@ _TRANSLATE_SYSTEM = "You are a translation assistant. Return ONLY valid JSON, no
 _logger = logging.getLogger(__name__)
 
 
+class TranslateRequest(BaseModel):
+    text: str
+    language_code: str
+
+
 def _build_translate_prompt(words: list[str], language_name: str) -> str:
     word_list = "\n".join(f"- {w}" for w in words)
     return (
@@ -328,6 +333,25 @@ def _build_translate_prompt(words: list[str], language_name: str) -> str:
         f'Return a JSON object mapping each to its translation: {{"word": "translation", ...}}\n\n'
         f"Words:\n{word_list}"
     )
+
+
+_VALID_LANGUAGE_CODES = frozenset({"sl", "en"})
+
+
+@router.post("/translate", status_code=200)
+async def translate(body: TranslateRequest, request: Request):
+    if not body.text.strip():
+        raise HTTPException(status_code=422, detail="text must not be empty")
+    if body.language_code not in _VALID_LANGUAGE_CODES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid language_code: {body.language_code!r}. Must be one of {sorted(_VALID_LANGUAGE_CODES)}",
+        )
+    llm = getattr(request.app.state, "llm", None)
+    if llm is None:
+        raise HTTPException(status_code=503, detail="LLM not configured")
+    translation = await translate_term(llm, body.text, body.language_code)
+    return {"translation": translation}
 
 
 @router.post("/translate-missing", status_code=200)
