@@ -1225,19 +1225,33 @@ class TestSyncPullIdFirstLookup:
 @pytest.mark.parametrize(
     "fsrs_known,queue,reps,expected_state",
     [
+        # `queue` is authoritative; `reps` does not override it (Layer 30).
         # fsrs_known=False path
         (False, -2, 4, SRSState.BURIED),
         (False, 1, 2, SRSState.LEARNING),
         (False, 3, 5, SRSState.RELEARNING),
         (False, 0, 0, SRSState.NEW),
-        (False, 0, 5, SRSState.REVIEW),
+        (False, 0, 5, SRSState.NEW),  # queue=0 → NEW even if reps>0 (weird state, mirror Anki)
         # fsrs_known=True path (adds queue=-3)
         (True, -2, 4, SRSState.BURIED),
         (True, -3, 4, SRSState.BURIED),
         (True, 1, 2, SRSState.LEARNING),
         (True, 3, 5, SRSState.RELEARNING),
         (True, 0, 0, SRSState.NEW),
-        (True, 0, 5, SRSState.REVIEW),
+        (True, 0, 5, SRSState.NEW),
+        # queue=2 must always map to REVIEW, even when reps=0 (Anki's "Forget"
+        # action or manual edit can leave a graduated card with reps=0 while
+        # queue stays at 2). Previously the reps==0 fallback wrongly returned
+        # NEW for these, surfacing already-graded cards as fresh new cards.
+        (True, 2, 0, SRSState.REVIEW),
+        (False, 2, 0, SRSState.REVIEW),
+        (True, 2, 7, SRSState.REVIEW),
+        # Defensive fallback for unknown queue values: trust reps as a last
+        # resort. Never happens against current Anki (all queues in -3..3),
+        # but the branch is exercised so future-Anki queue additions don't
+        # silently miscategorize.
+        (True, 99, 0, SRSState.NEW),
+        (True, 99, 4, SRSState.REVIEW),
     ],
 )
 def test_queue_to_state_mapping(fsrs_known, queue, reps, expected_state):

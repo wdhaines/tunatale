@@ -603,6 +603,47 @@ class TestExtractL2FromFields:
         fields = ["before the stressed syllable", "besêda"]
         assert extract_l2_from_fields(fields) == "besêda"
 
+    def test_b_then_i_pattern_returns_b_content(self):
+        """Pronunciation/Basic notetype Front field: `<b>SLOVENE</b><br><i>ENGLISH</i>`.
+        The regex-strip fallback would concatenate ('ničnothing'); this test pins
+        the new behavior that extracts the `<b>...</b>` group as L2.
+        """
+        fields = ["<b>nič</b><br><i>nothing</i>", "[sound:sl_nic.mp3][nətʃ]"]
+        assert extract_l2_from_fields(fields) == "nič"
+
+    def test_b_then_i_pattern_with_whitespace(self):
+        """Tolerate whitespace and minor variation between the <b> and <i> tags."""
+        fields = ["<b>ulica</b><br/>  <i>street</i>", "[sound:sl_ulica.mp3]"]
+        assert extract_l2_from_fields(fields) == "ulica"
+
+
+class TestExtractGlossFromFields:
+    """Layer 31: extract the English gloss from a `<b>L2</b><br><i>EN</i>` field."""
+
+    def test_returns_gloss_for_b_then_i_pattern(self):
+        from app.anki.sqlite_reader import extract_gloss_from_fields
+
+        fields = ["<b>nič</b><br><i>nothing</i>", "[sound:sl_nic.mp3]"]
+        assert extract_gloss_from_fields(fields) == "nothing"
+
+    def test_returns_gloss_with_whitespace_and_self_closing_br(self):
+        from app.anki.sqlite_reader import extract_gloss_from_fields
+
+        fields = ["<b>ulica</b><br/> <i>street</i>", "[sound:sl_ulica.mp3]"]
+        assert extract_gloss_from_fields(fields) == "street"
+
+    def test_returns_none_when_no_pattern_match(self):
+        from app.anki.sqlite_reader import extract_gloss_from_fields
+
+        fields = ["banka", "bank"]
+        assert extract_gloss_from_fields(fields) is None
+
+    def test_returns_none_for_phonics_question_field(self):
+        from app.anki.sqlite_reader import extract_gloss_from_fields
+
+        fields = ["What sound is <b>v</b> word-initial?", "[wː]"]
+        assert extract_gloss_from_fields(fields) is None
+
 
 class TestListMediaRefs:
     def test_extracts_sound_ref(self):

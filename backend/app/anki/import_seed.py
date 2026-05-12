@@ -18,6 +18,7 @@ from app.anki.safety import safe_open
 from app.anki.sqlite_reader import (
     AnkiCard,
     extract_disambig_from_fields,
+    extract_gloss_from_fields,
     extract_l2,
     extract_l2_from_fields,
     extract_translation,
@@ -125,14 +126,22 @@ def import_seed(
                 results["skipped_non_vocab"] += 1
                 continue
             disambig = extract_disambig_from_fields(note.fields)
-            # Translation lives in the field that isn't the L2 field. For inverse-layout
-            # notes the L2 text is in fields[1], so read translation from fields[0].
-            l2_idx = next(
-                (i for i, f in enumerate(note.fields) if extract_l2(f) == l2_text and l2_text),
-                0,
-            )
-            other_idx = 1 - l2_idx if len(note.fields) > 1 else 0
-            translation = extract_translation(note.fields[other_idx]) if len(note.fields) > 1 else ""
+            # Layer 31: if a field uses the `<b>L2</b><br><i>EN</i>` pattern
+            # (Pronunciation/Basic notetype), the English gloss lives inside
+            # the same field as the L2 word — recover it directly. Otherwise
+            # translation lives in the field that isn't the L2 field. For
+            # inverse-layout notes the L2 text is in fields[1], so read
+            # translation from fields[0].
+            gloss = extract_gloss_from_fields(note.fields)
+            if gloss is not None:
+                translation = gloss
+            else:
+                l2_idx = next(
+                    (i for i, f in enumerate(note.fields) if extract_l2(f) == l2_text and l2_text),
+                    0,
+                )
+                other_idx = 1 - l2_idx if len(note.fields) > 1 else 0
+                translation = extract_translation(note.fields[other_idx]) if len(note.fields) > 1 else ""
             guid = compute_guid(l2_text, "sl", disambig)
 
             # GUID collision check: if existing row has different (text, disambig_key), skip

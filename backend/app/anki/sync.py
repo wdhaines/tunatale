@@ -694,7 +694,15 @@ def _anki_step_ahead(anki_left: int | None, local_left: int | None) -> bool:
 
 
 def _queue_to_state(queue: int, card_type: int, reps: int) -> SRSState:
-    """Map Anki's (queue, type, reps) tuple to TT's SRSState."""
+    """Map Anki's (queue, type, reps) tuple to TT's SRSState.
+
+    `queue` is the authoritative signal for Anki's current placement — TT
+    must mirror it directly. Layer 30: the previous `if reps == 0: NEW`
+    fallback wrongly mapped `(queue=2, reps=0)` cards to NEW, surfacing
+    already-graduated cards (e.g. via Anki's "Forget" action or a manual
+    `cards.due` edit, which clears `reps` but leaves `queue=2`) as fresh
+    new cards in TT.
+    """
     if queue == -1:
         return SRSState.SUSPENDED
     if queue in (-2, -3):
@@ -703,9 +711,12 @@ def _queue_to_state(queue: int, card_type: int, reps: int) -> SRSState:
         return SRSState.RELEARNING if card_type == 3 else SRSState.LEARNING
     if queue == 3:
         return SRSState.RELEARNING
-    if reps == 0:
+    if queue == 2:
+        return SRSState.REVIEW
+    if queue == 0:
         return SRSState.NEW
-    return SRSState.REVIEW
+    # Fallback for unknown queue values (shouldn't happen against modern Anki).
+    return SRSState.NEW if reps == 0 else SRSState.REVIEW
 
 
 def _step_minutes_from_left(left: int | None, steps: list[float]) -> float | None:

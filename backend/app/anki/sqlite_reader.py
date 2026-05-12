@@ -341,6 +341,28 @@ def extract_l2(field_html: str) -> str:
     return clean.strip()
 
 
+_B_THEN_I_PATTERN = re.compile(
+    r"^\s*<b>([^<]+)</b>\s*<br\s*/?>\s*<i>([^<]+)</i>",
+    re.IGNORECASE,
+)
+
+
+def extract_gloss_from_fields(fields: list[str]) -> str | None:
+    """Return the English gloss when a field uses the `<b>L2</b><br><i>EN</i>` pattern.
+
+    Slovene Pronunciation/Basic notetype cards put both the L2 word and its
+    English gloss in the same field with HTML formatting (e.g.
+    ``<b>nič</b><br><i>nothing</i>``). The naive HTML-strip used by
+    `extract_translation` joins them into ``ničnothing``; this helper recovers
+    the English gloss cleanly. Returns None when no field matches the pattern.
+    """
+    for field in fields:
+        m = _B_THEN_I_PATTERN.match(field)
+        if m:
+            return m.group(2).strip()
+    return None
+
+
 def extract_l2_from_fields(fields: list[str]) -> str:
     """Return the L2 text from fields, preferring class="slovene" markup.
 
@@ -355,6 +377,14 @@ def extract_l2_from_fields(fields: list[str]) -> str:
     # First pass: find field with class="slovene"
     for field in fields:
         m = re.search(r'class="slovene"[^>]*>\s*([^<]+?)\s*<', field)
+        if m:
+            return m.group(1).strip()
+
+    # Second pass (Layer 31): `<b>L2</b><br><i>EN</i>` pattern used by the
+    # Pronunciation/Basic notetype. The HTML-strip fallback would concatenate
+    # the two inner texts (``ničnothing``); pick the `<b>` group instead.
+    for field in fields:
+        m = _B_THEN_I_PATTERN.match(field)
         if m:
             return m.group(1).strip()
 

@@ -132,6 +132,31 @@ class TestLemmaPopulation:
         assert item is not None
         assert item.syntactic_unit.text == "zdravo"
 
+    def test_b_then_i_pattern_splits_l2_and_gloss(self, tmp_path):
+        """Layer 31: import_seed recognises `<b>L2</b><br><i>EN</i>` Front fields
+        and splits them: text=L2, translation=EN. Previously these were imported
+        as text='L2EN' (concatenated) with translation pulled from the wrong field.
+        """
+        import sqlite3 as sq3
+
+        from app.srs.database import SRSDatabase
+        from tests.conftest import build_minimal_anki_db
+
+        db_path = build_minimal_anki_db(tmp_path)
+        conn = sq3.connect(str(db_path))
+        conn.execute(
+            "UPDATE notes SET flds = ?, sfld = ? WHERE id = 1001",
+            ("<b>nič</b><br><i>nothing</i>\x1f[sound:sl_nic.mp3][nətʃ]", "nič"),
+        )
+        conn.commit()
+        conn.close()
+
+        _run(db_path, tmp_path)
+        db = SRSDatabase(str(tmp_path / "tunatale.db"))
+        item = db.get_collocation("nič")
+        assert item is not None, "expected text='nič' (not 'ničnothing')"
+        assert item.syntactic_unit.translation == "nothing"
+
 
 class TestDryRun:
     def test_dry_run_rolls_back_tunatale_writes(self, fake_anki_db, tmp_path):

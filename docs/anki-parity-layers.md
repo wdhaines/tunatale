@@ -424,6 +424,42 @@ TT did this in three separated steps (`get_new_items(REC)`, `get_new_items(PROD)
 
 ---
 
+## Layer 30 — `_queue_to_state` must trust `queue`, not `reps`
+
+**Trigger.** TT served `ničnothing` as the first-new card while Anki served `zdravo`. `ničnothing` in Anki was `queue=2` (review), `type=2`, `due=4515`, `ivl=16`, `reps=0` — a card that's clearly been graduated but somehow has `reps=0` (e.g., the user used Anki's "Forget" action, which clears `reps` but leaves the card in `queue=2`). TT's `_queue_to_state` had this fallback at the bottom: `if reps == 0: return SRSState.NEW`. The `queue=2` arm was never reached. So sync_pull saw the card as Anki-reviewed but wrote `state='new'` to TT — and TT then surfaced it at the head of the new bucket every day.
+
+**Fix.** `_queue_to_state` now uses `queue` as the authoritative signal: `queue=2 → REVIEW`, `queue=0 → NEW`, regardless of `reps`. The reps fallback only fires for unknown queue values (never happens against current Anki, but defensively kept for future-proofing).
+
+**Files.** `backend/app/anki/sync.py:_queue_to_state` (explicit `queue == 2` arm added before the reps fallback; `queue == 0` arm explicit too), `backend/tests/test_anki_sync_pull.py::test_queue_to_state_mapping` (added `(queue=2, reps=0) → REVIEW` and `(queue=2, reps=7) → REVIEW` parametrize cases; updated existing `(queue=0, reps=5)` from REVIEW to NEW to reflect "queue is authoritative").
+
+**How to spot in the wild.** Run the diagnostic:
+```sql
+SELECT c.id, c.queue, c.type, c.due, c.reps, c.ivl, n.flds
+FROM cards c JOIN notes n ON c.nid=n.id
+WHERE c.queue=2 AND c.reps=0 AND c.did=<your-deck>;
+```
+Any row here is a "Forget"-style or manually-edited card. After Layer 30 these correctly mirror to TT as REVIEW.
+
+---
+
+## Layer 31 — `<b>L2</b><br><i>EN</i>` import bug + one-shot cleanup script
+
+**Trigger.** User noticed `ničnothing` at the head of TT's new bucket — clearly mangled text (Slovene `nič` concatenated with English gloss `nothing`). Traced to `extract_l2_from_fields` in `app/anki/sqlite_reader.py`: the HTML-strip fallback `re.sub(r"<[^>]+>", "", field)` removes tags without inserting whitespace, so Anki's Pronunciation/Basic notetype Front field `<b>nič</b><br><i>nothing</i>` collapsed into the single token `ničnothing`. Saved as TT's `text`, English gloss lost. 39 rows affected in the user's deck (every Basic-notetype note that used the `<b>L2</b><br><i>EN</i>` formatting).
+
+**Fix (import side).** Added `extract_gloss_from_fields(fields) -> str | None` that recognises the `<b>L2</b><br><i>EN</i>` pattern and returns the gloss. Updated `extract_l2_from_fields` to short-circuit on the same pattern returning the L2 group. `import_seed.py` now checks `extract_gloss_from_fields` before falling back to the "other field" stripped-HTML translation extractor. Future imports of these notes do the right thing.
+
+**Fix (existing data).** One-shot script `app/anki/fix_html_concat_imports.py` walks every TT collocation linked to an Anki note, parses the Front field, and:
+- **renames** the row (`text=L2, translation=EN`) when no other TT collocation already uses the clean L2 text;
+- **deletes** the row when a clean-L2 twin already exists (Pronunciation cards duplicate Slovene Vocabulary cards for these words; user opted to drop the dupes).
+
+Defensive: if a rename hits a UNIQUE conflict at apply-time, it falls back to delete. Tests cover both planning and apply phases, plus the CLI's dry-run / missing-DB / mixed-output paths.
+
+**Files.** `backend/app/anki/sqlite_reader.py` (added `_B_THEN_I_PATTERN`, `extract_gloss_from_fields`, second-pass arm in `extract_l2_from_fields`), `backend/app/anki/import_seed.py:128-144` (uses `extract_gloss_from_fields` when matched), `backend/app/anki/fix_html_concat_imports.py` (new one-shot script), `backend/tests/test_anki_sqlite_reader.py` (extractor tests), `backend/tests/test_anki_import_seed_readonly.py` (round-trip test), `backend/tests/test_anki_fix_html_concat_imports.py` (script tests).
+
+**Aftermath.** Live cleanup applied: 19 renames + 20 deletes, no fallback-deletes needed. User's queue now serves clean Slovene words; `ničnothing` and friends are gone.
+
+---
+
 ## Cleanup pass (post-Layer 23)
 
 After 23 layers, swept for dead code and duplication. Behavior unchanged.
