@@ -68,6 +68,7 @@ addopts = "--cov=app --cov-report=term-missing"
 [tool.coverage.run]
 source = ["app"]
 branch = true
+omit = ["app/srs/build_function_word_list.py"]
 
 [tool.coverage.report]
 fail_under = 100

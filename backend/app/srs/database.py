@@ -253,8 +253,8 @@ class SRSDatabase:
                 INSERT INTO collocations
                     (text, translation, language_code, word_count, unit_difficulty,
                      source, corpus_frequency, lemma, guid, disambig_key, grammar, note,
-                     source_sentence, source_lesson_id, source_line_index)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     source_sentence, source_lesson_id, source_line_index, card_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(guid) DO UPDATE SET
                     translation = CASE
                         WHEN excluded.translation != '' AND collocations.translation = ''
@@ -278,6 +278,7 @@ class SRSDatabase:
                     unit.source_sentence,
                     unit.source_lesson_id,
                     unit.source_line_index,
+                    unit.card_type,
                 ),
             )
             row = conn.execute(
@@ -285,7 +286,10 @@ class SRSDatabase:
                 (guid,),
             ).fetchone()
             coll_id = row["id"]
-            for direction in (Direction.RECOGNITION, Direction.PRODUCTION):
+            directions = [Direction.RECOGNITION]
+            if unit.card_type != "cloze":
+                directions.append(Direction.PRODUCTION)
+            for direction in directions:
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO collocation_directions
@@ -472,6 +476,7 @@ class SRSDatabase:
             source_sentence=row["source_sentence"],
             source_lesson_id=row["source_lesson_id"],
             source_line_index=row["source_line_index"],
+            card_type=row["card_type"] if "card_type" in row.keys() else "vocab",  # noqa: SIM118
         )
         directions = self._load_directions(conn, row["id"])
         return SRSItem(
@@ -1695,6 +1700,16 @@ class SRSDatabase:
         with self._get_conn() as conn:
             conn.execute("DELETE FROM anki_state_cache WHERE key = ?", (key,))
             self._commit(conn)
+
+    def get_enable_cloze_cards(self) -> bool:
+        """Return the current cloze-cards flag (DB-backed, default False)."""
+        row = self.get_anki_state_cache("enable_cloze_cards")
+        if row is None:
+            return False
+        return row[0].lower() == "true"
+
+    def set_enable_cloze_cards(self, enabled: bool) -> None:
+        self.set_anki_state_cache("enable_cloze_cards", "true" if enabled else "false")
 
     def set_dirty_fields(self, guid: str, fields_str: str) -> None:
         """Set dirty_fields for the collocation identified by guid."""

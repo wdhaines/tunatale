@@ -429,6 +429,18 @@ export class TunaTaleAPI {
 			body: JSON.stringify({ deck_name: deckName, model_name: modelName })
 		});
 	}
+
+	async getClozeSetting(): Promise<{ enabled: boolean }> {
+		return this.request('/api/srs/settings/cloze');
+	}
+
+	async setClozeSetting(enabled: boolean): Promise<{ enabled: boolean }> {
+		return this.request('/api/srs/settings/cloze', {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ enabled })
+		});
+	}
 }
 
 export const api = new TunaTaleAPI();

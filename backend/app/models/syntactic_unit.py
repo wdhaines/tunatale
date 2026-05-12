@@ -33,6 +33,7 @@ class SyntacticUnit:
     source_sentence: str = ""
     source_lesson_id: str | None = None
     source_line_index: int | None = None
+    card_type: str = "vocab"  # "vocab" | "cloze"
 
     def __post_init__(self) -> None:
         if self.word_count < 1:

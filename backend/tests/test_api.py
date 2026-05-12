@@ -971,6 +971,145 @@ class TestSRSEndpoints:
         assert data["registered"] == 1
 
 
+class TestListenClozeIntegration:
+    """Phase F: /listen creates cloze cards for Slovene function words."""
+
+    async def _setup_lesson(
+        self,
+        phrase_text: str = "Kje je banka?",
+        language_code: str = "sl",
+        cloze_enabled: bool = True,
+    ):
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code=language_code,
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(
+                            text=phrase_text,
+                            voice_id="female-1",
+                            language_code=language_code,
+                            role="female-1",
+                        ),
+                    ],
+                )
+            ],
+            key_phrases=[],
+        )
+        db = SRSDatabase(":memory:")
+        if cloze_enabled:
+            db.set_enable_cloze_cards(True)
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+        return db
+
+    async def test_listen_creates_cloze_card_when_enabled(self):
+        db = await self._setup_lesson(cloze_enabled=True)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        # "kje" is a function word → cloze card
+        item_kje = db.get_collocation_by_lemma("kje")
+        assert item_kje is not None
+        assert item_kje.syntactic_unit.card_type == "cloze"
+        assert item_kje.syntactic_unit.source_sentence == "Kje je banka?"
+
+        # "je" is a function word → cloze card
+        item_je = db.get_collocation_by_lemma("je")
+        assert item_je is not None
+        assert item_je.syntactic_unit.card_type == "cloze"
+        assert item_je.syntactic_unit.source_sentence == "Kje je banka?"
+
+        # "banka" is a content word → vocab card
+        item_banka = db.get_collocation_by_lemma("banka")
+        assert item_banka is not None
+        assert item_banka.syntactic_unit.card_type == "vocab"
+        assert item_banka.syntactic_unit.source_sentence == ""
+
+    async def test_listen_skips_cloze_when_disabled(self):
+        db = await self._setup_lesson(cloze_enabled=False)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        item = db.get_collocation_by_lemma("kje")
+        assert item is not None
+        assert item.syntactic_unit.card_type == "vocab"
+        assert item.syntactic_unit.source_sentence == ""
+
+    async def test_listen_non_slovene_skips_cloze(self):
+        db = await self._setup_lesson(
+            phrase_text="Where is the bank?",
+            language_code="en",
+            cloze_enabled=True,
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        # All English lemmas should remain vocab regardless of flag
+        item = db.get_collocation_by_lemma("where")
+        assert item is not None
+        assert item.syntactic_unit.card_type == "vocab"
+
+
+class TestClozeSetting:
+    """Tests for GET/PUT /api/srs/settings/cloze."""
+
+    async def test_get_cloze_setting_defaults_false(self):
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(":memory:")
+        app.state.srs_db = db
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/settings/cloze")
+
+        assert response.status_code == 200
+        assert response.json() == {"enabled": False}
+
+    async def test_put_cloze_setting_enables(self):
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(":memory:")
+        app.state.srs_db = db
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.put(
+                "/api/srs/settings/cloze",
+                json={"enabled": True},
+            )
+
+            assert response.status_code == 200
+            assert response.json() == {"enabled": True}
+
+            # Subsequent GET returns True
+            get_response = await client.get("/api/srs/settings/cloze")
+            assert get_response.json() == {"enabled": True}
+
+    async def test_put_cloze_setting_validates_body(self):
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(":memory:")
+        app.state.srs_db = db
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.put(
+                "/api/srs/settings/cloze",
+                json={},
+            )
+
+        assert response.status_code == 422
+
+
 class TestQueueStatsEndpoint:
     """Tests for GET /api/srs/queue-stats."""
 

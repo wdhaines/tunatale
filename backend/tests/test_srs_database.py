@@ -108,6 +108,65 @@ class TestCRUD:
         reloaded = srs_db.get_collocation("test_word")
         assert reloaded.directions[Direction.RECOGNITION].anki_due == 612
 
+    def test_add_collocation_cloze_creates_only_recognition_direction(self, srs_db):
+        """Cloze card_type creates only recognition direction (no production)."""
+        unit = SyntacticUnit(
+            text="ki",
+            translation="",
+            word_count=1,
+            difficulty=1,
+            source="cloze",
+            lemma="ki",
+            source_sentence="knjiga, ki je tam",
+            card_type="cloze",
+        )
+        srs_db.add_collocation(unit, language_code="sl")
+        with srs_db._get_conn() as conn:
+            row = conn.execute("SELECT id FROM collocations WHERE text = 'ki'").fetchone()
+            assert row is not None
+            directions = conn.execute(
+                "SELECT direction FROM collocation_directions WHERE collocation_id = ?",
+                (row["id"],),
+            ).fetchall()
+            dirs = [d["direction"] for d in directions]
+            assert dirs == ["recognition"]
+
+    def test_add_collocation_vocab_creates_both_directions(self, srs_db):
+        """Default vocab card_type creates both recognition and production directions."""
+        unit = _unit()
+        srs_db.add_collocation(unit, language_code="sl")
+        item = srs_db.get_collocation("dober dan")
+        assert Direction.RECOGNITION in item.directions
+        assert Direction.PRODUCTION in item.directions
+
+    def test_get_collocation_returns_card_type(self, srs_db):
+        """Round-trip card_type through add_collocation and get_collocation."""
+        unit = SyntacticUnit(
+            text="je",
+            translation="is",
+            word_count=1,
+            difficulty=1,
+            source="cloze",
+            lemma="je",
+            source_sentence="je tam",
+            card_type="cloze",
+        )
+        srs_db.add_collocation(unit, language_code="sl")
+        item = srs_db.get_collocation("je")
+        assert item is not None
+        assert item.syntactic_unit.card_type == "cloze"
+
+    def test_get_enable_cloze_cards_defaults_false(self, srs_db):
+        """Fresh DB with no cache row returns False."""
+        assert srs_db.get_enable_cloze_cards() is False
+
+    def test_set_then_get_enable_cloze_cards(self, srs_db):
+        """Round-trip set/get for the cloze flag."""
+        srs_db.set_enable_cloze_cards(True)
+        assert srs_db.get_enable_cloze_cards() is True
+        srs_db.set_enable_cloze_cards(False)
+        assert srs_db.get_enable_cloze_cards() is False
+
 
 class TestDueQueries:
     """Tests for due/new collocation queries."""

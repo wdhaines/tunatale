@@ -62,6 +62,8 @@ All commands use `uv run` (no manual venv activation).
 - **Coverage fails at <100%** (`pyproject.toml: fail_under = 100`)
 - **SRS tests**: use `sqlite:///:memory:` via `srs_db` fixture
 - **Anki tests**: use `fake_anki_db`, `fake_anki_db_modern`, `fake_anki_db_slovene_pairs` fixtures from `conftest.py` — never use real `collection.anki2`
+  - Cloze tests use `_make_cloze_collection_conn()` or `_make_dual_collection_conn()` helpers from `test_anki_sync_create_new.py`
+- **E2E tests**: `test_e2e_listen_to_sync.py` combines `/listen` API calls with offline Anki sync
 - **CI only runs backend** (no frontend checks in `.github/workflows/ci.yml`)
 - CI requires `ffmpeg` as system dependency
 
@@ -72,6 +74,7 @@ All commands use `uv run` (no manual venv activation).
 - **LLM tests must use cassettes** — never hit live API in tests
 - **Anki writes**: always use `app.anki.safety.safe_open()` — handles lock probe, SHA256 backup, integrity check
 - **Anki mutations**: always set `usn=-1`, `mod=now_ts` on touched rows, and update `col` — see `.claude/rules/anki-sync.md`
+- **Cloze items** (Phase F): set `card_type="cloze"` on the `SyntacticUnit`; only produce RECOGNITION direction; sync uses `OfflineWriter.create_cloze_note()` targeting Anki's built-in Cloze notetype
 
 ## CI Order
 

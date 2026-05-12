@@ -482,6 +482,77 @@ class OfflineWriter:
         self._conn.commit()
         return note_id
 
+    def create_cloze_note(
+        self,
+        deck_name: str,
+        cloze_text: str,
+        back_extra: str = "",
+        tags: list[str] | None = None,
+    ) -> int:
+        """Insert a new Cloze note + cards into the collection.
+
+        Cloze notetype is Anki built-in: fields are Text + Back Extra. One card
+        per c1, c2, ... cloze number. For Phase F we use c1 only → one card per note.
+
+        Raises DuplicateNoteError if the computed GUID already exists.
+        Raises ValueError if the Cloze notetype is not found.
+        No col.scm change.
+        """
+        import hashlib
+
+        from app.anki.sqlite_reader import find_deck_id
+        from app.common.guid import compute_guid
+
+        mid_row = self._conn.execute("SELECT id FROM notetypes WHERE name = 'Cloze'").fetchone()
+        if mid_row is None:
+            raise ValueError("Cloze notetype not found in collection")
+        mid = mid_row[0]
+
+        did = find_deck_id(self._conn, deck_name)
+        if did is None:
+            raise ValueError(f"Deck {deck_name!r} not found")
+
+        sfld = cloze_text
+        anki_guid = compute_guid(cloze_text, "sl", "")
+
+        existing = self._conn.execute("SELECT id FROM notes WHERE guid = ?", (anki_guid,)).fetchone()
+        if existing:
+            raise DuplicateNoteError(existing[0])
+
+        ts_ms = int(_time.time() * 1000)
+        max_row = self._conn.execute("SELECT MAX(id) FROM notes").fetchone()
+        note_id = max(ts_ms, (max_row[0] or 0) + 1)
+
+        flds = f"{cloze_text}\x1f{back_extra}"
+        csum = int(hashlib.sha1(sfld.encode()).hexdigest()[:8], 16)
+        ts = int(_time.time())
+        tags_str = f" {' '.join(tags)} " if tags else ""
+
+        self._conn.execute(
+            "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+            "VALUES (?, ?, ?, ?, -1, ?, ?, ?, ?, 0, '')",
+            (note_id, anki_guid, mid, ts, tags_str, flds, sfld, csum),
+        )
+
+        tmpl_rows = self._conn.execute("SELECT ord FROM templates WHERE ntid = ? ORDER BY ord", (mid,)).fetchall()
+        due_row = self._conn.execute("SELECT MAX(due) + 1 FROM cards WHERE type = 0").fetchone()
+        next_due = due_row[0] if due_row and due_row[0] else 1
+
+        for (ord_,) in tmpl_rows:
+            card_id = note_id + ord_
+            while self._conn.execute("SELECT 1 FROM cards WHERE id = ?", (card_id,)).fetchone():
+                card_id += 1
+            self._conn.execute(
+                "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, "
+                "factor, reps, lapses, left, odue, odid, flags, data) "
+                "VALUES (?, ?, ?, ?, ?, -1, 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+                (card_id, note_id, did, ord_, ts, next_due + ord_),
+            )
+
+        self._bump_col(ts)
+        self._conn.commit()
+        return note_id
+
     def store_media_file(self, filename: str, data: bytes) -> None:
         """Write media file to collection.media dir and register in collection.media.db."""
         if self._media_dir is None:
@@ -1358,6 +1429,31 @@ class AnkiSync:
         skipped = 0
 
         for guid, item in items:
+            from app.srs.function_words import make_cloze_text
+
+            if item.syntactic_unit.card_type == "cloze":
+                cloze_text = make_cloze_text(
+                    item.syntactic_unit.text,
+                    item.syntactic_unit.source_sentence or "",
+                )
+                try:
+                    note_id = self._writer.create_cloze_note(
+                        deck_name,
+                        cloze_text,
+                        back_extra="",
+                        tags=["tunatale", "cloze"],
+                    )
+                    created += 1
+                except DuplicateNoteError as exc:
+                    note_id = exc.note_id
+                    linked += 1
+
+                cards_by_ord = self._writer.get_cards_for_note(note_id)
+                # Cloze notetype has exactly one template (ord=0 = RECOGNITION)
+                card_ids = {Direction.RECOGNITION: cards_by_ord[0]}
+                self._db.set_anki_ids(guid, note_id, card_ids)
+                continue
+
             word = item.syntactic_unit.text
             english = item.syntactic_unit.translation
             audio_tag = ""

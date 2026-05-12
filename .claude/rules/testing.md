@@ -37,4 +37,12 @@ uv run pytest --llm-mode=patch
 
 ## Coverage
 
-Target: ≥95% line coverage. Run with `uv run pytest` (coverage configured in pyproject.toml).
+Target: 100% line coverage (strict `fail_under = 100` in pyproject.toml). Run with `uv run pytest`. The CLI generator script `build_function_word_list.py` is excluded via `coverage.run.omit`.
+
+## Cloze Tests (Phase F)
+
+- **Unit**: `tests/test_function_words.py` — `is_function_word`, `make_cloze_text`
+- **Integration**: `tests/test_api.py::TestListenClozeIntegration` — `/listen` cloze flag detection
+- **Sync**: `tests/test_anki_sync_create_new.py::TestClozeNote`, `TestSyncCreateNewRouting` — `create_cloze_note`, cloze routing
+- **E2E**: `tests/test_e2e_listen_to_sync.py` — full listen→sync round-trip
+- **In-memory Anki collections**: use `_make_cloze_collection_conn()` or `_make_dual_collection_conn()` from `test_anki_sync_create_new.py`

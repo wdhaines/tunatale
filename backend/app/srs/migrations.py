@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 18
+CURRENT_VERSION = 19
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -556,6 +556,17 @@ def migrate_v17_to_v18(conn: sqlite3.Connection) -> None:
     _set_version(conn, 18)
 
 
+def migrate_v18_to_v19(conn: sqlite3.Connection) -> None:
+    """Add collocations.card_type to support Phase F cloze cards.
+
+    'vocab' (default): existing Slovene Vocabulary notetype path.
+    'cloze': Anki built-in Cloze notetype with {{c1::surface}} in source_sentence.
+    """
+    if not _column_exists(conn, "collocations", "card_type"):
+        conn.execute("ALTER TABLE collocations ADD COLUMN card_type TEXT DEFAULT 'vocab'")
+    _set_version(conn, 19)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -575,6 +586,7 @@ _MIGRATIONS = {
     15: migrate_v15_to_v16,
     16: migrate_v16_to_v17,
     17: migrate_v17_to_v18,
+    18: migrate_v18_to_v19,
 }
 
 

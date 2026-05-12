@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 
 import httpx
+import pytest
 
 from app.anki.anki_connect import AnkiConnectClient
 from app.anki.media.pipeline import MediaResult
 from app.anki.sync import (
     AnkiSync,
+    DuplicateNoteError,
+    OfflineWriter,
     _safe_stem,
 )
 from app.models.srs_item import Direction
@@ -99,6 +102,22 @@ def _add_item_with_anki_ids(db: SRSDatabase, text: str, translation: str, note_i
     guid = _add_item(db, text, translation)
     db.set_anki_ids(guid, note_id, {Direction.RECOGNITION: note_id * 10})
     return guid
+
+
+def _add_cloze_item(db: SRSDatabase, text: str, sentence: str) -> str:
+    """Add a cloze collocation with no Anki IDs. Returns guid."""
+    unit = SyntacticUnit(
+        text=text,
+        translation="",
+        word_count=1,
+        difficulty=1,
+        source="cloze",
+        lemma=text.casefold(),
+        source_sentence=sentence,
+        card_type="cloze",
+    )
+    db.add_collocation(unit)
+    return db.get_collocation(text).guid
 
 
 class FakeReader:
@@ -201,6 +220,342 @@ def _flex_client(results: dict) -> tuple[AnkiConnectClient, FlexTransport]:
     transport = FlexTransport(results)
     client = AnkiConnectClient(http_client=httpx.Client(transport=transport))
     return client, transport
+
+
+def _make_cloze_collection_conn():
+    """Build minimal in-memory collection.anki2 with the Cloze notetype pre-seeded."""
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript("""
+        CREATE TABLE col (
+            id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER,
+            dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT,
+            decks TEXT, dconf TEXT, tags TEXT
+        );
+        CREATE TABLE notes (
+            id INTEGER PRIMARY KEY, guid TEXT UNIQUE, mid INTEGER, mod INTEGER,
+            usn INTEGER, tags TEXT, flds TEXT, sfld TEXT, csum INTEGER,
+            flags INTEGER, data TEXT
+        );
+        CREATE TABLE cards (
+            id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER, ord INTEGER,
+            mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER, due INTEGER,
+            ivl INTEGER, factor INTEGER, reps INTEGER, lapses INTEGER, left INTEGER,
+            odue INTEGER, odid INTEGER, flags INTEGER, data TEXT
+        );
+        CREATE TABLE revlog (
+            id INTEGER PRIMARY KEY, cid INTEGER, usn INTEGER, ease INTEGER,
+            ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER
+        );
+        CREATE TABLE notetypes (
+            id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER,
+            usn INTEGER, config BLOB
+        );
+        CREATE TABLE templates (
+            ntid INTEGER, ord INTEGER, name TEXT, mtime_secs INTEGER,
+            usn INTEGER, config BLOB, PRIMARY KEY (ntid, ord)
+        );
+        CREATE TABLE fields (
+            ntid INTEGER, ord INTEGER, name TEXT, config BLOB,
+            PRIMARY KEY (ntid, ord)
+        );
+        CREATE TABLE decks (
+            id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER,
+            usn INTEGER, common BLOB
+        );
+    """)
+    conn.execute("INSERT INTO col VALUES (1, 1704067200, 0, 1000, 18, 0, 0, 0, '{}', '{}', '{}', '{}', '{}')")
+    conn.execute("INSERT INTO decks VALUES (12345, '0. Slovene', 0, 0, x'')")
+    conn.execute("INSERT INTO notetypes VALUES (1000001, 'Cloze', 0, 0, x'')")
+    conn.executemany(
+        "INSERT INTO fields VALUES (?, ?, ?, x'')",
+        [(1000001, i, name) for i, name in enumerate(["Text", "Back Extra"])],
+    )
+    conn.executemany(
+        "INSERT INTO templates VALUES (?, ?, ?, 0, 0, x'')",
+        [(1000001, 0, "Cloze")],
+    )
+    conn.commit()
+    return conn
+
+
+# ── TestClozeNote ─────────────────────────────────────────────────────────────
+
+
+class TestClozeNote:
+    def test_create_cloze_note_inserts_cloze_note_with_single_card(self):
+        """create_cloze_note inserts note with correct notetype, usn=-1, single card."""
+        anki_conn = _make_cloze_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        cloze_text = "knjiga, {{c1::ki}} je tam"
+
+        note_id = writer.create_cloze_note(
+            deck_name="0. Slovene",
+            cloze_text=cloze_text,
+            tags=["tunatale", "cloze"],
+        )
+
+        note = anki_conn.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+        assert note is not None
+        assert note["mid"] == 1000001  # Cloze notetype
+        assert note["usn"] == -1
+        assert note["mod"] > 0
+        assert "tunatale" in note["tags"]
+        assert "cloze" in note["tags"]
+
+        cards = anki_conn.execute("SELECT * FROM cards WHERE nid = ?", (note_id,)).fetchall()
+        assert len(cards) == 1
+        card = cards[0]
+        assert card["type"] == 0
+        assert card["queue"] == 0
+        assert card["ord"] == 0
+        assert card["usn"] == -1
+
+    def test_create_cloze_note_raises_if_cloze_notetype_missing(self):
+        """Missing Cloze notetype raises ValueError."""
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript("""
+            CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, decks TEXT, dconf TEXT, tags TEXT);
+            CREATE TABLE notes (id INTEGER PRIMARY KEY, guid TEXT UNIQUE, mid INTEGER, mod INTEGER, usn INTEGER, tags TEXT, flds TEXT, sfld TEXT, csum INTEGER, flags INTEGER, data TEXT);
+            CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER, ord INTEGER, mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER, due INTEGER, ivl INTEGER, factor INTEGER, reps INTEGER, lapses INTEGER, left INTEGER, odue INTEGER, odid INTEGER, flags INTEGER, data TEXT);
+            CREATE TABLE revlog (id INTEGER PRIMARY KEY, cid INTEGER, usn INTEGER, ease INTEGER, ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER);
+            CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB);
+            CREATE TABLE templates (ntid INTEGER, ord INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB, PRIMARY KEY (ntid, ord));
+            CREATE TABLE fields (ntid INTEGER, ord INTEGER, name TEXT, config BLOB, PRIMARY KEY (ntid, ord));
+            CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, common BLOB);
+        """)
+        conn.execute("INSERT INTO col VALUES (1, 1704067200, 0, 1000, 18, 0, 0, 0, '{}', '{}', '{}', '{}', '{}')")
+        conn.execute("INSERT INTO decks VALUES (12345, '0. Slovene', 0, 0, x'')")
+        conn.commit()
+
+        writer = OfflineWriter(conn)
+        with pytest.raises(ValueError, match="Cloze notetype not found"):
+            writer.create_cloze_note(deck_name="0. Slovene", cloze_text="test")
+
+    def test_create_cloze_note_raises_if_deck_missing(self):
+        """Missing deck name raises ValueError."""
+        anki_conn = _make_cloze_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        with pytest.raises(ValueError, match="not found"):
+            writer.create_cloze_note(deck_name="Nonexistent Deck", cloze_text="test")
+
+    def test_create_cloze_note_duplicate_guid_raises(self):
+        """Same cloze_text called twice raises DuplicateNoteError."""
+        anki_conn = _make_cloze_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        cloze_text = "knjiga, {{c1::ki}} je tam"
+
+        writer.create_cloze_note(deck_name="0. Slovene", cloze_text=cloze_text)
+        with pytest.raises(DuplicateNoteError):
+            writer.create_cloze_note(deck_name="0. Slovene", cloze_text=cloze_text)
+
+    def test_create_cloze_note_creates_card_with_max_due_plus_one(self):
+        """Cloze card gets MAX(due)+1 allocator same as create_note."""
+        anki_conn = _make_cloze_collection_conn()
+        # Pre-populate with an existing card at due=5
+        existing_id = 9001
+        guid = "aabbccdd00112233"
+        anki_conn.execute(
+            "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+            "VALUES (?, ?, 1000001, 0, 0, '', 'existing', 'existing', 0, 0, '')",
+            (existing_id, guid),
+        )
+        anki_conn.execute(
+            "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, lapses, left, odue, odid, flags, data) "
+            "VALUES (?, 9001, 12345, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+            (existing_id * 10,),
+        )
+        anki_conn.commit()
+
+        writer = OfflineWriter(anki_conn)
+        note_id = writer.create_cloze_note(
+            deck_name="0. Slovene",
+            cloze_text="knjiga, {{c1::je}} tam",
+        )
+        due = anki_conn.execute("SELECT due FROM cards WHERE nid = ?", (note_id,)).fetchone()
+        assert due is not None
+        assert due["due"] >= 6  # MAX(5) + 1 = 6
+
+
+def _make_dual_collection_conn():
+    """In-memory collection.anki2 with both Slovene Vocabulary and Cloze notetypes."""
+    import sqlite3
+
+    from app.anki.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript("""
+        CREATE TABLE col (
+            id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER,
+            dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT,
+            decks TEXT, dconf TEXT, tags TEXT
+        );
+        CREATE TABLE notes (
+            id INTEGER PRIMARY KEY, guid TEXT UNIQUE, mid INTEGER, mod INTEGER,
+            usn INTEGER, tags TEXT, flds TEXT, sfld TEXT, csum INTEGER,
+            flags INTEGER, data TEXT
+        );
+        CREATE TABLE cards (
+            id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER, ord INTEGER,
+            mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER, due INTEGER,
+            ivl INTEGER, factor INTEGER, reps INTEGER, lapses INTEGER, left INTEGER,
+            odue INTEGER, odid INTEGER, flags INTEGER, data TEXT
+        );
+        CREATE TABLE revlog (
+            id INTEGER PRIMARY KEY, cid INTEGER, usn INTEGER, ease INTEGER,
+            ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER
+        );
+        CREATE TABLE notetypes (
+            id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER,
+            usn INTEGER, config BLOB
+        );
+        CREATE TABLE templates (
+            ntid INTEGER, ord INTEGER, name TEXT, mtime_secs INTEGER,
+            usn INTEGER, config BLOB, PRIMARY KEY (ntid, ord)
+        );
+        CREATE TABLE fields (
+            ntid INTEGER, ord INTEGER, name TEXT, config BLOB,
+            PRIMARY KEY (ntid, ord)
+        );
+        CREATE TABLE decks (
+            id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER,
+            usn INTEGER, common BLOB
+        );
+    """)
+    conn.execute("INSERT INTO col VALUES (1, 1704067200, 0, 1000, 18, 0, 0, 0, '{}', '{}', '{}', '{}', '{}')")
+    conn.execute("INSERT INTO decks VALUES (12345, '0. Slovene', 0, 0, x'')")
+    # Slovene Vocabulary notetype
+    conn.execute(
+        "INSERT INTO notetypes VALUES (1000001, ?, 0, 0, x'')",
+        (SLOVENE_VOCAB_NOTETYPE_NAME,),
+    )
+    conn.executemany(
+        "INSERT INTO fields VALUES (?, ?, ?, x'')",
+        [(1000001, i, name) for i, name in enumerate(SLOVENE_VOCAB_FIELD_NAMES)],
+    )
+    conn.executemany(
+        "INSERT INTO templates VALUES (?, ?, ?, 0, 0, x'')",
+        [(1000001, 0, "Recognition"), (1000001, 1, "Production")],
+    )
+    # Cloze notetype
+    conn.execute("INSERT INTO notetypes VALUES (1000002, 'Cloze', 0, 0, x'')")
+    conn.executemany(
+        "INSERT INTO fields VALUES (?, ?, ?, x'')",
+        [(1000002, i, name) for i, name in enumerate(["Text", "Back Extra"])],
+    )
+    conn.executemany(
+        "INSERT INTO templates VALUES (?, ?, ?, 0, 0, x'')",
+        [(1000002, 0, "Cloze")],
+    )
+    conn.commit()
+    return conn
+
+
+# ── TestSyncCreateNewRouting ──────────────────────────────────────────────────
+
+
+class TestSyncCreateNewRouting:
+    async def test_sync_create_new_routes_cloze_items_to_create_cloze_note(self):
+        """Cloze items create Anki notes with Cloze notetype and {{c1::word}} text."""
+        db = _make_db()
+        _add_cloze_item(db, "ki", "knjiga, ki je tam")
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        notes = anki_conn.execute("SELECT n.id, n.mid, n.flds, n.tags FROM notes n").fetchall()
+        assert len(notes) == 1
+        note = notes[0]
+        assert note["mid"] == 1000002  # Cloze notetype
+        assert "tunatale" in note["tags"]
+        assert "cloze" in note["tags"]
+        flds = note["flds"].split("\x1f")
+        assert flds[0] == "knjiga, {{c1::ki}} je tam"
+
+    async def test_sync_create_new_routes_vocab_items_to_create_note(self):
+        """Vocab items go through existing create_note path."""
+        db = _make_db()
+        _add_item(db, "voda", "water")
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        notes = anki_conn.execute("SELECT n.id, n.mid, n.flds FROM notes n").fetchall()
+        assert len(notes) == 1
+        note = notes[0]
+        assert note["mid"] == 1000001  # Slovene Vocabulary notetype
+        flds = note["flds"].split("\x1f")
+        assert flds[0] == "voda"
+
+    async def test_sync_create_new_mixed_batch(self):
+        """One vocab + one cloze in the same batch: both land correctly."""
+        db = _make_db()
+        vocab_guid = _add_item(db, "voda", "water")
+        cloze_guid = _add_cloze_item(db, "ki", "knjiga, ki je tam")
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        notes = anki_conn.execute("SELECT n.id, n.mid, n.guid, n.tags FROM notes n ORDER BY n.id").fetchall()
+        assert len(notes) == 2
+
+        # Cloze note
+        cloze_notes = [n for n in notes if "cloze" in n["tags"]]
+        assert len(cloze_notes) == 1
+        assert cloze_notes[0]["mid"] == 1000002
+
+        # Vocab note
+        vocab_notes = [n for n in notes if "cloze" not in n["tags"]]
+        assert len(vocab_notes) == 1
+        assert vocab_notes[0]["mid"] == 1000001
+
+        # Both items have anki_note_id set
+        assert db.get_collocation_by_guid(cloze_guid).anki_note_id is not None
+        assert db.get_collocation_by_guid(vocab_guid).anki_note_id is not None
+
+    async def test_sync_create_new_cloze_duplicate_guid(self):
+        """Cloze item whose text already exists as an Anki note uses DuplicateNoteError path."""
+        db = _make_db()
+        cloze_guid = _add_cloze_item(db, "ki", "knjiga, ki je tam")
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn)
+
+        # First sync creates the cloze note
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        # Clear anki_note_id so the item appears unsynced again
+        with db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET anki_note_id = NULL WHERE guid = ?", (cloze_guid,))
+            db._commit(conn)
+
+        # Second sync hits DuplicateNoteError → linked (+1), not created
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        assert report.created == 0
+        assert report.linked == 1
+
+        # anki_note_id is still set from the linked path
+        item = db.get_collocation_by_guid(cloze_guid)
+        assert item.anki_note_id is not None
 
 
 # ── TestListItemsWithoutAnkiNote ──────────────────────────────────────────────

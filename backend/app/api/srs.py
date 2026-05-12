@@ -17,6 +17,7 @@ from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, schedule
+from app.srs.function_words import is_function_word
 from app.srs.lemmatizer import LowercaseLemmatizer
 from app.srs.queue_stats import (
     advance_learning_cutoff,
@@ -236,6 +237,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     )
 
     unique_lemmas: set[str] = set()
+    lemma_to_sentence: dict[str, str] = {}
     if natural_speed is not None:
         for phrase in natural_speed.phrases:
             if phrase.language_code != lesson.language_code:
@@ -243,8 +245,13 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             for surface in tokenize(phrase.text):
                 lemma = _lemmatizer.lemmatize(surface, lesson.language_code)
                 unique_lemmas.add(lemma)
+                if lemma not in lemma_to_sentence:
+                    lemma_to_sentence[lemma] = phrase.text
+
+    cloze_enabled = lesson.language_code == "sl" and db.get_enable_cloze_cards()
 
     for lemma in unique_lemmas:
+        is_cloze = cloze_enabled and is_function_word(lemma, lesson.language_code)
         unit = SyntacticUnit(
             text=lemma,
             translation=token_glosses.get(lemma, ""),
@@ -252,6 +259,8 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             difficulty=1,
             source="llm",
             lemma=lemma,
+            card_type="cloze" if is_cloze else "vocab",
+            source_sentence=lemma_to_sentence.get(lemma, "") if is_cloze else "",
         )
         db.add_collocation(unit, language_code=lesson.language_code)
         item = db.get_collocation_by_lemma(lemma)
@@ -431,6 +440,26 @@ async def get_queue_stats(request: Request):
         "cap_source": source,
         "fsrs_source": fsrs_source,
     }
+
+
+# ── Cloze settings ────────────────────────────────────────────────────────────
+
+
+class ClozeSettingRequest(BaseModel):
+    enabled: bool
+
+
+@router.get("/settings/cloze")
+async def get_cloze_setting(request: Request):
+    db = request.app.state.srs_db
+    return {"enabled": db.get_enable_cloze_cards()}
+
+
+@router.put("/settings/cloze")
+async def set_cloze_setting(body: ClozeSettingRequest, request: Request):
+    db = request.app.state.srs_db
+    db.set_enable_cloze_cards(body.enabled)
+    return {"enabled": body.enabled}
 
 
 # ── Admin endpoints ────────────────────────────────────────────────────────────

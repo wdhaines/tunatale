@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 18
+        assert CURRENT_VERSION == 19
 
     def test_migrates_v15_to_v16_deletes_phantom_directions(self, tmp_path):
         """v16 deletes direction rows that were auto-filled by the pre-fix
@@ -189,6 +189,37 @@ class TestMigrations:
         # Idempotent
         migrate_v17_to_v18(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 18
+
+    def test_migrates_v18_to_v19_adds_card_type_column(self, tmp_path):
+        """v19 adds collocations.card_type for Phase F cloze cards."""
+        import sqlite3
+
+        from app.srs.migrations import _set_version, migrate_v18_to_v19
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            """CREATE TABLE collocations (
+                id INTEGER PRIMARY KEY,
+                text TEXT,
+                translation TEXT
+            )"""
+        )
+        conn.execute("INSERT INTO collocations (id, text, translation) VALUES (1, 'test', 'test')")
+        _set_version(conn, 18)
+
+        migrate_v18_to_v19(conn)
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocations)")}
+        assert "card_type" in cols
+        # DEFAULT 'vocab' should apply to existing rows
+        row = conn.execute("SELECT card_type FROM collocations WHERE id = 1").fetchone()
+        assert row["card_type"] == "vocab"
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 19
+
+        # Idempotent
+        migrate_v18_to_v19(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 19
 
     def test_migrates_v14_to_v15_fills_null_lemma(self, tmp_path):
         """v15 fills lemma for single-word rows that have lemma=NULL."""
