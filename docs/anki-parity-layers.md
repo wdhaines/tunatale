@@ -406,6 +406,10 @@ TT did this in three separated steps (`get_new_items(REC)`, `get_new_items(PROD)
 
 **Files.** `backend/app/api/srs.py:_merge_directions` (re-keyed sort), `backend/app/api/srs.py:get_review_queue` (added stable sort by ord after bury), `backend/tests/test_api_srs.py` (updated `_merge_directions` tests + added `test_review_queue_new_head_matches_anki_gather_bury_template` reproducing the `časa`/`sekira` case).
 
+**Aftermath / lessons.**
+- The user reported "fix isn't working" because `session_main_queue` (DB-backed cache; survives restarts) still held the pre-Layer-28 order. Sync clears it; restart does not. Future debug sessions: run `clear_session_main_queue` before doubting a fix — see the new note in principle 2 of the rule file.
+- Layer 25 fixed the per-direction ORDER BY but missed that Anki's gather phase pools both ords together AND its sibling-bury runs during gather (rejecting the second-seen sibling). The Layer-25 sort was right; the merge step it fed was wrong. The right mental model: TT's `get_new_items` produces the per-direction *input* to the merge, not the final order. `_merge_directions` is the gather phase; the bury step matches Anki's `add_new_card`; the post-bury `nonlearning_new.sort` is Template.
+
 ---
 
 ## Cleanup pass (post-Layer 23)
