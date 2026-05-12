@@ -1282,43 +1282,45 @@ class TestReviewQueue:
         assert result[0][3] == Direction.PRODUCTION
         assert result[1][3] == Direction.RECOGNITION
 
-    # --- Tests for _merge_by_anki_due_then_id ---
-    async def test_merge_anki_due_empty_inputs(self, api_app_state):
-        from app.api.srs import _merge_by_anki_due_then_id
+    # --- Tests for _merge_directions ---
+    async def test_merge_directions_empty_inputs(self, api_app_state):
+        from app.api.srs import _merge_directions
 
-        result = _merge_by_anki_due_then_id([], [])
+        result = _merge_directions([], [])
         assert result == []
 
-    async def test_merge_anki_due_orders_nulls_last(self, api_app_state):
+    async def test_merge_directions_preserves_upstream_order(self, api_app_state):
+        """Merge concatenates without re-sorting, preserving get_new_items recency order."""
         from datetime import date
 
-        from app.api.srs import _merge_by_anki_due_then_id
+        from app.api.srs import _merge_directions
 
         rec_item = self._make_item(date(2026, 1, 1), None, Direction.RECOGNITION, anki_due=None)
         prod_item = self._make_item(date(2026, 1, 1), 100, Direction.PRODUCTION, anki_due=50)
         rec = [(1, rec_item, "sl")]
         prod = [(2, prod_item, "sl")]
-        result = _merge_by_anki_due_then_id(rec, prod)
-        # prod has anki_due=50, rec has anki_due=None, so prod should come first
-        assert result[0][3] == Direction.PRODUCTION
-        assert result[1][3] == Direction.RECOGNITION
+        result = _merge_directions(rec, prod)
+        # rec comes first (upstream order preserved), then prod
+        assert result[0][3] == Direction.RECOGNITION
+        assert result[1][3] == Direction.PRODUCTION
 
-    async def test_merge_anki_due_numeric_order(self, api_app_state):
+    async def test_merge_directions_rec_before_prod(self, api_app_state):
+        """Recognition items come before production items (upstream order preserved)."""
         from datetime import date
 
-        from app.api.srs import _merge_by_anki_due_then_id
+        from app.api.srs import _merge_directions
 
-        # item1: anki_due=200, item2: anki_due=100, item3: anki_due=None
         item1 = self._make_item(date(2026, 1, 1), 999, Direction.RECOGNITION, anki_due=200)
         item2 = self._make_item(date(2026, 1, 1), 100, Direction.PRODUCTION, anki_due=100)
         item3 = self._make_item(date(2026, 1, 1), 200, Direction.RECOGNITION, anki_due=None)
         rec = [(1, item1, "sl"), (3, item3, "sl")]
         prod = [(2, item2, "sl")]
-        result = _merge_by_anki_due_then_id(rec, prod)
-        # item2 (anki_due=100) < item1 (anki_due=200) < item3 (anki_due=None)
-        assert result[0][1].directions[result[0][3]].anki_due == 100
-        assert result[1][1].directions[result[1][3]].anki_due == 200
-        assert result[2][1].directions[result[2][3]].anki_due is None
+        result = _merge_directions(rec, prod)
+        # All rec items first (in upstream order), then all prod items
+        assert len(result) == 3
+        assert result[0][3] == Direction.RECOGNITION
+        assert result[1][3] == Direction.RECOGNITION
+        assert result[2][3] == Direction.PRODUCTION
 
     async def test_review_queue_new_cards_ordered_by_anki_due_across_directions(self, api_app_state):
         """New cards ordered by anki_due across directions."""
@@ -1365,10 +1367,11 @@ class TestReviewQueue:
         assert resp.status_code == 200
         queue = resp.json()["queue"]
         new_items = [q for q in queue if q["state"] == "new"]
-        # coll_b (anki_due=595) should come before coll_a (anki_due=596)
+        # Both same created_at → tiebroken by anki_due ASC NULLS LAST:
+        # coll_a_rec (596) before coll_b_rec (NULL)
         assert len(new_items) >= 2
-        assert new_items[0]["text"] == "coll_b"
-        assert new_items[1]["text"] == "coll_a"
+        assert new_items[0]["text"] == "coll_a"
+        assert new_items[1]["text"] == "coll_b"
 
     async def test_review_queue_new_cards_fall_back_to_anki_card_id_when_anki_due_null(self, api_app_state):
         """When anki_due is None, fall back to anki_card_id ordering."""

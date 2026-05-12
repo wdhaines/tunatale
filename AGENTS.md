@@ -88,6 +88,12 @@ Frontend checks are local-only (`npm run check`, `test:coverage`, `test:e2e`).
 - `.claude/rules/environment.md` — secrets, venv, Groq setup, rate limits
 - `.claude/rules/anki-sync.md` — USN protocol, safety envelope, migration rules
 
+## Anki Deck Setup (Phase C)
+
+**Requires one-time user action**: Open target deck's options → **Display Order → New card gather order** → set to **"Descending position"**.
+
+Without this, Anki's default "Ascending position" surfaces oldest-first, defeating the Anki-side recency ordering. TT-side recency works regardless (newest cards appear first in `/review`), but sync will not reflect it. Recoverable any time by flipping the setting.
+
 ## Critical Rules
 
 1. **Strict TDD**: Always follow red-green-refactor. Run `./test.sh` BEFORE declaring victory — never commit with failing tests or coverage failures. Verify all changes with `./test.sh` before committing.

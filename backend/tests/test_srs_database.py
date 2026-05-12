@@ -148,10 +148,15 @@ class TestDueQueries:
         second = [item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(limit=5)]
         assert first == second
 
-    def test_get_new_items_orders_by_anki_due_then_anki_card_id(self, srs_db):
-        """anki_due ASC NULLS LAST, then anki_card_id ASC NULLS LAST, then c.id ASC."""
+    def test_get_new_items_tiebreakers_after_created_at(self, srs_db):
+        """Within the same created_at, tiebreak by anki_due ASC, anki_card_id ASC, c.id ASC."""
         for t in ["word_a", "word_b", "word_c", "word_d"]:
             srs_db.add_collocation(_unit(t, f"trans_{t}"), language_code="sl")
+
+        # Pin all to the same created_at so tiebreakers control ordering
+        with srs_db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET created_at = '2026-01-01 00:00:00'")
+            conn.commit()
 
         # word_a: anki_due=None, anki_card_id=100
         # word_b: anki_due=596, anki_card_id=999 (low position, late ID)
@@ -178,8 +183,54 @@ class TestDueQueries:
 
         result = srs_db.get_new_items(limit=10)
         texts = [item.syntactic_unit.text for _, item, _ in result]
-        # word_b (596), word_c (597), word_d (None, id=50), word_a (None, id=100)
+        # same created_at: word_b (596), word_c (597), word_d (None, id=50), word_a (None, id=100)
         assert texts == ["word_b", "word_c", "word_d", "word_a"]
+
+    def test_get_new_items_orders_by_created_at_desc(self, srs_db):
+        """Recency first: newer created_at beats older, even without anki_due."""
+        srs_db.add_collocation(_unit("older", "older"), language_code="sl")
+        with srs_db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET created_at = '2024-01-01 00:00:00' WHERE text = 'older'")
+            conn.commit()
+        srs_db.add_collocation(_unit("newer", "newer"), language_code="sl")
+
+        result = srs_db.get_new_items(limit=10)
+        texts = [item.syntactic_unit.text for _, item, _ in result]
+        assert texts == ["newer", "older"]
+
+    def test_get_new_items_fresh_autoadd_beats_anki_backlog(self, srs_db):
+        """Phase C divergence: TT prioritizes recency over Anki's anki_due position counter."""
+        # Imported Anki card: anki_due=5, older created_at
+        srs_db.add_collocation(_unit("anki_backlog", "backlog"), language_code="sl")
+        with srs_db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET created_at = '2024-01-01 00:00:00' WHERE text = 'anki_backlog'")
+            conn.commit()
+        rows, _ = srs_db.list_collocations(search="anki_backlog", limit=1)
+        row_id, item, _ = rows[0]
+        orig = item.directions[Direction.RECOGNITION]
+        srs_db.update_direction_by_id(
+            row_id,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.NEW,
+                due_date=orig.due_date,
+                stability=orig.stability,
+                difficulty=orig.difficulty,
+                reps=orig.reps,
+                lapses=orig.lapses,
+                anki_card_id=12345,
+                anki_due=5,
+            ),
+        )
+        # Fresh auto-add: anki_due=NULL, recent created_at
+        srs_db.add_collocation(_unit("fresh_autoadd", "fresh"), language_code="sl")
+
+        result = srs_db.get_new_items(limit=10)
+        texts = [item.syntactic_unit.text for _, item, _ in result]
+        assert texts == ["fresh_autoadd", "anki_backlog"], (
+            "Phase C divergence: TT prioritizes recency over Anki's anki_due position counter"
+        )
 
     def test_get_due_items_returns_due_date_then_id_order(self, srs_db):
         today = date.today()

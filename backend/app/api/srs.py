@@ -650,25 +650,23 @@ def _merge_by_retrievability_ascending(
     return combined
 
 
-def _merge_by_anki_due_then_id(
+def _merge_directions(
     rec: list[tuple[int, SRSItem, str]],
     prod: list[tuple[int, SRSItem, str]],
 ) -> list[tuple[int, SRSItem, str, Direction]]:
-    """Combine and sort by (anki_due ASC NULLS LAST, anki_card_id ASC NULLS LAST, row_id)."""
+    """Tag each item with its direction and preserve upstream ordering.
+
+    Both rec and prod are already ordered by get_new_items
+    (c.created_at DESC, d.anki_due ASC, d.anki_card_id ASC, c.id ASC).
+    This function tags each item with its Direction and concatenates
+    without re-sorting — the upstream ORDER BY is authoritative for the
+    new-card queue. See docs/anki-parity-layers.md Layer 24.
+    """
     combined: list[tuple[int, SRSItem, str, Direction]] = []
     for row_id, item, lang in rec:
         combined.append((row_id, item, lang, Direction.RECOGNITION))
     for row_id, item, lang in prod:
         combined.append((row_id, item, lang, Direction.PRODUCTION))
-    combined.sort(
-        key=lambda t: (
-            t[1].directions[t[3]].anki_due is None,
-            t[1].directions[t[3]].anki_due or 0,
-            t[1].directions[t[3]].anki_card_id is None,
-            t[1].directions[t[3]].anki_card_id or 0,
-            t[0],
-        ),
-    )
     return combined
 
 
@@ -778,7 +776,7 @@ async def get_review_queue(request: Request, session_start: bool = False) -> dic
     _NEW_OVERFETCH = max(new_quota * 4, new_quota + 50)
     new_rec = db.get_new_items(direction=Direction.RECOGNITION, limit=_NEW_OVERFETCH)
     new_prod = db.get_new_items(direction=Direction.PRODUCTION, limit=_NEW_OVERFETCH)
-    new_combined = _merge_by_anki_due_then_id(new_rec, new_prod)
+    new_combined = _merge_directions(new_rec, new_prod)
     if bury_new:
         new_combined = [t for t in new_combined if t[0] not in buried]
 

@@ -23,6 +23,70 @@ def _make_db() -> SRSDatabase:
     return SRSDatabase(":memory:")
 
 
+def _make_collection_conn():
+    """Build minimal in-memory collection.anki2 for OfflineWriter.create_note tests."""
+    import sqlite3
+
+    from app.anki.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript("""
+        CREATE TABLE col (
+            id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER,
+            dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT,
+            decks TEXT, dconf TEXT, tags TEXT
+        );
+        CREATE TABLE notes (
+            id INTEGER PRIMARY KEY, guid TEXT UNIQUE, mid INTEGER, mod INTEGER,
+            usn INTEGER, tags TEXT, flds TEXT, sfld TEXT, csum INTEGER,
+            flags INTEGER, data TEXT
+        );
+        CREATE TABLE cards (
+            id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER, ord INTEGER,
+            mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER, due INTEGER,
+            ivl INTEGER, factor INTEGER, reps INTEGER, lapses INTEGER, left INTEGER,
+            odue INTEGER, odid INTEGER, flags INTEGER, data TEXT
+        );
+        CREATE TABLE revlog (
+            id INTEGER PRIMARY KEY, cid INTEGER, usn INTEGER, ease INTEGER,
+            ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER
+        );
+        CREATE TABLE notetypes (
+            id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER,
+            usn INTEGER, config BLOB
+        );
+        CREATE TABLE templates (
+            ntid INTEGER, ord INTEGER, name TEXT, mtime_secs INTEGER,
+            usn INTEGER, config BLOB, PRIMARY KEY (ntid, ord)
+        );
+        CREATE TABLE fields (
+            ntid INTEGER, ord INTEGER, name TEXT, config BLOB,
+            PRIMARY KEY (ntid, ord)
+        );
+        CREATE TABLE decks (
+            id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER,
+            usn INTEGER, common BLOB
+        );
+    """)
+    conn.execute("INSERT INTO col VALUES (1, 1704067200, 0, 1000, 18, 0, 0, 0, '{}', '{}', '{}', '{}', '{}')")
+    conn.execute("INSERT INTO decks VALUES (12345, '0. Slovene', 0, 0, x'')")
+    conn.execute(
+        "INSERT INTO notetypes VALUES (1000001, ?, 0, 0, x'')",
+        (SLOVENE_VOCAB_NOTETYPE_NAME,),
+    )
+    conn.executemany(
+        "INSERT INTO fields VALUES (?, ?, ?, x'')",
+        [(1000001, i, name) for i, name in enumerate(SLOVENE_VOCAB_FIELD_NAMES)],
+    )
+    conn.executemany(
+        "INSERT INTO templates VALUES (?, ?, ?, 0, 0, x'')",
+        [(1000001, 0, "Recognition"), (1000001, 1, "Production")],
+    )
+    conn.commit()
+    return conn
+
+
 def _add_item(db: SRSDatabase, text: str, translation: str) -> str:
     """Add a collocation with no Anki IDs. Returns guid."""
     unit = SyntacticUnit(text=text, translation=translation, word_count=1, difficulty=1, source="corpus")
@@ -473,3 +537,100 @@ class TestSyncCreateNew:
         assert db.get_collocation("voda").anki_note_id == 8888
         # find_notes must NOT be called (offline path knows the ID from the exception)
         assert not any(c[0] == "find_notes" for c in writer.calls)
+
+    async def test_creates_notes_with_higher_due_for_newer_items(self):
+        """sync_create_new with real OfflineWriter: newer items get higher cards.due."""
+        from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
+        from app.anki.sync import OfflineWriter
+
+        db = _make_db()
+        guid_old = _add_item(db, "staro", "old")
+        guid_new = _add_item(db, "novo", "new")
+        with db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET created_at = '2026-01-01 00:00:00' WHERE guid = ?", (guid_old,))
+            conn.execute("UPDATE collocations SET created_at = '2026-06-01 00:00:00' WHERE guid = ?", (guid_new,))
+            conn.commit()
+
+        anki_conn = _make_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name=SLOVENE_VOCAB_NOTETYPE_NAME
+        )
+        rows = anki_conn.execute(
+            "SELECT n.guid, c.due FROM notes n JOIN cards c ON c.nid = n.id WHERE c.type = 0 ORDER BY c.due ASC"
+        ).fetchall()
+        assert len(rows) == 4  # 2 notes × 2 cards each (rec + prod)
+        guids = [r["guid"] for r in rows]
+        # Oldest TT item (staro) should have lowest cards.due → appears first
+        assert guids[0] == guid_old
+        assert guids[2] == guid_new  # newer TT item starts at position 3 (after both staro cards)
+
+    async def test_preserves_existing_anki_due(self):
+        """sync_create_new doesn't touch existing cards' due values."""
+        from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
+        from app.anki.sync import OfflineWriter
+
+        db = _make_db()
+        _add_item_with_anki_ids(db, "obstojeca", "existing", note_id=9999)
+        guid_new = _add_item(db, "nova", "new")
+
+        anki_conn = _make_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        # Pre-populate with existing cards at due=1,2,3
+        anki_conn.execute(
+            "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+            "VALUES (9999, 'existing', 1000001, 0, 0, '', 'existing', 'existing', 0, 0, '')"
+        )
+        for due_val in (1, 2, 3):
+            anki_conn.execute(
+                "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, lapses, left, odue, odid, flags, data) "
+                "VALUES (?, 9999, 12345, ?, 0, 0, 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+                (9000 + due_val, due_val - 1, due_val),
+            )
+        anki_conn.commit()
+
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name=SLOVENE_VOCAB_NOTETYPE_NAME
+        )
+        unchanged = anki_conn.execute("SELECT due FROM cards WHERE id IN (9001, 9002, 9003) ORDER BY id").fetchall()
+        assert [r["due"] for r in unchanged] == [1, 2, 3]
+
+        new_due = anki_conn.execute(
+            "SELECT c.due FROM cards c JOIN notes n ON c.nid = n.id WHERE n.guid = ? LIMIT 1",
+            (guid_new,),
+        ).fetchone()
+        assert new_due is not None
+        assert new_due["due"] >= 4  # MAX(existing due) + 1 = 3 + 1 = 4
+
+    async def test_sorts_by_created_at_asc_before_creating_notes(self):
+        """sync_create_new sorts oldest-first so MAX(due)+1 gives newer items higher due."""
+        db = _make_db()
+        guid_new = _add_item(db, "new_word", "new")
+        guid_old = _add_item(db, "old_word", "old")
+        with db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET created_at = '2026-01-01 00:00:00' WHERE guid = ?", (guid_old,))
+            conn.execute("UPDATE collocations SET created_at = '2026-06-01 00:00:00' WHERE guid = ?", (guid_new,))
+            conn.commit()
+
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        create_calls = [c for c in writer.calls if c[0] == "create_note"]
+        assert len(create_calls) == 2
+        assert create_calls[0][3]["Slovene"] == "old_word"
+        assert create_calls[1][3]["Slovene"] == "new_word"
+
+    async def test_same_second_created_at_does_not_crash(self):
+        """Multiple items with identical created_at produce no crash; all 3 created."""
+        db = _make_db()
+        _add_item(db, "word_a", "a")
+        _add_item(db, "word_b", "b")
+        _add_item(db, "word_c", "c")
+
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        create_calls = [c for c in writer.calls if c[0] == "create_note"]
+        assert len(create_calls) == 3

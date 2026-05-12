@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 16
+        assert CURRENT_VERSION == 17
 
     def test_migrates_v15_to_v16_deletes_phantom_directions(self, tmp_path):
         """v16 deletes direction rows that were auto-filled by the pre-fix
@@ -128,6 +128,29 @@ class TestMigrations:
         # Idempotent
         migrate_v15_to_v16(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 16
+
+    def test_migrates_v16_to_v17_adds_created_at_index(self, tmp_path):
+        """v17 creates idx_collocations_created_at for recency-prioritized new queue."""
+        import sqlite3
+
+        from app.srs.migrations import _set_version, migrate_v16_to_v17
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.row_factory = sqlite3.Row
+        conn.execute("CREATE TABLE collocations (id INTEGER PRIMARY KEY, created_at TEXT DEFAULT (datetime('now')))")
+        _set_version(conn, 16)
+
+        migrate_v16_to_v17(conn)
+
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_collocations_created_at'"
+        ).fetchone()
+        assert row is not None, "idx_collocations_created_at index must exist"
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 17
+
+        # Idempotent
+        migrate_v16_to_v17(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 17
 
     def test_migrates_v14_to_v15_fills_null_lemma(self, tmp_path):
         """v15 fills lemma for single-word rows that have lemma=NULL."""

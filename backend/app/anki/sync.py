@@ -1290,9 +1290,16 @@ class AnkiSync:
 
         Returns a CreateNewReport with created/linked/skipped counters.
         """
-        items = self._db.list_items_without_anki_note()
+        items = list(self._db.list_items_without_anki_note())
         if dry_run:
             return CreateNewReport(count=len(items))
+
+        # Sort oldest-first so the MAX(due)+1 allocator in create_note gives newer
+        # items higher cards.due. Under Anki's "New card gather order: Descending
+        # position" deck setting (rslib/src/storage/card/mod.rs:923 — emits
+        # "due DESC, ord ASC"), the freshest TT auto-add surfaces first in the
+        # user's next review. See docs/anki-parity-layers.md Layer 24.
+        items.sort(key=lambda gi: self._db.get_created_at_by_guid(gi[0]) or "")
 
         used_image_urls: set[str] = set()
         created = 0

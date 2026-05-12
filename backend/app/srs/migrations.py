@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 16
+CURRENT_VERSION = 17
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -525,6 +525,19 @@ def migrate_v15_to_v16(conn: sqlite3.Connection) -> None:
     _set_version(conn, 16)
 
 
+def migrate_v16_to_v17(conn: sqlite3.Connection) -> None:
+    """Index collocations.created_at for the Phase C recency-prioritized new queue.
+
+    get_new_items ORDER BY now leads with c.created_at DESC so freshly auto-added
+    cards from /listen surface ahead of the imported Anki backlog. Without an index
+    on created_at, every queue rebuild does a full sort. See docs/anki-parity-layers.md
+    Layer 24 for the rationale (intentional divergence from Anki's due-position
+    ordering).
+    """
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_collocations_created_at ON collocations(created_at)")
+    _set_version(conn, 17)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -542,6 +555,7 @@ _MIGRATIONS = {
     13: migrate_v13_to_v14,
     14: migrate_v14_to_v15,
     15: migrate_v15_to_v16,
+    16: migrate_v16_to_v17,
 }
 
 

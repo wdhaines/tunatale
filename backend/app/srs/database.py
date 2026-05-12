@@ -615,14 +615,24 @@ class SRSDatabase:
         limit: int = 10,
         direction: Direction = Direction.RECOGNITION,
     ) -> list[tuple[int, SRSItem, str]]:
-        """Like get_new_collocations but returns (id, SRSItem, language_code) tuples."""
+        """Return new-state cards, freshest first.
+
+        Anki-parity divergence: Anki orders new cards by `cards.due` (a per-deck
+        position counter set at note creation). TunaTale prepends c.created_at DESC
+        so listen-driven auto-adds (Phase A) surface ahead of the imported Anki
+        backlog. See .claude/rules/anki-queue-parity.md and docs/anki-parity-layers.md
+        Layer 24 for the rationale.
+        """
         with self._get_conn() as conn:
             rows = conn.execute(
                 """
                 SELECT c.* FROM collocations c
                 JOIN collocation_directions d ON d.collocation_id = c.id
                 WHERE d.direction = ? AND d.state = 'new'
-                 ORDER BY d.anki_due ASC NULLS LAST, d.anki_card_id ASC NULLS LAST, c.id ASC
+                 ORDER BY c.created_at DESC NULLS LAST,
+                          d.anki_due ASC NULLS LAST,
+                          d.anki_card_id ASC NULLS LAST,
+                          c.id ASC
                  LIMIT ?
                 """,
                 (direction.value, limit),
@@ -682,6 +692,15 @@ class SRSDatabase:
                 (collocation_id,),
             ).fetchone()
         return row["filename"] if row is not None else None
+
+    def get_created_at_by_guid(self, guid: str) -> str | None:
+        """Return the ISO timestamp from collocations.created_at for the given guid,
+        or None if no row matches. Used by sync_create_new to sort items so newer
+        cards get higher cards.due under Anki's Descending position gather order.
+        """
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT created_at FROM collocations WHERE guid = ?", (guid,)).fetchone()
+            return row["created_at"] if row else None
 
     def get_collocation_by_id(self, row_id: int) -> tuple[int, SRSItem, str] | None:
         with self._get_conn() as conn:
