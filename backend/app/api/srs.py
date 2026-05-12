@@ -383,6 +383,7 @@ async def get_stats(request: Request):
 async def get_queue_stats(request: Request):
     db = request.app.state.srs_db
     today = datetime.date.today()
+    db.unbury_if_needed(today)
     cap, source = resolve_daily_new_cap(db)
     _, fsrs_source = resolve_fsrs_params(db)
     # "Introduced today" is reconstructed from TT state (`prior_state='new'` +
@@ -654,19 +655,41 @@ def _merge_directions(
     rec: list[tuple[int, SRSItem, str]],
     prod: list[tuple[int, SRSItem, str]],
 ) -> list[tuple[int, SRSItem, str, Direction]]:
-    """Tag each item with its direction and preserve upstream ordering.
+    """Merge new-card directions in Anki's gather order.
 
-    Both rec and prod are already ordered by get_new_items
-    (c.created_at DESC, d.anki_due ASC, d.anki_card_id ASC, c.id ASC).
-    This function tags each item with its Direction and concatenates
-    without re-sorting — the upstream ORDER BY is authoritative for the
-    new-card queue. See docs/anki-parity-layers.md Layer 24.
+    Mirrors Anki's `add_new_card` (rslib `queue/builder/gathering.rs:63-169`),
+    which fetches cards under `NewCardSorting::HighestPosition` =
+    ``"due DESC, ord ASC"`` (storage/card/mod.rs:923) and proactively buries
+    the LATER sibling per note. By interleaving both directions in that gather
+    order BEFORE sibling-bury runs, the higher-anki_due sibling wins. The
+    downstream Template re-sort (applied to the survivors in `get_review_queue`)
+    then ranks ord=0 (recognition) ahead of ord=1 (production).
+
+    Sort key (LOWER sorts first):
+      1. ``(0,)`` for ``anki_due IS NULL`` else ``(1, -anki_due)`` — NULLS FIRST, DESC
+      2. ord ASC (Direction.RECOGNITION = 0, Direction.PRODUCTION = 1)
+      3. anki_card_id ASC NULLS LAST (deterministic tiebreak)
+      4. row_id ASC (final tiebreak)
+
+    Together with the post-bury Template sort in `get_review_queue`, this
+    reproduces the gather → bury → Template-sort pipeline exactly.
     """
     combined: list[tuple[int, SRSItem, str, Direction]] = []
     for row_id, item, lang in rec:
         combined.append((row_id, item, lang, Direction.RECOGNITION))
     for row_id, item, lang in prod:
         combined.append((row_id, item, lang, Direction.PRODUCTION))
+
+    def _gather_key(
+        t: tuple[int, SRSItem, str, Direction],
+    ) -> tuple[int, int, int, int, int]:
+        row_id, item, _lang, direction = t
+        ds = item.directions[direction]
+        ord_value = 0 if direction == Direction.RECOGNITION else 1
+        primary = (0, 0) if ds.anki_due is None else (1, -ds.anki_due)
+        return (*primary, ord_value, ds.anki_card_id or (1 << 62), row_id)
+
+    combined.sort(key=_gather_key)
     return combined
 
 
@@ -739,6 +762,10 @@ async def get_review_queue(request: Request, session_start: bool = False) -> dic
     db = request.app.state.srs_db
     today = datetime.date.today()
     now = datetime.datetime.now(datetime.UTC)
+
+    # Anki parity: run the daily unbury sweep before reading any queue state.
+    # Idempotent within a local day (cached via anki_state_cache['last_unbury_day']).
+    db.unbury_if_needed(today)
 
     if session_start:
         advance_learning_cutoff(db, now)
@@ -826,6 +853,12 @@ async def get_review_queue(request: Request, session_start: bool = False) -> dic
 
     nonlearning_due = _bury_siblings_in_queue(nonlearning_due, bury_review)
     nonlearning_new = _bury_siblings_in_queue(nonlearning_new, bury_new)
+    # Anki-parity Template stable sort over the post-bury new pool
+    # (rslib `queue/builder/sorting.rs:14-36`, NewCardSortOrder::Template).
+    # Gather order — anki_due DESC inside each ord group — is preserved by the
+    # stable sort, so the head of the new bucket is the highest-due card whose
+    # surviving sibling sits in ord=0.
+    nonlearning_new.sort(key=lambda t: 0 if t[3] == Direction.RECOGNITION else 1)
     # Final cap: only `new_quota` distinct collocations may be introduced today
     # (matches Anki's RemainingLimits decrement after each successful add).
     nonlearning_new = nonlearning_new[:new_quota]

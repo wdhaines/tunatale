@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 17
+CURRENT_VERSION = 18
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -538,6 +538,24 @@ def migrate_v16_to_v17(conn: sqlite3.Connection) -> None:
     _set_version(conn, 17)
 
 
+def migrate_v17_to_v18(conn: sqlite3.Connection) -> None:
+    """Add collocation_directions.introduced_at for the Layer 26 first-grade marker.
+
+    `count_new_introduced_today` previously filtered on `prior_state='new' AND
+    last_review today` — over-counting sticky-NEW cards whose introduction was
+    on a prior day but happened to be reviewed again today. With `introduced_at`
+    set only on the first NEW→non-NEW transition, the count now mirrors Anki's
+    `newToday` counter exactly. Existing rows get NULL (no backfill); they
+    naturally fall out of the count, restoring the historical "introduced 0
+    today" state until grades populate the column going forward.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)")}
+    if "introduced_at" not in cols:
+        conn.execute("ALTER TABLE collocation_directions ADD COLUMN introduced_at TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_directions_introduced_at ON collocation_directions(introduced_at)")
+    _set_version(conn, 18)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -556,6 +574,7 @@ _MIGRATIONS = {
     14: migrate_v14_to_v15,
     15: migrate_v15_to_v16,
     16: migrate_v16_to_v17,
+    17: migrate_v17_to_v18,
 }
 
 

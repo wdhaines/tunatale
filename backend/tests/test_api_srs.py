@@ -124,6 +124,7 @@ class TestQueueStats:
                 last_review=graded_at,
                 prior_state=SRSState.NEW,
                 anki_card_id=4242,
+                introduced_at=graded_at,
             ),
         )
 
@@ -176,6 +177,7 @@ class TestQueueStats:
                 due_at=datetime.now(UTC) + timedelta(minutes=1),
                 last_review=graded_at,
                 anki_card_id=4242,
+                introduced_at=graded_at,
             ),
         )
 
@@ -1289,86 +1291,130 @@ class TestReviewQueue:
         result = _merge_directions([], [])
         assert result == []
 
-    async def test_merge_directions_preserves_upstream_order(self, api_app_state):
-        """Merge concatenates without re-sorting, preserving get_new_items recency order."""
+    async def test_merge_directions_interleaves_by_anki_due_desc(self, api_app_state):
+        """Anki-parity: merge interleaves both directions in gather order
+        (anki_due DESC NULLS FIRST, ord ASC) so sibling-bury later favors the
+        higher-due sibling — matching Anki's `add_new_card` (rslib gathering.rs).
+        """
         from datetime import date
 
         from app.api.srs import _merge_directions
 
-        rec_item = self._make_item(date(2026, 1, 1), None, Direction.RECOGNITION, anki_due=None)
-        prod_item = self._make_item(date(2026, 1, 1), 100, Direction.PRODUCTION, anki_due=50)
+        # Same note: rec anki_due=100, prod anki_due=200 — prod is higher.
+        rec_item = self._make_item(date(2026, 1, 1), 1, Direction.RECOGNITION, anki_due=100)
+        prod_item = self._make_item(date(2026, 1, 1), 2, Direction.PRODUCTION, anki_due=200)
+        rec = [(1, rec_item, "sl")]
+        prod = [(1, prod_item, "sl")]
+        result = _merge_directions(rec, prod)
+        # Highest anki_due first → production (200) before recognition (100)
+        assert result[0][3] == Direction.PRODUCTION
+        assert result[1][3] == Direction.RECOGNITION
+
+    async def test_merge_directions_nulls_first(self, api_app_state):
+        """Unsynced (anki_due=NULL) rows sort above all synced rows."""
+        from datetime import date
+
+        from app.api.srs import _merge_directions
+
+        rec_item = self._make_item(date(2026, 1, 1), 1, Direction.RECOGNITION, anki_due=None)
+        prod_item = self._make_item(date(2026, 1, 1), 2, Direction.PRODUCTION, anki_due=999_999)
         rec = [(1, rec_item, "sl")]
         prod = [(2, prod_item, "sl")]
         result = _merge_directions(rec, prod)
-        # rec comes first (upstream order preserved), then prod
+        # NULLS FIRST: unsynced rec wins despite prod's high anki_due
         assert result[0][3] == Direction.RECOGNITION
         assert result[1][3] == Direction.PRODUCTION
 
-    async def test_merge_directions_rec_before_prod(self, api_app_state):
-        """Recognition items come before production items (upstream order preserved)."""
+    async def test_merge_directions_ord_ascending_on_anki_due_tie(self, api_app_state):
+        """When anki_due ties, ord ASC wins (recognition before production)."""
         from datetime import date
 
         from app.api.srs import _merge_directions
 
-        item1 = self._make_item(date(2026, 1, 1), 999, Direction.RECOGNITION, anki_due=200)
-        item2 = self._make_item(date(2026, 1, 1), 100, Direction.PRODUCTION, anki_due=100)
-        item3 = self._make_item(date(2026, 1, 1), 200, Direction.RECOGNITION, anki_due=None)
-        rec = [(1, item1, "sl"), (3, item3, "sl")]
-        prod = [(2, item2, "sl")]
+        # Same anki_due → ord ASC: rec (ord=0) before prod (ord=1)
+        rec_item = self._make_item(date(2026, 1, 1), 1, Direction.RECOGNITION, anki_due=500)
+        prod_item = self._make_item(date(2026, 1, 1), 2, Direction.PRODUCTION, anki_due=500)
+        rec = [(1, rec_item, "sl")]
+        prod = [(1, prod_item, "sl")]
         result = _merge_directions(rec, prod)
-        # All rec items first (in upstream order), then all prod items
-        assert len(result) == 3
+        assert len(result) == 2
         assert result[0][3] == Direction.RECOGNITION
-        assert result[1][3] == Direction.RECOGNITION
-        assert result[2][3] == Direction.PRODUCTION
+        assert result[1][3] == Direction.PRODUCTION
 
-    async def test_review_queue_new_cards_ordered_by_anki_due_across_directions(self, api_app_state):
-        """New cards ordered by anki_due across directions."""
+    async def test_review_queue_new_cards_ordered_by_anki_due_desc(self, api_app_state):
+        """Anki HighestPosition parity: synced new cards order by anki_due DESC."""
         from datetime import date
 
         db = api_app_state
 
         from app.models.syntactic_unit import SyntacticUnit
 
-        # Coll A: recognition (anki_due=596, anki_card_id=999)
-        # Coll B: production (anki_due=595, anki_card_id=100)
+        # Both directions of both collocations get synced anki_due values so the
+        # ordering is unambiguous (no NULL → no NULLS-FIRST effect).
         unit_a = SyntacticUnit(text="coll_a", translation="a", word_count=2, difficulty=1, source="test")
         unit_b = SyntacticUnit(text="coll_b", translation="b", word_count=2, difficulty=1, source="test")
         db.add_collocation(unit_a, language_code="sl")
         db.add_collocation(unit_b, language_code="sl")
 
         rows_a, _ = db.list_collocations(search="coll_a", limit=1)
-        row_id_a, item_a, _ = rows_a[0]
+        row_id_a, _item_a, _ = rows_a[0]
         rows_b, _ = db.list_collocations(search="coll_b", limit=1)
-        row_id_b, item_b, _ = rows_b[0]
+        row_id_b, _item_b, _ = rows_b[0]
 
-        # Set recognition for coll_a: anki_due=596, anki_card_id=999
-        rec_dir_a = DirectionState(
-            direction=Direction.RECOGNITION,
-            state=SRSState.NEW,
-            due_date=date.today(),
-            anki_card_id=999,
-            anki_due=596,
+        # coll_a: rec anki_due=596, prod anki_due=597
+        db.update_direction_by_id(
+            row_id_a,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.NEW,
+                due_date=date.today(),
+                anki_card_id=596,
+                anki_due=596,
+            ),
         )
-        db.update_direction_by_id(row_id_a, Direction.RECOGNITION, rec_dir_a)
-
-        # Set production for coll_b: anki_due=595, anki_card_id=100
-        prod_dir_b = DirectionState(
-            direction=Direction.PRODUCTION,
-            state=SRSState.NEW,
-            due_date=date.today(),
-            anki_card_id=100,
-            anki_due=595,
+        db.update_direction_by_id(
+            row_id_a,
+            Direction.PRODUCTION,
+            DirectionState(
+                direction=Direction.PRODUCTION,
+                state=SRSState.NEW,
+                due_date=date.today(),
+                anki_card_id=597,
+                anki_due=597,
+            ),
         )
-        db.update_direction_by_id(row_id_b, Direction.PRODUCTION, prod_dir_b)
+        # coll_b: rec anki_due=200, prod anki_due=201 (both lower than coll_a)
+        db.update_direction_by_id(
+            row_id_b,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.NEW,
+                due_date=date.today(),
+                anki_card_id=200,
+                anki_due=200,
+            ),
+        )
+        db.update_direction_by_id(
+            row_id_b,
+            Direction.PRODUCTION,
+            DirectionState(
+                direction=Direction.PRODUCTION,
+                state=SRSState.NEW,
+                due_date=date.today(),
+                anki_card_id=201,
+                anki_due=201,
+            ),
+        )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/srs/review-queue")
         assert resp.status_code == 200
         queue = resp.json()["queue"]
         new_items = [q for q in queue if q["state"] == "new"]
-        # Both same created_at → tiebroken by anki_due ASC NULLS LAST:
-        # coll_a_rec (596) before coll_b_rec (NULL)
+        # Higher anki_due first → coll_a (596) before coll_b (200); sibling-bury
+        # removes the prod duplicate of each.
         assert len(new_items) >= 2
         assert new_items[0]["text"] == "coll_a"
         assert new_items[1]["text"] == "coll_b"
@@ -1460,6 +1506,7 @@ class TestReviewQueue:
                 last_review=graded_at,
                 prior_state=SRSState.NEW,
                 anki_card_id=4242,
+                introduced_at=graded_at,
             ),
         )
 
@@ -1513,6 +1560,10 @@ class TestReviewQueue:
         db = api_app_state
         today = date.today()
 
+        # Pin last_unbury_day=today so the queue's daily unbury sweep is a no-op
+        # and the buried state survives long enough to be filtered out.
+        db.set_anki_state_cache("last_unbury_day", today.isoformat())
+
         # Create a collocation with recognition=buried, production=new
         unit = SyntacticUnit(text="buried_test", translation="test", word_count=2, difficulty=1, source="test")
         db.add_collocation(unit, language_code="sl")
@@ -1540,6 +1591,100 @@ class TestReviewQueue:
 
         # Just verify the endpoint works and doesn't error
         assert isinstance(queue, list)
+
+    async def test_review_queue_runs_daily_unbury_sweep(self, api_app_state):
+        """Stale state='buried' rows (from a prior day) are restored on first queue load."""
+        from datetime import date, timedelta
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        # Pretend the last sweep ran yesterday.
+        db.set_anki_state_cache("last_unbury_day", yesterday)
+
+        unit = SyntacticUnit(text="stale_buried", translation="x", word_count=2, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        rows, _ = db.list_collocations(search="stale_buried", limit=1)
+        row_id, item, _ = rows[0]
+        # Stale-buried row: reps=4 → should restore to REVIEW under sweep.
+        orig = item.directions[Direction.RECOGNITION]
+        db.update_direction_by_id(
+            row_id,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.BURIED,
+                due_date=orig.due_date,
+                stability=orig.stability,
+                difficulty=orig.difficulty,
+                reps=4,
+                lapses=orig.lapses,
+                anki_card_id=12345,
+            ),
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.get("/api/srs/review-queue")
+
+        item_after = db.get_collocation("stale_buried")
+        assert item_after.directions[Direction.RECOGNITION].state == SRSState.REVIEW
+
+    async def test_review_queue_new_head_matches_anki_gather_bury_template(self, api_app_state):
+        """The časa-vs-sekira regression — Anki's gather adds higher-due siblings first,
+        burying the lower-due one. Template sort then ranks surviving ord=0 (recognition)
+        ahead of surviving ord=1 (production). For two notes:
+          - časa: rec anki_due=1001997, prod anki_due=1001998 (prod higher)
+          - sekira: rec anki_due=1001974, prod anki_due=1001974 (tied)
+        Gather (anki_due DESC, ord ASC) adds: časa prod, časa rec (buried), sekira rec
+        (ord ASC tiebreak), sekira prod (buried). Survivors: časa prod, sekira rec.
+        Template sort by ord ASC: sekira rec first, then časa prod.
+        """
+        from datetime import date
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        # No reviews or learning today — just probe the new-bucket head.
+        for txt, rec_due, prod_due in [
+            ("časa", 1001997, 1001998),
+            ("sekira", 1001974, 1001974),
+        ]:
+            unit = SyntacticUnit(text=txt, translation="t", word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+            rows, _ = db.list_collocations(search=txt, limit=1)
+            row_id, item, _ = rows[0]
+            db.update_direction_by_id(
+                row_id,
+                Direction.RECOGNITION,
+                DirectionState(
+                    direction=Direction.RECOGNITION,
+                    state=SRSState.NEW,
+                    due_date=today,
+                    anki_card_id=rec_due,
+                    anki_due=rec_due,
+                ),
+            )
+            db.update_direction_by_id(
+                row_id,
+                Direction.PRODUCTION,
+                DirectionState(
+                    direction=Direction.PRODUCTION,
+                    state=SRSState.NEW,
+                    due_date=today,
+                    anki_card_id=prod_due,
+                    anki_due=prod_due,
+                ),
+            )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        queue = resp.json()["queue"]
+        new_items = [q for q in queue if q["state"] == "new"]
+        assert len(new_items) >= 2
+        assert (new_items[0]["text"], new_items[0]["direction"]) == ("sekira", "recognition")
+        assert (new_items[1]["text"], new_items[1]["direction"]) == ("časa", "production")
 
     async def test_review_queue_includes_audio_url_when_audio_exists(self, api_app_state):
         from datetime import date
@@ -2816,6 +2961,7 @@ class TestSessionMainQueueFreeze:
                     last_review=datetime.fromisoformat(graded_lr),
                     prior_state=SRSState.NEW,
                     anki_card_id=1500 + i,
+                    introduced_at=datetime.fromisoformat(graded_lr),
                 ),
             )
 

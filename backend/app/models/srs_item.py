@@ -76,6 +76,11 @@ class DirectionState:
     prior_state: SRSState | None = None
     prior_left: int | None = None
     prior_stability: float | None = None
+    # First-grade timestamp — set once on the initial NEW→non-NEW transition
+    # (by `app.srs.fsrs.schedule` for TT-side grades, by `sync_pull` for Anki
+    # grades). Used by `count_new_introduced_today` to mirror Anki's `newToday`
+    # counter, which increments only on the actual first-grade event. Layer 26.
+    introduced_at: datetime | None = None
 
 
 class SRSItem:

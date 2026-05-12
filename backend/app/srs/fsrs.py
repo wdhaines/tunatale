@@ -389,6 +389,9 @@ def _schedule_new(
         prior_state=_grade_prior_state(prev, SRSState.LEARNING),
         prior_left=prev.left,
         prior_stability=prev.stability,
+        # Layer 26: stamp the first-grade event so count_new_introduced_today
+        # reflects Anki's `newToday` increment exactly once per intro arc.
+        introduced_at=last_review_dt,
     )
     new_directions = dict(item.directions)
     new_directions[direction] = new_dir
@@ -640,6 +643,10 @@ def _graduate_to_review(
         prior_state=_grade_prior_state(prev, SRSState.REVIEW),
         prior_left=prev.left,
         prior_stability=prev.stability,
+        # Layer 26: NEW + EASY skips _schedule_new and lands here directly. Stamp
+        # introduced_at on the first NEW→REVIEW transition; preserve on later
+        # LEARNING/RELEARNING → REVIEW graduations.
+        introduced_at=(last_review_dt if prev.state == SRSState.NEW else prev.introduced_at),
     )
     new_directions = dict(item.directions)
     new_directions[direction] = new_dir

@@ -581,6 +581,30 @@ def _resolve_prior_state(
     return local_dir.prior_state
 
 
+def _resolve_introduced_at(
+    local_dir: DirectionState,
+    new_state: SRSState,
+    *,
+    first_review_ms: int | None,
+) -> datetime | None:
+    """Return the `introduced_at` to write on a sync-merged direction.
+
+    Layer 26: introduced_at is stamped exactly once per card's intro arc — on
+    the first NEW→non-NEW transition observed in EITHER app. Preserves an
+    already-set value (sticky for the card's lifetime). Else, if Anki shows
+    the card has been graded (new_state != NEW) and we know when Anki's first
+    revlog row landed, anchor to that timestamp so `count_new_introduced_today`
+    reflects Anki-side introductions after sync.
+    """
+    if local_dir.introduced_at is not None:
+        return local_dir.introduced_at
+    if new_state == SRSState.NEW:
+        return None
+    if first_review_ms is None:
+        return None
+    return datetime.fromtimestamp(first_review_ms / 1000, tz=UTC)
+
+
 def _anki_step_ahead(anki_left: int | None, local_left: int | None) -> bool:
     """Return True iff Anki's `total_remaining` is strictly less than TT's.
 
@@ -801,6 +825,13 @@ class AnkiSync:
         report = PullReport()
         max_revlog_ms = 0  # tracked to advance the learning cutoff after Anki-side grades
 
+        # Anki-parity daily unbury sweep. Run BEFORE processing Anki records so
+        # that any state='buried' rows that this pull lands (today's sibling-
+        # buries from Anki) stick — the idempotency guard prevents re-sweep
+        # later within the same day.
+        if not dry_run:
+            self._db.unbury_if_needed(date.today())
+
         # Local-today's UTC start, used to infer `prior_state='new'` for cards
         # whose first revlog is today but TT lost the transition (synced before
         # sync_pull learned to write prior_state).
@@ -882,6 +913,17 @@ class AnkiSync:
                         today_start_ms=_today_start_ms,
                     )
 
+                def _intro_at(
+                    local_dir: DirectionState,
+                    new_state: SRSState,
+                    _first_review_ms: int = card_rec.first_review_ms,
+                ) -> datetime | None:
+                    return _resolve_introduced_at(
+                        local_dir,
+                        new_state,
+                        first_review_ms=_first_review_ms,
+                    )
+
                 # Compute timestamps for conflict resolution
                 local_last_ms = int(local_dir.last_review.timestamp() * 1000) if local_dir.last_review else 0
                 anki_last_ms = card_rec.last_review_ms or 0
@@ -914,6 +956,7 @@ class AnkiSync:
                         lapses=card_rec.lapses,
                         state=new_state,
                         prior_state=_prior(local_dir, new_state),
+                        introduced_at=_intro_at(local_dir, new_state),
                         dirty_fsrs=False,  # cleared so push won't overwrite Anki
                         anki_card_id=card_rec.anki_card_id,
                         anki_card_mod=card_rec.anki_card_mod,
@@ -948,6 +991,7 @@ class AnkiSync:
                             local_dir,
                             state=SRSState.SUSPENDED,
                             prior_state=_prior(local_dir, SRSState.SUSPENDED),
+                            introduced_at=_intro_at(local_dir, SRSState.SUSPENDED),
                             anki_card_id=card_rec.anki_card_id,
                             anki_card_mod=card_rec.anki_card_mod,
                             anki_due=card_rec.anki_due,
@@ -958,6 +1002,7 @@ class AnkiSync:
                             local_dir,
                             state=SRSState.BURIED,
                             prior_state=_prior(local_dir, SRSState.BURIED),
+                            introduced_at=_intro_at(local_dir, SRSState.BURIED),
                             anki_card_id=card_rec.anki_card_id,
                             anki_card_mod=card_rec.anki_card_mod,
                             anki_due=card_rec.anki_due,
@@ -983,6 +1028,7 @@ class AnkiSync:
                             lapses=card_rec.lapses,
                             state=new_state,
                             prior_state=_prior(local_dir, new_state),
+                            introduced_at=_intro_at(local_dir, new_state),
                             dirty_fsrs=False,
                             anki_card_id=card_rec.anki_card_id,
                             anki_card_mod=card_rec.anki_card_mod,
@@ -1017,6 +1063,7 @@ class AnkiSync:
                             lapses=card_rec.lapses,
                             state=SRSState.REVIEW,
                             prior_state=_prior(local_dir, SRSState.REVIEW),
+                            introduced_at=_intro_at(local_dir, SRSState.REVIEW),
                             dirty_fsrs=False,
                             anki_card_id=card_rec.anki_card_id,
                             anki_card_mod=card_rec.anki_card_mod,
@@ -1051,6 +1098,7 @@ class AnkiSync:
                             left=card_rec.left,
                             due_at=card_rec.due_at,
                             prior_state=_prior(local_dir, local_dir.state),
+                            introduced_at=_intro_at(local_dir, local_dir.state),
                             dirty_fsrs=False,
                             anki_card_id=card_rec.anki_card_id,
                             anki_card_mod=card_rec.anki_card_mod,
@@ -1073,6 +1121,7 @@ class AnkiSync:
                             local_dir,
                             state=local_dir.state,
                             prior_state=_prior(local_dir, local_dir.state),
+                            introduced_at=_intro_at(local_dir, local_dir.state),
                             anki_card_id=card_rec.anki_card_id,
                             anki_card_mod=card_rec.anki_card_mod,
                             anki_due=card_rec.anki_due,
@@ -1089,6 +1138,7 @@ class AnkiSync:
                         lapses=card_rec.lapses,
                         state=new_state,
                         prior_state=_prior(local_dir, new_state),
+                        introduced_at=_intro_at(local_dir, new_state),
                         dirty_fsrs=False,
                         anki_card_id=card_rec.anki_card_id,
                         anki_card_mod=card_rec.anki_card_mod,
@@ -1109,6 +1159,7 @@ class AnkiSync:
                         lapses=card_rec.lapses,
                         state=new_state,
                         prior_state=_prior(local_dir, new_state),
+                        introduced_at=_intro_at(local_dir, new_state),
                         dirty_fsrs=False,
                         anki_card_id=card_rec.anki_card_id,
                         anki_card_mod=card_rec.anki_card_mod,

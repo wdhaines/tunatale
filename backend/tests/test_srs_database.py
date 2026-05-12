@@ -1,6 +1,6 @@
 """SRS database tests."""
 
-from datetime import UTC, date, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 
@@ -148,64 +148,38 @@ class TestDueQueries:
         second = [item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(limit=5)]
         assert first == second
 
-    def test_get_new_items_tiebreakers_after_created_at(self, srs_db):
-        """Within the same created_at, tiebreak by anki_due ASC, anki_card_id ASC, c.id ASC."""
-        for t in ["word_a", "word_b", "word_c", "word_d"]:
+    def test_get_new_items_synced_orders_by_anki_due_desc(self, srs_db):
+        """Synced rows sort by anki_due DESC to mirror Anki HighestPosition gather."""
+        for t in ["word_a", "word_b", "word_c"]:
             srs_db.add_collocation(_unit(t, f"trans_{t}"), language_code="sl")
-
-        # Pin all to the same created_at so tiebreakers control ordering
-        with srs_db._get_conn() as conn:
-            conn.execute("UPDATE collocations SET created_at = '2026-01-01 00:00:00'")
-            conn.commit()
-
-        # word_a: anki_due=None, anki_card_id=100
-        # word_b: anki_due=596, anki_card_id=999 (low position, late ID)
-        # word_c: anki_due=597, anki_card_id=200
-        # word_d: anki_due=None, anki_card_id=50
-        anki_due_map = {"word_a": None, "word_b": 596, "word_c": 597, "word_d": None}
-        anki_id_map = {"word_a": 100, "word_b": 999, "word_c": 200, "word_d": 50}
-        for text in ["word_a", "word_b", "word_c", "word_d"]:
+        due_map = {"word_a": 100, "word_b": 200, "word_c": 150}
+        for text, due in due_map.items():
             rows, _ = srs_db.list_collocations(search=text, limit=1)
             row_id, item, _ = rows[0]
             orig = item.directions[Direction.RECOGNITION]
-            new_dir = DirectionState(
-                direction=Direction.RECOGNITION,
-                state=SRSState.NEW,
-                due_date=orig.due_date,
-                stability=orig.stability,
-                difficulty=orig.difficulty,
-                reps=orig.reps,
-                lapses=orig.lapses,
-                anki_card_id=anki_id_map[text],
-                anki_due=anki_due_map[text],
+            srs_db.update_direction_by_id(
+                row_id,
+                Direction.RECOGNITION,
+                DirectionState(
+                    direction=Direction.RECOGNITION,
+                    state=SRSState.NEW,
+                    due_date=orig.due_date,
+                    stability=orig.stability,
+                    difficulty=orig.difficulty,
+                    reps=orig.reps,
+                    lapses=orig.lapses,
+                    anki_card_id=due * 10,
+                    anki_due=due,
+                ),
             )
-            srs_db.update_direction_by_id(row_id, Direction.RECOGNITION, new_dir)
+        texts = [item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(limit=10)]
+        # Highest anki_due first → b (200), c (150), a (100)
+        assert texts == ["word_b", "word_c", "word_a"]
 
-        result = srs_db.get_new_items(limit=10)
-        texts = [item.syntactic_unit.text for _, item, _ in result]
-        # same created_at: word_b (596), word_c (597), word_d (None, id=50), word_a (None, id=100)
-        assert texts == ["word_b", "word_c", "word_d", "word_a"]
-
-    def test_get_new_items_orders_by_created_at_desc(self, srs_db):
-        """Recency first: newer created_at beats older, even without anki_due."""
-        srs_db.add_collocation(_unit("older", "older"), language_code="sl")
-        with srs_db._get_conn() as conn:
-            conn.execute("UPDATE collocations SET created_at = '2024-01-01 00:00:00' WHERE text = 'older'")
-            conn.commit()
-        srs_db.add_collocation(_unit("newer", "newer"), language_code="sl")
-
-        result = srs_db.get_new_items(limit=10)
-        texts = [item.syntactic_unit.text for _, item, _ in result]
-        assert texts == ["newer", "older"]
-
-    def test_get_new_items_fresh_autoadd_beats_anki_backlog(self, srs_db):
-        """Phase C divergence: TT prioritizes recency over Anki's anki_due position counter."""
-        # Imported Anki card: anki_due=5, older created_at
-        srs_db.add_collocation(_unit("anki_backlog", "backlog"), language_code="sl")
-        with srs_db._get_conn() as conn:
-            conn.execute("UPDATE collocations SET created_at = '2024-01-01 00:00:00' WHERE text = 'anki_backlog'")
-            conn.commit()
-        rows, _ = srs_db.list_collocations(search="anki_backlog", limit=1)
+    def test_get_new_items_unsynced_rows_surface_above_synced(self, srs_db):
+        """Unsynced rows (anki_due NULL) come BEFORE any synced row, even if synced has higher anki_due."""
+        srs_db.add_collocation(_unit("synced_high", "s"), language_code="sl")
+        rows, _ = srs_db.list_collocations(search="synced_high", limit=1)
         row_id, item, _ = rows[0]
         orig = item.directions[Direction.RECOGNITION]
         srs_db.update_direction_by_id(
@@ -219,18 +193,55 @@ class TestDueQueries:
                 difficulty=orig.difficulty,
                 reps=orig.reps,
                 lapses=orig.lapses,
-                anki_card_id=12345,
-                anki_due=5,
+                anki_card_id=999_999,
+                anki_due=1_000_000,
             ),
         )
-        # Fresh auto-add: anki_due=NULL, recent created_at
-        srs_db.add_collocation(_unit("fresh_autoadd", "fresh"), language_code="sl")
-
-        result = srs_db.get_new_items(limit=10)
-        texts = [item.syntactic_unit.text for _, item, _ in result]
-        assert texts == ["fresh_autoadd", "anki_backlog"], (
-            "Phase C divergence: TT prioritizes recency over Anki's anki_due position counter"
+        # Fresh auto-add: anki_due=NULL
+        srs_db.add_collocation(_unit("fresh_unsynced", "f"), language_code="sl")
+        texts = [item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(limit=10)]
+        assert texts == ["fresh_unsynced", "synced_high"], (
+            "Unsynced TT-added rows must appear before all synced rows (NULLS FIRST)."
         )
+
+    def test_get_new_items_within_unsynced_newest_created_first(self, srs_db):
+        """Among unsynced rows (anki_due NULL), tiebreak by created_at DESC."""
+        srs_db.add_collocation(_unit("older", "older"), language_code="sl")
+        with srs_db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET created_at = '2024-01-01 00:00:00' WHERE text = 'older'")
+            conn.commit()
+        srs_db.add_collocation(_unit("newer", "newer"), language_code="sl")
+        texts = [item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(limit=10)]
+        assert texts == ["newer", "older"]
+
+    def test_get_new_items_tiebreakers_after_anki_due(self, srs_db):
+        """When anki_due ties, fall back to anki_card_id ASC then c.id ASC."""
+        for t in ["word_a", "word_b", "word_c"]:
+            srs_db.add_collocation(_unit(t, f"trans_{t}"), language_code="sl")
+        # Same anki_due, different anki_card_id
+        cfg = {"word_a": 555, "word_b": 222, "word_c": 333}
+        for text, aid in cfg.items():
+            rows, _ = srs_db.list_collocations(search=text, limit=1)
+            row_id, item, _ = rows[0]
+            orig = item.directions[Direction.RECOGNITION]
+            srs_db.update_direction_by_id(
+                row_id,
+                Direction.RECOGNITION,
+                DirectionState(
+                    direction=Direction.RECOGNITION,
+                    state=SRSState.NEW,
+                    due_date=orig.due_date,
+                    stability=orig.stability,
+                    difficulty=orig.difficulty,
+                    reps=orig.reps,
+                    lapses=orig.lapses,
+                    anki_card_id=aid,
+                    anki_due=42,
+                ),
+            )
+        texts = [item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(limit=10)]
+        # anki_due ties → anki_card_id ASC: b(222), c(333), a(555)
+        assert texts == ["word_b", "word_c", "word_a"]
 
     def test_get_due_items_returns_due_date_then_id_order(self, srs_db):
         today = date.today()
@@ -366,6 +377,78 @@ class TestDueQueries:
         assert "review_word" in texts
         assert "learning_word" in texts
         assert "buried_word" not in texts
+
+
+class TestUnburyIfNeeded:
+    """Tests for db.unbury_if_needed — Anki-parity daily queue=-2/-3 reset."""
+
+    def _bury_direction(self, srs_db, text: str, direction: Direction, reps: int):
+        rows, _ = srs_db.list_collocations(search=text, limit=1)
+        row_id, item, _ = rows[0]
+        orig = item.directions[direction]
+        srs_db.update_direction_by_id(
+            row_id,
+            direction,
+            DirectionState(
+                direction=direction,
+                state=SRSState.BURIED,
+                due_date=orig.due_date,
+                stability=orig.stability,
+                difficulty=orig.difficulty,
+                reps=reps,
+                lapses=orig.lapses,
+                anki_card_id=42,
+            ),
+        )
+
+    def test_unbury_restores_review_for_reps_gt_zero(self, srs_db):
+        today = date.today()
+        srs_db.add_collocation(_unit("graded_then_buried", "x"), language_code="sl")
+        self._bury_direction(srs_db, "graded_then_buried", Direction.RECOGNITION, reps=5)
+        count = srs_db.unbury_if_needed(today)
+        assert count == 1
+        item = srs_db.get_collocation("graded_then_buried")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.REVIEW
+
+    def test_unbury_restores_new_for_reps_zero(self, srs_db):
+        today = date.today()
+        srs_db.add_collocation(_unit("never_graded_buried", "x"), language_code="sl")
+        self._bury_direction(srs_db, "never_graded_buried", Direction.RECOGNITION, reps=0)
+        srs_db.unbury_if_needed(today)
+        item = srs_db.get_collocation("never_graded_buried")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.NEW
+
+    def test_unbury_is_idempotent_within_same_day(self, srs_db):
+        today = date.today()
+        srs_db.add_collocation(_unit("buried_once", "x"), language_code="sl")
+        self._bury_direction(srs_db, "buried_once", Direction.RECOGNITION, reps=3)
+        first = srs_db.unbury_if_needed(today)
+        # Bury again to simulate a fresh sync_pull that landed today's sibling-buries
+        self._bury_direction(srs_db, "buried_once", Direction.RECOGNITION, reps=3)
+        second = srs_db.unbury_if_needed(today)
+        assert first == 1
+        assert second == 0, "second call within the same day must be a no-op"
+        # The row stays buried (today's bury is preserved)
+        item = srs_db.get_collocation("buried_once")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.BURIED
+
+    def test_unbury_re_sweeps_on_new_day(self, srs_db):
+        today = date.today()
+        yesterday = today - timedelta(days=1)
+        srs_db.add_collocation(_unit("rebury_after_rollover", "x"), language_code="sl")
+        self._bury_direction(srs_db, "rebury_after_rollover", Direction.RECOGNITION, reps=2)
+        srs_db.unbury_if_needed(yesterday)
+        # Bury again post-yesterday-sweep
+        self._bury_direction(srs_db, "rebury_after_rollover", Direction.RECOGNITION, reps=2)
+        count = srs_db.unbury_if_needed(today)
+        assert count == 1, "rolling to a new day must re-sweep stale buried rows"
+
+    def test_unbury_writes_last_unbury_day_cache(self, srs_db):
+        today = date.today()
+        srs_db.unbury_if_needed(today)
+        cached = srs_db.get_anki_state_cache("last_unbury_day")
+        assert cached is not None
+        assert cached[0] == today.isoformat()
 
 
 class TestReviewedToday:
@@ -522,6 +605,108 @@ class TestReviewedToday:
         # And NOT into adjacent days
         assert late_id not in srs_db.list_collocations_reviewed_today(today_local + timedelta(days=1))
         assert early_id not in srs_db.list_collocations_reviewed_today(today_local - timedelta(days=1))
+
+
+class TestCountNewIntroducedToday:
+    """count_new_introduced_today must reflect *real* first-grade introductions,
+    not the sticky prior_state='new' marker on long-graduated cards.
+
+    Layer 26 bug fix: filter on the explicit `introduced_at` column written by
+    the grade endpoint / sync_pull on the first NEW→non-NEW transition.
+    """
+
+    def _seed_with_introduction(
+        self,
+        db: SRSDatabase,
+        text: str,
+        introduced_at_iso: str | None,
+        last_review_iso: str,
+        prior_state: SRSState = SRSState.NEW,
+        reps: int = 1,
+    ):
+        """Insert a card whose recognition direction was introduced at `introduced_at_iso`."""
+        from datetime import datetime as _dt
+
+        db.add_collocation(_unit(text, "x"), language_code="sl")
+        item = db.get_collocation(text)
+        orig = item.directions[Direction.RECOGNITION]
+        new_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=orig.due_date,
+            stability=1.0,
+            difficulty=5.0,
+            reps=reps,
+            lapses=0,
+            last_review=_dt.fromisoformat(last_review_iso) if last_review_iso else None,
+            prior_state=prior_state,
+            introduced_at=_dt.fromisoformat(introduced_at_iso) if introduced_at_iso else None,
+        )
+        db.update_direction(item.guid, Direction.RECOGNITION, new_dir)
+
+    def test_counts_card_introduced_today(self, srs_db):
+        from datetime import datetime as _dt
+
+        today = date.today()
+        local = _dt.now().astimezone().tzinfo
+        today_noon = _dt.combine(today, time(12), tzinfo=local).astimezone(UTC).isoformat()
+        self._seed_with_introduction(srs_db, "intro_today", today_noon, today_noon)
+        assert srs_db.count_new_introduced_today(today) == 1
+
+    def test_does_not_count_card_introduced_on_prior_day_reviewed_today(self, srs_db):
+        """Sticky-NEW card reviewed today but introduced days ago must NOT count.
+
+        Anki's `newToday` increments only on the actual first-grade event; later
+        reviews of the same card don't bump it. TT must mirror that.
+        """
+        from datetime import datetime as _dt
+
+        today = date.today()
+        local = _dt.now().astimezone().tzinfo
+        intro_day = today - timedelta(days=5)
+        intro_iso = _dt.combine(intro_day, time(9), tzinfo=local).astimezone(UTC).isoformat()
+        today_iso = _dt.combine(today, time(8), tzinfo=local).astimezone(UTC).isoformat()
+        self._seed_with_introduction(
+            srs_db,
+            "old_intro_reviewed_today",
+            introduced_at_iso=intro_iso,
+            last_review_iso=today_iso,
+            prior_state=SRSState.NEW,
+            reps=7,
+        )
+        assert srs_db.count_new_introduced_today(today) == 0
+
+    def test_does_not_count_unintroduced_card(self, srs_db):
+        """A card with no introduced_at (e.g., still NEW) doesn't count."""
+        today = date.today()
+        srs_db.add_collocation(_unit("never_graded", "x"), language_code="sl")
+        assert srs_db.count_new_introduced_today(today) == 0
+
+    def test_counts_distinct_collocations_when_both_directions_introduced(self, srs_db):
+        """Both directions of the same colloc introduced today → still counts once."""
+        from datetime import datetime as _dt
+
+        today = date.today()
+        local = _dt.now().astimezone().tzinfo
+        today_noon = _dt.combine(today, time(12), tzinfo=local).astimezone(UTC).isoformat()
+        self._seed_with_introduction(srs_db, "dual_intro", today_noon, today_noon)
+        item = srs_db.get_collocation("dual_intro")
+        orig_prod = item.directions[Direction.PRODUCTION]
+        srs_db.update_direction(
+            item.guid,
+            Direction.PRODUCTION,
+            DirectionState(
+                direction=Direction.PRODUCTION,
+                state=SRSState.REVIEW,
+                due_date=orig_prod.due_date,
+                stability=1.0,
+                reps=1,
+                last_review=datetime.fromisoformat(today_noon),
+                prior_state=SRSState.NEW,
+                introduced_at=datetime.fromisoformat(today_noon),
+            ),
+        )
+        assert srs_db.count_new_introduced_today(today) == 1
 
 
 class TestViolations:

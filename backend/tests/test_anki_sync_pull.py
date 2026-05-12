@@ -1971,3 +1971,65 @@ class TestSyncPullCardType:
         assert recog.state == SRSState.LEARNING, f"Rožnat should be LEARNING (type=1), got {recog.state}"
         # Should NOT be REVIEW (the original bug)
         assert recog.state != SRSState.REVIEW
+
+
+class TestResolveIntroducedAt:
+    """Layer 26 helper — stamps introduced_at once per intro arc."""
+
+    def test_preserves_existing_introduced_at(self):
+        """Sticky: if local already has introduced_at, return it unchanged."""
+        from datetime import date as _date
+
+        from app.anki.sync import _resolve_introduced_at
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        existing = _dt(2026, 1, 15, 10, 30, tzinfo=UTC)
+        local_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=_date(2026, 5, 1),
+            state=SRSState.REVIEW,
+            introduced_at=existing,
+        )
+        result = _resolve_introduced_at(local_dir, SRSState.REVIEW, first_review_ms=999_999_999_999)
+        assert result == existing
+
+    def test_returns_none_for_new_state(self):
+        from datetime import date as _date
+
+        from app.anki.sync import _resolve_introduced_at
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        local_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=_date(2026, 5, 1),
+            state=SRSState.NEW,
+        )
+        assert _resolve_introduced_at(local_dir, SRSState.NEW, first_review_ms=123) is None
+
+    def test_returns_none_when_no_revlog(self):
+        from datetime import date as _date
+
+        from app.anki.sync import _resolve_introduced_at
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        local_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=_date(2026, 5, 1),
+            state=SRSState.NEW,
+        )
+        assert _resolve_introduced_at(local_dir, SRSState.REVIEW, first_review_ms=None) is None
+
+    def test_stamps_from_first_revlog_when_local_is_null(self):
+        from datetime import date as _date
+
+        from app.anki.sync import _resolve_introduced_at
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        local_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=_date(2026, 5, 1),
+            state=SRSState.NEW,
+        )
+        first_ms = 1_700_000_000_000  # 2023-11-14
+        result = _resolve_introduced_at(local_dir, SRSState.REVIEW, first_review_ms=first_ms)
+        assert result == _dt.fromtimestamp(first_ms / 1000, tz=UTC)

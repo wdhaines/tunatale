@@ -114,6 +114,7 @@ _DIR_COLUMNS = (
     "prior_state",
     "prior_left",
     "prior_stability",
+    "introduced_at",
 )
 
 # States that should never surface in the due queue regardless of due_date.
@@ -353,7 +354,8 @@ class SRSDatabase:
                     due_at = ?,
                     prior_state = ?,
                     prior_left = ?,
-                    prior_stability = ?
+                    prior_stability = ?,
+                    introduced_at = ?
                 WHERE collocation_id = ? AND direction = ?
                 """,
                 (
@@ -376,6 +378,7 @@ class SRSDatabase:
                     state.prior_state.value if state.prior_state is not None else None,
                     state.prior_left,
                     state.prior_stability,
+                    state.introduced_at.isoformat() if state.introduced_at else None,
                     row["id"],
                     direction.value,
                 ),
@@ -427,6 +430,7 @@ class SRSDatabase:
             if row["due_at"] is not None:
                 due_at = datetime.fromisoformat(row["due_at"])
             prior_state_raw = row["prior_state"]
+            introduced_at_raw = row["introduced_at"]
             directions[d] = DirectionState(
                 direction=d,
                 due_date=date.fromisoformat(row["due_date"]),
@@ -448,6 +452,7 @@ class SRSDatabase:
                 prior_state=SRSState(prior_state_raw) if prior_state_raw else None,
                 prior_left=row["prior_left"],
                 prior_stability=row["prior_stability"],
+                introduced_at=datetime.fromisoformat(introduced_at_raw) if introduced_at_raw else None,
             )
         return directions
 
@@ -615,13 +620,22 @@ class SRSDatabase:
         limit: int = 10,
         direction: Direction = Direction.RECOGNITION,
     ) -> list[tuple[int, SRSItem, str]]:
-        """Return new-state cards, freshest first.
+        """Return new-state cards in Anki-parity order under HighestPosition gather.
 
-        Anki-parity divergence: Anki orders new cards by `cards.due` (a per-deck
-        position counter set at note creation). TunaTale prepends c.created_at DESC
-        so listen-driven auto-adds (Phase A) surface ahead of the imported Anki
-        backlog. See .claude/rules/anki-queue-parity.md and docs/anki-parity-layers.md
-        Layer 24 for the rationale.
+        Sort order mirrors Anki's deck setting "New card gather order: Descending
+        position" (`NewCardGatherPriority::HighestPosition`, emits `due DESC, ord ASC`
+        in `rslib/src/storage/card/mod.rs:923`):
+
+        1. `d.anki_due DESC NULLS FIRST` — unsynced rows (anki_due NULL) sit above
+           every synced row so /listen auto-adds surface immediately, before they're
+           pushed to Anki. After `sync_create_new` allocates `MAX(due)+1` per Phase C,
+           they re-anchor at the top of the synced pool with the highest anki_due.
+        2. `c.created_at DESC NULLS LAST` — within the unsynced batch, newer wins.
+        3. `d.anki_card_id ASC NULLS LAST`, `c.id ASC` — deterministic tiebreakers.
+
+        Layer 25 (this commit) replaces Layer 24's `created_at DESC` lead key with
+        `anki_due DESC` so both apps order the synced pool identically while still
+        keeping fresh TT-only rows up front. See `.claude/rules/anki-queue-parity.md`.
         """
         with self._get_conn() as conn:
             rows = conn.execute(
@@ -629,8 +643,8 @@ class SRSDatabase:
                 SELECT c.* FROM collocations c
                 JOIN collocation_directions d ON d.collocation_id = c.id
                 WHERE d.direction = ? AND d.state = 'new'
-                 ORDER BY c.created_at DESC NULLS LAST,
-                          d.anki_due ASC NULLS LAST,
+                 ORDER BY d.anki_due DESC NULLS FIRST,
+                          c.created_at DESC NULLS LAST,
                           d.anki_card_id ASC NULLS LAST,
                           c.id ASC
                  LIMIT ?
@@ -1461,6 +1475,39 @@ class SRSDatabase:
             )
             self._commit(conn)
 
+    def unbury_if_needed(self, today: date) -> int:
+        """Anki-parity daily unbury sweep — restores stale state='buried' rows.
+
+        Anki resets queue=-2 (user/sibling buried) and queue=-3 (scheduler buried)
+        back to their original queues once per day, on the first queue rebuild
+        after the rollover (`rslib/.../queue/builder/...`). TT mirrors this:
+        cards that were buried on a prior day (e.g., by sync_pull pulling Anki's
+        queue=-2) must be released so they reappear in today's review pool.
+
+        Tracked via `anki_state_cache['last_unbury_day']`. Idempotent within a
+        local day — subsequent calls today return 0 without touching anything,
+        which is important because sync_pull within the same day may land new
+        state='buried' rows for today's sibling-buries that must stick.
+
+        Returns the number of rows unburied.
+        """
+        cached = self.get_anki_state_cache("last_unbury_day")
+        today_iso = today.isoformat()
+        if cached and cached[0] == today_iso:
+            return 0
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE collocation_directions
+                SET state = CASE WHEN reps > 0 THEN 'review' ELSE 'new' END
+                WHERE state = 'buried'
+                """
+            )
+            rowcount = cursor.rowcount
+            self._commit(conn)
+        self.set_anki_state_cache("last_unbury_day", today_iso)
+        return rowcount
+
     def count_new_available(self) -> int:
         """Count all collocation_directions rows in the NEW state (both directions)."""
         with self._get_conn() as conn:
@@ -1535,11 +1582,17 @@ class SRSDatabase:
             ).fetchone()[0]
 
     def count_new_introduced_today(self, today: date) -> int:
-        """Count distinct collocations whose first grade today moved them out of NEW.
+        """Count distinct collocations whose first NEW→non-NEW transition fell today.
 
-        Used to reconstruct session-start counts for the intersperser ratio
-        without reading collection.anki2. Captures both TT grades and Anki
-        grades that have been synced (sync writes `prior_state` and `last_review`).
+        Filters on the explicit `introduced_at` column written once by the grade
+        endpoint (`app.srs.fsrs.schedule`) and by `sync_pull` on the first
+        introduction event. Mirrors Anki's `newToday` counter, which increments
+        only on that first grade — subsequent reviews of the same card on later
+        days do NOT bump it.
+
+        Pre-Layer-26 rows that were introduced before `introduced_at` existed
+        have NULL and naturally fall out of the count. Going forward, every new
+        grade populates the column.
         """
         local_tz = datetime.now().astimezone().tzinfo
         start_utc = datetime.combine(today, time(0), tzinfo=local_tz).astimezone(UTC)
@@ -1548,13 +1601,11 @@ class SRSDatabase:
             row = conn.execute(
                 """
                 SELECT COUNT(DISTINCT collocation_id) FROM collocation_directions
-                WHERE prior_state = 'new'
-                  AND (
-                    (length(last_review) > 10 AND last_review >= ? AND last_review < ?)
-                    OR (length(last_review) = 10 AND last_review = ?)
-                  )
+                WHERE introduced_at IS NOT NULL
+                  AND introduced_at >= ?
+                  AND introduced_at < ?
                 """,
-                (start_utc.isoformat(), end_utc.isoformat(), today.isoformat()),
+                (start_utc.isoformat(), end_utc.isoformat()),
             ).fetchone()
             return row[0] if row else 0
 

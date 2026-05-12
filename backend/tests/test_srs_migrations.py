@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 17
+        assert CURRENT_VERSION == 18
 
     def test_migrates_v15_to_v16_deletes_phantom_directions(self, tmp_path):
         """v16 deletes direction rows that were auto-filled by the pre-fix
@@ -151,6 +151,44 @@ class TestMigrations:
         # Idempotent
         migrate_v16_to_v17(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 17
+
+    def test_migrates_v17_to_v18_adds_introduced_at_column(self, tmp_path):
+        """v18 adds collocation_directions.introduced_at for first-grade tracking."""
+        import sqlite3
+
+        from app.srs.migrations import _set_version, migrate_v17_to_v18
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            """CREATE TABLE collocation_directions (
+                collocation_id INTEGER,
+                direction TEXT,
+                state TEXT,
+                last_review TEXT,
+                prior_state TEXT,
+                reps INTEGER DEFAULT 0
+            )"""
+        )
+        conn.execute(
+            "INSERT INTO collocation_directions (collocation_id, direction, state, prior_state, reps) "
+            "VALUES (1, 'recognition', 'review', 'new', 3)"
+        )
+        _set_version(conn, 17)
+
+        migrate_v17_to_v18(conn)
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)")}
+        assert "introduced_at" in cols
+        # Pre-existing rows must keep introduced_at=NULL (we don't backfill — Anki
+        # revlog reconstruction is the source of truth for old rows post-sync).
+        row = conn.execute("SELECT introduced_at FROM collocation_directions").fetchone()
+        assert row["introduced_at"] is None
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 18
+
+        # Idempotent
+        migrate_v17_to_v18(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 18
 
     def test_migrates_v14_to_v15_fills_null_lemma(self, tmp_path):
         """v15 fills lemma for single-word rows that have lemma=NULL."""
