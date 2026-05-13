@@ -460,6 +460,70 @@ Defensive: if a rename hits a UNIQUE conflict at apply-time, it falls back to de
 
 ---
 
+## Layer 32 — Overfetch limit broke cross-direction sibling bury
+
+**Trigger.** After sync, TT served `eksplodirati` recognition (anki_due=1127) as the first new card while Anki served `zdravo` production (anki_due=1002000). The Layer 28 fix (`_merge_directions` interleaves both directions; bury favors the higher-due sibling; Template sort by ord) was correctly implemented — and called by the post-sync eager rebuild in Layer 29. But the merge step received per-direction lists that were truncated asymmetrically.
+
+**Mechanism.** `_compute_live_main` fetched `new_rec` and `new_prod` with `limit = _NEW_OVERFETCH = max(new_quota * 4, new_quota + 50)` = 112 for `new_quota=28`. The user's pool had:
+- ~30 production-only-new cards with `anki_due` in the 1001970–1002000 range (notes where the recognition sibling was already graduated).
+- Many paired notes with low `anki_due` (e.g., `eksplodirati` rec=1127, prod=1128).
+
+Sorted DESC, the high-anki_due production-only notes filled `new_prod`'s top 112 slots, pushing `eksplodirati prod` (1128) outside the limit. But `new_rec` returned only 36 cards total (no overflow), so `eksplodirati rec` (1127) WAS in the list. In the merge there was no `eksplodirati prod` to bury against → `eksplodirati rec` survived → Template sort by `ord` put it ahead of all production cards.
+
+**Fix.** Replace the quota-based overfetch with `max(count_new_available, new_quota + 50)` — a strict upper bound on the per-direction new pool. For the user's ~350-card pool this fetches everything per direction, guaranteeing every paired note's `prod` (if state=new) is present in the merge alongside its `rec`. The bury step then correctly drops the lower-due sibling.
+
+**Files.** `backend/app/api/srs.py:_compute_live_main` (one-line change to `_NEW_OVERFETCH`), `backend/tests/test_api_srs.py:test_review_queue_new_head_unaffected_by_overfetch_truncation` (regression test: 120 high-due production-only notes + one low-due paired note; asserts the paired-note's prod survives, not its rec).
+
+**Lesson.** Cross-direction operations (merge, bury) require BOTH directions to be fetched coherently. Per-direction limits that don't account for the *union* size break the parity. A safer pattern: fetch unbounded, then cap *after* the merge.
+
+---
+
+## Layer 33 — NULLS FIRST only for genuinely-fresh /listen adds
+
+**Trigger.** Post-Layer-32, TT served `trgovina` (production, anki_due=NULL) as the first new card while Anki served `zdravo` prod (anki_due=1002000). Both should agree.
+
+**Root cause.** `trgovina` is a HOMONYM corruption from the user's Anki collection: there are TWO trgovina notes in deck "0. Slovene" — a Basic-notetype prompt card (nid=1775264031843) and a Slovene-Vocabulary dual-direction card (nid=1775264031842). TT's `compute_guid("trgovina","sl","")` collapses them to a single collocation. The collocation got linked to the Basic note (anki_note_id=...843) but its production direction's anki_card_id (1776536654137) points to the Slovene-Voc note's prod card. `sync_pull` iterates Anki by note, finds the Basic note via the collocation's anki_note_id, processes only that note's one card (recognition), and never reaches the Slovene-Voc note. The production direction stays state=new with anki_due=NULL forever.
+
+Under Layer 28 + 32's `_gather_key`, `anki_due=NULL` always sorted to the front via NULLS FIRST — appropriate for /listen auto-adds (which the user wants to surface immediately) but wrong for cross-note phantoms.
+
+**Fix.** Make NULLS FIRST conditional on `item.anki_note_id IS NULL`:
+- **Fresh /listen add** (`anki_note_id IS NULL` AND `anki_due IS NULL`) → primary key `(0, 0)` → top.
+- **Synced row** (`anki_due IS NOT NULL`) → primary key `(1, -anki_due)` → middle, by Anki position descending.
+- **Phantom** (`anki_note_id IS NOT NULL` AND `anki_due IS NULL`) → primary key `(2, 0)` → bottom.
+
+This preserves the Phase C listen-first benefit (true fresh adds surface immediately) while sinking cross-note / orphan / never-synced-direction phantoms below the synced pool — where they don't displace Anki's actual queue head.
+
+**Files.** `backend/app/api/srs.py:_gather_key` (three-bucket primary key), `backend/tests/test_api_srs.py:test_merge_directions_sinks_phantom_directions` (regression), `test_merge_directions_nulls_first_for_fresh_listen_adds` (renamed + clarified existing test).
+
+**Lesson.** "Unsynced" is ambiguous — a fresh /listen add and a cross-note phantom both look like `anki_due=NULL` at the direction level. The distinguishing signal is at the parent collocation: `anki_note_id IS NULL` means TT has never pushed this row to Anki, so it's genuinely new; `anki_note_id IS NOT NULL` means TT has pushed *something*, and any NULL `anki_due` on a direction reflects a sync gap, not a fresh add.
+
+The underlying homonym corruption (TT collocation guid points to one Anki note while its directions link to cards on another) is a separate data-quality issue worth a future cleanup; Layer 33 only ensures the queue head behaves correctly in its presence.
+
+---
+
+## Layer 34 — LingQ-import historical mess + pinned spec
+
+**Trigger.** Investigating Layer-33's `trgovina` phantom revealed a systemic corruption: 40 Anki Basic-notetype notes in deck "0. Slovene" that a prior buggy `/listen` import had created. 21 of them duplicated existing Slovene-Vocabulary notes (the "twins" — cross-note linked); 19 were words not in Anki that should have been pushed as Slovene-Voc with two cards but landed as Basic with one. The current `sync_create_new` already meets the correct spec (Slovene-Voc notetype, `DuplicateNoteError`-caught for guid-matched twins) — the mess is leftover data from code that's been since fixed.
+
+**Cleanup script.** New `app/anki/fix_lingq_import_mess.py`:
+- Identifies Basic-notetype notes in the deck whose Front matches one of three vocab patterns: `<b>L2</b><br><i>EN</i>`, `<div class="prompt">[L1]</div>` (back fields supply L2 + EN), or bare `<b>L2</b>`.
+- For each, looks up TT's collocation by `anki_note_id` and checks for a Slovene-Voc twin by `LOWER(sfld) = LOWER(slovene)` (with '/'-split fallback so `ulica / cesta` matches twin `ulica`).
+- DELETE plan items: drop the Basic note + cards; relink TT collocation to the Slovene-Voc nid; clear `anki_card_id`/`anki_due` on the directions so sync_pull repopulates.
+- CONVERT plan items: change `notes.mid` to Slovene-Voc, reshape 2-field Basic flds → 7-field Slovene-Voc, recompute guid; keep the existing card as ord=0 (Recognition) so revlog stays attached; create a new ord=1 (Production) card; add the matching Production direction to TT. Bumps `col.scm` (notetype-of-note change is schema-significant per Anki's sync model).
+- Uses `app.anki.safety.safe_open(mode='rw')` for backup + integrity check + post-write audit.
+- Following the standard schema-bump workflow from `.claude/rules/anki-sync.md`: prints "File → Sync → Upload to AnkiWeb, then run `app.anki.normalize_usns`".
+
+**Spec tests pinned** (so the buggy importer can't come back):
+- `test_anki_sync_create_new.py::test_sync_create_new_uses_slovene_voc_for_source_llm` — `/listen`'s `source='llm'` rows become Slovene-Voc notes with both Recognition + Production card_ids populated in TT.
+- `test_sync_create_new_vocab_duplicate_guid_links_not_creates` — when an Anki note with the matching guid already exists, `sync_create_new` catches `DuplicateNoteError` and links TT to the existing nid without creating a duplicate Anki note.
+- `test_api.py::test_listen_creates_collocations_with_source_llm_and_no_anki_link` — `/listen` writes `source='llm'`, `anki_note_id=NULL` (guarantees the next sync handles it correctly).
+
+**Aftermath.** After applying: 95 → 55 Basic notes in the deck (40 cleaned up: 21 deleted + 19 converted). `col.scm` bumped 1777771242057 → 1778635744000. User runs Anki File→Sync→Upload to AnkiWeb, closes Anki, runs `normalize_usns` to align local `*_gt_col` USN counts. Next `sync_pull` then repopulates `anki_due` on the relinked TT collocations; the queue head finally matches Anki — no more phantom-direction surprises.
+
+**Files.** `backend/app/anki/fix_lingq_import_mess.py` (new), `backend/tests/test_anki_fix_lingq_import_mess.py` (new), `backend/tests/test_anki_sync_create_new.py` (extended), `backend/tests/test_api.py` (extended).
+
+---
+
 ## Cleanup pass (post-Layer 23)
 
 After 23 layers, swept for dead code and duplication. Behavior unchanged.

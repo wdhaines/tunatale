@@ -363,6 +363,38 @@ def extract_gloss_from_fields(fields: list[str]) -> str | None:
     return None
 
 
+_QA_INTERROGATIVES = frozenset(
+    [
+        "what",
+        "how",
+        "where",
+        "when",
+        "why",
+        "who",
+        "which",
+        "whose",
+        "whom",
+        "can",
+        "could",
+        "would",
+        "should",
+        "do",
+        "does",
+        "did",
+        "is",
+        "are",
+        "was",
+        "were",
+        "has",
+        "have",
+        "had",
+        "will",
+        "may",
+        "might",
+    ]
+)
+
+
 def extract_l2_from_fields(fields: list[str]) -> str:
     """Return the L2 text from fields, preferring class="slovene" markup.
 
@@ -387,6 +419,18 @@ def extract_l2_from_fields(fields: list[str]) -> str:
         m = _B_THEN_I_PATTERN.match(field)
         if m:
             return m.group(1).strip()
+
+    # Q&A pass: if Field 0 is an English question (starts with an interrogative
+    # like What/How/Where/... and ends with "?"), it IS the L2-side prompt for
+    # the card. Without this, an IPA-laden answer in Field 1 can outscore the
+    # question on the Slovene-char heuristic — see the 11 phonology Q&A notes
+    # (cid 790–801) that ended up reversed in TT before this rule.
+    if fields:
+        first = re.sub(r"<[^>]+>", "", fields[0]).strip()
+        if first.endswith("?"):
+            first_word = first.split()[0].lower().strip("'") if first.split() else ""
+            if first_word in _QA_INTERROGATIVES:
+                return first
 
     # Second pass: no field has class="slovene".
     # Score each field: prefer fields with Slovene-specific or IPA phonetic characters

@@ -739,7 +739,15 @@ def _merge_directions(
         row_id, item, _lang, direction = t
         ds = item.directions[direction]
         ord_value = 0 if direction == Direction.RECOGNITION else 1
-        primary = (0, 0) if ds.anki_due is None else (1, -ds.anki_due)
+        # Layer 33: distinguish fresh /listen-added rows from stale/phantom
+        # directions when anki_due is NULL. A fresh add has no anki_note_id at
+        # the COLLOCATION level (never pushed to Anki); it should sit at the top
+        # of the new bucket (NULLS FIRST). A phantom direction belongs to a
+        # collocation that IS linked to Anki but whose own anki_due never got
+        # populated — typically a cross-note homonym link that sync_pull can't
+        # reach via the parent collocation. Sinking phantoms to the bottom keeps
+        # them out of the queue head while preserving the listen-first benefit.
+        primary = ((0, 0) if item.anki_note_id is None else (2, 0)) if ds.anki_due is None else (1, -ds.anki_due)
         return (*primary, ord_value, ds.anki_card_id or (1 << 62), row_id)
 
     combined.sort(key=_gather_key)
@@ -830,7 +838,16 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     if bury_review:
         due = [t for t in due if t[0] not in buried]
 
-    _NEW_OVERFETCH = max(new_quota * 4, new_quota + 50)
+    # Layer 32: fetch the FULL per-direction new pool, not a quota-based overfetch.
+    # The bug was that a small per-direction limit truncates one direction before
+    # the other, breaking cross-direction sibling-bury. For a paired note whose
+    # prod sits outside the limit but whose rec slips in (because new_rec has
+    # fewer total cards), the merge sees rec without prod → no bury → rec
+    # survives → Template sort puts it ahead. Fetching unbounded per direction
+    # makes the bury step see both siblings whenever both are state=new.
+    # `count_new_available` is the total across both directions; using it as the
+    # per-direction cap is a strict upper bound.
+    _NEW_OVERFETCH = max(db.count_new_available(), new_quota + 50)
     new_rec = db.get_new_items(direction=Direction.RECOGNITION, limit=_NEW_OVERFETCH)
     new_prod = db.get_new_items(direction=Direction.PRODUCTION, limit=_NEW_OVERFETCH)
     new_combined = _merge_directions(new_rec, new_prod)

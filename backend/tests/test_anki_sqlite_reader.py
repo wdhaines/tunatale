@@ -574,27 +574,61 @@ class TestExtractL2FromFields:
     def test_empty_list_returns_empty(self):
         assert extract_l2_from_fields([]) == ""
 
-    def test_phonics_note_returns_slovene_answer_not_english_question(self):
-        """Phonics notes have English questions without class='slovene' and Slovene answers.
+    def test_qa_front_with_interrogative_and_question_mark_wins(self):
+        """When Field 0 is an English Q&A prompt (e.g. 'What sound is v word-initial...?'),
+        return it as the L2 text rather than letting an IPA-laden answer outscore it.
 
-        Bug: extract_l2_from_fields returns the English question (Field 0) because
-        extract_l2() falls back to stripped HTML text when no class='slovene' is found.
-        This causes word_count > 8 and the note gets skipped in import_seed.py.
-
-        Fix: prefer fields with class='slovene', or use field position for inverse layouts.
+        Reproduces the 11 reversed phonology Q&A notes (cid 790, 791, 792, 793, 794,
+        795, 796, 798, 799, 800, 801) where the back had enough IPA chars (ˈ, ː, ɛ, etc.)
+        to outweigh the front's English stopword penalty.
         """
-        # Simulate a phonics note: Field 0 = English question, Field 1 = Slovene answer
+        fields = [
+            "What sound is <b>v</b> word-initial before a voiced consonant or sonorant?",
+            "[sound:sl_vrata.mp3][w] — voiced bilabial, like English <i>w</i>"
+            "<br><br><i>vrata</i> → [ˈwɾaːta] — door<br><i>vlak</i> → [wlak] — train",
+        ]
+        assert extract_l2_from_fields(fields).startswith("What sound is")
+
+    def test_qa_how_question_with_diacritic_back_still_returns_question(self):
+        fields = [
+            "How is syllabic <b>r</b> pronounced in <i>trg</i> (town square)?",
+            "[sound:sl_trg.mp3][tərg] — r acts as the syllable nucleus with a schwa-like quality",
+        ]
+        assert extract_l2_from_fields(fields).startswith("How is")
+
+    def test_field0_ending_with_question_but_no_interrogative_falls_through_to_scoring(self):
+        """A non-question first field that happens to end with '?' (no interrogative
+        opener) should still go through the normal Slovene-char scoring path."""
+        fields = ["banka?", "<div>bank</div>"]
+        # No interrogative, falls through. Both clean strip to short text;
+        # neither has Slovene chars, so the earlier field wins by tie-break.
+        assert extract_l2_from_fields(fields) == "banka?"
+
+    def test_phonics_qa_prompt_returns_question_not_answer(self):
+        """Phonics Q&A notes use Field 0 for an English question and Field 1 for the
+        Slovene/IPA answer. The question IS the L2-side prompt for the card; review
+        UIs (TT + Anki) show it on the front. Earlier heuristic preferred the IPA
+        back because of its higher Slovene/IPA character density; the new rule
+        recognises English Q&A patterns (interrogative + '?') and keeps them on the
+        front. The earlier behavior caused 11 phonology cards to display with the
+        answer on the prompt side in TT — see cleanup_function_word_notes /
+        link_tt_images history."""
         fields = [
             "What phoneme does unstressed <b>e before</b> the stressed syllable represent?",
             "[sound:sl_beseda.mp3]/ɛ/ = [ɛ] — open-mid front<br><br><i>besêda</i> [bɛˈseːda]",
         ]
         result = extract_l2_from_fields(fields)
-        # Should NOT return the English question (10 words)
-        assert "What phoneme" not in result, (
-            f"Bug: extract_l2_from_fields returned English question instead of Slovene answer: {result!r}"
-        )
-        # Should return something with Slovene/IPA content
-        assert len(result.split()) <= 8, f"Returned text has too many words ({len(result.split())}): {result!r}"
+        assert result.startswith("What phoneme"), f"Q&A front should win on the new heuristic; got: {result!r}"
+
+    def test_ipa_chars_boost_score_when_no_qa_pattern(self):
+        """Below the Q&A path: when Field 0 isn't a question, IPA chars in Field 1
+        still bump its score so it wins over a stopword-heavy Field 0."""
+        fields = [
+            "Practice the phoneme with the audio",  # no '?', no interrogative
+            "[ɛ] besêda [bɛˈseːda]",  # several IPA chars
+        ]
+        result = extract_l2_from_fields(fields)
+        assert "besêda" in result
 
     def test_dictionary_stress_diacritic_counts_as_slovene(self):
         # Slovene dictionaries mark stress with diacritics (besêda, oblákov)

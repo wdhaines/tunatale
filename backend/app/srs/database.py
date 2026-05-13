@@ -1297,14 +1297,35 @@ class SRSDatabase:
             self._commit(conn)
             return cursor.lastrowid
 
-    def find_media_by_anki_filename(self, anki_filename: str) -> dict[str, Any] | None:
-        """Return the media row for the given Anki filename, or None."""
+    def find_media_by_anki_filename(self, anki_filename: str, *, collocation_id: int) -> dict[str, Any] | None:
+        """Return the media row for the given Anki filename on a specific collocation, or None.
+
+        Scoped by ``collocation_id`` so that two collocations referencing the
+        same filename (e.g. ``img_yes.jpg`` shared between ``ja`` and ``da``)
+        don't cross-contaminate during sync.
+        """
         with self._get_conn() as conn:
             row = conn.execute(
-                "SELECT * FROM media WHERE anki_filename = ?",
-                (anki_filename,),
+                "SELECT * FROM media WHERE anki_filename = ? AND collocation_id = ?",
+                (anki_filename, collocation_id),
             ).fetchone()
         return dict(row) if row is not None else None
+
+    def delete_stale_media_for_kind(self, collocation_id: int, kind: str, keep_anki_filenames: set[str]) -> int:
+        """Delete media rows on this collocation/kind whose anki_filename isn't in
+        ``keep_anki_filenames``. Used by import_seed to collapse the row set down
+        to what Anki currently references. Returns the number of rows deleted.
+        """
+        if not keep_anki_filenames:
+            return 0
+        placeholders = ",".join("?" * len(keep_anki_filenames))
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                f"DELETE FROM media WHERE collocation_id = ? AND kind = ? AND anki_filename NOT IN ({placeholders})",
+                (collocation_id, kind, *keep_anki_filenames),
+            )
+            self._commit(conn)
+            return cur.rowcount
 
     def update_media_file(self, row_id: int, sha256: str, size_bytes: int) -> None:
         """Update sha256 and size_bytes for an existing media row (used by refresh-media)."""

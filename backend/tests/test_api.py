@@ -565,6 +565,42 @@ class TestSRSEndpoints:
         assert db.get_collocation("dober dan") is not None
         assert db.get_collocation("prosim kavo") is not None
 
+    async def test_listen_creates_collocations_with_source_llm_and_no_anki_link(self):
+        """Layer 34 spec: /listen creates TT collocations with source='llm' and
+        anki_note_id=NULL — guaranteeing the next sync_create_new picks them up
+        and pushes them as proper Slovene Vocabulary notes (or links via guid if
+        Anki already has them)."""
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.KEY_PHRASES,
+                    phrases=[Phrase(text="dober dan", voice_id="sl-SI-PetraNeural", language_code="sl")],
+                )
+            ],
+            key_phrases=[KeyPhraseInfo(phrase="dober dan", translation="good day")],
+        )
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        # Inspect the persisted collocation
+        with db._get_conn() as conn:
+            row = conn.execute("SELECT text, source, anki_note_id FROM collocations WHERE text='dober dan'").fetchone()
+        assert row is not None
+        assert row["source"] == "llm"
+        assert row["anki_note_id"] is None
+
     async def test_listen_is_idempotent(self):
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore

@@ -170,14 +170,59 @@ class TestAddMedia:
             sha256="abc123",
             size_bytes=1024,
         )
-        row = srs_db.find_media_by_anki_filename("sl_stol.mp3")
+        row = srs_db.find_media_by_anki_filename("sl_stol.mp3", collocation_id=coll_id)
         assert row is not None
         assert row["filename"] == "sl_stol.mp3"
         assert row["sha256"] == "abc123"
         assert row["kind"] == "audio_forvo"
 
     def test_find_media_missing_returns_none(self, srs_db):
-        assert srs_db.find_media_by_anki_filename("ghost.mp3") is None
+        coll_id = srs_db.upsert_by_guid(_unit("stol", "chair"), "sl", _dirs())
+        assert srs_db.find_media_by_anki_filename("ghost.mp3", collocation_id=coll_id) is None
+
+    def test_delete_stale_media_returns_zero_when_keep_set_empty(self, srs_db):
+        """Guard against accidentally deleting everything when no filename to keep is supplied."""
+        coll_id = srs_db.upsert_by_guid(_unit("stol", "chair"), "sl", _dirs())
+        srs_db.add_media(
+            coll_id,
+            kind="image",
+            filename="img_a.jpg",
+            path="/tmp/a.jpg",
+            anki_filename="img_a.jpg",
+            sha256="aaa",
+            size_bytes=10,
+        )
+        removed = srs_db.delete_stale_media_for_kind(coll_id, "image", set())
+        assert removed == 0
+        # Untouched
+        assert srs_db.get_image_filename(coll_id) == "img_a.jpg"
+
+    def test_find_media_is_scoped_to_collocation(self, srs_db):
+        """Two collocations referencing the same anki_filename → return the right one."""
+        cid_a = srs_db.upsert_by_guid(_unit("stol", "chair"), "sl", _dirs())
+        cid_b = srs_db.upsert_by_guid(_unit("miza", "table"), "sl", _dirs())
+        srs_db.add_media(
+            cid_a,
+            kind="image",
+            filename="img_shared.jpg",
+            path="/tmp/a.jpg",
+            anki_filename="img_shared.jpg",
+            sha256="aaa",
+            size_bytes=10,
+        )
+        srs_db.add_media(
+            cid_b,
+            kind="image",
+            filename="img_shared.jpg",
+            path="/tmp/b.jpg",
+            anki_filename="img_shared.jpg",
+            sha256="bbb",
+            size_bytes=20,
+        )
+        row_a = srs_db.find_media_by_anki_filename("img_shared.jpg", collocation_id=cid_a)
+        row_b = srs_db.find_media_by_anki_filename("img_shared.jpg", collocation_id=cid_b)
+        assert row_a is not None and row_a["sha256"] == "aaa"
+        assert row_b is not None and row_b["sha256"] == "bbb"
 
     def test_inserts_missing_direction_row_for_existing_parent(self, srs_db):
         """When an existing parent is missing a direction row, upsert inserts it."""

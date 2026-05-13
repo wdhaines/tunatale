@@ -190,20 +190,20 @@ def import_seed(
 
             # Media: copy referenced files from Anki media dir
             if anki_media_path.exists():
+                current_by_kind: dict[str, set[str]] = {}
                 for filename in list_media_refs(note.fields):
                     src = anki_media_path / filename
                     if not src.exists():
                         continue
-                    existing_row = db.find_media_by_anki_filename(filename)
+                    existing_row = db.find_media_by_anki_filename(filename, collocation_id=coll_id)
                     if existing_row is not None:
-                        # SHA-aware: only skip if content unchanged
                         from app.media.importer import compute_sha256
 
                         current_sha = compute_sha256(src)
                         if current_sha == existing_row["sha256"]:
                             results["unchanged_media"] = results.get("unchanged_media", 0) + 1
-                            continue  # no-op: same content
-                        # Content changed: overwrite file and update DB
+                            current_by_kind.setdefault(existing_row["kind"], set()).add(filename)
+                            continue
                         dest_dir = Path(media_dir)
                         dest_path = dest_dir / filename
                         import shutil
@@ -211,6 +211,7 @@ def import_seed(
                         shutil.copy2(src, dest_path)
                         db.update_media_file(existing_row["id"], sha256=current_sha, size_bytes=src.stat().st_size)
                         results["updated_media"] += 1
+                        current_by_kind.setdefault(existing_row["kind"], set()).add(filename)
                         continue
                     copy_result = copy_media_file(src, media_dir)
                     db.add_media(
@@ -223,6 +224,16 @@ def import_seed(
                         size_bytes=copy_result.size_bytes,
                     )
                     results["new_media"] += 1
+                    current_by_kind.setdefault(copy_result.kind, set()).add(filename)
+
+                # Collapse: delete TT media rows whose anki_filename isn't currently
+                # referenced by this note (per kind). Fixes the case where the user
+                # reverts Anki to an older filename — the stale newer-id row would
+                # otherwise win in get_image_filename's ORDER BY id DESC.
+                for kind, keep_filenames in current_by_kind.items():
+                    removed = db.delete_stale_media_for_kind(coll_id, kind, keep_filenames)
+                    if removed:
+                        results["collapsed_media"] = results.get("collapsed_media", 0) + removed
 
     return results
 

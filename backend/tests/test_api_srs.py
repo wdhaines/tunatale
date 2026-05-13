@@ -1310,18 +1310,20 @@ class TestReviewQueue:
         assert result[0][3] == Direction.PRODUCTION
         assert result[1][3] == Direction.RECOGNITION
 
-    async def test_merge_directions_nulls_first(self, api_app_state):
-        """Unsynced (anki_due=NULL) rows sort above all synced rows."""
+    async def test_merge_directions_nulls_first_for_fresh_listen_adds(self, api_app_state):
+        """Fresh /listen auto-adds (anki_note_id IS NULL AND anki_due IS NULL)
+        sort above all synced rows (Layer 33 NULLS-FIRST-only-for-fresh rule)."""
         from datetime import date
 
         from app.api.srs import _merge_directions
 
         rec_item = self._make_item(date(2026, 1, 1), 1, Direction.RECOGNITION, anki_due=None)
+        rec_item.anki_note_id = None  # fresh — not yet pushed to Anki
         prod_item = self._make_item(date(2026, 1, 1), 2, Direction.PRODUCTION, anki_due=999_999)
         rec = [(1, rec_item, "sl")]
         prod = [(2, prod_item, "sl")]
         result = _merge_directions(rec, prod)
-        # NULLS FIRST: unsynced rec wins despite prod's high anki_due
+        # Fresh unsynced rec wins despite prod's high anki_due.
         assert result[0][3] == Direction.RECOGNITION
         assert result[1][3] == Direction.PRODUCTION
 
@@ -1629,6 +1631,122 @@ class TestReviewQueue:
 
         item_after = db.get_collocation("stale_buried")
         assert item_after.directions[Direction.RECOGNITION].state == SRSState.REVIEW
+
+    async def test_merge_directions_sinks_phantom_directions(self, api_app_state):
+        """Layer 33: a `state=new` direction whose collocation IS already linked
+        to an Anki note (anki_note_id IS NOT NULL) but whose own anki_due is NULL
+        is a stale/phantom direction (cross-note link, sync mismatch, etc.). It
+        must NOT surface above synced rows. Only fresh /listen auto-adds —
+        whose collocation.anki_note_id IS NULL — get the NULLS FIRST treatment.
+        """
+        from datetime import date
+
+        from app.api.srs import _merge_directions
+
+        # Phantom: collocation linked to Anki, but this direction has anki_due=NULL.
+        phantom = self._make_item(date(2026, 1, 1), 999, Direction.PRODUCTION, anki_due=None)
+        phantom.anki_note_id = 12345
+
+        # Fresh /listen add: anki_note_id is NULL → genuinely new to TT.
+        fresh = self._make_item(date(2026, 1, 1), 1, Direction.PRODUCTION, anki_due=None)
+        fresh.anki_note_id = None
+
+        # Synced row: anki_due=500.
+        synced = self._make_item(date(2026, 1, 1), 2, Direction.PRODUCTION, anki_due=500)
+        synced.anki_note_id = 99999
+
+        rec = []
+        prod = [(1, fresh, "sl"), (2, synced, "sl"), (3, phantom, "sl")]
+        result = _merge_directions(rec, prod)
+
+        order = [item.anki_note_id for _, item, _, _ in result]
+        assert order == [None, 99999, 12345], f"unexpected order: {order}"
+
+    async def test_review_queue_new_head_unaffected_by_overfetch_truncation(self, api_app_state):
+        """Layer 32 regression. If `new_prod` overfetch is too small, paired notes
+        whose `prod` falls outside the per-direction limit have their `rec` survive
+        bury (no sibling to bury against). Template sort then puts those rec cards
+        at the head — wrong: in Anki, paired-note `prod` always wins under
+        HighestPosition+gather-bury, and the surviving pool is ord=1 (production).
+
+        Setup: many high-anki_due production-only-new notes (saturating overfetch)
+        + a paired note with low-due rec=10, prod=11. With a too-small overfetch the
+        paired prod is dropped; without truncation, prod survives and rec is buried.
+        """
+        from datetime import date, timedelta
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        db.set_anki_state_cache("daily_new_cap", "5")
+
+        # Lots of high-due production-only-new notes (recognition is state=review).
+        for i in range(120):
+            anki_due_prod = 1_000_000 + i
+            txt = f"prod_only_{i}"
+            db.add_collocation(
+                SyntacticUnit(text=txt, translation="t", word_count=1, difficulty=1, source="test"),
+                language_code="sl",
+            )
+            rows, _ = db.list_collocations(search=txt, limit=1)
+            row_id, _, _ = rows[0]
+            db.update_direction_by_id(
+                row_id,
+                Direction.RECOGNITION,
+                DirectionState(
+                    direction=Direction.RECOGNITION,
+                    state=SRSState.REVIEW,
+                    due_date=today + timedelta(days=30),
+                    anki_card_id=anki_due_prod - 1,
+                    anki_due=anki_due_prod - 1,
+                    stability=10.0,
+                ),
+            )
+            db.update_direction_by_id(
+                row_id,
+                Direction.PRODUCTION,
+                DirectionState(
+                    direction=Direction.PRODUCTION,
+                    state=SRSState.NEW,
+                    due_date=today,
+                    anki_card_id=anki_due_prod,
+                    anki_due=anki_due_prod,
+                ),
+            )
+
+        # One paired note with LOW anki_due in both ords. With small overfetch its
+        # prod gets dropped, leaving rec to wrongly survive bury.
+        db.add_collocation(
+            SyntacticUnit(text="paired_low", translation="t", word_count=1, difficulty=1, source="test"),
+            language_code="sl",
+        )
+        rows, _ = db.list_collocations(search="paired_low", limit=1)
+        row_id, _, _ = rows[0]
+        db.update_direction_by_id(
+            row_id,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION, state=SRSState.NEW, due_date=today, anki_card_id=10, anki_due=10
+            ),
+        )
+        db.update_direction_by_id(
+            row_id,
+            Direction.PRODUCTION,
+            DirectionState(
+                direction=Direction.PRODUCTION, state=SRSState.NEW, due_date=today, anki_card_id=11, anki_due=11
+            ),
+        )
+
+        from app.api.srs import _compute_live_main
+
+        live = _compute_live_main(db)
+        first_new = next((t for t in live if t[1].directions[t[3]].state == SRSState.NEW), None)
+        assert first_new is not None
+        assert first_new[3] == Direction.PRODUCTION, (
+            f"first new should be PRODUCTION (Anki parity); got {first_new[3]} "
+            f"text={first_new[1].syntactic_unit.text!r}"
+        )
 
     async def test_review_queue_new_head_matches_anki_gather_bury_template(self, api_app_state):
         """The časa-vs-sekira regression — Anki's gather adds higher-due siblings first,

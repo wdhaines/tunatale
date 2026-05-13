@@ -528,6 +528,61 @@ class TestSyncCreateNewRouting:
         assert db.get_collocation_by_guid(cloze_guid).anki_note_id is not None
         assert db.get_collocation_by_guid(vocab_guid).anki_note_id is not None
 
+    async def test_sync_create_new_uses_slovene_voc_for_source_llm(self):
+        """LingQ /listen pushes TT rows with source='llm'; sync_create_new must
+        create them as Slovene Vocabulary notes (not Basic) with 2 cards (Recognition + Production)."""
+        db = _make_db()
+        unit = SyntacticUnit(text="nič", translation="nothing", word_count=1, difficulty=1, source="llm")
+        db.add_collocation(unit)
+        guid = db.get_collocation("nič").guid
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        notes = anki_conn.execute("SELECT id, mid, flds FROM notes").fetchall()
+        assert len(notes) == 1
+        assert notes[0]["mid"] == 1000001  # Slovene Vocabulary notetype
+        # Both Recognition + Production cards were created
+        cards = anki_conn.execute("SELECT ord FROM cards WHERE nid = ? ORDER BY ord", (notes[0]["id"],)).fetchall()
+        assert [c["ord"] for c in cards] == [0, 1]
+        # TT collocation has both directions populated with the new Anki card_ids
+        item = db.get_collocation_by_guid(guid)
+        rec = item.directions[Direction.RECOGNITION]
+        prod = item.directions[Direction.PRODUCTION]
+        assert rec.anki_card_id is not None
+        assert prod.anki_card_id is not None
+        assert rec.anki_card_id != prod.anki_card_id
+
+    async def test_sync_create_new_vocab_duplicate_guid_links_not_creates(self):
+        """If an Anki note with the matching guid already exists, sync_create_new
+        catches DuplicateNoteError and links the TT row to the existing note rather
+        than creating a duplicate. This is the spec the buggy LingQ importer violated.
+        """
+        db = _make_db()
+        guid = _add_item(db, "trgovina", "shop")
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        # Clear anki_note_id to simulate "the same word is being re-added".
+        with db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET anki_note_id = NULL WHERE guid = ?", (guid,))
+            db._commit(conn)
+
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        # Second pass: linked (1), not created (0). No duplicate note in Anki.
+        assert report.created == 0
+        assert report.linked == 1
+        note_count = anki_conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+        assert note_count == 1
+
     async def test_sync_create_new_cloze_duplicate_guid(self):
         """Cloze item whose text already exists as an Anki note uses DuplicateNoteError path."""
         db = _make_db()

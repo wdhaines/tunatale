@@ -1617,13 +1617,13 @@ class TestUpdateMediaFile:
             size_bytes=100,
         )
 
-        row = db.find_media_by_anki_filename("test.mp3")
+        row = db.find_media_by_anki_filename("test.mp3", collocation_id=coll_id)
         assert row["sha256"] == "old_sha"
         assert row["bytes"] == 100
 
         db.update_media_file(row["id"], sha256="new_sha", size_bytes=200)
 
-        updated = db.find_media_by_anki_filename("test.mp3")
+        updated = db.find_media_by_anki_filename("test.mp3", collocation_id=coll_id)
         assert updated["sha256"] == "new_sha"
         assert updated["bytes"] == 200
 

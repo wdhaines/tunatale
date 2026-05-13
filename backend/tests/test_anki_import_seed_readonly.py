@@ -337,6 +337,66 @@ class TestMediaImport:
         # Verify the file was actually overwritten
         assert (media_dir / "sl_banka.mp3").read_bytes() == b"updated audio content changed"
 
+    def test_stale_image_rows_collapsed_to_anki_current(self, tmp_path):
+        """When Anki has reverted to an older filename, stale newer-id rows on the
+        same collocation should be deleted so get_image_filename returns Anki's current.
+
+        Reproduces the ptica/moška-obleka pattern: TT had two image rows from
+        earlier syncs; user reverted Anki to the older filename; import_seed
+        used to leave both rows, and TT served the newer-id stale paste.
+        """
+        import sqlite3 as sq3
+
+        from tests.conftest import build_minimal_anki_db
+
+        anki_dir = tmp_path / "anki"
+        anki_dir.mkdir(exist_ok=True)
+        db_path = build_minimal_anki_db(anki_dir)
+        # Attach an <img> tag to note 1001 ("banka") so import_seed has an image to process.
+        conn = sq3.connect(str(db_path))
+        conn.execute(
+            "UPDATE notes SET flds = ? WHERE id = 1001",
+            ('banka\x1fbank\x1f\x1f<img src="img_bank.jpg">\x1f\x1f\x1f',),
+        )
+        conn.commit()
+        conn.close()
+
+        anki_media_path = tmp_path / "anki" / "media"
+        anki_media_path.mkdir()
+        (anki_media_path / "img_bank.jpg").write_bytes(b"bank image bytes")
+        media_dir = tmp_path / "tunatale_media"
+        media_dir.mkdir()
+
+        # First import: TT gets one row referencing img_bank.jpg
+        _run(db_path, tmp_path, anki_media_path=anki_media_path, media_dir=media_dir)
+
+        # Simulate "user pasted a different image in Anki, ran import_seed, then
+        # reverted Anki back to img_bank.jpg": insert a newer-id stale paste row
+        # into TT (as if from a prior import) without changing Anki's current state.
+        tt_path = tmp_path / "tunatale.db"
+        tt = sq3.connect(str(tt_path))
+        coll_id = tt.execute("SELECT id FROM collocations WHERE text='banka'").fetchone()[0]
+        tt.execute(
+            "INSERT INTO media (collocation_id, kind, filename, path, anki_filename, sha256, bytes) "
+            "VALUES (?, 'image', 'paste-xxx.jpg', '/tmp/paste.jpg', 'paste-xxx.jpg', 'fakehash', 12345)",
+            (coll_id,),
+        )
+        tt.commit()
+        tt.close()
+
+        # Second import: with the fix, the stale paste row should be deleted so
+        # get_image_filename returns Anki's current image (img_bank.jpg).
+        _run(db_path, tmp_path, anki_media_path=anki_media_path, media_dir=media_dir)
+
+        tt = sq3.connect(str(tt_path))
+        rows = tt.execute(
+            "SELECT filename FROM media WHERE collocation_id=? AND kind='image' ORDER BY id",
+            (coll_id,),
+        ).fetchall()
+        tt.close()
+        # Only one image row should remain, and it should match Anki's current.
+        assert rows == [("img_bank.jpg",)]
+
 
 class TestTranslationStrip:
     def test_translation_html_stripped(self, tmp_path):

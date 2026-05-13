@@ -25,7 +25,6 @@ SLOVENE_FUNCTION_WORDS: frozenset[str] = frozenset(
         "na",  # 6 / 3 — "on"
         "kako",  # 5 / 3 — "how"
         "ni",  # 5 / 3 — "is not"
-        "ja",  # 4 / 3 — "yes"
         "se",  # 4 / 4 — reflexive pronoun
         "to",  # 3 / 2 — "this", "that"
         "vam",  # 3 / 3 — "you" (plural/formal dative)
