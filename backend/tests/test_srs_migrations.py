@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 19
+        assert CURRENT_VERSION == 20
 
     def test_migrates_v15_to_v16_deletes_phantom_directions(self, tmp_path):
         """v16 deletes direction rows that were auto-filled by the pre-fix
@@ -220,6 +220,57 @@ class TestMigrations:
         # Idempotent
         migrate_v18_to_v19(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 19
+
+    def test_migrates_v19_to_v20_adds_bury_kind_and_backfills(self, tmp_path):
+        """v20 adds collocation_directions.bury_kind and marks pre-existing buried rows as 'user'.
+
+        Backfilling state='buried' rows as 'user' is the safe default: prior
+        to this migration, every buried row was wiped by unbury_if_needed
+        regardless of source. Marking them 'user' preserves whatever Anki had
+        sync_pulled as queue=-2/-3 — sibling-buries from earlier today
+        would lose their auto-unbury at next rollover, but the user can
+        manually unbury or wait for the next sync_pull to overwrite the kind.
+        """
+        import sqlite3
+
+        from app.srs.migrations import _set_version, migrate_v19_to_v20
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            """CREATE TABLE collocation_directions (
+                collocation_id INTEGER, direction TEXT, state TEXT
+            )"""
+        )
+        conn.executemany(
+            "INSERT INTO collocation_directions (collocation_id, direction, state) VALUES (?, ?, ?)",
+            [
+                (1, "recognition", "buried"),
+                (2, "production", "buried"),
+                (3, "recognition", "review"),
+                (4, "recognition", "new"),
+            ],
+        )
+        _set_version(conn, 19)
+
+        migrate_v19_to_v20(conn)
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)")}
+        assert "bury_kind" in cols
+        rows = conn.execute(
+            "SELECT collocation_id, state, bury_kind FROM collocation_directions ORDER BY collocation_id"
+        ).fetchall()
+        # Buried rows → 'user' (preserved across rollover)
+        assert rows[0]["bury_kind"] == "user"
+        assert rows[1]["bury_kind"] == "user"
+        # Non-buried rows → NULL
+        assert rows[2]["bury_kind"] is None
+        assert rows[3]["bury_kind"] is None
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 20
+
+        # Idempotent
+        migrate_v19_to_v20(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 20
 
     def test_migrates_v14_to_v15_fills_null_lemma(self, tmp_path):
         """v15 fills lemma for single-word rows that have lemma=NULL."""

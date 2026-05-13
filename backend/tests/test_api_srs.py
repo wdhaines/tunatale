@@ -1610,6 +1610,7 @@ class TestReviewQueue:
         rows, _ = db.list_collocations(search="stale_buried", limit=1)
         row_id, item, _ = rows[0]
         # Stale-buried row: reps=4 → should restore to REVIEW under sweep.
+        # bury_kind='sched' so the daily sweep releases it (user-bury would stick).
         orig = item.directions[Direction.RECOGNITION]
         db.update_direction_by_id(
             row_id,
@@ -1623,6 +1624,7 @@ class TestReviewQueue:
                 reps=4,
                 lapses=orig.lapses,
                 anki_card_id=12345,
+                bury_kind="sched",
             ),
         )
 

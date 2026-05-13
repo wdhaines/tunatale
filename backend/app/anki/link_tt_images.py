@@ -60,8 +60,16 @@ def apply_link_image(
     anki_conn: sqlite3.Connection,
     tt_conn: sqlite3.Connection,
     op: LinkImageOp,
+    *,
+    anki_media_dir: Path | None = None,
+    tt_media_dir: Path | None = None,
 ) -> bool:
     """Link the Anki image to the TT collocation if not already linked.
+
+    When ``anki_media_dir`` and ``tt_media_dir`` are provided the actual
+    image file is also copied from Anki's collection.media into TT's media
+    directory (instead of only inserting a DB row that ``import_seed`` would
+    have to materialise on the next sync).
 
     Returns True if a media row was inserted (or already present and a
     translation was backfilled); False if no TT collocation references the
@@ -84,6 +92,25 @@ def apply_link_image(
             "INSERT INTO media (collocation_id, kind, filename, anki_filename) VALUES (?, 'image', ?, ?)",
             (coll_id, op.image_filename, op.image_filename),
         )
+        # Copy the actual file from Anki media to TT media so the image
+        # is immediately available (not waiting for the next import_seed).
+        if anki_media_dir is not None and tt_media_dir is not None:
+            src = anki_media_dir / op.image_filename
+            if src.exists():
+                from app.media.importer import copy_media_file
+
+                copy_result = copy_media_file(src, tt_media_dir)
+                tt_conn.execute(
+                    "UPDATE media SET path = ?, sha256 = ?, bytes = ? "
+                    "WHERE collocation_id = ? AND kind = 'image' AND filename = ?",
+                    (
+                        str(copy_result.dest_path),
+                        copy_result.sha256,
+                        copy_result.size_bytes,
+                        coll_id,
+                        op.image_filename,
+                    ),
+                )
 
     if op.translation_override and not current_translation.strip():
         tt_conn.execute(
@@ -148,6 +175,9 @@ def main(argv: list[str] | None = None) -> int:
 
     from app.anki.safety import safe_open
 
+    anki_media_dir = anki_path.parent / "collection.media"
+    tt_media_dir = settings.media_dir
+
     tt_conn = sqlite3.connect(str(tt_path), isolation_level=None)
     try:
         with safe_open(anki_path, mode="rw") as ctx:
@@ -160,7 +190,13 @@ def main(argv: list[str] | None = None) -> int:
                     "SELECT id, translation FROM collocations WHERE anki_note_id = ?", (op.anki_nid,)
                 ).fetchone()
                 pre_empty_translation = bool(tt_row) and not (tt_row[1] or "").strip()
-                if apply_link_image(anki_conn, tt_conn, op):
+                if apply_link_image(
+                    anki_conn,
+                    tt_conn,
+                    op,
+                    anki_media_dir=anki_media_dir,
+                    tt_media_dir=tt_media_dir,
+                ):
                     counts["media_linked"] += 1
                     if op.translation_override and pre_empty_translation:
                         counts["translations_backfilled"] += 1

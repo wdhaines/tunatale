@@ -441,7 +441,7 @@ class TestDueQueries:
 class TestUnburyIfNeeded:
     """Tests for db.unbury_if_needed — Anki-parity daily queue=-2/-3 reset."""
 
-    def _bury_direction(self, srs_db, text: str, direction: Direction, reps: int):
+    def _bury_direction(self, srs_db, text: str, direction: Direction, reps: int, bury_kind: str = "sched"):
         rows, _ = srs_db.list_collocations(search=text, limit=1)
         row_id, item, _ = rows[0]
         orig = item.directions[direction]
@@ -457,6 +457,7 @@ class TestUnburyIfNeeded:
                 reps=reps,
                 lapses=orig.lapses,
                 anki_card_id=42,
+                bury_kind=bury_kind,
             ),
         )
 
@@ -501,6 +502,23 @@ class TestUnburyIfNeeded:
         self._bury_direction(srs_db, "rebury_after_rollover", Direction.RECOGNITION, reps=2)
         count = srs_db.unbury_if_needed(today)
         assert count == 1, "rolling to a new day must re-sweep stale buried rows"
+
+    def test_unbury_preserves_user_buried_rows(self, srs_db):
+        """User-manual-buried rows (bury_kind='user') stay buried across the sweep.
+
+        Anki's sched/sibling-bury auto-releases at rollover; manual user-bury
+        doesn't. Mirroring that: only `bury_kind='sched'` rows get released.
+        """
+        today = date.today()
+        srs_db.add_collocation(_unit("user_buried", "x"), language_code="sl")
+        self._bury_direction(srs_db, "user_buried", Direction.RECOGNITION, reps=4, bury_kind="user")
+        srs_db.add_collocation(_unit("sched_buried", "x"), language_code="sl")
+        self._bury_direction(srs_db, "sched_buried", Direction.RECOGNITION, reps=4, bury_kind="sched")
+
+        count = srs_db.unbury_if_needed(today)
+        assert count == 1  # only the sched one
+        assert srs_db.get_collocation("user_buried").directions[Direction.RECOGNITION].state == SRSState.BURIED
+        assert srs_db.get_collocation("sched_buried").directions[Direction.RECOGNITION].state == SRSState.REVIEW
 
     def test_unbury_writes_last_unbury_day_cache(self, srs_db):
         today = date.today()

@@ -65,6 +65,10 @@ class DirectionState:
     # Anki's `cards.mod` (modification timestamp). Used as the secondary sort
     # key under RetrievabilityAscending — Anki tiebreaks via `fnvhash(id, mod)`.
     anki_card_mod: int | None = None
+    # Source of a buried state: 'user' (manual bury, persists across rollover)
+    # or 'sched' (sibling/auto bury, released at next rollover via Layer 27's
+    # unbury_if_needed sweep). NULL on non-buried rows.
+    bury_kind: str | None = None
     dirty_fsrs: bool = False
     last_synced_at: str | None = None
     last_rating: int | None = None

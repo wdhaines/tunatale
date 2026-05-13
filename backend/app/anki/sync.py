@@ -731,6 +731,20 @@ def _anki_step_ahead(anki_left: int | None, local_left: int | None) -> bool:
     return anki_tr > 0 and local_tr > 0 and anki_tr < local_tr
 
 
+def _bury_kind_from_queue(queue: int) -> str | None:
+    """Return the bury kind for an Anki queue value, or None when not buried.
+
+    Anki: ``queue=-3`` is sched/sibling bury (auto-released at next rollover);
+    ``queue=-2`` is manual/user bury (sticks until the user unburies). Other
+    queue values aren't buried.
+    """
+    if queue == -3:
+        return "sched"
+    if queue == -2:
+        return "user"
+    return None
+
+
 def _queue_to_state(queue: int, card_type: int, reps: int) -> SRSState:
     """Map Anki's (queue, type, reps) tuple to TT's SRSState.
 
@@ -1095,6 +1109,7 @@ class AnkiSync:
                         last_rating=local_dir.last_rating,  # preserve for push revlog
                         left=card_rec.left,
                         due_at=card_rec.due_at,
+                        bury_kind=_bury_kind_from_queue(card_rec.queue),
                     )
                     self._record_conflict(
                         report,
@@ -1124,6 +1139,7 @@ class AnkiSync:
                             anki_card_mod=card_rec.anki_card_mod,
                             anki_due=card_rec.anki_due,
                             last_synced_at=datetime.now(UTC).isoformat(),
+                            bury_kind=None,
                         )
                     elif card_rec.queue in (-2, -3):
                         new_dir_state = replace(
@@ -1135,6 +1151,7 @@ class AnkiSync:
                             anki_card_mod=card_rec.anki_card_mod,
                             anki_due=card_rec.anki_due,
                             last_synced_at=datetime.now(UTC).isoformat(),
+                            bury_kind=_bury_kind_from_queue(card_rec.queue),
                         )
                     elif anki_in_learning and not local_in_learning:
                         # State-class divergence: Anki has the card mid-learning but
@@ -1165,6 +1182,7 @@ class AnkiSync:
                             last_synced_at=datetime.now(UTC).isoformat(),
                             left=card_rec.left,
                             due_at=card_rec.due_at,
+                            bury_kind=_bury_kind_from_queue(card_rec.queue),
                         )
                         self._record_conflict(
                             report,
@@ -1200,6 +1218,7 @@ class AnkiSync:
                             last_synced_at=datetime.now(UTC).isoformat(),
                             left=card_rec.left,
                             due_at=card_rec.due_at,
+                            bury_kind=None,
                         )
                         self._record_conflict(
                             report,
@@ -1275,6 +1294,7 @@ class AnkiSync:
                         last_synced_at=datetime.now(UTC).isoformat(),
                         left=card_rec.left,
                         due_at=card_rec.due_at,
+                        bury_kind=_bury_kind_from_queue(card_rec.queue),
                     )
                 else:
                     new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
@@ -1296,6 +1316,7 @@ class AnkiSync:
                         last_synced_at=datetime.now(UTC).isoformat(),
                         left=card_rec.left,
                         due_at=card_rec.due_at,
+                        bury_kind=_bury_kind_from_queue(card_rec.queue),
                     )
                 if _direction_differs(local_dir, new_dir_state):
                     if not dry_run:

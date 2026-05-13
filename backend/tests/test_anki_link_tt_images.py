@@ -75,7 +75,10 @@ def _make_tt_db(tmp_path: Path) -> Path:
             collocation_id INTEGER,
             kind TEXT NOT NULL,
             filename TEXT NOT NULL,
-            anki_filename TEXT
+            path TEXT,
+            anki_filename TEXT,
+            sha256 TEXT,
+            bytes INTEGER
         );
     """)
     conn.commit()
@@ -164,6 +167,76 @@ def test_apply_inserts_tt_media_row(tmp_path):
         "SELECT collocation_id, kind, filename, anki_filename FROM media WHERE collocation_id=?", (tt_cid,)
     ).fetchall()
     assert rows == [(tt_cid, "image", "img_time.jpg", "img_time.jpg")]
+
+
+def test_apply_copies_file_when_media_dirs_given(tmp_path):
+    """File is copied from Anki media dir to TT media dir when dirs are passed."""
+    anki_path = _make_anki_db(tmp_path)
+    tt_path = _make_tt_db(tmp_path)
+    nid = 1778267269399
+    _add_anki_note(anki_path, nid, "ime", "name", '<img src="img_time.jpg">')
+    tt_cid = _add_tt_coll(tt_path, "ime", anki_note_id=nid, translation="name")
+
+    anki_media_dir = tmp_path / "anki_media"
+    anki_media_dir.mkdir()
+    src_file = anki_media_dir / "img_time.jpg"
+    src_file.write_text("fake-image-bytes")
+
+    tt_media_dir = tmp_path / "tt_media"
+
+    anki = sqlite3.connect(str(anki_path), isolation_level=None)
+    tt = sqlite3.connect(str(tt_path), isolation_level=None)
+    op = LinkImageOp(anki_nid=nid, image_filename="img_time.jpg")
+    result = apply_link_image(
+        anki,
+        tt,
+        op,
+        anki_media_dir=anki_media_dir,
+        tt_media_dir=tt_media_dir,
+    )
+    assert result is True
+
+    dest_file = tt_media_dir / "img_time.jpg"
+    assert dest_file.exists()
+    assert dest_file.read_text() == "fake-image-bytes"
+
+    row = tt.execute(
+        "SELECT path, sha256, bytes FROM media WHERE collocation_id=? AND kind='image'",
+        (tt_cid,),
+    ).fetchone()
+    assert row is not None
+    assert row[0] is not None  # path set
+    assert row[1] is not None  # sha256 set
+    assert row[2] == 16  # len("fake-image-bytes")
+
+
+def test_apply_skips_file_copy_when_anki_source_missing(tmp_path):
+    """No crash when Anki source file doesn't exist (e.g. deleted in Anki)."""
+    anki_path = _make_anki_db(tmp_path)
+    tt_path = _make_tt_db(tmp_path)
+    nid = 1778267269399
+    _add_anki_note(anki_path, nid, "ime", "name", '<img src="img_time.jpg">')
+    tt_cid = _add_tt_coll(tt_path, "ime", anki_note_id=nid, translation="name")
+
+    anki_media_dir = tmp_path / "anki_media"
+    anki_media_dir.mkdir()
+    tt_media_dir = tmp_path / "tt_media"
+
+    anki = sqlite3.connect(str(anki_path), isolation_level=None)
+    tt = sqlite3.connect(str(tt_path), isolation_level=None)
+    op = LinkImageOp(anki_nid=nid, image_filename="img_time.jpg")
+    # Source file does NOT exist in anki_media_dir
+    result = apply_link_image(
+        anki,
+        tt,
+        op,
+        anki_media_dir=anki_media_dir,
+        tt_media_dir=tt_media_dir,
+    )
+    assert result is True
+    # DB row is inserted regardless
+    rows = tt.execute("SELECT filename, path, sha256 FROM media WHERE collocation_id=?", (tt_cid,)).fetchall()
+    assert rows == [("img_time.jpg", None, None)]
 
 
 def test_apply_is_idempotent(tmp_path):

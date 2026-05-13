@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 19
+CURRENT_VERSION = 20
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -567,6 +567,25 @@ def migrate_v18_to_v19(conn: sqlite3.Connection) -> None:
     _set_version(conn, 19)
 
 
+def migrate_v19_to_v20(conn: sqlite3.Connection) -> None:
+    """Add collocation_directions.bury_kind to distinguish sched vs user bury.
+
+    Anki has two bury kinds: ``queue=-3`` (sched/sibling bury, auto-unburied at
+    rollover) and ``queue=-2`` (user/manual bury, sticks until manually
+    unburied). Before this migration TT collapsed both into ``state='buried'``
+    and the daily ``unbury_if_needed`` sweep wiped them all — surfacing
+    manually-buried Anki cards as reviewable in TT.
+
+    Backfill: every existing ``state='buried'`` row gets ``bury_kind='user'``.
+    Pessimistic but safe — sibling-buried rows from the current day would
+    survive until the next sync_pull rewrites the kind from Anki's queue value.
+    """
+    if not _column_exists(conn, "collocation_directions", "bury_kind"):
+        conn.execute("ALTER TABLE collocation_directions ADD COLUMN bury_kind TEXT")
+    conn.execute("UPDATE collocation_directions SET bury_kind = 'user' WHERE state = 'buried' AND bury_kind IS NULL")
+    _set_version(conn, 20)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -587,6 +606,7 @@ _MIGRATIONS = {
     16: migrate_v16_to_v17,
     17: migrate_v17_to_v18,
     18: migrate_v18_to_v19,
+    19: migrate_v19_to_v20,
 }
 
 

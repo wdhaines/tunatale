@@ -360,7 +360,8 @@ class SRSDatabase:
                     prior_state = ?,
                     prior_left = ?,
                     prior_stability = ?,
-                    introduced_at = ?
+                    introduced_at = ?,
+                    bury_kind = ?
                 WHERE collocation_id = ? AND direction = ?
                 """,
                 (
@@ -384,6 +385,7 @@ class SRSDatabase:
                     state.prior_left,
                     state.prior_stability,
                     state.introduced_at.isoformat() if state.introduced_at else None,
+                    state.bury_kind,
                     row["id"],
                     direction.value,
                 ),
@@ -459,6 +461,7 @@ class SRSDatabase:
                 prior_left=row["prior_left"],
                 prior_stability=row["prior_stability"],
                 introduced_at=datetime.fromisoformat(introduced_at_raw) if introduced_at_raw else None,
+                bury_kind=row["bury_kind"] if "bury_kind" in row.keys() else None,  # noqa: SIM118
             )
         return directions
 
@@ -1509,18 +1512,19 @@ class SRSDatabase:
             self._commit(conn)
 
     def unbury_if_needed(self, today: date) -> int:
-        """Anki-parity daily unbury sweep — restores stale state='buried' rows.
+        """Anki-parity daily unbury sweep — restores stale sched-buried rows.
 
-        Anki resets queue=-2 (user/sibling buried) and queue=-3 (scheduler buried)
-        back to their original queues once per day, on the first queue rebuild
-        after the rollover (`rslib/.../queue/builder/...`). TT mirrors this:
-        cards that were buried on a prior day (e.g., by sync_pull pulling Anki's
-        queue=-2) must be released so they reappear in today's review pool.
+        Anki distinguishes two bury kinds: ``queue=-3`` (sched/sibling, auto-
+        released at next rollover) and ``queue=-2`` (user/manual, stays buried
+        until manually unburied). TT mirrors this via ``bury_kind``:
+        only rows where ``bury_kind = 'sched'`` get released here. Manually-
+        buried rows (``bury_kind = 'user'``) survive the sweep, matching
+        Anki's ``unbury_if_needed`` behavior in ``rslib/.../queue/builder/``.
 
-        Tracked via `anki_state_cache['last_unbury_day']`. Idempotent within a
+        Tracked via ``anki_state_cache['last_unbury_day']``. Idempotent within a
         local day — subsequent calls today return 0 without touching anything,
         which is important because sync_pull within the same day may land new
-        state='buried' rows for today's sibling-buries that must stick.
+        ``state='buried'`` rows for today's sibling-buries that must stick.
 
         Returns the number of rows unburied.
         """
@@ -1532,8 +1536,9 @@ class SRSDatabase:
             cursor = conn.execute(
                 """
                 UPDATE collocation_directions
-                SET state = CASE WHEN reps > 0 THEN 'review' ELSE 'new' END
-                WHERE state = 'buried'
+                SET state = CASE WHEN reps > 0 THEN 'review' ELSE 'new' END,
+                    bury_kind = NULL
+                WHERE state = 'buried' AND bury_kind = 'sched'
                 """
             )
             rowcount = cursor.rowcount
