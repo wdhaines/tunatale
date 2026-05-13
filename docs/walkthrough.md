@@ -5589,6 +5589,17 @@ Most of the new fields are paths to the user's Anki install (`anki_collection_pa
 | v5 → v6 | `anki_due` on `collocation_directions` (preserves Anki's deck position for new-card ordering) |
 | v6 → v7 | `grammar` and `note` text columns on `collocations` |
 | v7 → v8 | `source_sentence`, `source_lesson_id`, `source_line_index` (LingQ-style capture context) |
+| v8 → v9 | Drop `pending_revlog` table (online-mode artifact, no longer used) |
+| v9 → v10 | `last_review_time_ms INTEGER NOT NULL DEFAULT 0` on `collocation_directions` |
+| v10 → v11 | `left INTEGER` and `due_at TEXT` on `collocation_directions` (learning step state) |
+| v11 → v12 | Repair invariant: `state='new'` implies `last_review IS NULL` (companion to `parse_fsrs_data` fix) |
+| v12 → v13 | `prior_state`, `prior_left`, `prior_stability` on `collocation_directions` (revlog shape) |
+| v13 → v14 | `anki_card_mod` on `collocation_directions` (Anki `cards.mod` mirror for fnvhash tiebreak) |
+| v14 → v15 | Fill lemma for single-word rows that lacked it (`LOWER(text)`) |
+| v15 → v16 | Delete phantom direction rows with `anki_card_id IS NULL` from the old auto-fill bug |
+| v16 → v17 | `idx_collocations_created_at` for the Phase C recency-prioritized new queue (Layer 24) |
+| v17 → v18 | `introduced_at` on `collocation_directions` + `idx_directions_introduced_at` (Layer 26) |
+| v18 → v19 | `card_type TEXT DEFAULT 'vocab'` on `collocations` (Phase F cloze support) |
 
 Migrations are guarded by `_column_exists` / `_table_exists` so they're idempotent — re-running a partial migration after a crash won't fail.
 
@@ -5598,3 +5609,552 @@ Two CLI entry points worth knowing:
 
 - `uv run python -m app.anki.normalize_usns` — the post-full-upload USN clamp. Run it whenever `*_gt_col > 0` from the diagnostic in `.claude/rules/anki-sync.md`.
 - `uv run python -m app.anki.import_seed` — refresh Anki media into TunaTale's local cache. Now invoked automatically by `/api/anki/sync` so the manual button was removed.
+
+
+---
+
+## PART 15: Listen-First Acquisition Loop (Phases B–F)
+
+The biggest user-visible change since the last walkthrough is the **listen-first acquisition loop** — the user listens to a generated lesson, gets a clickable transcript, and adds the words and phrases they don't already know. Five phases shipped in sequence: B (status cycle and `untrack`), C (recency-prioritized new queue), D (Transcript component), E (translate-on-demand + off-transcript phrases), F (function-word cloze cards). Each phase landed Anki-parity-clean: the per-card sync round-trip works for the new card_type values, and the queue stays aligned with Anki for the new ordering rules.
+
+This part replaces the single-file `walkthrough-listen.md` draft and supersedes the brief Phase A description in the Stage 3 section: every step here is the production version.
+
+### 15.1 The Status Cycle and `/items/{id}/untrack`
+
+`POST /api/srs/items/{id}/state` lets the UI flip a card directly to a non-FSRS state. The valid transitions are `new`, `learning`, `known`, `ignored` — the frontend cycles through them in this order:
+
+```bash
+sed -n "20,29p" frontend/src/routes/c/\[curriculumId\]/l/\[lessonId\]/+page.svelte
+```
+
+```output
+	const STATE_CYCLE: Record<string, string> = {
+		unknown: 'learning',
+		new: 'learning',
+		learning: 'known',
+		review: 'known',
+		relearning: 'known',
+		known: 'ignored',
+		ignored: 'new',
+		suspended: 'new'
+	};
+```
+
+A click on a word advances it one step around the cycle (`unknown → learning → known → ignored → new → …`). Stepping into `ignored` no longer calls `set_state_by_id(SUSPENDED)`; it routes through a dedicated endpoint that knows whether the row was ever synced to Anki.
+
+`POST /api/srs/items/{id}/untrack` lives in `backend/app/api/srs.py:624` and delegates to `SRSDatabase.untrack_collocation`:
+
+```bash
+sed -n "785,815p" backend/app/srs/database.py
+```
+
+```output
+    def untrack_collocation(self, row_id: int) -> dict[str, str]:
+        """Remove a collocation from the user's learning queue.
+
+        If the row was never pushed to Anki (anki_note_id IS NULL), delete it
+        outright (cascade deletes both direction rows). Otherwise suspend both
+        directions and mark dirty_fsrs=1 so the next Anki push suspends the card.
+
+        Returns {"action": "deleted"} or {"action": "suspended"}.
+        """
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT anki_note_id FROM collocations WHERE id = ?", (row_id,)).fetchone()
+            if row is None:
+                return {"action": "deleted"}
+            if row["anki_note_id"] is None:
+                conn.execute(
+                    "DELETE FROM violations WHERE collocation_text = (SELECT text FROM collocations WHERE id = ?)",
+                    (row_id,),
+                )
+                conn.execute("DELETE FROM collocations WHERE id = ?", (row_id,))
+                self._commit(conn)
+                return {"action": "deleted"}
+            conn.execute(
+                "UPDATE collocation_directions SET state = 'suspended', dirty_fsrs = 1 WHERE collocation_id = ?",
+                (row_id,),
+            )
+            conn.execute(
+                "UPDATE collocations SET updated_at = datetime('now') WHERE id = ?",
+                (row_id,),
+            )
+            self._commit(conn)
+            return {"action": "suspended"}
+```
+
+Two-path semantics:
+
+- **Never-synced rows** (`anki_note_id IS NULL`) — e.g. words auto-added by `/listen` that the user immediately marks "ignored" before any sync — get hard-deleted, taking their `violations` rows with them. Cascade FK delete handles the direction rows.
+- **Synced rows** — both directions flip to `state='suspended', dirty_fsrs=1`. The next `sync_push` translates that into Anki's `queue=-1` (suspended) via the existing dirty-FSRS branch, so the card disappears from Anki's review pool too.
+
+The matching state-set endpoint (`/state`) special-cases `"learning"` to call `db.promote_to_learning` instead of `set_state_by_id` — `promote_to_learning` writes a fresh `last_review = now`, `due_date = today`, and `dirty_fsrs = 1`, but leaves `left`/`due_at` as NULL. That asymmetry is intentional but documented in the docstring at `backend/app/srs/database.py:874`: TT shows the card as LEARNING immediately, Anki receives it as a same-day-due card without learning-step metadata, and the user re-grades it normally on next session.
+
+### 15.2 The `/api/srs/listen` Endpoint
+
+`POST /api/srs/listen` is the entry point: the user clicks "I listened to this lesson" and the lesson's words are tokenized, lemmatized, and registered as SRS items with a Rating.GOOD grade. It now also branches on `card_type`:
+
+```bash
+sed -n "220,289p" backend/app/api/srs.py
+```
+
+```output
+@router.post("/listen", status_code=200)
+async def mark_lesson_listened(body: ListenRequest, request: Request):
+    store = request.app.state.content_store
+    lesson = store.get_lesson(body.lesson_id)
+    if lesson is None:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+
+    db = request.app.state.srs_db
+
+    # ── Word-level tracking from NATURAL_SPEED section ──────────────────
+    from app.models.lesson import SectionType
+
+    token_glosses: dict[str, str] = lesson.generation_metadata.get("token_glosses", {})
+
+    natural_speed = next(
+        (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
+        None,
+    )
+
+    unique_lemmas: set[str] = set()
+    lemma_to_sentence: dict[str, str] = {}
+    if natural_speed is not None:
+        for phrase in natural_speed.phrases:
+            if phrase.language_code != lesson.language_code:
+                continue
+            for surface in tokenize(phrase.text):
+                lemma = _lemmatizer.lemmatize(surface, lesson.language_code)
+                unique_lemmas.add(lemma)
+                if lemma not in lemma_to_sentence:
+                    lemma_to_sentence[lemma] = phrase.text
+
+    cloze_enabled = lesson.language_code == "sl" and db.get_enable_cloze_cards()
+
+    for lemma in unique_lemmas:
+        is_cloze = cloze_enabled and is_function_word(lemma, lesson.language_code)
+        unit = SyntacticUnit(
+            text=lemma,
+            translation=token_glosses.get(lemma, ""),
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma=lemma,
+            card_type="cloze" if is_cloze else "vocab",
+            source_sentence=lemma_to_sentence.get(lemma, "") if is_cloze else "",
+        )
+        db.add_collocation(unit, language_code=lesson.language_code)
+        item = db.get_collocation_by_lemma(lemma)
+        if item is None:
+            continue  # pragma: no cover — lemma is always filled for single-word units
+        rating = _WORD_RATING_MAP.get(body.word_ratings.get(lemma, "good"), Rating.GOOD)
+        now = datetime.datetime.now(datetime.UTC)
+        updated = schedule(item, rating, params=resolve_fsrs_params(db)[0], now=now)
+        db.update_collocation(updated)
+
+    # ── Key phrase registration (preserves translations) ─────────────────
+    for kp in lesson.key_phrases:
+        if db.get_collocation(kp.phrase) is not None:
+            continue  # idempotent — already registered from a prior listen
+        unit = SyntacticUnit(
+            text=kp.phrase,
+            translation=kp.translation,
+            word_count=min(8, max(1, len(kp.phrase.split()))),
+            difficulty=1,
+            source="llm",
+        )
+        db.add_collocation(unit, language_code=lesson.language_code)
+
+    registered = len(unique_lemmas) + len(lesson.key_phrases)
+    return {"status": "ok", "registered": registered}
+
+```
+
+Notable details:
+
+- **Lemma-keyed registration.** The natural-speed phrases are tokenized via `app.srs.tokenizer.tokenize` then lemmatized through `app.srs.lemmatizer.Lemmatizer.lemmatize` (a thin wrapper over a hand-curated dictionary). The lemma is what gets stored as `collocations.text`, so subsequent listens of the same lesson hit the existing row (`unique_lemmas` dedup is per-call; `db.add_collocation` ON CONFLICT DO NOTHING dedups across calls).
+- **Cloze branching.** When `enable_cloze_cards` is on (DB-backed flag, default OFF) and the language is Slovene, function words go through the cloze path: `card_type="cloze"`, `source_sentence` captured from the first natural-speed phrase containing the surface. Everything else gets `card_type="vocab"`. See PART 15.5 below for the cloze pipeline.
+- **Auto-grade.** Every registered lemma gets a `Rating.GOOD` grade immediately — the user already heard it, so the FSRS state advances on first listen rather than waiting for a manual review.
+- **Key phrases are preserved verbatim** (`kp.phrase` is the original surface form, not lemmatized). Their `translation` is already known from the curriculum, so it survives the `idempotent` guard at line 276 even on re-listen.
+
+### 15.3 The Transcript Component (Phase D)
+
+`frontend/src/lib/components/Transcript.svelte` is a 175-line Svelte 5 component (with a 261-line test file) that renders the lesson dialogue with per-word color coding, click-to-cycle state, drag-to-select phrase capture, and an "Add phrase…" affordance for phrases that don't appear verbatim. The data shape comes from `GET /api/srs/lesson/{lesson_id}/transcript` (`backend/app/api/srs.py:291`):
+
+```
+{
+  lesson_id: string,
+  key_phrases: [{phrase, translation}],
+  dialogue_lines: [
+    {role, words: [
+      {surface, lemma, srs_state, srs_item_id, translation,
+       collocation_span_id, collocation_start,
+       collocation_srs_state, collocation_lemma, collocation_translation}
+    ]}
+  ]
+}
+```
+
+`collocation_span_id`/`collocation_start` are non-null when a multi-word collocation overlaps that word. The component groups overlapping words into a single styled collocation token; otherwise each word is its own `WordSpan`. State colors:
+
+- **unknown / new** — dotted underline (user hasn't seen it)
+- **learning / relearning** — yellow underline
+- **review** — green underline (graduated)
+- **known** — no underline
+- **ignored / suspended** — strikethrough, faded
+
+Click a word and the parent page calls `handleStateChange(lemma, srs_item_id)` which (1) reads `currentState` off the most recent transcript snapshot, (2) computes `nextState = STATE_CYCLE[currentState]`, (3) creates an SRS row if needed (`srs_item_id === null` for cards never registered), and (4) calls the appropriate endpoint (`/untrack` for `ignored`, `/state` otherwise). The transcript is then re-fetched so the next click reads the updated state.
+
+### 15.4 Translate Button + Off-Transcript Phrase Entry (Phase E)
+
+When the user drags to select a phrase ("dober dan" → "good day") that isn't pre-translated, the popover shows a ✨ button. Clicking it calls a new endpoint:
+
+```bash
+sed -n "347,363p" backend/app/api/srs.py
+```
+
+```output
+_VALID_LANGUAGE_CODES = frozenset({"sl", "en"})
+
+
+@router.post("/translate", status_code=200)
+async def translate(body: TranslateRequest, request: Request):
+    if not body.text.strip():
+        raise HTTPException(status_code=422, detail="text must not be empty")
+    if body.language_code not in _VALID_LANGUAGE_CODES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid language_code: {body.language_code!r}. Must be one of {sorted(_VALID_LANGUAGE_CODES)}",
+        )
+    llm = getattr(request.app.state, "llm", None)
+    if llm is None:
+        raise HTTPException(status_code=503, detail="LLM not configured")
+    translation = await translate_term(llm, body.text, body.language_code)
+    return {"translation": translation}
+```
+
+`translate_term` is the same Groq-backed prompt used by `POST /api/srs/items` when a card is created without a translation (see Part 7.3) — Phase E reuses it instead of duplicating the prompt. Three failure modes are surfaced explicitly to the UI (no more silent `try/catch`):
+
+- empty `text` → **422** "text must not be empty"
+- `language_code` not in `{"sl", "en"}` → **422** with a list of valid codes
+- LLM not configured → **503** "LLM not configured"
+
+The Transcript component awaits the call inline, fills the translation field, and lets the user edit before clicking **Create**. That hits the existing `POST /api/srs/items` with the manual `translation`; the LLM is never called twice for the same selection.
+
+Below the dialogue lines, an `Add phrase…` collapsed section accepts free-form L2 text for phrases that don't appear verbatim in the transcript. It uses sentinel `source_line_index = -1` so downstream consumers can distinguish on-transcript adds from manual entries. Phrases flow through `sync_create_new` like any other manual add — no special Anki-side path.
+
+### 15.5 Function-Word Cloze Cards (Phase F)
+
+The cloze spike (`feat(srs): Phase F` — commit `1006f49`) wires `/listen` to also create **Anki Cloze notes** for Slovene function words detected in NATURAL_SPEED phrases. It's behind a feature flag (`enable_cloze_cards`, set via `PUT /api/srs/settings/cloze` and surfaced as a checkbox on `/admin/srs`).
+
+The pipeline:
+
+1. **Detection.** `is_function_word(lemma, "sl")` checks against `SLOVENE_FUNCTION_WORDS` — a curated 22-word frozenset (`je`, `kje`, `v`, `kaj`, `sem`, `si`, `da`, `za`, `tam`, `na`, `kako`, `ni`, `ja`, `se`, `to`, `vam`, `z`, `mi`, `še`, `pa`, `ti`, `po`). The list was generated by `app/srs/build_function_word_list.py` over a 7-day curriculum, then manually curated to drop obvious content words.
+2. **Storage.** Migration v18→v19 adds `collocations.card_type TEXT DEFAULT 'vocab'`. Cloze cards get `card_type='cloze'` and `source_sentence=<the natural-speed phrase>`. `add_collocation` (`backend/app/srs/database.py:238`) only creates a RECOGNITION direction for cloze cards — there's no L1→L2 production side for a function-word fill-in.
+3. **Cloze text generation.** `make_cloze_text(surface, source_sentence)` wraps every word-bounded occurrence of `surface` with `{{c1::surface}}`. It's case-insensitive but case-preserving, idempotent (if `{{c1::...}}` is already present it passes through), and skips empty source sentences.
+4. **Anki note creation.** `OfflineWriter.create_cloze_note` (`backend/app/anki/sync.py:485`) targets Anki's built-in **Cloze** notetype (looked up by `name='Cloze'` in `notetypes`). The fields are `Text` (the cloze-wrapped sentence) and `Back Extra` (left empty). GUID is computed from the cloze-wrapped text + language code via `compute_guid` so duplicate detection works the same way as vocab notes. Each template's `cards.due` is allocated from `MAX(due)+1` over existing new cards.
+5. **Routing.** `sync_create_new` checks `item.syntactic_unit.card_type` and dispatches to `create_cloze_note` (cloze) or `create_note` (vocab). The dispatch is at `backend/app/anki/sync.py:1449`.
+
+The flag default is OFF; turning it on only affects new function-word lemmas going forward. Existing rows aren't backfilled — they stay as `vocab` cards.
+
+### 15.6 Recency-Prioritized New Queue (Phase C)
+
+Background: when the user listens to a fresh lesson on day N, the auto-added words should surface in `/review-queue` ahead of the imported Anki backlog from day 1. Anki's default "HighestPosition" gather orders by `cards.due DESC` (newest first), but the imported backlog has higher `due` than the just-`add_collocation`'d rows that haven't been pushed yet.
+
+Phase C threads recency through both the gather query and the sync_create_new allocator:
+
+- **`get_new_items` ORDER BY.** Layer 24's original sort was `c.created_at DESC` first. Layer 25 revised it to `d.anki_due DESC NULLS FIRST, c.created_at DESC, d.anki_card_id ASC, c.id ASC` — matching Anki's `HighestPosition` gather under `NewCardSorting`. Unsynced TT-adds (`anki_due IS NULL`) sit on top via NULLS FIRST; synced rows order identically in both apps.
+- **`sync_create_new` allocates `cards.due` from `MAX(due) + 1`** over existing new cards, in `created_at ASC` order. So when 30 fresh `/listen` lemmas push at sync time, the most recent gets the highest `cards.due`, surfacing first on the next Anki session too.
+- **Migration v16→v17** adds `CREATE INDEX idx_collocations_created_at ON collocations(created_at)` — without it every queue rebuild does a full sort.
+- **Required deck setting.** Anki's "Display Order → New card gather order" must be set to **"Descending position"** for sync to reflect the recency ordering. Without it, Anki surfaces oldest-first and the TT-side recency work is invisible on the Anki side. TT-side recency works regardless.
+
+### 15.7 Listen-First Endpoint Index
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/srs/listen` | Mark lesson listened; auto-add words; auto-grade GOOD |
+| GET | `/api/srs/lesson/{id}/transcript` | Per-word state for the Transcript component |
+| POST | `/api/srs/translate` | LLM-translate a free-form selection (✨ button) |
+| POST | `/api/srs/items/{id}/state` | Cycle to `new/learning/known/ignored` |
+| POST | `/api/srs/items/{id}/untrack` | Delete (never-synced) or suspend (synced) |
+| GET | `/api/srs/settings/cloze` | Read cloze flag |
+| PUT | `/api/srs/settings/cloze` | Toggle cloze flag |
+
+---
+
+## PART 16: Anki Queue Parity — Layers 24–31
+
+Stage 3 (PART 12) introduced bidirectional sync. Between syncs, both apps schedule independently, and TT must mirror Anki's algorithms closely enough that switching apps doesn't feel discontinuous. The "layers" history lives in `docs/anki-parity-layers.md` and the principles plus a divergence decision tree live in `.claude/rules/anki-queue-parity.md` — read those before editing `app/api/srs.py`, `app/srs/fsrs.py`, `app/srs/queue_stats.py`, or `app/anki/sync.py`.
+
+This section documents Layers 24–31, all landed since the previous walkthrough.
+
+### 16.1 Layer 24 — Recency Becomes the Lead Sort
+
+The lead sort key in `get_new_items` flipped from Anki-position to `c.created_at DESC`. Documented above in Part 15.6. Layer 25 then revised it again to merge Anki's HighestPosition gather (by `anki_due DESC`) with recency on top, giving the final ORDER BY:
+
+```
+ORDER BY d.anki_due DESC NULLS FIRST, c.created_at DESC,
+         d.anki_card_id ASC, c.id ASC
+```
+
+This is the single source of truth for new-card pull order. Don't re-introduce a per-direction-only sort here — Layer 28 below explains why the post-merge step is load-bearing.
+
+### 16.2 Layer 26 — `introduced_at` Replaces Sticky-NEW Filter
+
+Old: `count_new_introduced_today` filtered on `prior_state='new' AND last_review today`. That over-counted: a sticky-NEW card whose intro was on day N–3 but which got re-reviewed today would show up. Anki's `newToday` counter increments only on the very first NEW→non-NEW transition.
+
+New: migration v17→v18 adds `collocation_directions.introduced_at TEXT` plus `idx_directions_introduced_at`. The column is written exactly once per direction:
+
+- `fsrs.schedule` stamps it when the grade event transitions the row out of NEW (TT-side first grade).
+- `sync_pull._resolve_introduced_at` stamps it from `MIN(revlog.id)` for an Anki-side first grade observed during pull.
+
+`count_new_introduced_today` (`backend/app/srs/database.py:1589`) just filters distinct `collocation_id` with `introduced_at` in today's UTC window:
+
+```bash
+sed -n "1602,1615p" backend/app/srs/database.py
+```
+
+```output
+        local_tz = datetime.now().astimezone().tzinfo
+        start_utc = datetime.combine(today, time(0), tzinfo=local_tz).astimezone(UTC)
+        end_utc = datetime.combine(today + timedelta(days=1), time(0), tzinfo=local_tz).astimezone(UTC)
+        with self._get_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(DISTINCT collocation_id) FROM collocation_directions
+                WHERE introduced_at IS NOT NULL
+                  AND introduced_at >= ?
+                  AND introduced_at < ?
+                """,
+                (start_utc.isoformat(), end_utc.isoformat()),
+            ).fetchone()
+            return row[0] if row else 0
+```
+
+Pre-Layer-26 rows have NULL `introduced_at` and naturally fall out of the count. Going forward, every new grade populates the column. The local-timezone-to-UTC math handles the daily rollover the same way `count_review_due_collocations` does.
+
+The Layer 22 distinction (`introduced_at` is a one-shot stamp, NOT a sticky marker) matters: don't conflate it with `prior_state='new'`. `prior_state` lives for the entire intro arc and applies to revlog correctness; `introduced_at` is a fixed timestamp that anchors Anki's `newToday` parity.
+
+### 16.3 Layer 27 — Daily Unbury Sweep
+
+Anki resets `queue=-2` (sibling-buried) and `queue=-3` (scheduler-buried) cards back to their original queues once per day, on the first queue rebuild after rollover. TT must mirror this — stale `state='buried'` rows from a prior day under-count `count_review_due_collocations` and silently drop cards from the review pool.
+
+`SRSDatabase.unbury_if_needed(today)` (`backend/app/srs/database.py:1483`) runs at the top of three call sites: `/queue-stats`, `/review-queue` (via `_compute_live_main`), and `sync_pull`. It's tracked via `anki_state_cache['last_unbury_day']`:
+
+```bash
+sed -n "1497,1515p" backend/app/srs/database.py
+```
+
+```output
+        Returns the number of rows unburied.
+        """
+        cached = self.get_anki_state_cache("last_unbury_day")
+        today_iso = today.isoformat()
+        if cached and cached[0] == today_iso:
+            return 0
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE collocation_directions
+                SET state = CASE WHEN reps > 0 THEN 'review' ELSE 'new' END
+                WHERE state = 'buried'
+                """
+            )
+            rowcount = cursor.rowcount
+            self._commit(conn)
+        self.set_anki_state_cache("last_unbury_day", today_iso)
+        return rowcount
+
+```
+
+Idempotency matters: `sync_pull` within the same day may land *new* `state='buried'` rows (today's sibling-buries that must stick). The `last_unbury_day` cache guards against re-sweeping them.
+
+### 16.4 Layer 25 + Layer 28 — Cross-Direction Gather, Bury, Template Sort
+
+Per-direction ordering in `get_new_items` is necessary but not sufficient. Anki's `add_new_card` (rslib `queue/builder/gathering.rs:63-169`) gathers BOTH ords in one pass and proactively buries the LATER sibling per note — so the higher-due sibling wins. Then `sort_new` (`sorting.rs:14-36`) stably re-sorts by `ord` (the Template step) so ord=0 (recognition) comes before ord=1 (production) within each note's surviving direction.
+
+TT's `_merge_directions` (`backend/app/api/srs.py:707`) mirrors the gather sort key exactly:
+
+```bash
+sed -n "707,746p" backend/app/api/srs.py
+```
+
+```output
+def _merge_directions(
+    rec: list[tuple[int, SRSItem, str]],
+    prod: list[tuple[int, SRSItem, str]],
+) -> list[tuple[int, SRSItem, str, Direction]]:
+    """Merge new-card directions in Anki's gather order.
+
+    Mirrors Anki's `add_new_card` (rslib `queue/builder/gathering.rs:63-169`),
+    which fetches cards under `NewCardSorting::HighestPosition` =
+    ``"due DESC, ord ASC"`` (storage/card/mod.rs:923) and proactively buries
+    the LATER sibling per note. By interleaving both directions in that gather
+    order BEFORE sibling-bury runs, the higher-anki_due sibling wins. The
+    downstream Template re-sort (applied to the survivors in `get_review_queue`)
+    then ranks ord=0 (recognition) ahead of ord=1 (production).
+
+    Sort key (LOWER sorts first):
+      1. ``(0,)`` for ``anki_due IS NULL`` else ``(1, -anki_due)`` — NULLS FIRST, DESC
+      2. ord ASC (Direction.RECOGNITION = 0, Direction.PRODUCTION = 1)
+      3. anki_card_id ASC NULLS LAST (deterministic tiebreak)
+      4. row_id ASC (final tiebreak)
+
+    Together with the post-bury Template sort in `get_review_queue`, this
+    reproduces the gather → bury → Template-sort pipeline exactly.
+    """
+    combined: list[tuple[int, SRSItem, str, Direction]] = []
+    for row_id, item, lang in rec:
+        combined.append((row_id, item, lang, Direction.RECOGNITION))
+    for row_id, item, lang in prod:
+        combined.append((row_id, item, lang, Direction.PRODUCTION))
+
+    def _gather_key(
+        t: tuple[int, SRSItem, str, Direction],
+    ) -> tuple[int, int, int, int, int]:
+        row_id, item, _lang, direction = t
+        ds = item.directions[direction]
+        ord_value = 0 if direction == Direction.RECOGNITION else 1
+        primary = (0, 0) if ds.anki_due is None else (1, -ds.anki_due)
+        return (*primary, ord_value, ds.anki_card_id or (1 << 62), row_id)
+
+    combined.sort(key=_gather_key)
+    return combined
+```
+
+After `_merge_directions`, `_compute_live_main` runs `_bury` (`backend/app/api/srs.py:850`) to keep only the first-seen survivor per `collocation_id`. Then a final stable sort by `ord` (`nonlearning_new.sort(key=lambda t: 0 if t[3] == Direction.RECOGNITION else 1)`) reproduces Anki's Template step.
+
+Layer 28's fix was the `časa`/`sekira` head-of-queue divergence: per-direction sorts let recognition-bucket order disagree with Anki because the gather/bury order on the production side was selecting a different survivor. The interleaved merge fixed it.
+
+### 16.5 Layer 29 — Eager `session_main_queue` Rebuild on Sync
+
+`session_main_queue` is the DB-backed frozen queue order — Anki rebuilds it once at session open / sync; TT mirrors the freeze moment. Before Layer 29, `sync_pull` only **cleared** the cache and deferred rebuild to the next `/review-queue` request. Hours could pass before that request, letting the underlying pool shift — the two apps froze their queues at different moments, causing off-by-slot drift on the first-new-card position.
+
+Layer 29 added `build_and_freeze_main_queue(db)` in `backend/app/api/srs.py:871` and called it immediately after the clear in `sync_pull`:
+
+```bash
+sed -n "871,882p" backend/app/api/srs.py
+```
+
+```output
+def build_and_freeze_main_queue(db) -> None:
+    """Compute live_main and write it to session_main_queue cache.
+
+    Called by sync_pull post-ingest so the freeze moment is at sync completion,
+    matching when Anki rebuilds its own queue. Without this, TT freezes on the
+    first /review-queue request after sync — which can be much later, with a
+    different pool state, causing drift on the very-first-new-card position.
+    """
+    today = datetime.date.today()
+    live_main = _compute_live_main(db)
+    set_session_main_queue(db, today, [(t[0], t[3].value) for t in live_main])
+
+```
+
+`_compute_live_main` (`backend/app/api/srs.py:801`) was extracted out of `get_review_queue` for this: the live-pool build logic up through the spread step is shared between the route handler and the eager-rebuild call. The route handler still owns cache reconciliation, learning-card assembly, and the collapse hack — those depend on the request-scoped `now`/`cutoff`.
+
+Deploy-time pitfall to remember: the cache lives in `anki_state_cache` (DB-backed), so it survives backend restarts. After changing queue-assembly logic, an existing cache row will replay the OLD order until the next sync — restart alone does NOT invalidate it. When debugging a "fix doesn't seem to be working" report, run `clear_session_main_queue` first (see the diagnostic in `.claude/rules/anki-queue-parity.md`) before concluding the fix is broken.
+
+### 16.6 Layer 30 — `_queue_to_state` Must Trust `queue`, Not `reps`
+
+The previous mapper had a fallback `if reps == 0: return SRSState.NEW`. That broke when an Anki user hit "Forget" on a graduated card — `cards.queue` stays at 2 (review) but `cards.reps` resets to 0. The fallback wrongly mapped these to NEW, surfacing them as fresh new cards in TT.
+
+`_queue_to_state` (`backend/app/anki/sync.py:696`) now treats `queue` as authoritative:
+
+```bash
+sed -n "696,719p" backend/app/anki/sync.py
+```
+
+```output
+def _queue_to_state(queue: int, card_type: int, reps: int) -> SRSState:
+    """Map Anki's (queue, type, reps) tuple to TT's SRSState.
+
+    `queue` is the authoritative signal for Anki's current placement — TT
+    must mirror it directly. Layer 30: the previous `if reps == 0: NEW`
+    fallback wrongly mapped `(queue=2, reps=0)` cards to NEW, surfacing
+    already-graduated cards (e.g. via Anki's "Forget" action or a manual
+    `cards.due` edit, which clears `reps` but leaves `queue=2`) as fresh
+    new cards in TT.
+    """
+    if queue == -1:
+        return SRSState.SUSPENDED
+    if queue in (-2, -3):
+        return SRSState.BURIED
+    if queue == 1:
+        return SRSState.RELEARNING if card_type == 3 else SRSState.LEARNING
+    if queue == 3:
+        return SRSState.RELEARNING
+    if queue == 2:
+        return SRSState.REVIEW
+    if queue == 0:
+        return SRSState.NEW
+    # Fallback for unknown queue values (shouldn't happen against modern Anki).
+    return SRSState.NEW if reps == 0 else SRSState.REVIEW
+```
+
+The `card_type == 3` branch distinguishes RELEARNING (re-step after a lapse) from LEARNING (initial steps) within `queue=1` — same as Anki's internal model.
+
+### 16.7 Layer 31 — `<b>L2</b><br><i>EN</i>` Field Split
+
+The user's Anki collection has a Pronunciation/Basic notetype that stores both the L2 word and its English gloss in ONE field with HTML formatting (e.g. `<b>nič</b><br><i>nothing</i>`). Pre-Layer-31, the HTML-strip fallback in `extract_l2_from_fields` concatenated the two inner texts (`ničnothing`) and saved it as TT's `text` column with no translation.
+
+Layer 31 adds two pieces:
+
+1. **`extract_gloss_from_fields`** (`backend/app/anki/sqlite_reader.py:350`) — returns the English gloss when a field uses the pattern.
+2. **A short-circuit in `extract_l2_from_fields`** (`backend/app/anki/sqlite_reader.py:386-389`) — runs before the score-based fallback so the `<b>X</b><br><i>Y</i>` pattern picks the `<b>` group cleanly. The `_B_THEN_I_PATTERN` is a module-level regex anchored at `^\s*<b>([^<]+)</b>\s*<br\s*/?>\s*<i>([^<]+)</i>`.
+
+`import_seed` and the sync_pull `get_note_records` path both use the updated extractor, so new imports come in clean. For the 39 already-mangled rows in the live DB, a one-shot script under `app/anki/fix_html_concat_imports.py` walks the TT DB, cross-checks the linked Anki note, and either renames the row (`text=X, translation=Y`) or deletes it when a clean-X twin collocation already exists. The script is read-only on `collection.anki2`, mutates only `tunatale.db`, supports `--dry-run`, and is invoked as:
+
+```
+uv run python -m app.anki.fix_html_concat_imports [--dry-run]
+```
+
+### 16.8 Layer Summary
+
+| Layer | Where | What changed |
+|-------|-------|--------------|
+| 24 | `database.get_new_items` | Lead sort flipped to `created_at DESC` for recency |
+| 25 | `database.get_new_items` | ORDER BY revised to `anki_due DESC NULLS FIRST, created_at DESC, ...` |
+| 26 | `database.count_new_introduced_today` + migration v17→v18 | `introduced_at` column replaces sticky-NEW filter |
+| 27 | `database.unbury_if_needed` | Daily unbury sweep at queue-build |
+| 28 | `srs._merge_directions` + post-bury Template sort | Cross-direction gather + bury + ord-stable sort |
+| 29 | `srs.build_and_freeze_main_queue` + `sync_pull` call site | Eager rebuild on sync, not lazy on first request |
+| 30 | `sync._queue_to_state` | `queue` is authoritative, `reps` is fallback-only |
+| 31 | `sqlite_reader.extract_l2_from_fields` + `fix_html_concat_imports.py` | Pronunciation notetype `<b>L2</b><br><i>EN</i>` split |
+
+---
+
+## PART 17: Sync Cleanups & Dead-Code Removals
+
+A cleanup pass between Phases D and F reduced sync.py noise and deleted three dead pipelines. Documented at the bottom of `docs/anki-parity-layers.md` under "Cleanup pass." None of the cleanups changed behavior — they're pure refactors with the same test counts before and after, except the removed-pipeline commits which deleted test files alongside their implementations.
+
+### 17.1 Extracted Helpers (Three Commits)
+
+**`_queue_to_state` helper** (commit `8b11935`). Three duplicate `if queue == ...` ladders in `sync_pull` collapsed to one module-level function. Layer 30 then made this single helper the place to fix the `reps=0` bug — keeping the dedup work paid off immediately.
+
+**`_record_conflict` helper** (commit `0309a85`). Five duplicate blocks of the form:
+```python
+report.conflicts.append(SyncConflict(...))
+if not dry_run:
+    self._db.record_sync_conflict(...)
+```
+collapsed to `self._record_conflict(report, guid=..., direction=..., field=..., local=..., remote=..., resolution=..., dry_run=dry_run)` (`backend/app/anki/sync.py:874`).
+
+**`_resolve_prior_state` closure** (commit `38d2804`). The call-site signature was passing `first_review_ms`, `today_start_ms`, and the local direction state through repeated kwargs. The refactor introduces a per-iteration `_prior` closure that captures `card_rec.first_review_ms` and `today_start_ms` once, leaving the call site as `_prior(local_dir, new_state)`. Same idea applied to `_intro_at = _resolve_introduced_at`. Visual noise dropped, behavior identical.
+
+### 17.2 Three Dead Pipelines Deleted
+
+**`_factor_to_fsrs_difficulty` helper** (commit `55d57b2`). The push path used to compute an FSRS difficulty from the Anki ease factor before writing revlog. Layer 17+ obsoleted it (we now persist `prior_state` and use `_derive_revlog_shape`), but the helper plus its 12-test suite hung on. Removed both.
+
+**`_spread_mix.ratio_override`** (commit `916e0bf`). Layer 9 added a parameter to override the intersperser ratio at session-start; Layer 14 reverted that approach but left the parameter in place. The parameter and its tests are gone.
+
+**Review-count pipeline** (commit `b4e6fd7`). An entire `count_review_*` family inside `queue_stats.py` plus a 512-line test file (`tests/test_queue_stats_review.py`) and a 193-line cache test file (`tests/test_queue_stats_cache.py`) — all driving a badge logic path that hadn't been wired to the API since the Phase A refactor. The `count_review_due_collocations` method (the path the UI actually reads) was left in `database.py`. Deletes:
+
+- 251 lines from `app/srs/queue_stats.py`
+- `tests/test_queue_stats_cache.py` (193 lines)
+- `tests/test_queue_stats_review.py` (512 lines)
+
+### 17.3 Why It's Worth Reading
+
+When debugging a queue divergence, dead code is a trap: the divergence playbook in `.claude/rules/anki-queue-parity.md` walks specific helpers, and if a stale one is still in the tree, it can look like the active implementation. The Cleanup pass made the file harder to misread. Future cleanups should follow the same shape: prove the path is dead with `git grep` + test removal, delete in one commit, leave the rule file untouched.
+
