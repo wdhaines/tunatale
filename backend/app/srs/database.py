@@ -1065,8 +1065,8 @@ class SRSDatabase:
                         """
                         INSERT INTO collocation_directions
                             (collocation_id, direction, stability, fsrs_difficulty, due_date,
-                             reps, lapses, state, last_review, anki_card_id, left, due_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             reps, lapses, state, last_review, anki_card_id, anki_due, left, due_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             coll_id,
@@ -1079,6 +1079,7 @@ class SRSDatabase:
                             state.state.value,
                             state.last_review.isoformat() if state.last_review else None,
                             state.anki_card_id,
+                            state.anki_due,
                             state.left,
                             state.due_at.isoformat() if state.due_at else None,
                         ),
@@ -1115,8 +1116,8 @@ class SRSDatabase:
                             """
                             INSERT INTO collocation_directions
                                 (collocation_id, direction, stability, fsrs_difficulty, due_date,
-                                 reps, lapses, state, last_review, anki_card_id, left, due_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 reps, lapses, state, last_review, anki_card_id, anki_due, left, due_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 coll_id,
@@ -1129,21 +1130,24 @@ class SRSDatabase:
                                 state.state.value,
                                 state.last_review.isoformat() if state.last_review else None,
                                 state.anki_card_id,
+                                state.anki_due,
                                 state.left,
                                 state.due_at.isoformat() if state.due_at else None,
                             ),
                         )
                     elif dir_row["reps"] > 0:
-                        # Preserve TunaTale-local FSRS progress; only update state (from Anki queue) and anki_card_id.
+                        # Preserve TunaTale-local FSRS progress; refresh Anki-bookkeeping fields
+                        # (state, anki_card_id, anki_due, left, due_at) from the current sync.
                         conn.execute(
                             """
                             UPDATE collocation_directions SET
-                                state = ?, anki_card_id = ?, left = ?, due_at = ?
+                                state = ?, anki_card_id = ?, anki_due = ?, left = ?, due_at = ?
                             WHERE collocation_id = ? AND direction = ?
                             """,
                             (
                                 state.state.value,
                                 state.anki_card_id,
+                                state.anki_due,
                                 state.left,
                                 state.due_at.isoformat() if state.due_at else None,
                                 coll_id,
@@ -1155,8 +1159,8 @@ class SRSDatabase:
                             """
                             UPDATE collocation_directions SET
                                 stability = ?, fsrs_difficulty = ?, due_date = ?,
-                                reps = ?, lapses = ?, state = ?, last_review = ?, anki_card_id = ?,
-                                left = ?, due_at = ?
+                                reps = ?, lapses = ?, state = ?, last_review = ?,
+                                anki_card_id = ?, anki_due = ?, left = ?, due_at = ?
                             WHERE collocation_id = ? AND direction = ?
                             """,
                             (
@@ -1168,6 +1172,7 @@ class SRSDatabase:
                                 state.state.value,
                                 state.last_review.isoformat() if state.last_review else None,
                                 state.anki_card_id,
+                                state.anki_due,
                                 state.left,
                                 state.due_at.isoformat() if state.due_at else None,
                                 coll_id,

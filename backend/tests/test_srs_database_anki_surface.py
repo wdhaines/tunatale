@@ -107,6 +107,110 @@ class TestUpsertByGuid:
         assert item.directions[Direction.RECOGNITION].stability == 20.0
         assert item.directions[Direction.PRODUCTION].stability == 10.0
 
+    def test_writes_anki_due_on_initial_insert(self, srs_db):
+        """anki_due (Anki's card.due ordering value) must propagate to the new
+        direction row so Layer 33's phantom-direction guard doesn't sink it."""
+        today = date.today()
+        dirs = {
+            Direction.RECOGNITION: DirectionState(
+                direction=Direction.RECOGNITION, due_date=today, reps=0, anki_due=4564
+            ),
+            Direction.PRODUCTION: DirectionState(
+                direction=Direction.PRODUCTION, due_date=today, reps=0, anki_due=1001968
+            ),
+        }
+        srs_db.upsert_by_guid(_unit("ulica", "street"), "sl", dirs, anki_note_id=42)
+        item = srs_db.get_collocation("ulica")
+        assert item.directions[Direction.RECOGNITION].anki_due == 4564
+        assert item.directions[Direction.PRODUCTION].anki_due == 1001968
+
+    def test_writes_anki_due_when_inserting_missing_direction_on_existing_parent(self, srs_db):
+        """Existing collocation, brand-new direction (e.g. /listen creates only
+        recognition, then a later import_seed observes the production card) —
+        the INSERT path on the existing-parent branch must also carry anki_due."""
+        today = date.today()
+        # Seed with recognition only.
+        rec_only = {
+            Direction.RECOGNITION: DirectionState(
+                direction=Direction.RECOGNITION, due_date=today, reps=0, anki_due=4564
+            ),
+        }
+        srs_db.upsert_by_guid(_unit("ulica", "street"), "sl", rec_only, anki_note_id=42)
+        # Now upsert with both directions; production is missing on the existing collocation.
+        both = {
+            Direction.RECOGNITION: DirectionState(
+                direction=Direction.RECOGNITION, due_date=today, reps=0, anki_due=4564
+            ),
+            Direction.PRODUCTION: DirectionState(
+                direction=Direction.PRODUCTION, due_date=today, reps=0, anki_due=1001968
+            ),
+        }
+        srs_db.upsert_by_guid(_unit("ulica", "street"), "sl", both, anki_note_id=42)
+        item = srs_db.get_collocation("ulica")
+        assert item.directions[Direction.PRODUCTION].anki_due == 1001968
+
+    def test_refreshes_anki_due_when_reps_gt_zero(self, srs_db):
+        """When the user grades in Anki and queue position shifts, anki_due
+        changes. Even with reps>0 (FSRS-progress preserved), anki_due is Anki's
+        bookkeeping — it should refresh from the supplied state."""
+        today = date.today()
+        dirs_old = {
+            Direction.RECOGNITION: DirectionState(
+                direction=Direction.RECOGNITION,
+                due_date=today,
+                reps=5,
+                state=SRSState.REVIEW,
+                anki_due=4000,
+            ),
+            Direction.PRODUCTION: DirectionState(
+                direction=Direction.PRODUCTION,
+                due_date=today,
+                reps=3,
+                state=SRSState.REVIEW,
+                anki_due=2000,
+            ),
+        }
+        srs_db.upsert_by_guid(_unit("ulica", "street"), "sl", dirs_old, anki_note_id=42)
+        # Second sync with new anki_due values
+        dirs_new = {
+            Direction.RECOGNITION: DirectionState(
+                direction=Direction.RECOGNITION,
+                due_date=today,
+                reps=5,
+                state=SRSState.REVIEW,
+                anki_due=4564,
+            ),
+            Direction.PRODUCTION: DirectionState(
+                direction=Direction.PRODUCTION,
+                due_date=today,
+                reps=3,
+                state=SRSState.REVIEW,
+                anki_due=1001968,
+            ),
+        }
+        srs_db.upsert_by_guid(_unit("ulica", "street"), "sl", dirs_new, anki_note_id=42)
+        item = srs_db.get_collocation("ulica")
+        assert item.directions[Direction.RECOGNITION].anki_due == 4564
+        assert item.directions[Direction.PRODUCTION].anki_due == 1001968
+
+    def test_refreshes_anki_due_when_reps_zero(self, srs_db):
+        """The new-direction (reps=0) refresh path must update anki_due too."""
+        today = date.today()
+        dirs_old = {
+            Direction.RECOGNITION: DirectionState(
+                direction=Direction.RECOGNITION, due_date=today, reps=0, anki_due=None
+            ),
+        }
+        srs_db.upsert_by_guid(_unit("ulica", "street"), "sl", dirs_old, anki_note_id=42)
+        dirs_new = {
+            Direction.RECOGNITION: DirectionState(
+                direction=Direction.RECOGNITION, due_date=today, reps=0, anki_due=4564
+            ),
+        }
+        srs_db.upsert_by_guid(_unit("ulica", "street"), "sl", dirs_new, anki_note_id=42)
+        item = srs_db.get_collocation("ulica")
+        assert item.directions[Direction.RECOGNITION].anki_due == 4564
+
     def test_preserves_anki_card_id_even_when_reps_gt_zero(self, srs_db):
         dirs_no_card_id = {
             Direction.RECOGNITION: DirectionState(
