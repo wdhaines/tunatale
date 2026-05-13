@@ -1757,15 +1757,16 @@ class SRSDatabase:
         guid: str,
         *,
         translation: str,
+        note: str,
         dirty_fields_str: str,
     ) -> None:
-        """Update translation and dirty_fields after a sync pull."""
+        """Update translation, note, and dirty_fields after a sync pull."""
         now_iso = datetime.now(UTC).isoformat()
         with self._get_conn() as conn:
             conn.execute(
-                "UPDATE collocations SET translation = ?, dirty_fields = ?, "
+                "UPDATE collocations SET translation = ?, note = ?, dirty_fields = ?, "
                 "last_synced_at = ?, updated_at = ? WHERE guid = ?",
-                (translation, dirty_fields_str, now_iso, now_iso, guid),
+                (translation, note, dirty_fields_str, now_iso, now_iso, guid),
             )
             self._commit(conn)
 

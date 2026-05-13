@@ -135,6 +135,7 @@ class NoteRecord:
     anki_guid: str
     l2_text: str
     translation: str
+    note: str
     disambig_key: str
     mod: int
     cards: list[CardRecord]
@@ -170,6 +171,25 @@ class CreateNewReport:
     created: int = 0
     linked: int = 0
     skipped: int = 0
+
+
+_BACK_EXTRA_TRANS = re.compile(r"^\s*<i>([^<]+)</i>\s*<br\s*/?>\s*<br\s*/?>\s*(.*)", re.DOTALL)
+
+
+def extract_cloze_translation(back_extra: str) -> str:
+    """Extract translation from a Cloze note's back_extra (<i>…) field."""
+    m = _BACK_EXTRA_TRANS.match(back_extra)
+    if m:
+        return m.group(1).strip()
+    return extract_translation(back_extra)
+
+
+def extract_cloze_note(back_extra: str) -> str:
+    """Extract note body from a Cloze note's back_extra (after the <i>translation</i> prefix)."""
+    m = _BACK_EXTRA_TRANS.match(back_extra)
+    if m:
+        return m.group(2).strip()
+    return ""
 
 
 class OfflineReader:
@@ -208,11 +228,28 @@ class OfflineReader:
         for c in cards:
             cards_by_note.setdefault(c.note_id, []).append(c)
 
+        # Detect Cloze notetype — its back_extra field (fields[1]) is HTML, not plain text
+        cloze_mid = None
+        try:
+            cloze_mid_row = self._conn.execute("SELECT id FROM notetypes WHERE name = 'Cloze'").fetchone()
+            cloze_mid = cloze_mid_row[0] if cloze_mid_row else None
+        except sqlite3.OperationalError:
+            pass  # notetypes table may not exist in test/minimal collections
+
         records = []
         for note in notes:
-            l2_text = extract_l2_from_fields(note.fields)
-            translation = extract_translation(note.fields[1]) if len(note.fields) > 1 else ""
-            disambig_key = extract_disambig_from_fields(note.fields)
+            is_cloze = cloze_mid is not None and note.mid == cloze_mid
+            if is_cloze:
+                back_extra = note.fields[1] if len(note.fields) > 1 else ""
+                translation = extract_cloze_translation(back_extra)
+                note_text = extract_cloze_note(back_extra)
+                l2_text = extract_l2_from_fields(note.fields)
+                disambig_key = ""
+            else:
+                l2_text = extract_l2_from_fields(note.fields)
+                translation = extract_translation(note.fields[1]) if len(note.fields) > 1 else ""
+                disambig_key = extract_disambig_from_fields(note.fields)
+                note_text = ""
             card_records = [
                 CardRecord(
                     anki_card_id=c.id,
@@ -240,6 +277,7 @@ class OfflineReader:
                     anki_guid=note.anki_guid,
                     l2_text=l2_text,
                     translation=translation,
+                    note=note_text,
                     disambig_key=disambig_key,
                     mod=note.mod,
                     cards=card_records,
@@ -949,6 +987,7 @@ class AnkiSync:
             dirty_set = {f for f in local_dirty_fields.split(",") if f}
 
             local_translation = local_item.syntactic_unit.translation
+            local_note = local_item.syntactic_unit.note
             note_changed = False
             new_dirty_fields = dirty_set.copy()
 
@@ -967,11 +1006,15 @@ class AnkiSync:
                     )
                     new_dirty_fields.discard("translation")
 
+            if rec.note != local_note:
+                note_changed = True
+
             if note_changed:
                 if not dry_run:
                     self._db.update_collocation_for_sync(
                         guid,
                         translation=rec.translation,
+                        note=rec.note,
                         dirty_fields_str=",".join(sorted(new_dirty_fields)),
                     )
                 report.notes_updated += 1

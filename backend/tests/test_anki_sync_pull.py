@@ -19,6 +19,8 @@ from app.anki.sync import (
     NoteRecord,
     OfflineReader,
     _direction_differs,
+    extract_cloze_note,
+    extract_cloze_translation,
 )
 from app.common.guid import compute_guid
 from app.models.srs_item import Direction, DirectionState, SRSState
@@ -88,6 +90,37 @@ class FakeReader:
 
     def get_note_records(self) -> list[NoteRecord]:
         return self._records
+
+
+# ── Cloze helper functions ────────────────────────────────────────────────────
+
+
+class TestClozeExtractors:
+    """Unit tests for extract_cloze_translation / extract_cloze_note."""
+
+    def test_extract_cloze_translation_standard(self):
+        back_extra = '<i>every</i><br><br><a href="https://forvo.com/word/vsak/">▶ Forvo</a>'
+        assert extract_cloze_translation(back_extra) == "every"
+
+    def test_extract_cloze_translation_no_i_tag(self):
+        """Fallback to extract_translation when there's no <i> tag."""
+        assert extract_cloze_translation("plain text") == "plain text"
+
+    def test_extract_cloze_translation_empty(self):
+        assert extract_cloze_translation("") == ""
+
+    def test_extract_cloze_note_returns_body(self):
+        back_extra = '<i>every</i><br><br><a href="https://forvo.com/word/vsak/">▶ Forvo</a>'
+        assert extract_cloze_note(back_extra) == '<a href="https://forvo.com/word/vsak/">▶ Forvo</a>'
+
+    def test_extract_cloze_note_no_i_tag(self):
+        assert extract_cloze_note("plain text") == ""
+
+    def test_extract_cloze_note_empty(self):
+        assert extract_cloze_note("") == ""
+
+    def test_extract_cloze_note_no_body(self):
+        assert extract_cloze_note("<i>every</i><br><br>") == ""
 
 
 # ── OfflineReader ─────────────────────────────────────────────────────────────
@@ -194,6 +227,66 @@ class TestOfflineReader:
         records = OfflineReader(conn, "Empty Deck").get_note_records()
         conn.close()
         assert records == []
+
+    def test_cloze_note_parses_back_extra(self, tmp_path):
+        """OfflineReader correctly extracts translation and note from Cloze notes."""
+        deck_id = 12345
+        deck_name = "0. Slovene"
+        cloze_mid = 10001
+        basic_mid = 10002
+
+        db_path = tmp_path / "cloze.anki2"
+        conn = sqlite3.connect(str(db_path))
+        conn.executescript(f"""
+            CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER,
+                dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, decks TEXT,
+                dconf TEXT, tags TEXT);
+            INSERT INTO col VALUES (1,0,0,0,11,0,0,0,'{{}}','{{}}','{{"{deck_id}":{{"id":{deck_id},"name":"{deck_name}"}}}}','{{}}','{{}}');
+            CREATE TABLE notes (id INTEGER, guid TEXT, mid INTEGER, mod INTEGER, usn INTEGER,
+                tags TEXT, flds TEXT, sfld TEXT, csum INTEGER, flags INTEGER, data TEXT);
+            CREATE TABLE cards (id INTEGER, nid INTEGER, did INTEGER, ord INTEGER, mod INTEGER,
+                usn INTEGER, type INTEGER, queue INTEGER, due INTEGER, ivl INTEGER, factor INTEGER,
+                reps INTEGER, lapses INTEGER, left INTEGER, odue INTEGER, odid INTEGER, flags INTEGER, data TEXT);
+            CREATE TABLE revlog (id INTEGER, cid INTEGER, usn INTEGER, ease INTEGER, ivl INTEGER,
+                lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER);
+            CREATE TABLE notetypes (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, common TEXT);
+            INSERT INTO notetypes VALUES ({cloze_mid}, 'Cloze', 0, 0, '{{}}');
+            INSERT INTO notetypes VALUES ({basic_mid}, 'Basic', 0, 0, '{{}}');
+        """)
+        back_extra = '<i>every</i><br><br><a href="https://forvo.com/word/vsak/">\u25b6 Forvo</a>'
+        conn.execute(
+            "INSERT INTO notes VALUES (2001, 'cloze_guid', ?, 0, 0, '', ?, 'vsak', 0, 0, '')",
+            (cloze_mid, f"vsak\x1f{back_extra}"),
+        )
+        conn.execute(
+            "INSERT INTO notes VALUES (2002, 'basic_guid', ?, 0, 0, '', ?, 'banka', 0, 0, '')",
+            (basic_mid, "banka\x1fbank"),
+        )
+        conn.execute(
+            "INSERT INTO cards VALUES (3001, 2001, ?, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+            (deck_id,),
+        )
+        conn.execute(
+            "INSERT INTO cards VALUES (3002, 2002, ?, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+            (deck_id,),
+        )
+        conn.commit()
+
+        records = OfflineReader(conn, deck_name).get_note_records()
+        conn.close()
+
+        assert len(records) == 2
+
+        cloze = next(r for r in records if r.anki_note_id == 2001)
+        assert cloze.translation == "every"
+        assert cloze.note == '<a href="https://forvo.com/word/vsak/">\u25b6 Forvo</a>'
+        assert cloze.l2_text == "vsak"
+        assert cloze.disambig_key == ""
+
+        basic = next(r for r in records if r.anki_note_id == 2002)
+        assert basic.translation == "bank"
+        assert basic.note == ""
+        assert basic.l2_text == "banka"
 
 
 # ── Additional tests ──────────────────────────────────────────────────────────

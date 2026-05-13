@@ -100,6 +100,7 @@ class TestConflictRecordDryRun:
                 anki_guid=guid,
                 l2_text="banka",
                 translation="bank",
+                note="",
                 disambig_key="",
                 mod=int(anki_time.timestamp()),
                 cards=[

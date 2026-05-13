@@ -77,10 +77,10 @@
 				{/if}
 				<p class="answer-text english">{item.translation}</p>
 				{#if item.grammar}
-					<div class="gram">{item.grammar}</div>
+					<div class="gram">{@html item.grammar}</div>
 				{/if}
 				{#if item.note}
-					<div class="note">{item.note}</div>
+					<div class="note">{@html item.note}</div>
 				{/if}
 			{:else if direction === 'production'}
 				{#if item.card_type === 'cloze' && item.source_sentence}
@@ -98,10 +98,10 @@
 				{/if}
 				<p class="answer-text english">{item.translation}</p>
 				{#if item.grammar}
-					<div class="gram">{item.grammar}</div>
+					<div class="gram">{@html item.grammar}</div>
 				{/if}
 				{#if item.note}
-					<div class="note">{item.note}</div>
+					<div class="note">{@html item.note}</div>
 				{/if}
 			{/if}
 		</div>
@@ -167,7 +167,7 @@
 		color: var(--color-muted);
 		margin-bottom: 0.75rem;
 	}
-	.cloze-answer {
+	:global(.cloze-answer) {
 		background: var(--color-highlight, #fff3cd);
 		padding: 0.1em 0.3em;
 		border-radius: 3px;

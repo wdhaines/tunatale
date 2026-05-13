@@ -107,6 +107,7 @@ def test_pull_then_push_after_local_grade_flushes_review_to_anki():
             anki_guid=guid,
             l2_text="banka",
             translation="bank",
+            note="",
             disambig_key="",
             mod=0,
             cards=[
@@ -182,6 +183,7 @@ def test_dirty_new_card_preserves_review_state_through_pull():
             anki_guid=guid,
             l2_text="banka",
             translation="bank",
+            note="",
             disambig_key="",
             mod=0,
             cards=[
@@ -228,6 +230,7 @@ def test_promote_to_learning_dirty_cleared_by_push():
                 anki_guid=guid,
                 l2_text="banka",
                 translation="bank",
+                note="",
                 disambig_key="",
                 mod=0,
                 cards=[
@@ -288,6 +291,7 @@ def test_untrack_suspend_dirty_cleared_by_push():
                 anki_guid=guid,
                 l2_text="banka",
                 translation="bank",
+                note="",
                 disambig_key="",
                 mod=0,
                 cards=[
@@ -329,3 +333,39 @@ def test_untrack_suspend_dirty_cleared_by_push():
     writer2 = _FakeWriter()
     AnkiSync(db=db, _reader=stale, _writer=writer2).sync_push()
     assert writer2.suspend_calls == []
+
+
+def test_pull_syncs_note_field():
+    """sync_pull writes the note field from Anki records to the local DB."""
+    db, guid, _ = _make_db_with_banka()
+
+    reader = _FakeReader(
+        [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                note="pronunciation info",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=2,
+                        reps=0,
+                        lapses=0,
+                        stability=0.0,
+                        difficulty=0.0,
+                        due_date=date.today(),
+                        fsrs_known=True,
+                    ),
+                ],
+            ),
+        ]
+    )
+    sync = AnkiSync(db=db, _reader=reader, _writer=_FakeWriter())
+    sync.sync_pull()
+    after = db.get_collocation_by_guid(guid)
+    assert after.syntactic_unit.note == "pronunciation info"

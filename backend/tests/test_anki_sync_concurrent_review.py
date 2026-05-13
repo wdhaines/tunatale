@@ -173,6 +173,7 @@ class TestAnkiGradeOnlyPullsNormally:
                 anki_guid="banka",
                 l2_text="banka",
                 translation="bank",
+                note="",
                 disambig_key="",
                 mod=int(anki_time.timestamp()),
                 cards=[
@@ -236,6 +237,7 @@ class TestAnkiNewerThanTunaTale:
                 anki_guid="banka",
                 l2_text="banka",
                 translation="bank",
+                note="",
                 disambig_key="",
                 mod=int(anki_time.timestamp()),
                 cards=[
@@ -299,6 +301,7 @@ class TestAnkiNewerThanTunaTale:
                 anki_guid="banka",
                 l2_text="banka",
                 translation="bank",
+                note="",
                 disambig_key="",
                 mod=int(anki_time.timestamp()),
                 cards=[
@@ -340,6 +343,7 @@ class TestTunaTaleNewerThanAnki:
                 anki_guid="banka",
                 l2_text="banka",
                 translation="bank",
+                note="",
                 disambig_key="",
                 mod=int(anki_time.timestamp()),
                 cards=[
@@ -566,6 +570,7 @@ class TestAnkiWinsByTimestampQueueMappings:
                 anki_guid="banka",
                 l2_text="banka",
                 translation="bank",
+                note="",
                 disambig_key="",
                 mod=int(anki_time.timestamp()),
                 cards=[
@@ -600,6 +605,7 @@ class TestAnkiWinsByTimestampQueueMappings:
                 anki_guid="banka",
                 l2_text="banka",
                 translation="bank",
+                note="",
                 disambig_key="",
                 mod=int(anki_time.timestamp()),
                 cards=[
@@ -634,6 +640,7 @@ class TestAnkiWinsByTimestampQueueMappings:
                 anki_guid="banka",
                 l2_text="banka",
                 translation="bank",
+                note="",
                 disambig_key="",
                 mod=int(anki_time.timestamp()),
                 cards=[
@@ -668,6 +675,7 @@ class TestAnkiWinsByTimestampQueueMappings:
                 anki_guid="banka",
                 l2_text="banka",
                 translation="bank",
+                note="",
                 disambig_key="",
                 mod=int(anki_time.timestamp()),
                 cards=[
@@ -702,6 +710,7 @@ class TestAnkiWinsByTimestampQueueMappings:
                 anki_guid="banka",
                 l2_text="banka",
                 translation="bank",
+                note="",
                 disambig_key="",
                 mod=int(anki_time.timestamp()),
                 cards=[
@@ -822,6 +831,7 @@ class TestRecordConflictToDB:
                 anki_guid="banka",
                 l2_text="banka",
                 translation="bank",
+                note="",
                 disambig_key="",
                 mod=int(anki_time.timestamp()),
                 cards=[

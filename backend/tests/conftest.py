@@ -110,6 +110,7 @@ def make_note_record(
         anki_guid=anki_guid,
         l2_text=l2_text,
         translation=translation,
+        note="",
         disambig_key=disambig_key,
         mod=mod,
         cards=cards,
