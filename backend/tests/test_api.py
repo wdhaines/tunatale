@@ -1096,6 +1096,30 @@ class TestListenClozeIntegration:
         assert item is not None
         assert item.syntactic_unit.card_type == "vocab"
 
+    async def test_listen_cloze_returns_card_type_and_source_sentence_via_api(self):
+        """Cloze items expose card_type and source_sentence via the items API."""
+        await self._setup_lesson(cloze_enabled=True)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+            # Fetch items via API and verify cloze fields
+            response = await client.get("/api/srs/items", params={"limit": 50})
+        assert response.status_code == 200
+        data = response.json()
+        items = {i["text"]: i for i in data["items"]}
+
+        # "kje" is a function word → cloze card
+        kje = items.get("kje")
+        assert kje is not None
+        assert kje["card_type"] == "cloze"
+        assert kje["source_sentence"] == "Kje je banka?"
+
+        # "banka" is a content word → vocab card
+        banka = items.get("banka")
+        assert banka is not None
+        assert banka["card_type"] == "vocab"
+        assert banka["source_sentence"] == ""
+
 
 class TestClozeSetting:
     """Tests for GET/PUT /api/srs/settings/cloze."""

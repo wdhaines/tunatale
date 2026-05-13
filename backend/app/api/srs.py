@@ -102,6 +102,8 @@ def _item_to_dict(
             "recognition": _direction_to_dict(rec) if rec else None,
             "production": _direction_to_dict(prod) if prod else None,
         },
+        "card_type": item.syntactic_unit.card_type,
+        "source_sentence": item.syntactic_unit.source_sentence,
         "image_url": image_url,
         "audio_url": audio_url,
         "grammar": item.syntactic_unit.grammar,
@@ -268,7 +270,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             continue  # pragma: no cover — lemma is always filled for single-word units
         rating = _WORD_RATING_MAP.get(body.word_ratings.get(lemma, "good"), Rating.GOOD)
         now = datetime.datetime.now(datetime.UTC)
-        updated = schedule(item, rating, params=resolve_fsrs_params(db)[0], now=now)
+        # Cloze items only have the PRODUCTION direction; vocab items default to RECOGNITION
+        sched_dir = Direction.PRODUCTION if is_cloze else Direction.RECOGNITION
+        updated = schedule(item, rating, direction=sched_dir, params=resolve_fsrs_params(db)[0], now=now)
         db.update_collocation(updated)
 
     # ── Key phrase registration (preserves translations) ─────────────────

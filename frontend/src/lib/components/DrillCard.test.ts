@@ -148,7 +148,60 @@ describe('DrillCard', () => {
 		});
 	});
 
-	describe('rating callbacks', () => {
+	describe('cloze card', () => {
+	const clozeItem = makeSRSItemDetail({
+		text: 'vsak',
+		translation: 'every',
+		card_type: 'cloze',
+		source_sentence: 'Odprto je vsak dan',
+		audio_url: '/api/media/sl_vsak.mp3',
+		grammar: 'adj',
+		note: 'common word',
+	});
+
+	it('front shows sentence with blank, no leak of answer word', async () => {
+		const onRate = vi.fn().mockResolvedValue(undefined);
+		const { container } = render(DrillCard, { item: clozeItem, direction: 'production', onRate });
+		expect(container.textContent).toContain('[...]');
+		expect(container.textContent).toContain('Odprto je');
+		expect(container.textContent).toContain('dan');
+		expect(container.textContent).not.toContain('vsak');
+	});
+
+	it('reveal shows filled sentence with answer highlighted', async () => {
+		const onRate = vi.fn().mockResolvedValue(undefined);
+		const { findByRole, container } = render(DrillCard, { item: clozeItem, direction: 'production', onRate });
+		await fireEvent.click(await findByRole('button', { name: 'Show' }));
+		expect(container.innerHTML).toContain('<mark class="cloze-answer">');
+		expect(container.textContent).toContain('vsak');
+		expect(container.textContent).toContain('every');
+	});
+
+	it('reveal shows audio, translation, grammar, note', async () => {
+		const onRate = vi.fn().mockResolvedValue(undefined);
+		const { findByRole, container } = render(DrillCard, { item: clozeItem, direction: 'production', onRate });
+		await fireEvent.click(await findByRole('button', { name: 'Show' }));
+		expect(container.querySelector('audio')).toBeTruthy();
+		expect(container.textContent).toContain('every');
+		expect(container.textContent).toContain('adj');
+		expect(container.textContent).toContain('common word');
+	});
+
+	it('front falls back to translation when cloze but no source_sentence or image', async () => {
+		const onRate = vi.fn().mockResolvedValue(undefined);
+		const noSentence = makeSRSItemDetail({
+			text: 'vsak',
+			translation: 'every',
+			card_type: 'cloze',
+			source_sentence: '',
+			image_url: null,
+		});
+		const { findByText } = render(DrillCard, { item: noSentence, direction: 'production', onRate });
+		expect(await findByText('every')).toBeTruthy();
+	});
+});
+
+describe('rating callbacks', () => {
 		it('calls onRate("good") when Good clicked', async () => {
 			const onRate = vi.fn().mockResolvedValue(undefined);
 			const item = makeSRSItemDetail({});

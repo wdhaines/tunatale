@@ -74,7 +74,7 @@ All commands use `uv run` (no manual venv activation).
 - **LLM tests must use cassettes** — never hit live API in tests
 - **Anki writes**: always use `app.anki.safety.safe_open()` — handles lock probe, SHA256 backup, integrity check
 - **Anki mutations**: always set `usn=-1`, `mod=now_ts` on touched rows, and update `col` — see `.claude/rules/anki-sync.md`
-- **Cloze items** (Phase F): set `card_type="cloze"` on the `SyntacticUnit`; only produce RECOGNITION direction; sync uses `OfflineWriter.create_cloze_note()` targeting Anki's built-in Cloze notetype
+- **Cloze items** (Phase F): set `card_type="cloze"` on the `SyntacticUnit`; only produce PRODUCTION direction; sync uses `OfflineWriter.create_cloze_note()` targeting Anki's built-in Cloze notetype
 
 ## CI Order
 

@@ -369,12 +369,12 @@ def test_apply_convert_to_cloze_updates_tt(tmp_path):
         "SELECT card_type, source_sentence, anki_note_id FROM collocations WHERE id=?", (tt_cid,)
     ).fetchone()
     assert coll == ("cloze", "Zdravo Ana, jaz sem Janez.", new_nid)
-    # Production direction removed; recognition kept and repointed
+    # Recognition direction removed; production kept and repointed
     dirs = tt.execute(
         "SELECT direction, anki_card_id FROM collocation_directions WHERE collocation_id=?", (tt_cid,)
     ).fetchall()
     assert len(dirs) == 1
-    assert dirs[0][0] == "recognition"
+    assert dirs[0][0] == "production"
     new_cid = anki.execute("SELECT id FROM cards WHERE nid=?", (new_nid,)).fetchone()[0]
     assert dirs[0][1] == new_cid
 

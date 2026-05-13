@@ -108,8 +108,8 @@ class TestCRUD:
         reloaded = srs_db.get_collocation("test_word")
         assert reloaded.directions[Direction.RECOGNITION].anki_due == 612
 
-    def test_add_collocation_cloze_creates_only_recognition_direction(self, srs_db):
-        """Cloze card_type creates only recognition direction (no production)."""
+    def test_add_collocation_cloze_creates_only_production_direction(self, srs_db):
+        """Cloze card_type creates only production direction (no recognition)."""
         unit = SyntacticUnit(
             text="ki",
             translation="",
@@ -129,7 +129,7 @@ class TestCRUD:
                 (row["id"],),
             ).fetchall()
             dirs = [d["direction"] for d in directions]
-            assert dirs == ["recognition"]
+            assert dirs == ["production"]
 
     def test_add_collocation_vocab_creates_both_directions(self, srs_db):
         """Default vocab card_type creates both recognition and production directions."""

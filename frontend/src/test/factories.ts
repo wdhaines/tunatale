@@ -59,6 +59,8 @@ export function makeSRSItemDetail(overrides: Partial<SRSItemDetail> = {}): SRSIt
 		lapses: 0,
 		last_review: '2026-04-10',
 		language_code: 'sl',
+		card_type: 'vocab',
+		source_sentence: '',
 		image_url: '/api/media/banka.jpg',
 		audio_url: null,
 		grammar: '',

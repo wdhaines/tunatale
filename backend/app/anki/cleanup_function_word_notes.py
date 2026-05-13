@@ -196,17 +196,17 @@ def apply_convert_to_cloze(
     )
     new_cid = anki_conn.execute("SELECT id FROM cards WHERE nid = ? ORDER BY ord LIMIT 1", (new_nid,)).fetchone()[0]
 
-    # TT: collapse to cloze (recognition only), repoint to new note/card.
+    # TT: collapse to cloze (production only), repoint to new note/card.
     tt_conn.execute(
         "UPDATE collocations SET card_type = 'cloze', source_sentence = ?, anki_note_id = ? WHERE id = ?",
         (op.source_sentence, new_nid, op.tt_collocation_id),
     )
     tt_conn.execute(
-        "DELETE FROM collocation_directions WHERE collocation_id = ? AND direction = 'production'",
+        "DELETE FROM collocation_directions WHERE collocation_id = ? AND direction = 'recognition'",
         (op.tt_collocation_id,),
     )
     tt_conn.execute(
-        "UPDATE collocation_directions SET anki_card_id = ? WHERE collocation_id = ? AND direction = 'recognition'",
+        "UPDATE collocation_directions SET anki_card_id = ? WHERE collocation_id = ? AND direction = 'production'",
         (new_cid, op.tt_collocation_id),
     )
 

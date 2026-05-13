@@ -286,9 +286,10 @@ class SRSDatabase:
                 (guid,),
             ).fetchone()
             coll_id = row["id"]
-            directions = [Direction.RECOGNITION]
-            if unit.card_type != "cloze":
-                directions.append(Direction.PRODUCTION)
+            if unit.card_type == "cloze":
+                directions = [Direction.PRODUCTION]
+            else:
+                directions = [Direction.RECOGNITION, Direction.PRODUCTION]
             for direction in directions:
                 conn.execute(
                     """
@@ -390,10 +391,10 @@ class SRSDatabase:
             self._commit(conn)
 
     def update_collocation(self, item: SRSItem) -> None:
-        """Back-compat shim: persist the recognition direction of `item`.
+        """Persist the first available direction of `item`.
 
-        Callers still constructing flat SRSItems (via property shims) go
-        through this path. Stage 3.5 removes it.
+        Cloze items only have PRODUCTION; vocab items have RECOGNITION
+        as the primary direction used by back-compat callers.
         """
         if item.guid is None:
             # Fall back to looking up the guid by text for legacy flows.
@@ -407,7 +408,8 @@ class SRSDatabase:
                 guid = row["guid"]
         else:
             guid = item.guid
-        self.update_direction(guid, Direction.RECOGNITION, item.directions[Direction.RECOGNITION])
+        direction = Direction.RECOGNITION if Direction.RECOGNITION in item.directions else Direction.PRODUCTION
+        self.update_direction(guid, direction, item.directions[direction])
 
     def record_violation(
         self, collocation_text: str, day_number: int, violation_type: str, details: str | None = None
@@ -988,7 +990,7 @@ class SRSDatabase:
 
         # d_filter is a direction row used for state filter + ordering by direction columns.
         # It is always joined on the requested order_direction.
-        join = "JOIN collocation_directions d_filter ON d_filter.collocation_id = c.id AND d_filter.direction = ?"
+        join = "LEFT JOIN collocation_directions d_filter ON d_filter.collocation_id = c.id AND d_filter.direction = ?"
         join_params = [order_direction.value]
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""

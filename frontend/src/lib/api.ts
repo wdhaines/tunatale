@@ -149,6 +149,8 @@ export interface SRSItemDetail {
 		recognition: DirectionState | null;
 		production: DirectionState | null;
 	};
+	card_type?: 'vocab' | 'cloze';
+	source_sentence?: string;
 	image_url?: string | null;
 	audio_url?: string | null;
 	grammar?: string;

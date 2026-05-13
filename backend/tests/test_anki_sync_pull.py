@@ -64,6 +64,24 @@ def _add_banka(db: SRSDatabase) -> str:
     return item.guid  # type: ignore[return-value]
 
 
+def _add_cloze_collocation(db: SRSDatabase, text: str = "vsak", sentence: str = "Odprto je vsak dan") -> str:
+    """Insert a cloze collocation; return its computed GUID."""
+    unit = SyntacticUnit(
+        text=text,
+        translation="",
+        word_count=1,
+        difficulty=1,
+        source="cloze",
+        lemma=text,
+        source_sentence=sentence,
+        card_type="cloze",
+    )
+    db.add_collocation(unit)
+    item = db.get_collocation(text)
+    assert item is not None
+    return item.guid  # type: ignore[return-value]
+
+
 class FakeReader:
     def __init__(self, records: list[NoteRecord]):
         self._records = records
@@ -261,6 +279,43 @@ class TestSyncPull:
         item = db.get_collocation_by_guid(guid)
         assert item.directions[Direction.RECOGNITION].state == SRSState.SUSPENDED
         assert item.directions[Direction.PRODUCTION].state != SRSState.SUSPENDED
+
+    def test_sync_pull_cloze_ord_0_maps_to_production(self):
+        """Cloze note with ord=0 card maps to PRODUCTION direction."""
+        db = _make_tt_db()
+        guid = _add_cloze_collocation(db)
+
+        # Sync the GUID so the cloze collocation has the right anki_note_id
+        db.set_anki_ids(guid, note_id=9001, card_ids={Direction.PRODUCTION: 90010})
+
+        # Anki sends ord=0 card for the cloze note
+        cards = [
+            make_card_record(anki_card_id=90010, ord=0, queue=2, reps=3, stability=5.0, difficulty=4.5),
+        ]
+        records = [make_note_record(anki_guid=guid, cards=cards)]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        # The cloze ord=0 card should update PRODUCTION (not RECOGNITION)
+        item = db.get_collocation_by_guid(guid)
+        assert Direction.PRODUCTION in item.directions
+        assert Direction.RECOGNITION not in item.directions
+        assert item.directions[Direction.PRODUCTION].state == SRSState.REVIEW
+
+    def test_sync_pull_vocab_ord_0_still_maps_to_recognition(self):
+        """Vocab note with ord=0 card still maps to RECOGNITION."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        cards = [
+            make_card_record(anki_card_id=90010, ord=0, queue=2, reps=3, stability=5.0, difficulty=4.5),
+            make_card_record(anki_card_id=90011, ord=1, queue=2, reps=3, stability=5.0, difficulty=4.5),
+        ]
+        records = [make_note_record(anki_guid=guid, cards=cards)]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        item = db.get_collocation_by_guid(guid)
+        assert item.directions[Direction.RECOGNITION].state == SRSState.REVIEW
+        assert item.directions[Direction.PRODUCTION].state == SRSState.REVIEW
 
     def test_dry_run_does_not_write(self):
         """dry_run=True reports planned updates without touching the DB."""

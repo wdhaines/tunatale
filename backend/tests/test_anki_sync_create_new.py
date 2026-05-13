@@ -481,6 +481,12 @@ class TestSyncCreateNewRouting:
         flds = note["flds"].split("\x1f")
         assert flds[0] == "knjiga, {{c1::ki}} je tam"
 
+        # Cloze direction maps to PRODUCTION (not RECOGNITION)
+        guid = db.get_collocation("ki").guid
+        item = db.get_collocation_by_guid(guid)
+        assert Direction.PRODUCTION in item.directions
+        assert Direction.RECOGNITION not in item.directions
+
     async def test_sync_create_new_routes_vocab_items_to_create_note(self):
         """Vocab items go through existing create_note path."""
         db = _make_db()
@@ -611,6 +617,9 @@ class TestSyncCreateNewRouting:
         # anki_note_id is still set from the linked path
         item = db.get_collocation_by_guid(cloze_guid)
         assert item.anki_note_id is not None
+        # Cloze still has only PRODUCTION direction
+        assert Direction.PRODUCTION in item.directions
+        assert Direction.RECOGNITION not in item.directions
 
 
 # ── TestListItemsWithoutAnkiNote ──────────────────────────────────────────────

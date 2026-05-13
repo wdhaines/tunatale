@@ -977,7 +977,10 @@ class AnkiSync:
                 report.notes_updated += 1
 
             for card_rec in rec.cards:
-                direction = Direction.RECOGNITION if card_rec.ord == 0 else Direction.PRODUCTION
+                if local_item.syntactic_unit.card_type == "cloze":
+                    direction = Direction.PRODUCTION
+                else:
+                    direction = Direction.RECOGNITION if card_rec.ord == 0 else Direction.PRODUCTION
                 local_dir = local_item.directions.get(direction)
                 if local_dir is None:
                     continue
@@ -1464,8 +1467,8 @@ class AnkiSync:
                     linked += 1
 
                 cards_by_ord = self._writer.get_cards_for_note(note_id)
-                # Cloze notetype has exactly one template (ord=0 = RECOGNITION)
-                card_ids = {Direction.RECOGNITION: cards_by_ord[0]}
+                # Cloze notetype has exactly one template (ord=0)
+                card_ids = {Direction.PRODUCTION: cards_by_ord[0]}
                 self._db.set_anki_ids(guid, note_id, card_ids)
                 continue
 

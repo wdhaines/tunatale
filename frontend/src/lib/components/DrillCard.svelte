@@ -29,6 +29,24 @@
 	function playAudio() {
 		audioEl?.play().catch(() => {});
 	}
+
+	function escapeRegex(s: string): string {
+		return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	}
+
+	function clozePromptHtml(): string {
+		if (item.card_type !== 'cloze' || !item.source_sentence) return '';
+		const escaped = escapeRegex(item.text);
+		const re = new RegExp(`\\b${escaped}\\b`, 'gi');
+		return item.source_sentence.replace(re, '[...]');
+	}
+
+	function clozeAnswerHtml(): string {
+		if (item.card_type !== 'cloze' || !item.source_sentence) return '';
+		const escaped = escapeRegex(item.text);
+		const re = new RegExp(`\\b${escaped}\\b`, 'gi');
+		return item.source_sentence.replace(re, '<mark class="cloze-answer">$&</mark>');
+	}
 </script>
 
 <div class="drill-card">
@@ -40,7 +58,9 @@
 			{/if}
 			<p class="main-text slovene">{item.text}</p>
 		{:else if direction === 'production'}
-			{#if item.image_url != null}
+			{#if item.card_type === 'cloze' && item.source_sentence}
+				<p class="main-text">{@html clozePromptHtml()}</p>
+			{:else if item.image_url != null}
 				<img src={item.image_url} alt={item.translation} class="prompt-image" />
 			{:else}
 				<p class="main-text">{item.translation}</p>
@@ -63,11 +83,19 @@
 					<div class="note">{item.note}</div>
 				{/if}
 			{:else if direction === 'production'}
-				{#if item.audio_url}
-					<audio bind:this={audioEl} src={item.audio_url} autoplay preload="auto"></audio>
-					<button class="play-btn" onclick={playAudio} aria-label="Play audio">▶</button>
+				{#if item.card_type === 'cloze' && item.source_sentence}
+					{#if item.audio_url}
+						<audio bind:this={audioEl} src={item.audio_url} autoplay preload="auto"></audio>
+						<button class="play-btn" onclick={playAudio} aria-label="Play audio">▶</button>
+					{/if}
+					<p class="main-text">{@html clozeAnswerHtml()}</p>
+				{:else}
+					{#if item.audio_url}
+						<audio bind:this={audioEl} src={item.audio_url} autoplay preload="auto"></audio>
+						<button class="play-btn" onclick={playAudio} aria-label="Play audio">▶</button>
+					{/if}
+					<p class="answer-text slovene">{item.text}</p>
 				{/if}
-				<p class="answer-text slovene">{item.text}</p>
 				<p class="answer-text english">{item.translation}</p>
 				{#if item.grammar}
 					<div class="gram">{item.grammar}</div>
@@ -138,6 +166,12 @@
 		font-size: 0.85rem;
 		color: var(--color-muted);
 		margin-bottom: 0.75rem;
+	}
+	.cloze-answer {
+		background: var(--color-highlight, #fff3cd);
+		padding: 0.1em 0.3em;
+		border-radius: 3px;
+		font-weight: bold;
 	}
 	.play-btn {
 		background: var(--color-text, #333);
