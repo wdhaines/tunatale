@@ -49,6 +49,8 @@ frontend/build/
 # Runtime data / DB
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 *.db.bak_*
 *.db.pre_*
 
