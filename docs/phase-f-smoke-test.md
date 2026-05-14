@@ -7,10 +7,11 @@ curriculum, "Arrival in Ljubljana." This lesson exercises Phase F's path from
 ## What this verifies
 
 1. `/listen` lemmatizes each NATURAL_SPEED token, looks each lemma up against
-   `SLOVENE_FUNCTION_WORDS` (`backend/app/srs/function_words.py`), and
-   **only** creates rows for function-word matches (as `card_type='cloze'`).
-   Non-function-word lemmas are skipped entirely — they are no longer
-   auto-added as vocab rows.
+   `SLOVENE_FUNCTION_WORDS` (`backend/app/srs/function_words.py`).
+   Function-word lemmas create **cloze** rows (`card_type='cloze'`) when
+   the cloze flag is on. Non-function-word (content) lemmas create **vocab**
+   rows (`card_type='vocab'`) regardless of the cloze flag — unknown
+   lesson vocabulary is auto-surfaced into Anki.
 2. `add_collocation` skips the recognition direction for cloze items (Layer 35:
    cloze = production-only).
 3. `add_collocation` is idempotent against the schema's `UNIQUE(text,
@@ -24,15 +25,22 @@ curriculum, "Arrival in Ljubljana." This lesson exercises Phase F's path from
    `anki_state_cache`.
 7. Round-trip: grading a cloze card in Anki and syncing back marks the TT row
    clean.
+8. `/listen` creates cloze rows with `state='new'` (no auto-grade on creation)
+   and creates vocab rows for unknown content words with `state='new'`.
+   Existing vocab rows with recognition in LEARNING/RELEARNING/REVIEW states
+   receive a Good grade on the recognition direction only (once per day for
+   REVIEW). Key phrases (multi-word collocations) follow the same eligibility
+   rules as single-word content cards — created if missing, graded with Good
+   when eligible, and skipped otherwise.
 
 ## Function-word coverage in this lesson
 
 `SLOVENE_FUNCTION_WORDS` (curated 2026-05-12) contains 21 entries. Lesson 1's
 NATURAL_SPEED dialogue triggers some of these as lemmas. Behavior depends on
-whether a standalone single-word vocab row already exists in TT. **Non-function
-words (content words like proper nouns, conjugated verbs, etc.) are no longer
-auto-added by `/listen`** — that path was gated behind the cloze feature flag
-to prevent unwanted vocab rows from flooding Anki on sync.
+whether a standalone single-word vocab row already exists in TT. **Content
+words are now auto-added by `/listen` as vocab rows** — every unknown lemma
+in the lesson gets a TT row, and the next sync pushes it to Anki. The user
+can mark unwanted words "known" or "ignored" via the WordSpan click.
 
 | Lemma | Pre-existing standalone row? | Expected /listen outcome |
 |---|---|---|
@@ -141,10 +149,10 @@ sqlite3 ~/Library/Application\ Support/Anki2/Will/collection.anki2 \
 Navigate to the lesson page for **Day 1 — "Arrival in Ljubljana"** in the
 `arrival-in-ljubljana-5f8c0f52` curriculum. Click **Mark as Listened**.
 
-**Gating note:** `/listen` with the cloze flag on creates only function-word
-clozes + key phrases. Content words (proper nouns, conjugated verbs, etc.)
-are **not** auto-added as vocab rows. With the flag off, `/listen` is a
-complete no-op (`registered: 0`).
+**Gating note:** `/listen` with the cloze flag on creates function-word
+clozes AND content-word vocab rows. With the flag off, function words are
+skipped but content words still create vocab rows. Key phrases are always
+registered if missing.
 
 The NATURAL_SPEED dialogue contains many function-word phrases. A sample of
 what `make_cloze_text` should produce:
@@ -174,23 +182,30 @@ ORDER BY created_at DESC;
 EOF
 ```
 
-**Expect ~10 cloze rows** (no vocab rows from `/listen`):
+**Expect ~10 cloze rows + ~N vocab rows** (one vocab per unknown content-word lemma):
 
 - **~8 new cloze rows** from this /listen call (one per function-word lemma
   that didn't have a pre-existing standalone row): `kje`, `je`, `v`, `kako`,
   `si`, `to`, `vam`, `še`, `pa`, `se`. All have:
   - `card_type = 'cloze'`
+  - `state = 'new'` (not auto-graded; `reps=0`, `introduced_at IS NULL`)
   - `source_sentence` populated with the containing NATURAL_SPEED phrase
   - `anki_note_id IS NULL` (not yet synced)
   - Recent `created_at`
+- **~N new vocab rows** for content words in the lesson (proper nouns,
+  conjugated verbs, adjectives, etc.): `banka`, `center`, `ljubljani`, etc.
+  All have:
+  - `card_type = 'vocab'`
+  - `state = 'new'` (not graded)
+  - `anki_note_id IS NULL`
+  - Both recognition + production directions present
 - **2 pre-existing cloze rows** carried over from the 2026-05-12 cleanup:
   `sem`, `vsak`, both with `anki_note_id` set.
 
-Exact count varies if other lemmas in your function-word list also appear in
-the lesson — the principle is: **only function-word lemmas in the lesson that
-lack a pre-existing standalone row become new cloze rows.** Content words are
-skipped entirely. This prevents unwanted vocab (proper names, conjugations)
-from flooding Anki on the next sync.
+Exact count varies based on lesson content — the principle is: **every unknown
+lemma in the lesson gets a TT row (cloze for function words, vocab for content
+words).** Pre-existing rows are untouched unless their recognition direction
+is in LEARNING/RELEARNING/REVIEW (eligible for a once-per-day Good grade).
 
 ## 5. Verify single-direction creation
 
@@ -326,17 +341,17 @@ Back in `/admin/srs`, **uncheck** the cloze flag.
 
 Click **Mark as Listened** on any other lesson (e.g., Day 2 — "Asking for
 Directions to a Hotel"). Day 2 contains its own function words but with the
-flag off, `/listen` is a complete no-op (`{"status": "ok", "registered": 0}`)
-— no new rows of any kind are created:
+flag off, function words are skipped. Content words still create vocab rows:
 
 ```bash
 sqlite3 /Users/wdhaines/CascadeProjects/tunatale/backend/tunatale.db \
-  "SELECT COUNT(*) FROM collocations WHERE card_type='cloze';"
-# Expect: unchanged from Step 4's count
+  "SELECT card_type, COUNT(*) FROM collocations GROUP BY card_type;"
+# Expect: cloze count unchanged from Step 4; vocab count increased by the
+# number of content-word lemmas in Day 2's NATURAL_SPEED section
 ```
 
-This pins the "DB flag read per request, not at startup" guarantee from
-Phase F Step 7.
+Pins the "cloze-only gated behind flag; content-word creation is always on"
+guarantee.
 
 Re-enable the flag before continuing.
 
@@ -372,6 +387,9 @@ If any are non-zero, run `normalize_usns` per the sync rule.
 | Step 9: word labeled "unknown" in the lesson page even after creation | Broken `lemma` column on the cloze row. Run `uv run python -m app.anki.repair_cloze_lemmas` |
 | Step 10: `dirty_fsrs` still 1 after grade-and-sync | Round-trip didn't clear via `sync_pull`; check the pull path's clear-on-pull logic |
 | Step 12: `cards_gt_col > 0` after sync | Some write in this session bypassed the `usn=-1` envelope; investigate which mutation; restore from the safe_open backup if needed |
+| Step 4: cloze rows show `state='learning'` (not `'new'`) | The auto-grade-on-creation path regressed — `/listen` is calling `schedule()` during creation. Cloze rows must stay `state='new'` with `reps=0` |
+| Step 4: vocab rows for content words not created | The unknown-word branch isn't firing — check the lemma loop in `mark_lesson_listened` doesn't skip content-word lemmas |
+| Step 4: `registered` count lower than expected | Key phrases may not be counted in `registered`, or content-word creation isn't incrementing the counter |
 
 ## Backup recovery
 

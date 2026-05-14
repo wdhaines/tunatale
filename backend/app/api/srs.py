@@ -222,6 +222,24 @@ async def serve_media(filename: str, request: Request):
     return FileResponse(file_path)
 
 
+def _listen_grade_eligible(
+    rec: DirectionState | None, today_start: datetime.datetime, today_end: datetime.datetime
+) -> bool:
+    """True iff the recognition direction should accept a /listen Good grade."""
+    if rec is None:
+        return False
+    if rec.state in (SRSState.LEARNING, SRSState.RELEARNING):
+        return True
+    if rec.state == SRSState.REVIEW:
+        if rec.last_review is None:
+            return True
+        lr = rec.last_review
+        if not isinstance(lr, datetime.datetime):
+            return True
+        return not (today_start <= lr.astimezone(datetime.UTC) < today_end)
+    return False
+
+
 @router.post("/listen", status_code=200)
 async def mark_lesson_listened(body: ListenRequest, request: Request):
     store = request.app.state.content_store
@@ -256,49 +274,92 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
     cloze_enabled = lesson.language_code == "sl" and db.get_enable_cloze_cards()
 
-    if not cloze_enabled:
-        return {"status": "ok", "registered": 0}
+    # ── Today window (mirrors count_new_introduced_today convention) ────
+    local_tz = datetime.datetime.now().astimezone().tzinfo
+    today = datetime.date.today()
+    today_start = datetime.datetime.combine(today, datetime.time(0), tzinfo=local_tz).astimezone(datetime.UTC)
+    today_end = today_start + datetime.timedelta(days=1)
 
-    cloze_count = 0
+    created_count = 0
+    graded_count = 0
+
     for lemma in unique_lemmas:
-        if not is_function_word(lemma, lesson.language_code):
+        is_func = is_function_word(lemma, lesson.language_code)
+        if is_func and not cloze_enabled:
             continue
-        sent = lemma_to_sentence.get(lemma, "")
-        unit = SyntacticUnit(
-            text=lemma,
-            translation=token_glosses.get(lemma, ""),
-            word_count=1,
-            difficulty=1,
-            source="llm",
-            lemma=lemma,
-            card_type="cloze",
-            source_sentence=sent,
-            source_sentence_translation=sentence_translations.get(sent, ""),
-        )
-        db.add_collocation(unit, language_code=lesson.language_code)
-        item = db.get_collocation_by_lemma(lemma)
-        if item is None:
-            continue  # pragma: no cover — lemma is always filled for single-word units
-        rating = _WORD_RATING_MAP.get(body.word_ratings.get(lemma, "good"), Rating.GOOD)
-        now = datetime.datetime.now(datetime.UTC)
-        updated = schedule(item, rating, direction=Direction.PRODUCTION, params=resolve_fsrs_params(db)[0], now=now)
-        db.update_collocation(updated)
-        cloze_count += 1
 
-    # ── Key phrase registration (preserves translations) ─────────────────
+        existing = db.get_collocation_by_lemma(lemma)
+
+        if existing is None:
+            # ── Create new row (cloze for function words, vocab for content words) ──
+            sent = lemma_to_sentence.get(lemma, "")
+            unit = SyntacticUnit(
+                text=lemma,
+                translation=token_glosses.get(lemma, ""),
+                word_count=1,
+                difficulty=1,
+                source="llm",
+                lemma=lemma,
+                card_type="cloze" if is_func else "vocab",
+                source_sentence=sent,
+                source_sentence_translation=sentence_translations.get(sent, ""),
+            )
+            db.add_collocation(unit, language_code=lesson.language_code)
+            created_count += 1
+        else:
+            # ── Existing row — skip cloze, grade recognition for eligible vocab ──
+            if existing.syntactic_unit.card_type == "cloze":
+                continue
+
+            rec = existing.directions.get(Direction.RECOGNITION)
+            if rec is None:
+                continue
+
+            if _listen_grade_eligible(rec, today_start, today_end):
+                rating = _WORD_RATING_MAP.get(body.word_ratings.get(lemma, "good"), Rating.GOOD)
+                now = datetime.datetime.now(datetime.UTC)
+                updated = schedule(
+                    existing,
+                    rating,
+                    direction=Direction.RECOGNITION,
+                    params=resolve_fsrs_params(db)[0],
+                    now=now,
+                )
+                db.update_collocation(updated)
+                graded_count += 1
+
+    # ── Key phrase registration + auto-grade ────────────────────────────
     for kp in lesson.key_phrases:
-        if db.get_collocation(kp.phrase) is not None:
-            continue  # idempotent — already registered from a prior listen
-        unit = SyntacticUnit(
-            text=kp.phrase,
-            translation=kp.translation,
-            word_count=min(8, max(1, len(kp.phrase.split()))),
-            difficulty=1,
-            source="llm",
-        )
-        db.add_collocation(unit, language_code=lesson.language_code)
+        existing = db.get_collocation(kp.phrase)
+        if existing is None:
+            unit = SyntacticUnit(
+                text=kp.phrase,
+                translation=kp.translation,
+                word_count=min(8, max(1, len(kp.phrase.split()))),
+                difficulty=1,
+                source="llm",
+            )
+            db.add_collocation(unit, language_code=lesson.language_code)
+            created_count += 1
+        else:
+            if existing.syntactic_unit.card_type == "cloze":
+                continue
+            rec = existing.directions.get(Direction.RECOGNITION)
+            if rec is None:
+                continue
+            if _listen_grade_eligible(rec, today_start, today_end):
+                now = datetime.datetime.now(datetime.UTC)
+                updated = schedule(
+                    existing,
+                    Rating.GOOD,
+                    direction=Direction.RECOGNITION,
+                    params=resolve_fsrs_params(db)[0],
+                    now=now,
+                )
+                db.update_collocation(updated)
+                graded_count += 1
 
-    registered = cloze_count + len(lesson.key_phrases)
+    registered = created_count + graded_count
     return {"status": "ok", "registered": registered}
 
 

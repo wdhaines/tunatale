@@ -1,5 +1,6 @@
 """API endpoint tests."""
 
+from datetime import UTC
 from unittest.mock import AsyncMock
 
 import pytest
@@ -713,11 +714,13 @@ class TestSRSEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"
-        # 2 unique function words: kje, je (banka is content word — not created)
-        assert data["registered"] == 2
+        # 2 cloze (kje, je) + 1 vocab (banka)
+        assert data["registered"] == 3
         assert db.get_collocation_by_lemma("kje") is not None
         assert db.get_collocation_by_lemma("je") is not None
-        assert db.get_collocation_by_lemma("banka") is None
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka is not None
+        assert banka.syntactic_unit.card_type == "vocab"
 
     async def test_listen_key_phrases_translation_preserved(self):
         from app.srs.database import SRSDatabase
@@ -899,7 +902,7 @@ class TestSRSEndpoints:
 
 
 class TestListenClozeIntegration:
-    """Phase F: /listen creates cloze cards for Slovene function words."""
+    """Phase F: /listen as recognition-exposure event (Layer 1 redesign)."""
 
     async def _setup_lesson(
         self,
@@ -938,51 +941,241 @@ class TestListenClozeIntegration:
         return db
 
     async def test_listen_creates_cloze_card_when_enabled(self):
+        """Created cloze rows have state='new', reps=0, introduced_at IS NULL."""
+        from app.models.srs_item import Direction, SRSState
+
         db = await self._setup_lesson(cloze_enabled=True)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
 
-        # "kje" is a function word → cloze card
         item_kje = db.get_collocation_by_lemma("kje")
         assert item_kje is not None
         assert item_kje.syntactic_unit.card_type == "cloze"
-        assert item_kje.syntactic_unit.source_sentence == "Kje je banka?"
+        prod = item_kje.directions[Direction.PRODUCTION]
+        assert prod.state == SRSState.NEW
+        assert prod.reps == 0
+        assert prod.introduced_at is None
 
-        # "je" is a function word → cloze card
         item_je = db.get_collocation_by_lemma("je")
         assert item_je is not None
         assert item_je.syntactic_unit.card_type == "cloze"
         assert item_je.syntactic_unit.source_sentence == "Kje je banka?"
 
-        # "banka" is a content word → NOT created by /listen with cloze flag on
-        assert db.get_collocation_by_lemma("banka") is None
+    async def test_listen_creates_vocab_for_unknown_content_word(self):
+        """Unknown content-word lemma → vocab row, state='new', both directions present."""
+        from app.models.srs_item import Direction, SRSState
 
-    async def test_listen_skips_cloze_when_disabled(self):
+        db = await self._setup_lesson(cloze_enabled=True)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        item = db.get_collocation_by_lemma("banka")
+        assert item is not None
+        assert item.syntactic_unit.card_type == "vocab"
+        assert Direction.RECOGNITION in item.directions
+        assert Direction.PRODUCTION in item.directions
+        assert item.directions[Direction.RECOGNITION].state == SRSState.NEW
+        assert item.directions[Direction.RECOGNITION].reps == 0
+
+    async def test_listen_grades_recognition_when_learning(self):
+        """Pre-existing vocab with recognition state=LEARNING → grade recognition, production unchanged."""
+        from app.models.srs_item import Direction, SRSState
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        # Force banka's recognition to LEARNING
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka is not None
+        rec = banka.directions[Direction.RECOGNITION]
+        rec.state = SRSState.LEARNING
+        rec.reps = 1
+        db.update_collocation(banka)
+
+        prod_before = banka.directions.get(Direction.PRODUCTION)
+        prod_reps_before = prod_before.reps if prod_before else 0
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        banka = db.get_collocation_by_lemma("banka")
+        rec = banka.directions[Direction.RECOGNITION]
+        assert rec.reps == 2  # graded
+        assert rec.state != SRSState.NEW
+
+        prod = banka.directions.get(Direction.PRODUCTION)
+        if prod:
+            assert prod.reps == prod_reps_before
+
+    async def test_listen_grades_recognition_when_review_first_time_today(self):
+        """Pre-existing vocab with rec state=REVIEW, last_review 2 days ago → graded."""
+        from datetime import datetime, timedelta
+
+        from app.models.srs_item import Direction, SRSState
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka is not None
+        rec = banka.directions[Direction.RECOGNITION]
+        rec.state = SRSState.REVIEW
+        rec.last_review = datetime.now(UTC) - timedelta(days=2)
+        rec.reps = 5
+        db.update_collocation(banka)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka.directions[Direction.RECOGNITION].reps == 6
+
+    async def test_listen_skips_recognition_when_review_already_today(self):
+        """Pre-existing vocab with rec state=REVIEW, last_review today → no grade."""
+        from datetime import datetime
+
+        from app.models.srs_item import Direction, SRSState
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka is not None
+        rec = banka.directions[Direction.RECOGNITION]
+        rec.state = SRSState.REVIEW
+        rec.last_review = datetime.now(UTC)
+        rec.reps = 5
+        db.update_collocation(banka)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka.directions[Direction.RECOGNITION].reps == 5  # unchanged
+
+    async def test_listen_never_grades_production(self):
+        """Pre-existing vocab with production state=LEARNING → /listen does not touch production."""
+        from app.models.srs_item import Direction, SRSState
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka is not None
+        if Direction.PRODUCTION in banka.directions:
+            prod = banka.directions[Direction.PRODUCTION]
+            prod.state = SRSState.LEARNING
+            prod.reps = 3
+            db.update_collocation(banka)  # saves RECOGNITION, not production
+
+            # Directly update production in DB
+            db.update_direction(banka.guid, Direction.PRODUCTION, prod)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        banka = db.get_collocation_by_lemma("banka")
+        prod = banka.directions.get(Direction.PRODUCTION)
+        if prod:
+            assert prod.reps == 3  # unchanged
+            assert prod.state == SRSState.LEARNING  # unchanged
+
+    async def test_listen_never_grades_cloze(self):
+        """Pre-existing cloze row → /listen never grades it."""
+        from app.models.srs_item import Direction, SRSState
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        kje = db.get_collocation_by_lemma("kje")
+        assert kje is not None
+        assert kje.syntactic_unit.card_type == "cloze"
+        prod = kje.directions[Direction.PRODUCTION]
+        prod.state = SRSState.LEARNING
+        prod.reps = 1
+        db.update_direction(kje.guid, Direction.PRODUCTION, prod)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        kje = db.get_collocation_by_lemma("kje")
+        prod = kje.directions[Direction.PRODUCTION]
+        assert prod.reps == 1  # unchanged
+        assert prod.state == SRSState.LEARNING  # unchanged
+
+    async def test_listen_skips_existing_new_state(self):
+        """Pre-existing vocab, recognition state=NEW → no grade."""
+        from app.models.srs_item import Direction
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka is not None
+        # Already state=NEW after creation
+        rec_reps_before = banka.directions[Direction.RECOGNITION].reps
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka.directions[Direction.RECOGNITION].reps == rec_reps_before
+
+    async def test_listen_skips_function_word_when_flag_off(self):
+        """Function-word lemma + cloze flag off → skip. Content words still created."""
+        from app.models.srs_item import Direction, SRSState
+
         db = await self._setup_lesson(cloze_enabled=False)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
-        data = response.json()
-        assert data["registered"] == 0
 
-        # No rows created at all when cloze is disabled
+        # Function words NOT created
         assert db.get_collocation_by_lemma("kje") is None
         assert db.get_collocation_by_lemma("je") is None
-        assert db.get_collocation_by_lemma("banka") is None
 
-    async def test_listen_non_slovene_skips_cloze(self):
+        # Content word "banka" IS created as vocab
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka is not None
+        assert banka.syntactic_unit.card_type == "vocab"
+        assert banka.directions[Direction.RECOGNITION].state == SRSState.NEW
+
+    async def test_listen_skips_cloze_and_non_slovene_content_still_created(self):
+        """Non-Slovene lesson with cloze_enabled=False: content words created as vocab."""
+
         db = await self._setup_lesson(
             phrase_text="Where is the bank?",
             language_code="en",
-            cloze_enabled=True,
+            cloze_enabled=False,
         )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
 
-        # Non-Slovene language with cloze flag on is still a no-op
-        assert db.get_collocation_by_lemma("where") is None
+        # English words are all "content" (no function-word list for en) → created as vocab
+        for lemma in ("where", "is", "the", "bank"):
+            item = db.get_collocation_by_lemma(lemma)
+            assert item is not None, f"{lemma} should be created as vocab"
+            assert item.syntactic_unit.card_type == "vocab"
+        # Cloze card type should not appear
+        assert not any(
+            db.get_collocation_by_lemma(lemma).syntactic_unit.card_type == "cloze"
+            for lemma in ("where", "is", "the", "bank")
+        )
 
     async def test_listen_cloze_returns_card_type_and_source_sentence_via_api(self):
         """Cloze items expose card_type and source_sentence via the items API."""
@@ -990,40 +1183,32 @@ class TestListenClozeIntegration:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
-            # Fetch items via API and verify cloze fields
             response = await client.get("/api/srs/items", params={"limit": 50})
         assert response.status_code == 200
-        data = response.json()
-        items = {i["text"]: i for i in data["items"]}
+        items = {i["text"]: i for i in response.json()["items"]}
 
-        # "kje" is a function word → cloze card
         kje = items.get("kje")
         assert kje is not None
         assert kje["card_type"] == "cloze"
         assert kje["source_sentence"] == "Kje je banka?"
 
-        # "banka" is a content word → not created by /listen with cloze flag on
-        assert "banka" not in items
+        banka = items.get("banka")
+        assert banka is not None
+        assert banka["card_type"] == "vocab"
 
     async def test_listen_cloze_response_state_reflects_production_direction(self):
-        """`_item_to_dict` for cloze items must read state from PRODUCTION, not RECOGNITION.
-
-        Regression: cloze items have no recognition direction, so the prior
-        rec-only path emitted 'new' regardless of the production direction's
-        actual FSRS state.
-        """
+        """`_item_to_dict` for cloze items reads state from PRODUCTION."""
         from app.models.srs_item import Direction, SRSState
 
         db = await self._setup_lesson(cloze_enabled=True)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
-            # Force the cloze item's production direction into a non-NEW state
             item = db.get_collocation_by_lemma("kje")
             assert item is not None
             item.directions[Direction.PRODUCTION].state = SRSState.LEARNING
             item.directions[Direction.PRODUCTION].reps = 2
-            db.update_collocation(item)
+            db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
 
             response = await client.get("/api/srs/items", params={"limit": 50})
         assert response.status_code == 200
@@ -1036,7 +1221,6 @@ class TestListenClozeIntegration:
         from app.storage.store import ContentStore
 
         db = await self._setup_lesson(cloze_enabled=True)
-        # Add key phrases to the lesson
         store: ContentStore = app.state.content_store
         lesson = store.get_lesson("lesson-1")
         assert lesson is not None
@@ -1050,26 +1234,370 @@ class TestListenClozeIntegration:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
 
-        # Key phrases were registered
         kp1 = db.get_collocation("dober dan")
         assert kp1 is not None
         kp2 = db.get_collocation("hvala lepa")
         assert kp2 is not None
 
-        # Function-word clozes were created
         assert db.get_collocation_by_lemma("kje") is not None
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka is not None
+        assert banka.syntactic_unit.card_type == "vocab"
 
-        # Content word banka was NOT created
-        assert db.get_collocation_by_lemma("banka") is None
+    # ── Key-phrase auto-grade tests ──────────────────────────────────────
 
-    async def test_listen_with_flag_off_does_not_touch_db(self):
-        db = await self._setup_lesson(cloze_enabled=False)
+    async def test_listen_grades_key_phrase_when_recognition_learning(self):
+        """Pre-existing KP with rec state=LEARNING → reps incremented, production untouched."""
+        from app.models.srs_item import Direction, SRSState
+        from app.storage.store import ContentStore
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        store: ContentStore = app.state.content_store
+        lesson = store.get_lesson("lesson-1")
+        lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        item = db.get_collocation("dober dan")
+        assert item is not None
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = SRSState.LEARNING
+        rec.reps = 1
+        db.update_collocation(item)
+
+        prod_before = item.directions.get(Direction.PRODUCTION)
+        prod_reps_before = prod_before.reps if prod_before else 0
+
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
-        assert response.json()["registered"] == 0
 
-        assert db.count_collocations() == 0
+        item = db.get_collocation("dober dan")
+        rec = item.directions[Direction.RECOGNITION]
+        assert rec.reps == 2  # graded
+        assert rec.state != SRSState.NEW
+
+        prod = item.directions.get(Direction.PRODUCTION)
+        if prod:
+            assert prod.reps == prod_reps_before
+
+    async def test_listen_grades_key_phrase_when_review_first_time_today(self):
+        """Pre-existing KP with rec state=REVIEW, last_review 2 days ago → graded (reps+1)."""
+        from datetime import datetime, timedelta
+
+        from app.models.srs_item import Direction, SRSState
+        from app.storage.store import ContentStore
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        store: ContentStore = app.state.content_store
+        lesson = store.get_lesson("lesson-1")
+        lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        item = db.get_collocation("dober dan")
+        assert item is not None
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = SRSState.REVIEW
+        rec.last_review = datetime.now(UTC) - timedelta(days=2)
+        rec.reps = 5
+        db.update_collocation(item)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        item = db.get_collocation("dober dan")
+        assert item.directions[Direction.RECOGNITION].reps == 6
+
+    async def test_listen_skips_key_phrase_when_review_already_today(self):
+        """Pre-existing KP with rec state=REVIEW, last_review today → no grade."""
+        from datetime import datetime
+
+        from app.models.srs_item import Direction, SRSState
+        from app.storage.store import ContentStore
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        store: ContentStore = app.state.content_store
+        lesson = store.get_lesson("lesson-1")
+        lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        item = db.get_collocation("dober dan")
+        assert item is not None
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = SRSState.REVIEW
+        rec.last_review = datetime.now(UTC)
+        rec.reps = 5
+        db.update_collocation(item)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        item = db.get_collocation("dober dan")
+        assert item.directions[Direction.RECOGNITION].reps == 5  # unchanged
+
+    async def test_listen_skips_key_phrase_when_recognition_new(self):
+        """Pre-existing KP with rec state=NEW → no grade."""
+        from app.models.srs_item import Direction
+        from app.storage.store import ContentStore
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        store: ContentStore = app.state.content_store
+        lesson = store.get_lesson("lesson-1")
+        lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        item = db.get_collocation("dober dan")
+        assert item is not None
+        rec_reps_before = item.directions[Direction.RECOGNITION].reps
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        item = db.get_collocation("dober dan")
+        assert item.directions[Direction.RECOGNITION].reps == rec_reps_before  # unchanged
+
+    async def test_listen_skips_key_phrase_when_recognition_known(self):
+        """Pre-existing KP with rec state=KNOWN → no grade."""
+        from app.models.srs_item import Direction, SRSState
+        from app.storage.store import ContentStore
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        store: ContentStore = app.state.content_store
+        lesson = store.get_lesson("lesson-1")
+        lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        item = db.get_collocation("dober dan")
+        assert item is not None
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = SRSState.KNOWN
+        rec.reps = 3
+        db.update_collocation(item)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        item = db.get_collocation("dober dan")
+        assert item.directions[Direction.RECOGNITION].reps == 3  # unchanged
+
+    async def test_listen_skips_key_phrase_when_cloze(self):
+        """Key phrase existing as cloze (defensive) → skip, no crash."""
+        from app.storage.store import ContentStore
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        store: ContentStore = app.state.content_store
+        lesson = store.get_lesson("lesson-1")
+        lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        # Manually change card_type to cloze
+        with db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET card_type = 'cloze' WHERE text = 'dober dan'")
+            conn.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        item = db.get_collocation("dober dan")
+        assert item.syntactic_unit.card_type == "cloze"
+
+    async def test_listen_skips_key_phrase_without_recognition_direction(self):
+        """Key phrase existing without RECOGNITION direction (defensive) → skip, no crash."""
+        from app.storage.store import ContentStore
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        store: ContentStore = app.state.content_store
+        lesson = store.get_lesson("lesson-1")
+        lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        # Delete recognition direction
+        with db._get_conn() as conn:
+            conn.execute(
+                "DELETE FROM collocation_directions WHERE collocation_id = (SELECT id FROM collocations WHERE text = 'dober dan') AND direction = 'recognition'"
+            )
+            conn.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+    # ── Edge cases for _listen_grade_eligible (lines 228, 233, 236, 238) ──
+
+    async def test_listen_skips_known_state(self):
+        """Pre-existing vocab, recognition state=KNOWN → skip (no grade)."""
+        from app.models.srs_item import Direction, SRSState
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka is not None
+        rec = banka.directions[Direction.RECOGNITION]
+        rec.state = SRSState.KNOWN
+        rec.reps = 3
+        db.update_collocation(banka)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka.directions[Direction.RECOGNITION].reps == 3
+
+    async def test_listen_grades_review_with_no_last_review(self):
+        """REVIEW state with last_review=None → eligible for grade (line 233)."""
+        from app.models.srs_item import Direction, SRSState
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka is not None
+        rec = banka.directions[Direction.RECOGNITION]
+        rec.state = SRSState.REVIEW
+        rec.last_review = None
+        rec.reps = 5
+        db.update_collocation(banka)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka.directions[Direction.RECOGNITION].reps == 6
+
+    async def test_listen_grades_review_with_suspended_state(self):
+        """SUSPENDED state → skip (not eligible for grade), covers fallthrough at line 238."""
+        from app.models.srs_item import Direction, SRSState
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka is not None
+        rec = banka.directions[Direction.RECOGNITION]
+        rec.state = SRSState.SUSPENDED
+        rec.reps = 3
+        db.update_collocation(banka)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        banka = db.get_collocation_by_lemma("banka")
+        assert banka.directions[Direction.RECOGNITION].reps == 3
+
+    async def test_listen_skips_vocab_without_recognition_direction(self):
+        """Line 314 via /listen: vocab card without RECOGNITION direction → skip (no crash)."""
+
+        db = await self._setup_lesson(phrase_text="testword", cloze_enabled=True)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        with db._get_conn() as conn:
+            conn.execute(
+                "DELETE FROM collocation_directions WHERE collocation_id = (SELECT id FROM collocations WHERE lemma = 'testword') AND direction = 'recognition'",
+            )
+            conn.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+
+class TestListenGradeEligible:
+    """Direct unit tests for _listen_grade_eligible edge cases."""
+
+    def test_rec_is_none_returns_false(self):
+        from datetime import datetime
+
+        from app.api.srs import _listen_grade_eligible
+
+        assert _listen_grade_eligible(None, datetime.now(UTC), datetime.now(UTC)) is False
+
+    def test_legacy_date_last_review_returns_true(self):
+        from datetime import date, datetime, timedelta
+
+        from app.api.srs import _listen_grade_eligible
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            state=SRSState.REVIEW,
+            reps=5,
+            last_review=date(2026, 5, 1),  # legacy date, not datetime
+        )
+        today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = today_start + timedelta(days=1)
+        assert _listen_grade_eligible(rec, today_start, today_end) is True
+
+    def test_non_cloze_without_recognition_skipped(self):
+        """Line 314: existing item is vocab but has no RECOGNITION direction → skip (no crash)."""
+
+        from app.models.srs_item import Direction
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(":memory:")
+        unit = SyntacticUnit(
+            text="testword",
+            translation="",
+            word_count=1,
+            difficulty=1,
+            source="test",
+            lemma="testword",
+            card_type="vocab",
+        )
+        db.add_collocation(unit, language_code="sl")
+        with db._get_conn() as conn:
+            conn.execute(
+                "DELETE FROM collocation_directions WHERE collocation_id = (SELECT id FROM collocations WHERE lemma = 'testword') AND direction = 'recognition'"
+            )
+            conn.commit()
+
+        item = db.get_collocation_by_lemma("testword")
+        assert item is not None
+        assert Direction.RECOGNITION not in item.directions
+        assert item.syntactic_unit.card_type == "vocab"
+
+        from datetime import datetime, timedelta
+
+        from app.api.srs import _listen_grade_eligible
+
+        today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = today_start + timedelta(days=1)
+        rec = item.directions.get(Direction.RECOGNITION)
+        assert _listen_grade_eligible(rec, today_start, today_end) is False
 
 
 class TestClozeSetting:
