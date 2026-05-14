@@ -1015,6 +1015,32 @@ async def get_review_queue(request: Request, session_start: bool = False) -> dic
                 if dstate.state == SRSState.NEW:
                     ordered_main.append(t)
 
+    # Anki parity: counts.all_zero() auto-bump.
+    # `CardQueues::counts()` in rslib/scheduler/queue/mod.rs:187-196 advances the
+    # cutoff whenever the visible counts are all zero — so a pending learning
+    # card whose timer ripens between grades surfaces on the next fetch without
+    # the user having to grade. We mirror that here: if ready_learning AND
+    # ordered_main are both empty, and any pending learning card's due_at is
+    # past `now`, advance cutoff to `now` and re-split. Preserves the
+    # "card on screen is sticky" invariant: when main has items, the freeze
+    # stays in place (test_review_queue_auto_bump_skipped_when_main_has_items).
+    if not ready_learning and not ordered_main and pending_learning:
+        any_ripe = any(
+            t[1].directions[t[3]].due_at is not None and t[1].directions[t[3]].due_at <= now for t in pending_learning
+        )
+        if any_ripe:
+            advance_learning_cutoff(db, now)
+            cutoff = now
+            ready_learning = []
+            new_pending = []
+            for t in learning_cards:
+                ds = t[1].directions[t[3]]
+                if ds.due_at is None or ds.due_at <= cutoff:
+                    ready_learning.append(t)
+                else:
+                    new_pending.append(t)
+            pending_learning = new_pending
+
     # Anki parity "collapse" (rslib/.../queue/learning.rs:94-113): when main
     # is empty and the head of pending_learning was just graded
     # (last_review == cutoff), shift it past the next-soonest pending card so
