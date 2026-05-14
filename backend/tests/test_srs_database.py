@@ -55,6 +55,51 @@ class TestCRUD:
         rows, total = srs_db.list_collocations(search="zdravo")
         assert total == 1
 
+    def test_add_collocation_tolerates_legacy_guid_row(self, srs_db):
+        """Row already in DB under a stale guid must not crash a re-add.
+
+        Pre-Phase-H guids and pre-disambig-default rows live on under stored guids
+        that no longer match the current `compute_guid` output. The UNIQUE(text,
+        disambig_key) constraint still applies, so the old ON CONFLICT(guid)-only
+        path raised IntegrityError. New behavior: heal the stale guid in place and
+        backfill an empty translation.
+        """
+        # Plant a row with a deliberately stale guid (mimicking legacy data).
+        with srs_db._get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO collocations (text, translation, language_code, word_count,
+                    unit_difficulty, source, corpus_frequency, lemma, guid, disambig_key)
+                VALUES ('ja', '', 'sl', 1, 1, 'anki', 0, 'ja', 'legacystaleguid', '')
+                """
+            )
+            conn.commit()
+
+        # Re-add via the normal /listen-style path — must not raise.
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="ja",
+                translation="yes",
+                word_count=1,
+                difficulty=1,
+                source="llm",
+                lemma="ja",
+            ),
+            language_code="sl",
+        )
+
+        item = srs_db.get_collocation("ja")
+        assert item is not None
+        # Backfilled the empty translation.
+        assert item.syntactic_unit.translation == "yes"
+        # Healed the stale guid to the current compute_guid output.
+        from app.common.guid import compute_guid
+
+        assert item.guid == compute_guid("ja", "sl", "")
+        # Still exactly one row.
+        rows, total = srs_db.list_collocations(search="ja")
+        assert total == 1
+
     def test_backfill_translations_updates_empty_rows(self, srs_db):
         """backfill_translations fills in empty translations from a gloss map."""
         srs_db.add_collocation(_unit("banka", ""), language_code="sl")

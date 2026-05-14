@@ -249,45 +249,68 @@ class SRSDatabase:
         guid = compute_guid(unit.text, language_code, disambig)
         today = date.today().isoformat()
         with self._get_conn() as conn:
-            conn.execute(
-                """
-                INSERT INTO collocations
-                    (text, translation, language_code, word_count, unit_difficulty,
-                     source, corpus_frequency, lemma, guid, disambig_key, grammar, note,
-                     source_sentence, sentence_translation, source_lesson_id, source_line_index, card_type)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(guid) DO UPDATE SET
-                    translation = CASE
-                        WHEN excluded.translation != '' AND collocations.translation = ''
-                        THEN excluded.translation
-                        ELSE collocations.translation
-                    END
-                """,
-                (
-                    unit.text,
-                    unit.translation,
-                    language_code,
-                    unit.word_count,
-                    unit.difficulty,
-                    unit.source,
-                    unit.frequency,
-                    unit.lemma,
-                    guid,
-                    disambig,
-                    unit.grammar,
-                    unit.note,
-                    unit.source_sentence,
-                    unit.source_sentence_translation,
-                    unit.source_lesson_id,
-                    unit.source_line_index,
-                    unit.card_type,
-                ),
-            )
-            row = conn.execute(
-                "SELECT id FROM collocations WHERE guid = ?",
+            # Identity is the case-normalized guid; legacy rows may carry a
+            # stale guid that no longer matches the current compute_guid output,
+            # so check guid first, then fall back to (text, language_code,
+            # disambig_key) which is the actual UNIQUE constraint enforced by
+            # the schema. Heal a stale guid in place when the fallback matches.
+            existing = conn.execute(
+                "SELECT id, guid, translation FROM collocations WHERE guid = ?",
                 (guid,),
             ).fetchone()
-            coll_id = row["id"]
+            if existing is None:
+                existing = conn.execute(
+                    """
+                    SELECT id, guid, translation FROM collocations
+                    WHERE text = ? AND language_code = ? AND disambig_key = ?
+                    """,
+                    (unit.text, language_code, disambig),
+                ).fetchone()
+            if existing is None:
+                conn.execute(
+                    """
+                    INSERT INTO collocations
+                        (text, translation, language_code, word_count, unit_difficulty,
+                         source, corpus_frequency, lemma, guid, disambig_key, grammar, note,
+                         source_sentence, sentence_translation, source_lesson_id, source_line_index, card_type)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        unit.text,
+                        unit.translation,
+                        language_code,
+                        unit.word_count,
+                        unit.difficulty,
+                        unit.source,
+                        unit.frequency,
+                        unit.lemma,
+                        guid,
+                        disambig,
+                        unit.grammar,
+                        unit.note,
+                        unit.source_sentence,
+                        unit.source_sentence_translation,
+                        unit.source_lesson_id,
+                        unit.source_line_index,
+                        unit.card_type,
+                    ),
+                )
+                coll_id = conn.execute(
+                    "SELECT id FROM collocations WHERE guid = ?",
+                    (guid,),
+                ).fetchone()["id"]
+            else:
+                coll_id = existing["id"]
+                if existing["translation"] == "" and unit.translation:
+                    conn.execute(
+                        "UPDATE collocations SET translation = ? WHERE id = ?",
+                        (unit.translation, coll_id),
+                    )
+                if existing["guid"] != guid:
+                    conn.execute(
+                        "UPDATE collocations SET guid = ? WHERE id = ?",
+                        (guid, coll_id),
+                    )
             if unit.card_type == "cloze":
                 directions = [Direction.PRODUCTION]
             else:
