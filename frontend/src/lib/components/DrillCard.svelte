@@ -37,14 +37,14 @@
 	function clozePromptHtml(): string {
 		if (item.card_type !== 'cloze' || !item.source_sentence) return '';
 		const escaped = escapeRegex(item.text);
-		const re = new RegExp(`\\b${escaped}\\b`, 'gi');
+		const re = new RegExp(`(?<!\\p{L})${escaped}(?!\\p{L})`, 'giu');
 		return item.source_sentence.replace(re, '[...]');
 	}
 
 	function clozeAnswerHtml(): string {
 		if (item.card_type !== 'cloze' || !item.source_sentence) return '';
 		const escaped = escapeRegex(item.text);
-		const re = new RegExp(`\\b${escaped}\\b`, 'gi');
+		const re = new RegExp(`(?<!\\p{L})${escaped}(?!\\p{L})`, 'giu');
 		return item.source_sentence.replace(re, '<mark class="cloze-answer">$&</mark>');
 	}
 </script>

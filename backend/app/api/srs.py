@@ -256,9 +256,14 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
     cloze_enabled = lesson.language_code == "sl" and db.get_enable_cloze_cards()
 
+    if not cloze_enabled:
+        return {"status": "ok", "registered": 0}
+
+    cloze_count = 0
     for lemma in unique_lemmas:
-        is_cloze = cloze_enabled and is_function_word(lemma, lesson.language_code)
-        sent = lemma_to_sentence.get(lemma, "") if is_cloze else ""
+        if not is_function_word(lemma, lesson.language_code):
+            continue
+        sent = lemma_to_sentence.get(lemma, "")
         unit = SyntacticUnit(
             text=lemma,
             translation=token_glosses.get(lemma, ""),
@@ -266,9 +271,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             difficulty=1,
             source="llm",
             lemma=lemma,
-            card_type="cloze" if is_cloze else "vocab",
+            card_type="cloze",
             source_sentence=sent,
-            source_sentence_translation=sentence_translations.get(sent, "") if is_cloze else "",
+            source_sentence_translation=sentence_translations.get(sent, ""),
         )
         db.add_collocation(unit, language_code=lesson.language_code)
         item = db.get_collocation_by_lemma(lemma)
@@ -276,10 +281,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             continue  # pragma: no cover — lemma is always filled for single-word units
         rating = _WORD_RATING_MAP.get(body.word_ratings.get(lemma, "good"), Rating.GOOD)
         now = datetime.datetime.now(datetime.UTC)
-        # Cloze items only have the PRODUCTION direction; vocab items default to RECOGNITION
-        sched_dir = Direction.PRODUCTION if is_cloze else Direction.RECOGNITION
-        updated = schedule(item, rating, direction=sched_dir, params=resolve_fsrs_params(db)[0], now=now)
+        updated = schedule(item, rating, direction=Direction.PRODUCTION, params=resolve_fsrs_params(db)[0], now=now)
         db.update_collocation(updated)
+        cloze_count += 1
 
     # ── Key phrase registration (preserves translations) ─────────────────
     for kp in lesson.key_phrases:
@@ -294,7 +298,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         )
         db.add_collocation(unit, language_code=lesson.language_code)
 
-    registered = len(unique_lemmas) + len(lesson.key_phrases)
+    registered = cloze_count + len(lesson.key_phrases)
     return {"status": "ok", "registered": registered}
 
 

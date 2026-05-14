@@ -529,6 +529,43 @@ class TestSRSEndpoints:
         # The English phrase should contribute 0 lemmas (registered = 0 lemmas + 0 key phrases)
         assert db.count_collocations() == 0
 
+    async def test_listen_same_lemma_in_multiple_phrases_dedup_sentence(self):
+        """When the same lemma appears in multiple NATURAL_SPEED phrases, only
+        the first sentence is stored as source_sentence."""
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text="Kje je banka?", voice_id="female-1", language_code="sl", role="female-1"),
+                        Phrase(text="Kje je center?", voice_id="female-1", language_code="sl", role="female-1"),
+                    ],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        db.set_enable_cloze_cards(True)
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        assert response.status_code == 200
+        # kje and je appear in both phrases, but only first sentence stored
+        kje = db.get_collocation_by_lemma("kje")
+        assert kje is not None
+        assert kje.syntactic_unit.source_sentence == "Kje je banka?"
+
     async def test_listen_registers_collocations(self):
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
@@ -549,6 +586,7 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
+        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -585,6 +623,7 @@ class TestSRSEndpoints:
             key_phrases=[KeyPhraseInfo(phrase="dober dan", translation="good day")],
         )
         db = SRSDatabase(":memory:")
+        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -618,6 +657,7 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
+        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -661,6 +701,7 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
+        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -672,108 +713,11 @@ class TestSRSEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"
-        # 3 unique words: kje, je, banka
-        assert data["registered"] == 3
+        # 2 unique function words: kje, je (banka is content word — not created)
+        assert data["registered"] == 2
         assert db.get_collocation_by_lemma("kje") is not None
         assert db.get_collocation_by_lemma("je") is not None
-        assert db.get_collocation_by_lemma("banka") is not None
-
-    async def test_listen_default_rating_is_good(self):
-        from app.models.srs_item import SRSState
-        from app.srs.database import SRSDatabase
-        from app.storage.store import ContentStore
-
-        lesson = Lesson(
-            title="Day 1",
-            language_code="sl",
-            sections=[
-                Section(
-                    section_type=SectionType.NATURAL_SPEED,
-                    phrases=[Phrase(text="banka", voice_id="female-1", language_code="sl", role="female-1")],
-                )
-            ],
-            key_phrases=[],
-        )
-
-        db = SRSDatabase(":memory:")
-        store = ContentStore(":memory:")
-        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
-        app.state.srs_db = db
-        app.state.content_store = store
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
-
-        item = db.get_collocation_by_lemma("banka")
-        assert item is not None
-        # After GOOD rating on a NEW item, state advances to LEARNING
-        assert item.state in (SRSState.LEARNING, SRSState.REVIEW)
-        assert item.reps == 1
-
-    async def test_listen_with_word_rating_override_hard(self):
-        from app.srs.database import SRSDatabase
-        from app.storage.store import ContentStore
-
-        lesson = Lesson(
-            title="Day 1",
-            language_code="sl",
-            sections=[
-                Section(
-                    section_type=SectionType.NATURAL_SPEED,
-                    phrases=[Phrase(text="banka", voice_id="female-1", language_code="sl", role="female-1")],
-                )
-            ],
-            key_phrases=[],
-        )
-
-        db = SRSDatabase(":memory:")
-        store = ContentStore(":memory:")
-        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
-        app.state.srs_db = db
-        app.state.content_store = store
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post(
-                "/api/srs/listen",
-                json={"lesson_id": "lesson-1", "word_ratings": {"banka": "hard"}},
-            )
-
-        assert response.status_code == 200
-        item = db.get_collocation_by_lemma("banka")
-        assert item is not None
-        assert item.reps == 1
-
-    async def test_listen_deduplicates_lemmas(self):
-        from app.srs.database import SRSDatabase
-        from app.storage.store import ContentStore
-
-        lesson = Lesson(
-            title="Day 1",
-            language_code="sl",
-            sections=[
-                Section(
-                    section_type=SectionType.NATURAL_SPEED,
-                    phrases=[
-                        Phrase(text="banka banka banka", voice_id="female-1", language_code="sl", role="female-1"),
-                    ],
-                )
-            ],
-            key_phrases=[],
-        )
-
-        db = SRSDatabase(":memory:")
-        store = ContentStore(":memory:")
-        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
-        app.state.srs_db = db
-        app.state.content_store = store
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
-
-        # Even though "banka" appears 3 times, it should only be scheduled once
-        assert db.count_collocations() == 1
-        item = db.get_collocation_by_lemma("banka")
-        assert item.reps == 1
+        assert db.get_collocation_by_lemma("banka") is None
 
     async def test_listen_key_phrases_translation_preserved(self):
         from app.srs.database import SRSDatabase
@@ -787,6 +731,7 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
+        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -798,64 +743,6 @@ class TestSRSEndpoints:
         item = db.get_collocation("dober dan")
         assert item is not None
         assert item.syntactic_unit.translation == "good day"
-
-    async def test_listen_word_translations_from_gloss_map(self):
-        """Word-level SRS items get their translation from generation_metadata['token_glosses']."""
-        from app.srs.database import SRSDatabase
-        from app.storage.store import ContentStore
-
-        lesson = Lesson(
-            title="Day 1",
-            language_code="sl",
-            sections=[
-                Section(
-                    section_type=SectionType.NATURAL_SPEED,
-                    phrases=[Phrase(text="banka", voice_id="sl-SI-PetraNeural", language_code="sl")],
-                )
-            ],
-            generation_metadata={"token_glosses": {"banka": "bank"}},
-        )
-        db = SRSDatabase(":memory:")
-        store = ContentStore(":memory:")
-        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
-        app.state.srs_db = db
-        app.state.content_store = store
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
-
-        item = db.get_collocation_by_lemma("banka")
-        assert item is not None
-        assert item.syntactic_unit.translation == "bank"
-
-    async def test_listen_is_idempotent_with_word_tracking(self):
-        from app.srs.database import SRSDatabase
-        from app.storage.store import ContentStore
-
-        lesson = Lesson(
-            title="Day 1",
-            language_code="sl",
-            sections=[
-                Section(
-                    section_type=SectionType.NATURAL_SPEED,
-                    phrases=[Phrase(text="banka", voice_id="female-1", language_code="sl", role="female-1")],
-                )
-            ],
-            key_phrases=[],
-        )
-
-        db = SRSDatabase(":memory:")
-        store = ContentStore(":memory:")
-        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
-        app.state.srs_db = db
-        app.state.content_store = store
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
-
-        assert response.status_code == 200
-        assert db.count_collocations() == 1
 
     async def test_listen_lemma_auto_filled_on_single_word_collocation(self):
         """Single-word collocations now auto-fill lemma = casefolded text,
@@ -908,6 +795,7 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
+        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -935,6 +823,7 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
+        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -964,6 +853,7 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
+        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -990,6 +880,7 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
+        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -1064,22 +955,21 @@ class TestListenClozeIntegration:
         assert item_je.syntactic_unit.card_type == "cloze"
         assert item_je.syntactic_unit.source_sentence == "Kje je banka?"
 
-        # "banka" is a content word → vocab card
-        item_banka = db.get_collocation_by_lemma("banka")
-        assert item_banka is not None
-        assert item_banka.syntactic_unit.card_type == "vocab"
-        assert item_banka.syntactic_unit.source_sentence == ""
+        # "banka" is a content word → NOT created by /listen with cloze flag on
+        assert db.get_collocation_by_lemma("banka") is None
 
     async def test_listen_skips_cloze_when_disabled(self):
         db = await self._setup_lesson(cloze_enabled=False)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
+        data = response.json()
+        assert data["registered"] == 0
 
-        item = db.get_collocation_by_lemma("kje")
-        assert item is not None
-        assert item.syntactic_unit.card_type == "vocab"
-        assert item.syntactic_unit.source_sentence == ""
+        # No rows created at all when cloze is disabled
+        assert db.get_collocation_by_lemma("kje") is None
+        assert db.get_collocation_by_lemma("je") is None
+        assert db.get_collocation_by_lemma("banka") is None
 
     async def test_listen_non_slovene_skips_cloze(self):
         db = await self._setup_lesson(
@@ -1091,10 +981,8 @@ class TestListenClozeIntegration:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
 
-        # All English lemmas should remain vocab regardless of flag
-        item = db.get_collocation_by_lemma("where")
-        assert item is not None
-        assert item.syntactic_unit.card_type == "vocab"
+        # Non-Slovene language with cloze flag on is still a no-op
+        assert db.get_collocation_by_lemma("where") is None
 
     async def test_listen_cloze_returns_card_type_and_source_sentence_via_api(self):
         """Cloze items expose card_type and source_sentence via the items API."""
@@ -1114,11 +1002,8 @@ class TestListenClozeIntegration:
         assert kje["card_type"] == "cloze"
         assert kje["source_sentence"] == "Kje je banka?"
 
-        # "banka" is a content word → vocab card
-        banka = items.get("banka")
-        assert banka is not None
-        assert banka["card_type"] == "vocab"
-        assert banka["source_sentence"] == ""
+        # "banka" is a content word → not created by /listen with cloze flag on
+        assert "banka" not in items
 
     async def test_listen_cloze_response_state_reflects_production_direction(self):
         """`_item_to_dict` for cloze items must read state from PRODUCTION, not RECOGNITION.
@@ -1146,6 +1031,45 @@ class TestListenClozeIntegration:
         kje = items["kje"]
         assert kje["state"] == "learning"
         assert kje["reps"] == 2
+
+    async def test_listen_with_flag_on_still_registers_key_phrases(self):
+        from app.storage.store import ContentStore
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        # Add key phrases to the lesson
+        store: ContentStore = app.state.content_store
+        lesson = store.get_lesson("lesson-1")
+        assert lesson is not None
+        lesson.key_phrases = [
+            KeyPhraseInfo(phrase="dober dan", translation="good day"),
+            KeyPhraseInfo(phrase="hvala lepa", translation="thank you very much"),
+        ]
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        # Key phrases were registered
+        kp1 = db.get_collocation("dober dan")
+        assert kp1 is not None
+        kp2 = db.get_collocation("hvala lepa")
+        assert kp2 is not None
+
+        # Function-word clozes were created
+        assert db.get_collocation_by_lemma("kje") is not None
+
+        # Content word banka was NOT created
+        assert db.get_collocation_by_lemma("banka") is None
+
+    async def test_listen_with_flag_off_does_not_touch_db(self):
+        db = await self._setup_lesson(cloze_enabled=False)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+        assert response.json()["registered"] == 0
+
+        assert db.count_collocations() == 0
 
 
 class TestClozeSetting:

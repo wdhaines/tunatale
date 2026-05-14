@@ -201,6 +201,22 @@ describe('DrillCard', () => {
 		const { findByText } = render(DrillCard, { item: noSentence, direction: 'production', onRate });
 		expect(await findByText('every')).toBeTruthy();
 	});
+
+	it('masks non-ASCII Slovene word (še) with Unicode-aware word boundary', async () => {
+		const onRate = vi.fn().mockResolvedValue(undefined);
+		const item = makeSRSItemDetail({
+			text: 'še',
+			translation: 'still',
+			card_type: 'cloze',
+			source_sentence: 'Ja, še nisem videl.',
+			source_sentence_translation: 'Yes, I haven\'t seen yet.',
+		});
+		const { container } = render(DrillCard, { item, direction: 'production', onRate });
+		expect(container.textContent).toContain('[...]');
+		expect(container.textContent).toContain('Ja,');
+		expect(container.textContent).toContain('nisem videl.');
+		expect(container.textContent).not.toContain('še');
+	});
 });
 
 describe('rating callbacks', () => {

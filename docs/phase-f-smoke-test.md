@@ -7,8 +7,10 @@ curriculum, "Arrival in Ljubljana." This lesson exercises Phase F's path from
 ## What this verifies
 
 1. `/listen` lemmatizes each NATURAL_SPEED token, looks each lemma up against
-   `SLOVENE_FUNCTION_WORDS` (`backend/app/srs/function_words.py`), and routes
-   matches to `card_type='cloze'` while non-matches stay `card_type='vocab'`.
+   `SLOVENE_FUNCTION_WORDS` (`backend/app/srs/function_words.py`), and
+   **only** creates rows for function-word matches (as `card_type='cloze'`).
+   Non-function-word lemmas are skipped entirely — they are no longer
+   auto-added as vocab rows.
 2. `add_collocation` skips the recognition direction for cloze items (Layer 35:
    cloze = production-only).
 3. `add_collocation` is idempotent against the schema's `UNIQUE(text,
@@ -27,7 +29,10 @@ curriculum, "Arrival in Ljubljana." This lesson exercises Phase F's path from
 
 `SLOVENE_FUNCTION_WORDS` (curated 2026-05-12) contains 21 entries. Lesson 1's
 NATURAL_SPEED dialogue triggers some of these as lemmas. Behavior depends on
-whether a standalone single-word vocab row already exists in TT:
+whether a standalone single-word vocab row already exists in TT. **Non-function
+words (content words like proper nouns, conjugated verbs, etc.) are no longer
+auto-added by `/listen`** — that path was gated behind the cloze feature flag
+to prevent unwanted vocab rows from flooding Anki on sync.
 
 | Lemma | Pre-existing standalone row? | Expected /listen outcome |
 |---|---|---|
@@ -136,6 +141,11 @@ sqlite3 ~/Library/Application\ Support/Anki2/Will/collection.anki2 \
 Navigate to the lesson page for **Day 1 — "Arrival in Ljubljana"** in the
 `arrival-in-ljubljana-5f8c0f52` curriculum. Click **Mark as Listened**.
 
+**Gating note:** `/listen` with the cloze flag on creates only function-word
+clozes + key phrases. Content words (proper nouns, conjugated verbs, etc.)
+are **not** auto-added as vocab rows. With the flag off, `/listen` is a
+complete no-op (`registered: 0`).
+
 The NATURAL_SPEED dialogue contains many function-word phrases. A sample of
 what `make_cloze_text` should produce:
 
@@ -164,9 +174,9 @@ ORDER BY created_at DESC;
 EOF
 ```
 
-**Expect ~12 cloze rows**:
+**Expect ~10 cloze rows** (no vocab rows from `/listen`):
 
-- **10 new cloze rows** from this /listen call (one per function-word lemma
+- **~8 new cloze rows** from this /listen call (one per function-word lemma
   that didn't have a pre-existing standalone row): `kje`, `je`, `v`, `kako`,
   `si`, `to`, `vam`, `še`, `pa`, `se`. All have:
   - `card_type = 'cloze'`
@@ -177,8 +187,10 @@ EOF
   `sem`, `vsak`, both with `anki_note_id` set.
 
 Exact count varies if other lemmas in your function-word list also appear in
-the lesson — the principle is: **every function-word lemma in the lesson that
-lacks a pre-existing standalone vocab row becomes a new cloze row.**
+the lesson — the principle is: **only function-word lemmas in the lesson that
+lack a pre-existing standalone row become new cloze rows.** Content words are
+skipped entirely. This prevents unwanted vocab (proper names, conjugations)
+from flooding Anki on the next sync.
 
 ## 5. Verify single-direction creation
 
@@ -314,7 +326,8 @@ Back in `/admin/srs`, **uncheck** the cloze flag.
 
 Click **Mark as Listened** on any other lesson (e.g., Day 2 — "Asking for
 Directions to a Hotel"). Day 2 contains its own function words but with the
-flag off, no new cloze rows should be created:
+flag off, `/listen` is a complete no-op (`{"status": "ok", "registered": 0}`)
+— no new rows of any kind are created:
 
 ```bash
 sqlite3 /Users/wdhaines/CascadeProjects/tunatale/backend/tunatale.db \
@@ -346,8 +359,8 @@ If any are non-zero, run `normalize_usns` per the sync rule.
 
 | Symptom | Likely cause |
 |---|---|
-| Step 4 returns ≤ 2 cloze rows (only the pre-existing ones) | Feature flag is off (check `/admin/srs`), OR /listen wasn't actually clicked, OR the dialogue-lemma loop isn't reading the DB flag at request time |
-| Step 4 returns 50+ cloze rows | Function-word list expanded since this doc was written — verify against `function_words.py:14-38` |
+| Step 4 returns ≤ 2 cloze rows (only the pre-existing ones) | Feature flag is off (check `/admin/srs`), OR /listen wasn't actually clicked |
+| Step 4 shows 50+ cloze rows | Function-word list expanded since this doc was written — verify against `function_words.py:14-38` |
 | Step 4 shows duplicate cloze rows for the same lemma | Idempotency check is too aggressive — Phase F's loop should not skip *new* lemmas just because another cloze was created in the same /listen call, but `add_collocation` should de-dup the same lemma across calls |
 | Step 5 shows `recognition` direction rows for cloze items | `add_collocation`'s `card_type` branch isn't firing — check `database.py:289-292` |
 | Step 6 shows `card_type='cloze'` for `da`/`mi`/`ti`/`ja` | The `(text, language_code, disambig_key)` fallback in `add_collocation` regressed; a vocab row was overwritten to cloze. See `database.py:251-280` |

@@ -883,17 +883,24 @@ class SRSDatabase:
         *,
         mark_dirty: bool = True,
     ) -> None:
-        """Set the state of a collocation directly, bypassing FSRS scheduling."""
+        """Set the state of a collocation directly, bypassing FSRS scheduling.
+
+        When ``state == NEW`` we also clear ``introduced_at`` and ``prior_state``:
+        cycling a card back to NEW via the WordSpan word-click is a reset, and
+        leaving those columns stamped inflates ``count_new_introduced_today``.
+        """
         dirty_clause = ", dirty_fsrs = 1" if mark_dirty else ""
+        reset_clause = ", introduced_at = NULL, prior_state = NULL" if state == SRSState.NEW else ""
         with self._get_conn() as conn:
             if direction is None:
                 conn.execute(
-                    f"UPDATE collocation_directions SET state = ?{dirty_clause} WHERE collocation_id = ?",
+                    f"UPDATE collocation_directions SET state = ?{dirty_clause}{reset_clause} WHERE collocation_id = ?",
                     (state.value, row_id),
                 )
             else:
                 conn.execute(
-                    f"UPDATE collocation_directions SET state = ?{dirty_clause} WHERE collocation_id = ? AND direction = ?",
+                    f"UPDATE collocation_directions SET state = ?{dirty_clause}{reset_clause}"
+                    " WHERE collocation_id = ? AND direction = ?",
                     (state.value, row_id, direction.value),
                 )
             conn.execute(

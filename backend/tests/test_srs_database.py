@@ -530,6 +530,52 @@ class TestDueQueries:
         assert item.directions[Direction.RECOGNITION].dirty_fsrs is False
         assert item.directions[Direction.PRODUCTION].dirty_fsrs is False
 
+    def test_set_state_by_id_to_new_clears_introduced_at(self, srs_db):
+        """Resetting state to NEW must clear the introduced_at stamp.
+
+        Regression: the WordSpan word-click cycles state new → learning → known →
+        ignored → new. When sync_pull had previously stamped introduced_at (from
+        Anki's revlog) and the user cycles back to NEW, leaving introduced_at set
+        inflates count_new_introduced_today and the daily-new badge math.
+        """
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        # Simulate a sync_pull that stamped introduced_at + state=REVIEW.
+        now = datetime(2026, 5, 14, 13, 42, 59, tzinfo=UTC)
+        with srs_db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET state='review', introduced_at=?,"
+                " prior_state='new' WHERE collocation_id=?",
+                (now.isoformat(), row_id),
+            )
+            conn.commit()
+        # User cycles state back to NEW via WordSpan.
+        srs_db.set_state_by_id(row_id, SRSState.NEW)
+        item = srs_db.get_collocation("banka")
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            assert item.directions[d].state == SRSState.NEW
+            assert item.directions[d].introduced_at is None
+            assert item.directions[d].prior_state is None
+
+    def test_set_state_by_id_to_non_new_preserves_introduced_at(self, srs_db):
+        """Other state transitions must NOT clear introduced_at (Layer 26 sticky stamp)."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        stamp = datetime(2026, 5, 14, 13, 42, 59, tzinfo=UTC)
+        with srs_db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET state='review', introduced_at=? WHERE collocation_id=?",
+                (stamp.isoformat(), row_id),
+            )
+            conn.commit()
+        srs_db.set_state_by_id(row_id, SRSState.KNOWN)
+        item = srs_db.get_collocation("banka")
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            assert item.directions[d].state == SRSState.KNOWN
+            assert item.directions[d].introduced_at == stamp
+
     def test_get_due_items_excludes_buried_state(self, srs_db):
         """Buried directions must not appear in get_due_items even if due_date <= today."""
         today = date.today()
