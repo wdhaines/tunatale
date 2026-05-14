@@ -31,6 +31,7 @@ class SyntacticUnit:
     grammar: str = ""
     note: str = ""
     source_sentence: str = ""
+    source_sentence_translation: str = ""
     source_lesson_id: str | None = None
     source_line_index: int | None = None
     card_type: str = "vocab"  # "vocab" | "cloze"

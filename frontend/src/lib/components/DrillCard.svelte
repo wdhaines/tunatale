@@ -89,6 +89,9 @@
 						<button class="play-btn" onclick={playAudio} aria-label="Play audio">▶</button>
 					{/if}
 					<p class="main-text">{@html clozeAnswerHtml()}</p>
+					{#if item.source_sentence_translation}
+						<p class="answer-text english">{item.source_sentence_translation}</p>
+					{/if}
 				{:else}
 					{#if item.audio_url}
 						<audio bind:this={audioEl} src={item.audio_url} autoplay preload="auto"></audio>

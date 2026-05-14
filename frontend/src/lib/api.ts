@@ -151,6 +151,7 @@ export interface SRSItemDetail {
 	};
 	card_type?: 'vocab' | 'cloze';
 	source_sentence?: string;
+	source_sentence_translation?: string;
 	image_url?: string | null;
 	audio_url?: string | null;
 	grammar?: string;

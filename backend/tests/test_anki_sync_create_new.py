@@ -487,6 +487,36 @@ class TestSyncCreateNewRouting:
         assert Direction.PRODUCTION in item.directions
         assert Direction.RECOGNITION not in item.directions
 
+    async def test_sync_create_new_cloze_includes_sentence_translation_in_back_extra(self):
+        """Cloze notes with sentence_translation get <span class='st'> in back_extra."""
+        db = _make_db()
+        unit = SyntacticUnit(
+            text="vsak",
+            translation="every",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="vsak",
+            source_sentence="Odprto je vsak dan",
+            source_sentence_translation="It is open every day",
+            card_type="cloze",
+        )
+        db.add_collocation(unit)
+        item = db.get_collocation("vsak")
+        assert item is not None
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        notes = anki_conn.execute("SELECT n.flds FROM notes n").fetchall()
+        assert len(notes) == 1
+        flds = notes[0][0].split("\x1f")
+        assert "<i>every</i>" in flds[1]
+        assert '<span class="st">It is open every day</span>' in flds[1]
+
     async def test_sync_create_new_routes_vocab_items_to_create_note(self):
         """Vocab items go through existing create_note path."""
         db = _make_db()

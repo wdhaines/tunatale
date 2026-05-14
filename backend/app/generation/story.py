@@ -162,11 +162,22 @@ class StoryGenerator:
         glosses = data.get("dialogue_glosses", [])
         token_glosses = {g["lemma"]: g["translation"] for g in glosses if "lemma" in g and "translation" in g}
 
+        sentence_translations: dict[str, str] = {}
+        for scene in scenes:
+            for line in scene.get("lines", []):
+                l2 = line.get("text", "").strip()
+                en = line.get("translation", "").strip()
+                if l2 and en:
+                    sentence_translations[l2] = en
+
         return Lesson(
             title=title,
             language_code=language.code,
             sections=sections,
             narrator_voice=narrator_voice,
             key_phrases=kp_infos,
-            generation_metadata={"token_glosses": token_glosses},
+            generation_metadata={
+                "token_glosses": token_glosses,
+                "sentence_translations": sentence_translations,
+            },
         )

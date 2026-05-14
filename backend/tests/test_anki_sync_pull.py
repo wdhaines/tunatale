@@ -20,6 +20,7 @@ from app.anki.sync import (
     OfflineReader,
     _direction_differs,
     extract_cloze_note,
+    extract_cloze_sentence_translation,
     extract_cloze_translation,
 )
 from app.common.guid import compute_guid
@@ -96,10 +97,14 @@ class FakeReader:
 
 
 class TestClozeExtractors:
-    """Unit tests for extract_cloze_translation / extract_cloze_note."""
+    """Unit tests for extract_cloze_translation / extract_cloze_sentence_translation / extract_cloze_note."""
 
     def test_extract_cloze_translation_standard(self):
         back_extra = '<i>every</i><br><br><a href="https://forvo.com/word/vsak/">▶ Forvo</a>'
+        assert extract_cloze_translation(back_extra) == "every"
+
+    def test_extract_cloze_translation_with_sentence(self):
+        back_extra = '<i>every</i><br><br><span class="st">It is open every day</span>'
         assert extract_cloze_translation(back_extra) == "every"
 
     def test_extract_cloze_translation_no_i_tag(self):
@@ -109,9 +114,24 @@ class TestClozeExtractors:
     def test_extract_cloze_translation_empty(self):
         assert extract_cloze_translation("") == ""
 
+    def test_extract_cloze_sentence_translation_standard(self):
+        back_extra = '<i>every</i><br><br><span class="st">It is open every day</span>'
+        assert extract_cloze_sentence_translation(back_extra) == "It is open every day"
+
+    def test_extract_cloze_sentence_translation_no_span(self):
+        back_extra = '<i>every</i><br><br><a href="https://forvo.com/word/vsak/">▶ Forvo</a>'
+        assert extract_cloze_sentence_translation(back_extra) == ""
+
+    def test_extract_cloze_sentence_translation_empty(self):
+        assert extract_cloze_sentence_translation("") == ""
+
     def test_extract_cloze_note_returns_body(self):
         back_extra = '<i>every</i><br><br><a href="https://forvo.com/word/vsak/">▶ Forvo</a>'
         assert extract_cloze_note(back_extra) == '<a href="https://forvo.com/word/vsak/">▶ Forvo</a>'
+
+    def test_extract_cloze_note_after_sentence(self):
+        back_extra = '<i>every</i><br><br><span class="st">It is open every day</span><br><br>some notes'
+        assert extract_cloze_note(back_extra) == "some notes"
 
     def test_extract_cloze_note_no_i_tag(self):
         assert extract_cloze_note("plain text") == ""
@@ -279,6 +299,7 @@ class TestOfflineReader:
 
         cloze = next(r for r in records if r.anki_note_id == 2001)
         assert cloze.translation == "every"
+        assert cloze.sentence_translation == ""
         assert cloze.note == '<a href="https://forvo.com/word/vsak/">\u25b6 Forvo</a>'
         assert cloze.l2_text == "vsak"
         assert cloze.disambig_key == ""
@@ -393,6 +414,26 @@ class TestSyncPull:
         assert Direction.PRODUCTION in item.directions
         assert Direction.RECOGNITION not in item.directions
         assert item.directions[Direction.PRODUCTION].state == SRSState.REVIEW
+
+    def test_sync_pull_cloze_updates_sentence_translation(self):
+        """Anki has sentence_translation → sync_pull stores it on the collocation."""
+        db = _make_tt_db()
+        guid = _add_cloze_collocation(db)
+        db.set_anki_ids(guid, note_id=9001, card_ids={Direction.PRODUCTION: 90010})
+
+        cards = [make_card_record(anki_card_id=90010, ord=0, queue=2, reps=0)]
+        records = [
+            make_note_record(
+                anki_guid=guid,
+                cards=cards,
+                sentence_translation="Anki sentence translation",
+            )
+        ]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert report.notes_updated == 1
+        item = db.get_collocation_by_guid(guid)
+        assert item.syntactic_unit.source_sentence_translation == "Anki sentence translation"
 
     def test_sync_pull_vocab_ord_0_still_maps_to_recognition(self):
         """Vocab note with ord=0 card still maps to RECOGNITION."""

@@ -154,6 +154,7 @@ describe('DrillCard', () => {
 		translation: 'every',
 		card_type: 'cloze',
 		source_sentence: 'Odprto je vsak dan',
+		source_sentence_translation: 'It is open every day',
 		audio_url: '/api/media/sl_vsak.mp3',
 		grammar: 'adj',
 		note: 'common word',
@@ -177,11 +178,12 @@ describe('DrillCard', () => {
 		expect(container.textContent).toContain('every');
 	});
 
-	it('reveal shows audio, translation, grammar, note', async () => {
+	it('reveal shows audio, sentence translation, word translation, grammar, note', async () => {
 		const onRate = vi.fn().mockResolvedValue(undefined);
 		const { findByRole, container } = render(DrillCard, { item: clozeItem, direction: 'production', onRate });
 		await fireEvent.click(await findByRole('button', { name: 'Show' }));
 		expect(container.querySelector('audio')).toBeTruthy();
+		expect(container.textContent).toContain('It is open every day');
 		expect(container.textContent).toContain('every');
 		expect(container.textContent).toContain('adj');
 		expect(container.textContent).toContain('common word');

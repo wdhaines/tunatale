@@ -150,6 +150,11 @@ class SRSItem:
 
     @property
     def _rec(self) -> DirectionState:
+        # Cloze items only carry a PRODUCTION direction (single-template Anki
+        # Cloze notetype). Flat shims fall through to whichever direction the
+        # card_type implies.
+        if self.syntactic_unit.card_type == "cloze":
+            return self.directions[Direction.PRODUCTION]
         return self.directions[Direction.RECOGNITION]
 
     @property

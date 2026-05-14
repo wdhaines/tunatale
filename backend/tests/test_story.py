@@ -266,6 +266,52 @@ class TestStoryGeneration:
         with pytest.raises(StoryGenerationError, match="missing"):
             generator._parse_response(data, language=language)
 
+    async def test_generate_sentence_translations_in_metadata(self, language):
+        """sentence_translations dict maps L2 sentences to their English translations."""
+        from app.generation.story import StoryGenerator
+
+        generator = StoryGenerator(llm_client=MagicMock())
+        data = {
+            "title": "Test",
+            "key_phrases": [],
+            "scenes": [
+                {
+                    "label": "Scene 1",
+                    "lines": [
+                        {"speaker": "f1", "text": "Dober dan!", "translation": "Good day!"},
+                        {"speaker": "f1", "text": "Kje je banka?", "translation": "Where is the bank?"},
+                    ],
+                }
+            ],
+        }
+        lesson = generator._parse_response(data, language=language)
+        st = lesson.generation_metadata.get("sentence_translations", {})
+        assert st["Dober dan!"] == "Good day!"
+        assert st["Kje je banka?"] == "Where is the bank?"
+
+    async def test_generate_sentence_translations_skips_missing_translation(self, language):
+        """Lines without translation are omitted from sentence_translations."""
+        from app.generation.story import StoryGenerator
+
+        generator = StoryGenerator(llm_client=MagicMock())
+        data = {
+            "title": "Test",
+            "key_phrases": [],
+            "scenes": [
+                {
+                    "label": "Scene 1",
+                    "lines": [
+                        {"speaker": "f1", "text": "Dober dan!", "translation": "Good day!"},
+                        {"speaker": "f1", "text": "Brez prevoda", "translation": ""},
+                    ],
+                }
+            ],
+        }
+        lesson = generator._parse_response(data, language=language)
+        st = lesson.generation_metadata.get("sentence_translations", {})
+        assert st["Dober dan!"] == "Good day!"
+        assert "Brez prevoda" not in st
+
     async def test_generate_passes_cefr_level_in_user_prompt(self, generator, language, mock_llm):
         day = _make_curriculum_day()
         await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, cefr_level="B1")

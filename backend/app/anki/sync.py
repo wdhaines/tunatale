@@ -139,6 +139,7 @@ class NoteRecord:
     disambig_key: str
     mod: int
     cards: list[CardRecord]
+    sentence_translation: str = ""
 
 
 @dataclass
@@ -174,18 +175,32 @@ class CreateNewReport:
 
 
 _BACK_EXTRA_TRANS = re.compile(r"^\s*<i>([^<]+)</i>\s*<br\s*/?>\s*<br\s*/?>\s*(.*)", re.DOTALL)
+_BACK_EXTRA_SENT = re.compile(
+    r"^\s*<i>([^<]+)</i>\s*<br\s*/?>\s*<br\s*/?>\s*<span class=\"st\">([^<]*)</span>\s*(.*)", re.DOTALL
+)
 
 
 def extract_cloze_translation(back_extra: str) -> str:
-    """Extract translation from a Cloze note's back_extra (<i>…) field."""
-    m = _BACK_EXTRA_TRANS.match(back_extra)
+    """Extract word-level translation from a Cloze note's back_extra (<i>…) field."""
+    m = _BACK_EXTRA_SENT.match(back_extra) or _BACK_EXTRA_TRANS.match(back_extra)
     if m:
         return m.group(1).strip()
     return extract_translation(back_extra)
 
 
+def extract_cloze_sentence_translation(back_extra: str) -> str:
+    """Extract sentence-level translation from a Cloze note's back_extra (<span class="st">…)."""
+    m = _BACK_EXTRA_SENT.match(back_extra)
+    if m:
+        return m.group(2).strip()
+    return ""
+
+
 def extract_cloze_note(back_extra: str) -> str:
-    """Extract note body from a Cloze note's back_extra (after the <i>translation</i> prefix)."""
+    """Extract note body from a Cloze note's back_extra (after translation/sentence spans)."""
+    m = _BACK_EXTRA_SENT.match(back_extra)
+    if m:
+        return re.sub(r"^(?:<br\s*/?>)+", "", m.group(3).strip()).strip()
     m = _BACK_EXTRA_TRANS.match(back_extra)
     if m:
         return m.group(2).strip()
@@ -242,6 +257,7 @@ class OfflineReader:
             if is_cloze:
                 back_extra = note.fields[1] if len(note.fields) > 1 else ""
                 translation = extract_cloze_translation(back_extra)
+                sentence_translation = extract_cloze_sentence_translation(back_extra)
                 note_text = extract_cloze_note(back_extra)
                 l2_text = extract_l2_from_fields(note.fields)
                 disambig_key = ""
@@ -277,6 +293,7 @@ class OfflineReader:
                     anki_guid=note.anki_guid,
                     l2_text=l2_text,
                     translation=translation,
+                    sentence_translation=sentence_translation if is_cloze else "",
                     note=note_text,
                     disambig_key=disambig_key,
                     mod=note.mod,
@@ -1001,6 +1018,7 @@ class AnkiSync:
             dirty_set = {f for f in local_dirty_fields.split(",") if f}
 
             local_translation = local_item.syntactic_unit.translation
+            local_sent_trans = local_item.syntactic_unit.source_sentence_translation
             local_note = local_item.syntactic_unit.note
             note_changed = False
             new_dirty_fields = dirty_set.copy()
@@ -1020,6 +1038,9 @@ class AnkiSync:
                     )
                     new_dirty_fields.discard("translation")
 
+            if rec.sentence_translation != local_sent_trans:
+                note_changed = True
+
             if rec.note != local_note:
                 note_changed = True
 
@@ -1029,6 +1050,7 @@ class AnkiSync:
                         guid,
                         translation=rec.translation,
                         note=rec.note,
+                        sentence_translation=rec.sentence_translation,
                         dirty_fields_str=",".join(sorted(new_dirty_fields)),
                     )
                 report.notes_updated += 1
@@ -1518,11 +1540,17 @@ class AnkiSync:
                     item.syntactic_unit.text,
                     item.syntactic_unit.source_sentence or "",
                 )
+                trans = item.syntactic_unit.translation
+                sent_trans = item.syntactic_unit.source_sentence_translation
+                back_parts = [f"<i>{trans}</i>"] if trans else []
+                if sent_trans:
+                    back_parts.append(f'<span class="st">{sent_trans}</span>')
+                back_extra = "<br><br>".join(back_parts)
                 try:
                     note_id = self._writer.create_cloze_note(
                         deck_name,
                         cloze_text,
-                        back_extra="",
+                        back_extra=back_extra,
                         tags=["tunatale", "cloze"],
                     )
                     created += 1

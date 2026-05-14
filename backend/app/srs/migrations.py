@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 20
+CURRENT_VERSION = 21
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -586,6 +586,19 @@ def migrate_v19_to_v20(conn: sqlite3.Connection) -> None:
     _set_version(conn, 20)
 
 
+def migrate_v20_to_v21(conn: sqlite3.Connection) -> None:
+    """Add sentence_translation column to collocations for cloze sentence-level English.
+
+    Stores the English translation of the full source sentence (e.g. "It's open
+    every day" for source_sentence "Odprto je vsak dan"). Populated at cloze
+    creation time from lesson generation_metadata. Default empty string for
+    existing rows.
+    """
+    if not _column_exists(conn, "collocations", "sentence_translation"):
+        conn.execute("ALTER TABLE collocations ADD COLUMN sentence_translation TEXT NOT NULL DEFAULT ''")
+    _set_version(conn, 21)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -607,6 +620,7 @@ _MIGRATIONS = {
     17: migrate_v17_to_v18,
     18: migrate_v18_to_v19,
     19: migrate_v19_to_v20,
+    20: migrate_v20_to_v21,
 }
 
 

@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 20
+        assert CURRENT_VERSION == 21
 
     def test_migrates_v15_to_v16_deletes_phantom_directions(self, tmp_path):
         """v16 deletes direction rows that were auto-filled by the pre-fix
@@ -271,6 +271,32 @@ class TestMigrations:
         # Idempotent
         migrate_v19_to_v20(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 20
+
+    def test_migrates_v20_to_v21_adds_sentence_translation(self, tmp_path):
+        """v21 adds sentence_translation column to collocations with default ''."""
+        import sqlite3
+
+        from app.srs.migrations import _set_version, migrate_v20_to_v21
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.row_factory = sqlite3.Row
+        conn.execute("""CREATE TABLE collocations (
+            id INTEGER PRIMARY KEY, text TEXT, source_sentence TEXT NOT NULL DEFAULT ''
+        )""")
+        conn.execute("INSERT INTO collocations (id, text, source_sentence) VALUES (1, 'test', 'Kje je banka?')")
+        _set_version(conn, 20)
+
+        migrate_v20_to_v21(conn)
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocations)")}
+        assert "sentence_translation" in cols
+        row = conn.execute("SELECT sentence_translation FROM collocations WHERE id = 1").fetchone()
+        assert row["sentence_translation"] == ""
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 21
+
+        # Idempotent
+        migrate_v20_to_v21(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 21
 
     def test_migrates_v14_to_v15_fills_null_lemma(self, tmp_path):
         """v15 fills lemma for single-word rows that have lemma=NULL."""

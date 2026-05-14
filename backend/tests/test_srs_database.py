@@ -156,6 +156,86 @@ class TestCRUD:
         assert item is not None
         assert item.syntactic_unit.card_type == "cloze"
 
+    def test_add_collocation_empty_string_lemma_falls_back_to_casefold_text(self, srs_db):
+        """Single-word units with lemma='' (not just None) still get a usable lemma.
+
+        Regression: pre-Phase-F sync_pull paths sometimes wrote empty strings into
+        the lemma column for converted cloze rows. The fallback used to check only
+        for None, so empty strings slipped through and broke transcript lookups.
+        """
+        unit = SyntacticUnit(
+            text="Sem",
+            translation="I am",
+            word_count=1,
+            difficulty=1,
+            source="anki",
+            lemma="",  # explicit empty string, not None
+            card_type="cloze",
+            source_sentence="Jaz sem Janez",
+        )
+        srs_db.add_collocation(unit, language_code="sl")
+        item = srs_db.get_collocation_by_lemma("sem")
+        assert item is not None
+        assert item.syntactic_unit.lemma == "sem"
+
+    def test_upsert_by_guid_does_not_clobber_existing_lemma_with_empty(self, srs_db):
+        """An incoming sync row with empty lemma must not wipe a stored good lemma."""
+        unit = SyntacticUnit(
+            text="vsak",
+            translation="every",
+            word_count=1,
+            difficulty=1,
+            source="anki",
+            lemma="vsak",
+            card_type="cloze",
+            source_sentence="Odprto je vsak dan",
+        )
+        srs_db.add_collocation(unit, language_code="sl")
+        # Subsequent sync_pull provides empty/garbage lemma
+        bad_unit = SyntacticUnit(
+            text="vsak",
+            translation="every",
+            word_count=1,
+            difficulty=1,
+            source="anki",
+            lemma="",  # would corrupt; must be ignored
+            card_type="cloze",
+            source_sentence="Odprto je vsak dan",
+        )
+        srs_db.upsert_by_guid(bad_unit, "sl", {}, anki_note_id=12345)
+        item = srs_db.get_collocation_by_lemma("vsak")
+        assert item is not None
+        assert item.syntactic_unit.lemma == "vsak"
+
+    def test_cloze_item_state_reads_production_direction(self, srs_db):
+        """Cloze items have only PRODUCTION direction; `item.state` must read from it.
+
+        Regression: the legacy `_rec` shim hardcoded RECOGNITION, causing KeyError
+        on every cloze-aware caller (transcript.py, _item_to_dict, etc.).
+        """
+        unit = SyntacticUnit(
+            text="vsak",
+            translation="every",
+            word_count=1,
+            difficulty=1,
+            source="cloze",
+            lemma="vsak",
+            source_sentence="Odprto je vsak dan",
+            card_type="cloze",
+        )
+        srs_db.add_collocation(unit, language_code="sl")
+        item = srs_db.get_collocation("vsak")
+        assert item is not None
+        assert Direction.RECOGNITION not in item.directions
+        assert Direction.PRODUCTION in item.directions
+        # These accessors must not raise — they should fall through to PRODUCTION.
+        assert item.state == SRSState.NEW
+        assert item.reps == 0
+        assert item.lapses == 0
+        # Setter should mutate the production direction.
+        item.state = SRSState.LEARNING
+        assert item.directions[Direction.PRODUCTION].state == SRSState.LEARNING
+
     def test_get_enable_cloze_cards_defaults_false(self, srs_db):
         """Fresh DB with no cache row returns False."""
         assert srs_db.get_enable_cloze_cards() is False

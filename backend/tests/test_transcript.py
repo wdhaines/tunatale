@@ -64,6 +64,36 @@ class TestExtractTranscript:
         result = extract_transcript(lesson, self.db, self.lemmatizer)
         assert result.dialogue_lines[0].words[0].srs_state == "review"
 
+    def test_cloze_word_state_falls_through_to_production(self):
+        """Cloze items have only PRODUCTION direction; transcript must not crash.
+
+        Regression: `item.state.value` previously KeyErrored on cloze items because
+        the legacy `_rec` shim hardcoded RECOGNITION. Now it falls through to
+        production when card_type='cloze'.
+        """
+        from app.models.srs_item import Direction
+
+        unit = SyntacticUnit(
+            text="vsak",
+            translation="every",
+            word_count=1,
+            difficulty=1,
+            source="cloze",
+            lemma="vsak",
+            source_sentence="Odprto je vsak dan",
+            card_type="cloze",
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        item = self.db.get_collocation("vsak")
+        item.directions[Direction.PRODUCTION].state = SRSState.LEARNING
+        self.db.update_collocation(item)
+
+        lesson = _make_lesson([("female-1", "Odprto je vsak dan")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        words = result.dialogue_lines[0].words
+        vsak_token = next(w for w in words if w.lemma == "vsak")
+        assert vsak_token.srs_state == "learning"
+
     def test_english_narrator_lines_excluded(self):
         lesson = Lesson(title="Test", language_code="sl")
         lesson.sections = [

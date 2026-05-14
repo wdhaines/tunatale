@@ -1120,6 +1120,33 @@ class TestListenClozeIntegration:
         assert banka["card_type"] == "vocab"
         assert banka["source_sentence"] == ""
 
+    async def test_listen_cloze_response_state_reflects_production_direction(self):
+        """`_item_to_dict` for cloze items must read state from PRODUCTION, not RECOGNITION.
+
+        Regression: cloze items have no recognition direction, so the prior
+        rec-only path emitted 'new' regardless of the production direction's
+        actual FSRS state.
+        """
+        from app.models.srs_item import Direction, SRSState
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+            # Force the cloze item's production direction into a non-NEW state
+            item = db.get_collocation_by_lemma("kje")
+            assert item is not None
+            item.directions[Direction.PRODUCTION].state = SRSState.LEARNING
+            item.directions[Direction.PRODUCTION].reps = 2
+            db.update_collocation(item)
+
+            response = await client.get("/api/srs/items", params={"limit": 50})
+        assert response.status_code == 200
+        items = {i["text"]: i for i in response.json()["items"]}
+        kje = items["kje"]
+        assert kje["state"] == "learning"
+        assert kje["reps"] == 2
+
 
 class TestClozeSetting:
     """Tests for GET/PUT /api/srs/settings/cloze."""

@@ -76,18 +76,20 @@ def _item_to_dict(
 
     Single-template Anki notes (e.g., Basic phonics) have no production
     direction after migration v15→v16 — emit `null` rather than fabricating
-    one. The flat back-compat shims fall back to recognition when present.
+    one. Flat back-compat fields read from recognition for vocab cards and
+    from production for cloze cards (which have no recognition direction).
     """
     rec = item.directions.get(Direction.RECOGNITION)
     prod = item.directions.get(Direction.PRODUCTION)
+    flat_src = prod if item.syntactic_unit.card_type == "cloze" else rec
     flat: dict[str, object] = {
-        "state": rec.state.value if rec else SRSState.NEW.value,
-        "due_date": rec.due_date.isoformat() if rec else None,
-        "stability": rec.stability if rec else 1.0,
-        "difficulty": rec.difficulty if rec else 5.0,
-        "reps": rec.reps if rec else 0,
-        "lapses": rec.lapses if rec else 0,
-        "last_review": rec.last_review.isoformat() if rec and rec.last_review else None,
+        "state": flat_src.state.value if flat_src else SRSState.NEW.value,
+        "due_date": flat_src.due_date.isoformat() if flat_src else None,
+        "stability": flat_src.stability if flat_src else 1.0,
+        "difficulty": flat_src.difficulty if flat_src else 5.0,
+        "reps": flat_src.reps if flat_src else 0,
+        "lapses": flat_src.lapses if flat_src else 0,
+        "last_review": flat_src.last_review.isoformat() if flat_src and flat_src.last_review else None,
     }
     return {
         "id": row_id,
@@ -104,6 +106,7 @@ def _item_to_dict(
         },
         "card_type": item.syntactic_unit.card_type,
         "source_sentence": item.syntactic_unit.source_sentence,
+        "source_sentence_translation": item.syntactic_unit.source_sentence_translation,
         "image_url": image_url,
         "audio_url": audio_url,
         "grammar": item.syntactic_unit.grammar,
@@ -232,6 +235,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     from app.models.lesson import SectionType
 
     token_glosses: dict[str, str] = lesson.generation_metadata.get("token_glosses", {})
+    sentence_translations: dict[str, str] = lesson.generation_metadata.get("sentence_translations", {})
 
     natural_speed = next(
         (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
@@ -254,6 +258,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
     for lemma in unique_lemmas:
         is_cloze = cloze_enabled and is_function_word(lemma, lesson.language_code)
+        sent = lemma_to_sentence.get(lemma, "") if is_cloze else ""
         unit = SyntacticUnit(
             text=lemma,
             translation=token_glosses.get(lemma, ""),
@@ -262,7 +267,8 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             source="llm",
             lemma=lemma,
             card_type="cloze" if is_cloze else "vocab",
-            source_sentence=lemma_to_sentence.get(lemma, "") if is_cloze else "",
+            source_sentence=sent,
+            source_sentence_translation=sentence_translations.get(sent, "") if is_cloze else "",
         )
         db.add_collocation(unit, language_code=lesson.language_code)
         item = db.get_collocation_by_lemma(lemma)

@@ -240,9 +240,10 @@ class SRSDatabase:
 
         New rows get both recognition and production direction rows (defaults).
         Single-word units without an explicit lemma get lemma = casefolded text
-        so that get_collocation_by_lemma_with_id lookups succeed.
+        so that get_collocation_by_lemma_with_id lookups succeed. Empty strings
+        count as missing — pre-Phase-F sync paths sometimes wrote empties.
         """
-        if unit.lemma is None and unit.word_count == 1:
+        if not unit.lemma and unit.word_count == 1:
             unit.lemma = unit.text.casefold()
         disambig = unit.disambig_key
         guid = compute_guid(unit.text, language_code, disambig)
@@ -253,8 +254,8 @@ class SRSDatabase:
                 INSERT INTO collocations
                     (text, translation, language_code, word_count, unit_difficulty,
                      source, corpus_frequency, lemma, guid, disambig_key, grammar, note,
-                     source_sentence, source_lesson_id, source_line_index, card_type)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     source_sentence, sentence_translation, source_lesson_id, source_line_index, card_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(guid) DO UPDATE SET
                     translation = CASE
                         WHEN excluded.translation != '' AND collocations.translation = ''
@@ -276,6 +277,7 @@ class SRSDatabase:
                     unit.grammar,
                     unit.note,
                     unit.source_sentence,
+                    unit.source_sentence_translation,
                     unit.source_lesson_id,
                     unit.source_line_index,
                     unit.card_type,
@@ -479,6 +481,7 @@ class SRSDatabase:
             grammar=row["grammar"],
             note=row["note"],
             source_sentence=row["source_sentence"],
+            source_sentence_translation=row["sentence_translation"] if "sentence_translation" in row.keys() else "",  # noqa: SIM118
             source_lesson_id=row["source_lesson_id"],
             source_line_index=row["source_line_index"],
             card_type=row["card_type"] if "card_type" in row.keys() else "vocab",  # noqa: SIM118
@@ -1038,8 +1041,12 @@ class SRSDatabase:
         Returns the collocation id.
         """
         guid = compute_guid(unit.text, language_code, unit.disambig_key)
+        # Backfill missing single-word lemma so by-lemma lookups keep working;
+        # mirrors add_collocation. Empty strings count as missing.
+        if not unit.lemma and unit.word_count == 1:
+            unit.lemma = unit.text.casefold()
         with self._get_conn() as conn:
-            row = conn.execute("SELECT id FROM collocations WHERE guid = ?", (guid,)).fetchone()
+            row = conn.execute("SELECT id, lemma FROM collocations WHERE guid = ?", (guid,)).fetchone()
             if row is None:
                 cursor = conn.execute(
                     """
@@ -1089,6 +1096,8 @@ class SRSDatabase:
                     )
             else:
                 coll_id = row["id"]
+                # Preserve an existing non-empty lemma if the incoming row is empty.
+                resolved_lemma = unit.lemma if unit.lemma else row["lemma"]
                 conn.execute(
                     """
                     UPDATE collocations SET
@@ -1104,7 +1113,7 @@ class SRSDatabase:
                         unit.difficulty,
                         unit.source,
                         unit.frequency,
-                        unit.lemma,
+                        resolved_lemma,
                         anki_note_id,
                         coll_id,
                     ),
@@ -1768,15 +1777,16 @@ class SRSDatabase:
         *,
         translation: str,
         note: str,
+        sentence_translation: str = "",
         dirty_fields_str: str,
     ) -> None:
-        """Update translation, note, and dirty_fields after a sync pull."""
+        """Update translation, note, sentence_translation, and dirty_fields after a sync pull."""
         now_iso = datetime.now(UTC).isoformat()
         with self._get_conn() as conn:
             conn.execute(
-                "UPDATE collocations SET translation = ?, note = ?, dirty_fields = ?, "
-                "last_synced_at = ?, updated_at = ? WHERE guid = ?",
-                (translation, note, dirty_fields_str, now_iso, now_iso, guid),
+                "UPDATE collocations SET translation = ?, note = ?, sentence_translation = ?, "
+                "dirty_fields = ?, last_synced_at = ?, updated_at = ? WHERE guid = ?",
+                (translation, note, sentence_translation, dirty_fields_str, now_iso, now_iso, guid),
             )
             self._commit(conn)
 
