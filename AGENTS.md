@@ -14,9 +14,9 @@ cd backend && uv run ruff format app tests     # format
 cd backend && uv run pytest                     # test + coverage (target: 100%)
 
 # Frontend only:
-cd frontend && npm run check                    # svelte-check
-cd frontend && npm run test:coverage            # vitest
-cd frontend && npm run test:e2e                 # playwright
+cd frontend && bun run check                    # svelte-check
+cd frontend && bun run test:coverage            # vitest
+cd frontend && bun run test:e2e                 # playwright
 
 # Dev servers (backend :8000, frontend :5173):
 ./start-dev.sh
@@ -64,8 +64,8 @@ All commands use `uv run` (no manual venv activation).
 - **Anki tests**: use `fake_anki_db`, `fake_anki_db_modern`, `fake_anki_db_slovene_pairs` fixtures from `conftest.py` — never use real `collection.anki2`
   - Cloze tests use `_make_cloze_collection_conn()` or `_make_dual_collection_conn()` helpers from `test_anki_sync_create_new.py`
 - **E2E tests**: `test_e2e_listen_to_sync.py` combines `/listen` API calls with offline Anki sync
-- **CI only runs backend** (no frontend checks in `.github/workflows/ci.yml`)
-- CI requires `ffmpeg` as system dependency
+- **CI runs backend + frontend** (two parallel jobs in `.github/workflows/ci.yml`); frontend job runs svelte-check + vitest; E2E (Playwright) is local-only
+- CI requires `ffmpeg` as system dependency (backend job only)
 
 ## Key Conventions
 
@@ -78,11 +78,11 @@ All commands use `uv run` (no manual venv activation).
 
 ## CI Order
 
-```
-ruff check → ruff format --check → pytest
-```
+**Backend job**: `ruff check → ruff format --check → pytest`
 
-Frontend checks are local-only (`npm run check`, `test:coverage`, `test:e2e`).
+**Frontend job** (parallel): `bun install → bun run check → bun run test:coverage`
+
+E2E (Playwright) is local-only via `./test.sh`.
 
 ## Instruction Files
 
