@@ -94,7 +94,7 @@ describe('/c/[curriculumId] page', () => {
 		// DayPicker disables all buttons while one is loading
 		let resolveSelect!: (v: unknown) => void;
 		const slowSelect = new Promise((r) => { resolveSelect = r; });
-		const onSelectDay = vi.fn().mockReturnValue(slowSelect);
+		const _onSelectDay = vi.fn().mockReturnValue(slowSelect);
 
 		const { getAllByRole } = render(Page, { props: { data: { curriculum } } });
 		const buttons = getAllByRole('button');

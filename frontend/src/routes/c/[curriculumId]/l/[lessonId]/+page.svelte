@@ -163,7 +163,7 @@
 	<section class="lesson-header">
 		<h2>{data.lesson.title}</h2>
 		<ul>
-			{#each data.lesson.sections as section}
+			{#each data.lesson.sections as section, i (i)}
 				<li>{SECTION_TITLES[section.type] ?? section.type} — {section.phrases.length} phrase{section.phrases.length === 1 ? '' : 's'}</li>
 			{/each}
 		</ul>

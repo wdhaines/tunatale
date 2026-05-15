@@ -4,7 +4,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent, waitFor } from '@testing-library/svelte';
 import WordSpan from './WordSpan.svelte';
-import type { WordToken } from './api';
 import { makeWordToken } from '../test/factories';
 
 describe('WordSpan', () => {

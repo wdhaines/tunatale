@@ -1,10 +1,9 @@
 /**
  * Tests for DrillCard shared flashcard component.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, screen } from '@testing-library/svelte';
+import { describe, it, expect, vi } from 'vitest';
+import { render, fireEvent } from '@testing-library/svelte';
 import DrillCard from './DrillCard.svelte';
-import type { SRSItemDetail } from '$lib/api';
 import { makeSRSItemDetail } from '../../test/factories';
 
 describe('DrillCard', () => {

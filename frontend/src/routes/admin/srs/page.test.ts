@@ -34,7 +34,6 @@ vi.mock('$lib/api', () => {
 });
 
 import { api } from '$lib/api';
-import type { SRSItemDetail } from '$lib/api';
 const mockList = vi.mocked(api.listSRSItems);
 const mockUpdate = vi.mocked(api.updateSRSItem);
 const mockDelete = vi.mocked(api.deleteSRSItem);
@@ -107,7 +106,7 @@ describe('admin/srs/+page.svelte', () => {
 		mockList.mockResolvedValue({ items: [item], total: 1 });
 		mockUpdate.mockResolvedValue({ ...item, text: 'Zdravo!', translation: 'Hello!' });
 
-		const { findByText, findByRole, getAllByRole } = render(AdminSRSPage);
+		const { findByText, getAllByRole } = render(AdminSRSPage);
 		await findByText('zdravo');
 
 		const editBtn = (await findByText('Edit'));

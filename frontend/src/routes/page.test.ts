@@ -160,7 +160,7 @@ describe('Recent Curricula section', () => {
 
 	it('shows empty state when no curricula', async () => {
 		mockListCurricula.mockResolvedValue([]);
-		const { findByText, queryByText } = render(Page);
+		const { findByText } = render(Page);
 		expect(await findByText(/no curricula yet/i)).toBeTruthy();
 	});
 

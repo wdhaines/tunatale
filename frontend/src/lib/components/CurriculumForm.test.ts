@@ -89,7 +89,7 @@ describe('CurriculumForm', () => {
 	});
 
 	it('saves prefs to localStorage when form values change', async () => {
-		const { getByPlaceholderText, getByRole, getByDisplayValue } = render(CurriculumForm, { props: { onGenerate: vi.fn() } });
+		const { getByPlaceholderText, getByDisplayValue } = render(CurriculumForm, { props: { onGenerate: vi.fn() } });
 		// Change topic
 		await fireEvent.input(getByPlaceholderText(/ordering coffee/i), { target: { value: 'hiking' } });
 		// Change CEFR level

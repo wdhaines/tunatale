@@ -183,7 +183,7 @@ describe('Transcript', () => {
 	});
 
 	it('shows listen confirmation after listenResult changes from null to non-null (reactive update)', async () => {
-		const { rerender, findByText, queryByText } = render(Transcript, {
+		const { rerender, queryByText } = render(Transcript, {
 			props: defaultProps({ listenResult: null })
 		});
 		expect(queryByText(/words tracked/i)).toBeFalsy();
@@ -979,7 +979,7 @@ describe('Transcript', () => {
 		});
 
 		it('✨ button calls api.translateTerm and fills the translation input', async () => {
-			const mockTranslate = vi.mocked(api.translateTerm).mockResolvedValue({ translation: 'in the city centre' });
+			const _mockTranslate = vi.mocked(api.translateTerm).mockResolvedValue({ translation: 'in the city centre' });
 			const { container } = render(Transcript, {
 				props: defaultProps({ transcript: transcriptForDrag, lesson: { id: 'l1', title: 't', language_code: 'sl', key_phrases: [], sections: [] } })
 			});

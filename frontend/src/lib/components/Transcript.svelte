@@ -329,7 +329,7 @@
 		<div class="transcript-section">
 			<h3>Key Phrases</h3>
 			<ul class="key-phrases-list">
-				{#each transcript.key_phrases as kp}
+				{#each transcript.key_phrases as kp (kp.phrase)}
 					<li>
 						<span class="kp-phrase">{kp.phrase}</span>
 						<span class="kp-translation">{kp.translation}</span>
@@ -366,7 +366,7 @@
 				{selectionMode ? 'Cancel' : '+ New phrase'}
 			</button>
 
-			{#each scenes as scene}
+			{#each scenes as scene, sceneIdx (sceneIdx)}
 				{#if scene.title}
 					<h4 class="scene-header">{scene.title}</h4>
 				{/if}
@@ -383,7 +383,7 @@
 								onpointermove={(e) => handlePointerMove(e, lineIndex, line.words)}
 								onpointerup={(e) => handlePointerUp(e, lineIndex, line.words)}
 							>
-								{#each segments as segment, segIdx}
+								{#each segments as segment, segIdx (segIdx)}
 									{#if segment.type === 'collocation'}
 										<Tooltip
 											translation={altHeld ? null : segment.words[0].collocation_translation}
@@ -396,7 +396,7 @@
 												onclick={() => handleCollocationClick(segment)}
 												onkeydown={(e) => handleCollocationKeydown(e, segment)}
 											>
-												{#each segment.words as cw, innerIdx}
+												{#each segment.words as cw, innerIdx (innerIdx)}
 													{@const wIdx = wordIndexInLine(segments, segIdx, innerIdx)}
 													<WordSpan
 														word={cw}
@@ -406,7 +406,7 @@
 														lineIndex={lineIndex}
 														wordIndex={wIdx}
 														selected={wordIsSelected(lineIndex, wIdx)}
-													/>{' '}
+													/>
 												{/each}
 											</span>
 										</Tooltip>
@@ -423,7 +423,7 @@
 												lineIndex={lineIndex}
 												wordIndex={wIdx}
 												selected={wordIsSelected(lineIndex, wIdx)}
-											/>{' '}
+											/>
 										</span>
 									{/if}
 								{/each}

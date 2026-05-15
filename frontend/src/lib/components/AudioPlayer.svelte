@@ -11,7 +11,6 @@
 
 <section class="audio-section">
 	<h2>Audio Player</h2>
-	<!-- svelte-ignore a11y_media_has_caption -->
 	<audio controls src={api.audioUrl(audio.audio_id)}>
 		Your browser does not support the audio element.
 	</audio>
@@ -27,7 +26,7 @@
 			<details>
 				<summary>Individual sections</summary>
 				<div class="section-links">
-					{#each audio.sections as sec}
+					{#each audio.sections as sec (sec.audio_id)}
 						<a
 							class="section-dl-btn"
 							href={api.audioUrl(sec.audio_id)}

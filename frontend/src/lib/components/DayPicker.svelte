@@ -31,7 +31,7 @@
 </script>
 
 <div class="days">
-	{#each Array(curriculum.days) as _, i}
+	{#each Array(curriculum.days) as _, i (i)}
 		{@const day = i + 1}
 		{@const state = dayState(day)}
 		<button
