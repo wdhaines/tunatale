@@ -107,3 +107,7 @@ Without this, Anki's default "Ascending position" surfaces oldest-first, defeati
 
 - Always run tests using the virtual environment; don't just theorize
 - Add tests to the tests directory, not other random directories.
+
+## Housekeeping
+
+- **Clean coverage artifacts after running pytest with --cov.** The `--cov` flag generates `*.py,cover` files and `coverage.json`. Run `find backend -name '*.py,cover' -delete && rm -f backend/coverage.json` after each session, or use `--cov-report=term` (no file output). These are now in `.gitignore` but pre-existing files won't disappear.

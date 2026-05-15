@@ -24,9 +24,11 @@ env/
 # Test & coverage artifacts
 .coverage
 coverage.xml
+coverage.json
 htmlcov/
 .pytest_cache/
 .mypy_cache/
+*.py,cover
 
 # Node / frontend
 node_modules/
