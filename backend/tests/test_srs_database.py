@@ -957,6 +957,111 @@ class TestCountNewIntroducedToday:
         assert srs_db.count_new_introduced_today(today) == 1
 
 
+class TestCountReviewsCompletedToday:
+    """count_reviews_completed_today counts review/relearning directions with last_review today."""
+
+    def _seed_review(
+        self,
+        srs_db,
+        text: str,
+        state: SRSState,
+        last_review_iso: str | None,
+        last_rating: int | None = 3,
+        today_due: bool = True,
+    ):
+        srs_db.add_collocation(_unit(text, "x"), language_code="sl")
+        item = srs_db.get_collocation(text)
+        dt = date.today()
+        orig = item.directions[Direction.RECOGNITION]
+        new_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=state,
+            due_date=dt if today_due else orig.due_date,
+            stability=1.0,
+            difficulty=5.0,
+            reps=5 if state != SRSState.NEW else 0,
+            lapses=0,
+            last_review=datetime.fromisoformat(last_review_iso) if last_review_iso else None,
+            last_rating=last_rating,
+        )
+        srs_db.update_direction(item.guid, Direction.RECOGNITION, new_dir)
+
+    def test_counts_review_completed_today(self, srs_db):
+        """A REVIEW direction with last_review today and a rating counts."""
+        from datetime import datetime as _dt
+
+        today = date.today()
+        local = _dt.now().astimezone().tzinfo
+        today_noon = _dt.combine(today, time(12), tzinfo=local).astimezone(UTC).isoformat()
+        self._seed_review(srs_db, "done_today", SRSState.REVIEW, today_noon, last_rating=3)
+        assert srs_db.count_reviews_completed_today(today) == 1
+
+    def test_counts_relearning_completed_today(self, srs_db):
+        """A RELEARNING direction with last_review today counts."""
+        from datetime import datetime as _dt
+
+        today = date.today()
+        local = _dt.now().astimezone().tzinfo
+        today_noon = _dt.combine(today, time(12), tzinfo=local).astimezone(UTC).isoformat()
+        self._seed_review(srs_db, "relearn_today", SRSState.RELEARNING, today_noon, last_rating=2)
+        assert srs_db.count_reviews_completed_today(today) == 1
+
+    def test_excludes_review_from_yesterday(self, srs_db):
+        """A REVIEW direction with last_review yesterday does NOT count."""
+        from datetime import datetime as _dt
+
+        today = date.today()
+        yesterday = today - timedelta(days=1)
+        local = _dt.now().astimezone().tzinfo
+        yesterday_noon = _dt.combine(yesterday, time(12), tzinfo=local).astimezone(UTC).isoformat()
+        self._seed_review(srs_db, "yesterday", SRSState.REVIEW, yesterday_noon, last_rating=3)
+        assert srs_db.count_reviews_completed_today(today) == 0
+
+    def test_excludes_review_with_null_last_review(self, srs_db):
+        """A REVIEW direction with no last_review does NOT count."""
+        today = date.today()
+        self._seed_review(srs_db, "no_review", SRSState.REVIEW, None, last_rating=3)
+        assert srs_db.count_reviews_completed_today(today) == 0
+
+    def test_excludes_review_with_null_last_rating(self, srs_db):
+        """A REVIEW direction with a last_review today but null rating does NOT count."""
+        from datetime import datetime as _dt
+
+        today = date.today()
+        local = _dt.now().astimezone().tzinfo
+        today_noon = _dt.combine(today, time(12), tzinfo=local).astimezone(UTC).isoformat()
+        self._seed_review(srs_db, "no_rating", SRSState.REVIEW, today_noon, last_rating=None)
+        assert srs_db.count_reviews_completed_today(today) == 0
+
+    def test_counts_multiple_directions_on_same_collocation_individually(self, srs_db):
+        """Both directions of the same collocation reviewed today → counts each."""
+        from datetime import datetime as _dt
+
+        today = date.today()
+        local = _dt.now().astimezone().tzinfo
+        today_noon = _dt.combine(today, time(12), tzinfo=local).astimezone(UTC).isoformat()
+        srs_db.add_collocation(_unit("dual", "x"), language_code="sl")
+        item = srs_db.get_collocation("dual")
+        orig = item.directions[Direction.RECOGNITION]
+        for direction, state in [(Direction.RECOGNITION, SRSState.REVIEW), (Direction.PRODUCTION, SRSState.REVIEW)]:
+            srs_db.update_direction(
+                item.guid,
+                direction,
+                DirectionState(
+                    direction=direction,
+                    state=state,
+                    due_date=orig.due_date,
+                    stability=1.0,
+                    difficulty=5.0,
+                    reps=5,
+                    lapses=0,
+                    last_review=datetime.fromisoformat(today_noon),
+                    last_rating=3,
+                ),
+            )
+        assert srs_db.count_reviews_completed_today(today) == 2
+
+
 class TestViolations:
     """Tests for recording and querying SRS violations."""
 

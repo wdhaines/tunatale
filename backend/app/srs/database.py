@@ -1705,6 +1705,32 @@ class SRSDatabase:
             ).fetchone()
             return row[0] if row else 0
 
+    def count_reviews_completed_today(self, today: date) -> int:
+        """Count distinct collocation_directions with a review completed today.
+
+        Filters on state IN ('review', 'relearning') with a last_review that
+        falls within today's local-day window and a non-null last_rating
+        (filters out new-card introductions that happened to land today).
+        Mirrors Anki's 'reviews done today' derived from revlog.
+        """
+        local_tz = datetime.now().astimezone().tzinfo
+        start_utc = datetime.combine(today, time(0), tzinfo=local_tz).astimezone(UTC)
+        end_utc = datetime.combine(today + timedelta(days=1), time(0), tzinfo=local_tz).astimezone(UTC)
+        with self._get_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(DISTINCT collocation_id || '-' || direction)
+                FROM collocation_directions
+                WHERE state IN ('review', 'relearning')
+                  AND last_review IS NOT NULL
+                  AND last_review >= ?
+                  AND last_review < ?
+                  AND last_rating IS NOT NULL
+                """,
+                (start_utc.isoformat(), end_utc.isoformat()),
+            ).fetchone()
+            return row[0] if row else 0
+
     def count_due_collocations(
         self,
         as_of: date,

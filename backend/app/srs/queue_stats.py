@@ -196,6 +196,113 @@ def refresh_daily_new_cap(db: SRSDatabase, conn: sqlite3.Connection, deck_name: 
         db.set_anki_state_cache("daily_new_cap", str(cap))
 
 
+_REVIEWS_PER_DAY_FIELD = 10  # VARINT uint32 in DeckConfig.Config
+
+
+def _read_reviews_per_day_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> int | None:
+    """Read reviews-per-day from modern Anki's deck_config table (Anki ≥2.1.55).
+
+    Mirrors _read_new_per_day_from_deck_config_table but reads field 10
+    (reviews_per_day) instead of field 9 (new_per_day).
+    """
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    except sqlite3.Error:  # pragma: no cover
+        return None  # pragma: no cover
+
+    if "deck_config" not in tables or "decks" not in tables:
+        return None
+
+    conf_id = _read_conf_id_for_deck(conn, deck_name)
+    if conf_id is None:
+        return None
+
+    config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
+    if config_row is None or not config_row[0]:
+        return None
+
+    config_blob = config_row[0]
+    return find_varint_field(
+        config_blob if isinstance(config_blob, bytes) else bytes(config_blob), _REVIEWS_PER_DAY_FIELD
+    )
+
+
+def _read_reviews_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int | None:
+    """Return reviews-per-day from Anki's deck config, or None if unavailable.
+
+    Tries the legacy JSON format (col.dconf) first, then the modern protobuf
+    format (deck_config table, Anki ≥2.1.55). Mirrors _read_new_per_day_from_anki
+    but reads rev.perDay instead of new.perDay.
+    """
+    row = conn.execute("SELECT decks, dconf FROM col LIMIT 1").fetchone()
+    if row is None:
+        return None
+
+    dconf_raw = row[1] if row[1] else ""
+    if dconf_raw:
+        try:
+            decks = json.loads(row[0] or "{}")
+            dconf_json = json.loads(dconf_raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+        deck_info = next(
+            (v for v in decks.values() if isinstance(v, dict) and v.get("name") == deck_name),
+            None,
+        )
+        if deck_info is not None:
+            conf_id = str(deck_info.get("conf", 1))
+            deck_conf = dconf_json.get(conf_id)
+            if isinstance(deck_conf, dict):
+                try:
+                    return int(deck_conf["rev"]["perDay"])
+                except (KeyError, TypeError, ValueError):
+                    pass
+
+    return _read_reviews_per_day_from_deck_config_table(conn, deck_name)
+
+
+def refresh_daily_review_cap(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
+    """Read the reviews-per-day cap from collection.anki2 and write it to the cache."""
+    cap = _read_reviews_per_day_from_anki(conn, deck_name)
+    if cap is not None:
+        db.set_anki_state_cache("daily_review_cap", str(cap))
+
+
+def resolve_daily_review_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
+    """Return (cap, source) where source is 'cache', 'config', or 'default'.
+
+    Priority:
+    1. anki_state_cache (written during sync) — 'cache'
+    2. settings.anki_reviews_per_day_default — 'config'
+    3. Hard default 200 — 'default'
+    """
+    if db is None:
+        try:
+            from app.srs.database import SRSDatabase
+
+            db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        except Exception:
+            db = None
+
+    if db is not None:
+        row = db.get_anki_state_cache("daily_review_cap")
+        if row is not None:
+            value_str, updated_at = row
+            try:
+                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                    return (int(value_str), "cache")
+            except (ValueError, TypeError, OverflowError):
+                pass
+
+    config_default = getattr(settings, "anki_reviews_per_day_default", 0)
+    if config_default:
+        return (config_default, "config")
+
+    return (200, "default")
+
+
 def refresh_review_settings(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
     """Read newSpread/bury flags from Anki's deck_config protobuf and write to cache."""
     try:

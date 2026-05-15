@@ -524,6 +524,28 @@ The underlying homonym corruption (TT collocation guid points to one Anki note w
 
 ---
 
+## Layer 36 — Daily review cap on the badge (render-only)
+
+**Trigger.** After Layer 30 fixed the card-state mapping, TT showed 99 reviews while Anki showed 97 — a 2-card delta. Cross-referencing confirmed zero data drift (same 101 underlying cards). The gap was purely render: Anki applies `reviews_per_day` from `DeckConfig.Config` (protobuf field 10, default 200) to its badge; TT returned the raw uncapped `count_review_due_collocations()`.
+
+**Fix.** Mirror the existing `daily_new_cap` plumbing for reviews:
+- `_read_reviews_per_day_from_deck_config_table(conn, deck_name)` — reads protobuf field 10 from the `deck_config` table (modern Anki ≥2.1.55).
+- `_read_reviews_per_day_from_anki(conn, deck_name)` — tries legacy JSON (`dconf[id]["rev"]["perDay"]`) first, then protobuf fallback.
+- `refresh_daily_review_cap(db, conn, deck_name)` — writes the cap to `anki_state_cache` at sync time.
+- `resolve_daily_review_cap(db)` → `(cap, "cache"|"config"|"default")` — priority: cache → `settings.anki_reviews_per_day_default` (default 200) → hard default 200.
+- `count_reviews_completed_today(today)` — counts distinct `(collocation_id, direction)` pairs with `state IN ('review','relearning')`, `last_review` within today's local-day window, and non-null `last_rating`.
+- `/queue-stats` computes `review = max(0, min(due_raw, cap − reviews_today))`.
+
+**Important: render-only.** The cap is NOT applied inside `_compute_live_main` or anywhere in queue assembly. Anki doesn't cap the queue's served cards — only the badge. Defer capping the queue until requested.
+
+**Files.** `backend/app/config.py` (new setting), `backend/app/srs/queue_stats.py` (trio), `backend/app/srs/database.py` (`count_reviews_completed_today`), `backend/app/api/anki.py` (wired), `backend/app/api/srs.py` (cap applied).
+
+**Aftermath.** TT's review badge now matches Anki's deck-list "Due" count within ±1 (boundary drift at rollover acceptable). The `daily_review_cap` and `review_cap_source` fields appear in the `/queue-stats` response.
+
+**Cross-reference.** The existing `daily_new_cap` trio at `queue_stats.py:129-274` is the pattern; this layer mirrors it exactly.
+
+---
+
 ## Cleanup pass (post-Layer 23)
 
 After 23 layers, swept for dead code and duplication. Behavior unchanged.

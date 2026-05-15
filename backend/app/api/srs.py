@@ -25,6 +25,7 @@ from app.srs.queue_stats import (
     resolve_bury_new,
     resolve_bury_review,
     resolve_daily_new_cap,
+    resolve_daily_review_cap,
     resolve_fsrs_params,
     resolve_learning_cutoff,
     resolve_new_spread,
@@ -507,27 +508,32 @@ async def get_queue_stats(request: Request):
     db = request.app.state.srs_db
     today = datetime.date.today()
     db.unbury_if_needed(today)
-    cap, source = resolve_daily_new_cap(db)
+    new_cap, new_cap_source = resolve_daily_new_cap(db)
     _, fsrs_source = resolve_fsrs_params(db)
     # "Introduced today" is reconstructed from TT state (`prior_state='new'` +
     # `last_review` today): captures TT-side grades immediately and synced Anki
     # grades after the next sync. No live `collection.anki2` read on the
     # request path — sync is the cross-app alignment moment.
     introduced_today = db.count_new_introduced_today(today)
-    remaining_quota = max(0, cap - introduced_today)
+    remaining_quota = max(0, new_cap - introduced_today)
     # Badge tracks TT's view directly so every TT grade visibly decrements
     # the count (the graded card's due_date moves into the future and drops
     # out of `count_review_due_collocations`). Cross-app catch-up happens at
     # sync time: sync_pull updates TT's due_dates from Anki, so after sync
     # the count reflects Anki's grades too. Tab-visibility refetch (added in
     # the same layer) keeps the badge fresh between syncs as TT state mutates.
-    review_count = db.count_review_due_collocations(today)
+    review_due_raw = db.count_review_due_collocations(today)
+    review_cap, review_cap_source = resolve_daily_review_cap(db)
+    reviews_today = db.count_reviews_completed_today(today)
+    review_remaining = max(0, min(review_due_raw, review_cap - reviews_today))
     return {
         "new": min(remaining_quota, db.count_new_available()),
         "learning": db.count_learning(),
-        "review": review_count,
-        "daily_new_cap": cap,
-        "cap_source": source,
+        "review": review_remaining,
+        "daily_new_cap": new_cap,
+        "cap_source": new_cap_source,
+        "daily_review_cap": review_cap,
+        "review_cap_source": review_cap_source,
         "fsrs_source": fsrs_source,
     }
 

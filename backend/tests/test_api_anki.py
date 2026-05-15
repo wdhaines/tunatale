@@ -448,3 +448,69 @@ class TestAnkiStatusEndpoint:
 
         assert response.status_code == 200
         assert media_calls == ["voda"]
+
+    @patch("app.srs.queue_stats.refresh_daily_review_cap")
+    @patch("app.anki.import_seed.refresh_media_for_deck")
+    async def test_sync_calls_refresh_daily_review_cap(
+        self, mock_refresh_media_for_deck, mock_refresh_daily_review_cap, monkeypatch
+    ):
+        """refresh_daily_review_cap is invoked during a non-dry-run sync."""
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
+        monkeypatch.setattr(settings, "anki_collection_path", "/fake/collection.anki2")
+
+        conn = _make_minimal_anki_conn()
+        monkeypatch.setattr("app.anki.safety.safe_open", _make_fake_safe_open(conn))
+
+        async def fake_create_new(self, *, deck_name, model_name, dry_run=False, _media_fn=None):
+            return CreateNewReport(count=0, created=0)
+
+        def fake_push(self, dry_run=False, force_fsrs=False):
+            return PushReport()
+
+        def fake_pull(self, dry_run=False):
+            return PullReport()
+
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_create_new", fake_create_new)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_push", fake_push)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_pull", fake_pull)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post("/api/anki/sync")
+
+        assert response.status_code == 200
+        mock_refresh_daily_review_cap.assert_called_once()
+
+    @patch("app.srs.queue_stats.refresh_daily_review_cap")
+    @patch("app.anki.import_seed.refresh_media_for_deck")
+    async def test_sync_dry_run_skips_refresh_daily_review_cap(
+        self, mock_refresh_media_for_deck, mock_refresh_daily_review_cap, monkeypatch
+    ):
+        """refresh_daily_review_cap is NOT invoked during a dry-run sync."""
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
+        monkeypatch.setattr(settings, "anki_collection_path", "/fake/collection.anki2")
+
+        conn = _make_minimal_anki_conn()
+        monkeypatch.setattr("app.anki.safety.safe_open", _make_fake_safe_open(conn))
+
+        async def fake_create_new(self, *, deck_name, model_name, dry_run=False, _media_fn=None):
+            return CreateNewReport(count=0, created=0)
+
+        def fake_push(self, dry_run=False, force_fsrs=False):
+            return PushReport()
+
+        def fake_pull(self, dry_run=False):
+            return PullReport()
+
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_create_new", fake_create_new)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_push", fake_push)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_pull", fake_pull)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post("/api/anki/sync?dry_run=true")
+
+        assert response.status_code == 200
+        mock_refresh_daily_review_cap.assert_not_called()

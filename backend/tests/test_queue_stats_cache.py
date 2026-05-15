@@ -6,14 +6,17 @@ import sqlite3
 import struct
 from datetime import UTC, datetime, timedelta
 
+from app.config import settings
 from app.srs.database import SRSDatabase
 from app.srs.fsrs import DEFAULT_FSRS5_PARAMS
 from app.srs.queue_stats import (
     refresh_daily_new_cap,
+    refresh_daily_review_cap,
     refresh_fsrs_params,
     refresh_review_settings,
     resolve_bury_new,
     resolve_bury_review,
+    resolve_daily_review_cap,
     resolve_fsrs_params,
     resolve_new_spread,
 )
@@ -21,6 +24,7 @@ from tests._helpers.anki_db import (
     DESIRED_RETENTION_FIELD,
     FSRS5_WEIGHTS_FIELD,
     KNOWN_WEIGHTS,
+    make_anki_conn,
     make_deck_config_blob,
     make_deck_kind_blob,
     make_fsrs_deck_config_blob,
@@ -795,3 +799,283 @@ class TestSessionMainQueueCache:
         db = SRSDatabase(":memory:")
         clear_session_main_queue(db)  # no-op, must not raise
         clear_session_main_queue(db)  # double-clear, must not raise
+
+
+class TestReadReviewsPerDayFromAnki:
+    def test_reads_reviews_per_day_from_legacy_json(self):
+        """Legacy col.dconf format with rev.perDay returns the correct value."""
+        from app.srs.queue_stats import _read_reviews_per_day_from_anki
+
+        conn = make_anki_conn(reviews_per_day=97)
+        result = _read_reviews_per_day_from_anki(conn, "0. Slovene")
+        assert result == 97
+
+    def test_reads_reviews_per_day_from_modern_deck_config(self):
+        """Modern deck_config protobuf with reviews_per_day at field 10."""
+        from app.srs.queue_stats import _read_reviews_per_day_from_anki
+
+        conn = make_modern_anki_conn(reviews_per_day=150)
+        result = _read_reviews_per_day_from_anki(conn, "0. Slovene")
+        assert result == 150
+
+    def test_returns_none_when_dconf_empty(self):
+        """When col.dconf is empty, attempts protobuf fallback; no deck_config tables → None."""
+        from app.srs.queue_stats import _read_reviews_per_day_from_anki
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+            "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+            "decks TEXT, dconf TEXT, tags TEXT)"
+        )
+        conn.execute("INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', '', '', '{}')")
+        conn.commit()
+        result = _read_reviews_per_day_from_anki(conn, "0. Slovene")
+        assert result is None
+
+
+class TestRefreshDailyReviewCap:
+    def test_writes_to_cache(self):
+        """refresh_daily_review_cap writes the reviews-per-day value to anki_state_cache."""
+        db = SRSDatabase(":memory:")
+        conn = make_modern_anki_conn(reviews_per_day=75)
+        refresh_daily_review_cap(db, conn, "0. Slovene")
+
+        row = db.get_anki_state_cache("daily_review_cap")
+        assert row is not None
+        assert int(row[0]) == 75
+
+    def test_no_error_when_deck_config_missing(self):
+        """Graceful degradation when deck_config table doesn't exist."""
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+            "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+            "decks TEXT, dconf TEXT, tags TEXT)"
+        )
+        conn.execute("INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', '', '', '{}')")
+        conn.commit()
+        db = SRSDatabase(":memory:")
+        refresh_daily_review_cap(db, conn, "0. Slovene")  # must not raise
+        assert db.get_anki_state_cache("daily_review_cap") is None
+
+
+class TestResolveDailyReviewCap:
+    def test_returns_cache_when_fresh(self):
+        """Returns the cached value with source='cache'."""
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("daily_review_cap", "97")
+        cap, source = resolve_daily_review_cap(db)
+        assert cap == 97
+        assert source == "cache"
+
+    def test_returns_config_when_cache_missing(self):
+        """Returns settings value with source='config' when no cache exists."""
+        from unittest.mock import patch
+
+        db = SRSDatabase(":memory:")
+        with patch.object(settings, "anki_reviews_per_day_default", 150):
+            cap, source = resolve_daily_review_cap(db)
+        assert cap == 150
+        assert source == "config"
+
+    def test_returns_default_when_cache_and_config_missing(self):
+        """Hard default 200 when both cache and config are absent."""
+        from unittest.mock import patch
+
+        db = SRSDatabase(":memory:")
+        with patch.object(settings, "anki_reviews_per_day_default", 0):
+            cap, source = resolve_daily_review_cap(db)
+        assert cap == 200
+        assert source == "default"
+
+    def test_returns_default_when_cache_expired(self):
+        """Cache value older than _CACHE_MAX_AGE_DAYS falls through to config/default."""
+        db = SRSDatabase(":memory:")
+        from datetime import timedelta
+
+        stale = (datetime.now(UTC) - timedelta(days=31)).isoformat()
+        db.set_anki_state_cache("daily_review_cap", "97")
+        # Manually backdate the updated_at
+        conn = db._get_conn().__enter__()
+        conn.execute(
+            "UPDATE anki_state_cache SET updated_at = ? WHERE key = 'daily_review_cap'",
+            (stale,),
+        )
+        conn.commit()
+        cap, source = resolve_daily_review_cap(db)
+        assert source in ("config", "default")
+
+    def test_cache_parse_error_falls_through(self):
+        """Corrupt cache value triggers except and falls through."""
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("daily_review_cap", "not-a-number")
+        cap, source = resolve_daily_review_cap(db)
+        assert source in ("config", "default")
+
+    def test_resolve_with_no_db_auto_creates(self):
+        """Calling resolve_daily_review_cap() with no db auto-creates one from settings."""
+        cap, source = resolve_daily_review_cap()
+        assert isinstance(cap, int)
+        assert isinstance(source, str)
+
+
+class TestReadReviewsPerDayFromAnkiFallback:
+    def test_returns_none_when_col_table_missing_row(self):
+        """conn.execute returns None for col query."""
+        from app.srs.queue_stats import _read_reviews_per_day_from_anki
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+            "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+            "decks TEXT, dconf TEXT, tags TEXT)"
+        )
+        # No INSERT → SELECT returns no rows
+        conn.commit()
+        result = _read_reviews_per_day_from_anki(conn, "0. Slovene")
+        assert result is None
+
+    def test_legacy_json_decode_error_falls_to_protobuf(self):
+        """Corrupted dconf parses, falls through to protobuf, which returns None."""
+        from app.srs.queue_stats import _read_reviews_per_day_from_anki
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+            "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+            "decks TEXT, dconf TEXT, tags TEXT)"
+        )
+        conn.execute("INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', '{invalid', '{invalid', '{}')")
+        conn.commit()
+        result = _read_reviews_per_day_from_anki(conn, "0. Slovene")
+        # Falls through to protobuf; no deck_config table → None
+        assert result is None
+
+    def test_legacy_json_missing_perDay_goes_to_protobuf(self):
+        """dconf has rev section but no perDay → falls to protobuf."""
+        import json
+
+        from app.srs.queue_stats import _read_reviews_per_day_from_anki
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+            "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+            "decks TEXT, dconf TEXT, tags TEXT)"
+        )
+        decks = json.dumps({"1": {"name": "0. Slovene", "conf": 1}})
+        dconf = json.dumps({"1": {"new": {"perDay": 20}}})  # no rev section
+        conn.execute(
+            "INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', ?, ?, '{}')",
+            (decks, dconf),
+        )
+        conn.commit()
+        result = _read_reviews_per_day_from_anki(conn, "0. Slovene")
+        # Falls to protobuf; no deck_config table → None
+        assert result is None
+
+    def test_legacy_json_deck_not_found_falls_to_protobuf(self):
+        """Deck name not in decks JSON → deck_info None → falls to protobuf."""
+        import json
+
+        from app.srs.queue_stats import _read_reviews_per_day_from_anki
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+            "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+            "decks TEXT, dconf TEXT, tags TEXT)"
+        )
+        decks = json.dumps({"1": {"name": "Other Deck", "conf": 1}})
+        dconf = json.dumps({"1": {"rev": {"perDay": 50}}})
+        conn.execute(
+            "INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', ?, ?, '{}')",
+            (decks, dconf),
+        )
+        conn.commit()
+        result = _read_reviews_per_day_from_anki(conn, "0. Slovene")
+        assert result is None
+
+    def test_legacy_json_conf_not_dict_goes_to_protobuf(self):
+        """conf_id found but its value is not a dict → falls to protobuf."""
+        import json
+
+        from app.srs.queue_stats import _read_reviews_per_day_from_anki
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+            "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+            "decks TEXT, dconf TEXT, tags TEXT)"
+        )
+        decks = json.dumps({"1": {"name": "0. Slovene", "conf": 1}})
+        dconf = json.dumps({"1": "not-a-dict"})
+        conn.execute(
+            "INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', ?, ?, '{}')",
+            (decks, dconf),
+        )
+        conn.commit()
+        result = _read_reviews_per_day_from_anki(conn, "0. Slovene")
+        assert result is None
+
+
+class TestReadReviewsPerDayFromDeckConfigTable:
+    def test_returns_none_when_conf_id_missing(self):
+        """conf_id is None when deck is not found in decks table."""
+        from app.srs.queue_stats import _read_reviews_per_day_from_deck_config_table
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+            "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+            "decks TEXT, dconf TEXT, tags TEXT)"
+        )
+        conn.execute("INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', '', '', '{}')")
+        conn.execute(
+            "CREATE TABLE deck_config (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)"
+        )
+        conn.execute("INSERT INTO deck_config VALUES (1, 'Slovene', 0, -1, ?)", (make_deck_config_blob(30),))
+        conn.execute(
+            "CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, "
+            "usn INTEGER, common BLOB, kind BLOB)"
+        )
+        # No deck named "0. Slovene" → conf_id is None
+        conn.execute("INSERT INTO decks VALUES (1, 'Other Deck', 0, -1, NULL, ?)", (make_deck_kind_blob(1),))
+        conn.commit()
+        result = _read_reviews_per_day_from_deck_config_table(conn, "0. Slovene")
+        assert result is None
+
+    def test_returns_none_when_deck_missing_from_deck_config_table(self):
+        """conf_id found but no matching row in deck_config table."""
+        from app.srs.queue_stats import _read_reviews_per_day_from_deck_config_table
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, "
+            "dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT, "
+            "decks TEXT, dconf TEXT, tags TEXT)"
+        )
+        conn.execute("INSERT INTO col VALUES (1, 0, 0, 0, 18, 0, 0, 0, '{}', '{}', '', '', '{}')")
+        conn.execute(
+            "CREATE TABLE deck_config (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)"
+        )
+        # deck_config has id=1, but kind points to id=999
+        conn.execute("INSERT INTO deck_config VALUES (1, 'Slovene', 0, -1, ?)", (make_deck_config_blob(30),))
+        conn.execute(
+            "CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, "
+            "usn INTEGER, common BLOB, kind BLOB)"
+        )
+        conn.execute("INSERT INTO decks VALUES (1, '0. Slovene', 0, -1, NULL, ?)", (make_deck_kind_blob(999),))
+        conn.commit()
+        result = _read_reviews_per_day_from_deck_config_table(conn, "0. Slovene")
+        assert result is None

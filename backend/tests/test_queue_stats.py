@@ -629,3 +629,40 @@ def test_resolve_daily_new_cap_corrupt_cache_timestamp(monkeypatch):
     cap, source = resolve_daily_new_cap(db)
     # Falls through to config/default
     assert source in ("config", "default")
+
+
+# ── resolve_daily_review_cap ────────────────────────────────────────────────────
+
+
+def test_resolve_daily_review_cap_db_creation_fails(monkeypatch):
+    """db is None and SRSDatabase creation fails."""
+    from app.srs.queue_stats import resolve_daily_review_cap
+
+    monkeypatch.setattr(
+        "app.srs.database.SRSDatabase.__init__", lambda self, x: (_ for _ in ()).throw(Exception("test"))
+    )
+    monkeypatch.setattr("app.srs.queue_stats.settings.anki_reviews_per_day_default", 0)
+    cap, source = resolve_daily_review_cap(None)
+    assert source == "default"
+    assert cap == 200
+
+
+def test_resolve_daily_review_cap_cache_corrupt_timestamp():
+    """Cache has invalid timestamp that fromisoformat raises ValueError."""
+    from app.srs.queue_stats import resolve_daily_review_cap
+
+    db = SRSDatabase(":memory:")
+    db.set_anki_state_cache_raw("daily_review_cap", "30", "not-a-valid-timestamp")
+    cap, source = resolve_daily_review_cap(db)
+    assert source in ("config", "default")
+
+
+def test_resolve_daily_review_cap_cache_too_old():
+    """Cache exists but is older than _CACHE_MAX_AGE_DAYS (30 days)."""
+    from app.srs.queue_stats import resolve_daily_review_cap
+
+    db = SRSDatabase(":memory:")
+    old_ts = (datetime.now(UTC) - timedelta(days=31)).strftime("%Y-%m-%d %H:%M:%S")
+    db.set_anki_state_cache_raw("daily_review_cap", "30", old_ts)
+    cap, source = resolve_daily_review_cap(db)
+    assert source in ("config", "default")

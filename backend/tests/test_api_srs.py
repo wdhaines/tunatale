@@ -3,11 +3,52 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime
 
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
+
+
+def _add_review_due_collocation(db, text: str, today: date):
+    """Add a collocation with both directions in REVIEW state, due today."""
+    from app.models.syntactic_unit import SyntacticUnit
+
+    unit = SyntacticUnit(text=text, translation=text, word_count=1, difficulty=1, source="test")
+    db.add_collocation(unit, language_code="sl")
+    item = db.get_collocation(text)
+    for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
+        ds = DirectionState(
+            direction=direction,
+            due_date=today,
+            stability=5.0,
+            difficulty=4.0,
+            reps=5,
+            lapses=0,
+            state=SRSState.REVIEW,
+        )
+        db.update_direction(item.guid, direction, ds)
+
+
+def _stamp_reviews_completed_today(db, today: date, count: int):
+    """Stamp last_rating and last_review on count collocations to simulate reviews done today."""
+    import random
+
+    local_tz = datetime.now().astimezone().tzinfo
+    now_local = datetime.combine(today, datetime.min.time(), tzinfo=local_tz).replace(hour=10)
+
+    conn = db._get_conn().__enter__()
+    rows = conn.execute(
+        "SELECT collocation_id, direction FROM collocation_directions WHERE state = 'review' LIMIT ?",
+        (count,),
+    ).fetchall()
+    for row in rows:
+        conn.execute(
+            "UPDATE collocation_directions SET last_review = ?, last_rating = ? WHERE collocation_id = ? AND direction = ?",
+            (now_local.isoformat(), random.choice([1, 2, 3]), row["collocation_id"], row["direction"]),
+        )
+    conn.commit()
 
 
 class TestQueueStats:
@@ -420,6 +461,85 @@ class TestQueueStats:
         data = resp.json()
         assert data["learning"] == 2  # RELEARNING counts as learning
         assert data["review"] == 0
+
+    async def test_review_badge_capped_at_daily_review_cap(self, api_app_state):
+        """Review badge is capped at daily_review_cap when more reviews are due."""
+        db = api_app_state
+        db.set_anki_state_cache("daily_review_cap", "97")
+        today = date.today()
+        for i in range(101):
+            _add_review_due_collocation(db, f"word{i}", today)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/queue-stats")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["review"] == 97
+        assert data["daily_review_cap"] == 97
+        assert data["review_cap_source"] == "cache"
+
+    async def test_review_badge_uncapped_when_below_cap(self, api_app_state):
+        """Review badge equals raw due count when below cap."""
+        db = api_app_state
+        db.set_anki_state_cache("daily_review_cap", "97")
+        today = date.today()
+        for i in range(50):
+            _add_review_due_collocation(db, f"word{i}", today)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/queue-stats")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["review"] == 50
+        assert data["daily_review_cap"] == 97
+
+    async def test_review_badge_decrements_with_reviews_completed_today(self, api_app_state):
+        """Cap is depleted by reviews already done today."""
+        db = api_app_state
+        db.set_anki_state_cache("daily_review_cap", "97")
+        today = date.today()
+        for i in range(101):
+            _add_review_due_collocation(db, f"word{i}", today)
+        _stamp_reviews_completed_today(db, today, count=10)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/queue-stats")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["review"] == 87  # min(101, 97-10)
+
+    async def test_review_badge_floors_at_zero(self, api_app_state):
+        """Review badge never goes negative when reviews_today exceeds cap."""
+        db = api_app_state
+        db.set_anki_state_cache("daily_review_cap", "97")
+        today = date.today()
+        for i in range(101):
+            _add_review_due_collocation(db, f"word{i}", today)
+        _stamp_reviews_completed_today(db, today, count=200)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/queue-stats")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["review"] == 0
+
+    async def test_review_badge_includes_review_cap_fields_in_response(self, api_app_state):
+        """Response includes daily_review_cap and review_cap_source."""
+        db = api_app_state
+        db.set_anki_state_cache("daily_review_cap", "75")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/queue-stats")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "daily_review_cap" in data
+        assert "review_cap_source" in data
+        assert data["daily_review_cap"] == 75
+        assert data["review_cap_source"] == "cache"
+
+    async def test_review_badge_preserves_existing_new_cap_keys(self, api_app_state):
+        """daily_new_cap and cap_source still present for backwards compat."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/queue-stats")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "daily_new_cap" in data
+        assert "cap_source" in data
 
 
 class TestReviewQueue:

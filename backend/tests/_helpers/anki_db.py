@@ -34,9 +34,9 @@ KNOWN_WEIGHTS: tuple[float, ...] = (
 )
 
 
-def make_deck_config_blob(new_per_day: int) -> bytes:
-    """Build a DeckConfig.Config protobuf blob with new_per_day at field 9."""
-    return pb_varint_field(9, new_per_day)
+def make_deck_config_blob(new_per_day: int, reviews_per_day: int = 200) -> bytes:
+    """Build a DeckConfig.Config protobuf blob with new_per_day at field 9 and reviews_per_day at field 10."""
+    return pb_varint_field(9, new_per_day) + pb_varint_field(10, reviews_per_day)
 
 
 def make_deck_kind_blob(conf_id: int) -> bytes:
@@ -63,7 +63,9 @@ def make_fsrs_deck_config_blob(
     return blob
 
 
-def make_anki_conn(new_per_day: int = 20, deck_name: str = "0. Slovene") -> sqlite3.Connection:
+def make_anki_conn(
+    new_per_day: int = 20, deck_name: str = "0. Slovene", reviews_per_day: int = 200
+) -> sqlite3.Connection:
     """Build a minimal in-memory collection.anki2 with a deck config."""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -78,6 +80,7 @@ def make_anki_conn(new_per_day: int = 20, deck_name: str = "0. Slovene") -> sqli
                 "id": dconf_id,
                 "name": "Default",
                 "new": {"perDay": new_per_day, "order": 0},
+                "rev": {"perDay": reviews_per_day},
             }
         }
     )
@@ -104,7 +107,9 @@ def make_anki_conn(new_per_day: int = 20, deck_name: str = "0. Slovene") -> sqli
     return conn
 
 
-def make_modern_anki_conn(new_per_day: int = 20, deck_name: str = "0. Slovene") -> sqlite3.Connection:
+def make_modern_anki_conn(
+    new_per_day: int = 20, deck_name: str = "0. Slovene", reviews_per_day: int = 200
+) -> sqlite3.Connection:
     """Build a minimal in-memory collection.anki2 with modern deck_config/decks tables."""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -125,7 +130,7 @@ def make_modern_anki_conn(new_per_day: int = 20, deck_name: str = "0. Slovene") 
     )
     conn.execute(
         "INSERT INTO deck_config VALUES (?, ?, 0, -1, ?)",
-        (config_id, "Slovene", make_deck_config_blob(new_per_day)),
+        (config_id, "Slovene", make_deck_config_blob(new_per_day, reviews_per_day)),
     )
 
     conn.execute(
