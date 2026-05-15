@@ -156,11 +156,13 @@ class TestRateLimit:
     async def test_pacing_wait_applied(self):
         """Verify _next_call_at causes a wait before the request."""
         client = LLMClient(groq_api_key="test-key")
-        client._next_call_at = time.monotonic() + 0.01  # tiny wait
+        client._next_call_at = time.monotonic() + 0.5
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(200, json=_make_groq_response("ok")))
-            result = await client.complete("q")
+            with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+                result = await client.complete("q")
         assert result == "ok"
+        mock_sleep.assert_awaited_once()
 
     async def test_pacing_reset_after_60s(self):
         """Verify _groq_call_delay is reset after 60s with no 429."""
