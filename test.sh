@@ -13,6 +13,12 @@ echo "=== Tests ==="
 uv run pytest
 
 cd ../frontend
+echo "=== Frontend format check ==="
+bun run fmt:check
+
+echo "=== Frontend lint ==="
+bun run lint
+
 echo "=== Svelte type check ==="
 bun run check
 

@@ -14,6 +14,8 @@
 		"test:coverage": "vitest run --coverage",
 		"test:watch": "vitest",
 		"test:e2e": "playwright test",
+		"fmt": "oxfmt 'src/**/*.ts' 'src/**/*.js'",
+		"fmt:check": "oxfmt --check 'src/**/*.ts' 'src/**/*.js'",
 		"lint:fast": "oxlint src/ --ignore-pattern=*.svelte",
 		"lint:svelte": "eslint src",
 		"lint": "bun run lint:fast && bun run lint:svelte"
