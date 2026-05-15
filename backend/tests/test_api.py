@@ -1524,6 +1524,29 @@ class TestListenClozeIntegration:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
 
+    async def test_listen_skips_existing_cloze_with_populated_sentence_translation(self):
+        """Existing cloze already has sentence_translation → no re-backfill, dirty_fields unchanged."""
+        db = await self._setup_lesson(cloze_enabled=True)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        # Manually set sentence_translation to simulate already-backfilled state
+        with db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET sentence_translation = 'already set' WHERE text = 'kje'")
+            conn.commit()
+        # Clear dirty fields to verify they aren't re-marked
+        item = db.get_collocation_by_lemma("kje")
+        db.set_dirty_fields(item.guid, "")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        item = db.get_collocation_by_lemma("kje")
+        assert item.syntactic_unit.source_sentence_translation == "already set"
+        dirty = db.get_dirty_fields(item.guid)
+        assert dirty == ""  # not re-marked
+
     # ── Edge cases for _listen_grade_eligible (lines 228, 233, 236, 238) ──
 
     async def test_listen_skips_known_state(self):

@@ -302,6 +302,23 @@ class TestOfflineWriter:
         col = conn.execute("SELECT usn FROM col").fetchone()
         assert col["usn"] == -1
 
+    def test_update_note_fields_with_notetypes_table_no_match(self):
+        """notetypes table exists but note's mid has no matching row → falls through to Slovene_VOCAB_FIELD_NAMES."""
+        conn = _make_anki_full_db()
+        conn.execute(
+            "CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)"
+        )
+        conn.execute("CREATE TABLE fields (ntid INTEGER, ord INTEGER, name TEXT, config BLOB, PRIMARY KEY (ntid, ord))")
+        # Insert a notetype with id=100, but seed the note with mid=999 (no match)
+        conn.execute("INSERT INTO notetypes VALUES (100, 'Cloze', 0, 0, x'')")
+        conn.execute("INSERT INTO fields VALUES (100, 0, 'Text', x''), (100, 1, 'Back Extra', x'')")
+        _seed_note_and_cards(conn, mid=999, flds=("banka", "bank", "", "", "", "", ""))
+        writer = OfflineWriter(conn)
+        # "English" is from Slovene Vocabulary, not Cloze
+        writer.update_note_fields(9001, {"English": "bank (financial)"})
+        row = conn.execute("SELECT flds FROM notes WHERE id=9001").fetchone()
+        assert row["flds"].split("\x1f")[1] == "bank (financial)"
+
     def test_update_note_fields_with_cloze_notetype(self):
         """Cloze notetype path: update Back Extra via update_note_fields."""
         conn = _make_anki_full_db()
@@ -309,8 +326,9 @@ class TestOfflineWriter:
         conn.execute(
             "CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)"
         )
+        conn.execute("CREATE TABLE fields (ntid INTEGER, ord INTEGER, name TEXT, config BLOB, PRIMARY KEY (ntid, ord))")
         conn.execute("INSERT INTO notetypes VALUES (100, 'Cloze', 0, 0, x'')")
-        conn.execute("INSERT INTO fields VALUES (100, 0, 'Text'), (100, 1, 'Back Extra')")
+        conn.execute("INSERT INTO fields VALUES (100, 0, 'Text', x''), (100, 1, 'Back Extra', x'')")
         # Seed a cloze note with mid pointing to the Cloze notetype
         _seed_note_and_cards(conn, mid=100, flds=("vsak", "<i>every</i>", "", "", "", "", ""))
         writer = OfflineWriter(conn)

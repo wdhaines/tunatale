@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 from app.anki.backfill_cloze_sentence_translations import (
+    BackfillPlan,
+    LessonUpdate,
     apply_backfill,
     plan_backfill,
 )
@@ -56,6 +58,21 @@ def _add_cloze(db: SRSDatabase, *, text: str, source_sentence: str, translation:
 
 
 class TestPlanBackfill:
+    def test_skips_lesson_when_get_lesson_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """plan_backfill handles missing lesson gracefully (defensive guard)."""
+        db, store, _ = _seed(tmp_path)
+
+        def patched_list_all(_store):
+            return [("phantom", "c1", 1)]
+
+        monkeypatch.setattr(
+            "app.anki.backfill_cloze_sentence_translations._list_all_lessons",
+            patched_list_all,
+        )
+
+        plan = plan_backfill(db, store)
+        assert len(plan.lesson_updates) == 0
+
     def test_returns_unmatched_cloze_rows_separately(self, tmp_path: Path):
         db, store, _ = _seed(tmp_path)
         _add_translated_lesson(store, "l1", [("Kako si?", "How are you?")])
@@ -103,6 +120,67 @@ class TestPlanBackfill:
 
 
 class TestApplyBackfill:
+    def test_apply_skips_orphan_lesson(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """apply_backfill skips lesson_updates whose lesson_id no longer exists."""
+        db, store, _ = _seed(tmp_path)
+
+        def fake_plan(*_a, **_kw):
+            return BackfillPlan(
+                lesson_updates=[LessonUpdate(lesson_id="orphan", new_pairs={"Kako si?": "How are you?"})],
+                cloze_updates=[],
+            )
+
+        monkeypatch.setattr(
+            "app.anki.backfill_cloze_sentence_translations.plan_backfill",
+            fake_plan,
+        )
+
+        result = apply_backfill(db, store, dry_run=False)
+        # The orphan is counted in lessons_updated (linen count from the plan)
+        # but the write was skipped because get_lesson returned None.
+        assert result.lessons_updated == 1
+        assert result.cloze_updated == 0
+
+    def test_apply_skips_lesson_when_row_disappears(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """apply_backfill skips lesson when curriculum_id/day query returns no row."""
+        db, store, db_path = _seed(tmp_path)
+        _add_translated_lesson(store, "l1", [("Kako si?", "How are you?")])
+
+        def fake_plan(*_a, **_kw):
+            return BackfillPlan(
+                lesson_updates=[LessonUpdate(lesson_id="l1", new_pairs={"Kako si?": "How are you?"})],
+                cloze_updates=[],
+            )
+
+        monkeypatch.setattr(
+            "app.anki.backfill_cloze_sentence_translations.plan_backfill",
+            fake_plan,
+        )
+
+        from app.storage.store import ContentStore
+
+        original_get_conn = ContentStore._get_conn
+        call_count: list[int] = [0]
+
+        # must be a @contextmanager to work with 'with' blocks
+        from contextlib import contextmanager
+
+        @contextmanager
+        def patched_get_conn(self):
+            call_count[0] += 1
+            if call_count[0] == 2:
+                raw = sqlite3.connect(db_path)
+                raw.execute("DELETE FROM lessons WHERE id = 'l1'")
+                raw.commit()
+                raw.close()
+            with original_get_conn(self) as conn:
+                yield conn
+
+        monkeypatch.setattr(ContentStore, "_get_conn", patched_get_conn)
+
+        result = apply_backfill(db, store, dry_run=False)
+        assert result.lessons_updated == 1
+
     def test_writes_cloze_sentence_translation_and_marks_dirty(self, tmp_path: Path):
         db, store, _ = _seed(tmp_path)
         _add_translated_lesson(store, "l1", [("Kako si?", "How are you?")])
@@ -168,19 +246,66 @@ class TestApplyBackfill:
         assert meta["sentence_translations"] == {"Kako si?": "PRE-EXISTING"}
 
 
-@pytest.mark.parametrize(
-    "argv,expected_exit",
-    [
-        (["--dry-run"], 0),
-        ([], 0),
-    ],
-)
-def test_main_smoke(tmp_path: Path, argv: list[str], expected_exit: int):
-    """CLI runs successfully against an empty DB."""
-    from app.anki.backfill_cloze_sentence_translations import main
+class TestMainCLI:
+    def test_main_missing_db(self, tmp_path: Path):
+        """CLI returns 1 when TT database file does not exist."""
+        from app.anki.backfill_cloze_sentence_translations import main
 
-    db_path = tmp_path / "tt.db"
-    SRSDatabase(str(db_path))  # create schema
-    ContentStore(str(db_path))
-    rc = main([*argv, "--tt-db", str(db_path)])
-    assert rc == expected_exit
+        nonexistent = tmp_path / "nope.db"
+        rc = main(["--tt-db", str(nonexistent)])
+        assert rc == 1
+
+    def test_main_dry_run_with_empty_db(self, tmp_path: Path):
+        """CLI dry-run against empty DB returns 0 with no updates."""
+        from app.anki.backfill_cloze_sentence_translations import main
+
+        db_path = tmp_path / "tt.db"
+        SRSDatabase(str(db_path))  # create schema
+        ContentStore(str(db_path))
+        rc = main(["--dry-run", "--tt-db", str(db_path)])
+        assert rc == 0
+
+    def test_main_wet_run_updates_cloze(self, tmp_path: Path):
+        """CLI wet run against a DB with a matchable cloze returns 0 and updates the row."""
+        from app.anki.backfill_cloze_sentence_translations import main
+
+        db_path = tmp_path / "tt.db"
+        db = SRSDatabase(str(db_path))
+        store = ContentStore(str(db_path))
+        _add_translated_lesson(store, "l1", [("Kako si?", "How are you?")])
+        _add_cloze(db, text="kako", source_sentence="Kako si?")
+        rc = main(["--tt-db", str(db_path)])
+        assert rc == 0
+        # verify the cloze was updated
+        item = db.get_collocation_by_lemma("kako")
+        assert item is not None
+        assert item.syntactic_unit.source_sentence_translation == "How are you?"
+
+    def test_main_with_unmatched_cloze(self, tmp_path: Path):
+        """CLI prints unmatched rows when no lesson translation exists."""
+        from app.anki.backfill_cloze_sentence_translations import main
+
+        db_path = tmp_path / "tt.db"
+        db = SRSDatabase(str(db_path))
+        ContentStore(str(db_path))
+        _add_cloze(db, text="vsak", source_sentence="Odprto je vsak dan")
+        rc = main(["--tt-db", str(db_path)])
+        assert rc == 0
+        # cloze should still have empty sentence_translation
+        item = db.get_collocation_by_lemma("vsak")
+        assert item.syntactic_unit.source_sentence_translation == ""
+
+    def test_main_dry_run_with_data(self, tmp_path: Path):
+        """CLI dry-run shows plan but does not write."""
+        from app.anki.backfill_cloze_sentence_translations import main
+
+        db_path = tmp_path / "tt.db"
+        db = SRSDatabase(str(db_path))
+        store = ContentStore(str(db_path))
+        _add_translated_lesson(store, "l1", [("Kako si?", "How are you?")])
+        _add_cloze(db, text="kako", source_sentence="Kako si?")
+        rc = main(["--dry-run", "--tt-db", str(db_path)])
+        assert rc == 0
+        # nothing written
+        item = db.get_collocation_by_lemma("kako")
+        assert item.syntactic_unit.source_sentence_translation == ""
