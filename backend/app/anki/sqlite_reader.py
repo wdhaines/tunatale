@@ -214,6 +214,8 @@ def parse_fsrs_data(
         state = SRSState.RELEARNING if card_type == 3 else SRSState.LEARNING
     elif queue == 3:
         state = SRSState.RELEARNING
+    elif queue == 2:
+        state = SRSState.REVIEW
     elif reps == 0:
         state = SRSState.NEW
     else:

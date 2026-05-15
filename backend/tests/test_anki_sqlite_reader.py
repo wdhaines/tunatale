@@ -516,31 +516,65 @@ class TestParseFsrsData:
         )
         assert state.last_review == datetime.combine(date(2026, 4, 29), time.min, tzinfo=UTC)
 
-    def test_parse_fsrs_data_last_review_none_when_reps_zero(self):
-        """Bug fix: when reps=0, last_review must be None regardless of queue.
+    def test_parse_fsrs_data_queue_2_reps_0_is_review_with_no_last_review(self):
+        """Layer 30 mirror: (queue=2, reps=0) is REVIEW, not NEW.
 
-        Previously, a card with queue=2 (review) and reps=0 would get state=NEW
-        but last_review would still be computed from due/ivl, creating an invalid
-        state (NEW with last_review set).
+        Anki's "Forget Card" or manual reschedule puts cards on the review
+        queue with cleared FSRS data (reps=0). _queue_to_state in sync.py
+        already handles this; parse_fsrs_data must mirror it.
         """
         col_crt = 1388836800
-        # Card with queue=2 (review queue) but reps=0 (no reviews done)
-        # This happens when Anki's reps field is out of sync with revlog
         state = parse_fsrs_data(
             card_id=6,
             ord=0,
-            data_str="",  # no JSON → fallback
+            data_str="",
             queue=2,
-            reps=0,  # reps=0 but queue=2
+            reps=0,
             lapses=0,
             col_crt=col_crt,
             due_raw=4501,
             ivl=3,
         )
-        # State should be NEW
-        assert state.state == SRSState.NEW
-        # last_review must be None (invariant: NEW implies last_review IS NULL)
+        assert state.state == SRSState.REVIEW
         assert state.last_review is None
+
+    def test_parse_fsrs_data_queue_2_reps_0_no_data_maps_to_review(self):
+        """Layer 30 mirror: (queue=2, reps=0, data='{}') is REVIEW, not NEW.
+
+        Signature of Anki's "Forget Card" or manual reschedule — card graduated
+        to review queue but FSRS data cleared. _queue_to_state in sync.py already
+        handles this; parse_fsrs_data must mirror it or import_seed clobbers
+        sync_pull's correct state.
+        """
+        ds = parse_fsrs_data(
+            card_id=1,
+            ord=0,
+            data_str="{}",
+            queue=2,
+            reps=0,
+            lapses=0,
+            col_crt=0,
+            due_raw=4514,
+            ivl=1,
+            left=0,
+            card_type=2,
+        )
+        assert ds.state == SRSState.REVIEW
+        assert ds.last_review is None
+        assert ds.stability == 1.0
+        assert ds.difficulty == 5.0
+
+    def test_parse_fsrs_data_fallback_review_for_unknown_queue(self):
+        """Unknown queue values with reps>0 fall back to REVIEW."""
+        state = parse_fsrs_data(
+            card_id=7,
+            ord=0,
+            data_str="",
+            queue=99,
+            reps=5,
+            lapses=0,
+        )
+        assert state.state == SRSState.REVIEW
 
 
 class TestExtractL2:
