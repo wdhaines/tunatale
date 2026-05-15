@@ -1801,6 +1801,29 @@ class SRSDatabase:
             ).fetchone()
         return (row["dirty_fields"] or "") if row else ""
 
+    def set_sentence_translation_dirty(self, guid: str, sentence_translation: str) -> None:
+        """Update sentence_translation for `guid` and append `sentence_translation` to dirty_fields.
+
+        Called by the /listen backfill path and the one-shot backfill script.
+        Marks dirty so sync_push will rewrite the cloze note's Back Extra field
+        on the next push.
+        """
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT dirty_fields FROM collocations WHERE guid = ?",
+                (guid,),
+            ).fetchone()
+            if row is None:
+                return
+            existing = {f for f in (row["dirty_fields"] or "").split(",") if f}
+            existing.add("sentence_translation")
+            conn.execute(
+                "UPDATE collocations SET sentence_translation = ?, dirty_fields = ?, "
+                "updated_at = datetime('now') WHERE guid = ?",
+                (sentence_translation, ",".join(sorted(existing)), guid),
+            )
+            self._commit(conn)
+
     def update_collocation_for_sync(
         self,
         guid: str,

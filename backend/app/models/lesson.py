@@ -110,3 +110,25 @@ class Lesson:
             key_phrases=key_phrases,
             generation_metadata=data.get("generation_metadata", {}),
         )
+
+
+def extract_sentence_translations_from_translated(lesson: Lesson) -> dict[str, str]:
+    """Recover {L2_sentence: EN_translation} from a stored Lesson's TRANSLATED section.
+
+    Used to backfill `generation_metadata['sentence_translations']` on lessons
+    generated before that field existed. The TRANSLATED section emits
+    alternating L2/EN phrases (with stray EN-EN label lines like
+    "Translated"/"At the Cafe" at the top); we pair each L2 phrase with the
+    immediately-following EN phrase. First occurrence wins on duplicate L2 keys.
+    """
+    out: dict[str, str] = {}
+    l2_code = lesson.language_code
+    for section in lesson.sections:
+        if section.section_type is not SectionType.TRANSLATED:
+            continue
+        phrases = section.phrases
+        for i in range(len(phrases) - 1):
+            cur, nxt = phrases[i], phrases[i + 1]
+            if cur.language_code == l2_code and nxt.language_code == "en" and cur.text and cur.text not in out:
+                out[cur.text] = nxt.text
+    return out

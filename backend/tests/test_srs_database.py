@@ -1970,6 +1970,17 @@ class TestSourceContextFields:
             pytest.fail("nova fraza not found in items without anki note")
 
 
+class TestSetSentenceTranslationDirty:
+    """Tests for set_sentence_translation_dirty edge cases."""
+
+    def test_nonexistent_guid_does_not_raise(self, srs_db):
+        """Calling set_sentence_translation_dirty with a non-existent guid is a no-op."""
+        srs_db.set_sentence_translation_dirty(
+            guid="nonexistent-guid",
+            sentence_translation="some translation",
+        )
+
+
 class TestDatabaseURLParsing:
     """Tests for sqlite:// URL parsing in SRSDatabase."""
 

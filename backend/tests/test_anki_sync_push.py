@@ -13,6 +13,7 @@ from app.anki.sync import (
     AnkiSync,
     OfflineWriter,
     _local_today_4am,
+    build_cloze_back_extra,
 )
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -251,6 +252,20 @@ def _seed_note_and_cards(
     conn.commit()
 
 
+class TestBuildClozeBackExtra:
+    def test_build_cloze_back_extra_with_note(self):
+        """All three parts present: translation, sentence_translation, note."""
+        result = build_cloze_back_extra(
+            translation="every",
+            sentence_translation="It is open every day",
+            note="user note here",
+        )
+        assert "<i>every</i>" in result
+        assert '<span class="st">It is open every day</span>' in result
+        assert "user note here" in result
+        assert result.count("<br>") >= 4  # two separators → 4 <br> chars
+
+
 class TestOfflineWriter:
     def test_write_revlog_inserts_row(self):
         conn = _make_anki_full_db()
@@ -286,6 +301,27 @@ class TestOfflineWriter:
         assert row["mod"] > 100  # bumped past seed value
         col = conn.execute("SELECT usn FROM col").fetchone()
         assert col["usn"] == -1
+
+    def test_update_note_fields_with_cloze_notetype(self):
+        """Cloze notetype path: update Back Extra via update_note_fields."""
+        conn = _make_anki_full_db()
+        # Add notetypes table and Cloze notetype
+        conn.execute(
+            "CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)"
+        )
+        conn.execute("INSERT INTO notetypes VALUES (100, 'Cloze', 0, 0, x'')")
+        conn.execute("INSERT INTO fields VALUES (100, 0, 'Text'), (100, 1, 'Back Extra')")
+        # Seed a cloze note with mid pointing to the Cloze notetype
+        _seed_note_and_cards(conn, mid=100, flds=("vsak", "<i>every</i>", "", "", "", "", ""))
+        writer = OfflineWriter(conn)
+        writer.update_note_fields(
+            9001,
+            {"Back Extra": '<i>every</i><br><br><span class="st">It is open every day</span>'},
+        )
+        row = conn.execute("SELECT flds, usn FROM notes WHERE id=9001").fetchone()
+        parts = row["flds"].split("\x1f")
+        assert parts[1] == '<i>every</i><br><br><span class="st">It is open every day</span>'
+        assert row["usn"] == -1
 
     def test_suspend_sets_queue_minus_one_and_usn_minus_one(self):
         conn = _make_anki_full_db()
@@ -420,6 +456,94 @@ class TestSyncPush:
         AnkiSync(db=db, _reader=FakeReader(), _writer=FakeWriter()).sync_push()
 
         assert db.get_dirty_fields(guid) == ""
+
+    def test_dirty_cloze_sentence_translation_writes_back_extra(self):
+        """Cloze card with dirty sentence_translation rebuilds Back Extra and pushes."""
+        db = _make_tt_db()
+        unit = SyntacticUnit(
+            text="vsak",
+            translation="every",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="vsak",
+            card_type="cloze",
+            source_sentence="Odprto je vsak dan",
+            source_sentence_translation="It is open every day",
+        )
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation_by_lemma("vsak")
+        guid = item.guid
+        # Cloze notes have only one card (PRODUCTION).
+        db.set_anki_ids(guid, 7777, {Direction.PRODUCTION: 70001})
+        db.set_dirty_fields(guid, "sentence_translation")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert "update_note_fields" in writer.action_names()
+        call = next(c for c in writer.calls if c[0] == "update_note_fields")
+        assert call[1] == 7777
+        assert "Back Extra" in call[2]
+        be = call[2]["Back Extra"]
+        assert "<i>every</i>" in be
+        assert '<span class="st">It is open every day</span>' in be
+        # Dirty fields cleared
+        assert db.get_dirty_fields(guid) == ""
+
+    def test_dirty_cloze_translation_writes_back_extra_not_english_field(self):
+        """Cloze with dirty translation writes Back Extra (cloze has no English field)."""
+        db = _make_tt_db()
+        unit = SyntacticUnit(
+            text="vsak",
+            translation="every",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="vsak",
+            card_type="cloze",
+            source_sentence="Odprto je vsak dan",
+            source_sentence_translation="",
+        )
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation_by_lemma("vsak")
+        guid = item.guid
+        db.set_anki_ids(guid, 7777, {Direction.PRODUCTION: 70001})
+        db.set_dirty_fields(guid, "translation")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert "update_note_fields" in writer.action_names()
+        call = next(c for c in writer.calls if c[0] == "update_note_fields")
+        assert "Back Extra" in call[2]
+        assert "English" not in call[2]
+        assert "<i>every</i>" in call[2]["Back Extra"]
+
+    def test_cloze_dirty_fields_not_matching_skips_back_extra(self):
+        """Cloze with dirty field outside {translation, sentence_translation, note} → no update_note_fields."""
+        db = _make_tt_db()
+        unit = SyntacticUnit(
+            text="vsak",
+            translation="every",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="vsak",
+            card_type="cloze",
+            source_sentence="Odprto je vsak dan",
+        )
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation_by_lemma("vsak")
+        guid = item.guid
+        db.set_anki_ids(guid, 7777, {Direction.PRODUCTION: 70001})
+        # Mark a field NOT in the cloze back-extra set
+        db.set_dirty_fields(guid, "direction")
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+        assert "update_note_fields" not in writer.action_names()
+        # Dirty fields preserved since nothing was pushed
+        assert db.get_dirty_fields(guid) == "direction"
 
     def test_dirty_direction_calls_set_due_date(self):
         db = _make_tt_db()

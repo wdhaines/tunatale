@@ -202,6 +202,23 @@ def extract_cloze_sentence_translation(back_extra: str) -> str:
     return ""
 
 
+def build_cloze_back_extra(translation: str, sentence_translation: str, note: str = "") -> str:
+    """Compose a Cloze note's `Back Extra` field from its parts.
+
+    Format: `<i>WORD</i><br><br><span class="st">SENTENCE</span><br><br>NOTE`,
+    skipping any empty part. Single source of truth for both card creation
+    (sync_create_new) and edit-push (sync_push).
+    """
+    parts: list[str] = []
+    if translation:
+        parts.append(f"<i>{translation}</i>")
+    if sentence_translation:
+        parts.append(f'<span class="st">{sentence_translation}</span>')
+    if note:
+        parts.append(note)
+    return "<br><br>".join(parts)
+
+
 def extract_cloze_note(back_extra: str) -> str:
     """Extract note body from a Cloze note's back_extra (after translation/sentence spans)."""
     m = _BACK_EXTRA_SENT.match(back_extra)
@@ -348,15 +365,30 @@ class OfflineWriter:
     def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
         from app.anki.notetype import SLOVENE_VOCAB_FIELD_NAMES
 
-        row = self._conn.execute("SELECT flds FROM notes WHERE id = ?", (note_id,)).fetchone()
+        row = self._conn.execute("SELECT flds, mid FROM notes WHERE id = ?", (note_id,)).fetchone()
         if row is None:
             return
+        # Detect notetype: Cloze notes have fields ["Text", "Back Extra"];
+        # everything else falls through to SLOVENE_VOCAB_FIELD_NAMES. The
+        # notetypes table is absent in some unit-test fixtures — treat that
+        # as "use the legacy Slovene Vocabulary mapping."
+        nt_name = ""
+        try:
+            nt_row = self._conn.execute("SELECT name FROM notetypes WHERE id = ?", (row["mid"],)).fetchone()
+            if nt_row is not None:
+                nt_name = nt_row["name"] or ""
+        except sqlite3.OperationalError:
+            nt_name = ""
+        if nt_name == "Cloze":
+            field_names: list[str] = ["Text", "Back Extra"]
+        else:
+            field_names = list(SLOVENE_VOCAB_FIELD_NAMES)
         parts = row["flds"].split("\x1f")
-        name_to_idx = {name: i for i, name in enumerate(SLOVENE_VOCAB_FIELD_NAMES)}
+        name_to_idx = {name: i for i, name in enumerate(field_names)}
         for name, value in fields.items():
             idx = name_to_idx.get(name)
             if idx is None:
-                raise ValueError(f"Unknown field name for Slovene Vocabulary notetype: {name!r}")
+                raise ValueError(f"Unknown field name for {nt_name or 'Slovene Vocabulary'} notetype: {name!r}")
             parts[idx] = value
         new_flds = "\x1f".join(parts)
         ts = int(_time.time())
@@ -1445,8 +1477,18 @@ class AnkiSync:
                 continue
             dirty_set = {f for f in dirty_fields_str.split(",") if f}
             fields: dict[str, str] = {}
-            if "translation" in dirty_set:
-                fields["English"] = item.syntactic_unit.translation
+            if item.syntactic_unit.card_type == "cloze":
+                # Cloze notes: any of {translation, sentence_translation, note}
+                # dirty → rebuild Back Extra. Cloze has no separate "English" field.
+                if dirty_set & {"translation", "sentence_translation", "note"}:
+                    fields["Back Extra"] = build_cloze_back_extra(
+                        item.syntactic_unit.translation,
+                        item.syntactic_unit.source_sentence_translation,
+                        item.syntactic_unit.note,
+                    )
+            else:
+                if "translation" in dirty_set:
+                    fields["English"] = item.syntactic_unit.translation
             if not fields:
                 continue
             if not dry_run:
@@ -1625,12 +1667,10 @@ class AnkiSync:
                     item.syntactic_unit.text,
                     item.syntactic_unit.source_sentence or "",
                 )
-                trans = item.syntactic_unit.translation
-                sent_trans = item.syntactic_unit.source_sentence_translation
-                back_parts = [f"<i>{trans}</i>"] if trans else []
-                if sent_trans:
-                    back_parts.append(f'<span class="st">{sent_trans}</span>')
-                back_extra = "<br><br>".join(back_parts)
+                back_extra = build_cloze_back_extra(
+                    item.syntactic_unit.translation,
+                    item.syntactic_unit.source_sentence_translation,
+                )
                 try:
                     note_id = self._writer.create_cloze_note(
                         deck_name,

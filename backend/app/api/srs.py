@@ -250,10 +250,16 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     db = request.app.state.srs_db
 
     # ── Word-level tracking from NATURAL_SPEED section ──────────────────
-    from app.models.lesson import SectionType
+    from app.models.lesson import SectionType, extract_sentence_translations_from_translated
 
     token_glosses: dict[str, str] = lesson.generation_metadata.get("token_glosses", {})
     sentence_translations: dict[str, str] = lesson.generation_metadata.get("sentence_translations", {})
+    # Backfill path: pre-Layer-N lessons have no `sentence_translations` in
+    # metadata. Recover from the TRANSLATED section so old lessons can still
+    # populate cloze cards' Back Extra. First-occurrence wins on the merge.
+    derived_st = extract_sentence_translations_from_translated(lesson)
+    for k, v in derived_st.items():
+        sentence_translations.setdefault(k, v)
 
     natural_speed = next(
         (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
@@ -309,6 +315,15 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         else:
             # ── Existing row — skip cloze, grade recognition for eligible vocab ──
             if existing.syntactic_unit.card_type == "cloze":
+                # Backfill empty sentence_translation on existing cloze rows so
+                # the user's pre-existing cards can still surface the English
+                # sentence in Anki / TT review. Mark dirty so sync_push picks it
+                # up and rewrites Back Extra.
+                if not existing.syntactic_unit.source_sentence_translation:
+                    sent = existing.syntactic_unit.source_sentence or lemma_to_sentence.get(lemma, "")
+                    new_st = sentence_translations.get(sent, "")
+                    if new_st:
+                        db.set_sentence_translation_dirty(existing.guid, new_st)
                 continue
 
             rec = existing.directions.get(Direction.RECOGNITION)

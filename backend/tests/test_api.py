@@ -1398,6 +1398,83 @@ class TestListenClozeIntegration:
         item = db.get_collocation("dober dan")
         assert item.directions[Direction.RECOGNITION].reps == 3  # unchanged
 
+    async def test_listen_creates_cloze_with_sentence_translation_from_metadata(self):
+        """New cloze uses sentence_translations from lesson.generation_metadata."""
+        from app.storage.store import ContentStore
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        store: ContentStore = app.state.content_store
+        lesson = store.get_lesson("lesson-1")
+        lesson.generation_metadata = {"sentence_translations": {"Kje je banka?": "Where is the bank?"}}
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        item_kje = db.get_collocation_by_lemma("kje")
+        assert item_kje is not None
+        assert item_kje.syntactic_unit.source_sentence_translation == "Where is the bank?"
+
+    async def test_listen_creates_cloze_with_sentence_translation_from_translated_section(self):
+        """When metadata is missing, /listen falls back to deriving from TRANSLATED section."""
+        from app.storage.store import ContentStore
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        store: ContentStore = app.state.content_store
+        lesson = store.get_lesson("lesson-1")
+        # No sentence_translations in metadata; emulate pre-Layer-N stored lesson
+        lesson.generation_metadata = {}
+        lesson.sections.append(
+            Section(
+                section_type=SectionType.TRANSLATED,
+                phrases=[
+                    Phrase(text="Kje je banka?", voice_id="v", language_code="sl"),
+                    Phrase(text="Where is the bank?", voice_id="v", language_code="en"),
+                ],
+            )
+        )
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        item_kje = db.get_collocation_by_lemma("kje")
+        assert item_kje is not None
+        assert item_kje.syntactic_unit.source_sentence_translation == "Where is the bank?"
+
+    async def test_listen_backfills_existing_cloze_sentence_translation(self):
+        """Existing cloze with empty sentence_translation gets populated and marked dirty."""
+        from app.storage.store import ContentStore
+
+        db = await self._setup_lesson(cloze_enabled=True)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        item_kje = db.get_collocation_by_lemma("kje")
+        assert item_kje is not None
+        assert item_kje.syntactic_unit.source_sentence_translation == ""
+
+        # Simulate "card already in Anki" so sync_push will see it: stamp anki_note_id.
+        with db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET anki_note_id = 9999 WHERE guid = ?", (item_kje.guid,))
+            conn.commit()
+
+        # Re-load lesson with TRANSLATED section so /listen has source data
+        store: ContentStore = app.state.content_store
+        lesson = store.get_lesson("lesson-1")
+        lesson.generation_metadata = {"sentence_translations": {"Kje je banka?": "Where is the bank?"}}
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        item_kje = db.get_collocation_by_lemma("kje")
+        assert item_kje.syntactic_unit.source_sentence_translation == "Where is the bank?"
+
+        dirty = db.get_dirty_fields(item_kje.guid)
+        assert "sentence_translation" in dirty.split(",")
+
     async def test_listen_skips_key_phrase_when_cloze(self):
         """Key phrase existing as cloze (defensive) → skip, no crash."""
         from app.storage.store import ContentStore

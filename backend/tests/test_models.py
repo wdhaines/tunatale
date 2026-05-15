@@ -231,6 +231,83 @@ class TestLesson:
         assert restored.key_phrases == []
 
 
+class TestExtractSentenceTranslationsFromTranslated:
+    """Helper used to backfill sentence_translations from a stored Lesson's TRANSLATED section."""
+
+    def _lesson_with_translated(self, phrases: list[Phrase]) -> Lesson:
+        return Lesson(
+            title="t",
+            language_code="sl",
+            sections=[Section(section_type=SectionType.TRANSLATED, phrases=phrases)],
+        )
+
+    def test_pairs_sl_with_following_en(self):
+        from app.models.lesson import extract_sentence_translations_from_translated
+
+        lesson = self._lesson_with_translated(
+            [
+                Phrase(text="Kam greš?", voice_id="v", language_code="sl"),
+                Phrase(text="Where are you going?", voice_id="v", language_code="en"),
+                Phrase(text="Grem domov.", voice_id="v", language_code="sl"),
+                Phrase(text="I'm going home.", voice_id="v", language_code="en"),
+            ]
+        )
+        result = extract_sentence_translations_from_translated(lesson)
+        assert result == {"Kam greš?": "Where are you going?", "Grem domov.": "I'm going home."}
+
+    def test_skips_unpaired_sl(self):
+        from app.models.lesson import extract_sentence_translations_from_translated
+
+        lesson = self._lesson_with_translated(
+            [
+                Phrase(text="Kam greš?", voice_id="v", language_code="sl"),
+                Phrase(text="Še ena fraza.", voice_id="v", language_code="sl"),  # SL after SL — not paired
+                Phrase(text="Another phrase.", voice_id="v", language_code="en"),
+            ]
+        )
+        result = extract_sentence_translations_from_translated(lesson)
+        assert result == {"Še ena fraza.": "Another phrase."}
+
+    def test_first_occurrence_wins_on_duplicate(self):
+        from app.models.lesson import extract_sentence_translations_from_translated
+
+        lesson = self._lesson_with_translated(
+            [
+                Phrase(text="Kako si?", voice_id="v", language_code="sl"),
+                Phrase(text="How are you?", voice_id="v", language_code="en"),
+                Phrase(text="Kako si?", voice_id="v", language_code="sl"),
+                Phrase(text="(repeated translation)", voice_id="v", language_code="en"),
+            ]
+        )
+        result = extract_sentence_translations_from_translated(lesson)
+        assert result == {"Kako si?": "How are you?"}
+
+    def test_returns_empty_when_no_translated_section(self):
+        from app.models.lesson import extract_sentence_translations_from_translated
+
+        lesson = Lesson(
+            title="t",
+            language_code="sl",
+            sections=[Section(section_type=SectionType.NATURAL_SPEED, phrases=[])],
+        )
+        assert extract_sentence_translations_from_translated(lesson) == {}
+
+    def test_ignores_english_label_lines(self):
+        """The TRANSLATED section often opens with EN-EN label lines that we shouldn't pair."""
+        from app.models.lesson import extract_sentence_translations_from_translated
+
+        lesson = self._lesson_with_translated(
+            [
+                Phrase(text="Translated", voice_id="v", language_code="en"),
+                Phrase(text="At the Cafe", voice_id="v", language_code="en"),
+                Phrase(text="Dober dan!", voice_id="v", language_code="sl"),
+                Phrase(text="Good day!", voice_id="v", language_code="en"),
+            ]
+        )
+        result = extract_sentence_translations_from_translated(lesson)
+        assert result == {"Dober dan!": "Good day!"}
+
+
 class TestSRSItem:
     """Tests for SRSItem initial state and enum values."""
 
