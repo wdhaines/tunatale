@@ -174,118 +174,118 @@ class TestPbParsing:
 
     def test_pb_read_varint_empty_data(self):
         """Empty bytes → returns (0, 0) without error."""
-        from app.srs.queue_stats import _pb_read_varint
+        from app.anki.protobuf_wire import decode_varint
 
-        value, pos = _pb_read_varint(b"", 0)
+        value, pos = decode_varint(b"", 0)
         assert value == 0
         assert pos == 0
 
     def test_pb_skip_field_wire_type_1(self):
         """Wire type 1 (64-bit) skips exactly 8 bytes."""
-        from app.srs.queue_stats import _pb_skip_field
+        from app.anki.protobuf_wire import skip_field
 
         data = b"\x00" * 10
-        new_pos = _pb_skip_field(data, 0, 1)
+        new_pos = skip_field(data, 0, 1)
         assert new_pos == 8
 
     def test_pb_skip_field_wire_type_5(self):
         """Wire type 5 (32-bit) skips exactly 4 bytes."""
-        from app.srs.queue_stats import _pb_skip_field
+        from app.anki.protobuf_wire import skip_field
 
         data = b"\x00" * 8
-        new_pos = _pb_skip_field(data, 0, 5)
+        new_pos = skip_field(data, 0, 5)
         assert new_pos == 4
 
     def test_pb_find_varint_field_memoryview(self):
         """Accepts memoryview and converts to bytes."""
-        from app.srs.queue_stats import _pb_find_varint_field
+        from app.anki.protobuf_wire import find_varint_field
 
         blob = pb_varint_field(9, 30)
-        result = _pb_find_varint_field(memoryview(blob), 9)
+        result = find_varint_field(memoryview(blob), 9)
         assert result == 30
 
     def test_pb_find_len_field_memoryview(self):
         """Accepts memoryview and converts to bytes."""
-        from app.srs.queue_stats import _pb_find_len_field
+        from app.anki.protobuf_wire import find_len_field
 
         inner = pb_varint_field(1, 42)
         blob = pb_len_field(1, inner)
-        result = _pb_find_len_field(memoryview(blob), 1)
+        result = find_len_field(memoryview(blob), 1)
         assert result == inner
 
     def test_pb_find_varint_field_skips_other_wire_types(self):
         """Fields with different wire types before the target are skipped correctly."""
         import struct
 
-        from app.srs.queue_stats import _pb_find_varint_field
+        from app.anki.protobuf_wire import find_varint_field
 
         # field 3 (wire_type=1, 64-bit fixed), then field 9 (VARINT)
         fixed64_tag = (3 << 3) | 1
         blob = encode_varint(fixed64_tag) + struct.pack("<Q", 12345) + pb_varint_field(9, 25)
-        result = _pb_find_varint_field(blob, 9)
+        result = find_varint_field(blob, 9)
         assert result == 25
 
     def test_pb_find_len_field_exception_on_corrupt_data(self):
         """Corrupted bytes in LEN field → returns None without raising."""
-        from app.srs.queue_stats import _pb_find_len_field
+        from app.anki.protobuf_wire import find_len_field
 
         # Craft a tag for field 1 LEN but then malformed length varint (all continuation bits set)
         corrupt = bytes([(1 << 3) | 2]) + bytes([0xFF, 0xFF, 0xFF])  # tag + truncated varint length
-        result = _pb_find_len_field(corrupt, 1)
+        result = find_len_field(corrupt, 1)
         # Doesn't raise; may return None or partial - either is fine as long as no exception
         assert result is None or isinstance(result, bytes)
 
     def test_pb_skip_field_wire_type_2_via_find(self):
         """Skip a LEN-delimited field before finding the target VARINT."""
-        from app.srs.queue_stats import _pb_find_varint_field
+        from app.anki.protobuf_wire import find_varint_field
 
         # field 2 (LEN, wire_type=2) with 3-byte payload, then field 9 (VARINT=30)
         blob = pb_len_field(2, b"\x00\x01\x02") + pb_varint_field(9, 30)
-        result = _pb_find_varint_field(blob, 9)
+        result = find_varint_field(blob, 9)
         assert result == 30
 
     def test_pb_skip_varint_with_continuation_byte(self):
         """Skip a multi-byte varint field before finding the target."""
-        from app.srs.queue_stats import _pb_find_varint_field
+        from app.anki.protobuf_wire import find_varint_field
 
         # field 3 (VARINT, value=300 which requires 2 bytes), then field 9 (VARINT=7)
         # 300 in varint: 0xAC 0x02
         multi_byte_varint = bytes([0xAC, 0x02])  # 300
         blob = encode_varint((3 << 3) | 0) + multi_byte_varint + pb_varint_field(9, 7)
-        result = _pb_find_varint_field(blob, 9)
+        result = find_varint_field(blob, 9)
         assert result == 7
 
     def test_pb_find_varint_field_corrupt_tag(self):
         """Completely corrupted tag varint → returns None."""
-        from app.srs.queue_stats import _pb_find_varint_field
+        from app.anki.protobuf_wire import find_varint_field
 
         # All continuation bits set but no terminator — infinite loop guard via pos advance
         corrupt = bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])
         # In practice this reads a 10-byte varint and returns the field; we just want no exception
-        result = _pb_find_varint_field(corrupt, 9)
+        result = find_varint_field(corrupt, 9)
         assert result is None or isinstance(result, int)
 
     def test_pb_find_varint_field_skip_raises(self):
         """When skip_field raises (unknown wire type in blob), returns None."""
-        from app.srs.queue_stats import _pb_find_varint_field
+        from app.anki.protobuf_wire import find_varint_field
 
-        # Wire type 3 is deprecated and not handled; _pb_skip_field returns same pos → infinite?
-        # Actually _pb_skip_field just returns pos unchanged for unhandled wire types.
+        # Wire type 3 is deprecated and not handled; skip_field returns same pos → infinite?
+        # Actually skip_field just returns pos unchanged for unhandled wire types.
         # Test with wire_type=6 (also not handled), so the field is effectively zero-length.
         # Just check no exception is raised on unusual input.
         unusual = bytes([(5 << 3) | 6]) + pb_varint_field(9, 12)
-        result = _pb_find_varint_field(unusual, 9)
+        result = find_varint_field(unusual, 9)
         # May or may not find field 9 depending on parse; just must not raise
         assert result is None or isinstance(result, int)
 
     def test_pb_find_len_field_skips_varint_field(self):
         """Skip a VARINT field before finding the target LEN field."""
-        from app.srs.queue_stats import _pb_find_len_field
+        from app.anki.protobuf_wire import find_len_field
 
         # field 2 (VARINT=5), then field 1 (LEN)
         inner = b"\x01\x02\x03"
         blob = pb_varint_field(2, 5) + pb_len_field(1, inner)
-        result = _pb_find_len_field(blob, 1)
+        result = find_len_field(blob, 1)
         assert result == inner
 
     def test_no_conf_id_in_normal_kind_submessage(self):

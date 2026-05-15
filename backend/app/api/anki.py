@@ -39,7 +39,8 @@ async def trigger_sync(request: Request, dry_run: bool = False):
 
     try:
         with safe_open(settings.anki_collection_path, mode="rw") as ctx:
-            col_ver = ctx.conn.execute("SELECT ver FROM col").fetchone()[0]
+            col_row = ctx.conn.execute("SELECT ver, crt FROM col").fetchone()
+            col_ver, col_crt = col_row[0], col_row[1]
             reader = OfflineReader(ctx.conn, settings.anki_deck_name)
             writer = OfflineWriter(ctx.conn, media_dir=_derive_media_dir(settings.anki_collection_path))
 
@@ -55,7 +56,13 @@ async def trigger_sync(request: Request, dry_run: bool = False):
                     ),
                 )
 
-            sync = AnkiSync(db=db, _reader=reader, _writer=writer, _anki_col_ver=col_ver)
+            sync = AnkiSync(
+                db=db,
+                _reader=reader,
+                _writer=writer,
+                _anki_col_ver=col_ver,
+                _anki_col_crt=col_crt,
+            )
 
             # Self-healing: detect TT rows that point at Anki cards/notes that
             # no longer exist (deleted from Anki, lost to a force-full-download,

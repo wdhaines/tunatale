@@ -12,6 +12,7 @@ from app.anki.anki_connect import AnkiConnectClient
 from app.anki.sync import (
     AnkiSync,
     OfflineWriter,
+    _local_today_4am,
 )
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -102,6 +103,15 @@ class FakeWriter:
 
     def get_current_card_state(self, card_id: int) -> dict | None:
         return self.current_states.get(card_id)
+
+    def count_revlog_before(self, cid: int, ts_ms: int) -> int:
+        return 0
+
+    def get_deck_id_for_card(self, cid: int) -> int | None:
+        return None
+
+    def bump_deck_new_today(self, deck_id: int, today_day_index: int) -> None:
+        self.calls.append(("bump_deck_new_today", deck_id, today_day_index))
 
     def action_names(self) -> list[str]:
         return [c[0] for c in self.calls]
@@ -1577,3 +1587,332 @@ class TestPushLearningCardLeftAndDue:
         # After graduating from learning, left should be 0 and queue should be 2 (review)
         assert new_left == 0, f"Expected left=0 after graduating, got {new_left}"
         assert new_queue == 2, f"Expected queue=2 (review) after graduating, got {new_queue}"
+
+
+# ── TestSyncPushBumpNewToday ─────────────────────────────────────────────────
+
+
+def _make_anki_with_decks() -> sqlite3.Connection:
+    """Full Anki DB shape incl. col, notes, cards, revlog AND a decks table."""
+    conn = _make_anki_full_db()
+    conn.execute("CREATE TABLE decks (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, common BLOB)")
+    _REAL_BLOB = bytes.fromhex("18A12338ABA702")
+    conn.execute("INSERT INTO decks VALUES (1, '0. Slovene', 0, 0, ?)", (_REAL_BLOB,))
+    conn.commit()
+    return conn
+
+
+class TestSyncPushBumpNewToday:
+    """sync_push must bump the "new today" deck counter on NEW→non-NEW introduction."""
+
+    def test_sync_push_bumps_new_today_on_first_grade(self):
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        anki_conn = _make_anki_with_decks()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid)
+        # Set up a NEW→LEARNING transition (prior_state=new, state=learning, reps=1)
+        col_crt = 1704067200
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=1),
+            stability=1.0,
+            difficulty=5.0,
+            reps=1,
+            lapses=0,
+            state=SRSState.LEARNING,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            left=1,
+            prior_state=SRSState.NEW,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        # Build a reader that returns the note with first_review_ms=None (no prior revlog)
+        class NoRevlogReader:
+            def get_note_records(self):
+                card = make_card_record(
+                    anki_card_id=rec_cid,
+                    ord=0,
+                    queue=1,
+                    reps=1,
+                    stability=1.0,
+                    difficulty=5.0,
+                    due_date=date.today() + timedelta(days=1),
+                    first_review_ms=None,
+                )
+                return [make_note_record(anki_guid=guid, cards=[card])]
+
+        writer = OfflineWriter(anki_conn)
+        sync = AnkiSync(
+            db=db,
+            _reader=NoRevlogReader(),
+            _writer=writer,
+            _anki_col_crt=col_crt,
+        )
+        sync.sync_push()
+
+        # Verify decks.common field 4 == 1
+        row = anki_conn.execute("SELECT common FROM decks WHERE id = 1").fetchone()
+        from app.anki.protobuf_wire import find_varint_field
+
+        assert find_varint_field(bytes(row[0]), 4) == 1
+
+    def test_sync_push_does_not_bump_when_deck_id_none(self):
+        """First loop: NEW→non-NEW with no deck mapping → bump skipped (covers deck_id is None branch)."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        col_crt = 1704067200
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=10),
+            stability=10.0,
+            difficulty=4.8,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            prior_state=SRSState.NEW,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        sync = AnkiSync(
+            db=db,
+            _reader=FakeReader(),
+            _writer=writer,
+            _anki_col_crt=col_crt,
+        )
+        sync.sync_push()
+
+        bump_calls = [c for c in writer.calls if c[0] == "bump_deck_new_today"]
+        assert bump_calls == []
+
+    def test_sync_push_second_loop_bumps_new_today(self):
+        """Second loop (clean with last_rating) bumps NEW→non-NEW when no prior revlog."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        anki_conn = _make_anki_with_decks()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid)
+
+        col_crt = 1704067200
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=10),
+            stability=10.0,
+            difficulty=4.8,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=False,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            prior_state=SRSState.NEW,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        class NoPriorRevlogReader:
+            def get_note_records(self):
+                return []
+
+        writer = OfflineWriter(anki_conn)
+        sync = AnkiSync(
+            db=db,
+            _reader=NoPriorRevlogReader(),
+            _writer=writer,
+            _anki_col_crt=col_crt,
+        )
+        sync.sync_push()
+
+        row = anki_conn.execute("SELECT common FROM decks WHERE id = 1").fetchone()
+        from app.anki.protobuf_wire import find_varint_field
+
+        assert find_varint_field(bytes(row[0]), 4) == 1
+
+    def test_sync_push_first_loop_does_not_bump_when_prior_nonzero(self):
+        """First loop: NEW→non-NEW with prior revlog today → no bump (prior != 0)."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        col_crt = 1704067200
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=10),
+            stability=10.0,
+            difficulty=4.8,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            prior_state=SRSState.NEW,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        class FakeWriterWithPriorRevlog(FakeWriter):
+            def count_revlog_before(self, cid: int, ts_ms: int) -> int:
+                return 1
+
+        writer = FakeWriterWithPriorRevlog()
+        sync = AnkiSync(
+            db=db,
+            _reader=FakeReader(),
+            _writer=writer,
+            _anki_col_crt=col_crt,
+        )
+        sync.sync_push()
+
+        bump_calls = [c for c in writer.calls if c[0] == "bump_deck_new_today"]
+        assert bump_calls == []
+
+    def test_sync_push_second_loop_does_not_bump_when_prior_nonzero(self):
+        """Second loop: NEW→non-NEW with prior revlog today → no bump."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        anki_conn = _make_anki_with_decks()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid)
+
+        today_4am_ms = int(_local_today_4am().timestamp() * 1000)
+        anki_conn.execute(
+            "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) "
+            "VALUES (?, ?, -1, 3, 10, 0, 2500, 1000, 0)",
+            (today_4am_ms - 1000, rec_cid),
+        )
+        anki_conn.commit()
+
+        col_crt = 1704067200
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=10),
+            stability=10.0,
+            difficulty=4.8,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=False,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            prior_state=SRSState.NEW,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = OfflineWriter(anki_conn)
+        sync = AnkiSync(
+            db=db,
+            _reader=FakeReader(),
+            _writer=writer,
+            _anki_col_crt=col_crt,
+        )
+        sync.sync_push()
+
+        row = anki_conn.execute("SELECT common FROM decks WHERE id = 1").fetchone()
+        from app.anki.protobuf_wire import find_varint_field
+
+        assert find_varint_field(bytes(row[0]), 4) is None
+
+    def test_sync_push_second_loop_does_not_bump_when_deck_id_none(self):
+        """Second loop: NEW→non-NEW with no deck mapping → bump skipped."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        col_crt = 1704067200
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=10),
+            stability=10.0,
+            difficulty=4.8,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=False,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            prior_state=SRSState.NEW,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        sync = AnkiSync(
+            db=db,
+            _reader=FakeReader(),
+            _writer=writer,
+            _anki_col_crt=col_crt,
+        )
+        sync.sync_push()
+
+        bump_calls = [c for c in writer.calls if c[0] == "bump_deck_new_today"]
+        assert bump_calls == []
+
+    def test_sync_push_dry_run_does_not_bump(self):
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        anki_conn = _make_anki_with_decks()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid)
+
+        col_crt = 1704067200
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=1),
+            stability=1.0,
+            difficulty=5.0,
+            reps=1,
+            lapses=0,
+            state=SRSState.LEARNING,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            left=1,
+            prior_state=SRSState.NEW,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        sync = AnkiSync(
+            db=db,
+            _reader=FakeReader(),
+            _writer=writer,
+            _anki_col_crt=col_crt,
+        )
+        sync.sync_push(dry_run=True)
+
+        row = anki_conn.execute("SELECT common FROM decks WHERE id = 1").fetchone()
+        from app.anki.protobuf_wire import find_varint_field
+
+        assert find_varint_field(bytes(row[0]), 4) is None
+
+    def test_sync_push_does_not_bump_when_prior_state_not_new(self):
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        anki_conn = _make_anki_with_decks()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid)
+
+        col_crt = 1704067200
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today() + timedelta(days=10),
+            stability=10.0,
+            difficulty=4.8,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            prior_state=SRSState.REVIEW,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        sync = AnkiSync(
+            db=db,
+            _reader=FakeReader(),
+            _writer=writer,
+            _anki_col_crt=col_crt,
+        )
+        sync.sync_push()
+
+        row = anki_conn.execute("SELECT common FROM decks WHERE id = 1").fetchone()
+        from app.anki.protobuf_wire import find_varint_field
+
+        assert find_varint_field(bytes(row[0]), 4) is None

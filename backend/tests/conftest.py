@@ -126,6 +126,7 @@ def build_minimal_anki_db(
     deck_id: int = 12345,
     use_decks_table: bool = False,
     col_crt: int | None = None,
+    decks_table_with_real_common: bool = False,
 ) -> Path:
     """Create a minimal collection.anki2 for testing.
 
@@ -133,6 +134,10 @@ def build_minimal_anki_db(
     Note 5 (knjiga) has empty cards.data to trigger the fallback log.
     Production card of note 3 (miza) is suspended (queue=-1).
     col_crt defaults to 1704067200 (2024-01-01 UTC) so tests can compute expected due_dates.
+
+    When *decks_table_with_real_common* is True, the decks row gets a real
+    protobuf ``common`` blob (field 3=4513, field 7=37803) instead of ``'{}'``.
+    Implies ``use_decks_table=True``.
     """
     if col_crt is None:
         col_crt = 1704067200  # 2024-01-01 00:00:00 UTC
@@ -155,9 +160,13 @@ def build_minimal_anki_db(
         id INTEGER, cid INTEGER, usn INTEGER, ease INTEGER, ivl INTEGER,
         lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)""")
 
-    if use_decks_table:
-        conn.execute("CREATE TABLE decks (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, common TEXT)")
-        conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, '{}')", (deck_id, deck_name))
+    if use_decks_table or decks_table_with_real_common:
+        conn.execute("CREATE TABLE decks (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, common BLOB)")
+        if decks_table_with_real_common:
+            _REAL_BLOB = bytes.fromhex("18A12338ABA702")
+            conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, ?)", (deck_id, deck_name, _REAL_BLOB))
+        else:
+            conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, '{}')", (deck_id, deck_name))
         decks_json = json.dumps({})
     else:
         decks_json = json.dumps(

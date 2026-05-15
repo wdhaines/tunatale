@@ -18,31 +18,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
-def _varint(value: int) -> bytes:
-    """Encode an unsigned integer as a protobuf varint."""
-    out = bytearray()
-    while True:
-        to_write = value & 0x7F
-        value >>= 7
-        if value:
-            out.append(to_write | 0x80)
-        else:
-            out.append(to_write)
-            break
-    return bytes(out)
-
-
-def _tag(field_number: int, wire_type: int) -> bytes:
-    return _varint((field_number << 3) | wire_type)
+from app.anki.protobuf_wire import encode_tag, encode_varint, encode_varint_field
 
 
 def _length_delimited(field_number: int, payload: bytes) -> bytes:
-    return _tag(field_number, 2) + _varint(len(payload)) + payload
-
-
-def _varint_field(field_number: int, value: int) -> bytes:
-    return _tag(field_number, 0) + _varint(value)
+    return encode_tag(field_number, 2) + encode_varint(len(payload)) + payload
 
 
 SLOVENE_VOCAB_NOTETYPE_NAME = "Slovene Vocabulary"
@@ -112,7 +92,7 @@ def build_field_config(name: str, font: str = "Arial", font_size: int = 20) -> b
     other_json = b'{"media":[],"preventDeletion":false,"id":null,"tag":null}'
     out = b""
     out += _length_delimited(3, font.encode("utf-8"))
-    out += _varint_field(4, font_size)
+    out += encode_varint_field(4, font_size)
     out += _length_delimited(255, other_json)
     return out
 

@@ -9,6 +9,7 @@ import struct
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from app.anki.protobuf_wire import decode_varint, find_len_field, find_varint_field, skip_field
 from app.config import settings
 from app.srs.fsrs import DEFAULT_FSRS5_PARAMS, FSRSParams
 
@@ -34,88 +35,11 @@ def _read_conf_id_for_deck(conn: sqlite3.Connection, deck_name: str) -> int | No
         return None
 
     kind_blob = bytes(deck_row[0]) if isinstance(deck_row[0], memoryview) else deck_row[0]
-    normal_kind_bytes = _pb_find_len_field(kind_blob, 1)
+    normal_kind_bytes = find_len_field(kind_blob, 1)
     if normal_kind_bytes is None:
         return None
 
-    return _pb_find_varint_field(normal_kind_bytes, 1)
-
-
-def _pb_read_varint(data: bytes, pos: int) -> tuple[int, int]:
-    """Read a protobuf varint from data at pos. Returns (value, new_pos)."""
-    value = 0
-    shift = 0
-    while pos < len(data):
-        b = data[pos]
-        pos += 1
-        value |= (b & 0x7F) << shift
-        shift += 7
-        if not (b & 0x80):
-            break
-    return value, pos
-
-
-def _pb_skip_field(data: bytes, pos: int, wire_type: int) -> int:
-    """Skip a protobuf field. Returns new_pos."""
-    if wire_type == 0:  # VARINT
-        while pos < len(data) and (data[pos] & 0x80):
-            pos += 1
-        pos += 1
-    elif wire_type == 1:  # 64-bit fixed
-        pos += 8
-    elif wire_type == 2:  # LEN-delimited
-        length, pos = _pb_read_varint(data, pos)
-        pos += length
-    elif wire_type == 5:  # 32-bit fixed
-        pos += 4
-    return pos
-
-
-def _pb_find_varint_field(data: bytes, target_field: int) -> int | None:
-    """Scan protobuf bytes for the first VARINT with the given field number."""
-    if isinstance(data, memoryview):
-        data = bytes(data)
-    pos = 0
-    while pos < len(data):
-        try:
-            tag, pos = _pb_read_varint(data, pos)
-        except Exception:  # pragma: no cover
-            return None  # pragma: no cover
-        field_num = tag >> 3
-        wire_type = tag & 0x7
-        if field_num == target_field and wire_type == 0:
-            value, _ = _pb_read_varint(data, pos)
-            return value
-        try:
-            pos = _pb_skip_field(data, pos, wire_type)
-        except Exception:  # pragma: no cover
-            return None  # pragma: no cover
-    return None
-
-
-def _pb_find_len_field(data: bytes, target_field: int) -> bytes | None:
-    """Scan protobuf bytes for the first LEN-delimited field with the given field number."""
-    if isinstance(data, memoryview):
-        data = bytes(data)
-    pos = 0
-    while pos < len(data):
-        try:
-            tag, pos = _pb_read_varint(data, pos)
-        except Exception:  # pragma: no cover
-            return None  # pragma: no cover
-        field_num = tag >> 3
-        wire_type = tag & 0x7
-        if field_num == target_field and wire_type == 2:
-            try:
-                length, pos = _pb_read_varint(data, pos)
-                return data[pos : pos + length]
-            except Exception:  # pragma: no cover
-                return None  # pragma: no cover
-        try:
-            pos = _pb_skip_field(data, pos, wire_type)
-        except Exception:  # pragma: no cover
-            return None  # pragma: no cover
-    return None
+    return find_varint_field(normal_kind_bytes, 1)
 
 
 def _pb_find_packed_float_field(data: bytes, target_field: int) -> list[float] | None:
@@ -125,21 +49,21 @@ def _pb_find_packed_float_field(data: bytes, target_field: int) -> list[float] |
     pos = 0
     while pos < len(data):
         try:
-            tag, pos = _pb_read_varint(data, pos)
+            tag, pos = decode_varint(data, pos)
         except Exception:  # pragma: no cover
             return None  # pragma: no cover
         field_num = tag >> 3
         wire_type = tag & 0x7
         if field_num == target_field and wire_type == 2:
             try:
-                length, pos = _pb_read_varint(data, pos)
+                length, pos = decode_varint(data, pos)
                 if length % 4 != 0:
                     return None
                 return list(struct.unpack(f"<{length // 4}f", data[pos : pos + length]))
             except Exception:  # pragma: no cover
                 return None  # pragma: no cover
         try:
-            pos = _pb_skip_field(data, pos, wire_type)
+            pos = skip_field(data, pos, wire_type)
         except Exception:  # pragma: no cover
             return None  # pragma: no cover
     return None
@@ -152,7 +76,7 @@ def _pb_find_fixed32_float_field(data: bytes, target_field: int) -> float | None
     pos = 0
     while pos < len(data):
         try:
-            tag, pos = _pb_read_varint(data, pos)
+            tag, pos = decode_varint(data, pos)
         except Exception:  # pragma: no cover
             return None  # pragma: no cover
         field_num = tag >> 3
@@ -162,7 +86,7 @@ def _pb_find_fixed32_float_field(data: bytes, target_field: int) -> float | None
                 return None  # pragma: no cover
             return struct.unpack("<f", data[pos : pos + 4])[0]
         try:
-            pos = _pb_skip_field(data, pos, wire_type)
+            pos = skip_field(data, pos, wire_type)
         except Exception:  # pragma: no cover
             return None  # pragma: no cover
     return None
@@ -227,7 +151,7 @@ def _read_new_per_day_from_deck_config_table(conn: sqlite3.Connection, deck_name
 
     config_blob = config_row[0]
     # DeckConfig.Config: field 9 (VARINT) = new_per_day
-    return _pb_find_varint_field(config_blob if isinstance(config_blob, bytes) else bytes(config_blob), 9)
+    return find_varint_field(config_blob if isinstance(config_blob, bytes) else bytes(config_blob), 9)
 
 
 def _read_new_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int | None:
@@ -293,17 +217,17 @@ def refresh_review_settings(db: SRSDatabase, conn: sqlite3.Connection, deck_name
     config_blob = bytes(config_row[0]) if isinstance(config_row[0], memoryview) else config_row[0]
 
     # new_mix (newSpread): field 30 (VARINT) — 0=mix, 1=after_reviews, 2=before_reviews
-    new_spread = _pb_find_varint_field(config_blob, 30)
+    new_spread = find_varint_field(config_blob, 30)
     if new_spread is not None and new_spread in (0, 1, 2):
         db.set_anki_state_cache("new_spread", str(new_spread))
 
     # bury_new: field 27 (VARINT/bool) — default false
-    bury_new_raw = _pb_find_varint_field(config_blob, 27)
+    bury_new_raw = find_varint_field(config_blob, 27)
     if bury_new_raw is not None:
         db.set_anki_state_cache("bury_new", str(bool(bury_new_raw)))
 
     # bury_reviews: field 28 (VARINT/bool) — default false
-    bury_reviews_raw = _pb_find_varint_field(config_blob, 28)
+    bury_reviews_raw = find_varint_field(config_blob, 28)
     if bury_reviews_raw is not None:
         db.set_anki_state_cache("bury_review", str(bool(bury_reviews_raw)))
 

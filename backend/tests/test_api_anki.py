@@ -120,6 +120,53 @@ class TestSyncOfflineEndpoint:
         assert data["directions_pulled"] == 4
         assert data["dry_run"] is False
 
+    @patch("app.anki.import_seed.import_seed")
+    async def test_passes_col_crt_to_anki_sync(self, mock_import_seed, monkeypatch):
+        """Layer 4 regression: sync_push needs col.crt to compute the day_index
+        used by bump_deck_new_today. The /api/anki/sync route must read col.crt
+        and pass it as _anki_col_crt — without this, the bump path is silently
+        skipped by the `self._anki_col_crt is not None` guard."""
+        from app.anki import sync as sync_mod
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
+        monkeypatch.setattr(settings, "anki_collection_path", "/fake/collection.anki2")
+
+        conn = _make_minimal_anki_conn()
+        conn.execute("UPDATE col SET crt = 1704067200 WHERE id = 1")
+        conn.commit()
+        monkeypatch.setattr("app.anki.safety.safe_open", _make_fake_safe_open(conn))
+
+        captured: dict = {}
+        real_init = sync_mod.AnkiSync.__init__
+
+        def capturing_init(self, *args, **kwargs):
+            captured["_anki_col_crt"] = kwargs.get("_anki_col_crt")
+            captured["_anki_col_ver"] = kwargs.get("_anki_col_ver")
+            real_init(self, *args, **kwargs)
+
+        monkeypatch.setattr(sync_mod.AnkiSync, "__init__", capturing_init)
+
+        async def fake_create_new(self, *, deck_name, model_name, dry_run=False, _media_fn=None):
+            return CreateNewReport(count=0, created=0)
+
+        def fake_push(self, dry_run=False, force_fsrs=False):
+            return PushReport()
+
+        def fake_pull(self, dry_run=False):
+            return PullReport()
+
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_create_new", fake_create_new)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_push", fake_push)
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_pull", fake_pull)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post("/api/anki/sync")
+
+        assert response.status_code == 200
+        assert captured["_anki_col_crt"] == 1704067200
+        assert captured["_anki_col_ver"] == 18
+
     async def test_409_when_orphan_threshold_exceeded(self, monkeypatch):
         """When detect_and_reset_orphans aborts (likely a misconfigured deck
         path), the endpoint surfaces a 409 instead of letting the exception

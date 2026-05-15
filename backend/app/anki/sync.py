@@ -16,6 +16,12 @@ from datetime import UTC, date, datetime, time
 from pathlib import Path
 
 from app.anki.anki_connect import AnkiConnectClient
+from app.anki.protobuf_wire import (
+    compute_anki_day_index,
+    find_varint_field,
+    pb_remove_field,
+    pb_replace_or_insert_varint,
+)
 from app.anki.sqlite_reader import (
     extract_disambig_from_fields,
     extract_l2_from_fields,
@@ -205,6 +211,16 @@ def extract_cloze_note(back_extra: str) -> str:
     if m:
         return m.group(2).strip()
     return ""
+
+
+def _local_today_4am() -> datetime:
+    """Return the datetime of today's 4 AM rollover in local timezone.
+
+    Mirrors Anki's day-cutoff concept — entries with a revlog.id before this
+    timestamp are "before today" for the purpose of counting introductions.
+    """
+    local_tz = datetime.now().astimezone().tzinfo
+    return datetime.combine(date.today(), time(4), tzinfo=local_tz)
 
 
 class OfflineReader:
@@ -641,6 +657,55 @@ class OfflineWriter:
         rows = self._conn.execute("SELECT ord, id FROM cards WHERE nid = ? ORDER BY ord", (note_id,)).fetchall()
         return {row[0]: row[1] for row in rows}
 
+    # ── Protobuf field numbers in decks.common ──────────────────────────────
+    _DECKS_COMMON_LAST_DAY_STUDIED = 3
+    _DECKS_COMMON_NEW_TODAY = 4
+    _DECKS_COMMON_REVIEW_TODAY = 5
+    _DECKS_COMMON_SECONDS_TODAY = 7
+
+    def count_revlog_before(self, cid: int, ts_ms: int) -> int:
+        """Count revlog entries for *cid* whose ID < *ts_ms*."""
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM revlog WHERE cid = ? AND id < ?",
+            (cid, ts_ms),
+        ).fetchone()
+        return row[0] if row else 0
+
+    def get_deck_id_for_card(self, cid: int) -> int | None:
+        """Return the ``did`` (deck id) for *cid*, or None if not found."""
+        row = self._conn.execute("SELECT did FROM cards WHERE id = ?", (cid,)).fetchone()
+        return row[0] if row else None
+
+    def bump_deck_new_today(self, deck_id: int, today_day_index: int) -> None:
+        """Increment the "new studied today" counter for *deck_id*.
+
+        Mirrors Anki's ``update_counters_after_answering_card``: reads/writes
+        ``decks.common`` protobuf blob.
+
+        TODO: review_today and seconds_today follow the same protobuf
+        path. Extend if those counters ever drift.
+        """
+        row = self._conn.execute("SELECT common FROM decks WHERE id = ?", (deck_id,)).fetchone()
+        if row is None:
+            return
+        blob = bytes(row[0]) if row[0] else b""
+
+        last_day = find_varint_field(blob, self._DECKS_COMMON_LAST_DAY_STUDIED) or 0
+        current_new = find_varint_field(blob, self._DECKS_COMMON_NEW_TODAY) or 0
+        if last_day < today_day_index:
+            blob = pb_remove_field(blob, self._DECKS_COMMON_NEW_TODAY)
+            blob = pb_remove_field(blob, self._DECKS_COMMON_REVIEW_TODAY)
+            blob = pb_remove_field(blob, self._DECKS_COMMON_SECONDS_TODAY)
+            blob = pb_replace_or_insert_varint(blob, self._DECKS_COMMON_LAST_DAY_STUDIED, today_day_index)
+            current_new = 0
+        blob = pb_replace_or_insert_varint(blob, self._DECKS_COMMON_NEW_TODAY, current_new + 1)
+        now_ts = int(_time.time())
+        self._conn.execute(
+            "UPDATE decks SET common = ?, mtime_secs = ?, usn = -1 WHERE id = ?",
+            (blob, now_ts, deck_id),
+        )
+        self._bump_col(now_ts)
+
 
 def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool:
     """Return True only if a sync-relevant field changed between local and candidate.
@@ -887,9 +952,11 @@ class AnkiSync:
         _reader=None,
         _writer=None,
         _anki_col_ver: int | None = None,
+        _anki_col_crt: int | None = None,
     ) -> None:
         self._db = db
         self._anki_col_ver = _anki_col_ver
+        self._anki_col_crt = _anki_col_crt
         if _reader is not None:
             self._reader = _reader
         else:
@@ -1462,6 +1529,15 @@ class AnkiSync:
                         type_=type_,
                         preferred_id=preferred_id,
                     )
+                    # Bump Anki's "new today" deck counter on NEW→non-NEW
+                    if ds.prior_state == SRSState.NEW and ds.state != SRSState.NEW and self._anki_col_crt is not None:
+                        today_4am_ms = int(_local_today_4am().timestamp() * 1000)
+                        prior = self._writer.count_revlog_before(ds.anki_card_id, today_4am_ms)
+                        if prior == 0:
+                            deck_id = self._writer.get_deck_id_for_card(ds.anki_card_id)
+                            if deck_id is not None:
+                                day_index = compute_anki_day_index(self._anki_col_crt)
+                                self._writer.bump_deck_new_today(deck_id, day_index)
                 if row_force_fsrs:
                     schema_ok = self._anki_col_ver is None or self._anki_col_ver <= KNOWN_ANKI_SCHEMA_VER
                     if schema_ok:
@@ -1498,6 +1574,15 @@ class AnkiSync:
                         type_=type_,
                         preferred_id=preferred_id,
                     )
+                    # Bump Anki's "new today" deck counter on NEW→non-NEW
+                    if ds.prior_state == SRSState.NEW and ds.state != SRSState.NEW and self._anki_col_crt is not None:
+                        today_4am_ms = int(_local_today_4am().timestamp() * 1000)
+                        prior = self._writer.count_revlog_before(ds.anki_card_id, today_4am_ms)
+                        if prior == 0:
+                            deck_id = self._writer.get_deck_id_for_card(ds.anki_card_id)
+                            if deck_id is not None:
+                                day_index = compute_anki_day_index(self._anki_col_crt)
+                                self._writer.bump_deck_new_today(deck_id, day_index)
                 # Clear last_rating so it doesn't re-fire next sync
                 self._db.mark_direction_clean(guid, direction)
             report.directions_pushed += 1
@@ -1649,10 +1734,18 @@ def main(
 
     try:
         with _so(_s.anki_collection_path, mode="rw") as ctx:
-            col_ver = ctx.conn.execute("SELECT ver FROM col").fetchone()[0]
+            col_row = ctx.conn.execute("SELECT ver, crt FROM col").fetchone()
+            col_ver = col_row[0]
+            col_crt = col_row[1]
             reader = OfflineReader(ctx.conn, _s.anki_deck_name)
             writer = OfflineWriter(ctx.conn)
-            sync = AnkiSync(db=db, _reader=reader, _writer=writer, _anki_col_ver=col_ver)
+            sync = AnkiSync(
+                db=db,
+                _reader=reader,
+                _writer=writer,
+                _anki_col_ver=col_ver,
+                _anki_col_crt=col_crt,
+            )
             push = sync.sync_push(dry_run=args.dry_run, force_fsrs=args.force_fsrs)
             pull = sync.sync_pull(dry_run=args.dry_run)
             print(
