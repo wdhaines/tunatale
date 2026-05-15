@@ -742,6 +742,70 @@ class OfflineWriter:
         )
         self._bump_col(now_ts)
 
+    def list_decks_with_revlog_today(self, today_4am_ms: int) -> list[int]:
+        """Return distinct deck IDs that have at least one revlog entry since *today_4am_ms*.
+
+        Used by `AnkiSync._recompute_anki_new_today_all_decks` to know which
+        decks need their newToday counter rewritten.
+        """
+        try:
+            rows = self._conn.execute(
+                "SELECT DISTINCT c.did FROM revlog r JOIN cards c ON c.id = r.cid WHERE r.id >= ?",
+                (today_4am_ms,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        return [r[0] for r in rows]
+
+    def count_first_grades_today_for_deck(self, deck_id: int, today_4am_ms: int) -> int:
+        """Count distinct cards in *deck_id* whose first-ever revlog id >= *today_4am_ms*.
+
+        Mirrors Anki's "newToday" semantic: a card transitions NEW→non-NEW on
+        its first revlog entry, and that's the moment newToday increments.
+        Subsequent grades of the same card do not bump it.
+        """
+        try:
+            row = self._conn.execute(
+                """
+                SELECT COUNT(*) FROM (
+                    SELECT r.cid FROM revlog r JOIN cards c ON c.id = r.cid AND c.did = ?
+                    GROUP BY r.cid HAVING MIN(r.id) >= ?
+                )
+                """,
+                (deck_id, today_4am_ms),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return 0
+        return row[0] if row else 0
+
+    def set_deck_new_today(self, deck_id: int, today_day_index: int, new_today: int) -> None:
+        """Set ``deck.common.new_today`` to an explicit value (recompute path).
+
+        Unlike `bump_deck_new_today`, this writes a known count rather than
+        incrementing. Used by `_recompute_anki_new_today_all_decks` to align
+        the deck counter with revlog reality on every sync, eliminating any
+        per-push counting drift. Rollover handling (clear today fields when
+        last_day_studied is older) matches `bump_deck_new_today`.
+        """
+        row = self._conn.execute("SELECT common FROM decks WHERE id = ?", (deck_id,)).fetchone()
+        if row is None:
+            return
+        blob = bytes(row[0]) if row[0] else b""
+
+        last_day = find_varint_field(blob, self._DECKS_COMMON_LAST_DAY_STUDIED) or 0
+        if last_day < today_day_index:
+            blob = pb_remove_field(blob, self._DECKS_COMMON_NEW_TODAY)
+            blob = pb_remove_field(blob, self._DECKS_COMMON_REVIEW_TODAY)
+            blob = pb_remove_field(blob, self._DECKS_COMMON_SECONDS_TODAY)
+            blob = pb_replace_or_insert_varint(blob, self._DECKS_COMMON_LAST_DAY_STUDIED, today_day_index)
+        blob = pb_replace_or_insert_varint(blob, self._DECKS_COMMON_NEW_TODAY, new_today)
+        now_ts = int(_time.time())
+        self._conn.execute(
+            "UPDATE decks SET common = ?, mtime_secs = ?, usn = -1 WHERE id = ?",
+            (blob, now_ts, deck_id),
+        )
+        self._bump_col(now_ts)
+
 
 def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool:
     """Return True only if a sync-relevant field changed between local and candidate.
@@ -1472,6 +1536,43 @@ class AnkiSync:
             build_and_freeze_main_queue(self._db)
         return report
 
+    def _capture_anki_card_state(self, card_id: int) -> dict | None:
+        """Snapshot ``cards.{queue, type, left}`` for *card_id* before mutating it.
+
+        Retained for the anki_ahead conflict-resolution check in sync_push.
+        """
+        if hasattr(self._writer, "get_current_card_state"):
+            return self._writer.get_current_card_state(card_id)
+        return None
+
+    def _recompute_anki_new_today_all_decks(self) -> None:
+        """Set every revlog-touched deck's ``new_today`` counter from revlog reality.
+
+        Replaces per-push increment. Walks ``SELECT DISTINCT did`` for cards
+        with any revlog ``id >= today_4am_ms``, then for each deck counts
+        distinct cards whose *first* revlog id falls today (mirroring Anki's
+        newToday semantic) and writes that count back to ``deck.common.new_today``.
+
+        Idempotent — running it twice in a row produces the same result.
+        Eliminates the per-push double-count drift that the older increment
+        approach was prone to (Anki grades a card → Anki bumps; TT pushes the
+        same card → push bumped again).
+
+        No-op when the writer doesn't support the three methods (e.g., legacy
+        AnkiConnect path, FakeReader-only tests). Also no-op when col.crt is
+        unknown (can't compute today_day_index).
+        """
+        if self._anki_col_crt is None:
+            return
+        required = ("list_decks_with_revlog_today", "count_first_grades_today_for_deck", "set_deck_new_today")
+        if not all(hasattr(self._writer, m) for m in required):
+            return
+        today_4am_ms = int(_local_today_4am().timestamp() * 1000)
+        day_index = compute_anki_day_index(self._anki_col_crt)
+        for deck_id in self._writer.list_decks_with_revlog_today(today_4am_ms):
+            count = self._writer.count_first_grades_today_for_deck(deck_id, today_4am_ms)
+            self._writer.set_deck_new_today(deck_id, day_index, count)
+
     def sync_push(self, dry_run: bool = False, force_fsrs: bool = False) -> PushReport:
         """Push TunaTale → Anki. Returns a PushReport summarising changes."""
         report = PushReport()
@@ -1512,6 +1613,11 @@ class AnkiSync:
             row_force_fsrs = force_fsrs or (guid, direction.value) in recovered
             days_str = str(max(0, (ds.due_date - date.today()).days))
             if not dry_run:
+                # Snapshot Anki's pre-push card state for the anki_ahead
+                # conflict-resolution check. Must be captured BEFORE
+                # set_learning_state / set_due_date, which mutate cards.queue.
+                anki_state_before = self._capture_anki_card_state(ds.anki_card_id)
+
                 if ds.state == SRSState.SUSPENDED:
                     self._writer.suspend([ds.anki_card_id])
                 else:
@@ -1528,11 +1634,7 @@ class AnkiSync:
                     # stale TT view would clobber Anki's correct step state /
                     # graduation. The matching pull-side defense (Fix 2) then
                     # carries Anki's view into TT and clears dirty_fsrs.
-                    anki_now = (
-                        self._writer.get_current_card_state(ds.anki_card_id)
-                        if hasattr(self._writer, "get_current_card_state")
-                        else None
-                    )
+                    anki_now = anki_state_before
                     anki_ahead = False
                     if anki_now is not None:
                         if anki_now["queue"] == 2:
@@ -1575,15 +1677,6 @@ class AnkiSync:
                         type_=type_,
                         preferred_id=preferred_id,
                     )
-                    # Bump Anki's "new today" deck counter on NEW→non-NEW
-                    if ds.prior_state == SRSState.NEW and ds.state != SRSState.NEW and self._anki_col_crt is not None:
-                        today_4am_ms = int(_local_today_4am().timestamp() * 1000)
-                        prior = self._writer.count_revlog_before(ds.anki_card_id, today_4am_ms)
-                        if prior == 0:
-                            deck_id = self._writer.get_deck_id_for_card(ds.anki_card_id)
-                            if deck_id is not None:
-                                day_index = compute_anki_day_index(self._anki_col_crt)
-                                self._writer.bump_deck_new_today(deck_id, day_index)
                 if row_force_fsrs:
                     schema_ok = self._anki_col_ver is None or self._anki_col_ver <= KNOWN_ANKI_SCHEMA_VER
                     if schema_ok:
@@ -1620,18 +1713,14 @@ class AnkiSync:
                         type_=type_,
                         preferred_id=preferred_id,
                     )
-                    # Bump Anki's "new today" deck counter on NEW→non-NEW
-                    if ds.prior_state == SRSState.NEW and ds.state != SRSState.NEW and self._anki_col_crt is not None:
-                        today_4am_ms = int(_local_today_4am().timestamp() * 1000)
-                        prior = self._writer.count_revlog_before(ds.anki_card_id, today_4am_ms)
-                        if prior == 0:
-                            deck_id = self._writer.get_deck_id_for_card(ds.anki_card_id)
-                            if deck_id is not None:
-                                day_index = compute_anki_day_index(self._anki_col_crt)
-                                self._writer.bump_deck_new_today(deck_id, day_index)
                 # Clear last_rating so it doesn't re-fire next sync
                 self._db.mark_direction_clean(guid, direction)
             report.directions_pushed += 1
+
+        # Recompute Anki's deck.newToday from revlog reality. Runs after both
+        # push loops so it sees every revlog this push just wrote. Idempotent.
+        if not dry_run:
+            self._recompute_anki_new_today_all_decks()
 
         return report
 

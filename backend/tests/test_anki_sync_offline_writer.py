@@ -119,3 +119,114 @@ class TestBumpDeckNewToday:
         writer.bump_deck_new_today(999, 4513)
         row = conn.execute("SELECT COUNT(*) FROM decks WHERE id = 999").fetchone()
         assert row[0] == 0
+
+
+class TestListDecksWithRevlogToday:
+    def test_returns_distinct_deck_ids(self):
+        conn = _make_decks_db()
+        conn.execute("CREATE TABLE revlog (id INTEGER, cid INTEGER)")
+        conn.execute("CREATE TABLE cards (id INTEGER, did INTEGER)")
+        # Two cards in deck 1, one in deck 2; revlog has entries today (>= 1000) and yesterday (< 1000).
+        conn.execute("INSERT INTO cards VALUES (10, 1), (11, 1), (20, 2)")
+        conn.execute("INSERT INTO revlog VALUES (500, 10), (1500, 10), (2500, 11), (3500, 20)")
+        conn.commit()
+        writer = OfflineWriter(conn)
+        result = sorted(writer.list_decks_with_revlog_today(1000))
+        assert result == [1, 2]
+
+    def test_excludes_pre_today_only_decks(self):
+        conn = _make_decks_db()
+        conn.execute("CREATE TABLE revlog (id INTEGER, cid INTEGER)")
+        conn.execute("CREATE TABLE cards (id INTEGER, did INTEGER)")
+        conn.execute("INSERT INTO cards VALUES (10, 1), (20, 2)")
+        # Deck 1 has only pre-today revlog; Deck 2 has today's.
+        conn.execute("INSERT INTO revlog VALUES (500, 10), (1500, 20)")
+        conn.commit()
+        writer = OfflineWriter(conn)
+        result = writer.list_decks_with_revlog_today(1000)
+        assert result == [2]
+
+    def test_no_revlog_table_returns_empty(self):
+        conn = _make_decks_db()
+        # No revlog or cards table — must not raise.
+        writer = OfflineWriter(conn)
+        assert writer.list_decks_with_revlog_today(1000) == []
+
+
+class TestCountFirstGradesTodayForDeck:
+    def test_counts_only_first_revlog_today(self):
+        conn = _make_decks_db()
+        conn.execute("CREATE TABLE revlog (id INTEGER, cid INTEGER)")
+        conn.execute("CREATE TABLE cards (id INTEGER, did INTEGER)")
+        conn.execute("INSERT INTO cards VALUES (10, 1), (11, 1), (12, 1), (20, 2)")
+        # cid=10: first-grade today (>= 1000) → counts.
+        # cid=11: first-grade YESTERDAY (< 1000), graded again today → does NOT count.
+        # cid=12: first-grade today → counts.
+        # cid=20: in deck 2 → not in deck 1's count.
+        conn.execute("""
+            INSERT INTO revlog VALUES
+              (1500, 10),
+              (500, 11), (1600, 11),
+              (1700, 12),
+              (1800, 20)
+        """)
+        conn.commit()
+        writer = OfflineWriter(conn)
+        assert writer.count_first_grades_today_for_deck(1, 1000) == 2
+
+    def test_zero_when_no_cards(self):
+        conn = _make_decks_db()
+        conn.execute("CREATE TABLE revlog (id INTEGER, cid INTEGER)")
+        conn.execute("CREATE TABLE cards (id INTEGER, did INTEGER)")
+        conn.commit()
+        writer = OfflineWriter(conn)
+        assert writer.count_first_grades_today_for_deck(1, 1000) == 0
+
+    def test_catches_operational_error_when_revlog_table_missing(self):
+        conn = _make_decks_db()
+        writer = OfflineWriter(conn)
+        assert writer.count_first_grades_today_for_deck(1, 1000) == 0
+
+
+class TestSetDeckNewToday:
+    def test_writes_explicit_value(self):
+        conn = _make_decks_db()
+        writer = OfflineWriter(conn)
+        writer.set_deck_new_today(_DECK_ID, 4513, 17)
+
+        row = conn.execute("SELECT common, usn FROM decks WHERE id = ?", (_DECK_ID,)).fetchone()
+        blob = bytes(row[0]) if row[0] else b""
+        assert find_varint_field(blob, 4) == 17
+        assert find_varint_field(blob, 3) == 4513
+        assert row["usn"] == -1
+
+    def test_overwrites_existing_value(self):
+        blob = b""
+        from app.anki.protobuf_wire import encode_varint_field
+
+        blob += encode_varint_field(3, 4513)
+        blob += encode_varint_field(4, 30)  # the overcounted value
+        conn = _make_decks_db(blob)
+        writer = OfflineWriter(conn)
+        # Recompute to truth.
+        writer.set_deck_new_today(_DECK_ID, 4513, 24)
+        row = conn.execute("SELECT common FROM decks WHERE id = ?", (_DECK_ID,)).fetchone()
+        assert find_varint_field(bytes(row[0]), 4) == 24
+
+    def test_applies_rollover_when_last_day_older(self):
+        conn = _make_decks_db_with_review_new_reset()
+        writer = OfflineWriter(conn)
+        writer.set_deck_new_today(_DECK_ID, 4513, 5)
+        row = conn.execute("SELECT common FROM decks WHERE id = ?", (_DECK_ID,)).fetchone()
+        blob = bytes(row[0]) if row[0] else b""
+        assert find_varint_field(blob, 3) == 4513
+        assert find_varint_field(blob, 4) == 5
+        assert find_varint_field(blob, 5) is None
+        assert find_varint_field(blob, 7) is None
+
+    def test_missing_deck_is_noop(self):
+        conn = _make_decks_db()
+        writer = OfflineWriter(conn)
+        writer.set_deck_new_today(999, 4513, 5)
+        row = conn.execute("SELECT COUNT(*) FROM decks WHERE id = 999").fetchone()
+        assert row[0] == 0

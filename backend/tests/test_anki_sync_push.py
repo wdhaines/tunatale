@@ -114,6 +114,15 @@ class FakeWriter:
     def bump_deck_new_today(self, deck_id: int, today_day_index: int) -> None:
         self.calls.append(("bump_deck_new_today", deck_id, today_day_index))
 
+    def list_decks_with_revlog_today(self, today_4am_ms: int) -> list[int]:
+        return []
+
+    def count_first_grades_today_for_deck(self, deck_id: int, today_4am_ms: int) -> int:
+        return 0
+
+    def set_deck_new_today(self, deck_id: int, today_day_index: int, new_today: int) -> None:
+        self.calls.append(("set_deck_new_today", deck_id, today_day_index, new_today))
+
     def action_names(self) -> list[str]:
         return [c[0] for c in self.calls]
 
@@ -1751,7 +1760,8 @@ class TestSyncPushBumpNewToday:
         db = _make_tt_db()
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         anki_conn = _make_anki_with_decks()
-        _seed_note_and_cards(anki_conn, rec_cid=rec_cid)
+        # First grade scenario: Anki's card is still NEW (queue=0, type=0).
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid, queue=0, card_type=0)
         # Set up a NEW→LEARNING transition (prior_state=new, state=learning, reps=1)
         col_crt = 1704067200
         ds = DirectionState(
@@ -1837,7 +1847,8 @@ class TestSyncPushBumpNewToday:
         db = _make_tt_db()
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         anki_conn = _make_anki_with_decks()
-        _seed_note_and_cards(anki_conn, rec_cid=rec_cid)
+        # First-introduction scenario: Anki card is still NEW.
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid, queue=0, card_type=0)
 
         col_crt = 1704067200
         ds = DirectionState(
@@ -1909,8 +1920,13 @@ class TestSyncPushBumpNewToday:
         bump_calls = [c for c in writer.calls if c[0] == "bump_deck_new_today"]
         assert bump_calls == []
 
-    def test_sync_push_second_loop_does_not_bump_when_prior_nonzero(self):
-        """Second loop: NEW→non-NEW with prior revlog today → no bump."""
+    def test_sync_push_counts_zero_when_first_grade_was_yesterday(self):
+        """Recompute correctly counts 0 when the card's first revlog is from a prior day.
+
+        Even though sync_push writes a fresh revlog today, MIN(revlog.id) for
+        this cid is yesterday's seeded entry — so the card doesn't qualify as a
+        first-grade-today.
+        """
         db = _make_tt_db()
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         anki_conn = _make_anki_with_decks()
@@ -1952,7 +1968,7 @@ class TestSyncPushBumpNewToday:
         row = anki_conn.execute("SELECT common FROM decks WHERE id = 1").fetchone()
         from app.anki.protobuf_wire import find_varint_field
 
-        assert find_varint_field(bytes(row[0]), 4) is None
+        assert find_varint_field(bytes(row[0]), 4) == 0
 
     def test_sync_push_second_loop_does_not_bump_when_deck_id_none(self):
         """Second loop: NEW→non-NEW with no deck mapping → bump skipped."""
@@ -2023,11 +2039,158 @@ class TestSyncPushBumpNewToday:
 
         assert find_varint_field(bytes(row[0]), 4) is None
 
-    def test_sync_push_does_not_bump_when_prior_state_not_new(self):
+    def test_sync_push_counts_once_when_card_graded_in_both_apps(self):
+        """Card graded today in Anki AND in TT → recompute counts it exactly once.
+
+        Scenario: user graded card X in Anki first (revlog entry today, Anki's
+        newToday=1), then graded in TT, then synced. TT's push writes a second
+        revlog today for the same cid. The recompute counts DISTINCT cids
+        whose MIN(revlog.id) is today — still 1, not 2.
+        """
         db = _make_tt_db()
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         anki_conn = _make_anki_with_decks()
-        _seed_note_and_cards(anki_conn, rec_cid=rec_cid)
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid, queue=1, card_type=1, due=0, ivl=0)
+
+        # Simulate Anki's earlier-today grade with a revlog entry.
+        today_4am_ms = int(_local_today_4am().timestamp() * 1000)
+        anki_conn.execute(
+            "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) "
+            "VALUES (?, ?, -1, 3, 1, 0, 2500, 1000, 0)",
+            (today_4am_ms + 100, rec_cid),
+        )
+        anki_conn.commit()
+
+        col_crt = 1704067200
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=1.0,
+            difficulty=5.0,
+            reps=1,
+            lapses=0,
+            state=SRSState.LEARNING,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            left=1,
+            prior_state=SRSState.NEW,
+        )
+        from datetime import datetime as _dt
+
+        ds.due_at = _dt.now(UTC) + timedelta(minutes=1)
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = OfflineWriter(anki_conn)
+        sync = AnkiSync(
+            db=db,
+            _reader=FakeReader(),
+            _writer=writer,
+            _anki_col_crt=col_crt,
+        )
+        sync.sync_push()
+
+        row = anki_conn.execute("SELECT common FROM decks WHERE id = 1").fetchone()
+        from app.anki.protobuf_wire import find_varint_field
+
+        # Distinct cid count whose first revlog is today = 1 (rec_cid).
+        # Both revlog entries are today's, but they share one cid.
+        assert find_varint_field(bytes(row[0]), 4) == 1
+
+    def test_sync_push_does_not_double_bump_on_second_push_same_card(self):
+        """`prior_state='new'` is sticky across learning steps. The bump must
+        fire only on the first push (when Anki's card is still queue=0). The
+        second push for the same card has queue=1 (set by the first push), so
+        no bump.
+        """
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        anki_conn = _make_anki_with_decks()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid, queue=0, card_type=0, due=0, ivl=0)
+
+        col_crt = 1704067200
+
+        from datetime import datetime as _dt
+
+        # First push: NEW→LEARNING, left=2
+        ds1 = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=1.0,
+            difficulty=5.0,
+            reps=1,
+            lapses=0,
+            state=SRSState.LEARNING,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            left=2,
+            prior_state=SRSState.NEW,
+        )
+        ds1.due_at = _dt.now(UTC) + timedelta(minutes=1)
+        db.update_direction(guid, Direction.RECOGNITION, ds1)
+
+        writer = OfflineWriter(anki_conn)
+        sync = AnkiSync(
+            db=db,
+            _reader=FakeReader(),
+            _writer=writer,
+            _anki_col_crt=col_crt,
+        )
+        sync.sync_push()
+
+        from app.anki.protobuf_wire import find_varint_field
+
+        row = anki_conn.execute("SELECT common FROM decks WHERE id = 1").fetchone()
+        assert find_varint_field(bytes(row[0]), 4) == 1, "first push should bump"
+
+        # Second push: user graded again, still in learning. prior_state STAYS new (sticky).
+        ds2 = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=1.5,
+            difficulty=5.0,
+            reps=2,
+            lapses=0,
+            state=SRSState.LEARNING,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            left=1,
+            prior_state=SRSState.NEW,  # sticky
+        )
+        ds2.due_at = _dt.now(UTC) + timedelta(minutes=2)
+        db.update_direction(guid, Direction.RECOGNITION, ds2)
+
+        sync2 = AnkiSync(
+            db=db,
+            _reader=FakeReader(),
+            _writer=writer,
+            _anki_col_crt=col_crt,
+        )
+        sync2.sync_push()
+
+        row = anki_conn.execute("SELECT common FROM decks WHERE id = 1").fetchone()
+        # Counter should still be 1, not 2
+        assert find_varint_field(bytes(row[0]), 4) == 1, "second push must NOT bump again"
+
+    def test_sync_push_counts_zero_for_review_push_with_prior_history(self):
+        """Recompute correctly excludes a review-state push when the card was
+        already first-graded on a prior day.
+        """
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        anki_conn = _make_anki_with_decks()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid, queue=2, card_type=2)
+
+        # Card was already graded prior to today.
+        today_4am_ms = int(_local_today_4am().timestamp() * 1000)
+        anki_conn.execute(
+            "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) "
+            "VALUES (?, ?, -1, 3, 10, 0, 2500, 1000, 0)",
+            (today_4am_ms - 100000, rec_cid),
+        )
+        anki_conn.commit()
 
         col_crt = 1704067200
         ds = DirectionState(
@@ -2058,3 +2221,23 @@ class TestSyncPushBumpNewToday:
         from app.anki.protobuf_wire import find_varint_field
 
         assert find_varint_field(bytes(row[0]), 4) is None
+
+    def test_sync_push_skips_recompute_when_writer_lacks_methods(self):
+        """Writer missing list_decks_with_revlog_today → recompute is no-op (covers early return)."""
+        db = _make_tt_db()
+        col_crt = 1704067200
+
+        class BareWriter:
+            pass
+
+        writer = BareWriter()
+        sync = AnkiSync(
+            db=db,
+            _reader=FakeReader(),
+            _writer=writer,
+            _anki_col_crt=col_crt,
+        )
+        # Should not raise despite the writer lacking all three required methods.
+        sync.sync_push()
+        # No assertion needed — the test passes if no exception is raised;
+        # the hasattr guard in _recompute_anki_new_today_all_decks returns early.
