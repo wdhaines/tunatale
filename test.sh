@@ -14,12 +14,12 @@ uv run pytest
 
 cd ../frontend
 echo "=== Svelte type check ==="
-npm run check
+bun run check
 
 echo "=== Frontend tests (with coverage) ==="
-npm run test:coverage
+bun run test:coverage
 
 echo "=== E2E smoke tests ==="
-npm run test:e2e
+bun run test:e2e
 
 echo "=== All checks passed ==="

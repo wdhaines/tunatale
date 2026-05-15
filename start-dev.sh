@@ -14,7 +14,7 @@ fi
 # Check if frontend dependencies are installed
 if [ ! -d "frontend/node_modules" ]; then
     echo "Error: Frontend dependencies not installed. Please run:"
-    echo "  cd frontend && npm install"
+    echo "  cd frontend && bun install"
     exit 1
 fi
 
@@ -24,7 +24,7 @@ FRONTEND_PID=""
 cleanup() {
     echo ""
     echo "Shutting down..."
-    # Frontend: kill Vite child, then npm parent
+    # Frontend: kill Vite child, then bun parent
     if [ -n "$FRONTEND_PID" ]; then
         pkill -P "$FRONTEND_PID" 2>/dev/null
         kill "$FRONTEND_PID" 2>/dev/null
@@ -52,7 +52,7 @@ sleep 2
 # Start frontend in background
 echo "Starting frontend on http://localhost:5173..."
 cd frontend
-npm run dev &
+bun run dev &
 FRONTEND_PID=$!
 cd ..
 
