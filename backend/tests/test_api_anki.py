@@ -86,8 +86,8 @@ class TestSyncOfflineEndpoint:
         assert response.status_code == 409
         assert "Close Anki" in response.json()["detail"]
 
-    @patch("app.anki.import_seed.import_seed")
-    async def test_returns_offline_mode_and_counters(self, mock_import_seed, monkeypatch):
+    @patch("app.anki.import_seed.refresh_media_for_deck")
+    async def test_returns_offline_mode_and_counters(self, mock_refresh_media_for_deck, monkeypatch):
         from app.config import settings
 
         monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
@@ -120,8 +120,8 @@ class TestSyncOfflineEndpoint:
         assert data["directions_pulled"] == 4
         assert data["dry_run"] is False
 
-    @patch("app.anki.import_seed.import_seed")
-    async def test_passes_col_crt_to_anki_sync(self, mock_import_seed, monkeypatch):
+    @patch("app.anki.import_seed.refresh_media_for_deck")
+    async def test_passes_col_crt_to_anki_sync(self, mock_refresh_media_for_deck, monkeypatch):
         """Layer 4 regression: sync_push needs col.crt to compute the day_index
         used by bump_deck_new_today. The /api/anki/sync route must read col.crt
         and pass it as _anki_col_crt — without this, the bump path is silently
@@ -247,11 +247,11 @@ class TestSyncOfflineEndpoint:
         assert response.json()["dry_run"] is True
         assert dry_runs_seen == [True, True, True]
 
-    @patch("app.anki.import_seed.import_seed")
-    async def test_sync_calls_import_seed_and_returns_media_counts(self, mock_import_seed, monkeypatch):
+    @patch("app.anki.import_seed.refresh_media_for_deck")
+    async def test_sync_calls_refresh_media_and_returns_media_counts(self, mock_refresh_media_for_deck, monkeypatch):
         from app.config import settings
 
-        mock_import_seed.return_value = {
+        mock_refresh_media_for_deck.return_value = {
             "updated_media": 3,
             "unchanged_media": 100,
             "new_media": 5,
@@ -287,8 +287,8 @@ class TestSyncOfflineEndpoint:
         assert data["media_unchanged"] == 100
         assert data["media_new"] == 5
 
-    @patch("app.anki.import_seed.import_seed")
-    async def test_sync_dry_run_skips_media_refresh(self, mock_import_seed, monkeypatch):
+    @patch("app.anki.import_seed.refresh_media_for_deck")
+    async def test_sync_dry_run_skips_media_refresh(self, mock_refresh_media_for_deck, monkeypatch):
         from app.config import settings
 
         monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
@@ -313,7 +313,7 @@ class TestSyncOfflineEndpoint:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             await c.post("/api/anki/sync?dry_run=true")
 
-        mock_import_seed.assert_not_called()
+        mock_refresh_media_for_deck.assert_not_called()
 
     async def test_dry_run_response_has_zero_media_counts(self, monkeypatch):
         from app.config import settings
@@ -375,8 +375,8 @@ class TestAnkiStatusEndpoint:
         assert data["anki_running"] is True
         assert data["lock_acquirable"] is False
 
-    @patch("app.anki.import_seed.import_seed")
-    async def test_media_fn_called_during_create_new(self, mock_import_seed, monkeypatch):
+    @patch("app.anki.import_seed.refresh_media_for_deck")
+    async def test_media_fn_called_during_create_new(self, mock_refresh_media_for_deck, monkeypatch):
         """_media_fn closure inside trigger_sync must be invoked for new SRS items."""
         from app.config import settings
 

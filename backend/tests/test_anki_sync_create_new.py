@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 
 import httpx
 import pytest
@@ -11,11 +12,13 @@ from app.anki.anki_connect import AnkiConnectClient
 from app.anki.media.pipeline import MediaResult
 from app.anki.sync import (
     AnkiSync,
+    CardRecord,
     DuplicateNoteError,
+    NoteRecord,
     OfflineWriter,
     _safe_stem,
 )
-from app.models.srs_item import Direction
+from app.models.srs_item import Direction, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 
@@ -1083,3 +1086,298 @@ class TestSyncCreateNew:
         )
         create_calls = [c for c in writer.calls if c[0] == "create_note"]
         assert len(create_calls) == 3
+
+
+# ── Reverse-import tests (Layer 22: Anki→TT) ──────────────────────────────────
+
+
+class _ReverseFakeReader:
+    """Fake OfflineReader.get_note_records that returns pre-built NoteRecords."""
+
+    def __init__(self, records: list[NoteRecord]) -> None:
+        self._records = records
+
+    def get_note_records(self) -> list[NoteRecord]:
+        return self._records
+
+
+class _ReverseFakeWriter:
+    """Writer stub for sync_create_new reverse-import tests."""
+
+    def create_note(self, deck_name, model_name, fields, tags):
+        return 5001
+
+    def create_cloze_note(self, deck_name, cloze_text, back_extra, tags):
+        return 5001
+
+    def get_cards_for_note(self, note_id):
+        return {0: 50010, 1: 50011}
+
+    def store_media_file(self, fn, data):
+        pass
+
+    def update_note_fields(self, *a):
+        pass
+
+    def suspend(self, *a):
+        pass
+
+    def unsuspend(self, *a):
+        pass
+
+    def set_due_date(self, *a):
+        pass
+
+    def write_revlog(self, **kw):
+        pass
+
+    def set_specific_value_of_card(self, *a):
+        pass
+
+    def find_notes(self, q):
+        return []
+
+
+class TestReverseImportLayer22:
+    """sync_create_new reverse-import pass mints TT rows from Anki-only notes."""
+
+    async def test_reverse_imports_anki_only_notes(self):
+        """An Anki-only note with no TT row gets imported as a new collocation."""
+        db = _make_db()
+        reader = _ReverseFakeReader(
+            [
+                NoteRecord(
+                    anki_note_id=1001,
+                    anki_guid="test-guid-1",
+                    l2_text="voda",
+                    translation="water",
+                    note="",
+                    disambig_key="",
+                    mod=0,
+                    cards=[
+                        CardRecord(
+                            anki_card_id=90010,
+                            ord=0,
+                            queue=2,
+                            reps=3,
+                            lapses=0,
+                            stability=5.0,
+                            difficulty=4.0,
+                            due_date=date.today(),
+                            anki_due=10,
+                            anki_card_mod=100,
+                        ),
+                    ],
+                ),
+            ]
+        )
+        writer = _ReverseFakeWriter()
+        report = await AnkiSync(db=db, _reader=reader, _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        assert report.notes_created_from_anki == 1
+        item = db.get_collocation("voda")
+        assert item is not None
+        assert item.anki_note_id == 1001
+
+        rec_dir = item.directions[Direction.RECOGNITION]
+        assert rec_dir.state == SRSState.REVIEW
+        assert rec_dir.stability == 5.0
+        assert rec_dir.reps == 3
+
+    async def test_reverse_import_handles_queue_2_reps_0(self):
+        """Anki card with (queue=2, reps=0) reverse-imports as REVIEW."""
+        db = _make_db()
+        reader = _ReverseFakeReader(
+            [
+                NoteRecord(
+                    anki_note_id=1002,
+                    anki_guid="test-guid-2",
+                    l2_text="banka",
+                    translation="bank",
+                    note="",
+                    disambig_key="",
+                    mod=0,
+                    cards=[
+                        CardRecord(
+                            anki_card_id=90020,
+                            ord=0,
+                            queue=2,
+                            reps=0,
+                            lapses=0,
+                            stability=0.0,
+                            difficulty=0.0,
+                            due_date=date.today(),
+                            anki_due=10,
+                            anki_card_mod=0,
+                        ),
+                    ],
+                ),
+            ]
+        )
+        writer = _ReverseFakeWriter()
+        await AnkiSync(db=db, _reader=reader, _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        item = db.get_collocation("banka")
+        assert item is not None
+        rec_dir = item.directions[Direction.RECOGNITION]
+        assert rec_dir.state == SRSState.REVIEW
+
+    async def test_reverse_import_skips_already_linked(self):
+        """An Anki note already linked in TT is not re-imported."""
+        db = _make_db()
+        guid = _add_item_with_anki_ids(db, "voda", "water", note_id=1001)
+
+        reader = _ReverseFakeReader(
+            [
+                NoteRecord(
+                    anki_note_id=1001,
+                    anki_guid=guid,
+                    l2_text="voda",
+                    translation="water",
+                    note="",
+                    disambig_key="",
+                    mod=0,
+                    cards=[
+                        CardRecord(
+                            anki_card_id=90010,
+                            ord=0,
+                            queue=2,
+                            reps=3,
+                            lapses=0,
+                            stability=5.0,
+                            difficulty=4.0,
+                            due_date=date.today(),
+                            anki_due=10,
+                        ),
+                    ],
+                ),
+            ]
+        )
+        writer = _ReverseFakeWriter()
+        report = await AnkiSync(db=db, _reader=reader, _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        assert report.notes_created_from_anki == 0
+
+    async def test_reverse_import_handles_cloze(self):
+        """A cloze Anki note reverse-imports as a single PRODUCTION direction."""
+        db = _make_db()
+        reader = _ReverseFakeReader(
+            [
+                NoteRecord(
+                    anki_note_id=1003,
+                    anki_guid="cloze-guid-1",
+                    l2_text="ki",
+                    translation="which",
+                    note="knjiga, ki je tam",
+                    disambig_key="",
+                    mod=0,
+                    cards=[
+                        CardRecord(
+                            anki_card_id=90030,
+                            ord=0,
+                            queue=0,
+                            reps=0,
+                            lapses=0,
+                            stability=1.0,
+                            difficulty=5.0,
+                            due_date=date.today(),
+                            anki_due=0,
+                        ),
+                    ],
+                    is_cloze=True,
+                ),
+            ]
+        )
+        writer = _ReverseFakeWriter()
+        report = await AnkiSync(db=db, _reader=reader, _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        assert report.notes_created_from_anki == 1
+        item = db.get_collocation("ki")
+        assert item is not None
+        assert item.anki_note_id == 1003
+        assert item.syntactic_unit.card_type == "cloze"
+        assert Direction.PRODUCTION in item.directions
+        assert Direction.RECOGNITION not in item.directions
+
+    async def test_reverse_import_multi_cloze_picks_first_card(self):
+        """Multi-deletion cloze (c1/c2/c3) uses only the first card (ord=0)."""
+        db = _make_db()
+        reader = _ReverseFakeReader(
+            [
+                NoteRecord(
+                    anki_note_id=1005,
+                    anki_guid="multi-cloze-guid",
+                    l2_text="ki",
+                    translation="which",
+                    note="knjiga, {{c1::ki}} je {{c2::tam}}",
+                    disambig_key="",
+                    mod=0,
+                    is_cloze=True,
+                    cards=[
+                        CardRecord(
+                            anki_card_id=90050, ord=0, queue=2, reps=5, lapses=0,
+                            stability=5.0, difficulty=4.0, due_date=date.today(),
+                            anki_due=10, anki_card_mod=100,
+                        ),
+                        CardRecord(
+                            anki_card_id=90051, ord=1, queue=2, reps=3, lapses=1,
+                            stability=3.0, difficulty=5.0, due_date=date.today(),
+                            anki_due=20, anki_card_mod=101,
+                        ),
+                        CardRecord(
+                            anki_card_id=90052, ord=2, queue=0, reps=0, lapses=0,
+                            stability=1.0, difficulty=5.0, due_date=date.today(),
+                            anki_due=0, anki_card_mod=102,
+                        ),
+                    ],
+                ),
+            ]
+        )
+        writer = _ReverseFakeWriter()
+        report = await AnkiSync(db=db, _reader=reader, _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        assert report.notes_created_from_anki == 1
+        item = db.get_collocation("ki")
+        assert item is not None
+        directions = item.directions
+        assert Direction.PRODUCTION in directions
+        assert Direction.RECOGNITION not in directions
+        prod = directions[Direction.PRODUCTION]
+        assert prod.anki_card_id == 90050
+        assert prod.reps == 5
+        assert prod.stability == 5.0
+
+    async def test_reverse_import_skips_note_with_no_cards(self):
+        """An Anki note with zero cards produces no TT row (directions is empty)."""
+        db = _make_db()
+        reader = _ReverseFakeReader(
+            [
+                NoteRecord(
+                    anki_note_id=1004,
+                    anki_guid="no-cards-guid",
+                    l2_text="missing",
+                    translation="missing",
+                    note="",
+                    disambig_key="",
+                    mod=0,
+                    cards=[],
+                ),
+            ]
+        )
+        writer = _ReverseFakeWriter()
+        report = await AnkiSync(db=db, _reader=reader, _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        assert report.notes_created_from_anki == 0
+        assert db.get_collocation("missing") is None

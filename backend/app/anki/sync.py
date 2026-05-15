@@ -32,6 +32,7 @@ from app.anki.sqlite_reader import (
 )
 from app.common.guid import compute_guid
 from app.models.srs_item import Direction, DirectionState, Rating, SRSState
+from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 from app.srs.queue_stats import resolve_learning_steps, resolve_relearning_steps
 
@@ -146,6 +147,7 @@ class NoteRecord:
     mod: int
     cards: list[CardRecord]
     sentence_translation: str = ""
+    is_cloze: bool = False
 
 
 @dataclass
@@ -178,6 +180,7 @@ class CreateNewReport:
     created: int = 0
     linked: int = 0
     skipped: int = 0
+    notes_created_from_anki: int = 0
 
 
 _BACK_EXTRA_TRANS = re.compile(r"^\s*<i>([^<]+)</i>\s*<br\s*/?>\s*<br\s*/?>\s*(.*)", re.DOTALL)
@@ -331,6 +334,7 @@ class OfflineReader:
                     disambig_key=disambig_key,
                     mod=note.mod,
                     cards=card_records,
+                    is_cloze=is_cloze,
                 )
             )
         return records
@@ -1730,7 +1734,79 @@ class AnkiSync:
             self._db.set_anki_ids(guid, note_id, card_ids)
 
         count = created + linked + skipped
-        return CreateNewReport(count=count, created=created, linked=linked, skipped=skipped)
+
+        # Reverse-import pass: mint new TT rows from Anki-only notes (Layer 22)
+        records = self._reader.get_note_records()
+        linked_anki_ids = self._db.list_linked_anki_note_ids()
+        notes_created_from_anki = 0
+
+        for rec in records:
+            if rec.anki_note_id in linked_anki_ids:
+                continue
+
+            card_type = "cloze" if rec.is_cloze else "vocab"
+            word_count = max(1, len(rec.l2_text.split()))
+            unit = SyntacticUnit(
+                text=rec.l2_text,
+                translation=rec.translation,
+                word_count=word_count,
+                difficulty=1,
+                source="anki",
+                frequency=0,
+                disambig_key=rec.disambig_key,
+                lemma=rec.l2_text.lower() if word_count == 1 else None,
+                source_sentence=rec.note,
+                source_sentence_translation=rec.sentence_translation,
+                card_type=card_type,
+            )
+
+            directions: dict[Direction, DirectionState] = {}
+            cards_to_import = rec.cards[:1] if rec.is_cloze else rec.cards
+            for card in cards_to_import:
+                if rec.is_cloze:
+                    direction = Direction.PRODUCTION
+                else:
+                    direction = Direction.RECOGNITION if card.ord == 0 else Direction.PRODUCTION
+
+                state = _queue_to_state(card.queue, card.card_type, card.reps)
+
+                directions[direction] = DirectionState(
+                    direction=direction,
+                    due_date=card.due_date,
+                    stability=card.stability,
+                    difficulty=card.difficulty,
+                    reps=card.reps,
+                    lapses=card.lapses,
+                    state=state,
+                    last_review=card.last_review,
+                    anki_card_id=card.anki_card_id,
+                    anki_due=card.anki_due or 0,
+                    anki_card_mod=card.anki_card_mod,
+                    left=card.left,
+                    due_at=card.due_at,
+                    dirty_fsrs=False,
+                    last_synced_at=datetime.now(UTC).isoformat(),
+                    prior_state=None,
+                    introduced_at=_resolve_introduced_at(
+                        DirectionState(direction=direction, due_date=card.due_date),
+                        state,
+                        first_review_ms=card.first_review_ms,
+                    ),
+                )
+
+            if not directions:
+                continue
+
+            self._db.upsert_by_guid(unit, "sl", directions, anki_note_id=rec.anki_note_id)
+            notes_created_from_anki += 1
+
+        return CreateNewReport(
+            count=count,
+            created=created,
+            linked=linked,
+            skipped=skipped,
+            notes_created_from_anki=notes_created_from_anki,
+        )
 
 
 def main(

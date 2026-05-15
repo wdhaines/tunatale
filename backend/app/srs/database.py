@@ -538,6 +538,16 @@ class SRSDatabase:
                 return None
             return self._row_to_item(conn, row)
 
+    def list_linked_anki_note_ids(self) -> dict[int, int]:
+        """Return {anki_note_id: collocation_id} for all linked notes.
+
+        Used by sync_create_new to determine which Anki notes already have
+        a TT row (reverse-import skips already-linked notes).
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT id, anki_note_id FROM collocations WHERE anki_note_id IS NOT NULL").fetchall()
+            return {row["anki_note_id"]: row["id"] for row in rows}
+
     def get_collocation_by_lemma(self, lemma: str) -> SRSItem | None:
         with self._get_conn() as conn:
             row = conn.execute("SELECT * FROM collocations WHERE lemma = ? LIMIT 1", (lemma,)).fetchone()
@@ -1082,8 +1092,10 @@ class SRSDatabase:
                     """
                     INSERT INTO collocations
                         (text, translation, language_code, word_count, unit_difficulty,
-                         source, corpus_frequency, lemma, guid, anki_note_id, disambig_key)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         source, corpus_frequency, lemma, guid, anki_note_id, disambig_key,
+                         grammar, note, source_sentence, sentence_translation,
+                         source_lesson_id, source_line_index, card_type)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         unit.text,
@@ -1097,6 +1109,13 @@ class SRSDatabase:
                         guid,
                         anki_note_id,
                         unit.disambig_key,
+                        unit.grammar,
+                        unit.note,
+                        unit.source_sentence,
+                        unit.source_sentence_translation,
+                        unit.source_lesson_id,
+                        unit.source_line_index,
+                        unit.card_type,
                     ),
                 )
                 coll_id = cursor.lastrowid

@@ -29,10 +29,116 @@ from app.anki.sqlite_reader import (
 )
 from app.common.guid import compute_guid
 from app.config import settings
-from app.media.importer import copy_media_file
+from app.media.importer import compute_sha256, copy_media_file
 from app.models.srs_item import Direction, DirectionState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
+
+
+def _refresh_media_for_collocation(
+    anki_media_path: Path,
+    note_fields: str,
+    coll_id: int,
+    media_dir: Path,
+    db: SRSDatabase,
+    results: dict[str, Any],
+) -> None:
+    """Copy media files for one collocation from Anki media dir to TT media dir.
+
+    Handles SHA256 comparison for unchanged detection, copy for updates, and
+    stale-file cleanup (collapse) per kind. Accumulates counters into `results`.
+    """
+    if not anki_media_path.exists():
+        return
+    import shutil
+
+    current_by_kind: dict[str, set[str]] = {}
+    for filename in list_media_refs(note_fields):
+        src = anki_media_path / filename
+        if not src.exists():
+            continue
+        existing_row = db.find_media_by_anki_filename(filename, collocation_id=coll_id)
+        if existing_row is not None:
+            current_sha = compute_sha256(src)
+            if current_sha == existing_row["sha256"]:
+                results["unchanged_media"] = results.get("unchanged_media", 0) + 1
+                current_by_kind.setdefault(existing_row["kind"], set()).add(filename)
+                continue
+            dest_path = media_dir / filename
+            shutil.copy2(src, dest_path)
+            db.update_media_file(existing_row["id"], sha256=current_sha, size_bytes=src.stat().st_size)
+            results["updated_media"] += 1
+            current_by_kind.setdefault(existing_row["kind"], set()).add(filename)
+            continue
+        copy_result = copy_media_file(src, media_dir)
+        db.add_media(
+            coll_id,
+            kind=copy_result.kind,
+            filename=copy_result.dest_path.name,
+            path=str(copy_result.dest_path),
+            anki_filename=filename,
+            sha256=copy_result.sha256,
+            size_bytes=copy_result.size_bytes,
+        )
+        results["new_media"] += 1
+        current_by_kind.setdefault(copy_result.kind, set()).add(filename)
+
+    for kind, keep_filenames in current_by_kind.items():
+        removed = db.delete_stale_media_for_kind(coll_id, kind, keep_filenames)
+        if removed:
+            results["collapsed_media"] = results.get("collapsed_media", 0) + removed
+
+
+def refresh_media_for_deck(
+    deck_name: str | None = None,
+    anki_collection_path: Path | None = None,
+    anki_media_path: Path | None = None,
+    anki_backup_dir: Path | None = None,
+    tunatale_db_path: str | None = None,
+    media_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Refresh TT media files for all Anki notes already linked in TT.
+
+    Read-only on Anki side (no Anki writes). Writes to TT media dir and DB.
+    Returns media-only keys: new_media, updated_media, unchanged_media, collapsed_media.
+    """
+    if deck_name is None:
+        deck_name = settings.anki_deck_name
+    if anki_collection_path is None:
+        anki_collection_path = settings.anki_collection_path
+    if anki_media_path is None:
+        anki_media_path = settings.anki_media_path
+    if anki_backup_dir is None:
+        anki_backup_dir = settings.anki_backup_dir
+    if tunatale_db_path is None:
+        tunatale_db_path = settings.database_url.replace("sqlite:///", "")
+    if media_dir is None:
+        media_dir = settings.media_dir
+
+    results: dict[str, Any] = {
+        "new_media": 0,
+        "updated_media": 0,
+        "unchanged_media": 0,
+        "collapsed_media": 0,
+    }
+
+    with safe_open(anki_collection_path, backup_dir=anki_backup_dir) as ctx:
+        deck_id = find_deck_id(ctx.conn, deck_name)
+        if deck_id is None:
+            return results
+
+        notes = fetch_notes_for_deck(ctx.conn, deck_id)
+
+    db = SRSDatabase(tunatale_db_path)
+    linked = db.list_linked_anki_note_ids()
+
+    for note in notes:
+        coll_id = linked.get(note.id)
+        if coll_id is None:
+            continue
+        _refresh_media_for_collocation(anki_media_path, note.fields, coll_id, media_dir, db, results)
+
+    return results
 
 
 def _build_directions(
@@ -188,52 +294,7 @@ def import_seed(
                 results["new_parents"] += 1
                 results["new_directions"] += len(directions)
 
-            # Media: copy referenced files from Anki media dir
-            if anki_media_path.exists():
-                current_by_kind: dict[str, set[str]] = {}
-                for filename in list_media_refs(note.fields):
-                    src = anki_media_path / filename
-                    if not src.exists():
-                        continue
-                    existing_row = db.find_media_by_anki_filename(filename, collocation_id=coll_id)
-                    if existing_row is not None:
-                        from app.media.importer import compute_sha256
-
-                        current_sha = compute_sha256(src)
-                        if current_sha == existing_row["sha256"]:
-                            results["unchanged_media"] = results.get("unchanged_media", 0) + 1
-                            current_by_kind.setdefault(existing_row["kind"], set()).add(filename)
-                            continue
-                        dest_dir = Path(media_dir)
-                        dest_path = dest_dir / filename
-                        import shutil
-
-                        shutil.copy2(src, dest_path)
-                        db.update_media_file(existing_row["id"], sha256=current_sha, size_bytes=src.stat().st_size)
-                        results["updated_media"] += 1
-                        current_by_kind.setdefault(existing_row["kind"], set()).add(filename)
-                        continue
-                    copy_result = copy_media_file(src, media_dir)
-                    db.add_media(
-                        coll_id,
-                        kind=copy_result.kind,
-                        filename=copy_result.dest_path.name,
-                        path=str(copy_result.dest_path),
-                        anki_filename=filename,
-                        sha256=copy_result.sha256,
-                        size_bytes=copy_result.size_bytes,
-                    )
-                    results["new_media"] += 1
-                    current_by_kind.setdefault(copy_result.kind, set()).add(filename)
-
-                # Collapse: delete TT media rows whose anki_filename isn't currently
-                # referenced by this note (per kind). Fixes the case where the user
-                # reverts Anki to an older filename — the stale newer-id row would
-                # otherwise win in get_image_filename's ORDER BY id DESC.
-                for kind, keep_filenames in current_by_kind.items():
-                    removed = db.delete_stale_media_for_kind(coll_id, kind, keep_filenames)
-                    if removed:
-                        results["collapsed_media"] = results.get("collapsed_media", 0) + removed
+            _refresh_media_for_collocation(anki_media_path, note.fields, coll_id, media_dir, db, results)
 
     return results
 

@@ -8,6 +8,7 @@ to flush — grades reviewed in TunaTale were silently discarded.
 from __future__ import annotations
 
 from datetime import date, timedelta
+from unittest.mock import patch
 
 from app.anki.sync import AnkiSync, CardRecord, NoteRecord
 from app.models.srs_item import Direction, DirectionState, SRSState
@@ -369,3 +370,79 @@ def test_pull_syncs_note_field():
     sync.sync_pull()
     after = db.get_collocation_by_guid(guid)
     assert after.syntactic_unit.note == "pronunciation info"
+
+
+def test_sync_pull_state_not_clobbered_by_media_refresh():
+    """TT state='new' stays as REVIEW after sync_pull + full pipeline.
+
+    Regression: import_seed's stale parse_fsrs_data (reps==0 → NEW) was
+    clobbering sync_pull's correct REVIEW for (queue=2, reps=0) cards.
+    Phase 1 fixed parse_fsrs_data; Phase 2 replaced import_seed in the
+    sync endpoint with refresh_media_for_deck (media-only, no direction
+    writes). Verify state survives the full flow.
+    """
+    db, guid, _ = _make_db_with_banka()
+
+    # Set TT state='new' to match old (buggy) import state
+    db.update_direction(
+        guid,
+        Direction.RECOGNITION,
+        DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=1.0,
+            difficulty=5.0,
+            reps=0,
+            lapses=0,
+            state=SRSState.NEW,
+            anki_card_id=90010,
+        ),
+    )
+
+    # Anki side has queue=2, reps=0 (Forget Card / manual reschedule)
+    records = [
+        NoteRecord(
+            anki_note_id=9001,
+            anki_guid=guid,
+            l2_text="banka",
+            translation="bank",
+            note="",
+            disambig_key="",
+            mod=0,
+            cards=[
+                CardRecord(
+                    anki_card_id=90010,
+                    ord=0,
+                    queue=2,
+                    reps=0,
+                    lapses=0,
+                    stability=0.0,
+                    difficulty=0.0,
+                    due_date=date.today(),
+                    anki_due=10,
+                    anki_card_mod=0,
+                ),
+            ],
+        )
+    ]
+
+    reader = _FakeReader(records)
+    writer = _FakeWriter()
+    sync = AnkiSync(db=db, _reader=reader, _writer=writer)
+    sync.sync_pull()
+
+    after = db.get_collocation_by_guid(guid)
+    rec = after.directions[Direction.RECOGNITION]
+    assert rec.state == SRSState.REVIEW, f"state should be REVIEW after sync_pull, got {rec.state}"
+
+    # Now simulate what the sync endpoint does after pull —
+    # refresh_media_for_deck must not touch direction state.
+    # We use a patched no-op so the test doesn't need a real Anki collection.
+    with patch("app.anki.import_seed.refresh_media_for_deck", return_value={}):
+        from app.api.anki import _refresh_media
+
+        _refresh_media()
+
+    after2 = db.get_collocation_by_guid(guid)
+    rec2 = after2.directions[Direction.RECOGNITION]
+    assert rec2.state == SRSState.REVIEW, f"state clobbered after media refresh: got {rec2.state}"

@@ -15,12 +15,10 @@ def _derive_media_dir(collection_path) -> Path:
     return Path(collection_path).parent / "collection.media"
 
 
-def _refresh_media_if_not_dry_run(dry_run: bool) -> dict:
-    if dry_run:
-        return {}
-    from app.anki.import_seed import import_seed
+def _refresh_media() -> dict:
+    from app.anki.import_seed import refresh_media_for_deck
 
-    return import_seed()
+    return refresh_media_for_deck()
 
 
 @router.post("/sync", status_code=200)
@@ -110,10 +108,15 @@ async def trigger_sync(request: Request, dry_run: bool = False):
     except OrphanThresholdExceededError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    media_result = _refresh_media_if_not_dry_run(dry_run)
-    media_updated = media_result.get("updated_media", 0)
-    media_unchanged = media_result.get("unchanged_media", 0)
-    media_new = media_result.get("new_media", 0)
+    if not dry_run:
+        media_result = _refresh_media()
+        media_updated = media_result.get("updated_media", 0)
+        media_unchanged = media_result.get("unchanged_media", 0)
+        media_new = media_result.get("new_media", 0)
+    else:
+        media_updated = 0
+        media_unchanged = 0
+        media_new = 0
 
     return {
         "mode": "offline",
@@ -125,6 +128,7 @@ async def trigger_sync(request: Request, dry_run: bool = False):
         "conflicts": len(pull_report.conflicts),
         "notes_pushed": push_report.notes_pushed,
         "directions_pushed": push_report.directions_pushed,
+        "notes_created_from_anki": create_report.notes_created_from_anki,
         "dry_run": dry_run,
         "media_updated": media_updated,
         "media_unchanged": media_unchanged,

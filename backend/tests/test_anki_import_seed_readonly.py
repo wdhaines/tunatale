@@ -576,3 +576,154 @@ class TestTransactionRollback:
         with closing(sqlite3.connect(str(tmp_path / "tunatale.db"))) as db:
             count = db.execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
         assert count == 0
+
+
+def test_refresh_media_for_deck_none_params_use_settings_defaults(fake_anki_db, tmp_path):
+    """Passing None for all params exercises the settings fallback."""
+    import sqlite3
+    from contextlib import contextmanager
+    from unittest.mock import patch
+
+    from app.anki.import_seed import refresh_media_for_deck
+    from app.anki.safety import AnkiContext
+    from app.config import settings
+
+    _run(fake_anki_db, tmp_path)
+
+    saved = {
+        "deck": settings.anki_deck_name,
+        "coll": settings.anki_collection_path,
+        "media_path": settings.anki_media_path,
+        "backup": settings.anki_backup_dir,
+        "db": settings.database_url,
+        "media_dir": settings.media_dir,
+    }
+    try:
+        settings.anki_deck_name = "0. Slovene"
+        settings.anki_collection_path = fake_anki_db
+        settings.anki_media_path = tmp_path / "nonexistent_media"
+        settings.anki_backup_dir = tmp_path / "bak"
+        settings.database_url = f"sqlite:///{tmp_path}/tunatale.db"
+        settings.media_dir = tmp_path / "media"
+
+        # Patch safe_open to use an in-memory connection to the real Anki DB
+        real_conn = sqlite3.connect(str(fake_anki_db))
+        real_conn.row_factory = sqlite3.Row
+
+        @contextmanager
+        def _fake_safe_open(path, *args, **kwargs):
+            yield AnkiContext(conn=real_conn, backup_path=tmp_path / "bak" / "backup.anki2", source_sha256="abc")
+
+        with patch("app.anki.import_seed.safe_open", _fake_safe_open):
+            result = refresh_media_for_deck(
+                deck_name=None,
+                anki_collection_path=None,
+                anki_media_path=None,
+                anki_backup_dir=None,
+                tunatale_db_path=None,
+                media_dir=None,
+            )
+    finally:
+        real_conn.close()
+        settings.anki_deck_name = saved["deck"]
+        settings.anki_collection_path = saved["coll"]
+        settings.anki_media_path = saved["media_path"]
+        settings.anki_backup_dir = saved["backup"]
+        settings.database_url = saved["db"]
+        settings.media_dir = saved["media_dir"]
+
+    assert isinstance(result, dict)
+    assert result["new_media"] == 0
+
+
+def test_refresh_media_for_deck_linked_notes_returns_media_counts(fake_anki_db, tmp_path):
+    """refresh_media_for_deck processes linked notes and returns media dict."""
+    from app.anki.import_seed import refresh_media_for_deck
+
+    # First import seed to link notes
+    _run(fake_anki_db, tmp_path)
+
+    # Now refresh media: no media files exist, so all counts are 0
+    result = refresh_media_for_deck(
+        anki_collection_path=fake_anki_db,
+        anki_backup_dir=tmp_path / "bak",
+        anki_media_path=tmp_path / "nonexistent_media",
+        deck_name="0. Slovene",
+        tunatale_db_path=str(tmp_path / "tunatale.db"),
+        media_dir=tmp_path / "media",
+    )
+
+    assert isinstance(result, dict)
+    assert result["new_media"] == 0
+    assert result["updated_media"] == 0
+    assert result["unchanged_media"] == 0
+    assert result["collapsed_media"] == 0
+
+
+def test_refresh_media_for_deck_missing_deck_returns_empty(tmp_path):
+    """refresh_media_for_deck with a deck not found returns early with zeros."""
+
+    import sqlite3
+
+    from app.anki.import_seed import refresh_media_for_deck
+
+    db_path = tmp_path / "empty.anki2"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("""CREATE TABLE col (
+        id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER,
+        dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT,
+        decks TEXT, dconf TEXT, tags TEXT)""")
+    conn.execute("""CREATE TABLE notes (
+        id INTEGER, guid TEXT, mid INTEGER, mod INTEGER, usn INTEGER,
+        tags TEXT, flds TEXT, sfld TEXT, csum INTEGER, flags INTEGER, data TEXT)""")
+    conn.execute("""CREATE TABLE cards (
+        id INTEGER, nid INTEGER, did INTEGER, ord INTEGER, mod INTEGER,
+        usn INTEGER, type INTEGER, queue INTEGER, due INTEGER, ivl INTEGER,
+        factor INTEGER, reps INTEGER, lapses INTEGER, left INTEGER,
+        odue INTEGER, odid INTEGER, flags INTEGER, data TEXT)""")
+    # No deck matching "0. Slovene" — find_deck_id returns None
+    conn.execute("INSERT INTO col VALUES (1,1704067200,0,0,11,0,0,0,'{}','{}','{}','{}','{}')")
+    conn.commit()
+    conn.close()
+
+    result = refresh_media_for_deck(
+        anki_collection_path=db_path,
+        anki_backup_dir=tmp_path / "bak",
+        anki_media_path=tmp_path / "media",
+        deck_name="0. Slovene",
+        tunatale_db_path=str(tmp_path / "empty.db"),
+        media_dir=tmp_path / "media",
+    )
+
+    assert result["new_media"] == 0
+    assert result["updated_media"] == 0
+    assert result["unchanged_media"] == 0
+
+
+def test_refresh_media_for_deck_skips_unlinked_notes(fake_anki_db, tmp_path):
+    """refresh_media_for_deck skips Anki notes not linked in TT."""
+    from app.anki.import_seed import refresh_media_for_deck
+
+    # Link only one note (1001) to TT
+    from app.models.srs_item import Direction
+    from app.models.syntactic_unit import SyntacticUnit
+    from app.srs.database import SRSDatabase
+
+    db = SRSDatabase(str(tmp_path / "tunatale.db"))
+    unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="anki")
+    db.add_collocation(unit)
+    item = db.get_collocation("banka")
+    assert item is not None
+    db.set_anki_ids(item.guid, 1001, {Direction.RECOGNITION: 10001})
+
+    result = refresh_media_for_deck(
+        anki_collection_path=fake_anki_db,
+        anki_backup_dir=tmp_path / "bak",
+        anki_media_path=tmp_path / "nonexistent_media",
+        deck_name="0. Slovene",
+        tunatale_db_path=str(tmp_path / "tunatale.db"),
+        media_dir=tmp_path / "media",
+    )
+
+    assert isinstance(result, dict)
+    assert result["new_media"] == 0
