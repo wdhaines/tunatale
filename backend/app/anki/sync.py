@@ -759,6 +759,7 @@ class OfflineWriter:
             (blob, now_ts, deck_id),
         )
         self._bump_col(now_ts)
+        self._conn.commit()
 
     def list_decks_with_revlog_today(self, today_4am_ms: int) -> list[int]:
         """Return distinct deck IDs that have at least one revlog entry since *today_4am_ms*.
@@ -823,6 +824,7 @@ class OfflineWriter:
             (blob, now_ts, deck_id),
         )
         self._bump_col(now_ts)
+        self._conn.commit()
 
 
 def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool:
