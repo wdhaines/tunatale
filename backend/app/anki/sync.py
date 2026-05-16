@@ -8,6 +8,7 @@ S3.6: --force-fsrs gate + setSpecificValueOfCard.
 from __future__ import annotations
 
 import json as _json
+import logging
 import re
 import sqlite3
 import time as _time
@@ -35,6 +36,8 @@ from app.models.srs_item import Direction, DirectionState, Rating, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 from app.srs.queue_stats import resolve_learning_steps, resolve_relearning_steps
+
+_log = logging.getLogger(__name__)
 
 KNOWN_ANKI_SCHEMA_VER = 18
 
@@ -857,6 +860,10 @@ def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool
         or local.left != candidate.left
         or local.due_at != candidate.due_at
         or local.prior_state != candidate.prior_state
+        # Without bury_kind in the diff, a state-matched / kind-only flip
+        # (e.g. migration's pessimistic 'user' default vs candidate 'sched')
+        # is silently no-op'd, locking the row in the wrong kind forever.
+        or local.bury_kind != candidate.bury_kind
     )
 
 
@@ -1171,6 +1178,14 @@ class AnkiSync:
         """Pull Anki → TunaTale. Returns a PullReport summarising changes."""
         report = PullReport()
         max_revlog_ms = 0  # tracked to advance the learning cutoff after Anki-side grades
+        bury_stats: dict[str, int] = {
+            "anki_queue_minus2_seen": 0,  # Anki shows user-bury at sync time
+            "anki_queue_minus3_seen": 0,  # Anki shows sched-bury at sync time
+            "buried_to_released_writes": 0,  # TT BURIED → REVIEW/NEW
+            "released_to_buried_writes": 0,  # TT non-BURIED → BURIED
+            "kind_only_flips_written": 0,  # state matched but kind differed (was a no-op pre-fix)
+            "buried_state_match_no_write": 0,  # both BURIED, all fields incl. kind match
+        }
 
         # Anki-parity daily unbury sweep. Run BEFORE processing Anki records so
         # that any state='buried' rows that this pull lands (today's sibling-
@@ -1536,7 +1551,56 @@ class AnkiSync:
                         due_at=card_rec.due_at,
                         bury_kind=_bury_kind_from_queue(card_rec.queue),
                     )
-                if _direction_differs(local_dir, new_dir_state):
+                differs = _direction_differs(local_dir, new_dir_state)
+                # Forensic trace for any direction whose Anki state OR TT state
+                # touches BURIED. Lets future investigators reconstruct exactly
+                # which queue value Anki returned (sched vs user vs released),
+                # what TT had locally, and whether the diff actually fired.
+                # Grep server stderr for "BURY_TRACE".
+                bury_relevant = (
+                    card_rec.queue in (-2, -3)
+                    or local_dir.state == SRSState.BURIED
+                    or new_dir_state.state == SRSState.BURIED
+                )
+                if bury_relevant:
+                    _log.info(
+                        "BURY_TRACE cid=%s text=%r dir=%s anki_queue=%d anki_mod=%s "
+                        "local=(state=%s kind=%s last_review=%s) "
+                        "candidate=(state=%s kind=%s last_review=%s) "
+                        "diff=%s write=%s",
+                        card_rec.anki_card_id,
+                        local_item.syntactic_unit.text,
+                        direction.value,
+                        card_rec.queue,
+                        card_rec.anki_card_mod,
+                        local_dir.state.value,
+                        local_dir.bury_kind,
+                        local_dir.last_review.isoformat() if local_dir.last_review else None,
+                        new_dir_state.state.value,
+                        new_dir_state.bury_kind,
+                        new_dir_state.last_review.isoformat() if new_dir_state.last_review else None,
+                        differs,
+                        differs and not dry_run,
+                    )
+                    if card_rec.queue == -2:
+                        bury_stats["anki_queue_minus2_seen"] += 1
+                    elif card_rec.queue == -3:
+                        bury_stats["anki_queue_minus3_seen"] += 1
+                    was_buried = local_dir.state == SRSState.BURIED
+                    will_be_buried = new_dir_state.state == SRSState.BURIED
+                    if differs and was_buried and not will_be_buried:
+                        bury_stats["buried_to_released_writes"] += 1
+                    if differs and not was_buried and will_be_buried:
+                        bury_stats["released_to_buried_writes"] += 1
+                    if (
+                        differs
+                        and local_dir.state == new_dir_state.state
+                        and local_dir.bury_kind != new_dir_state.bury_kind
+                    ):
+                        bury_stats["kind_only_flips_written"] += 1
+                    if not differs and was_buried and will_be_buried:
+                        bury_stats["buried_state_match_no_write"] += 1
+                if differs:
                     if not dry_run:
                         self._db.update_direction(guid, direction, new_dir_state)
                     report.directions_updated += 1
@@ -1563,6 +1627,8 @@ class AnkiSync:
 
             clear_session_main_queue(self._db)
             build_and_freeze_main_queue(self._db)
+
+        _log.info("BURY_TRACE summary dry_run=%s %s", dry_run, bury_stats)
         return report
 
     def _capture_anki_card_state(self, card_id: int) -> dict | None:

@@ -92,10 +92,11 @@ def compute_retrievability(
     direction_state: DirectionState,
     today: date,
     now: datetime | None = None,
-) -> float:
-    """Return retrievability (0-1) for a direction_state, handling edge cases.
+) -> float | None:
+    """Return retrievability (0-1) for a direction_state, or None when undefined.
 
-    Null stability or null last_review → return 1.0 (sorts last among due cards).
+    Null stability or null last_review → return None (sorts first in ascending
+    order, matching Anki's SQLite NULL-first semantics).
 
     Mirrors Anki's `extract_fsrs_retrievability` (rslib storage/sqlite.rs):
       - When cards.data has `lrt` (FSRS-effective last-review timestamp,
@@ -111,7 +112,7 @@ def compute_retrievability(
     stability = direction_state.stability
     last_review = direction_state.last_review
     if stability is None or last_review is None:
-        return 1.0
+        return None
     if isinstance(last_review, datetime):
         # Detect day-level fallback values (midnight UTC, no sub-day component).
         # `parse_fsrs_data` sets these via `_compute_last_review` when cards.data

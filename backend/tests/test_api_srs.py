@@ -1371,8 +1371,8 @@ class TestReviewQueue:
         assert result[1][3] == Direction.RECOGNITION
         assert result[1][0] == 1  # rama row
 
-    async def test_merge_retrievability_null_stability_sorts_last(self, api_app_state):
-        """Directions with null stability (R=1.0) sort after those with real stability."""
+    async def test_merge_retrievability_null_stability_sorts_first(self, api_app_state):
+        """Directions with null stability (R=None) sort before those with real stability (Anki NULL-first parity)."""
         from datetime import date
 
         from app.api.srs import _merge_by_retrievability_ascending
@@ -1400,9 +1400,9 @@ class TestReviewQueue:
         prod = [(2, item_low, "sl")]
 
         result = _merge_by_retrievability_ascending(rec, prod, today)
-        # item_low (stability=0.086, R < 1.0) comes first
-        assert result[0][3] == Direction.PRODUCTION
-        assert result[1][3] == Direction.RECOGNITION
+        # item_null (stability=None, R=None → sort_r=-1.0) comes first
+        assert result[0][3] == Direction.RECOGNITION
+        assert result[1][3] == Direction.PRODUCTION
 
     # --- Tests for _merge_directions ---
     async def test_merge_directions_empty_inputs(self, api_app_state):

@@ -791,10 +791,11 @@ def _merge_by_retrievability_ascending(
         row_id, item, _, direction = t
         dstate = item.directions[direction]
         r = compute_retrievability(dstate, today)
+        sort_r = -1.0 if r is None else r
         if dstate.anki_card_id is not None and dstate.anki_card_mod is not None:
-            return (r, 0, _fnv1a_64_i64(dstate.anki_card_id, dstate.anki_card_mod), 0)
+            return (sort_r, 0, _fnv1a_64_i64(dstate.anki_card_id, dstate.anki_card_mod), 0)
         # Fallback for rows that haven't been synced from Anki yet.
-        return (r, 1, dstate.anki_card_id or 0, row_id)
+        return (sort_r, 1, dstate.anki_card_id or 0, row_id)
 
     combined.sort(key=_key)
     return combined

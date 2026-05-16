@@ -115,6 +115,7 @@ _DIR_COLUMNS = (
     "prior_left",
     "prior_stability",
     "introduced_at",
+    "bury_kind",
 )
 
 # States that should never surface in the due queue regardless of due_date.
@@ -1459,6 +1460,7 @@ class SRSDatabase:
                     prior_state=SRSState(prior_state_raw) if prior_state_raw else None,
                     prior_left=row["prior_left"],
                     prior_stability=row["prior_stability"],
+                    bury_kind=row["bury_kind"],
                 )
                 result.append((row["guid"], d, ds))
         return result
@@ -1528,6 +1530,7 @@ class SRSDatabase:
                     prior_state=SRSState(prior_state_raw) if prior_state_raw else None,
                     prior_left=row["prior_left"],
                     prior_stability=row["prior_stability"],
+                    bury_kind=row["bury_kind"],
                 )
                 result.append((row["guid"], d, ds))
         return result

@@ -1851,6 +1851,199 @@ class TestDirectionDiffersDetectsLastReviewTransition:
 
         assert _direction_differs(ds, ds) is False
 
+    def test_sync_pull_bury_trace_logs_user_bury(self, caplog):
+        """Exercise the anki_queue_minus2_seen counter and confirm the
+        BURY_TRACE line records the queue=-2 case (so future investigators
+        can grep for ``anki_queue=-2`` to spot manual-bury sources).
+        """
+        import logging
+
+        db = _make_tt_db()
+        today = date.today()
+        unit = SyntacticUnit(text="ub", translation="t", word_count=1, difficulty=1, source="corpus")
+        db.add_collocation(unit)
+        guid = db.get_collocation("ub").guid
+
+        db.update_direction(
+            guid,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                due_date=today,
+                stability=5.0,
+                difficulty=4.5,
+                reps=3,
+                lapses=0,
+                state=SRSState.REVIEW,
+                anki_card_id=2001,
+                anki_due=4500,
+                last_review=_dt.now(UTC),
+                dirty_fsrs=False,
+            ),
+        )
+
+        records = [
+            make_note_record(
+                anki_note_id=2001,
+                anki_guid=guid,
+                l2_text="ub",
+                cards=[make_card_record(anki_card_id=2001, ord=0, queue=-2, due_date=today)],
+            )
+        ]
+        with caplog.at_level(logging.INFO, logger="app.anki.sync"):
+            AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        msg = "\n".join(r.getMessage() for r in caplog.records)
+        assert "anki_queue=-2" in msg
+        assert "'anki_queue_minus2_seen': 1" in msg
+
+    def test_sync_pull_bury_trace_counters_and_log(self, caplog):
+        """Exercise BURY_TRACE counter branches and log emission.
+
+        Walks four collocations through sync_pull, each producing a different
+        bury_stats outcome:
+          1. TT REVIEW + Anki queue=-3 → released_to_buried_writes, minus3 seen.
+          2. TT BURIED + Anki queue=2  → buried_to_released_writes.
+          3. TT BURIED kind='user' + Anki queue=-3 (kind flip) → kind_only_flips.
+          4. TT BURIED kind='sched' + Anki queue=-3 (full match) → no write,
+             buried_state_match_no_write counter increments.
+
+        Confirms the per-card BURY_TRACE INFO log and the summary log both
+        fire. These traces are the diagnostic for any future bury-kind drift.
+        """
+        import logging
+
+        db = _make_tt_db()
+        today = date.today()
+
+        # Set up 4 collocations, each with a recognition card (ord=0).
+        guids = []
+        for i, text in enumerate(["b1_review", "b2_buried", "b3_user", "b4_sched"]):
+            unit = SyntacticUnit(text=text, translation=f"t{i}", word_count=1, difficulty=1, source="corpus")
+            db.add_collocation(unit)
+            item = db.get_collocation(text)
+            guids.append(item.guid)
+
+        now_ts = _dt.now(UTC)
+        common = dict(
+            direction=Direction.RECOGNITION,
+            due_date=today,
+            stability=5.0,
+            difficulty=4.5,
+            reps=3,
+            lapses=0,
+            anki_card_id=0,
+            anki_due=4500,
+            last_review=now_ts,
+            dirty_fsrs=False,
+        )
+        db.update_direction(
+            guids[0],
+            Direction.RECOGNITION,
+            DirectionState(**{**common, "state": SRSState.REVIEW, "anki_card_id": 1001}),
+        )
+        db.update_direction(
+            guids[1],
+            Direction.RECOGNITION,
+            DirectionState(**{**common, "state": SRSState.BURIED, "anki_card_id": 1002, "bury_kind": "sched"}),
+        )
+        db.update_direction(
+            guids[2],
+            Direction.RECOGNITION,
+            DirectionState(**{**common, "state": SRSState.BURIED, "anki_card_id": 1003, "bury_kind": "user"}),
+        )
+        db.update_direction(
+            guids[3],
+            Direction.RECOGNITION,
+            DirectionState(**{**common, "state": SRSState.BURIED, "anki_card_id": 1004, "bury_kind": "sched"}),
+        )
+
+        # Mark today's unbury sweep as already-done so the buried test rows
+        # survive into sync_pull's main loop. (sync_pull's first action is
+        # `unbury_if_needed(today)`, which would otherwise release b2/b4.)
+        db.set_anki_state_cache("last_unbury_day", today.isoformat())
+
+        # Anki returns each in the queue value that produces the desired counter.
+        # NOTE: l2_text must match the TT collocation so compute_guid alignment works
+        # (sync_pull resolves records by guid when anki_note_id isn't set).
+        # For b4, every field must align between local and candidate so the diff
+        # actually returns False and the no_write branch fires.
+        texts = ["b1_review", "b2_buried", "b3_user", "b4_sched"]
+        cids = [1001, 1002, 1003, 1004]
+        anki_queues = [-3, 2, -3, -3]
+        records = []
+        for i, (text, cid, q) in enumerate(zip(texts, cids, anki_queues, strict=True)):
+            records.append(
+                make_note_record(
+                    anki_note_id=9000 + i,
+                    anki_guid=guids[i],
+                    l2_text=text,
+                    translation=f"t{i}",
+                    cards=[
+                        make_card_record(
+                            anki_card_id=cid,
+                            ord=0,
+                            queue=q,
+                            reps=3,  # match local
+                            stability=5.0,  # match local
+                            difficulty=4.5,  # match local
+                            due_date=today,
+                            anki_due=4500,
+                            last_review=now_ts,  # match local
+                            last_review_ms=int(now_ts.timestamp() * 1000),
+                        )
+                    ],
+                )
+            )
+        with caplog.at_level(logging.INFO, logger="app.anki.sync"):
+            AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        # Per-card BURY_TRACE lines exist for each of the 4
+        trace_lines = [r.getMessage() for r in caplog.records if "BURY_TRACE cid=" in r.getMessage()]
+        assert len(trace_lines) == 4
+        # Summary line emitted with the expected counters
+        summaries = [r.getMessage() for r in caplog.records if "BURY_TRACE summary" in r.getMessage()]
+        assert len(summaries) == 1
+        s = summaries[0]
+        assert "'anki_queue_minus3_seen': 3" in s
+        assert "'released_to_buried_writes': 1" in s
+        assert "'buried_to_released_writes': 1" in s
+        assert "'kind_only_flips_written': 1" in s
+        assert "'buried_state_match_no_write': 1" in s
+
+        # Also assert the user→sched flip actually persisted (proves the
+        # _direction_differs bury_kind fix landed end-to-end).
+        rec3 = db.get_collocation_by_guid(guids[2]).directions[Direction.RECOGNITION]
+        assert rec3.bury_kind == "sched"
+
+    def test_direction_differs_detects_bury_kind_change(self):
+        """When state matches but ``bury_kind`` differs, the diff must return
+        True so sync_pull's bury-kind reclassification actually lands.
+
+        Without this, the Layer 35 migration's pessimistic ``'user'`` backfill
+        cannot be corrected to ``'sched'`` or ``None`` on subsequent syncs
+        when Anki's state happens to match TT's (both BURIED, or both REVIEW
+        after a manual Anki unbury), silently locking the row in the wrong
+        kind forever.
+        """
+        base = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.BURIED,
+            due_date=date.today(),
+            stability=0.5,
+            difficulty=8.0,
+            reps=3,
+            lapses=0,
+            anki_card_id=100,
+            anki_due=4500,
+            last_review=_dt.now(UTC),
+            dirty_fsrs=False,
+            bury_kind="user",
+        )
+        assert _direction_differs(base, replace(base, bury_kind="sched")) is True
+        assert _direction_differs(base, replace(base, bury_kind=None)) is True
+        assert _direction_differs(base, base) is False
+
 
 # ── TestAnkiSyncConstructor ────────────────────────────────────────────────────
 

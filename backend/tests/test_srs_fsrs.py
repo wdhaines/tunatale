@@ -10,8 +10,8 @@ from app.srs.fsrs import schedule
 class TestComputeRetrievability:
     """Tests for compute_retrievability."""
 
-    def test_null_stability_returns_one(self):
-        """Null stability means no FSRS data — sort last."""
+    def test_null_stability_returns_none(self):
+        """Null stability means no FSRS data — return None (sorts first)."""
         state = DirectionState(
             direction=Direction.RECOGNITION,
             due_date=date.today(),
@@ -20,10 +20,10 @@ class TestComputeRetrievability:
         )
         from app.srs.fsrs import compute_retrievability
 
-        assert compute_retrievability(state, date.today()) == 1.0
+        assert compute_retrievability(state, date.today()) is None
 
-    def test_null_last_review_returns_one(self):
-        """Null last_review means never reviewed — sort last."""
+    def test_null_last_review_returns_none(self):
+        """Null last_review means never reviewed — return None (sorts first)."""
         state = DirectionState(
             direction=Direction.RECOGNITION,
             due_date=date.today(),
@@ -32,9 +32,9 @@ class TestComputeRetrievability:
         )
         from app.srs.fsrs import compute_retrievability
 
-        assert compute_retrievability(state, date.today()) == 1.0
+        assert compute_retrievability(state, date.today()) is None
 
-    def test_both_null_returns_one(self):
+    def test_both_null_returns_none(self):
         state = DirectionState(
             direction=Direction.RECOGNITION,
             due_date=date.today(),
@@ -43,7 +43,7 @@ class TestComputeRetrievability:
         )
         from app.srs.fsrs import compute_retrievability
 
-        assert compute_retrievability(state, date.today()) == 1.0
+        assert compute_retrievability(state, date.today()) is None
 
     def test_low_stability_low_retrievability(self):
         """Lower stability → lower retrievability for same elapsed days."""
