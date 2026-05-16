@@ -5,7 +5,7 @@ used by Anki at `rslib/src/scheduler/answering/learning.rs:learning_ivl_with_fuz
 (Anki 25.09 / `rand 0.9.2` / `rand_chacha 0.9.0`).
 
 Components:
-  - `_split_mix_64`         — `rand_core::SeedableRng::seed_from_u64` expansion
+  - `_pcg32`                — `rand_core::SeedableRng::seed_from_u64` expansion (PCG32 xsh rr)
   - `ChaCha12Rng`           — `rand_chacha::ChaCha12Rng` keystream (12 rounds)
   - `random_range_u32`      — `Uniform<u32>::sample_single`'s biased Canon's method
 
@@ -24,29 +24,35 @@ from __future__ import annotations
 _U32_MASK = 0xFFFFFFFF
 _U64_MASK = 0xFFFFFFFFFFFFFFFF
 
+# PCG32 constants — bit-identical to rand_core 0.9.5's seed_from_u64 default impl.
+_PCG_MUL = 6364136223846793005
+_PCG_INC = 11634580027462260723
 
-def _split_mix_64(state: int) -> tuple[int, int]:
-    """One round of SplitMix64 — same constants `rand_core` uses internally for
-    `SeedableRng::seed_from_u64`. Returns `(next_state, output_u64)`.
+
+def _pcg32(state: int) -> tuple[int, int]:
+    """One round of PCG32 (xsh rr variant) — same as `rand_core::SeedableRng::seed_from_u64`.
+
+    Returns `(next_state, output_u32)`.  The LCG step happens **before** the output
+    function, matching `rand_core`'s `seed_from_u64` (advance first, then read).
     """
-    state = (state + 0x9E3779B97F4A7C15) & _U64_MASK
-    z = state
-    z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & _U64_MASK
-    z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & _U64_MASK
-    z ^= z >> 31
-    return state, z
+    state = (state * _PCG_MUL + _PCG_INC) & _U64_MASK
+    xorshifted = (((state >> 18) ^ state) >> 27) & _U32_MASK
+    rot = (state >> 59) & _U32_MASK
+    out = ((xorshifted >> rot) | (xorshifted << (32 - rot))) & _U32_MASK
+    return state, out
 
 
 def _seed_from_u64(seed: int) -> bytes:
     """Mirror `rand_core::SeedableRng::seed_from_u64` for a 32-byte ChaCha key.
 
-    Runs SplitMix64 four times and concatenates the results little-endian.
+    Runs PCG32 eight times (8 × u32 = 32 bytes) and concatenates the results
+    little-endian.  Bit-exact with `rand_core` 0.9.5 `lib.rs:seed_from_u64`.
     """
     state = seed & _U64_MASK
     out = bytearray()
-    for _ in range(4):
-        state, z = _split_mix_64(state)
-        out += z.to_bytes(8, "little")
+    for _ in range(8):
+        state, z = _pcg32(state)
+        out += z.to_bytes(4, "little")
     return bytes(out)
 
 
@@ -71,6 +77,12 @@ def _chacha12_block(key: bytes, counter: int, nonce: bytes) -> bytes:
 
     `key` is 32 bytes, `nonce` is 12 bytes (zero for `ChaCha12Rng::seed_from_u64`),
     `counter` is a u32. ChaCha12 = 6 double-rounds = 12 rounds total.
+
+    Note: `rand_chacha` uses an 8-byte nonce, but we pass 12 zero bytes.  The extra
+    zero word lands in the counter-high slot, which is also zero — so the ChaCha
+    state matrix is identical to Rust's for the `seed_from_u64` path (counter=0,
+    nonce=0).  If this function were ever used with a non-zero counter or nonce
+    the layouts would diverge.
     """
     constants = [0x61707865, 0x3320646E, 0x79622D32, 0x6B206574]  # "expand 32-byte k"
     key_words = [int.from_bytes(key[i : i + 4], "little") for i in range(0, 32, 4)]
@@ -97,6 +109,9 @@ class ChaCha12Rng:
 
     `next_u32` consumes 4 bytes at a time, little-endian. Matches what
     `rng.random::<u32>()` does at the call site (rand 0.9.2).
+
+    The 32-byte key is produced by `_seed_from_u64` (PCG32 expansion, not
+    SplitMix64 — see that function for details).
     """
 
     __slots__ = ("_key", "_counter", "_buffer")
