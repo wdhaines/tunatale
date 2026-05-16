@@ -2044,6 +2044,95 @@ class TestDirectionDiffersDetectsLastReviewTransition:
         assert _direction_differs(base, replace(base, bury_kind=None)) is True
         assert _direction_differs(base, base) is False
 
+    def test_direction_differs_detects_anki_card_mod_change(self):
+        """``anki_card_mod`` feeds the FNV tiebreaker in
+        ``_merge_by_retrievability_ascending`` (Anki's ``fnvhash(id, mod)``
+        appended last in ``review_order_sql``). When Anki bumps ``cards.mod``
+        without changing any FSRS field, the tiebreak input drifts and TT
+        serves a different card than Anki from a pool of R-tied cards.
+        The diff must fire on mod-only changes so sync_pull refreshes it.
+        """
+        base = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=date.today(),
+            stability=5.0,
+            difficulty=4.5,
+            reps=3,
+            lapses=0,
+            anki_card_id=100,
+            anki_card_mod=1778703057,
+            anki_due=4500,
+            last_review=_dt.now(UTC),
+            dirty_fsrs=False,
+        )
+        assert _direction_differs(base, replace(base, anki_card_mod=1778812978)) is True
+        assert _direction_differs(base, base) is False
+
+    def test_sync_pull_refreshes_stale_anki_card_mod(self):
+        """End-to-end: a TT direction with stale ``anki_card_mod`` must be
+        rewritten when sync_pull observes a newer ``cards.mod`` from Anki,
+        even if no other FSRS field changed. Without this, the FNV
+        tiebreaker (``fnvhash(anki_card_id, anki_card_mod)``) sorts on
+        stale input and TT picks a different head card than Anki from
+        R-tied groups.
+        """
+        db = _make_tt_db()
+        today = date.today()
+        unit = SyntacticUnit(text="modrefresh", translation="t", word_count=1, difficulty=1, source="corpus")
+        db.add_collocation(unit)
+        guid = db.get_collocation("modrefresh").guid
+
+        stale_mod = 1778703057
+        fresh_mod = 1778812978
+        last_review = _dt.now(UTC)
+
+        db.update_direction(
+            guid,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.REVIEW,
+                due_date=today,
+                stability=5.0,
+                difficulty=4.5,
+                reps=3,
+                lapses=0,
+                anki_card_id=3001,
+                anki_card_mod=stale_mod,
+                anki_due=4500,
+                last_review=last_review,
+                dirty_fsrs=False,
+            ),
+        )
+
+        records = [
+            make_note_record(
+                anki_note_id=3001,
+                anki_guid=guid,
+                l2_text="modrefresh",
+                cards=[
+                    make_card_record(
+                        anki_card_id=3001,
+                        ord=0,
+                        queue=2,
+                        reps=3,
+                        lapses=0,
+                        stability=5.0,
+                        difficulty=4.5,
+                        due_date=today,
+                        anki_due=4500,
+                        anki_card_mod=fresh_mod,
+                        last_review=last_review,
+                    )
+                ],
+            )
+        ]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        item = db.get_collocation("modrefresh")
+        assert item.directions[Direction.RECOGNITION].anki_card_mod == fresh_mod
+
 
 # ── TestAnkiSyncConstructor ────────────────────────────────────────────────────
 

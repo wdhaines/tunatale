@@ -864,6 +864,12 @@ def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool
         # (e.g. migration's pessimistic 'user' default vs candidate 'sched')
         # is silently no-op'd, locking the row in the wrong kind forever.
         or local.bury_kind != candidate.bury_kind
+        # anki_card_mod feeds the FNV tiebreaker in
+        # _merge_by_retrievability_ascending (Anki's `fnvhash(id, mod)`).
+        # When Anki bumps cards.mod for any reason that doesn't change other
+        # FSRS fields (housekeeping, server sync, etc.), the tiebreak input
+        # drifts and TT serves a different card than Anki from R-tied pools.
+        or local.anki_card_mod != candidate.anki_card_mod
     )
 
 
