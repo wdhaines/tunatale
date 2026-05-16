@@ -47,7 +47,21 @@ class FakeWriter:
     def set_learning_state(self, card_id, left, due, type_):
         self.learning_state_calls.append((card_id, left, due, type_))
 
-    def write_revlog(self, *, cid, ease, ivl, last_ivl, factor, time_ms, type_, preferred_id=None):
+    def write_revlog(
+        self,
+        *,
+        cid,
+        ease,
+        ivl,
+        last_ivl,
+        factor,
+        time_ms,
+        type_,
+        preferred_id=None,
+        is_lapse=False,
+        ds_reps=None,
+        ds_lapses=None,
+    ):
         self.revlogs.append(
             {
                 "cid": cid,

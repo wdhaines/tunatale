@@ -13,6 +13,7 @@ echo "=== Tests ==="
 uv run pytest
 
 cd ../frontend
+
 echo "=== Frontend format check ==="
 bun run fmt:check
 
@@ -27,5 +28,8 @@ bun run test:coverage
 
 echo "=== E2E smoke tests ==="
 bun run test:e2e
+
+# Clean up coverage data file left by pytest --cov
+cd ../backend && uv run coverage erase
 
 echo "=== All checks passed ==="

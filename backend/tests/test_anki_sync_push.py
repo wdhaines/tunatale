@@ -98,7 +98,19 @@ class FakeWriter:
         self.calls.append(("set_learning_state", card_id, left, due_at, type_))
 
     def write_revlog(
-        self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_, preferred_id=None
+        self,
+        *,
+        cid: int,
+        ease: int,
+        ivl: int,
+        last_ivl: int,
+        factor: int,
+        time_ms: int,
+        type_,
+        preferred_id=None,
+        is_lapse: bool = False,
+        ds_reps: int | None = None,
+        ds_lapses: int | None = None,
     ) -> None:
         self.calls.append(("write_revlog", cid, ease, ivl, last_ivl, factor, time_ms, type_, preferred_id))
 
@@ -295,6 +307,41 @@ class TestOfflineWriter:
         col = conn.execute("SELECT mod, usn FROM col").fetchone()
         assert col["usn"] == -1
         assert col["mod"] > 0
+
+    def test_write_revlog_increments_reps(self):
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, rec_cid=90010)
+        writer = OfflineWriter(conn)
+        card_before = conn.execute("SELECT reps, lapses FROM cards WHERE id=90010").fetchone()
+        assert card_before["reps"] == 0
+        assert card_before["lapses"] == 0
+        writer.write_revlog(cid=90010, ease=3, ivl=7, last_ivl=7, factor=2500, time_ms=1000, type_=2)
+        card_after = conn.execute("SELECT reps, lapses FROM cards WHERE id=90010").fetchone()
+        assert card_after["reps"] == 1, "reps must be incremented by 1"
+        assert card_after["lapses"] == 0, "non-lapse must not increment lapses"
+
+    def test_write_revlog_increments_lapses_on_lapse(self):
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, rec_cid=90010)
+        writer = OfflineWriter(conn)
+        card_before = conn.execute("SELECT reps, lapses FROM cards WHERE id=90010").fetchone()
+        assert card_before["reps"] == 0
+        assert card_before["lapses"] == 0
+        writer.write_revlog(cid=90010, ease=1, ivl=-600, last_ivl=10, factor=2500, time_ms=1000, type_=1, is_lapse=True)
+        card_after = conn.execute("SELECT reps, lapses FROM cards WHERE id=90010").fetchone()
+        assert card_after["reps"] == 1, "reps must be incremented"
+        assert card_after["lapses"] == 1, "lapses must be incremented on lapse"
+
+    def test_write_revlog_preserves_lapses_without_lapse(self):
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, rec_cid=90010)
+        conn.execute("UPDATE cards SET lapses = 3 WHERE id = 90010")
+        conn.commit()
+        writer = OfflineWriter(conn)
+        writer.write_revlog(cid=90010, ease=3, ivl=7, last_ivl=7, factor=2500, time_ms=1000, type_=2)
+        card_after = conn.execute("SELECT reps, lapses FROM cards WHERE id=90010").fetchone()
+        assert card_after["reps"] == 1
+        assert card_after["lapses"] == 3, "pre-existing lapses must be preserved"
 
     def test_update_note_fields_replaces_named_field_and_bumps_usn(self):
         conn = _make_anki_full_db()
@@ -679,6 +726,89 @@ class TestSyncPush:
         AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
 
         assert "write_revlog" not in writer.action_names()
+
+    def test_sync_push_increments_anki_reps(self):
+        """Pushing a dirty direction increments cards.reps in Anki DB."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        _mark_direction_dirty(db, guid, reps=3, stability=10.5)
+
+        anki_conn = _make_anki_full_db()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid)
+        card_before = anki_conn.execute("SELECT reps FROM cards WHERE id=?", (rec_cid,)).fetchone()
+        assert card_before["reps"] == 0
+
+        writer = OfflineWriter(anki_conn)
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        card_after = anki_conn.execute("SELECT reps, lapses FROM cards WHERE id=?", (rec_cid,)).fetchone()
+        # reps jumps to ds.reps=3 via MAX(reps+1, ds_reps) — heals pre-existing drift
+        assert card_after["reps"] == 3, "Anki cards.reps must be corrected to match TT's ds.reps"
+        assert card_after["lapses"] == 0, "non-lapse must not increment lapses"
+
+    def test_sync_push_increments_lapses_on_review_lapse(self):
+        """Pushing a REVIEW→RELEARNING lapse increments cards.lapses in Anki DB."""
+        from datetime import datetime as dt
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=date.today(),
+            stability=0.5,
+            difficulty=5.5,
+            reps=4,
+            lapses=1,
+            state=SRSState.RELEARNING,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=1,
+            left=1001,
+            due_at=dt.now(UTC) + timedelta(minutes=10),
+            prior_state=SRSState.REVIEW,
+            prior_left=None,
+            prior_stability=10.0,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        anki_conn = _make_anki_full_db()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid)
+        # Set Anki card to queued relearning (queue=1, type=3, left=1001) so the
+        # anki_ahead guard doesn't block — it only fires when queue=2 (graduated)
+        # or when Anki has fewer remaining steps than TT. Matching left=1001 keeps
+        # the guard from blocking via the step-ahead check too.
+        anki_conn.execute(
+            "UPDATE cards SET queue = 1, type = 3, left = 1001 WHERE id = ?",
+            (rec_cid,),
+        )
+        anki_conn.commit()
+        writer = OfflineWriter(anki_conn)
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        card = anki_conn.execute("SELECT reps, lapses FROM cards WHERE id=?", (rec_cid,)).fetchone()
+        # reps jumps to ds.reps=4 and lapses to ds.lapses=1 via MAX(...) — heals pre-existing drift
+        assert card["reps"] == 4, "reps must be corrected to TT's ds.reps"
+        assert card["lapses"] == 1, "lapses must be corrected to TT's ds.lapses"
+
+    def test_sync_push_heals_pre_existing_reps_drift(self):
+        """Pre-existing drift in cards.reps is healed via MAX(reps+1, ds.reps)."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        _mark_direction_dirty(db, guid, reps=5, stability=10.5)
+
+        anki_conn = _make_anki_full_db()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid)
+        # Simulate pre-existing drift: Anki has reps=2 but TT has already pushed 3
+        # earlier grades without incrementing (pre-fix behavior).
+        anki_conn.execute("UPDATE cards SET reps = 2, lapses = 1 WHERE id = ?", (rec_cid,))
+        anki_conn.commit()
+
+        writer = OfflineWriter(anki_conn)
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        card = anki_conn.execute("SELECT reps, lapses FROM cards WHERE id=?", (rec_cid,)).fetchone()
+        assert card["reps"] == 5, f"reps should jump from 2 to ds.reps=5 via MAX, got {card['reps']}"
+        assert card["lapses"] == 1, "lapses should preserve existing drift value via MAX"
 
     def test_idempotent_after_push(self):
         """Running sync_push twice: second run finds nothing dirty."""

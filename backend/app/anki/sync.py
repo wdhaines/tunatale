@@ -506,7 +506,19 @@ class OfflineWriter:
         self._conn.commit()
 
     def write_revlog(
-        self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_, preferred_id=None
+        self,
+        *,
+        cid: int,
+        ease: int,
+        ivl: int,
+        last_ivl: int,
+        factor: int,
+        time_ms: int,
+        type_,
+        preferred_id=None,
+        is_lapse: bool = False,
+        ds_reps: int | None = None,
+        ds_lapses: int | None = None,
     ) -> None:
         max_row = self._conn.execute("SELECT MAX(id) FROM revlog").fetchone()
         max_id = (max_row[0] or 0) if max_row else 0
@@ -517,7 +529,13 @@ class OfflineWriter:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (rid, cid, -1, ease, ivl, last_ivl, factor, time_ms, type_),
         )
-        self._bump_col(int(_time.time()))
+        ts = int(_time.time())
+        lapse_inc = 1 if is_lapse else 0
+        self._conn.execute(
+            "UPDATE cards SET reps = MAX(reps + 1, ?), lapses = MAX(lapses + ?, ?), mod = ?, usn = -1 WHERE id = ?",
+            (ds_reps or 0, lapse_inc, ds_lapses or 0, ts, cid),
+        )
+        self._bump_col(ts)
         self._conn.commit()
 
     def set_specific_value_of_card(self, card_id: int, keys: list[str], new_values: list[str]) -> None:
@@ -1668,6 +1686,7 @@ class AnkiSync:
                     factor = max(1300, min(13000, round(ds.difficulty * 1000)))
                     # Use last_review timestamp for revlog ID
                     preferred_id = int(ds.last_review.timestamp() * 1000) if ds.last_review else None
+                    is_lapse = ds.prior_state == SRSState.REVIEW and ds.last_rating == Rating.AGAIN.value
                     self._writer.write_revlog(
                         cid=ds.anki_card_id,
                         ease=ease,
@@ -1677,6 +1696,9 @@ class AnkiSync:
                         time_ms=ds.last_review_time_ms,
                         type_=type_,
                         preferred_id=preferred_id,
+                        is_lapse=is_lapse,
+                        ds_reps=ds.reps,
+                        ds_lapses=ds.lapses,
                     )
                 if row_force_fsrs:
                     schema_ok = self._anki_col_ver is None or self._anki_col_ver <= KNOWN_ANKI_SCHEMA_VER
@@ -1704,6 +1726,7 @@ class AnkiSync:
                     ease = ds.last_rating if ds.last_rating is not None else 3
                     factor = max(1300, min(13000, round(ds.difficulty * 1000)))
                     preferred_id = int(ds.last_review.timestamp() * 1000) if ds.last_review else None
+                    is_lapse = ds.prior_state == SRSState.REVIEW and ds.last_rating == Rating.AGAIN.value
                     self._writer.write_revlog(
                         cid=ds.anki_card_id,
                         ease=ease,
@@ -1713,6 +1736,9 @@ class AnkiSync:
                         time_ms=ds.last_review_time_ms,
                         type_=type_,
                         preferred_id=preferred_id,
+                        is_lapse=is_lapse,
+                        ds_reps=ds.reps,
+                        ds_lapses=ds.lapses,
                     )
                 # Clear last_rating so it doesn't re-fire next sync
                 self._db.mark_direction_clean(guid, direction)

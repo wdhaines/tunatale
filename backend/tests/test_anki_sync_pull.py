@@ -46,7 +46,19 @@ class FakeWriter:
         pass
 
     def write_revlog(
-        self, *, cid: int, ease: int, ivl: int, last_ivl: int, factor: int, time_ms: int, type_: int
+        self,
+        *,
+        cid: int,
+        ease: int,
+        ivl: int,
+        last_ivl: int,
+        factor: int,
+        time_ms: int,
+        type_: int,
+        preferred_id=None,
+        is_lapse: bool = False,
+        ds_reps: int | None = None,
+        ds_lapses: int | None = None,
     ) -> None:
         pass
 
