@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import httpx
 
@@ -70,6 +70,18 @@ def _mark_direction_dirty(
         last_rating=last_rating,
     )
     db.update_direction(guid, direction, ds)
+
+
+class TestLocalToday4am:
+    """_local_today_4am returns the most recent 4 AM rollover."""
+
+    def test_after_4am_returns_today(self):
+        after = datetime(2026, 5, 15, 10, 0, 0, tzinfo=UTC)
+        assert _local_today_4am(after).day == 15
+
+    def test_before_4am_returns_yesterday(self):
+        before = datetime(2026, 5, 15, 3, 0, 0, tzinfo=UTC)
+        assert _local_today_4am(before).day == 14
 
 
 class FakeWriter:

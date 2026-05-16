@@ -12,7 +12,7 @@ import re
 import sqlite3
 import time as _time
 from dataclasses import dataclass, field, replace
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
 from app.anki.anki_connect import AnkiConnectClient
@@ -233,14 +233,22 @@ def extract_cloze_note(back_extra: str) -> str:
     return ""
 
 
-def _local_today_4am() -> datetime:
+def _local_today_4am(now: datetime | None = None) -> datetime:
     """Return the datetime of today's 4 AM rollover in local timezone.
 
     Mirrors Anki's day-cutoff concept — entries with a revlog.id before this
     timestamp are "before today" for the purpose of counting introductions.
+    Returns the most recent 4 AM (yesterday if before 4 AM today).
+    Accepts an optional *now* override for testability.
     """
-    local_tz = datetime.now().astimezone().tzinfo
-    return datetime.combine(date.today(), time(4), tzinfo=local_tz)
+    now = now or datetime.now()
+    if now.tzinfo is None:
+        now = now.astimezone()
+    local_tz = now.tzinfo
+    today_4am = datetime.combine(now.date(), time(4), tzinfo=local_tz)
+    if now < today_4am:
+        today_4am = datetime.combine(now.date() - timedelta(days=1), time(4), tzinfo=local_tz)
+    return today_4am
 
 
 class OfflineReader:
