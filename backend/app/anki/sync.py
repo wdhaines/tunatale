@@ -913,6 +913,7 @@ def _anki_step_ahead(anki_left: int | None, local_left: int | None) -> bool:
     return anki_tr > 0 and local_tr > 0 and anki_tr < local_tr
 
 
+# Layer 35: bury_kind split (sched/user/None).
 def _bury_kind_from_queue(queue: int) -> str | None:
     """Return the bury kind for an Anki queue value, or None when not buried.
 

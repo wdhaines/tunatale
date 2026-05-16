@@ -1592,6 +1592,7 @@ class SRSDatabase:
             return 0
         with self._get_conn() as conn:
             cursor = conn.execute(
+                # Layer 35: filter on bury_kind='sched' so user buries (queue=-2) survive.
                 """
                 UPDATE collocation_directions
                 SET state = CASE WHEN reps > 0 THEN 'review' ELSE 'new' END,

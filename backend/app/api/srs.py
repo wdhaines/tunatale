@@ -1107,7 +1107,7 @@ async def get_review_queue(request: Request, session_start: bool = False) -> dic
                 if dstate.state == SRSState.NEW:
                     ordered_main.append(t)
 
-    # Anki parity: counts.all_zero() auto-bump.
+    # Anki parity: counts.all_zero() auto-bump. (Layer 36 trigger 4)
     # `CardQueues::counts()` in rslib/scheduler/queue/mod.rs:187-196 advances the
     # cutoff whenever the visible counts are all zero — so a pending learning
     # card whose timer ripens between grades surfaces on the next fetch without

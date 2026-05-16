@@ -524,6 +524,24 @@ The underlying homonym corruption (TT collocation guid points to one Anki note w
 
 ---
 
+## Layer 35 — `bury_kind` split (refines Layer 27)
+
+**Trigger.** After Layer 27's daily unbury sweep, manually-buried Anki cards (queue=-2) kept resurfacing in TT each morning. The user would manual-bury a card in Anki, sync, and on the next day's first `/queue-stats` call the sweep released it back to `state='review'`. Anki distinguishes two bury kinds — queue=-3 (sched/sibling, auto-released at rollover) and queue=-2 (user/manual, sticks until the user unburies) — but TT collapsed both into `state='buried'` and `unbury_if_needed` wiped all of them. The reported impact: ~18 manually-buried cards re-entered the review pool on each `/queue-stats` poll.
+
+**Fix.** New column `collocation_directions.bury_kind TEXT` (migration v19→v20, `backend/app/srs/migrations.py:570-586`). Values: `'sched'` for sibling-bury (released by the daily sweep), `'user'` for manual-bury (stuck until manual unbury or sync_pull seeing Anki's card no longer buried), `NULL` for non-buried rows.
+
+- `_bury_kind_from_queue(queue)` helper at `backend/app/anki/sync.py:916-928`: maps Anki's queue value (-3 → `'sched'`, -2 → `'user'`, else `None`). All 7 direction-construction sites in `sync_pull` pass `bury_kind=_bury_kind_from_queue(card_rec.queue)` (5 sites) or explicit `bury_kind=None` (2 sites, for non-buried writes).
+- `unbury_if_needed` (`backend/app/srs/database.py:1595-1604`) now filters `WHERE state='buried' AND bury_kind='sched'`. User-buried rows survive the sweep, matching Anki's `unbury_if_needed` (which only releases queue=-3).
+- Migration backfill: every existing `state='buried'` row gets `bury_kind='user'` (pessimistic — better to leave a sibling-bury sticky for one extra day than wipe a user-bury). The next sync_pull rewrites the kind from Anki's actual queue value.
+
+**Files.** `backend/app/srs/migrations.py:570-586` (migration v19→v20), `backend/app/anki/sync.py:916-928` (helper) + 7 `bury_kind=` sites in `sync_pull` (5 `_bury_kind_from_queue`, 2 explicit `None`), `backend/app/srs/database.py:389/413/489` (column read/write), `backend/app/srs/database.py:1595-1604` (filtered sweep), `backend/app/models/srs_item.py` (DirectionState field), corresponding tests in `backend/tests/test_srs_migrations.py`, `backend/tests/test_anki_link_tt_images.py`, `backend/tests/test_srs_database.py`.
+
+**Aftermath.** Manually-buried cards survive across days. The pre-Layer-35 footgun — "an unconditional `UPDATE … WHERE state='buried'` wipes user-buries on every poll" — is recorded in `.claude/rules/anki-queue-parity.md` principle 10 as the canonical anti-pattern. Code committed as part of `09dc812 fix(media): copy image file in link_tt_images so nič's card image isn't broken` (commit message footer notes "Also includes pre-existing bury_kind feature").
+
+**Cross-reference.** Refines Layer 27 (daily unbury sweep) — without Layer 35 the sweep was over-aggressive. The two layers are now described together in `.claude/rules/anki-queue-parity.md` principles 9 and 10.
+
+---
+
 ## Layer 36 — Daily review cap on the badge (render-only)
 
 **Trigger.** After Layer 30 fixed the card-state mapping, TT showed 99 reviews while Anki showed 97 — a 2-card delta. Cross-referencing confirmed zero data drift (same 101 underlying cards). The gap was purely render: Anki applies `reviews_per_day` from `DeckConfig.Config` (protobuf field 10, default 200) to its badge; TT returned the raw uncapped `count_review_due_collocations()`.

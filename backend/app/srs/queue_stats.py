@@ -262,6 +262,7 @@ def _read_reviews_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) ->
     return _read_reviews_per_day_from_deck_config_table(conn, deck_name)
 
 
+# Layer 36: daily review cap (render-only).
 def refresh_daily_review_cap(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
     """Read the reviews-per-day cap from collection.anki2 and write it to the cache."""
     cap = _read_reviews_per_day_from_anki(conn, deck_name)
