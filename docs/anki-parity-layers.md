@@ -564,6 +564,45 @@ The underlying homonym corruption (TT collocation guid points to one Anki note w
 
 ---
 
+## Layer 37 — `anki_card_mod` in `_direction_differs` (FNV tiebreaker drift)
+
+**Trigger.** Three R-tied review cards (`iz`, `nič`, `dobrodošli` — all `data='{}'`, all queue=2, all due today) had different head positions between TT and Anki. Anki sorted them by `fnvhash(cards.id, cards.mod)`; TT's mirror agreed on the algorithm but used stale `anki_card_mod` values pulled from a prior sync, producing different hashes and a different ordering inside the tied group.
+
+**Cause.** `_direction_differs(local, candidate)` in `backend/app/anki/sync.py` checked every sync-relevant FSRS field but NOT `anki_card_mod`. Whenever Anki bumped `cards.mod` for any reason that didn't also change an FSRS field — server-side sync mtime resolution, scheduler housekeeping, bury actions — sync_pull's diff returned False and TT's local copy stayed stale. The FNV tiebreaker (Anki's `fnvhash(id, mod)` appended last in every `review_order_sql` variant — `rslib/src/storage/card/mod.rs:897`) silently diverged.
+
+**Fix.** One line in `_direction_differs`: `or local.anki_card_mod != candidate.anki_card_mod`. Sync_pull already constructs candidates with `anki_card_mod=card_rec.anki_card_mod` (the current Anki value), so once the diff fires, `update_direction` refreshes the column.
+
+**Files.** `backend/app/anki/sync.py:841-866` (diff check); regression tests in `backend/tests/test_anki_sync_pull.py` (`test_direction_differs_detects_anki_card_mod_change`, `test_sync_pull_refreshes_stale_anki_card_mod`).
+
+**Aftermath.** R-tied groups across both apps now agree on the tiebreaker. Write volume on sync is slightly higher (any mod-only Anki bump triggers a TT-side update), but each write is one small UPDATE.
+
+**Cross-reference.** `_merge_by_retrievability_ascending` at `backend/app/api/srs.py:768-800` is where the FNV value feeds the sort. Anki's matching constant: `rslib/src/storage/card/mod.rs:823` (`fnvhash(id, mod)`).
+
+---
+
+## Layer 38 — NULL-R sort: `desired_retention` placement (NOT NULLs-first, NOT NULLs-last)
+
+**Trigger.** During parallel grading, the user repeatedly saw TT serve cards earlier or later than Anki for the same data state. The recurring offender was `nič` — a queue=2 card with `data='{}'`, `reps=0`, no FSRS memory_state. TT placed it at queue head; Anki placed it mid-pool. Earlier in the session, TT had placed it at the tail (pre-Approach-2 behavior); Approach 2 flipped it to the head; both were wrong.
+
+**Empirical finding (Anki 25.09.4).** With the snapshot inspected via `uv run --with anki python` + `col.sched.get_queued_cards(fetch_limit=20)`, Anki places `data='{}'` review cards at the position `desired_retention` would occupy in R-asc. For the user's deck (`desired_retention=0.86`), nič landed between `streljati` (R=0.859) and `steklenica` (R=0.862). Same SQL run via `col.db.all(...)` with Anki's own UDFs returns NULL for nič, and the ORDER BY says NULLs-first — i.e. Anki's own SQL predicts head placement. The actual queue places it mid-pool. **The source-vs-binary contradiction was not resolved; the binary behavior was adopted as ground truth.** The `/tmp/anki-source` checkout is a shallow clone at `main` tip with no version tag — almost certainly newer than 25.09.4 — so the SQL-level explanation may live in a code path that has since been replaced.
+
+**Pre-existing bug surfaced.** `_DESIRED_RETENTION_FIELD` in `app/srs/queue_stats.py` was set to **40**, but per `proto/anki/deck_config.proto:188`, field 37 is `desired_retention` and field 40 is `historical_retention`. The existing `refresh_fsrs_params` was caching `historical_retention` thinking it was `desired_retention` (often 0.9 vs the user's 0.86 — close but wrong). Fixed both the production constant and the test helper (`tests/_helpers/anki_db.py:12`).
+
+**Fix.**
+- `compute_retrievability(state, today, now=None, desired_retention=0.9)` — when stability or last_review is None, returns `desired_retention` instead of `None` (Approach 2) or `1.0` (pre-Approach 2).
+- New `find_fixed32_field(data, target)` helper in `app/anki/protobuf_wire.py`.
+- New trio in `app/srs/queue_stats.py` mirroring `daily_new_cap`: `_read_desired_retention_from_deck_config_table`, `refresh_desired_retention`, `resolve_desired_retention` (cache → 0.9 default).
+- `refresh_desired_retention` wired into `app/api/anki.py` alongside the other refresh calls.
+- `_merge_by_retrievability_ascending` resolves `desired_retention` once per call and threads it into `compute_retrievability`. The `sort_r = -1.0 if r is None else r` Approach-2 workaround is gone.
+
+**Files.** `app/srs/fsrs.py:91-115` (signature + body), `app/srs/queue_stats.py:31` (constant 40→37) + `:280-339` (new trio), `app/anki/protobuf_wire.py:118-140` (helper), `app/api/srs.py:783-799` (resolve + thread), `app/api/anki.py:91-104` (sync wiring), `tests/_helpers/anki_db.py:12` (test helper field number); new tests in `test_srs_fsrs.py::test_*_returns_desired_retention`, `test_api_srs.py::test_merge_retrievability_null_card_lands_mid_pool_at_dr`, `test_queue_stats.py::test_resolve_desired_retention_*`, `test_queue_stats_cache.py::TestDesiredRetentionCache`.
+
+**Operational note.** After deploying this fix, run sync_pull (writes the `desired_retention` cache key) and then `clear_session_main_queue` — otherwise the DB-backed frozen queue replays the old order until next sync.
+
+**Cross-reference.** Layer 37 (anki_card_mod fix, landed same day) addresses the FNV tiebreaker *within* an R-tied group; Layer 38 addresses the R-value *for NULL-memory-state cards*. Both surfaced from the same iz/nič parallel-review session. The unresolved source-vs-binary puzzle is captured in `.claude/rules/anki-queue-parity.md` principle 13.
+
+---
+
 ## Cleanup pass (post-Layer 23)
 
 After 23 layers, swept for dead code and duplication. Behavior unchanged.

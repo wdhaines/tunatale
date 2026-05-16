@@ -666,3 +666,63 @@ def test_resolve_daily_review_cap_cache_too_old():
     db.set_anki_state_cache_raw("daily_review_cap", "30", old_ts)
     cap, source = resolve_daily_review_cap(db)
     assert source in ("config", "default")
+
+
+# ── resolve_desired_retention ───────────────────────────────────────────────────
+
+
+def test_resolve_desired_retention_db_creation_fails(monkeypatch):
+    """Default fallback (0.9) when no db is supplied and SRSDatabase creation raises."""
+    from app.srs.queue_stats import resolve_desired_retention
+
+    monkeypatch.setattr(
+        "app.srs.database.SRSDatabase.__init__", lambda self, x: (_ for _ in ()).throw(Exception("test"))
+    )
+    dr, source = resolve_desired_retention(None)
+    assert source == "default"
+    assert dr == 0.9
+
+
+def test_resolve_desired_retention_cache_too_old():
+    """Cache exists but is older than _CACHE_MAX_AGE_DAYS → fall back to default."""
+    from app.srs.queue_stats import resolve_desired_retention
+
+    db = SRSDatabase(":memory:")
+    old_ts = (datetime.now(UTC) - timedelta(days=31)).strftime("%Y-%m-%d %H:%M:%S")
+    db.set_anki_state_cache_raw("desired_retention", "0.86", old_ts)
+    dr, source = resolve_desired_retention(db)
+    assert source == "default"
+    assert dr == 0.9
+
+
+def test_resolve_desired_retention_corrupt_cache_timestamp():
+    """Cache timestamp can't be parsed → fall back to default without raising."""
+    from app.srs.queue_stats import resolve_desired_retention
+
+    db = SRSDatabase(":memory:")
+    db.set_anki_state_cache_raw("desired_retention", "0.86", "not-a-valid-timestamp")
+    dr, source = resolve_desired_retention(db)
+    assert source == "default"
+    assert dr == 0.9
+
+
+def test_refresh_desired_retention_skips_when_config_row_missing(tmp_path):
+    """deck points to a conf_id that doesn't exist in deck_config → cache untouched."""
+    import sqlite3
+
+    from app.srs.queue_stats import refresh_desired_retention
+
+    db = SRSDatabase(":memory:")
+    conn = sqlite3.connect(":memory:")
+    # Decks table has a deck whose kind points to conf_id=999 — but deck_config has no row 999.
+    from tests._helpers.protobuf import pb_len_field, pb_varint_field
+
+    conn.executescript("""
+        CREATE TABLE decks (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, common BLOB, kind BLOB);
+        CREATE TABLE deck_config (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB);
+    """)
+    kind_blob = pb_len_field(1, pb_varint_field(1, 999))
+    conn.execute("INSERT INTO decks VALUES (1, ?, 0, 0, NULL, ?)", ("0. Slovene", kind_blob))
+    conn.commit()
+    refresh_desired_retention(db, conn, "0. Slovene")
+    assert db.get_anki_state_cache("desired_retention") is None

@@ -229,6 +229,38 @@ class TestPbParsing:
         result = find_varint_field(blob, 9)
         assert result == 25
 
+    def test_pb_find_fixed32_field_reads_ieee_float(self):
+        """Field 37 with wire_type=5 (fixed32) decoded as a little-endian IEEE float."""
+        import struct
+
+        from app.anki.protobuf_wire import find_fixed32_field
+
+        # Anki's deck_config field 37 (desired_retention) is wire_type=5.
+        tag = (37 << 3) | 5
+        blob = encode_varint(tag) + struct.pack("<f", 0.86)
+        result = find_fixed32_field(blob, 37)
+        assert result is not None
+        assert abs(result - 0.86) < 1e-6
+
+    def test_pb_find_fixed32_field_returns_none_when_absent(self):
+        """Missing field 37 → returns None so callers can fall back to a default."""
+        from app.anki.protobuf_wire import find_fixed32_field
+
+        blob = pb_varint_field(9, 30) + pb_varint_field(10, 9999)
+        assert find_fixed32_field(blob, 37) is None
+
+    def test_pb_find_fixed32_field_memoryview(self):
+        """Accepts memoryview, like the other helpers."""
+        import struct
+
+        from app.anki.protobuf_wire import find_fixed32_field
+
+        tag = (37 << 3) | 5
+        blob = encode_varint(tag) + struct.pack("<f", 0.9)
+        result = find_fixed32_field(memoryview(blob), 37)
+        assert result is not None
+        assert abs(result - 0.9) < 1e-6
+
     def test_pb_find_len_field_exception_on_corrupt_data(self):
         """Corrupted bytes in LEN field → returns None without raising."""
         from app.anki.protobuf_wire import find_len_field
@@ -411,6 +443,59 @@ class TestRefreshFSRSParams:
         with caplog.at_level(logging.WARNING, logger="app.srs.queue_stats"):
             refresh_fsrs_params(db, conn, "0. Slovene")
         assert any("FSRS" in r.message and "0. Slovene" in r.message for r in caplog.records)
+
+
+class TestDesiredRetentionCache:
+    """Tests for refresh_desired_retention / resolve_desired_retention."""
+
+    def test_refresh_caches_value_from_modern_deck_config(self):
+        """refresh_desired_retention reads field 37 from deck_config and caches it."""
+        from app.srs.queue_stats import refresh_desired_retention
+
+        db = SRSDatabase(":memory:")
+        conn = make_modern_anki_conn_with_fsrs(weights=KNOWN_WEIGHTS, retention=0.86)
+        refresh_desired_retention(db, conn, "0. Slovene")
+
+        row = db.get_anki_state_cache("desired_retention")
+        assert row is not None
+        assert abs(float(row[0]) - 0.86) < 0.0001
+
+    def test_refresh_writes_nothing_when_field_absent(self):
+        """No field 37 in the blob → cache untouched, resolver falls back to default."""
+        from app.srs.queue_stats import refresh_desired_retention
+
+        db = SRSDatabase(":memory:")
+        conn = make_modern_anki_conn(new_per_day=20)  # no FSRS / no field 37
+        refresh_desired_retention(db, conn, "0. Slovene")
+        assert db.get_anki_state_cache("desired_retention") is None
+
+    def test_refresh_no_error_when_deck_missing(self):
+        from app.srs.queue_stats import refresh_desired_retention
+
+        db = SRSDatabase(":memory:")
+        conn = make_modern_anki_conn_with_fsrs()
+        refresh_desired_retention(db, conn, "No Such Deck")  # must not raise
+        assert db.get_anki_state_cache("desired_retention") is None
+
+    def test_resolve_returns_cached_value(self):
+        from app.srs.queue_stats import refresh_desired_retention, resolve_desired_retention
+
+        db = SRSDatabase(":memory:")
+        conn = make_modern_anki_conn_with_fsrs(weights=KNOWN_WEIGHTS, retention=0.86)
+        refresh_desired_retention(db, conn, "0. Slovene")
+
+        dr, source = resolve_desired_retention(db)
+        assert source == "cache"
+        assert abs(dr - 0.86) < 0.0001
+
+    def test_resolve_default_when_cache_empty(self):
+        """Empty cache → returns Anki's app-level default 0.9 with source='default'."""
+        from app.srs.queue_stats import resolve_desired_retention
+
+        db = SRSDatabase(":memory:")
+        dr, source = resolve_desired_retention(db)
+        assert source == "default"
+        assert dr == 0.9
 
 
 class TestResolveFSRSParams:

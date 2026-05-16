@@ -10,8 +10,8 @@ from app.srs.fsrs import schedule
 class TestComputeRetrievability:
     """Tests for compute_retrievability."""
 
-    def test_null_stability_returns_none(self):
-        """Null stability means no FSRS data — return None (sorts first)."""
+    def test_null_stability_returns_desired_retention(self):
+        """Null stability → return desired_retention (mirrors Anki's R-asc placement)."""
         state = DirectionState(
             direction=Direction.RECOGNITION,
             due_date=date.today(),
@@ -20,10 +20,11 @@ class TestComputeRetrievability:
         )
         from app.srs.fsrs import compute_retrievability
 
-        assert compute_retrievability(state, date.today()) is None
+        assert compute_retrievability(state, date.today()) == 0.9  # default
+        assert compute_retrievability(state, date.today(), desired_retention=0.86) == 0.86
 
-    def test_null_last_review_returns_none(self):
-        """Null last_review means never reviewed — return None (sorts first)."""
+    def test_null_last_review_returns_desired_retention(self):
+        """Null last_review → return desired_retention."""
         state = DirectionState(
             direction=Direction.RECOGNITION,
             due_date=date.today(),
@@ -32,9 +33,10 @@ class TestComputeRetrievability:
         )
         from app.srs.fsrs import compute_retrievability
 
-        assert compute_retrievability(state, date.today()) is None
+        assert compute_retrievability(state, date.today()) == 0.9
+        assert compute_retrievability(state, date.today(), desired_retention=0.86) == 0.86
 
-    def test_both_null_returns_none(self):
+    def test_both_null_returns_desired_retention(self):
         state = DirectionState(
             direction=Direction.RECOGNITION,
             due_date=date.today(),
@@ -43,7 +45,7 @@ class TestComputeRetrievability:
         )
         from app.srs.fsrs import compute_retrievability
 
-        assert compute_retrievability(state, date.today()) is None
+        assert compute_retrievability(state, date.today(), desired_retention=0.86) == 0.86
 
     def test_low_stability_low_retrievability(self):
         """Lower stability → lower retrievability for same elapsed days."""

@@ -92,11 +92,15 @@ def compute_retrievability(
     direction_state: DirectionState,
     today: date,
     now: datetime | None = None,
-) -> float | None:
-    """Return retrievability (0-1) for a direction_state, or None when undefined.
+    desired_retention: float = 0.9,
+) -> float:
+    """Return retrievability (0-1) for a direction_state.
 
-    Null stability or null last_review → return None (sorts first in ascending
-    order, matching Anki's SQLite NULL-first semantics).
+    Null stability or null last_review → return ``desired_retention``.
+    Empirically Anki places review cards with no memory_state (``data='{}'``) at
+    the R-asc position that ``desired_retention`` would occupy, not at the
+    SQLite NULLs-first head. The 0.9 default mirrors Anki's app-level default
+    when no deck-config value is cached.
 
     Mirrors Anki's `extract_fsrs_retrievability` (rslib storage/sqlite.rs):
       - When cards.data has `lrt` (FSRS-effective last-review timestamp,
@@ -112,7 +116,7 @@ def compute_retrievability(
     stability = direction_state.stability
     last_review = direction_state.last_review
     if stability is None or last_review is None:
-        return None
+        return desired_retention
     if isinstance(last_review, datetime):
         # Detect day-level fallback values (midnight UTC, no sub-day component).
         # `parse_fsrs_data` sets these via `_compute_last_review` when cards.data

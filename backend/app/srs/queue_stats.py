@@ -9,7 +9,13 @@ import struct
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from app.anki.protobuf_wire import decode_varint, find_len_field, find_varint_field, skip_field
+from app.anki.protobuf_wire import (
+    decode_varint,
+    find_fixed32_field,
+    find_len_field,
+    find_varint_field,
+    skip_field,
+)
 from app.config import settings
 from app.srs.fsrs import DEFAULT_FSRS5_PARAMS, FSRSParams
 
@@ -22,7 +28,8 @@ _CACHE_MAX_AGE_DAYS = 30
 
 # Field numbers in DeckConfig.Config protobuf (Anki ≥24.04)
 _FSRS5_WEIGHTS_FIELD = 5  # LEN-delimited packed f32; 19 floats for FSRS-5
-_DESIRED_RETENTION_FIELD = 40  # FIXED32 float
+_DESIRED_RETENTION_FIELD = 37  # FIXED32 float — per /tmp/anki-source/proto/anki/deck_config.proto:188
+# Field 40 is historical_retention; pre-2026-05-16 code read 40 thinking it was desired_retention.
 
 
 def _read_conf_id_for_deck(conn: sqlite3.Connection, deck_name: str) -> int | None:
@@ -268,6 +275,73 @@ def refresh_daily_review_cap(db: SRSDatabase, conn: sqlite3.Connection, deck_nam
     cap = _read_reviews_per_day_from_anki(conn, deck_name)
     if cap is not None:
         db.set_anki_state_cache("daily_review_cap", str(cap))
+
+
+def _read_desired_retention_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> float | None:
+    """Read FSRS desired_retention (proto field 37) from modern Anki's deck_config table.
+
+    Used as the synthetic R for cards without memory_state in `compute_retrievability`.
+    Empirically, Anki places `data='{}'` review cards at the R-asc position
+    ``desired_retention`` would occupy — between R<dr and R>dr cards — rather
+    than at the SQLite NULLs-first head.
+    """
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    except sqlite3.Error:  # pragma: no cover
+        return None  # pragma: no cover
+
+    if "deck_config" not in tables or "decks" not in tables:
+        return None
+
+    conf_id = _read_conf_id_for_deck(conn, deck_name)
+    if conf_id is None:
+        return None
+
+    config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
+    if config_row is None or not config_row[0]:
+        return None
+
+    config_blob = config_row[0]
+    return find_fixed32_field(
+        config_blob if isinstance(config_blob, bytes) else bytes(config_blob),
+        _DESIRED_RETENTION_FIELD,
+    )
+
+
+def refresh_desired_retention(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
+    """Read FSRS desired_retention from collection.anki2 and write it to the cache."""
+    dr = _read_desired_retention_from_deck_config_table(conn, deck_name)
+    if dr is not None:
+        db.set_anki_state_cache("desired_retention", repr(dr))
+
+
+def resolve_desired_retention(db: SRSDatabase | None = None) -> tuple[float, str]:
+    """Return (desired_retention, source) where source is 'cache' or 'default'.
+
+    Priority:
+    1. anki_state_cache (written during sync) — 'cache'
+    2. Anki's app-level default 0.9 — 'default'
+    """
+    if db is None:
+        try:
+            from app.srs.database import SRSDatabase
+
+            db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        except Exception:
+            db = None
+
+    if db is not None:
+        row = db.get_anki_state_cache("desired_retention")
+        if row is not None:
+            value_str, updated_at = row
+            try:
+                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                    return (float(value_str), "cache")
+            except (ValueError, TypeError, OverflowError):
+                pass
+
+    return (0.9, "default")
 
 
 def resolve_daily_review_cap(db: SRSDatabase | None = None) -> tuple[int, str]:

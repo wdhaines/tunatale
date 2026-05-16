@@ -9,7 +9,7 @@ import struct
 from tests._helpers.protobuf import encode_varint, pb_len_field, pb_varint_field
 
 FSRS5_WEIGHTS_FIELD = 5
-DESIRED_RETENTION_FIELD = 40
+DESIRED_RETENTION_FIELD = 37  # per /tmp/anki-source/proto/anki/deck_config.proto:188
 
 KNOWN_WEIGHTS: tuple[float, ...] = (
     0.1279,
@@ -57,9 +57,9 @@ def make_fsrs_deck_config_blob(
     payload = struct.pack(f"<{len(weights)}f", *weights)
     tag5 = encode_varint((FSRS5_WEIGHTS_FIELD << 3) | 2)
     blob += tag5 + encode_varint(len(payload)) + payload
-    # Field 40 (FIXED32): desired_retention as little-endian f32
-    tag40 = encode_varint((DESIRED_RETENTION_FIELD << 3) | 5)
-    blob += tag40 + struct.pack("<f", retention)
+    # Field 37 (FIXED32): desired_retention as little-endian f32
+    tag = encode_varint((DESIRED_RETENTION_FIELD << 3) | 5)
+    blob += tag + struct.pack("<f", retention)
     return blob
 
 

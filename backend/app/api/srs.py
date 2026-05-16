@@ -781,6 +781,9 @@ def _merge_by_retrievability_ascending(
     stays deterministic but no longer claims Anki parity.
     """
     from app.srs.fsrs import compute_retrievability
+    from app.srs.queue_stats import resolve_desired_retention
+
+    dr, _ = resolve_desired_retention()
 
     combined: list[tuple[int, SRSItem, str, Direction]] = [
         (row_id, item, lang, Direction.RECOGNITION) for row_id, item, lang in rec
@@ -790,12 +793,11 @@ def _merge_by_retrievability_ascending(
     def _key(t: tuple[int, SRSItem, str, Direction]) -> tuple:
         row_id, item, _, direction = t
         dstate = item.directions[direction]
-        r = compute_retrievability(dstate, today)
-        sort_r = -1.0 if r is None else r
+        r = compute_retrievability(dstate, today, desired_retention=dr)
         if dstate.anki_card_id is not None and dstate.anki_card_mod is not None:
-            return (sort_r, 0, _fnv1a_64_i64(dstate.anki_card_id, dstate.anki_card_mod), 0)
+            return (r, 0, _fnv1a_64_i64(dstate.anki_card_id, dstate.anki_card_mod), 0)
         # Fallback for rows that haven't been synced from Anki yet.
-        return (sort_r, 1, dstate.anki_card_id or 0, row_id)
+        return (r, 1, dstate.anki_card_id or 0, row_id)
 
     combined.sort(key=_key)
     return combined

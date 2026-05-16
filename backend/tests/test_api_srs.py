@@ -1371,15 +1371,21 @@ class TestReviewQueue:
         assert result[1][3] == Direction.RECOGNITION
         assert result[1][0] == 1  # rama row
 
-    async def test_merge_retrievability_null_stability_sorts_first(self, api_app_state):
-        """Directions with null stability (R=None) sort before those with real stability (Anki NULL-first parity)."""
+    async def test_merge_retrievability_null_stability_sorts_at_desired_retention(self, api_app_state):
+        """Directions with null stability sort at the position of ``desired_retention`` in R-asc.
+
+        Mirrors Anki's actual behavior (empirically verified 2026-05-16): cards
+        with ``data='{}'`` and no memory_state land between R<dr and R>dr cards,
+        not at the SQLite NULLs-first head. With the default dr=0.9 cache miss,
+        a null-R card sorts ahead of cards with R<0.9 and behind cards with R>0.9.
+        """
         from datetime import date
 
         from app.api.srs import _merge_by_retrievability_ascending
 
         today = date(2026, 5, 2)
 
-        # word_a: stability=None (null), due=today-1
+        # null-R card (stability=None) → R = dr (0.9 default).
         item_null = self._make_item(
             date(2026, 5, 1),
             100,
@@ -1387,7 +1393,7 @@ class TestReviewQueue:
             stability=None,
             last_review=date(2026, 5, 1),
         )
-        # word_b: stability=0.086, due=today-1
+        # low-R card (stability=0.086) → R ≈ 0.49 on 1-day elapsed. Sorts before null.
         item_low = self._make_item(
             date(2026, 5, 1),
             200,
@@ -1400,9 +1406,56 @@ class TestReviewQueue:
         prod = [(2, item_low, "sl")]
 
         result = _merge_by_retrievability_ascending(rec, prod, today)
-        # item_null (stability=None, R=None → sort_r=-1.0) comes first
-        assert result[0][3] == Direction.RECOGNITION
-        assert result[1][3] == Direction.PRODUCTION
+        # item_low (R ≈ 0.49) sorts before item_null (R = 0.9 default).
+        assert result[0][3] == Direction.PRODUCTION
+        assert result[1][3] == Direction.RECOGNITION
+
+    async def test_merge_retrievability_null_card_lands_mid_pool_at_dr(self, api_app_state, monkeypatch):
+        """Regression for the iz/nič divergence (2026-05-16): a NULL-R card lands
+        BETWEEN R-real cards in the R-asc pool, at the slot ``desired_retention``
+        would occupy. With dr=0.86 (the user's deck), nič (R=None → 0.86) must
+        sort after streljati (R≈0.859) and before steklenica (R≈0.862).
+
+        Pre-fix Approach-2 placed nič at position 0 — wrong, divergent from
+        Anki. Pre-Approach-2 behavior placed nič at the tail — also wrong.
+        """
+        from datetime import date
+
+        from app.api.srs import _merge_by_retrievability_ascending
+        from app.srs import queue_stats
+
+        # `_merge_by_retrievability_ascending` resolves desired_retention via a
+        # local `from app.srs.queue_stats import resolve_desired_retention` — so
+        # patch the source module, not the api re-export.
+        monkeypatch.setattr(queue_stats, "resolve_desired_retention", lambda *a, **kw: (0.86, "test"))
+
+        today = date(2026, 5, 16)
+        last = date(2026, 5, 15)
+
+        # streljati-shape: s=2.4799, 1d elapsed → R ≈ (1+19/81*1/2.48)^-0.5 ≈ 0.951
+        # — but we use lower stability to land ~0.859.
+        item_below = self._make_item(last, 1, Direction.RECOGNITION, stability=0.36, last_review=last)
+        # nič-shape: stability=None
+        item_null = self._make_item(last, 2, Direction.PRODUCTION, stability=None, last_review=last)
+        # steklenica-shape: s=2.55, 1d elapsed → R ≈ 0.953 — use stability that lands above dr.
+        item_above = self._make_item(last, 3, Direction.RECOGNITION, stability=999.0, last_review=last)
+
+        # Pre-fix Approach-2 would have put item_null at position 0.
+        # Anki-parity: order should be (below, null, above) — null sandwiched.
+        result = _merge_by_retrievability_ascending(
+            [(1, item_below, "sl"), (3, item_above, "sl")],
+            [(2, item_null, "sl")],
+            today,
+        )
+        # Compute R for each to assert ordering by name rather than tuple slot:
+        from app.srs.fsrs import compute_retrievability
+
+        r_below = compute_retrievability(item_below.directions[Direction.RECOGNITION], today, desired_retention=0.86)
+        r_above = compute_retrievability(item_above.directions[Direction.RECOGNITION], today, desired_retention=0.86)
+        assert r_below < 0.86 < r_above, f"test setup invalid: r_below={r_below} r_above={r_above}"
+
+        ordered_row_ids = [t[0] for t in result]
+        assert ordered_row_ids == [1, 2, 3], f"expected (below, null, above), got {ordered_row_ids}"
 
     # --- Tests for _merge_directions ---
     async def test_merge_directions_empty_inputs(self, api_app_state):

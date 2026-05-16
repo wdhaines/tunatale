@@ -116,6 +116,31 @@ def find_len_field(data: bytes, target_field: int) -> bytes | None:
     return None
 
 
+def find_fixed32_field(data: bytes, target_field: int) -> float | None:
+    """Scan protobuf *data* for the first fixed32 (IEEE float) with the given field number."""
+    import struct
+
+    if isinstance(data, memoryview):
+        data = bytes(data)
+    pos = 0
+    while pos < len(data):
+        try:
+            tag, pos = decode_varint(data, pos)
+        except Exception:  # pragma: no cover
+            return None
+        field_num = tag >> 3
+        wire_type = tag & 0x7
+        if field_num == target_field and wire_type == 5:
+            if pos + 4 > len(data):  # pragma: no cover
+                return None
+            return struct.unpack_from("<f", data, pos)[0]
+        try:
+            pos = skip_field(data, pos, wire_type)
+        except Exception:  # pragma: no cover
+            return None
+    return None
+
+
 # ── Mutation ───────────────────────────────────────────────────────────────────
 
 
