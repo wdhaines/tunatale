@@ -192,9 +192,10 @@ def _init_difficulty(rating: Rating, w: tuple[float, ...]) -> float:
 
 
 def _next_difficulty(d: float, rating: Rating, w: tuple[float, ...]) -> float:
-    next_d = d - w[6] * (rating.value - 3)
-    # Mean-reversion toward w[4] (the initial difficulty for a "normal" item)
-    next_d = w[7] * w[4] + (1 - w[7]) * next_d
+    delta_d = -w[6] * (rating.value - 3)
+    next_d = d + (10 - d) / 9 * delta_d
+    easy_init = _init_difficulty(Rating.EASY, w)
+    next_d = w[7] * (easy_init - next_d) + next_d
     return max(1.0, min(10.0, next_d))
 
 

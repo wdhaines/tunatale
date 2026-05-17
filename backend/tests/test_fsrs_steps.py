@@ -494,9 +494,8 @@ class TestShortTermAppliesInSteps:
 
         Routes through schedule() (not the helper directly) so any future
         refactor of _schedule_new / _schedule_with_steps that breaks parity
-        will fail this test. Note: difficulty also diverges in TT today
-        (TT uses old mean-reversion, Anki uses linear-damping) — that's a
-        separate pre-existing bug; not asserted here.
+        will fail this test. Difficulty lockstep is verified separately in
+        test_difficulty_lockstep_with_anki.
         """
         from app.srs.fsrs import FSRSParams
 
@@ -507,6 +506,44 @@ class TestShortTermAppliesInSteps:
             actual = item.directions[Direction.RECOGNITION].stability
             assert abs(actual - expected) < 1e-3, (
                 f"{name} grade {grade_num} ({rating.name}): TT stability {actual:.4f} ≠ Anki ground truth {expected}"
+            )
+
+    @pytest.mark.parametrize(
+        ("name", "ratings", "expected_difficulties"),
+        [
+            (
+                "again_hard_good_again",
+                [Rating.AGAIN, Rating.HARD, Rating.GOOD, Rating.AGAIN],
+                [7.1949, 7.6297, 7.6095, 8.3615],
+            ),
+            (
+                "four_lapses",
+                [Rating.AGAIN, Rating.AGAIN, Rating.AGAIN, Rating.AGAIN],
+                [7.1949, 8.0828, 8.6798, 9.0812],
+            ),
+        ],
+    )
+    def test_difficulty_lockstep_with_anki(self, name, ratings, expected_difficulties):
+        """End-to-end lockstep: TT's schedule() produces Anki's exact difficulty values.
+
+        Routes through schedule() so any refactor of _schedule_new /
+        _schedule_with_steps that breaks difficulty parity will fail this test.
+        Ground truth computed via the Anki model.rs formula:
+          delta_d = -w[6] * (rating - 3)
+          new_d = d + (10 - d) / 9 * delta_d
+          new_d = w[7] * (init_difficulty(Easy) - new_d) + new_d
+        Verified against the bug-report table (TT 7.1949→8.6486→8.6419→10.0000
+        vs Anki 7.195→7.630→7.610→8.362 for the again_hard_good_again seq).
+        """
+        from app.srs.fsrs import FSRSParams
+
+        params = FSRSParams(weights=self._SLOVENE_WEIGHTS)
+        item = _make_item(state=SRSState.NEW)
+        for grade_num, (rating, expected) in enumerate(zip(ratings, expected_difficulties, strict=True), 1):
+            item = schedule(item, rating, direction=Direction.RECOGNITION, params=params)
+            actual = item.directions[Direction.RECOGNITION].difficulty
+            assert abs(actual - expected) < 1e-3, (
+                f"{name} grade {grade_num} ({rating.name}): TT difficulty {actual:.4f} ≠ Anki ground truth {expected}"
             )
 
     def test_new_first_grade_no_short_term(self):
