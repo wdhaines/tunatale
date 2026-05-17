@@ -10,7 +10,7 @@ Verification status by layer:
   - `_seed_from_u64`: derived directly from PCG32 expansion (8 calls × u32).
     PASS by construction above.
   - ChaCha12 block / `ChaCha12Rng` / `random_range_u32` / fuzz: cross-verified
-    against Rust `rand 0.9.2 / rand_chacha 0.9.0` for seeds 0 and
+    against Rust `rand 0.9.1 / rand_chacha 0.9.0` for seeds 0 and
     1775264032847 (see `test_ground_truth_regression`). PASS.
 
 If Anki ever upgrades `rand` and changes `Uniform<u32>::sample_single` (Canon →
@@ -82,7 +82,7 @@ class TestChaCha12Rng:
     def test_seed_zero_first_u32_outputs(self):
         """First few u32 outputs from ChaCha12Rng seeded with u64 = 0."""
         rng = ChaCha12Rng(0)
-        # Cross-verified against Rust rand 0.9.2 / rand_chacha 0.9.0.
+        # Cross-verified against Rust rand 0.9.1 / rand_chacha 0.9.0.
         assert rng.next_u32() == 0xCD2C6F7F
         assert rng.next_u32() == 0xBB2A3FB2
         assert rng.next_u32() == 0x8E27697B
@@ -108,7 +108,7 @@ class TestRandomRangeU32:
         """For seed=0 and a 60-second learning step, fuzz upper=15 → range [0, 15)."""
         rng = ChaCha12Rng(0)
         v = random_range_u32(rng, 0, 15)
-        # Cross-verified against Rust rand 0.9.2 / rand_chacha 0.9.0.
+        # Cross-verified against Rust rand 0.9.1 / rand_chacha 0.9.0.
         assert v == 12
 
     def test_range_size_one_returns_low(self):
@@ -173,7 +173,7 @@ class TestLearningStepFuzzBitExact:
 
 
 class TestGroundTruthRegression:
-    """Cross-verified seed→output pairs captured from Rust `rand 0.9.2 / rand_chacha 0.9.0`.
+    """Cross-verified seed→output pairs captured from Rust `rand 0.9.1 / rand_chacha 0.9.0`.
 
     These are the ground-truth references for the entire RNG chain, not just
     our own port's output.  If any of these fail, either our port diverged from

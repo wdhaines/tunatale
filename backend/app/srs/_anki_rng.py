@@ -2,7 +2,7 @@
 
 Mirrors the chain `StdRng::seed_from_u64(seed) → rng.random_range(low..high)` as
 used by Anki at `rslib/src/scheduler/answering/learning.rs:learning_ivl_with_fuzz`
-(Anki 25.09 / `rand 0.9.2` / `rand_chacha 0.9.0`).
+(Anki 25.09 / `rand 0.9.1` / `rand_chacha 0.9.0`).
 
 Components:
   - `_pcg32`                — `rand_core::SeedableRng::seed_from_u64` expansion (PCG32 xsh rr)
@@ -108,7 +108,7 @@ class ChaCha12Rng:
     """Stateful keystream — same byte order as `rand_chacha::ChaCha12Rng`.
 
     `next_u32` consumes 4 bytes at a time, little-endian. Matches what
-    `rng.random::<u32>()` does at the call site (rand 0.9.2).
+    `rng.random::<u32>()` does at the call site (rand 0.9.1).
 
     The 32-byte key is produced by `_seed_from_u64` (PCG32 expansion, not
     SplitMix64 — see that function for details).
@@ -140,7 +140,7 @@ def _wmul_u32(a: int, b: int) -> tuple[int, int]:
 
 
 def random_range_u32(rng: ChaCha12Rng, low: int, high_exclusive: int) -> int:
-    """Mirror `rand 0.9.2` `Uniform::<u32>::sample_single(low, high_exclusive)`.
+    """Mirror `rand 0.9.1` `Uniform::<u32>::sample_single(low, high_exclusive)`.
 
     Algorithm: Canon's biased widening-multiply method (rand 0.9 default; the
     `unbiased` cargo feature is NOT enabled in Anki's workspace, so this is what
