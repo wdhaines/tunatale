@@ -1897,6 +1897,66 @@ class TestDirectionDiffersDetectsLastReviewTransition:
         assert "anki_queue=-2" in msg
         assert "'anki_queue_minus2_seen': 1" in msg
 
+    def test_sync_pull_classifies_queue_minus_2_as_sched(self):
+        """Anki's binary writes queue=-2 for grade-time sibling-bury, NOT
+        queue=-3 as the source code says. Verified 2026-05-17 by running
+        ``col.sched.answerCard`` against a copy of the user's collection:
+        grading ord=1 placed the ord=0 sibling at queue=-2 in the same
+        atomic transaction (matching mods). The user's deck had 19 cards
+        in queue=-2 with zero in queue=-3, all created by grading siblings.
+
+        Anki releases queue=-2 at rollover too (``unbury_on_day_rollover``
+        releases both -2 and -3, ``rslib/storage/card/sqlwriter.rs:471-476``).
+        TT must mirror that: classify queue=-2 as ``'sched'`` so the daily
+        unbury sweep releases it. The previous mapping (queue=-2 → ``'user'``)
+        left TT holding sibling-buries indefinitely while Anki had already
+        released them — producing the 19-card cohort on 2026-05-17 (and the
+        earlier 140-row incident on 2026-05-16, same root cause).
+
+        Rule 13: trust the binary, not the source.
+        """
+        db = _make_tt_db()
+        today = date.today()
+        unit = SyntacticUnit(text="sib", translation="t", word_count=1, difficulty=1, source="corpus")
+        db.add_collocation(unit)
+        guid = db.get_collocation("sib").guid
+
+        db.update_direction(
+            guid,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                due_date=today,
+                stability=5.0,
+                difficulty=4.5,
+                reps=3,
+                lapses=0,
+                state=SRSState.REVIEW,
+                anki_card_id=2001,
+                anki_due=4500,
+                last_review=_dt.now(UTC),
+                dirty_fsrs=False,
+            ),
+        )
+
+        records = [
+            make_note_record(
+                anki_note_id=2001,
+                anki_guid=guid,
+                l2_text="sib",
+                cards=[make_card_record(anki_card_id=2001, ord=0, queue=-2, due_date=today)],
+            )
+        ]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        result = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert result.state == SRSState.BURIED
+        assert result.bury_kind == "sched", (
+            f"queue=-2 must classify as 'sched' so the daily unbury sweep "
+            f"releases it (Anki releases queue=-2 at rollover). "
+            f"Got bury_kind={result.bury_kind!r}."
+        )
+
     def test_sync_pull_bury_trace_counters_and_log(self, caplog):
         """Exercise BURY_TRACE counter branches and log emission.
 

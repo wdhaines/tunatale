@@ -955,17 +955,29 @@ def _anki_step_ahead(anki_left: int | None, local_left: int | None) -> bool:
 
 
 # Layer 35: bury_kind split (sched/user/None).
+# Layer 39 (2026-05-17): queue=-2 now maps to 'sched', not 'user'.
 def _bury_kind_from_queue(queue: int) -> str | None:
     """Return the bury kind for an Anki queue value, or None when not buried.
 
-    Anki: ``queue=-3`` is sched/sibling bury (auto-released at next rollover);
-    ``queue=-2`` is manual/user bury (sticks until the user unburies). Other
-    queue values aren't buried.
+    Both ``queue=-2`` and ``queue=-3`` map to ``'sched'`` so the daily
+    unbury sweep releases them at TT's rollover, matching Anki's own
+    behavior (``unbury_on_day_rollover`` releases both, see
+    ``rslib/storage/card/sqlwriter.rs:471-476``).
+
+    The Anki *source* claims grade-time sibling-bury writes ``queue=-3``
+    (sched) and only explicit UI actions write ``queue=-2`` (user). The
+    Anki *binary* contradicts that: grading a card via
+    ``col.sched.answerCard`` places the sibling at ``queue=-2``,
+    verified 2026-05-17 against a copy of the user's collection. Per
+    rule 13 (``.claude/rules/anki-queue-parity.md``), trust the binary.
+
+    The previous mapping (``queue=-2 → 'user'``) left TT hoarding every
+    sibling-bury indefinitely while Anki auto-released them at rollover —
+    the 19-card cohort observed on 2026-05-17 and the earlier 140-row
+    incident on 2026-05-16 (see ``docs/bury-kind-investigation-*``).
     """
-    if queue == -3:
+    if queue in (-2, -3):
         return "sched"
-    if queue == -2:
-        return "user"
     return None
 
 
