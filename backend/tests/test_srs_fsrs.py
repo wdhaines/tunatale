@@ -7,6 +7,27 @@ from app.models.srs_item import Direction, DirectionState, Rating, SRSItem, SRSS
 from app.srs.fsrs import schedule
 
 
+class TestForgettingCurve:
+    """Tests for _forgetting_curve with decay parameter."""
+
+    def test_forgetting_curve_respects_decay(self):
+        """Different decay values produce different retrievability."""
+        from app.srs.fsrs import _forgetting_curve
+
+        # FSRS-5 decay (-0.5)
+        r_fsrs5 = _forgetting_curve(elapsed_days=10, stability=5, decay=-0.5)
+        # FSRS-6 decay (-0.1542)
+        r_fsrs6 = _forgetting_curve(elapsed_days=10, stability=5, decay=-0.1542)
+
+        # Same inputs but different decay → different retrievability
+        assert r_fsrs5 != r_fsrs6
+        # FSRS-6 decay (less negative) → flatter curve → higher R
+        assert r_fsrs6 > r_fsrs5
+        # Pin exact FSRS-5 value: (1 + 19/81 * 10/5)^(-0.5) = (1 + 0.23457 * 2)^(-0.5)
+        # = (1.46914)^(-0.5) = 0.825
+        assert abs(r_fsrs5 - 0.825) < 0.01
+
+
 class TestComputeRetrievability:
     """Tests for compute_retrievability."""
 

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import struct
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+import pytest
 
 from app.srs.database import SRSDatabase
 from app.srs.queue_stats import refresh_review_settings, resolve_daily_new_cap
@@ -726,3 +729,214 @@ def test_refresh_desired_retention_skips_when_config_row_missing(tmp_path):
     conn.commit()
     refresh_desired_retention(db, conn, "0. Slovene")
     assert db.get_anki_state_cache("desired_retention") is None
+
+
+# ── FSRS-6 protobuf field-6 reader tests ──────────────────────────────────────
+
+
+def _packed_float_field(field_num: int, floats: list[float]) -> bytes:
+    """Build a protobuf LEN-delimited packed f32 field."""
+    payload = struct.pack(f"<{len(floats)}f", *floats)
+    return pb_len_field(field_num, payload)
+
+
+def _make_deck_config_blob(tmp_path, deck_name, config_blob: bytes, conf_id: int = 1):
+    """Create an Anki DB with given deck_config protobuf and return a conn."""
+    conn = sqlite3.connect(str(tmp_path / "test_fsrs6.anki2"))
+    conn.executescript("""
+        CREATE TABLE decks (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, common BLOB, kind BLOB);
+        CREATE TABLE deck_config (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB);
+    """)
+    kind_blob = pb_len_field(1, pb_varint_field(1, conf_id))
+    conn.execute("INSERT INTO decks VALUES (1, ?, 0, 0, NULL, ?)", (deck_name, kind_blob))
+    conn.execute(
+        "INSERT INTO deck_config VALUES (?, 'Default', 0, 0, ?)",
+        (conf_id, config_blob),
+    )
+    conn.commit()
+    return conn
+
+
+class TestReadFSRSParamsFromDeckConfig:
+    """Tests for _read_fsrs_params_from_deck_config_table with FSRS-6 support."""
+
+    def test_reads_fsrs6_field_6(self, tmp_path):
+        """Field 6 with 21 packed floats → FSRS-6 params with version=6."""
+        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+
+        fsrs6_weights = [0.4 + i * 0.01 for i in range(21)]
+        config_blob = _packed_float_field(6, fsrs6_weights)
+        conn = _make_deck_config_blob(tmp_path, "Test", config_blob, conf_id=1)
+        result = _read_fsrs_params_from_deck_config_table(conn, "Test")
+        conn.close()
+
+        assert result is not None
+        assert result.version == 6
+        # Protobuf packed f32 loses precision; compare with tolerance
+        assert result.decay == pytest.approx(fsrs6_weights[20], abs=1e-6)
+        for a, b in zip(result.weights, fsrs6_weights, strict=True):
+            assert a == pytest.approx(b, abs=1e-6)
+
+    def test_prefers_field_6_when_both_present(self, tmp_path):
+        """Both field 5 (19 floats) and field 6 (21 floats) → returns FSRS-6."""
+        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+
+        fsrs5_weights = [0.4 + i * 0.01 for i in range(19)]
+        fsrs6_weights = [0.4 + i * 0.01 for i in range(21)]
+        # Build config blob with both fields
+        config_blob = _packed_float_field(5, fsrs5_weights) + _packed_float_field(6, fsrs6_weights)
+        conn = _make_deck_config_blob(tmp_path, "Test", config_blob, conf_id=1)
+        result = _read_fsrs_params_from_deck_config_table(conn, "Test")
+        conn.close()
+
+        assert result is not None
+        assert result.version == 6, "field 6 (21 weights) must be preferred"
+        for a, b in zip(result.weights, fsrs6_weights, strict=True):
+            assert a == pytest.approx(b, abs=1e-6)
+
+    def test_falls_back_to_field_5_when_field_6_is_19_floats(self, tmp_path):
+        """Field 6 with 19 floats (Anki dual-write artifact) → fall back to field 5."""
+        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+
+        fsrs5_weights = [0.4 + i * 0.01 for i in range(19)]
+        fsrs6_19 = [0.5 + i * 0.01 for i in range(19)]  # field 6 has 19 floats (dual-write)
+        config_blob = _packed_float_field(5, fsrs5_weights) + _packed_float_field(6, fsrs6_19)
+        conn = _make_deck_config_blob(tmp_path, "Test", config_blob, conf_id=1)
+        result = _read_fsrs_params_from_deck_config_table(conn, "Test")
+        conn.close()
+
+        assert result is not None
+        assert result.version == 5, "field 5 (19 weights) must be used when field 6 has 19 floats"
+        for a, b in zip(result.weights, fsrs5_weights, strict=True):
+            assert a == pytest.approx(b, abs=1e-6)
+
+    def test_falls_back_to_defaults_when_no_field(self, tmp_path):
+        """No field 5 or 6 → returns None."""
+        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+
+        config_blob = b""  # empty config
+        conn = _make_deck_config_blob(tmp_path, "Test", config_blob, conf_id=1)
+        result = _read_fsrs_params_from_deck_config_table(conn, "Test")
+        conn.close()
+        assert result is None
+
+    def test_reads_fsrs_short_term_when_present(self, tmp_path):
+        """_read_fsrs_short_term_from_config_table returns True for b'true'."""
+        from app.srs.queue_stats import _read_fsrs_short_term_from_config_table
+
+        db_path = tmp_path / "test.anki2"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE config (key TEXT PRIMARY KEY, val BLOB, mtime_secs INT, usn INT)")
+        conn.execute("INSERT INTO config (key, val) VALUES ('fsrsShortTermWithStepsEnabled', ?)", (b"true",))
+        conn.commit()
+
+        assert _read_fsrs_short_term_from_config_table(conn) is True
+        conn.close()
+
+    def test_reads_fsrs_short_term_when_false(self, tmp_path):
+        """_read_fsrs_short_term_from_config_table returns False for b'false'."""
+        from app.srs.queue_stats import _read_fsrs_short_term_from_config_table
+
+        db_path = tmp_path / "test.anki2"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE config (key TEXT PRIMARY KEY, val BLOB, mtime_secs INT, usn INT)")
+        conn.execute("INSERT INTO config (key, val) VALUES ('fsrsShortTermWithStepsEnabled', ?)", (b"false",))
+        conn.commit()
+
+        assert _read_fsrs_short_term_from_config_table(conn) is False
+        conn.close()
+
+    def test_reads_fsrs_short_term_when_missing(self, tmp_path):
+        """_read_fsrs_short_term_from_config_table returns None when key absent."""
+        from app.srs.queue_stats import _read_fsrs_short_term_from_config_table
+
+        db_path = tmp_path / "test.anki2"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE config (key TEXT PRIMARY KEY, val BLOB, mtime_secs INT, usn INT)")
+        conn.commit()
+
+        assert _read_fsrs_short_term_from_config_table(conn) is None
+        conn.close()
+
+    def test_refresh_fsrs_short_term_flag_writes_cache(self, tmp_path):
+        """refresh_fsrs_short_term_flag writes the flag to anki_state_cache."""
+        from app.srs.queue_stats import refresh_fsrs_short_term_flag, resolve_fsrs_short_term_flag
+
+        db_path = tmp_path / "test.anki2"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE config (key TEXT PRIMARY KEY, val BLOB, mtime_secs INT, usn INT)")
+        conn.execute("INSERT INTO config (key, val) VALUES ('fsrsShortTermWithStepsEnabled', ?)", (b"true",))
+        conn.commit()
+
+        db = SRSDatabase(":memory:")
+        refresh_fsrs_short_term_flag(db, conn)
+        assert resolve_fsrs_short_term_flag(db) is True
+        conn.close()
+
+    def test_resolve_fsrs_short_term_flag_defaults_false(self):
+        """resolve_fsrs_short_term_flag returns False when cache is empty."""
+        from app.srs.queue_stats import resolve_fsrs_short_term_flag
+
+        db = SRSDatabase(":memory:")
+        assert resolve_fsrs_short_term_flag(db) is False
+
+    def test_resolve_fsrs_short_term_flag_db_creation_fails(self, monkeypatch):
+        """Default fallback (False) when no db is supplied and SRSDatabase creation raises."""
+        from app.srs.queue_stats import resolve_fsrs_short_term_flag
+
+        monkeypatch.setattr(
+            "app.srs.database.SRSDatabase.__init__", lambda self, x: (_ for _ in ()).throw(Exception("test"))
+        )
+        assert resolve_fsrs_short_term_flag(None) is False
+
+
+class TestResolveFSRSParams:
+    """Tests for refresh_fsrs_params + resolve_fsrs_params with version."""
+
+    def test_resolve_fsrs_params_round_trip_with_version(self, srs_db):
+        """resolve_fsrs_params returns cached params with correct version after refresh."""
+        import json
+
+        from app.srs.queue_stats import resolve_fsrs_params
+
+        fsrs6_weights = list(range(21))  # dummy FSRS-6 weights
+        fsrs6_weights[20] = 0.1542  # decay param
+        srs_db.set_anki_state_cache(
+            "fsrs_params",
+            json.dumps(
+                {
+                    "weights": fsrs6_weights,
+                    "desired_retention": 0.9,
+                    "version": 6,
+                }
+            ),
+        )
+
+        params, source = resolve_fsrs_params(srs_db)
+        assert source == "cache"
+        assert params.version == 6
+        assert params.decay == fsrs6_weights[20]
+
+    def test_backward_compat_no_version_in_cache(self, srs_db):
+        """Old cache rows without 'version' still work; version inferred from weight count."""
+        import json
+
+        from app.srs.queue_stats import resolve_fsrs_params
+
+        # Old cache format: no "version" key
+        fsrs5_weights = [0.4 + i * 0.01 for i in range(19)]
+        srs_db.set_anki_state_cache(
+            "fsrs_params",
+            json.dumps(
+                {
+                    "weights": fsrs5_weights,
+                    "desired_retention": 0.9,
+                }
+            ),
+        )
+
+        params, source = resolve_fsrs_params(srs_db)
+        assert source == "cache"
+        # Without 'version' in cache, FSRSParams infers from weight count
+        assert params.version == 5
+        assert params.decay == 0.5

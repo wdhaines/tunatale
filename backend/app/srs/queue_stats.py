@@ -28,6 +28,7 @@ _CACHE_MAX_AGE_DAYS = 30
 
 # Field numbers in DeckConfig.Config protobuf (Anki ≥24.04)
 _FSRS5_WEIGHTS_FIELD = 5  # LEN-delimited packed f32; 19 floats for FSRS-5
+_FSRS6_WEIGHTS_FIELD = 6  # LEN-delimited packed f32; 21 floats for FSRS-6
 _DESIRED_RETENTION_FIELD = 37  # FIXED32 float — per /tmp/anki-source/proto/anki/deck_config.proto:188
 # Field 40 is historical_retention; pre-2026-05-16 code read 40 thinking it was desired_retention.
 
@@ -120,17 +121,27 @@ def _read_fsrs_params_from_deck_config_table(conn: sqlite3.Connection, deck_name
     config_blob = config_row[0]
     config_blob = bytes(config_blob) if isinstance(config_blob, memoryview) else config_blob
 
-    weights = _pb_find_packed_float_field(config_blob, _FSRS5_WEIGHTS_FIELD)
-    if weights is None or len(weights) != 19:
-        return None
+    # Try field 6 first (FSRS-6: 21 floats)
+    weights_6 = _pb_find_packed_float_field(config_blob, _FSRS6_WEIGHTS_FIELD)
+    if weights_6 is not None and len(weights_6) == 21:
+        retention_raw = _pb_find_fixed32_float_field(config_blob, _DESIRED_RETENTION_FIELD)
+        retention = float(retention_raw) if retention_raw is not None else 0.9
+        try:
+            return FSRSParams(weights=tuple(weights_6), desired_retention=retention)
+        except (ValueError, TypeError):  # pragma: no cover
+            pass  # fall through to field 5
 
-    retention_raw = _pb_find_fixed32_float_field(config_blob, _DESIRED_RETENTION_FIELD)
-    retention = float(retention_raw) if retention_raw is not None else 0.9
+    # Fall back to field 5 (FSRS-5: 19 floats)
+    weights_5 = _pb_find_packed_float_field(config_blob, _FSRS5_WEIGHTS_FIELD)
+    if weights_5 is not None and len(weights_5) == 19:
+        retention_raw = _pb_find_fixed32_float_field(config_blob, _DESIRED_RETENTION_FIELD)
+        retention = float(retention_raw) if retention_raw is not None else 0.9
+        try:
+            return FSRSParams(weights=tuple(weights_5), desired_retention=retention)
+        except (ValueError, TypeError):  # pragma: no cover
+            return None  # pragma: no cover
 
-    try:
-        return FSRSParams(weights=tuple(weights), desired_retention=retention)
-    except (ValueError, TypeError):  # pragma: no cover
-        return None  # pragma: no cover
+    return None
 
 
 def _read_new_per_day_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> int | None:
@@ -643,7 +654,13 @@ def refresh_fsrs_params(db: SRSDatabase, conn: sqlite3.Connection, deck_name: st
 
     db.set_anki_state_cache(
         "fsrs_params",
-        json.dumps({"weights": list(params.weights), "desired_retention": params.desired_retention}),
+        json.dumps(
+            {
+                "weights": list(params.weights),
+                "desired_retention": params.desired_retention,
+                "version": params.version,
+            }
+        ),
     )
 
 
@@ -665,6 +682,7 @@ def resolve_fsrs_params(db: SRSDatabase | None = None) -> tuple[FSRSParams, str]
                 age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
                 if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
                     cached = json.loads(value_str)
+                    # Backward compat: old cache rows lack "version"; infer from weight count
                     return (
                         FSRSParams(
                             weights=tuple(cached["weights"]),
@@ -776,3 +794,52 @@ def resolve_relearning_steps(db: SRSDatabase | None = None) -> tuple[list[float]
                 pass
 
     return ([10.0], "default")
+
+
+def _read_fsrs_short_term_from_config_table(conn: sqlite3.Connection) -> bool | None:
+    """Read fsrsShortTermWithStepsEnabled from Anki's config table.
+
+    Global user preference, stored as JSON bool bytes (b'true' / b'false').
+    Returns None if the key or table is absent (Anki's default is false).
+    """
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    except sqlite3.Error:  # pragma: no cover
+        return None
+
+    if "config" not in tables:
+        return None
+
+    row = conn.execute("SELECT val FROM config WHERE key = 'fsrsShortTermWithStepsEnabled'").fetchone()
+    if not row:
+        return None
+    return row[0] == b"true"
+
+
+def refresh_fsrs_short_term_flag(db: SRSDatabase, conn: sqlite3.Connection) -> None:
+    """Read fsrsShortTermWithStepsEnabled from Anki's config table and cache it."""
+    val = _read_fsrs_short_term_from_config_table(conn)
+    if val is not None:
+        db.set_anki_state_cache("fsrs_short_term_with_steps_enabled", "true" if val else "false")
+
+
+def resolve_fsrs_short_term_flag(db: SRSDatabase | None = None) -> bool:
+    """Return the cached fsrsShortTermWithStepsEnabled flag.
+
+    Defaults to False (Anki's default) when cache is empty.
+    """
+    if db is None:
+        try:
+            from app.srs.database import SRSDatabase as _SRSDatabase
+
+            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        except Exception:
+            db = None
+
+    if db is not None:
+        row = db.get_anki_state_cache("fsrs_short_term_with_steps_enabled")
+        if row is not None:
+            value_str, _ = row
+            return value_str == "true"
+
+    return False

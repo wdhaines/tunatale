@@ -93,6 +93,7 @@ async def trigger_sync(request: Request, dry_run: bool = False):
                     refresh_daily_review_cap,
                     refresh_desired_retention,
                     refresh_fsrs_params,
+                    refresh_fsrs_short_term_flag,
                     refresh_learning_steps,
                     refresh_review_settings,
                 )
@@ -101,6 +102,7 @@ async def trigger_sync(request: Request, dry_run: bool = False):
                 refresh_daily_review_cap(db, ctx.conn, settings.anki_deck_name)
                 refresh_desired_retention(db, ctx.conn, settings.anki_deck_name)
                 refresh_fsrs_params(db, ctx.conn, settings.anki_deck_name)
+                refresh_fsrs_short_term_flag(db, ctx.conn)
                 refresh_review_settings(db, ctx.conn, settings.anki_deck_name)
                 refresh_learning_steps(db, ctx.conn, settings.anki_deck_name)
 

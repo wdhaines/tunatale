@@ -246,8 +246,98 @@ class TestFSRSParams:
         assert 0.0 <= r <= 1.0
 
     def test_fsrs_params_has_19_weights(self):
-        """FSRSParams rejects weights that aren't 19 floats."""
+        """FSRSParams rejects weights that aren't 19 or 21 floats."""
         import pytest
 
         with pytest.raises((ValueError, TypeError, AssertionError)):
             FSRSParams(weights=(1.0,) * 18)
+        with pytest.raises(ValueError):
+            FSRSParams(weights=(1.0,) * 17)
+
+    def test_19_weights_implies_fsrs5_decay(self):
+        """19 weights → decay=0.5, version=5."""
+        params = FSRSParams(weights=(0.4072,) * 19)
+        assert params.decay == 0.5
+        assert params.version == 5
+
+    def test_21_weights_uses_w20_as_decay(self):
+        """21 weights → decay=weights[20], version=6."""
+        weights = (0.4072,) * 20 + (0.1542,)
+        params = FSRSParams(weights=weights)
+        assert params.decay == 0.1542
+        assert params.version == 6
+
+    def test_invalid_weights_length_raises(self):
+        """Neither 19 nor 21 weights → ValueError."""
+        import pytest
+
+        with pytest.raises(ValueError):
+            FSRSParams(weights=(1.0,) * 17)
+        with pytest.raises(ValueError):
+            FSRSParams(weights=(1.0,) * 20)
+
+
+class TestShortTermStability:
+    """Tests for _stability_short_term helper."""
+
+    # Default FSRS-5 weights have w[17]=0.51, w[18]=0.435
+    _FSRS5_DEFAULT = DEFAULT_FSRS5_PARAMS
+    # FSRS-6 params with w[19]=0.2 for testing
+    _FSRS6_WEIGHTS = tuple(list(DEFAULT_FSRS5_PARAMS.weights) + [0.2, 0.1542])
+
+    def test_short_term_fsrs5_again(self):
+        """AGAIN on FSRS-5: sinc = exp(0.51*-1.565) ≈ 0.450, new_s ≈ 0.450."""
+        from app.srs.fsrs import _stability_short_term
+
+        new_s = _stability_short_term(1.0, Rating.AGAIN, self._FSRS5_DEFAULT)
+        # exp(0.51 * (1 - 3 + 0.435)) = exp(-0.79815) ≈ 0.4501
+        assert abs(new_s - 0.450) < 0.01
+
+    def test_short_term_fsrs5_good(self):
+        """GOOD on FSRS-5: sinc = exp(0.51*0.435) ≈ 1.246, clamp not needed (≥1)."""
+        from app.srs.fsrs import _stability_short_term
+
+        new_s = _stability_short_term(1.0, Rating.GOOD, self._FSRS5_DEFAULT)
+        # exp(0.51 * 0.435) ≈ 1.248; clamp max(1.248, 1) = 1.248
+        assert abs(new_s - 1.248) < 0.01
+
+    def test_short_term_fsrs5_hard(self):
+        """HARD on FSRS-5: sinc < 1, rating < 3 so no clamp, new_s < last_s."""
+        from app.srs.fsrs import _stability_short_term
+
+        new_s = _stability_short_term(1.0, Rating.HARD, self._FSRS5_DEFAULT)
+        # exp(0.51 * (-1 + 0.435)) = exp(-0.28815) ≈ 0.749
+        # rating=2 < 3, no clamp
+        assert abs(new_s - 0.749) < 0.01
+
+    def test_short_term_fsrs5_easy(self):
+        """EASY on FSRS-5: sinc = exp(0.51*1.435) ≈ 2.084."""
+        from app.srs.fsrs import _stability_short_term
+
+        new_s = _stability_short_term(1.0, Rating.EASY, self._FSRS5_DEFAULT)
+        # exp(0.51 * (4 - 3 + 0.435)) = exp(0.51 * 1.435) = exp(0.73185) ≈ 2.079
+        assert abs(new_s - 2.079) < 0.01
+
+    def test_short_term_fsrs6_uses_w19(self):
+        """FSRS-6 w[19]=0.2 changes result from FSRS-5."""
+        from app.srs.fsrs import _stability_short_term
+
+        fsrs6_params = FSRSParams(weights=self._FSRS6_WEIGHTS)
+        # With last_s=1.0, last_s^(-w19) = 1.0 for both FSRS-5 and FSRS-6
+        # With last_s=2.0, FSRS-6 gets: sinc *= 2.0^(-0.2) = 0.871
+        fsrs5_s = _stability_short_term(2.0, Rating.AGAIN, self._FSRS5_DEFAULT)
+        fsrs6_s = _stability_short_term(2.0, Rating.AGAIN, fsrs6_params)
+        # FSRS-6 has additional w19 factor, so stability is lower
+        assert fsrs6_s < fsrs5_s
+
+    def test_short_term_good_clamps_below_one(self):
+        """When sinc < 1 with GOOD rating, clamp forces new_s == last_s."""
+        from app.srs.fsrs import _stability_short_term
+
+        # Use w17 that makes sinc < 1 even for GOOD: w17 large negative
+        bad_weights = (0.4072,) * 17 + (-5.0, 0.435, 0.0, 0.1542)  # 21 weights, w17=-5.0
+        params = FSRSParams(weights=bad_weights)
+        # sinc = exp(-5 * 0.435) = exp(-2.175) ≈ 0.114
+        # rating=3 >= 3, so clamp: sinc = max(0.114, 1.0) = 1.0
+        new_s = _stability_short_term(2.0, Rating.GOOD, params)
+        assert abs(new_s - 2.0) < 1e-10  # clamped to last_s

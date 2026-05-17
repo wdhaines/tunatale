@@ -64,28 +64,65 @@ _DEFAULT_WEIGHTS: tuple[float, ...] = (
     0.4350,  # w18: (unused in v5)
 )
 
-DECAY = -0.5
+_DEFAULT_FSRS6_WEIGHTS: tuple[float, ...] = (
+    0.212,  # w0: initial stability for Again
+    1.2931,  # w1: initial stability for Hard
+    2.3065,  # w2: initial stability for Good
+    8.2956,  # w3: initial stability for Easy
+    6.4133,  # w4: initial difficulty
+    0.8334,  # w5: initial difficulty decay
+    3.0194,  # w6: difficulty mean-reversion weight
+    0.001,  # w7: difficulty update weight
+    1.8722,  # w8: stability increase factor
+    0.1666,  # w9: stability increase decay
+    0.796,  # w10: stability increase R-factor
+    1.4835,  # w11: lapse stability factor
+    0.0614,  # w12: lapse stability difficulty decay
+    0.2629,  # w13: lapse stability S-factor
+    1.6483,  # w14: lapse stability R-factor
+    0.6014,  # w15: hard penalty
+    1.8729,  # w16: easy bonus
+    0.5425,  # w17: short-term exponent base
+    0.0912,  # w18: short-term rating offset
+    0.0658,  # w19: short-term stability exponent (FSRS-6)
+    0.1542,  # w20: decay (FSRS-6 default)
+)
+
 FACTOR = 19 / 81  # = 0.234...
 
 
 @dataclass(frozen=True)
 class FSRSParams:
-    """FSRS scheduling parameters (weights + desired retention)."""
+    """FSRS scheduling parameters (weights + desired retention).
 
-    weights: tuple[float, ...]  # 19 floats for FSRS-5
+    Supports FSRS-5 (19 weights) and FSRS-6 (21 weights).
+    ``decay`` and ``version`` are derived from the weight count.
+    """
+
+    weights: tuple[float, ...]
     desired_retention: float = 0.9
+    decay: float = 0.5
+    version: int = 5
 
     def __post_init__(self) -> None:
-        if len(self.weights) != 19:
-            raise ValueError(f"FSRSParams requires exactly 19 weights, got {len(self.weights)}")
+        n = len(self.weights)
+        if n == 19:
+            object.__setattr__(self, "decay", 0.5)
+            object.__setattr__(self, "version", 5)
+        elif n == 21:
+            object.__setattr__(self, "decay", self.weights[20])
+            object.__setattr__(self, "version", 6)
+        else:
+            raise ValueError(f"FSRSParams requires 19 (FSRS-5) or 21 (FSRS-6) weights, got {n}")
 
 
 DEFAULT_FSRS5_PARAMS = FSRSParams(weights=_DEFAULT_WEIGHTS)
+DEFAULT_FSRS6_PARAMS = FSRSParams(weights=_DEFAULT_FSRS6_WEIGHTS)
 
 
-def _forgetting_curve(elapsed_days: float, stability: float) -> float:
-    """Retrievability at elapsed_days given stability."""
-    return (1 + FACTOR * elapsed_days / stability) ** DECAY
+def _forgetting_curve(elapsed_days: float, stability: float, decay: float = -0.5) -> float:
+    """Retrievability at elapsed_days given stability and decay."""
+    return (1 + FACTOR * elapsed_days / stability) ** decay
 
 
 def compute_retrievability(
@@ -93,6 +130,7 @@ def compute_retrievability(
     today: date,
     now: datetime | None = None,
     desired_retention: float = 0.9,
+    decay: float = -0.5,
 ) -> float:
     """Return retrievability (0-1) for a direction_state.
 
@@ -135,12 +173,12 @@ def compute_retrievability(
             elapsed = max(0.0, elapsed_seconds / 86400.0)
     else:
         elapsed = max(0, (today - last_review).days)
-    return _forgetting_curve(elapsed, stability)
+    return _forgetting_curve(elapsed, stability, decay)
 
 
-def _next_interval(stability: float, desired_retention: float) -> int:
+def _next_interval(stability: float, desired_retention: float, decay: float = -0.5) -> int:
     """Days until next review at the given desired_retention."""
-    interval = stability / FACTOR * (desired_retention ** (1 / DECAY) - 1)
+    interval = stability / FACTOR * (desired_retention ** (1 / decay) - 1)
     return max(1, min(round(interval), 36500))
 
 
@@ -170,6 +208,25 @@ def _next_stability_recall(d: float, s: float, r: float, rating: Rating, w: tupl
 
 def _next_stability_lapse(d: float, s: float, r: float, w: tuple[float, ...]) -> float:
     return w[11] * d ** (-w[12]) * ((s + 1) ** w[13] - 1) * math.exp((1 - r) * w[14])
+
+
+def _stability_short_term(last_s: float, rating: Rating, params: FSRSParams) -> float:
+    """FSRS short-term stability update for same-day grades.
+
+    Mirrors ``model.rs:107-115`` in fsrs-rs:
+      ``sinc = exp(w[17] * (rating - 3 + w[18])) * last_s^(-w[19])``
+      ``if rating >= 3: sinc = max(sinc, 1.0)``
+      ``new_s = last_s * sinc``
+
+    For FSRS-5 the ``last_s^(-w[19])`` term vanishes (``w[19]`` effectively 0).
+    For FSRS-6 ``w[19]`` is a learned parameter.
+    """
+    w = params.weights
+    w19 = w[19] if params.version == 6 else 0.0
+    sinc = math.exp(w[17] * (rating.value - 3 + w[18])) * (last_s ** (-w19))
+    if rating.value >= 3:
+        sinc = max(sinc, 1.0)
+    return last_s * sinc
 
 
 def _parse_left(left: int | None) -> int:
@@ -276,6 +333,7 @@ def schedule(
     from dataclasses import replace
 
     w = params.weights
+    neg_decay = -params.decay
     prev = item.directions[direction]
 
     # Handle learning step semantics for LEARNING and RELEARNING states
@@ -292,10 +350,9 @@ def schedule(
         last = prev.last_review or last_review_dt
         last_date = last.date() if isinstance(last, datetime) else last
         elapsed = max(0, (last_review_dt.date() - last_date).days)
-        r = _forgetting_curve(elapsed, prev.stability)
+        r = _forgetting_curve(elapsed, prev.stability, neg_decay)
 
         if rating == Rating.AGAIN:
-            # REVIEW + AGAIN → RELEARNING
             return _schedule_review_again(
                 item, prev, rating, review_date, direction, params, time_ms, now, last_review_dt
             )
@@ -308,7 +365,7 @@ def schedule(
 
     new_stability = max(0.1, new_stability)
     new_difficulty = max(1.0, min(10.0, new_difficulty))
-    interval = _next_interval(new_stability, params.desired_retention)
+    interval = _next_interval(new_stability, params.desired_retention, neg_decay)
     new_due = review_date + timedelta(days=interval)
 
     new_dir = replace(
@@ -369,6 +426,15 @@ def _schedule_new(
     else:  # AGAIN or HARD: stay at step 0
         step_index = 0
 
+    # First grade out of NEW: seed stability from w[0..3] (matches Anki's
+    # fsrs-rs `step()` with `state=None`). DirectionState.stability defaults
+    # to 1.0, so we can't infer "no prior FSRS" from stability alone —
+    # `_schedule_new` is only called when prev.state == NEW, so the seed
+    # branch is unconditional here.
+    w = params.weights
+    new_stability = _init_stability(rating, w)
+    new_difficulty = _init_difficulty(rating, w)
+
     # total_remaining = steps left until graduation = total_steps - step_index
     new_left = _pack_left(total_steps - step_index)
     # Anki's Hard-on-first-step delay = avg of first two steps when ≥2 steps;
@@ -385,6 +451,8 @@ def _schedule_new(
         due_date=new_due_at.date(),
         due_at=new_due_at,
         left=new_left,
+        stability=new_stability,
+        difficulty=new_difficulty,
         reps=prev.reps + 1,
         lapses=prev.lapses,
         last_review=last_review_dt,
@@ -427,9 +495,16 @@ def _schedule_review_again(
     last = prev.last_review or last_review_dt
     last_date = last.date() if isinstance(last, datetime) else last
     elapsed = max(0, (last_review_dt.date() - last_date).days)
-    r = _forgetting_curve(elapsed, prev.stability) if prev.stability > 0 else 1.0
-    new_stability = _next_stability_lapse(prev.difficulty, prev.stability, r, w)
-    new_difficulty = _next_difficulty(prev.difficulty, rating, w)
+    # fsrs-rs model.rs:154-163: short-term stability overrides the lapse formula
+    # when delta_t == 0 (same-day grade). The deck option only governs card-state
+    # transitions, not memory_state — so this branch is not flag-gated.
+    if elapsed == 0 and prev.stability is not None:
+        new_stability = _stability_short_term(prev.stability, Rating.AGAIN, params)
+        new_difficulty = _next_difficulty(prev.difficulty, rating, w)
+    else:
+        r = _forgetting_curve(elapsed, prev.stability, -params.decay) if prev.stability > 0 else 1.0
+        new_stability = _next_stability_lapse(prev.difficulty, prev.stability, r, w)
+        new_difficulty = _next_difficulty(prev.difficulty, rating, w)
 
     steps, _ = _get_steps_for_state(SRSState.RELEARNING)
 
@@ -500,6 +575,17 @@ def _schedule_with_steps(
     # idx = total_steps - total_remaining. idx=0 means first step.
     current_step_index = total_steps - total_remaining
 
+    # Short-term stability update (Anki: learning.rs:40 sets memory_state
+    # unconditionally from fsrs_next_states). The fsrsShortTermWithStepsEnabled
+    # deck option only governs card-state transitions, not memory_state itself.
+    w = params.weights
+    if prev.stability is not None:
+        new_stability = _stability_short_term(prev.stability, rating, params)
+        new_difficulty = _next_difficulty(prev.difficulty, rating, w)
+    else:
+        new_stability = prev.stability
+        new_difficulty = prev.difficulty
+
     if rating == Rating.AGAIN:
         # Reset to step 0 (all steps remaining)
         new_left = _pack_left(total_steps)
@@ -510,6 +596,8 @@ def _schedule_with_steps(
             due_date=new_due_at.date(),
             due_at=new_due_at,
             left=new_left,
+            stability=new_stability,
+            difficulty=new_difficulty,
             reps=prev.reps + 1,
             lapses=prev.lapses + (1 if prev.state == SRSState.REVIEW else 0),
             last_review=last_review_dt,
@@ -539,6 +627,8 @@ def _schedule_with_steps(
             due_date=new_due_at.date(),
             due_at=new_due_at,
             left=new_left,
+            stability=new_stability,
+            difficulty=new_difficulty,
             reps=prev.reps + 1,
             lapses=prev.lapses,
             last_review=last_review_dt,
@@ -571,6 +661,8 @@ def _schedule_with_steps(
             due_date=new_due_at.date(),
             due_at=new_due_at,
             left=new_left,
+            stability=new_stability,
+            difficulty=new_difficulty,
             reps=prev.reps + 1,
             lapses=prev.lapses,
             last_review=last_review_dt,
@@ -610,6 +702,7 @@ def _graduate_to_review(
     from dataclasses import replace
 
     w = params.weights
+    neg_decay = -params.decay
 
     if prev.state == SRSState.NEW:
         new_stability = _init_stability(rating, w)
@@ -617,7 +710,7 @@ def _graduate_to_review(
     else:
         # Lapse or learning graduation
         elapsed = 0  # Graduation = fresh start
-        r = _forgetting_curve(elapsed, prev.stability) if prev.stability > 0 else 1.0
+        r = _forgetting_curve(elapsed, prev.stability, neg_decay) if prev.stability > 0 else 1.0
 
         if prev.state == SRSState.RELEARNING:
             new_stability = _next_stability_lapse(prev.difficulty, prev.stability, r, w)
@@ -628,7 +721,7 @@ def _graduate_to_review(
 
     new_stability = max(0.1, new_stability)
     new_difficulty = max(1.0, min(10.0, new_difficulty))
-    interval = _next_interval(new_stability, params.desired_retention)
+    interval = _next_interval(new_stability, params.desired_retention, neg_decay)
     new_due = date.today() + timedelta(days=interval)
 
     new_dir = replace(
