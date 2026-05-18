@@ -549,6 +549,33 @@ class TestReviewQueue:
         assert resp.status_code == 200
         assert resp.json()["queue"] == []
 
+    async def test_sets_no_store_cache_header(self, api_app_state):
+        """Browser must NEVER cache /review-queue. Without `no-store`, a normal
+        page refresh can be served from heuristic disk cache — the JS still
+        runs `onMount` and makes the fetch call, but the browser returns the
+        cached body without hitting the backend. Result: session_start=1 never
+        reaches /review-queue, the frozen queue isn't rebuilt, and TT/Anki
+        diverge until a hard refresh (Cmd+Shift+R) bypasses the cache.
+
+        Discovered when a user reported "had to hard-refresh to make rebuild
+        fire" — the rebuild logic was correct; the cache was eating the
+        request.
+        """
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+            resp_ss = await client.get("/api/srs/review-queue?session_start=1")
+        for r in (resp, resp_ss):
+            cc = r.headers.get("cache-control", "")
+            assert "no-store" in cc, f"expected no-store; got Cache-Control={cc!r}"
+
+    async def test_queue_stats_sets_no_store_cache_header(self, api_app_state):
+        """Same constraint as /review-queue: the badge counts must reflect every
+        request's live state (sync just happened, card just graded, etc.)."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/queue-stats")
+        cc = resp.headers.get("cache-control", "")
+        assert "no-store" in cc, f"expected no-store; got Cache-Control={cc!r}"
+
     async def test_buries_new_when_sibling_reviewed_today(self, api_app_state):
         from datetime import date
 

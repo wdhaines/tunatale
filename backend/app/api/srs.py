@@ -8,7 +8,7 @@ import logging
 import re
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -523,7 +523,10 @@ async def get_stats(request: Request):
 
 
 @router.get("/queue-stats", status_code=200)
-async def get_queue_stats(request: Request):
+async def get_queue_stats(request: Request, response: Response):
+    # Live state; never cache. Without this, a normal browser refresh can be
+    # served from heuristic disk cache and the badges go stale.
+    response.headers["Cache-Control"] = "no-store"
     db = request.app.state.srs_db
     today = datetime.date.today()
     db.unbury_if_needed(today)
@@ -1038,7 +1041,7 @@ def build_and_freeze_main_queue(db) -> None:
 
 
 @router.get("/review-queue", status_code=200)
-async def get_review_queue(request: Request, session_start: bool = False) -> dict:
+async def get_review_queue(request: Request, response: Response, session_start: bool = False) -> dict:
     """Return the entire ordered review queue in one shot.
 
     Implements Anki's queue construction: combined new-card cap across directions,
@@ -1051,6 +1054,13 @@ async def get_review_queue(request: Request, session_start: bool = False) -> dic
     cutoff between grades. Mirrors Anki's `update_learning_cutoff_and_count`
     being called at queue build time (rslib scheduler/queue/builder/mod.rs:222).
     """
+    # Live state; never cache. Without this, a normal browser refresh can serve
+    # /review-queue from heuristic cache — the JS still runs onMount and sends
+    # session_start=1, but the browser short-circuits with the cached body and
+    # the rebuild never reaches the backend. Only hard-refresh (Cmd+Shift+R)
+    # bypasses the cache, which is a bad UX.
+    response.headers["Cache-Control"] = "no-store"
+
     db = request.app.state.srs_db
     today = datetime.date.today()
     now = datetime.datetime.now(datetime.UTC)
