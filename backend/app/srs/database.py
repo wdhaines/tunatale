@@ -1207,16 +1207,23 @@ class SRSDatabase:
                             ),
                         )
                     elif dir_row["reps"] > 0:
-                        # Preserve TunaTale-local FSRS progress; refresh Anki-bookkeeping fields
-                        # (state, anki_card_id, anki_due, left, due_at) from the current sync.
+                        # `due_date` MUST refresh alongside `anki_due` — both describe
+                        # the same scheduling moment. Pre-fix, leaving due_date pinned
+                        # to the first-import value while anki_due advanced each sync
+                        # made 100+ review rows look "due today" every day forever (the
+                        # badge query filters on due_date). FSRS-progress fields
+                        # (stability, difficulty, reps, lapses, last_review) still
+                        # stay local — those represent TT-side review history.
                         conn.execute(
                             """
                             UPDATE collocation_directions SET
-                                state = ?, anki_card_id = ?, anki_due = ?, left = ?, due_at = ?
+                                state = ?, due_date = ?, anki_card_id = ?,
+                                anki_due = ?, left = ?, due_at = ?
                             WHERE collocation_id = ? AND direction = ?
                             """,
                             (
                                 state.state.value,
+                                state.due_date.isoformat(),
                                 state.anki_card_id,
                                 state.anki_due,
                                 state.left,

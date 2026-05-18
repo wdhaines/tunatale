@@ -252,6 +252,78 @@ class TestCRUD:
         assert item is not None
         assert item.syntactic_unit.lemma == "vsak"
 
+    def test_upsert_by_guid_reps_gt_zero_refreshes_due_date(self, srs_db):
+        """Invariant: a row's `due_date` and `anki_due` describe the SAME
+        scheduling moment. When upsert_by_guid runs against an existing direction
+        with reps>0, the reps>0 branch refreshes Anki-bookkeeping fields (state,
+        anki_card_id, anki_due, left, due_at) but historically left `due_date`
+        pinned to the first-import value.
+
+        On a deck synced over weeks, this manifests as 100+ review rows whose
+        `anki_due` advances correctly each sync while `due_date` stays at a
+        long-past date. The badge query (count_review_due_collocations) filters
+        on `due_date`, so every one of those rows is wrongly counted as due
+        today, every day, until graded or backfilled.
+        """
+        unit = SyntacticUnit(
+            text="banka",
+            translation="bank",
+            word_count=1,
+            difficulty=1,
+            source="anki",
+            lemma="banka",
+        )
+        initial_due = date(2026, 5, 17)
+        srs_db.upsert_by_guid(
+            unit,
+            "sl",
+            {
+                Direction.RECOGNITION: DirectionState(
+                    direction=Direction.RECOGNITION,
+                    due_date=initial_due,
+                    stability=10.0,
+                    difficulty=5.0,
+                    reps=3,
+                    state=SRSState.REVIEW,
+                    anki_card_id=999,
+                    anki_due=4516,
+                )
+            },
+            anki_note_id=9001,
+        )
+
+        # Anki has since graded the card, advancing cards.due to 4526 and
+        # stability to 15.0. Anki-side due_date is 2026-05-27. A re-import
+        # (or any future upsert_by_guid pass) must propagate due_date,
+        # NOT pin it at the original 2026-05-17.
+        advanced_due = date(2026, 5, 27)
+        srs_db.upsert_by_guid(
+            unit,
+            "sl",
+            {
+                Direction.RECOGNITION: DirectionState(
+                    direction=Direction.RECOGNITION,
+                    due_date=advanced_due,
+                    stability=15.0,
+                    difficulty=5.2,
+                    reps=4,
+                    state=SRSState.REVIEW,
+                    anki_card_id=999,
+                    anki_due=4526,
+                )
+            },
+            anki_note_id=9001,
+        )
+
+        item = srs_db.get_collocation("banka")
+        assert item is not None
+        rec = item.directions[Direction.RECOGNITION]
+        assert rec.anki_due == 4526, "anki_due refresh path is the obvious one"
+        assert rec.due_date == advanced_due, (
+            f"due_date must follow anki_due. Got {rec.due_date}, "
+            f"expected {advanced_due}. Bug: reps>0 branch ignores due_date."
+        )
+
     def test_cloze_item_state_reads_production_direction(self, srs_db):
         """Cloze items have only PRODUCTION direction; `item.state` must read from it.
 
