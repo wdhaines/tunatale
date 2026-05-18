@@ -137,10 +137,8 @@ def _elapsed_days_for_fsrs(last_review: datetime | date | None, ref_now: datetim
     = day-level fallback (no lrt was present); any sub-day component = lrt was
     present and `last_review` carries it.
 
-    The same dual-branch logic already lives in `compute_retrievability` for R-asc
-    sort. Until 2026-05-18 it did NOT live in `_schedule_review_again` or the
-    REVIEW+other-ratings path — those used integer days unconditionally,
-    producing 2-4% stability gaps with Anki for sub-day-elapsed grades.
+    The same dual-branch logic also lives in `compute_retrievability` for R-asc
+    sort.
     """
     if last_review is None:
         return 0.0
@@ -189,21 +187,8 @@ def compute_retrievability(
     if stability is None or last_review is None:
         return desired_retention
     if isinstance(last_review, datetime):
-        # Detect day-level fallback values (midnight UTC, no sub-day component).
-        # `parse_fsrs_data` sets these via `_compute_last_review` when cards.data
-        # has no `lrt` field — Anki itself uses integer-day elapsed for these.
-        is_day_level = (
-            last_review.hour == 0
-            and last_review.minute == 0
-            and last_review.second == 0
-            and last_review.microsecond == 0
-        )
-        if is_day_level:
-            elapsed = max(0, (today - last_review.date()).days)
-        else:
-            ref_now = now if now is not None else datetime.now(UTC)
-            elapsed_seconds = (ref_now - last_review).total_seconds()
-            elapsed = max(0.0, elapsed_seconds / 86400.0)
+        ref_now = now if now is not None else datetime.now(UTC)
+        elapsed = _elapsed_days_for_fsrs(last_review, ref_now)
     else:
         elapsed = max(0, (today - last_review).days)
     return _forgetting_curve(elapsed, stability, decay)
@@ -475,7 +460,7 @@ def _schedule_new(
     #   - ≥2 steps: avg of first two steps (e.g. [1,10] → 330s)
     #   - 1 step:   min(again*1.5, again + 1 day) (e.g. [10] → 900s)
     # Again uses step[0] verbatim regardless.
-    if rating == Rating.HARD and step_index == 0:
+    if rating == Rating.HARD:
         again_secs = steps[0] * 60
         delay_min = (steps[0] + steps[1]) / 2 if total_steps > 1 else min(again_secs * 1.5, again_secs + 86400) / 60
     else:

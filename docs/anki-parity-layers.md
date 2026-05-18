@@ -603,6 +603,43 @@ The underlying homonym corruption (TT collocation guid points to one Anki note w
 
 ---
 
+---
+
+## Layer 40 — Fractional elapsed days for FSRS scheduling (fixes Layer 11 gap)
+
+**Trigger.** Real-world investigation of `kupiti` scheduling divergences revealed a 2-4% stability gap between TT and Anki for cards with sub-day-precision `last_review`. The cause: TT's `_schedule_review_again` and the REVIEW recall path in `schedule()` used integer calendar days for elapsed time (`(today - last_date).days`), while Anki's `extract_fsrs_retrievability` uses fractional days when `cards.data.lrt` is present. `compute_retrievability` (Layer 11) already had the correct dual-branch logic for R-asc sort — it split on midnight-UTC vs sub-day `last_review` — but the scheduling path was missed.
+
+**Fix.** New helper `_elapsed_days_for_fsrs(last_review, ref_now)` at `backend/app/srs/fsrs.py:128-158` mirrors Anki's branch:
+- `datetime` with sub-day component → fractional days (lrt was present).
+- `datetime` at midnight UTC → integer days (day-level fallback, no lrt).
+- `date` object → integer days (no time-of-day at all).
+
+Wired into `schedule()` REVIEW path and `_schedule_review_again()`. `compute_retrievability` refactored to call the same helper (eliminated inline duplication of the dual-branch logic).
+
+**Re-audit (May 2026).** No dead branches or stale comments found. One cosmetic issue: `step_index == 0` conjunct remained tautological in `_schedule_new` — the HARD branch always enters through the `else` block at step_index=0, so the check was structurally guaranteed true. Removed.
+
+**Files.** `backend/app/srs/fsrs.py` (new `_elapsed_days_for_fsrs` helper, updated `schedule`, `_schedule_review_again`, `compute_retrievability`), `backend/tests/test_fsrs.py` (124 new test lines).
+
+**Cross-reference.** Layer 11 established sub-day precision for `compute_retrievability` (R-asc sort); Layer 40 extends the same fix to the scheduling path, so stability values computed at grade time match Anki's.
+
+---
+
+## Layer 41 — 1.5x Hard delay for single-step learning configs
+
+**Trigger.** During the same `kupiti` investigation, a 6-minute divergence appeared on single-step lapse configs (e.g., deck with one relearn step `[10]`). TT used `steps[0]` verbatim for Hard delay; Anki's `hard_delay_secs_for_first_step` (rslib/states/steps.rs:55-66) uses `min(again*1.5, again + DAY)` when there's only one step.
+
+**Fix.** Both `_schedule_new` and `_schedule_with_steps` now branch on step count:
+- `len(steps) > 1` (original path) → `(steps[0] + steps[1]) / 2`.
+- `len(steps) == 1` → `min(again_secs * 1.5, again_secs + 86400) / 60`.
+
+The `step_index == 0` guard was structurally tautological in `_schedule_new` (the HARD branch always enters through step_index=0); removed as part of a post-Layer-40 clean-up pass.
+
+**Files.** `backend/app/srs/fsrs.py:_schedule_new` (lines 474-480), `_schedule_with_steps` (lines 652-662); `backend/tests/test_fsrs_steps.py` (42 new test lines).
+
+**Cross-reference.** Layer 6b (revlog shape decode) also special-cases Hard-on-first-step, confirming the patten: Anki's step delay rules have multiple codepaths that need the same single-step branch.
+
+---
+
 ## Cleanup pass (post-Layer 23)
 
 After 23 layers, swept for dead code and duplication. Behavior unchanged.

@@ -136,9 +136,9 @@ def _read_config_value_from_deck_config_table(
 
     config_blob = bytes(config_row[0]) if isinstance(config_row[0], memoryview) else config_row[0]
 
-    if wire_type == 0:
+    if wire_type == _WIRE_TYPE_VARINT:
         return find_varint_field(config_blob, proto_field)
-    if wire_type == 5:
+    if wire_type == _WIRE_TYPE_FIXED32:
         return find_fixed32_field(config_blob, proto_field)
     return None  # pragma: no cover
 
