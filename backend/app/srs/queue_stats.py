@@ -50,6 +50,78 @@ def _read_conf_id_for_deck(conn: sqlite3.Connection, deck_name: str) -> int | No
     return find_varint_field(normal_kind_bytes, 1)
 
 
+def _read_config_value_from_deck_config_table(
+    conn: sqlite3.Connection,
+    deck_name: str,
+    *,
+    proto_field: int,
+    wire_type: int,
+    legacy_keys: tuple[str, str] | None = None,
+) -> int | float | None:
+    """Read a deck-config value from Anki's collection.
+
+    Tries the legacy JSON format (col.dconf) first when *legacy_keys* is set,
+    then falls back to the modern protobuf format (deck_config table, Anki >=2.1.55).
+
+    For VARINT fields (*wire_type* 0) returns ``int | None``.
+    For FIXED32 fields (*wire_type* 5) returns ``float | None``.
+    """
+    # Legacy JSON path (pre-2.1.55 Anki)
+    if legacy_keys is not None:
+        row = conn.execute("SELECT decks, dconf FROM col LIMIT 1").fetchone()
+        if row is None:
+            return None
+
+        dconf_raw = row[1] if row[1] else ""
+        if dconf_raw:
+            try:
+                decks = json.loads(row[0] or "{}")
+                dconf_json = json.loads(dconf_raw)
+            except (json.JSONDecodeError, TypeError):
+                return None
+
+            deck_info = next(
+                (v for v in decks.values() if isinstance(v, dict) and v.get("name") == deck_name),
+                None,
+            )
+            if deck_info is not None:
+                conf_id = str(deck_info.get("conf", 1))
+                deck_conf = dconf_json.get(conf_id)
+                if isinstance(deck_conf, dict):
+                    try:
+                        val = deck_conf
+                        for key in legacy_keys:
+                            val = val[key]
+                        return int(val)
+                    except (KeyError, TypeError, ValueError):
+                        pass
+
+    # Modern protobuf path (deck_config table)
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    except sqlite3.Error:  # pragma: no cover
+        return None  # pragma: no cover
+
+    if "deck_config" not in tables or "decks" not in tables:
+        return None
+
+    conf_id = _read_conf_id_for_deck(conn, deck_name)
+    if conf_id is None:
+        return None
+
+    config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
+    if config_row is None or not config_row[0]:
+        return None
+
+    config_blob = bytes(config_row[0]) if isinstance(config_row[0], memoryview) else config_row[0]
+
+    if wire_type == 0:
+        return find_varint_field(config_blob, proto_field)
+    if wire_type == 5:
+        return find_fixed32_field(config_blob, proto_field)
+    return None  # pragma: no cover
+
+
 def _pb_find_packed_float_field(data: bytes, target_field: int) -> list[float] | None:
     """Scan protobuf bytes for a LEN-delimited packed-float field."""
     if isinstance(data, memoryview):
@@ -145,66 +217,19 @@ def _read_fsrs_params_from_deck_config_table(conn: sqlite3.Connection, deck_name
 
 
 def _read_new_per_day_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> int | None:
-    """Read new-per-day from modern Anki's deck_config table (Anki ≥2.1.55).
-
-    Modern Anki stores deck configs as protobuf BLOBs in the deck_config table.
-    The deck's conf_id is found via decks.kind (protobuf: field 1 LEN → field 1 VARINT).
-    The cap is at field 9 (VARINT) in deck_config.config.
-    """
-    try:
-        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    except sqlite3.Error:  # pragma: no cover
-        return None  # pragma: no cover
-
-    if "deck_config" not in tables or "decks" not in tables:
-        return None
-
-    conf_id = _read_conf_id_for_deck(conn, deck_name)
-    if conf_id is None:
-        return None
-
-    config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
-    if config_row is None or not config_row[0]:
-        return None
-
-    config_blob = config_row[0]
-    # DeckConfig.Config: field 9 (VARINT) = new_per_day
-    return find_varint_field(config_blob if isinstance(config_blob, bytes) else bytes(config_blob), 9)
+    """Read new-per-day (field 9 VARINT) from deck_config.config."""
+    return _read_config_value_from_deck_config_table(conn, deck_name, proto_field=9, wire_type=0)
 
 
 def _read_new_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int | None:
     """Return new-cards-per-day from Anki's deck config, or None if unavailable.
 
     Tries the legacy JSON format (col.dconf) first, then the modern protobuf
-    format (deck_config table, Anki ≥2.1.55).
+    format (deck_config table, Anki =2.1.55).
     """
-    row = conn.execute("SELECT decks, dconf FROM col LIMIT 1").fetchone()
-    if row is None:
-        return None
-
-    dconf_raw = row[1] if row[1] else ""
-    if dconf_raw:
-        try:
-            decks = json.loads(row[0] or "{}")
-            dconf_json = json.loads(dconf_raw)
-        except (json.JSONDecodeError, TypeError):
-            return None
-
-        deck_info = next(
-            (v for v in decks.values() if isinstance(v, dict) and v.get("name") == deck_name),
-            None,
-        )
-        if deck_info is not None:
-            conf_id = str(deck_info.get("conf", 1))
-            deck_conf = dconf_json.get(conf_id)
-            if isinstance(deck_conf, dict):
-                try:
-                    return int(deck_conf["new"]["perDay"])
-                except (KeyError, TypeError, ValueError):
-                    pass
-
-    # Modern format: deck_config table with protobuf BLOBs
-    return _read_new_per_day_from_deck_config_table(conn, deck_name)
+    return _read_config_value_from_deck_config_table(
+        conn, deck_name, proto_field=9, wire_type=0, legacy_keys=("new", "perDay")
+    )
 
 
 def refresh_daily_new_cap(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
@@ -218,66 +243,20 @@ _REVIEWS_PER_DAY_FIELD = 10  # VARINT uint32 in DeckConfig.Config
 
 
 def _read_reviews_per_day_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> int | None:
-    """Read reviews-per-day from modern Anki's deck_config table (Anki ≥2.1.55).
-
-    Mirrors _read_new_per_day_from_deck_config_table but reads field 10
-    (reviews_per_day) instead of field 9 (new_per_day).
-    """
-    try:
-        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    except sqlite3.Error:  # pragma: no cover
-        return None  # pragma: no cover
-
-    if "deck_config" not in tables or "decks" not in tables:
-        return None
-
-    conf_id = _read_conf_id_for_deck(conn, deck_name)
-    if conf_id is None:
-        return None
-
-    config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
-    if config_row is None or not config_row[0]:
-        return None
-
-    config_blob = config_row[0]
-    return find_varint_field(
-        config_blob if isinstance(config_blob, bytes) else bytes(config_blob), _REVIEWS_PER_DAY_FIELD
-    )
+    """Read reviews-per-day (field 10 VARINT) from deck_config.config."""
+    return _read_config_value_from_deck_config_table(conn, deck_name, proto_field=_REVIEWS_PER_DAY_FIELD, wire_type=0)
 
 
 def _read_reviews_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int | None:
     """Return reviews-per-day from Anki's deck config, or None if unavailable.
 
     Tries the legacy JSON format (col.dconf) first, then the modern protobuf
-    format (deck_config table, Anki ≥2.1.55). Mirrors _read_new_per_day_from_anki
+    format (deck_config table, Anki =2.1.55). Mirrors _read_new_per_day_from_anki
     but reads rev.perDay instead of new.perDay.
     """
-    row = conn.execute("SELECT decks, dconf FROM col LIMIT 1").fetchone()
-    if row is None:
-        return None
-
-    dconf_raw = row[1] if row[1] else ""
-    if dconf_raw:
-        try:
-            decks = json.loads(row[0] or "{}")
-            dconf_json = json.loads(dconf_raw)
-        except (json.JSONDecodeError, TypeError):
-            return None
-
-        deck_info = next(
-            (v for v in decks.values() if isinstance(v, dict) and v.get("name") == deck_name),
-            None,
-        )
-        if deck_info is not None:
-            conf_id = str(deck_info.get("conf", 1))
-            deck_conf = dconf_json.get(conf_id)
-            if isinstance(deck_conf, dict):
-                try:
-                    return int(deck_conf["rev"]["perDay"])
-                except (KeyError, TypeError, ValueError):
-                    pass
-
-    return _read_reviews_per_day_from_deck_config_table(conn, deck_name)
+    return _read_config_value_from_deck_config_table(
+        conn, deck_name, proto_field=_REVIEWS_PER_DAY_FIELD, wire_type=0, legacy_keys=("rev", "perDay")
+    )
 
 
 # Layer 36: daily review cap (render-only).
@@ -289,34 +268,8 @@ def refresh_daily_review_cap(db: SRSDatabase, conn: sqlite3.Connection, deck_nam
 
 
 def _read_desired_retention_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> float | None:
-    """Read FSRS desired_retention (proto field 37) from modern Anki's deck_config table.
-
-    Used as the synthetic R for cards without memory_state in `compute_retrievability`.
-    Empirically, Anki places `data='{}'` review cards at the R-asc position
-    ``desired_retention`` would occupy — between R<dr and R>dr cards — rather
-    than at the SQLite NULLs-first head.
-    """
-    try:
-        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    except sqlite3.Error:  # pragma: no cover
-        return None  # pragma: no cover
-
-    if "deck_config" not in tables or "decks" not in tables:
-        return None
-
-    conf_id = _read_conf_id_for_deck(conn, deck_name)
-    if conf_id is None:
-        return None
-
-    config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
-    if config_row is None or not config_row[0]:
-        return None
-
-    config_blob = config_row[0]
-    return find_fixed32_field(
-        config_blob if isinstance(config_blob, bytes) else bytes(config_blob),
-        _DESIRED_RETENTION_FIELD,
-    )
+    """Read FSRS desired_retention (field 37 FIXED32) from deck_config.config."""
+    return _read_config_value_from_deck_config_table(conn, deck_name, proto_field=_DESIRED_RETENTION_FIELD, wire_type=5)
 
 
 def refresh_desired_retention(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
