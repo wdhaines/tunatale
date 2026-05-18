@@ -219,8 +219,20 @@ class SyntheticCollection:
         odue: int = 0,
         odid: int = 0,
         factor: int = 0,
+        last_review_secs: int | None = None,
     ) -> None:
-        data = json.dumps({"s": stability, "d": difficulty}) if stability is not None and difficulty is not None else ""
+        # cards.data JSON carries the FSRS memory state. ``lrt`` (last review
+        # time in seconds) is what Anki's next_states() uses to compute
+        # days_elapsed. Without ``lrt`` Anki sees elapsed=0 and routes through
+        # the short-term stability formula instead of stability_after_success
+        # — silently changing which TT path the parity test exercises.
+        if stability is not None and difficulty is not None:
+            data_obj: dict[str, Any] = {"s": stability, "d": difficulty}
+            if last_review_secs is not None:
+                data_obj["lrt"] = last_review_secs
+            data = json.dumps(data_obj)
+        else:
+            data = ""
         self.cards.append(
             {
                 "id": id,

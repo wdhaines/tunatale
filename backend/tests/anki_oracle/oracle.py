@@ -37,6 +37,70 @@ except ImportError as e:
     _IMPORT_ERROR = str(e)
 
 
+def _serialize_scheduling_state(state: Any) -> dict | None:
+    """Flatten a ``SchedulingState`` protobuf to a JSON-safe dict.
+
+    SchedulingState is a one-of-many message — current Anki may report
+    ``normal.review``, ``normal.learning``, ``normal.relearning``, etc. This
+    helper exposes whatever fields are present in a flat shape so test
+    assertions don't have to walk the variant chain.
+    """
+    if state is None:
+        return None
+    normal = state.normal if state.HasField("normal") else None
+    if normal is None:
+        return {"kind": "filtered_or_unknown"}
+
+    if normal.HasField("review"):
+        rv = normal.review
+        memory_state = rv.memory_state if rv.HasField("memory_state") else None
+        return {
+            "kind": "review",
+            "scheduled_days": rv.scheduled_days,
+            "elapsed_days": rv.elapsed_days,
+            "stability": memory_state.stability if memory_state else None,
+            "difficulty": memory_state.difficulty if memory_state else None,
+        }
+    if normal.HasField("learning"):
+        lr = normal.learning
+        memory_state = lr.memory_state if lr.HasField("memory_state") else None
+        return {
+            "kind": "learning",
+            "scheduled_secs": lr.scheduled_secs,
+            "elapsed_secs": lr.elapsed_secs,
+            "remaining_steps": lr.remaining_steps,
+            "stability": memory_state.stability if memory_state else None,
+            "difficulty": memory_state.difficulty if memory_state else None,
+        }
+    if normal.HasField("relearning"):
+        rl = normal.relearning
+        memory_state = rl.review.memory_state if rl.review.HasField("memory_state") else None
+        return {
+            "kind": "relearning",
+            "review_scheduled_days": rl.review.scheduled_days,
+            "learning_scheduled_secs": rl.learning.scheduled_secs,
+            "lapses": rl.review.lapses,
+            "stability": memory_state.stability if memory_state else None,
+            "difficulty": memory_state.difficulty if memory_state else None,
+        }
+    if normal.HasField("new"):
+        return {"kind": "new", "position": normal.new.position}
+    return {"kind": "normal_empty"}
+
+
+def _serialize_states(states: Any) -> dict | None:
+    """Flatten a ``SchedulingStates`` (current + 4 next) to JSON-safe nested dict."""
+    if states is None:
+        return None
+    return {
+        "current": _serialize_scheduling_state(states.current),
+        "again": _serialize_scheduling_state(states.again),
+        "hard": _serialize_scheduling_state(states.hard),
+        "good": _serialize_scheduling_state(states.good),
+        "easy": _serialize_scheduling_state(states.easy),
+    }
+
+
 def _serialize_card(card: Any, col: Any) -> dict:
     """Serialize a single queued card to a plain JSON-safe dict.
 
@@ -73,6 +137,7 @@ def _serialize_card(card: Any, col: Any) -> dict:
         result["memory_state"] = None
     result["last_review"] = last_review
     result["sfld"] = sfld
+    result["states"] = _serialize_states(card.states) if card.HasField("states") else None
     return result
 
 

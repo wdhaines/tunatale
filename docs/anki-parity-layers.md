@@ -640,6 +640,37 @@ The `step_index == 0` guard was structurally tautological in `_schedule_new` (th
 
 ---
 
+## Layer 42 — Lapse stability ceiling (surfaced by Phase 2.2.1 oracle harness)
+
+**Trigger.** First parity test in `backend/tests/test_parity_fsrs_schedule.py` (Phase 2.2.1, the FSRS-scheduling oracle test) flagged a divergence between TT's `_next_stability_lapse` and fsrs-rs's `stability_after_failure` for low-stability cards. For `(s=1.5, d=7.5)` graded Again, TT returned ~1.64 while Anki returned ~1.20. The difference is the ceiling that fsrs-rs applies and TT omits.
+
+**Mechanism (fsrs-rs, `src/model.rs:91-105`).**
+```rust
+fn stability_after_failure(&self, last_s, last_d, r) {
+    let new_s = w[11] * d.powf(-w[12]) * ((s+1).powf(w[13]) - 1) * exp((1-r) * w[14]);
+    let new_s_min = last_s / (w[17] * w[18]).exp();
+    new_s.mask_where(new_s_min.lower(new_s), new_s_min)  // = min(new_s, new_s_min)
+}
+```
+
+The ceiling `last_s / exp(w[17] * w[18])` bounds the post-lapse stability so a lapse can never *raise* stability above the pre-lapse value much. For low `last_s` the raw formula often exceeds this bound; the ceiling clamps it.
+
+**Status.** Not yet fixed in TT. The harness test (`test_fsrs_lapse_stability_ceiling_LAYER_42`) is `xfail(strict=True)` so it surfaces in test output but doesn't block CI. Once `_next_stability_lapse` adds the ceiling, flip the xfail marker.
+
+**Fix sketch.**
+```python
+def _next_stability_lapse(d, s, r, w):
+    new_s = w[11] * d ** (-w[12]) * ((s + 1) ** w[13] - 1) * math.exp((1 - r) * w[14])
+    new_s_min = s / math.exp(w[17] * w[18])
+    return min(new_s, new_s_min)
+```
+
+**Files (pending).** `backend/app/srs/fsrs.py:_next_stability_lapse` — add the ceiling.
+
+**Cross-reference.** First Layer surfaced via the harness — validates the Phase 2 approach. The harness asserts parity end-to-end and pins this divergence with a precise reproducer instead of waiting for a user-visible badge mismatch.
+
+---
+
 ## Cleanup pass (post-Layer 23)
 
 After 23 layers, swept for dead code and duplication. Behavior unchanged.
