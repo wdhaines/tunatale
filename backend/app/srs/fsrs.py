@@ -125,6 +125,39 @@ def _forgetting_curve(elapsed_days: float, stability: float, decay: float = -0.5
     return (1 + FACTOR * elapsed_days / stability) ** decay
 
 
+def _elapsed_days_for_fsrs(last_review: datetime | date | None, ref_now: datetime) -> float:
+    """Mirror Anki's `extract_fsrs_retrievability` dual branch for elapsed time.
+
+    Anki's lapse + recall stability formulas both feed off `delta_t = now - lrt`
+    in fractional days when `cards.data.lrt` is present (FSRS-effective last
+    review timestamp), and fall back to integer `today_col_day - (due - ivl)`
+    when it isn't.
+
+    TT mirrors via the marker `parse_fsrs_data` sets: midnight UTC `last_review`
+    = day-level fallback (no lrt was present); any sub-day component = lrt was
+    present and `last_review` carries it.
+
+    The same dual-branch logic already lives in `compute_retrievability` for R-asc
+    sort. Until 2026-05-18 it did NOT live in `_schedule_review_again` or the
+    REVIEW+other-ratings path — those used integer days unconditionally,
+    producing 2-4% stability gaps with Anki for sub-day-elapsed grades.
+    """
+    if last_review is None:
+        return 0.0
+    if isinstance(last_review, datetime):
+        is_day_level = (
+            last_review.hour == 0
+            and last_review.minute == 0
+            and last_review.second == 0
+            and last_review.microsecond == 0
+        )
+        if is_day_level:
+            return max(0, (ref_now.date() - last_review.date()).days)
+        return max(0.0, (ref_now - last_review).total_seconds() / 86400.0)
+    # `last_review` is a date (no time-of-day at all) — day-level by definition.
+    return max(0, (ref_now.date() - last_review).days)
+
+
 def compute_retrievability(
     direction_state: DirectionState,
     today: date,
@@ -347,10 +380,10 @@ def schedule(
 
     # REVIEW state logic
     else:
-        # REVIEW state
+        # REVIEW state. `_elapsed_days_for_fsrs` mirrors Anki's dual-branch:
+        # fractional days from lrt-precision last_review, integer otherwise.
         last = prev.last_review or last_review_dt
-        last_date = last.date() if isinstance(last, datetime) else last
-        elapsed = max(0, (last_review_dt.date() - last_date).days)
+        elapsed = _elapsed_days_for_fsrs(last, last_review_dt)
         r = _forgetting_curve(elapsed, prev.stability, neg_decay)
 
         if rating == Rating.AGAIN:
@@ -495,10 +528,11 @@ def _schedule_review_again(
     from dataclasses import replace
 
     w = params.weights
-    # Compute real retrievability from elapsed time since last review
+    # Real retrievability needs elapsed in the same units Anki uses — fractional
+    # days from `lrt` when present (sub-day precision on `prev.last_review`),
+    # integer days otherwise. See `_elapsed_days_for_fsrs`.
     last = prev.last_review or last_review_dt
-    last_date = last.date() if isinstance(last, datetime) else last
-    elapsed = max(0, (last_review_dt.date() - last_date).days)
+    elapsed = _elapsed_days_for_fsrs(last, last_review_dt)
     # fsrs-rs model.rs:154-163: short-term stability overrides the lapse formula
     # when delta_t == 0 (same-day grade). The deck option only governs card-state
     # transitions, not memory_state — so this branch is not flag-gated.

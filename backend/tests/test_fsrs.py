@@ -126,6 +126,130 @@ class TestReviewScheduling:
         # Should not raise TypeError
         assert result.last_review.date() == past_date
 
+    def test_review_again_uses_fractional_elapsed_when_last_review_has_sub_day_precision(self):
+        """REVIEW + AGAIN: the lapse formula's `r` must mirror Anki's
+        `extract_fsrs_retrievability` dual branch — fractional days from `lrt`
+        when sub-day precision is present, integer calendar days only when
+        the day-level midnight fallback was used.
+
+        Pre-fix, `_schedule_review_again` unconditionally used integer
+        calendar days (`last_review_dt.date() - last_date.days`). For a card
+        last reviewed at 02:43 yesterday-of-a-week-ago, that's 7 calendar
+        days vs Anki's ~7.55 fractional days — flowing through
+        `exp(w14 * (1-r))` into a 2-4% stability gap (real-world
+        observation: kupiti 1.0897 vs 1.1337 = 4.0% gap).
+        """
+        from dataclasses import replace
+        from datetime import datetime as _dt
+
+        grade_dt = _dt(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
+
+        def _grade_again_with_last_review_at(last_review_dt):
+            item = _review_item()
+            ds = item.directions[Direction.RECOGNITION]
+            item.directions[Direction.RECOGNITION] = replace(
+                ds, last_review=last_review_dt, stability=5.0, difficulty=7.0
+            )
+            return schedule(item, Rating.AGAIN, review_date=grade_dt.date(), now=grade_dt)
+
+        # Two cards graded at the same moment, with last_review on the SAME calendar
+        # day but at different sub-day times. Integer-days gives elapsed=7 for both;
+        # fractional-days gives 7.5 and 7.0 respectively → different new stabilities.
+        early_morning = _dt(2026, 5, 11, 0, 0, 1, tzinfo=UTC)  # ~7.5 days before grade
+        midday = _dt(2026, 5, 11, 12, 0, 0, tzinfo=UTC)  # exactly 7.0 days before grade
+
+        r_early = _grade_again_with_last_review_at(early_morning)
+        r_mid = _grade_again_with_last_review_at(midday)
+
+        s_early = r_early.directions[Direction.RECOGNITION].stability
+        s_mid = r_mid.directions[Direction.RECOGNITION].stability
+
+        # Sanity: both are sub-day precision (non-midnight microseconds for early,
+        # non-midnight for midday), so the fix's fractional branch fires for both.
+        # Their fractional elapseds differ (7.5 vs 7.0) → r differs → new_s differs.
+        # With the pre-fix integer-days bug, both rounded to 7 and produced identical s.
+        assert s_early != s_mid, (
+            f"Lapse formula must use fractional elapsed when last_review has sub-day precision. "
+            f"7.5-day-elapsed produced s={s_early}; 7.0-day-elapsed produced s={s_mid}; "
+            f"identical values mean the bug (integer days for both) is still present."
+        )
+        # Direction check: more time elapsed = lower r = larger 1-r = larger exp factor =
+        # higher new_s in lapse formula. So early (7.5 days) should produce s >= mid (7.0).
+        assert s_early > s_mid, (
+            f"More elapsed time should yield slightly higher new_s in the lapse formula "
+            f"(via the exp(w14*(1-r)) term). Got early={s_early}, mid={s_mid}."
+        )
+
+    def test_review_good_uses_fractional_elapsed_when_last_review_has_sub_day_precision(self):
+        """Same as above but for REVIEW + GOOD (the recall path at line 353).
+        Both code sites — `_schedule_review_again` and the REVIEW+other-ratings
+        branch — need the same fix.
+        """
+        from dataclasses import replace
+        from datetime import datetime as _dt
+
+        grade_dt = _dt(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
+
+        def _grade_good_with_last_review_at(last_review_dt):
+            item = _review_item()
+            ds = item.directions[Direction.RECOGNITION]
+            item.directions[Direction.RECOGNITION] = replace(
+                ds, last_review=last_review_dt, stability=5.0, difficulty=7.0
+            )
+            return schedule(item, Rating.GOOD, review_date=grade_dt.date(), now=grade_dt)
+
+        early_morning = _dt(2026, 5, 11, 0, 0, 1, tzinfo=UTC)
+        midday = _dt(2026, 5, 11, 12, 0, 0, tzinfo=UTC)
+
+        r_early = _grade_good_with_last_review_at(early_morning)
+        r_mid = _grade_good_with_last_review_at(midday)
+
+        s_early = r_early.directions[Direction.RECOGNITION].stability
+        s_mid = r_mid.directions[Direction.RECOGNITION].stability
+
+        assert s_early != s_mid, (
+            f"Recall formula must use fractional elapsed when last_review has sub-day precision. "
+            f"Got identical s={s_early} for both 7.5-day and 7.0-day elapsed cards — integer-days bug."
+        )
+
+
+class TestElapsedDaysForFsrs:
+    """Direct unit tests for the day-level vs lrt-fractional helper."""
+
+    def test_none_last_review_returns_zero(self):
+        from datetime import datetime as _dt
+
+        from app.srs.fsrs import _elapsed_days_for_fsrs
+
+        assert _elapsed_days_for_fsrs(None, _dt(2026, 5, 18, 12, 0, tzinfo=UTC)) == 0.0
+
+    def test_midnight_datetime_uses_integer_days(self):
+        """A midnight-UTC last_review is the marker for day-level fallback
+        (no lrt at parse time) — must return integer calendar days."""
+        from datetime import datetime as _dt
+
+        from app.srs.fsrs import _elapsed_days_for_fsrs
+
+        last = _dt(2026, 5, 11, 0, 0, 0, tzinfo=UTC)
+        # 7 calendar days + 15h means integer days = 7, NOT 7.625.
+        now_dt = _dt(2026, 5, 18, 15, 0, 0, tzinfo=UTC)
+        assert _elapsed_days_for_fsrs(last, now_dt) == 7
+
+    def test_sub_day_datetime_uses_fractional_days(self):
+        from datetime import datetime as _dt
+
+        from app.srs.fsrs import _elapsed_days_for_fsrs
+
+        # midday 7 days ago → exactly 7.0 fractional days
+        last = _dt(2026, 5, 11, 12, 0, 0, tzinfo=UTC)
+        now_dt = _dt(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
+        assert _elapsed_days_for_fsrs(last, now_dt) == 7.0
+
+        # 15h after midnight 7 days ago → 7.625 fractional days
+        last2 = _dt(2026, 5, 11, 0, 0, 1, tzinfo=UTC)  # sub-day precision (second != 0)
+        now2 = _dt(2026, 5, 18, 15, 0, 1, tzinfo=UTC)
+        assert _elapsed_days_for_fsrs(last2, now2) == 7.625
+
 
 class TestDifficultyAdjustment:
     """Tests for FSRS difficulty adjustment logic."""
