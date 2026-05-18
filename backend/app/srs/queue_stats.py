@@ -43,6 +43,16 @@ _DESIRED_RETENTION_FIELD = 37  # FIXED32 float — per /tmp/anki-source/proto/an
 _WIRE_TYPE_VARINT = 0
 _WIRE_TYPE_FIXED32 = 5
 
+# Default values (Anki's built-in defaults, used when no cache or config override is available)
+_DEFAULT_DESIRED_RETENTION = 0.9
+_DEFAULT_NEW_PER_DAY = 20
+_DEFAULT_REVIEWS_PER_DAY = 200
+_DEFAULT_NEW_SPREAD = 0
+_DEFAULT_BURY_NEW = True
+_DEFAULT_BURY_REVIEW = True
+_DEFAULT_LEARN_STEPS: list[float] = [1.0, 10.0]
+_DEFAULT_RELEARN_STEPS: list[float] = [10.0]
+
 
 def _read_conf_id_for_deck(conn: sqlite3.Connection, deck_name: str) -> int | None:
     """Return the conf_id for the given deck name, or None if not found.
@@ -319,7 +329,7 @@ def resolve_desired_retention(db: SRSDatabase | None = None) -> tuple[float, str
             except (ValueError, TypeError, OverflowError):
                 pass
 
-    return (0.9, "default")
+    return (_DEFAULT_DESIRED_RETENTION, "default")
 
 
 def resolve_daily_review_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
@@ -353,7 +363,7 @@ def resolve_daily_review_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
     if config_default:
         return (config_default, "config")
 
-    return (200, "default")
+    return (_DEFAULT_REVIEWS_PER_DAY, "default")
 
 
 def refresh_review_settings(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
@@ -420,7 +430,7 @@ def resolve_daily_new_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
     if config_default:
         return (config_default, "config")
 
-    return (20, "default")
+    return (_DEFAULT_NEW_PER_DAY, "default")
 
 
 def resolve_new_spread(db: SRSDatabase | None = None) -> tuple[int, str]:
@@ -450,7 +460,7 @@ def resolve_new_spread(db: SRSDatabase | None = None) -> tuple[int, str]:
             except (ValueError, TypeError, OverflowError):
                 pass
 
-    return (0, "default")
+    return (_DEFAULT_NEW_SPREAD, "default")
 
 
 def resolve_bury_new(db: SRSDatabase | None = None) -> tuple[bool, str]:
@@ -477,7 +487,7 @@ def resolve_bury_new(db: SRSDatabase | None = None) -> tuple[bool, str]:
             except (ValueError, TypeError, OverflowError):
                 pass
 
-    return (True, "default")
+    return (_DEFAULT_BURY_NEW, "default")
 
 
 def resolve_bury_review(db: SRSDatabase | None = None) -> tuple[bool, str]:
@@ -504,7 +514,7 @@ def resolve_bury_review(db: SRSDatabase | None = None) -> tuple[bool, str]:
             except (ValueError, TypeError, OverflowError):
                 pass
 
-    return (True, "default")
+    return (_DEFAULT_BURY_REVIEW, "default")
 
 
 _LEARNING_CUTOFF_KEY = "learning_cutoff"
@@ -725,7 +735,7 @@ def resolve_learning_steps(db: SRSDatabase | None = None) -> tuple[list[float], 
             except (ValueError, TypeError, OverflowError):
                 pass
 
-    return ([1.0, 10.0], "default")
+    return (_DEFAULT_LEARN_STEPS, "default")
 
 
 def resolve_relearning_steps(db: SRSDatabase | None = None) -> tuple[list[float], str]:
@@ -752,7 +762,7 @@ def resolve_relearning_steps(db: SRSDatabase | None = None) -> tuple[list[float]
             except (ValueError, TypeError, OverflowError):
                 pass
 
-    return ([10.0], "default")
+    return (_DEFAULT_RELEARN_STEPS, "default")
 
 
 def _read_fsrs_short_term_from_config_table(conn: sqlite3.Connection) -> bool | None:
