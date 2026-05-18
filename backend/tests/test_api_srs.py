@@ -3663,6 +3663,85 @@ class TestSessionMainQueueFreeze:
             f"graduated cards from today's flow); got {order}"
         )
 
+    async def test_session_start_rebuilds_frozen_queue_with_current_pool(self, api_app_state):
+        """Anki parity: `/review-queue?session_start=1` mirrors deck-open semantics.
+
+        Anki rebuilds its queue every time the deck is opened (lazy build on first
+        access). The frontend already sends `session_start=1` on /review mount.
+        Before this fix, that flag only advanced `learning_cutoff`; the frozen
+        main queue stayed at the last sync_pull snapshot. Result: if Anki was
+        closed/reopened mid-day (which rebuilds Anki's queue with the post-grade
+        pool) and TT was not synced, the two apps' intersperser positions
+        diverged irreversibly until next sync.
+
+        After this fix, session_start=1 also clears + rebuilds the frozen
+        session_main_queue, so a fresh page-mount aligns TT's queue moment with
+        Anki's.
+        """
+        from datetime import date
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+
+        # Seed two reviews. First /review-queue call will freeze with these.
+        for text, anki_id, stab in [("alpha", 1001, 10.0), ("beta", 1002, 5.0)]:
+            unit = SyntacticUnit(text=text, translation=text, word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+            rows, _ = db.list_collocations(search=text, limit=1)
+            row_id, _, _ = rows[0]
+            db.update_direction_by_id(
+                row_id,
+                Direction.RECOGNITION,
+                DirectionState(
+                    direction=Direction.RECOGNITION,
+                    state=SRSState.REVIEW,
+                    due_date=today,
+                    stability=stab,
+                    anki_card_id=anki_id,
+                ),
+            )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r1 = await client.get("/api/srs/review-queue")
+            order1 = [q["text"] for q in r1.json()["queue"]]
+            assert set(order1) == {"alpha", "beta"}, f"initial freeze should contain alpha + beta; got {order1}"
+
+            # Add a new review card with very low R — under a fresh rebuild it
+            # would land at the head. Under the existing frozen cache it must
+            # NOT appear (review-state latecomers are dropped per Layer 29).
+            gamma = SyntacticUnit(text="gamma", translation="g", word_count=1, difficulty=1, source="test")
+            db.add_collocation(gamma, language_code="sl")
+            rows, _ = db.list_collocations(search="gamma", limit=1)
+            row_g, _, _ = rows[0]
+            db.update_direction_by_id(
+                row_g,
+                Direction.RECOGNITION,
+                DirectionState(
+                    direction=Direction.RECOGNITION,
+                    state=SRSState.REVIEW,
+                    due_date=today,
+                    stability=0.01,
+                    anki_card_id=1003,
+                ),
+            )
+
+            # Without session_start: frozen cache stands; gamma is excluded.
+            r2 = await client.get("/api/srs/review-queue")
+            order2 = [q["text"] for q in r2.json()["queue"]]
+            assert "gamma" not in order2, (
+                f"sanity check: without session_start the frozen cache excludes "
+                f"the review-state latecomer; got {order2}"
+            )
+
+            # With session_start=1: rebuild. gamma should join the queue.
+            r3 = await client.get("/api/srs/review-queue?session_start=1")
+            order3 = [q["text"] for q in r3.json()["queue"]]
+            assert "gamma" in order3, (
+                f"session_start=1 must rebuild the frozen queue and include the new review; got {order3}"
+            )
+
 
 class TestLearningStepFeedback:
     """Tests for feedback returning learning state with due_at, and queue filtering."""

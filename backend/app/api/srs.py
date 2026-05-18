@@ -22,6 +22,7 @@ from app.srs.function_words import is_function_word
 from app.srs.lemmatizer import LowercaseLemmatizer
 from app.srs.queue_stats import (
     advance_learning_cutoff,
+    clear_session_main_queue,
     get_session_main_queue,
     resolve_bury_new,
     resolve_bury_review,
@@ -1056,6 +1057,15 @@ async def get_review_queue(request: Request, session_start: bool = False) -> dic
 
     if session_start:
         advance_learning_cutoff(db, now)
+        # Anki parity: deck-open also rebuilds the frozen main queue, not just
+        # the learning cutoff. The frontend fires session_start=1 exactly when
+        # the user navigates to /review (fresh mount / refresh / new tab) —
+        # that's TT's deck-open analog. Without rebuilding here, TT's queue
+        # stays frozen at the last sync_pull moment while Anki rebuilds on
+        # every reopen, and the two apps' intersperser positions drift
+        # irreversibly until next sync.
+        clear_session_main_queue(db)
+        build_and_freeze_main_queue(db)
 
     # Build live_main via the shared helper (also called by sync_pull eager
     # rebuild). The unbury sweep runs inside _compute_live_main.
