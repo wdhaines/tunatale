@@ -8,9 +8,9 @@ The user grades the same deck in both Anki and TunaTale. Between syncs, both app
 
 Anki is the reference implementation. TunaTale mirrors Anki's algorithms — but **reads `collection.anki2` only at sync time**, never on the live request path. A request handler that consults Anki's collection is a regression unless it's `sync_pull`/`sync_push` itself.
 
-## Two most common benign divergences
+## Three most common benign divergences
 
-The two patterns below account for the bulk of "TT and Anki disagree on head card" reports as of Layers 36+. **Check both before pattern-matching to anything algorithmic.** Both resolve at the next sync.
+The three patterns below account for the bulk of "TT and Anki disagree on head card" reports as of Layers 36+. **Check all three before pattern-matching to anything algorithmic.** All three resolve at the next TT sync.
 
 ### #1 — Cutoff frozen at last grade
 
@@ -50,6 +50,39 @@ sqlite3 /tmp/tt_inspect.db "SELECT c.text || ' ' || cd.direction, cd.anki_card_i
 done
 ```
 If per-card deltas are O(seconds) and the step (due − grade) matches between apps, it's drift, not a bug. **Do not** add code that "fixes" this by overwriting timestamps client-side — convergence is sync's job.
+
+### #3 — Asymmetric queue-rebuild cadence (R-asc inversion captured by only one app)
+
+Both apps freeze the main review queue and never re-sort mid-session (Anki: `CardQueues.main` is a `VecDeque`, pop-only on grade, verified at `rslib/src/scheduler/queue/main.rs:8-46` and `mod.rs:217-243`). But **Anki's rebuild trigger set is much larger than TT's**, so the two frozen queues can capture different snapshots of the same FSRS state.
+
+**Anki rebuilds when** (`queue/mod.rs:207-215`, `ops.rs:168-181`):
+- Day rollover
+- **File → Sync** in Anki (and AnkiWeb auto-sync receiving remote changes, including TT's push)
+- **Deck navigation** (`SetCurrentDeck` — deck list → back into the deck)
+- Deck-config / preferences change
+- Undo
+- Any non-grade card/deck mutation
+
+**TT rebuilds only on `sync_pull`** (rule 2 / Layer 29). Grading does not rebuild in either app.
+
+**Signature**: both apps show a *review* card at the head, both have the same set of candidate cards, TT's head and Anki's head are two different cards with **wildly different stabilities** (e.g. s=0.65 vs s=7.5), and their current R values are near-tie (delta ~0.001–0.005). The low-s card has decayed under the high-s card *during the session*, and only one app's frozen queue reflects the crossover.
+
+**Why low-s × high-s is the danger zone**: R decays at rate `1/(s·86400)` per second of elapsed. A card with s=0.65d decays ~12× faster than one with s=7.5d. Even small wall-clock gaps between the two app's queue-rebuild moments produce divergent R-asc rankings for any pair that's near-tie at sync time.
+
+**Worked example** (May 17, 2026 incident): synced TT ~20:45 PDT. Frozen TT order: prodati (R=0.8635) < cloze "se" (R=0.8639). At ~20:55 PDT the cards crossed (cloze R dipped below prodati R). At ~21:00 PDT user hit **File → Sync in Anki**, which cleared Anki's queue cache. Anki's next rebuild captured post-cross order: cloze (R=0.8620) < prodati (R=0.8633). TT still showed prodati first. **The trigger was confirmed by the user.**
+
+**Resolution**: `sync_pull` from TT to rebuild its frozen queue with current R values. After sync, both queues agree (until the next near-tie inversion).
+
+**Diagnostic** to confirm before pattern-matching elsewhere:
+```bash
+# Compute R for the two divergent cards right now.
+# Find their s and lrt from Anki's cards.data, plug into:
+#   R = (1 + 19/81 * elapsed_days / s) ** -0.5    (decay = 0.5 default)
+# If both Rs are within ~0.005 of each other AND their stabilities differ
+# by ~10× or more, this is the pattern.
+```
+
+**Don't try to "fix" this** by adding mid-session re-sort logic or by mirroring all of Anki's rebuild triggers. The freeze-at-build design is intentional in both apps (rule 2). The cheap fix is "sync more often"; the structural fix would be matching Anki's rebuild trigger set (deck-nav, settings-change, undo) — only do that if this divergence class proves frequent enough to justify the complexity.
 
 ## Architectural principles (don't undo these)
 
@@ -122,6 +155,7 @@ When a "TT and Anki disagree" report comes in, walk this tree. Each leaf points 
 - `review` badge: `min(db.count_review_due_collocations(today), max(0, daily_review_cap − reviews_today))` — due collocations, capped by Anki's `reviews_per_day` deck option, depleted by `db.count_reviews_completed_today(today)`. Drifts on Anki-side grades until sync. **Layer 27**: stale `state='buried'` rows (e.g., sync_pull pulled Anki's queue=-2 yesterday and TT never unburied) under-count this badge. **Layer 36**: the raw due count is capped at `min(due_raw, max(0, daily_review_cap - reviews_today))` — mirrors Anki's `reviews_per_day` deck option. If TT's review badge is consistently lower than raw `count_review_due_collocations`, check `anki_state_cache['daily_review_cap']` and `db.count_reviews_completed_today(today)`. The daily unbury sweep (`db.unbury_if_needed`) fires on every `/queue-stats` and `/review-queue` request — if reviews look low, check `SELECT COUNT(*) FROM collocation_directions WHERE state='buried'` against the count for siblings of today's grades. Should be close.
 
 **Queue head wrong (review-state card):**
+- **CHECK FIRST — top-of-file "Three most common benign divergences" #3 (asymmetric queue-rebuild cadence)** if the two head cards have wildly different stabilities and their current R values are near-tie. Confirmed pattern: user hit File→Sync (or deck-nav, settings-change, undo) in Anki, triggering an Anki-side queue rebuild that TT didn't mirror.
 - Compare R values for the divergent cards (snippet below). If TT and Anki produce different R, check which branch of `extract_fsrs_retrievability` Anki used (presence/absence of `cards.data.lrt`) and whether `compute_retrievability` picked the matching branch (Layer 11/15).
 - Check `session_main_queue` cache — if it's stale and the divergent card transitioned mid-session, Layer 7's invalidation may not have fired.
 - Check `today_col_day` (`_compute_today_col_day`) vs Anki's `last_day_studied` — timezone/rollover bugs land here (Layer 13).
