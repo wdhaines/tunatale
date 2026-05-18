@@ -481,6 +481,10 @@ def fake_anki_db_slovene_pairs(tmp_path):
 _CASSETTES_DIR = Path(__file__).parent / "cassettes"
 
 
+# Re-export Anki oracle fixtures so tests anywhere in the suite can request them.
+from tests.anki_oracle.harness_fixtures import anki_queue, synthetic_collection  # noqa: E402, F401
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--llm-mode",
@@ -488,6 +492,28 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default="mock",
         help="LLM mode for cassette fixtures: mock (replay), live, record, or patch.",
     )
+    parser.addoption(
+        "--run-oracle",
+        action="store_true",
+        default=False,
+        help="Run @pytest.mark.oracle tests (spawns `uv run --with anki` subprocesses).",
+    )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "oracle: requires --run-oracle (drives Anki's scheduler via subprocess).",
+    )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    if config.getoption("--run-oracle"):
+        return
+    skip_oracle = pytest.mark.skip(reason="--run-oracle not specified")
+    for item in items:
+        if "oracle" in item.keywords:
+            item.add_marker(skip_oracle)
 
 
 @pytest.fixture
