@@ -1,139 +1,115 @@
 # TT ↔ Anki Queue Parity
 
-Required reading before changing anything in `backend/app/api/srs.py`, `backend/app/srs/fsrs.py`, `backend/app/srs/queue_stats.py`, or `backend/app/anki/sync.py`. The full layer-by-layer history of how the current behavior was reached lives at `docs/anki-parity-layers.md` — open it only when you suspect "have we hit this exact thing before?"
+Required reading before changing `backend/app/api/srs.py`, `backend/app/srs/fsrs.py`, `backend/app/srs/queue_stats.py`, or `backend/app/anki/sync.py`. Full layer history at `docs/anki-parity-layers.md` — open only when "have we hit this exact thing before?"
 
 ## What "parity" means
 
-The user grades the same deck in both Anki and TunaTale. Between syncs, both apps run independently; the next-served card and the three badge counts (`new` / `learning` / `review`) must stay close enough that switching apps doesn't feel discontinuous. **Sync is the alignment moment.** Drift between syncs is bounded and acceptable.
+User grades the same deck in both apps. Between syncs they run independently; next-served card and the three badge counts (`new`/`learning`/`review`) must stay close enough that switching apps doesn't feel discontinuous. **Sync is the alignment moment.** Drift between syncs is bounded and acceptable.
 
-Anki is the reference implementation. TunaTale mirrors Anki's algorithms — but **reads `collection.anki2` only at sync time**, never on the live request path. A request handler that consults Anki's collection is a regression unless it's `sync_pull`/`sync_push` itself.
+Anki is the reference implementation. TT mirrors Anki's algorithms — but **reads `collection.anki2` only at sync time**, never on the live request path. A request handler that consults Anki's collection is a regression unless it's `sync_pull`/`sync_push`.
 
 ## Three most common benign divergences
 
-The three patterns below account for the bulk of "TT and Anki disagree on head card" reports as of Layers 36+. **Check all three before pattern-matching to anything algorithmic.** All three resolve at the next TT sync.
+These three account for the bulk of "TT and Anki disagree on head card" reports. **Check all three before pattern-matching to anything algorithmic.** All three resolve at the next TT sync.
 
-### #1 — Cutoff frozen at last grade
+### #1 — Cutoff frozen at last grade (rule 11)
 
-The intentional stickiness of `learning_cutoff` (rule 11).
+**Signature**: Anki serves a *learning* card, TT serves a *main/review* card, both apps have the card, TT's `learning_cutoff` is within seconds-to-minutes of the learning card's `due_at`.
 
-**Signature**: Anki serves a *learning* card, TT serves a *main/review* card, both apps have the card in question, and TT's `learning_cutoff` is within ~seconds-to-minutes of the learning card's `due_at`.
+**Why**: cutoff advances only on grade / session-start / sync_pull / end-of-session auto-bump. If you grade in Anki 2s *after* the learning card ripens, Anki advances past `due` and serves it. TT, last graded *before* the ripening, keeps cutoff frozen and the card waits in `pending_learning` tail.
 
-**Why it happens**: cutoff advances only on grade / session-start / sync_pull / end-of-session auto-bump (rule 11). If you grade in Anki 2 seconds *after* the learning card ripens, Anki advances its cutoff past `due` and serves it. If your most recent TT grade was *before* the ripening, TT keeps the cutoff frozen there and the learning card waits in `pending_learning` tail. Same card, same FSRS state — just two different "what time is it for queue purposes" answers.
+**Resolution**: refresh `/review` (frontend `onMount` sends `?session_start=1` → cutoff = `now`) or grade any TT card. **Do not** add a "live `now`" path or per-poll cutoff advance — stickiness is intentional and Anki works the same way.
 
-**Resolution**: refresh `/review` (the frontend `onMount` sends `?session_start=1`, which advances cutoff to `now`) or grade any TT card. Either surfaces the learning card next. **Do not** add a "live `now`" path or per-poll cutoff advance — the stickiness is the point (the card on screen shouldn't get preempted by a ripening learning card mid-glance), and Anki's stickiness works the same way.
-
-**Diagnostic one-liner** to confirm before pattern-matching to anything else:
+**Diagnostic**:
 ```bash
 sqlite3 /tmp/tt_inspect.db "SELECT value FROM anki_state_cache WHERE key='learning_cutoff';"
 sqlite3 /tmp/tt_inspect.db "SELECT c.text, cd.direction, cd.due_at FROM collocation_directions cd JOIN collocations c ON cd.collocation_id=c.id WHERE cd.state IN ('learning','relearning') ORDER BY cd.due_at LIMIT 5;"
 ```
-If the earliest learning `due_at` is just past the cutoff, you've found it. Move on.
+If the earliest learning `due_at` is just past the cutoff, you've found it.
 
-### #2 — Independent grading drift (same card graded at different instants)
+### #2 — Independent grading drift
 
-Each app stamps its own `last_review` at the moment the grade button fires, then computes `due_at = last_review + step + fuzz` independently. When you grade the same card in both apps, sub-second-to-few-seconds variation in human button-press timing produces `due_at` values that differ by 1–5 seconds. That's enough to invert the order of two cards whose underlying Anki gap is only 1 second.
+Each app stamps its own `last_review` at the moment the grade fires, computes `due_at = last_review + step + fuzz`. When you grade the same card in both apps, sub-second-to-few-seconds button-press variation produces `due_at` deltas of 1–5s — enough to invert order of two cards whose Anki gap is only 1s.
 
-**Signature (cross-queue)**: TT shows a review/main card, Anki shows a learning card, both have the card, TT's `anki_due` for the card is many hours/days older than Anki's `cards.due`. Already documented under playbook "Queue head wrong (Anki shows learning, TT shows main…) case 2."
+**Signature (cross-queue)**: TT shows review/main, Anki shows learning, TT's `anki_due` is much older than Anki's `cards.due`.
 
-**Signature (intra-learning-queue, more subtle)**: BOTH apps show a learning card at head, but *different* learning cards from the same stack. Both apps' learning queues contain the same N cards in nearly the same order — but positions 0 and 1 are swapped (or 0 and 2). Per-card `due_at` deltas between TT and Anki are O(seconds), not O(minutes).
+**Signature (intra-learning)**: BOTH apps show a learning card at head, but *different* cards from the same stack — positions 0/1 (or 0/2) swapped. Per-card `due_at` deltas are O(seconds).
 
-**Why it flips**: identical FSRS fuzz applied to slightly different grade timestamps. Worked example: peti graded in Anki 3s before TT, risati graded in Anki 2s after TT. Anki's queue: peti (due=X) → risati (due=X+1s). TT's queue: risati (due=X−2s) → peti (due=X+3s). The 5-second total swing inverts a 1-second Anki gap.
+**Why**: identical FSRS fuzz on slightly different timestamps. peti graded in Anki 3s before TT, risati 2s after. Anki: peti(X) → risati(X+1). TT: risati(X−2) → peti(X+3). 5s total swing inverts a 1s gap.
 
-**Resolution**: sync. `_direction_differs` includes `due_at` (rule 6); `sync_pull` writes Anki's `due_at` for cards where Anki's `mod` is later, `sync_push` writes TT's for cards where TT graded later. After one round-trip, both apps converge on the later grader's timestamp per card.
+**Resolution**: sync. `_direction_differs` includes `due_at` (rule 6); after one round-trip both apps converge on the later grader's timestamp per card. **Do not** overwrite timestamps client-side — convergence is sync's job.
 
-**Diagnostic** to confirm:
+**Diagnostic**:
 ```bash
-echo "TT (last_review, due_at) vs Anki (mod, due) for current learning stack:"
 sqlite3 /tmp/tt_inspect.db "SELECT c.text || ' ' || cd.direction, cd.anki_card_id, strftime('%s', cd.last_review) as tt_grade, cast(strftime('%s', cd.due_at) as int) as tt_due FROM collocation_directions cd JOIN collocations c ON cd.collocation_id=c.id WHERE cd.state IN ('learning','relearning') ORDER BY cd.due_at LIMIT 8;" | while IFS='|' read card cid tt_grade tt_due; do
   anki=$(sqlite3 /tmp/anki_inspect.db "SELECT mod || '|' || due FROM cards WHERE id=$cid")
   echo "  $card  TT(grade=$tt_grade due=$tt_due) Anki=$anki"
 done
 ```
-If per-card deltas are O(seconds) and the step (due − grade) matches between apps, it's drift, not a bug. **Do not** add code that "fixes" this by overwriting timestamps client-side — convergence is sync's job.
+If per-card deltas are O(seconds) and the step (due − grade) matches between apps, it's drift, not a bug.
 
 ### #3 — Asymmetric queue-rebuild cadence (R-asc inversion captured by only one app)
 
-Both apps freeze the main review queue and never re-sort mid-session (Anki: `CardQueues.main` is a `VecDeque`, pop-only on grade, verified at `rslib/src/scheduler/queue/main.rs:8-46` and `mod.rs:217-243`). But **Anki's rebuild trigger set is much larger than TT's**, so the two frozen queues can capture different snapshots of the same FSRS state.
+Both apps freeze the main review queue and never re-sort mid-session (Anki `CardQueues.main` is a `VecDeque`, pop-only; `rslib/.../queue/main.rs:8-46`). But **Anki's rebuild trigger set is much larger than TT's**, so the two frozen queues can capture different snapshots of the same state.
 
-**Anki rebuilds when** (`queue/mod.rs:207-215`, `ops.rs:168-181`):
-- Day rollover
-- **File → Sync** in Anki (and AnkiWeb auto-sync receiving remote changes, including TT's push)
-- **Profile / collection reopen** — Anki's queue is lazy-built on first access after open
-- **Deck navigation** (`SetCurrentDeck` — deck list → back into the deck)
-- Deck-config / preferences change
-- Undo
-- Any non-grade card/deck mutation
+**Anki rebuilds on** (`queue/mod.rs:207-215`): day rollover, **File→Sync** (and AnkiWeb auto-sync receiving remote changes incl. TT's push), **profile/collection reopen** (lazy-built on first access), **deck navigation**, deck-config/prefs change, undo, any non-grade card/deck mutation.
 
-**TT rebuilds only on `sync_pull`** (rule 2 / Layer 29). Grading does not rebuild in either app.
+**TT rebuilds only on `sync_pull`** (rule 2). Grading does not rebuild in either app.
 
-**Critical non-obvious trigger: TT sync itself is an Anki rebuild trigger.** TT's `safe_open(mode="rw")` (`backend/app/anki/safety.py:148-162`) acquires an exclusive SQLite lock on `collection.anki2`, which requires Anki to be **closed during the sync**. The user closes Anki, runs TT sync, then reopens Anki — and **the reopen rebuilds Anki's queue with current R values** via the "profile/collection reopen" trigger above. So:
+**Critical non-obvious trigger: TT sync itself triggers an Anki rebuild.** TT's `safe_open(mode="rw")` (`backend/app/anki/safety.py:148-162`) requires Anki to be closed. User closes Anki → runs TT sync → reopens Anki → **the reopen rebuilds Anki's queue with current R values**. TT's sync_pull moment and Anki's reopen moment can be seconds-to-minutes apart, and an R-asc cross can land between them. This is how "I only synced once, never touched Anki" still produces divergent heads. Forensic signature: a multi-minute gap in Anki's revlog spanning the cross point.
 
-- If the user syncs and the reopen happens *before* an R-asc cross, both apps freeze with matching order.
-- If the user syncs twice and the second reopen happens *after* a cross, Anki freezes with the new order while TT (whose sync_pull may have run *before* the cross) keeps the old order. **TT's sync_pull moment and Anki's reopen moment are not the same point in time** — they can be seconds-to-minutes apart, and the cross can land between them.
+**Signature**: both apps show a *review* card at head, same candidate set, two different cards with **wildly different stabilities** (e.g. s=0.65 vs s=7.5), R values near-tie (delta ~0.001–0.005). R decays at `1/(s·86400)`/sec, so low-s decays ~12× faster than high-s — small wall-clock gaps between rebuild moments invert near-tie pairs.
 
-This is how a user who reports "I only synced once, never touched Anki" can still see divergent queue heads. The forensic signature is a **multi-minute gap in Anki's revlog** spanning the R-asc cross point (look for unusually long gap in `SELECT id/1000 FROM revlog ORDER BY id` — gaps in the 100s-of-seconds range suggest a sync-and-reopen cycle).
+**Worked example** (May 17, 2026): synced TT ~20:45 PDT. Frozen TT: prodati (R=0.8635) < cloze "se" (R=0.8639). At ~20:55 they crossed. At ~21:00 user hit **File→Sync in Anki**, clearing Anki's cache. Anki's next rebuild: cloze (R=0.8620) < prodati (R=0.8633). TT still showed prodati first.
 
-**Signature**: both apps show a *review* card at the head, both have the same set of candidate cards, TT's head and Anki's head are two different cards with **wildly different stabilities** (e.g. s=0.65 vs s=7.5), and their current R values are near-tie (delta ~0.001–0.005). The low-s card has decayed under the high-s card *during the session*, and only one app's frozen queue reflects the crossover.
+**Resolution**: `sync_pull` from TT to rebuild its frozen queue with current R values.
 
-**Why low-s × high-s is the danger zone**: R decays at rate `1/(s·86400)` per second of elapsed. A card with s=0.65d decays ~12× faster than one with s=7.5d. Even small wall-clock gaps between the two app's queue-rebuild moments produce divergent R-asc rankings for any pair that's near-tie at sync time.
-
-**Worked example** (May 17, 2026 incident): synced TT ~20:45 PDT. Frozen TT order: prodati (R=0.8635) < cloze "se" (R=0.8639). At ~20:55 PDT the cards crossed (cloze R dipped below prodati R). At ~21:00 PDT user hit **File → Sync in Anki**, which cleared Anki's queue cache. Anki's next rebuild captured post-cross order: cloze (R=0.8620) < prodati (R=0.8633). TT still showed prodati first. **The trigger was confirmed by the user.**
-
-**Resolution**: `sync_pull` from TT to rebuild its frozen queue with current R values. After sync, both queues agree (until the next near-tie inversion).
-
-**Diagnostic** to confirm before pattern-matching elsewhere:
-```bash
-# Compute R for the two divergent cards right now.
-# Find their s and lrt from Anki's cards.data, plug into:
-#   R = (1 + 19/81 * elapsed_days / s) ** -0.5    (decay = 0.5 default)
-# If both Rs are within ~0.005 of each other AND their stabilities differ
-# by ~10× or more, this is the pattern.
-```
-
-**Don't try to "fix" this** by adding mid-session re-sort logic or by mirroring all of Anki's rebuild triggers. The freeze-at-build design is intentional in both apps (rule 2). The cheap fix is "sync more often"; the structural fix would be matching Anki's rebuild trigger set (deck-nav, settings-change, undo) — only do that if this divergence class proves frequent enough to justify the complexity.
+**Don't try to "fix" this** with mid-session re-sort or by mirroring all of Anki's rebuild triggers. The freeze-at-build design is intentional (rule 2). Cheap fix: "sync more often." Structural fix (match Anki's trigger set) only if this class proves frequent.
 
 ## Architectural principles (don't undo these)
 
-1. **Anki is reference, not runtime dependency.** Every badge endpoint and every queue-build path reconstructs from TT state alone (`collocation_directions` + `anki_state_cache`). If you find yourself opening `collection.anki2` in `app/api/`, you've taken a wrong turn — look for the TT-state-only equivalent (`count_new_introduced_today`, `count_review_due_collocations`, `list_collocations_reviewed_today`, etc.).
+1. **Anki is reference, not runtime dependency.** Every badge endpoint and queue-build path reconstructs from TT state alone (`collocation_directions` + `anki_state_cache`). If you find yourself opening `collection.anki2` in `app/api/`, wrong turn — look for the TT-state-only equivalent (`count_new_introduced_today`, `count_review_due_collocations`, etc.).
 
-2. **Cache invalidation + eager rebuild on sync.** Non-dry-run `sync_pull` *clears AND eagerly rebuilds* `session_main_queue` via `build_and_freeze_main_queue` (Layer 29). The freeze moment is sync time — matching Anki's `requires_study_queue_rebuild` at session-open. New cache keys that depend on Anki-side state must clear here too. **Deploy-time pitfall**: the cache lives in `anki_state_cache` (DB-backed), so it survives backend restarts. After changing queue-assembly logic, an existing cache row will replay the OLD order until the next sync — restart alone does not invalidate it. When debugging a "fix doesn't seem to be working" report, **always run `clear_session_main_queue` first** before concluding the fix is broken — see the diagnostic command lower in this file.
+2. **Cache invalidation + eager rebuild on sync.** Non-dry-run `sync_pull` *clears AND eagerly rebuilds* `session_main_queue` via `build_and_freeze_main_queue` (Layer 29). Freeze moment = sync time. New cache keys depending on Anki state must clear here too. **Deploy-time pitfall**: cache lives in `anki_state_cache` (DB-backed), survives restarts. After changing queue-assembly logic, the cache replays the OLD order until next sync — restart alone doesn't invalidate. **Always run `clear_session_main_queue` first** before concluding a fix is broken.
 
-3. **Sibling-bury via `last_review` filter.** Anki's `bury_reviews=true` removes a note from today's pool the moment any sibling is graded. TT mirrors this by excluding collocations where any direction has `last_review` today. Don't write count queries that ignore this — they over-count vs Anki.
+3. **Sibling-bury via `last_review` filter.** Anki's `bury_reviews=true` removes a note from today's pool the moment any sibling is graded. TT mirrors by excluding collocations where any direction has `last_review` today. Don't write count queries that ignore this.
 
-4. **Sync rebuilds with current pool.** Both apps gather with current-pool counts at sync time, not session-start pool. The intersperser ratio is `(one_len+1)/(two_len+1)` over natural list lengths — do **not** add a session-start override; that was Layer 9, reverted at Layer 14.
+4. **Sync rebuilds with current pool.** Both apps gather with current-pool counts at sync time, not session-start. Intersperser ratio is `(one_len+1)/(two_len+1)` over natural list lengths — do **not** add a session-start override (Layer 9, reverted at 14).
 
-5. **Two-branch R formula.** `extract_fsrs_retrievability` has an lrt branch (sub-day fractional elapsed) and a day-level fallback (integer-day elapsed). TT must mirror both in `compute_retrievability` — flipping a card from one branch to the other changes R-asc ordering.
+5. **Two-branch R formula.** `extract_fsrs_retrievability` has lrt branch (sub-day fractional elapsed) and day-level fallback (integer-day elapsed). TT mirrors both in `compute_retrievability`.
 
-6. **Sync must merge both directions.** `sync_push` (TT→Anki) must defer to Anki when Anki is ahead (graduated or smaller `total_remaining`). `sync_pull` (Anki→TT) must defer to Anki when Anki is ahead. The `_direction_differs` diff must include `left`, `due_at`, **and** `prior_state` so a self-heal write actually fires.
+6. **Sync must merge both directions.** `sync_push` defers to Anki when Anki is ahead (graduated or smaller `total_remaining`). `sync_pull` defers to Anki when Anki is ahead. `_direction_differs` must include `left`, `due_at`, `prior_state`, `bury_kind`, `anki_card_mod` so self-heal writes actually fire.
 
-7. **`prior_state='new'` is sticky.** Set on the introduction event by sync_pull's `_resolve_prior_state` or by the grade endpoint's `_grade_prior_state`. Persists across same-state-class grades and across LEARNING→REVIEW graduation. Released only on REVIEW→RELEARNING (lapse), where revlog `type=1` correctness wins. **Do not** add code that overwrites `prior_state='new'` without checking the new state.
+7. **`prior_state='new'` is sticky.** Set on intro by `_resolve_prior_state` (sync) or `_grade_prior_state` (TT). Persists across same-state-class grades and LEARNING→REVIEW graduation. Released only on REVIEW→RELEARNING (lapse) for revlog `type=1` correctness. **Do not** overwrite `prior_state='new'` without checking new state.
 
-8. **`introduced_at` is a one-shot stamp, NOT a sticky marker (Layer 26).** Written exactly once per direction on the first NEW→non-NEW transition by `fsrs.schedule` (TT-side grade) or `sync_pull._resolve_introduced_at` (Anki-side, from `MIN(revlog.id)`). Never updated after that. `count_new_introduced_today` queries this column, NOT `prior_state` + `last_review`. Don't conflate the two — `prior_state='new'` lives for the entire intro arc and applies to revlog correctness; `introduced_at` is a fixed timestamp that anchors Anki's `newToday` parity.
+8. **`introduced_at` is a one-shot stamp, NOT a sticky marker (Layer 26).** Written exactly once per direction on first NEW→non-NEW transition by `fsrs.schedule` or `sync_pull._resolve_introduced_at` (from `MIN(revlog.id)`). `count_new_introduced_today` queries this column, NOT `prior_state` + `last_review`. Don't conflate: `prior_state='new'` lives for the entire intro arc (revlog correctness); `introduced_at` is a fixed timestamp (anchors Anki's `newToday` parity).
 
-9. **Daily unbury sweep at queue-build (Layer 27, refined Layer 35).** `db.unbury_if_needed(today)` runs at the top of `/queue-stats`, `/review-queue`, and `sync_pull`. It restores `state='buried' AND bury_kind='sched'` rows to `state='review'` (reps>0) or `state='new'` (reps=0). Tracked via `anki_state_cache['last_unbury_day']`; idempotent within the local day so today's sibling-buries from sync don't get wiped. Mirrors Anki's `unbury_on_day_rollover` (releases both `queue=-3` AND `queue=-2`, see rule 10). **Do NOT** let `state='buried' bury_kind='sched'` rows accumulate — they under-count `count_review_due_collocations`.
+9. **Daily unbury sweep at queue-build (Layer 27, refined 35).** `db.unbury_if_needed(today)` runs at the top of `/queue-stats`, `/review-queue`, `sync_pull`. Restores `state='buried' AND bury_kind='sched'` to `state='review'` (reps>0) or `'new'` (reps=0). Tracked via `anki_state_cache['last_unbury_day']`; idempotent within local day. Mirrors Anki's `unbury_on_day_rollover` (releases both `queue=-3` AND `queue=-2`). **Do NOT** let `state='buried' bury_kind='sched'` rows accumulate.
 
-10. **`bury_kind` split (Layer 35, corrected 2026-05-16; Layer 39, corrected 2026-05-17).** Anki has two queues for buried cards: `queue=-3` and `queue=-2`. Anki's source claims grade-time sibling-bury writes `queue=-3` and only explicit UI actions (Ctrl-J, browse-bulk-bury) write `queue=-2`. **Anki's binary contradicts this**: running `col.sched.answerCard` against a real collection placed the sibling at `queue=-2` (verified 2026-05-17, per rule 13). Both queues are released by `unbury_on_day_rollover` (`rslib/src/scheduler/bury_and_suspend.rs:44-50` + `sqlwriter.rs:471-476` — `StateKind::Buried` → SQL `c.queue in (-3, -2)`). TT mirrors via `collocation_directions.bury_kind`:
-    - `'sched'` → released by daily sweep (Layer 27)
-    - `'user'` → sticks across rollover in TT (user-initiated bury from `POST /api/srs/bury`)
-    - `NULL` → non-buried row (no kind needed)
-    `sync_pull`'s `_bury_kind_from_queue` helper writes the kind from Anki's queue value: **both `queue=-2` and `queue=-3` map to `'sched'`**. Pre-Layer-35 buried rows were backfilled to `'user'` (safe default — pessimistic about losing data). **Do NOT** add an unconditional `UPDATE … WHERE state='buried'` — that's the pre-Layer-35 bug that wiped 18 manually-buried cards on every `/queue-stats` poll.
+10. **`bury_kind` split (Layer 35, corrected 2026-05-16; Layer 39, corrected 2026-05-17).** Anki has `queue=-3` and `queue=-2` for buried. Source claims grade-time sibling-bury writes -3 and only explicit UI actions write -2. **Binary contradicts**: `col.sched.answerCard` placed the sibling at `queue=-2` (per rule 13). Both released by `unbury_on_day_rollover` (`rslib/.../bury_and_suspend.rs:44-50` — SQL `c.queue in (-3, -2)`). TT mirrors via `collocation_directions.bury_kind`:
+    - `'sched'` → released by daily sweep
+    - `'user'` → sticks across rollover (from `POST /api/srs/bury`)
+    - `NULL` → non-buried
+
+    `_bury_kind_from_queue` maps **both `queue=-2` and `queue=-3` to `'sched'`**. Pre-Layer-35 buried rows backfilled to `'user'` (pessimistic). **Do NOT** add an unconditional `UPDATE … WHERE state='buried'` — pre-Layer-35 bug that wiped 18 manually-buried cards per poll.
 
     **Two follow-up bugs found 2026-05-16:**
-    - `_DIR_COLUMNS` in `database.py` did not include `bury_kind` — every `get_collocation_by_*` read returned `bury_kind=None` regardless of the DB value. Fixed: column added to the SELECT list.
-    - `_direction_differs` in `sync.py` did not check `bury_kind` — kind-only flips (e.g. migration's pessimistic `'user'` vs sync's correct `'sched'`) were silent no-ops, locking the kind permanently. Fixed: `or local.bury_kind != candidate.bury_kind` added to the diff.
+    - `_DIR_COLUMNS` in `database.py` didn't include `bury_kind` — every read returned `None`. Fixed.
+    - `_direction_differs` didn't check `bury_kind` — kind-only flips were silent no-ops. Fixed.
 
-    **BURY_TRACE diagnostic (2026-05-16).** Every sync_pull now emits one `BURY_TRACE` INFO log line per direction where local OR candidate state involves BURIED, plus a summary at the end (`anki_queue_minus2_seen`, `anki_queue_minus3_seen`, `buried_to_released_writes`, `released_to_buried_writes`, `kind_only_flips_written`, `buried_state_match_no_write`). Grep server stderr for `BURY_TRACE` after any sync to reconstruct exactly which queue value Anki returned and whether the diff fired. **`anki_queue_minus2_seen > 0` is no longer suspicious** — Anki's binary writes `queue=-2` for grade-time sibling-bury (per rule 13, trust the binary). The counter is useful for trending but not an anomaly indicator.
+    **BURY_TRACE diagnostic.** Every sync_pull emits `BURY_TRACE` INFO lines per buried direction + summary (`anki_queue_minus2_seen`, `anki_queue_minus3_seen`, `buried_to_released_writes`, etc.). `anki_queue_minus2_seen > 0` is no longer suspicious — Anki's binary writes -2 for sibling-bury.
 
-11. **`learning_cutoff` has 4 advancement triggers, not 3 (Layer 36).** TT mirrors Anki's `current_learning_cutoff`. Triggers in order of frequency:
-    1. **Grade** — `drill_feedback` calls `advance_learning_cutoff(db, now)` (Anki: `update_queues_after_answering_card` → `update_learning_cutoff_and_count`, `rslib/scheduler/queue/mod.rs:217-243`).
-    2. **Session-start** — `/review-queue?session_start=1` (frontend `onMount`) advances cutoff to `now`. Anki: queue build at deck open, `builder/mod.rs:224`.
-    3. **sync_pull ingest** — advances cutoff to the latest revlog timestamp pulled.
-    4. **counts.all_zero auto-bump (Layer 36)** — when `ready_learning` AND `ordered_main` are both empty in `/review-queue`, and any `pending_learning.due_at ≤ now`, advance cutoff to `now` and re-split. Mirrors Anki's `CardQueues::counts()` (`rslib/scheduler/queue/mod.rs:187-196`), which calls `update_learning_cutoff_and_count` whenever `counts.all_zero()` — the "end of session, learning card just ripened, surface it without a grade" path.
-    **Stickiness invariant**: if main has items OR ready_learning has items, the cutoff is frozen between grades. The auto-bump is end-of-session only. A learning card that ripens mid-session does NOT preempt the card on screen — matches Anki's "card on screen is sticky" semantic. Don't add a "live `now`" path or per-poll cutoff advance — that breaks stickiness and was rejected in design discussions.
+11. **`learning_cutoff` has 4 advancement triggers (Layer 36).** Mirrors Anki's `current_learning_cutoff`:
+    1. **Grade** — `drill_feedback` → `advance_learning_cutoff(db, now)` (Anki: `queue/mod.rs:217-243`).
+    2. **Session-start** — `/review-queue?session_start=1` → cutoff = `now`. Anki: queue build at deck open.
+    3. **sync_pull ingest** — advances cutoff to latest revlog timestamp pulled.
+    4. **counts.all_zero auto-bump** — when `ready_learning` AND `ordered_main` are both empty AND any `pending_learning.due_at ≤ now`, advance cutoff to `now` and re-split. Mirrors `CardQueues::counts()` end-of-session "surface ripened card without a grade" path.
 
-12. **Daily caps are render-only, not serving contracts.** `daily_new_cap` and `daily_review_cap` affect ONLY the badge counters on `/queue-stats`. The queue assembly (`_compute_live_main`, `get_review_queue`) does NOT cap what it serves. Anki also only applies the caps to the deck-list badge, not to the card-at-a-time review flow. See Layer 36 in `docs/anki-parity-layers.md`.
+    **Stickiness invariant**: if main OR ready_learning has items, cutoff is frozen between grades. Auto-bump is end-of-session only. A learning card that ripens mid-session does NOT preempt the card on screen. Don't add a "live `now`" or per-poll advance.
 
-13. **Trust the binary, not the source, when they disagree.** The `/tmp/anki-source/` checkout the `anki-source-expert` subagent reads is a shallow clone of `main` at no specific tag — it can be ahead of or behind the user's actual Anki release. When TT mirrors what source says and still diverges from observed Anki behavior, **reproduce against the running binary** before assuming TT is wrong. Concrete protocol:
+12. **Daily caps are render-only.** `daily_new_cap` and `daily_review_cap` affect ONLY badge counters. Queue assembly (`_compute_live_main`, `get_review_queue`) does NOT cap. Anki also only applies caps to the deck-list badge, not the review flow.
+
+13. **Trust the binary, not the source, when they disagree.** `/tmp/anki-source/` is a shallow clone of `main`, not a release tag — can be ahead of or behind the user's Anki. When TT mirrors source and still diverges, reproduce against the binary:
     ```bash
     cp "$HOME/Library/Application Support/Anki2/Will/collection.anki2" /tmp/anki_inspect.db
     sqlite3 /tmp/anki_inspect.db "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
@@ -147,84 +123,80 @@ This is how a user who reports "I only synced once, never touched Anki" can stil
         print(c.id, c.queue, n.fields[0][:25])
     col.close()"
     ```
-    Layer 38 (NULL-R sort = `desired_retention`, not NULLs-first) was found this way after source-code reasoning predicted the wrong placement. Anki must be CLOSED for this to work (Collection wants exclusive write access). The source remains the right starting point — it's just not the final word.
+    Anki must be CLOSED (Collection wants exclusive write access). Layer 38 was found this way. Source remains the right starting point — just not the final word.
 
-14. **NULL R-value sorts at `desired_retention`, not NULLs-first or NULLs-last (Layer 38).** Cards with no FSRS memory_state (`cards.data='{}'`, no `s`/`d` keys) are placed by Anki at the position `desired_retention` occupies in R-asc — between R<dr and R>dr cards, NOT at the SQLite-default NULLs-first head, and NOT at the tail. `compute_retrievability` returns `desired_retention` (default 0.9) instead of None for missing-state cases. The deck's actual `desired_retention` is cached at sync time via `refresh_desired_retention` (proto field 37, NOT field 40 — field 40 is `historical_retention`, a pre-Layer-38 footgun). `_merge_by_retrievability_ascending` calls `resolve_desired_retention()` once and threads the value into every R-key computation.
+14. **NULL R-value sorts at `desired_retention` (Layer 38).** Cards with no FSRS memory_state (`cards.data='{}'`) are placed by Anki at the position `desired_retention` occupies in R-asc — between R<dr and R>dr, NOT NULLs-first, NOT NULLs-last. `compute_retrievability` returns `desired_retention` (default 0.9) instead of None. Cached at sync via `refresh_desired_retention` (**proto field 37**, NOT field 40 = `historical_retention`, a pre-Layer-38 footgun).
 
-15. **`anki_card_mod` must be in `_direction_differs` (Layer 37).** The FNV tiebreaker `fnvhash(cards.id, cards.mod)` is appended to every Anki `review_order_sql` variant (`rslib/src/storage/card/mod.rs:897`), so any sort that ties on the primary key falls to mod. Anki bumps `cards.mod` for reasons that don't change FSRS state (server sync mtime resolution, housekeeping, bury actions); if sync_pull's diff doesn't notice the bump, TT's local copy stays stale and the FNV hash drifts. Keep `or local.anki_card_mod != candidate.anki_card_mod` in `_direction_differs` even if it looks like a metadata field — it's an ORDER BY input.
+15. **`anki_card_mod` must be in `_direction_differs` (Layer 37).** FNV tiebreaker `fnvhash(cards.id, cards.mod)` is appended to every Anki `review_order_sql` variant (`rslib/.../card/mod.rs:897`). Anki bumps `cards.mod` for non-FSRS reasons (sync mtime, housekeeping, bury); if the diff misses the bump, TT's FNV hash drifts. Keep `or local.anki_card_mod != candidate.anki_card_mod` — it's an ORDER BY input.
 
 ## Divergence playbook
 
-When a "TT and Anki disagree" report comes in, walk this tree. Each leaf points to the mechanism that handles it; verify it's still firing, then look for new edge cases.
+Walk this tree on a divergence report. Each leaf → mechanism that handles it; verify it's still firing, then look for new edge cases.
 
 **Badge wrong:**
-- `new` badge: `db.count_new_introduced_today(today)` filters `introduced_at` within today's UTC range (Layer 26). The column is stamped once per intro arc — by `fsrs.schedule` on the first NEW→non-NEW transition and by `sync_pull._resolve_introduced_at` on first observed Anki revlog. Pre-Layer-26 rows have NULL and don't count (intentional — keeps the count from over-firing on sticky-NEW review cards). If "I just introduced X and the badge didn't decrement" → check that `introduced_at` is set: `SELECT introduced_at FROM collocation_directions WHERE collocation_id=(SELECT id FROM collocations WHERE text=?)`. Empty means the grade path didn't stamp it — that's the regression. The older `prior_state='new' AND last_review today` filter is gone; do not reintroduce it (it over-counted sticky-NEW cards reviewed today whose actual intro was on a prior day).
-- `learning` badge: `db.count_learning()` — pure TT state (`state IN ('learning','relearning')`). Drifts when the user grades in Anki and TT hasn't synced. Expected drift; not a bug. **Caveat (Layer 22+)**: `promote_to_learning` from the listen-first UI sets `state='learning'` without `left`/`due_at`, so TT counts it while Anki keeps the card as `queue=0` (new). Promoted-but-not-graded cards are a documented TT-only addition to the learning count.
-- `review` badge: `min(db.count_review_due_collocations(today), max(0, daily_review_cap − reviews_today))` — due collocations, capped by Anki's `reviews_per_day` deck option, depleted by `db.count_reviews_completed_today(today)`. Drifts on Anki-side grades until sync. **Layer 27**: stale `state='buried'` rows (e.g., sync_pull pulled Anki's queue=-2 yesterday and TT never unburied) under-count this badge. **Layer 36**: the raw due count is capped at `min(due_raw, max(0, daily_review_cap - reviews_today))` — mirrors Anki's `reviews_per_day` deck option. If TT's review badge is consistently lower than raw `count_review_due_collocations`, check `anki_state_cache['daily_review_cap']` and `db.count_reviews_completed_today(today)`. The daily unbury sweep (`db.unbury_if_needed`) fires on every `/queue-stats` and `/review-queue` request — if reviews look low, check `SELECT COUNT(*) FROM collocation_directions WHERE state='buried'` against the count for siblings of today's grades. Should be close.
+- `new`: `db.count_new_introduced_today(today)` filters `introduced_at` within today's UTC range (Layer 26). Stamped once per intro arc. Pre-Layer-26 rows have NULL and don't count (intentional). "Introduced X, badge didn't decrement" → check `SELECT introduced_at FROM collocation_directions WHERE collocation_id=...`. Empty = grade path didn't stamp. Don't reintroduce the legacy `prior_state='new' AND last_review today` filter.
+- `learning`: `db.count_learning()` — pure TT state. Drifts on Anki-side grades until sync (expected). **Caveat**: `promote_to_learning` from listen-first UI sets `state='learning'` without `left`/`due_at` — TT counts it while Anki keeps `queue=0`. Documented TT-only addition.
+- `review`: `min(db.count_review_due_collocations(today), max(0, daily_review_cap − reviews_today))`. **Layer 27**: stale `state='buried'` rows under-count. **Layer 36**: cap via `reviews_per_day`. If consistently lower than raw count, check `anki_state_cache['daily_review_cap']` and `count_reviews_completed_today`. Daily unbury sweep fires on every relevant request — check `COUNT(*) WHERE state='buried'` against siblings of today's grades.
 
-**Queue head wrong (review-state card):**
-- **CHECK FIRST — top-of-file "Three most common benign divergences" #3 (asymmetric queue-rebuild cadence)** if the two head cards have wildly different stabilities and their current R values are near-tie. Confirmed pattern: user hit File→Sync (or deck-nav, settings-change, undo) in Anki, triggering an Anki-side queue rebuild that TT didn't mirror.
-- Compare R values for the divergent cards (snippet below). If TT and Anki produce different R, check which branch of `extract_fsrs_retrievability` Anki used (presence/absence of `cards.data.lrt`) and whether `compute_retrievability` picked the matching branch (Layer 11/15).
-- Check `session_main_queue` cache — if it's stale and the divergent card transitioned mid-session, Layer 7's invalidation may not have fired.
-- Check `today_col_day` (`_compute_today_col_day`) vs Anki's `last_day_studied` — timezone/rollover bugs land here (Layer 13).
+**Queue head wrong (review-state):**
+- **CHECK FIRST** — top-of-file divergence #3 (asymmetric rebuild cadence) if heads have wildly different stabilities and R near-tie.
+- Compare R values (snippet below). Different R → check which branch of `extract_fsrs_retrievability` Anki used (lrt presence) and whether `compute_retrievability` matched (Layer 11/15).
+- Check `session_main_queue` cache — stale + mid-session transition → Layer 7's invalidation may not have fired.
+- Check `today_col_day` vs Anki's `last_day_studied` — timezone/rollover bugs (Layer 13).
 
 **Duplicate TT collocations linked to same Anki note (Layer 35 cleanup):**
-- Two collocation rows with the same `anki_note_id` cause "phantom direction" mis-classifications in `_merge_directions` (Layer 33). `sync_pull`'s `get_collocation_by_anki_note_id` returns the FIRST cid SQLite finds, so one collocation gets the live `anki_due` updates and the other stays stale → Layer 33 sinks the stale one to the queue bottom. The visible symptom is "card disappears from TT new-card head even though Anki shows it next."
-- Diagnostic: `SELECT anki_note_id, COUNT(*) FROM collocations WHERE anki_note_id IS NOT NULL GROUP BY anki_note_id HAVING COUNT(*) > 1`. Should be 0 — three pairs were merged in Layer 35 (ulica, Bog, ura). If more appear, the LingQ-import-bug or some other path is creating dupes; use the dedupe pattern from `app/anki/dedupe_tt_collocations.py`.
-- Architectural note: `sync_pull` looks up TT rows by `anki_note_id`. If you ever add a code path that creates a second collocation for an existing Anki note (e.g. a homonym import script), you MUST also handle the dedupe — otherwise sync_pull silently picks the wrong one.
+- Two collocations sharing `anki_note_id` → "phantom direction" mis-classifications in `_merge_directions` (Layer 33). `sync_pull`'s `get_collocation_by_anki_note_id` returns FIRST cid SQLite finds → one gets live updates, other stays stale → Layer 33 sinks the stale one to bottom. Symptom: "card disappears from TT new-head though Anki shows it next."
+- Diagnostic: `SELECT anki_note_id, COUNT(*) FROM collocations WHERE anki_note_id IS NOT NULL GROUP BY anki_note_id HAVING COUNT(*) > 1`. Should be 0 (3 pairs merged in Layer 35: ulica, Bog, ura). If more appear, use `app/anki/dedupe_tt_collocations.py` pattern.
+- Architectural note: any new code path that creates a second collocation for an existing Anki note MUST also handle dedupe.
 
-**Queue head wrong (Anki shows learning card, TT shows main, both have it):**
-- **CHECK THIS FIRST — top-of-file "Two most common benign divergences" #1 covers this.**
-- This is almost always one of two things — **NOT a bug**:
-  1. **Cutoff frozen at last grade (Layer 13/36).** TT's `learning_cutoff` only advances on grade/session-start/sync/auto-bump. If the learning card's `due_at` is just after the cutoff (e.g. user graded, learning step expired 2 seconds later, user stared at the next card for a minute), TT keeps it in `pending_learning` → tail. Anki, in deck mode, may have advanced its own cutoff via the `counts.all_zero()` auto-bump trigger if its main was empty. Resolution: refresh `/review` (calls `?session_start=1` → cutoff = now) or grade any card.
-  2. **Independent grading drift (no sync).** The user has graded the card in BOTH apps without syncing in between. Each app advances its own FSRS with its own fuzz seed, producing slightly-different next-step times. TT's `anki_due` will be stale (still showing the pre-divergence value). Resolution: Anki → File → Sync, then refresh TT.
-- Symptom signature: TT's `anki_due` for the card is many hours/days older than Anki's `cards.due`. Diagnostic: compare `cards.due` for the cid against TT's `anki_due` for the matching direction.
+**Queue head wrong (Anki=learning, TT=main, both have card):**
+- **CHECK FIRST** — top-of-file divergence #1. Almost always one of:
+  1. **Cutoff frozen** — refresh `/review` or grade any card.
+  2. **Independent grading drift (no sync)** — File→Sync, refresh TT.
+- Signature: TT's `anki_due` is much older than Anki's `cards.due`.
 
 **User-buried cards keep coming back in TT (Layer 35):**
-- Anki has the card at `queue=-2` (user-buried or sibling-buried) AT THE MOMENT OF GRADE/BURY. TT shows `state='review'` or `state='new'`.
-- Root cause options:
-  1. Sync hasn't run since the user buried in Anki → expected drift. Run sync_pull.
-  2. **Expected after rollover.** `_bury_kind_from_queue` maps both `queue=-2` and `queue=-3` to `'sched'`. Anki releases both at rollover (`unbury_on_day_rollover` → SQL `c.queue in (-3, -2)`), and TT's daily sweep releases `bury_kind='sched'` on every `/queue-stats` and `/review-queue` poll. This is NOT a bug — it's parity. If the card reappears before rollover or you explicitly user-buried via `POST /api/srs/bury`, proceed to next option.
-  3. sync_pull's `_bury_kind_from_queue` wasn't called for this card's write path. Audit every DirectionState construction in `sync.py` — five sites in `sync_pull`; all must pass `bury_kind=_bury_kind_from_queue(card_rec.queue)`.
-  4. **Anki rolled over, and the card was a true user-bury.** `_bury_kind_from_queue` has no way to distinguish user-buries from sibling-buries (both produce `queue=-2` in Anki). After rollover, Anki releases it (expected); the only way to keep it buried in TT is via `POST /api/srs/bury` (writes `bury_kind='user'` directly, bypassing Anki). Check `BURY_TRACE` for `buried_to_released_writes` after the next sync.
+- Anki has card at `queue=-2`, TT shows `'review'` or `'new'`. Causes:
+  1. Sync hasn't run → expected.
+  2. **Expected after rollover.** Both -2 and -3 map to `'sched'`; both released by rollover. NOT a bug unless before rollover or you explicitly used `POST /api/srs/bury`.
+  3. `_bury_kind_from_queue` wasn't called for this write path. Audit all 5 DirectionState sites in `sync_pull`.
+  4. **Rollover + true user-bury.** `_bury_kind_from_queue` can't distinguish user-bury from sibling-bury (both = -2). After rollover Anki releases; only way to keep TT-buried is `POST /api/srs/bury` (writes `'user'` directly). Check `BURY_TRACE` for `buried_to_released_writes`.
 
-**TT shows 140-ish stuck `state='buried' bury_kind='user'` rows that won't release (2026-05-16 incident):**
-- See `docs/bury-kind-investigation-2026-05-16.md` for the full story. Short version: Layer 35 migration's pessimistic `bury_kind='user'` backfill, combined with two latent bugs (read-path missing column + diff blind to bury_kind), locked the cohort. Bugs fixed 2026-05-16. Next sync should release the cohort via state-mismatch (Anki has them released, TT has them BURIED).
-- Diagnostic: `SELECT bury_kind, state, COUNT(*) FROM collocation_directions GROUP BY bury_kind, state`. If `'user'` count is non-trivial AND no `'sched'` rows exist anywhere (suspicious — `'sched'` rows should exist transiently between sibling-bury and rollover), the cohort is locked. After next sync, check `BURY_TRACE` summary — `buried_to_released_writes` should equal the previously-stuck count.
+**TT shows 140-ish stuck `state='buried' bury_kind='user'` rows (2026-05-16 incident):**
+- See `docs/bury-kind-investigation-2026-05-16.md`. Short: Layer 35 pessimistic backfill + 2 latent bugs (now fixed) locked the cohort. Next sync releases via state-mismatch.
+- Diagnostic: `SELECT bury_kind, state, COUNT(*) FROM collocation_directions GROUP BY bury_kind, state`. Non-trivial `'user'` count AND no `'sched'` rows anywhere = locked cohort. Check `BURY_TRACE` `buried_to_released_writes` after next sync.
 
 **Queue head wrong (new card placement):**
-- Verify the intersperser ratio against natural list lengths: `(R_remaining + 1) / (N_quota + 1)`. Do NOT add a session-start counts override — Layer 14 reverted that.
-- Check sibling-bury: gather should pull `new_quota * 4` then proactively bury siblings, capping the post-bury list at `new_quota`. If you serve fewer than `new_quota` new cards, the over-fetch is missing.
-- **Sort key (Layer 25)**: `get_new_items` ORDER BY is `d.anki_due DESC NULLS FIRST, c.created_at DESC, d.anki_card_id ASC, c.id ASC`. Per direction. **Requires Anki deck setting**: New card gather order = "Descending position".
-- **Cross-direction gather + bury + Template sort (Layer 28)**: per-direction ordering isn't enough — Anki gathers BOTH ords in one pass and buries the second-seen sibling, so the *higher-due* sibling wins (`rslib/.../queue/builder/gathering.rs:157-169`). Then `sort_new` stably re-sorts by `ord` (`rslib/.../queue/builder/sorting.rs:14-36`). TT's `_merge_directions` mirrors the gather order; `_bury_siblings_in_queue` keeps the first-seen survivor; `get_review_queue` then re-sorts the post-bury new pool by `0 if recognition else 1`. If TT's new-bucket head disagrees with Anki, walk this pipeline in order:
-  1. **Cache check first.** Stale `session_main_queue` cache can mask a working fix. Run `clear_session_main_queue` (diagnostic below) and refetch before anything else.
-  2. `_merge_directions` output: should be sorted by `(anki_due DESC NULLS FIRST, ord ASC, anki_card_id ASC, row_id ASC)`. If not, the merge regressed.
-  3. After `_bury_siblings_in_queue`: each collocation_id appears once, on the direction whose anki_due was higher (or ord=0 on ties).
-  4. After the final stable sort by ord: all surviving recognition cards come before surviving production cards, gather order preserved within each ord group.
-  5. **Don't re-introduce per-direction-only sorts in `get_new_items`.** Layer 25 tried that and it looked right in isolation, but the gather+bury+template pipeline requires the interleaved merge to land siblings in the correct relative position. The Layer-25 ORDER BY in `get_new_items` is fine (and necessary as the input ordering) but is NOT sufficient on its own — `_merge_directions` re-sorts the combined pool, and that re-sort is the load-bearing step.
+- Verify intersperser ratio `(R_remaining + 1) / (N_quota + 1)`. NO session-start override (Layer 14).
+- Sibling-bury: gather `new_quota * 4`, bury siblings, cap at `new_quota` post-bury.
+- **Sort key (Layer 25)**: `get_new_items` ORDER BY = `d.anki_due DESC NULLS FIRST, c.created_at DESC, d.anki_card_id ASC, c.id ASC`. **Requires Anki deck setting**: New card gather order = "Descending position".
+- **Cross-direction gather + bury + Template sort (Layer 28)**: per-direction isn't enough. Anki gathers BOTH ords in one pass and buries second-seen → higher-due wins (`rslib/.../queue/builder/gathering.rs:157-169`). Then `sort_new` stably re-sorts by `ord`. TT pipeline: `_merge_directions` (gather), `_bury_siblings_in_queue` (keep first-seen), `get_review_queue` (stable sort by ord). If TT new-head disagrees with Anki:
+  1. **Cache check first.** `clear_session_main_queue` and refetch.
+  2. `_merge_directions` output sorted by `(anki_due DESC NULLS FIRST, ord ASC, anki_card_id ASC, row_id ASC)`?
+  3. After bury: each collocation_id once, on the higher-anki_due direction (or ord=0 on ties).
+  4. After stable sort by ord: all surviving rec before surviving prod, gather order preserved per group.
+  5. **Don't re-introduce per-direction-only sorts in `get_new_items`.** Layer 25's ORDER BY is necessary input ordering, not sufficient alone — `_merge_directions` re-sorts the combined pool.
 
-**Queue head wrong (both apps show learning, different card within the learning queue):**
-- **CHECK FIRST — top-of-file "Two most common benign divergences" #2 (independent grading drift) covers this.**
-- Signature: both apps' learning queues contain the same N cards in nearly the same order, but positions 0 and 1 (or 0 and 2) are swapped. Per-card `due_at` deltas between TT and Anki are O(seconds).
-- Root cause: identical FSRS fuzz applied to slightly different grade timestamps (you hit "Good" in each app a few seconds apart). The 5-second swing inverts a 1-second Anki gap.
-- Resolution: sync. Each card converges to the later grader's `due_at` per rule 6 / Layer 17.
-- Run the diagnostic in the top-of-file section to confirm. **Do not** chase this in queue-assembly code — TT's sort (by `due_at` ascending) and Anki's sort (by `cards.due` ascending) both work correctly; the inputs differ.
+**Queue head wrong (both apps learning, different card):**
+- **CHECK FIRST** — top-of-file divergence #2.
+- Resolution: sync. Each card converges to later grader's `due_at` per rule 6 / Layer 17.
+- **Do not** chase this in queue-assembly code — both sorts work correctly; inputs differ.
 
 **Queue head wrong (learning card re-appears immediately after grading):**
-- Anki's "collapse" (`rslib/scheduler/queue/learning.rs:94-113`) shifts a just-graded learning card past the next-soonest pending card when main is empty. TT mirrors this in `get_review_queue` by swapping `pending_learning[0]` and `[1]` when the head's `last_review == cutoff`. If you change the queue assembly, re-verify the collapse fires.
+- Anki's "collapse" (`rslib/.../queue/learning.rs:94-113`) shifts a just-graded card past next-soonest pending when main is empty. TT mirrors in `get_review_queue` by swapping `pending_learning[0]` and `[1]` when head's `last_review == cutoff`. If you change queue assembly, re-verify the collapse.
 
-**`left` / `total_remaining` mismatch between apps:**
-- Sync didn't carry the value. `_direction_differs` must compare `left` (Layer 17). If it does and the card still has wrong `left`:
-  - Check `sync_pull`: the dirty_fsrs branch with `_anki_step_ahead` (Layer 18) takes Anki's `left` when Anki is further along. If both apps were ahead in different ways, the timestamp comparison wins (line 801).
-  - Check `sync_push`: `OfflineWriter.get_current_card_state` + the skip-when-Anki-ahead guard (Layer 19) must fire to avoid overwriting Anki's progress.
-- Push doesn't currently write `reps`/`lapses` to Anki. If `reps` is the divergent field, that's the open issue — Anki's reps doesn't advance via `set_learning_state`.
+**`left`/`total_remaining` mismatch:**
+- `_direction_differs` must compare `left` (Layer 17). If still wrong:
+  - `sync_pull`: dirty_fsrs + `_anki_step_ahead` (Layer 18) takes Anki's `left` when ahead.
+  - `sync_push`: `OfflineWriter.get_current_card_state` + skip-when-Anki-ahead (Layer 19).
+- Push doesn't currently write `reps`/`lapses` — open issue.
 
 **Sync silently skipped a card:**
-- TT row missing for a note Anki has. `sync_pull` doesn't create new TT rows from Anki — only `import_seed` does. This is the open Layer 22 (no fix yet); manual `uv run python -m app.anki.import_seed --deck "0. Slovene"` populates the missing rows.
+- TT row missing for Anki note. `sync_pull` doesn't create new TT rows; only `import_seed` does. Run `uv run python -m app.anki.import_seed --deck "0. Slovene"`.
 
 ## Diagnostic commands
 
-Always snapshot first so the analysis doesn't race the live DBs:
+Snapshot first so analysis doesn't race the live DBs:
 
 ```bash
 cp "$HOME/Library/Application Support/Anki2/Will/collection.anki2" /tmp/anki_inspect.db
@@ -328,27 +300,27 @@ clear_session_main_queue(SRSDatabase(settings.database_url.removeprefix('sqlite:
 
 ## When to escalate to Path 2
 
-The current model — TT reconstructs Anki's queue from TT state — has held through ~22 divergence fixes. If a new divergence:
-- Comes from a not-yet-mirrored branch of Anki's R formula or queue gather → patch (add another branch).
-- Comes from input quality (sync didn't carry a needed field) → patch (add to `sync_pull`/`sync_push`).
-- Comes from a fundamental algorithmic difference where mirroring keeps growing in complexity → consider **Path 2**.
+Current model — TT reconstructs from TT state — has held through ~22 fixes. If a new divergence:
+- Not-yet-mirrored R formula / queue gather branch → patch.
+- Input quality (sync didn't carry a field) → patch.
+- Fundamental algorithmic difference where mirroring complexity keeps growing → **Path 2**.
 
-**Path 2** = at sync time (while `collection.anki2` is open), execute Anki's actual `review_order_sql` and persist the resulting card-id sequence as TT's "today's anchor queue." Between syncs, TT serves from the snapshot, filtered by "graded since sync." Dissolves the entire class of "mirror Anki's algorithm with all branches" bugs. Estimated cost: 2-3 hour refactor. Most of the freeze / intersperser / R-asc reconstruction code goes away. Recommended only when the leak count won't stop.
+**Path 2** = at sync time, execute Anki's `review_order_sql` and persist the card-id sequence as TT's "today's anchor queue." Between syncs, TT serves from snapshot filtered by "graded since sync." Dissolves the entire "mirror Anki's algorithm with all branches" class. ~2-3 hour refactor. Most freeze / intersperser / R-asc reconstruction code goes away. Only when the leak count won't stop.
 
 ## Source references
 
-The `anki-source-expert` subagent has Anki's source at `/tmp/anki-source/`. Key files:
-- `rslib/src/scheduler/queue/builder/mod.rs` — `learn_count`, `current_learning_cutoff`, queue assembly
-- `rslib/src/scheduler/queue/learning.rs` — intraday-now vs intraday-ahead, `requeue_learning_entry` collapse, `update_learning_cutoff_and_count`
-- `rslib/src/scheduler/queue/mod.rs:149-157` — serve order: `intraday_now → main → intraday_ahead`
-- `rslib/src/scheduler/queue/builder/intersperser.rs` — ratio `(one_len+1)/(two_len+1)`
-- `rslib/src/storage/sqlite.rs:312-364` — `extract_fsrs_retrievability` (two branches)
-- `rslib/src/scheduler/timing.rs:27-81` — `sched_timing_today_v2_new`
-- `rslib/src/scheduler/answering/mod.rs:632-648` — `get_fuzz_seed_for_id_and_reps` = `card.id + card.reps`
+`anki-source-expert` subagent reads `/tmp/anki-source/`. Key files:
+- `rslib/.../scheduler/queue/builder/mod.rs` — `learn_count`, `current_learning_cutoff`, assembly
+- `rslib/.../scheduler/queue/learning.rs` — intraday-now vs intraday-ahead, `requeue_learning_entry` collapse, `update_learning_cutoff_and_count`
+- `rslib/.../scheduler/queue/mod.rs:149-157` — serve order: `intraday_now → main → intraday_ahead`
+- `rslib/.../scheduler/queue/builder/intersperser.rs` — ratio `(one_len+1)/(two_len+1)`
+- `rslib/.../storage/sqlite.rs:312-364` — `extract_fsrs_retrievability` (two branches)
+- `rslib/.../scheduler/timing.rs:27-81` — `sched_timing_today_v2_new`
+- `rslib/.../scheduler/answering/mod.rs:632-648` — `get_fuzz_seed_for_id_and_reps` = `card.id + card.reps`
 
-When in doubt, ask the subagent: it cites file:line and pairs Anki's behavior with TT's parallel code path.
+Ask the subagent when in doubt: cites file:line, pairs Anki's behavior with TT's parallel code path.
 
 ## Cross-references
 
-- `.claude/rules/anki-sync.md` — USN, safety envelope, schema-change workflow. Required for anything writing to `collection.anki2`.
-- `docs/anki-parity-layers.md` — the full Layers 1-22 history. Reference, not auto-loaded.
+- `.claude/rules/anki-sync.md` — USN, safety envelope, schema-change workflow.
+- `docs/anki-parity-layers.md` — full layer history.
