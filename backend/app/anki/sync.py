@@ -1231,6 +1231,32 @@ class AnkiSync:
         if not dry_run:
             self._db.unbury_if_needed(date.today())
 
+    @staticmethod
+    def _init_bury_stats() -> dict[str, int]:
+        """Return an empty bury_stats accumulator for sync_pull."""
+        return {
+            "anki_queue_minus2_seen": 0,
+            "anki_queue_minus3_seen": 0,
+            "buried_to_released_writes": 0,
+            "released_to_buried_writes": 0,
+            "kind_only_flips_written": 0,
+            "buried_state_match_no_write": 0,
+        }
+
+    @staticmethod
+    def _compute_today_start_ms() -> int:
+        """Return the local-today UTC midnight in milliseconds.
+
+        Used to infer ``prior_state='new'`` for cards whose first revlog is today
+        but TT lost the transition (synced before sync_pull learned to write prior_state).
+        """
+        return int(
+            datetime.combine(date.today(), time(0), tzinfo=datetime.now().astimezone().tzinfo)
+            .astimezone(UTC)
+            .timestamp()
+            * 1000
+        )
+
     def _pull_advance_learning_cutoff(self, max_revlog_ms: int, dry_run: bool) -> None:
         """Advance the learning cutoff to the most recent Anki revlog timestamp ingested.
 
@@ -1262,27 +1288,12 @@ class AnkiSync:
     def sync_pull(self, dry_run: bool = False) -> PullReport:
         """Pull Anki → TunaTale. Returns a PullReport summarising changes."""
         report = PullReport()
-        max_revlog_ms = 0  # tracked to advance the learning cutoff after Anki-side grades
-        bury_stats: dict[str, int] = {
-            "anki_queue_minus2_seen": 0,  # Anki shows user-bury at sync time
-            "anki_queue_minus3_seen": 0,  # Anki shows sched-bury at sync time
-            "buried_to_released_writes": 0,  # TT BURIED → REVIEW/NEW
-            "released_to_buried_writes": 0,  # TT non-BURIED → BURIED
-            "kind_only_flips_written": 0,  # state matched but kind differed (was a no-op pre-fix)
-            "buried_state_match_no_write": 0,  # both BURIED, all fields incl. kind match
-        }
+        max_revlog_ms = 0
+        bury_stats = self._init_bury_stats()
 
         self._pull_unbury_sweep(dry_run)
 
-        # Local-today's UTC start, used to infer `prior_state='new'` for cards
-        # whose first revlog is today but TT lost the transition (synced before
-        # sync_pull learned to write prior_state).
-        today_start_ms = int(
-            datetime.combine(date.today(), time(0), tzinfo=datetime.now().astimezone().tzinfo)
-            .astimezone(UTC)
-            .timestamp()
-            * 1000
-        )
+        today_start_ms = self._compute_today_start_ms()
 
         for rec in self._reader.get_note_records():
             # Primary: stable pointer set by sync_create_new. Handles duplicate
