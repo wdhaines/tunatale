@@ -320,15 +320,51 @@ class TestLearningStepSemantics:
         # 10min = 600s. Anki fuzz upper = min(int(600*0.25), 300) = 150.
         assert 600 <= delay_sec < 600 + 150, f"Hard later-step with fuzz must land in [600, 750); got {delay_sec}"
 
-    def test_new_hard_single_step_uses_step_zero(self, monkeypatch):
-        """NEW + HARD with single-step deck → due_at = now + step[0] (+ fuzz), no averaging."""
+    def test_new_hard_single_step_uses_again_times_1_5(self, monkeypatch):
+        """NEW + HARD with a single-step learn config → 1.5x the again delay, NOT step[0].
+
+        Anki's `hard_delay_secs_for_first_step` (rslib/.../scheduler/states/steps.rs:55-66):
+        when there's no second step, returns `min(again_secs * 3/2, again_secs + DAY)`.
+        Anki's own unit test at line 119: `assert_delay_secs!([10.0], 1, Some(600), Some(900), None)`
+        — Again=600s, Hard=900s, no Good.
+
+        Pre-fix, TT returned `steps[0]` raw (600s, 10 min). The bug previously
+        had a wrong-direction test asserting [600, 750) — locking in the bug per
+        the "empirical Anki behavior beats source / never pin tests to TT's own
+        port outputs" rule.
+        """
         monkeypatch.setattr("app.srs.queue_stats.resolve_learning_steps", lambda db=None: ([10.0], "default"))
         item = _make_item(state=SRSState.NEW)
         now = datetime.now(UTC)
         result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION, now=now)
         new_dir = result.directions[Direction.RECOGNITION]
         delay_sec = (new_dir.due_at - now).total_seconds()
-        assert 600 <= delay_sec < 600 + 150, f"single-step Hard with fuzz must land in [600, 750); got {delay_sec}"
+        # 900s base + fuzz upper = min(int(900*0.25), 300) = 225 → range [900, 1125).
+        assert 900 <= delay_sec < 900 + 225, (
+            f"single-step NEW+Hard must use again*1.5=900s + fuzz, landing in [900, 1125); got {delay_sec}"
+        )
+
+    def test_relearning_hard_single_step_uses_again_times_1_5(self, monkeypatch):
+        """RELEARNING + HARD with single-step lapse delays → again*1.5, not step[0].
+
+        Direct regression for the kupiti divergence (2026-05-18): user graded
+        kupiti Hard while relearning. lapse.delays=[10.0]. TT scheduled +10 min
+        (raw step), Anki scheduled +15 min (Anki's first-step Hard formula). The
+        gap put TT and Anki out of sync on the head card by 6 minutes.
+        """
+        monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([10.0], "default"))
+        # Relearning step 0 of 1: left=1
+        item = _make_item(state=SRSState.RELEARNING, left=1)
+        # Seed a non-NEW prior_state so the relearning path is exercised cleanly.
+        item.directions[Direction.RECOGNITION].stability = 1.0
+        item.directions[Direction.RECOGNITION].reps = 1
+        now = datetime.now(UTC)
+        result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION, now=now)
+        new_dir = result.directions[Direction.RECOGNITION]
+        delay_sec = (new_dir.due_at - now).total_seconds()
+        assert 900 <= delay_sec < 900 + 225, (
+            f"single-step RELEARNING+Hard must use again*1.5=900s + fuzz, landing in [900, 1125); got {delay_sec}"
+        )
 
 
 class TestLearningStepFuzz:

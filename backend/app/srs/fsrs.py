@@ -438,10 +438,13 @@ def _schedule_new(
 
     # total_remaining = steps left until graduation = total_steps - step_index
     new_left = _pack_left(total_steps - step_index)
-    # Anki's Hard-on-first-step delay = avg of first two steps when ≥2 steps;
-    # Again uses step[0] verbatim. See _schedule_with_steps for the same rule.
-    if rating == Rating.HARD and step_index == 0 and total_steps > 1:
-        delay_min = (steps[0] + steps[1]) / 2
+    # Anki's Hard-on-first-step delay (rslib/.../scheduler/states/steps.rs:38-66):
+    #   - ≥2 steps: avg of first two steps (e.g. [1,10] → 330s)
+    #   - 1 step:   min(again*1.5, again + 1 day) (e.g. [10] → 900s)
+    # Again uses step[0] verbatim regardless.
+    if rating == Rating.HARD and step_index == 0:
+        again_secs = steps[0] * 60
+        delay_min = (steps[0] + steps[1]) / 2 if total_steps > 1 else min(again_secs * 1.5, again_secs + 86400) / 60
     else:
         delay_min = steps[step_index]
     new_due_at = _due_at_after_step(now, prev, delay_min)
@@ -612,13 +615,17 @@ def _schedule_with_steps(
 
     elif rating == Rating.HARD:
         # Stay on same step — total_remaining unchanged.
-        # Anki's rslib special-cases Hard on the first step of a multi-step
-        # deck: the delay is the average of the first two steps, not the
-        # current step (rslib/src/scheduler/states/learning.rs). Empirically
-        # confirmed by revlog `ivl=-330` for Hard on a [1, 10] first step.
+        # Anki's rslib special-cases Hard on the first step (idx==0):
+        #   - With ≥2 steps: delay = avg of first two steps.
+        #     [1,10] → 330s (confirmed by Anki's unit test + TT revlog).
+        #   - With 1 step:   delay = min(again*1.5, again + 1 day).
+        #     [10] → 900s (Anki unit test: `assert_delay_secs!([10.0], 1, Some(600), Some(900), None)`,
+        #     rslib/.../scheduler/states/steps.rs:55-66, 119).
+        # On any later step (idx > 0): delay = current step verbatim.
         new_left = _pack_left(total_remaining)
-        if current_step_index == 0 and len(steps) > 1:
-            delay_min = (steps[0] + steps[1]) / 2
+        if current_step_index == 0:
+            again_secs = steps[0] * 60
+            delay_min = (steps[0] + steps[1]) / 2 if len(steps) > 1 else min(again_secs * 1.5, again_secs + 86400) / 60
         else:
             delay_min = steps[current_step_index]
         new_due_at = _due_at_after_step(now, prev, delay_min)
