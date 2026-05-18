@@ -1221,6 +1221,34 @@ class AnkiSync:
                 resolution=resolution,
             )
 
+    def _pull_advance_learning_cutoff(self, max_revlog_ms: int, dry_run: bool) -> None:
+        """Advance the learning cutoff to the most recent Anki revlog timestamp ingested.
+
+        Anki-parity: without this, an Anki-only grading session would leave
+        TT's cutoff frozen at the last *TT* grade, and intraday-learning cards that
+        ticked past-due during the Anki session would never become eligible.
+        """
+        if not dry_run and max_revlog_ms > 0:
+            from app.srs.queue_stats import advance_learning_cutoff
+
+            advance_learning_cutoff(self._db, datetime.fromtimestamp(max_revlog_ms / 1000, UTC))
+
+    def _pull_rebuild_session_main_queue(self, dry_run: bool) -> None:
+        """Invalidate and eagerly rebuild the frozen session_main_queue on sync completion.
+
+        Anki's ``requires_study_queue_rebuild`` (rslib scheduler/queue/mod.rs:211-215)
+        forces a queue rebuild after sync round-trip; mirroring it lazily (clear-only,
+        rebuild-on-next-request) means TT freezes at a different moment than Anki's
+        session-open rebuild, leading to off-by-N drift on the first-new-card position.
+        The eager rebuild aligns the freeze moments. Layer 29.
+        """
+        if not dry_run:
+            from app.api.srs import build_and_freeze_main_queue
+            from app.srs.queue_stats import clear_session_main_queue
+
+            clear_session_main_queue(self._db)
+            build_and_freeze_main_queue(self._db)
+
     def sync_pull(self, dry_run: bool = False) -> PullReport:
         """Pull Anki → TunaTale. Returns a PullReport summarising changes."""
         report = PullReport()
@@ -1652,28 +1680,8 @@ class AnkiSync:
                         self._db.update_direction(guid, direction, new_dir_state)
                     report.directions_updated += 1
 
-        # Anki parity: advance the learning cutoff to the most recent Anki revlog
-        # timestamp ingested. Without this, an Anki-only grading session would leave
-        # TT's cutoff frozen at the last *TT* grade, and intraday-learning cards that
-        # ticked past-due during the Anki session would never become eligible.
-        if not dry_run and max_revlog_ms > 0:
-            from app.srs.queue_stats import advance_learning_cutoff
-
-            advance_learning_cutoff(self._db, datetime.fromtimestamp(max_revlog_ms / 1000, UTC))
-
-        # Anki parity: invalidate AND eagerly rebuild the frozen session_main_queue
-        # on sync completion. Anki's `requires_study_queue_rebuild` (rslib
-        # scheduler/queue/mod.rs:211-215) forces a queue rebuild after sync round-trip;
-        # mirroring it lazily (clear-only, rebuild-on-next-request) means TT freezes
-        # at a different moment than Anki's session-open rebuild, leading to off-by-N
-        # drift on the first-new-card position. The eager rebuild aligns the freeze
-        # moments. Layer 29.
-        if not dry_run:
-            from app.api.srs import build_and_freeze_main_queue
-            from app.srs.queue_stats import clear_session_main_queue
-
-            clear_session_main_queue(self._db)
-            build_and_freeze_main_queue(self._db)
+        self._pull_advance_learning_cutoff(max_revlog_ms, dry_run)
+        self._pull_rebuild_session_main_queue(dry_run)
 
         _log.info("BURY_TRACE summary dry_run=%s %s", dry_run, bury_stats)
         return report
