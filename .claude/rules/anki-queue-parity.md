@@ -58,12 +58,20 @@ Both apps freeze the main review queue and never re-sort mid-session (Anki: `Car
 **Anki rebuilds when** (`queue/mod.rs:207-215`, `ops.rs:168-181`):
 - Day rollover
 - **File → Sync** in Anki (and AnkiWeb auto-sync receiving remote changes, including TT's push)
+- **Profile / collection reopen** — Anki's queue is lazy-built on first access after open
 - **Deck navigation** (`SetCurrentDeck` — deck list → back into the deck)
 - Deck-config / preferences change
 - Undo
 - Any non-grade card/deck mutation
 
 **TT rebuilds only on `sync_pull`** (rule 2 / Layer 29). Grading does not rebuild in either app.
+
+**Critical non-obvious trigger: TT sync itself is an Anki rebuild trigger.** TT's `safe_open(mode="rw")` (`backend/app/anki/safety.py:148-162`) acquires an exclusive SQLite lock on `collection.anki2`, which requires Anki to be **closed during the sync**. The user closes Anki, runs TT sync, then reopens Anki — and **the reopen rebuilds Anki's queue with current R values** via the "profile/collection reopen" trigger above. So:
+
+- If the user syncs and the reopen happens *before* an R-asc cross, both apps freeze with matching order.
+- If the user syncs twice and the second reopen happens *after* a cross, Anki freezes with the new order while TT (whose sync_pull may have run *before* the cross) keeps the old order. **TT's sync_pull moment and Anki's reopen moment are not the same point in time** — they can be seconds-to-minutes apart, and the cross can land between them.
+
+This is how a user who reports "I only synced once, never touched Anki" can still see divergent queue heads. The forensic signature is a **multi-minute gap in Anki's revlog** spanning the R-asc cross point (look for unusually long gap in `SELECT id/1000 FROM revlog ORDER BY id` — gaps in the 100s-of-seconds range suggest a sync-and-reopen cycle).
 
 **Signature**: both apps show a *review* card at the head, both have the same set of candidate cards, TT's head and Anki's head are two different cards with **wildly different stabilities** (e.g. s=0.65 vs s=7.5), and their current R values are near-tie (delta ~0.001–0.005). The low-s card has decayed under the high-s card *during the session*, and only one app's frozen queue reflects the crossover.
 
