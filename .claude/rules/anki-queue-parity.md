@@ -8,6 +8,23 @@ The user grades the same deck in both Anki and TunaTale. Between syncs, both app
 
 Anki is the reference implementation. TunaTale mirrors Anki's algorithms — but **reads `collection.anki2` only at sync time**, never on the live request path. A request handler that consults Anki's collection is a regression unless it's `sync_pull`/`sync_push` itself.
 
+## Most common benign divergence: cutoff-frozen-at-last-grade
+
+**Before diving into the playbook, check this first.** As of Layers 36+, the dominant remaining "TT and Anki disagree on the head card" report is NOT a bug — it's the intentional stickiness of `learning_cutoff` (rule 11).
+
+**Signature**: Anki serves a *learning* card, TT serves a *main/review* card, both apps have the card in question, and TT's `learning_cutoff` is within ~seconds-to-minutes of the learning card's `due_at`.
+
+**Why it happens**: cutoff advances only on grade / session-start / sync_pull / end-of-session auto-bump (rule 11). If you grade in Anki 2 seconds *after* the learning card ripens, Anki advances its cutoff past `due` and serves it. If your most recent TT grade was *before* the ripening, TT keeps the cutoff frozen there and the learning card waits in `pending_learning` tail. Same card, same FSRS state — just two different "what time is it for queue purposes" answers.
+
+**Resolution**: refresh `/review` (the frontend `onMount` sends `?session_start=1`, which advances cutoff to `now`) or grade any TT card. Either surfaces the learning card next. **Do not** add a "live `now`" path or per-poll cutoff advance — the stickiness is the point (the card on screen shouldn't get preempted by a ripening learning card mid-glance), and Anki's stickiness works the same way.
+
+**Diagnostic one-liner** to confirm before pattern-matching to anything else:
+```bash
+sqlite3 /tmp/tt_inspect.db "SELECT value FROM anki_state_cache WHERE key='learning_cutoff';"
+sqlite3 /tmp/tt_inspect.db "SELECT c.text, cd.direction, cd.due_at FROM collocation_directions cd JOIN collocations c ON cd.collocation_id=c.id WHERE cd.state IN ('learning','relearning') ORDER BY cd.due_at LIMIT 5;"
+```
+If the earliest learning `due_at` is just past the cutoff, you've found it. Move on.
+
 ## Architectural principles (don't undo these)
 
 1. **Anki is reference, not runtime dependency.** Every badge endpoint and every queue-build path reconstructs from TT state alone (`collocation_directions` + `anki_state_cache`). If you find yourself opening `collection.anki2` in `app/api/`, you've taken a wrong turn — look for the TT-state-only equivalent (`count_new_introduced_today`, `count_review_due_collocations`, `list_collocations_reviewed_today`, etc.).
@@ -89,6 +106,7 @@ When a "TT and Anki disagree" report comes in, walk this tree. Each leaf points 
 - Architectural note: `sync_pull` looks up TT rows by `anki_note_id`. If you ever add a code path that creates a second collocation for an existing Anki note (e.g. a homonym import script), you MUST also handle the dedupe — otherwise sync_pull silently picks the wrong one.
 
 **Queue head wrong (Anki shows learning card, TT shows main, both have it):**
+- **CHECK THIS FIRST — this is the #1 benign divergence as of Layers 36+** (see "Most common benign divergence" near top of file).
 - This is almost always one of two things — **NOT a bug**:
   1. **Cutoff frozen at last grade (Layer 13/36).** TT's `learning_cutoff` only advances on grade/session-start/sync/auto-bump. If the learning card's `due_at` is just after the cutoff (e.g. user graded, learning step expired 2 seconds later, user stared at the next card for a minute), TT keeps it in `pending_learning` → tail. Anki, in deck mode, may have advanced its own cutoff via the `counts.all_zero()` auto-bump trigger if its main was empty. Resolution: refresh `/review` (calls `?session_start=1` → cutoff = now) or grade any card.
   2. **Independent grading drift (no sync).** The user has graded the card in BOTH apps without syncing in between. Each app advances its own FSRS with its own fuzz seed, producing slightly-different next-step times. TT's `anki_due` will be stale (still showing the pre-divergence value). Resolution: Anki → File → Sync, then refresh TT.
