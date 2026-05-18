@@ -928,8 +928,19 @@ def _queue_item_to_dict(row_id: int, item: SRSItem, lang: str, direction: Direct
     base = _item_to_dict(row_id, item, lang, image_url, audio_url)
     base["direction"] = direction.value
     base["word_audio_url"] = word_audio_url
-    # Override flat state with per-direction state
-    base["state"] = item.directions[direction].state.value
+    # `_item_to_dict` populates flat fields from recognition (or production for
+    # cloze). For a queue item that's the OTHER direction, those values misrepresent
+    # the actual card on screen: a production card due today + heavily-reviewed can
+    # come back with recognition's untouched stats. Override every per-direction
+    # field with the queued direction's authoritative value.
+    ds = item.directions[direction]
+    base["state"] = ds.state.value
+    base["due_date"] = ds.due_date.isoformat()
+    base["stability"] = ds.stability
+    base["difficulty"] = ds.difficulty
+    base["reps"] = ds.reps
+    base["lapses"] = ds.lapses
+    base["last_review"] = ds.last_review.isoformat() if ds.last_review else None
     return base
 
 

@@ -2039,6 +2039,72 @@ class TestReviewQueue:
         item = next(q for q in queue if q["text"] == "jabolko")
         assert item["image_url"] == "/api/srs/media/apple.jpg"
 
+    async def test_flat_fields_track_the_queued_direction_not_recognition(self, api_app_state):
+        """For dual-direction vocab where the QUEUED direction is production, the
+        flat fields (reps, last_review, due_date, stability, difficulty, lapses)
+        must reflect production's values — not recognition's.
+
+        Regression: `_queue_item_to_dict` previously overrode only `state`,
+        leaving the rest leaking through from `_item_to_dict`'s recognition-only
+        defaulting. Symptom: a well-trained card (production reps=27, last_review
+        yesterday) would appear in the API as reps=6, last_review=null because
+        recognition had different stats. Confuses any frontend that inspects
+        those fields to decide rendering.
+        """
+        from datetime import UTC, date, datetime, timedelta
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+
+        unit = SyntacticUnit(text="podpisati", translation="sign", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation("podpisati")
+
+        # Production is the QUEUED direction: due today, heavily reviewed.
+        prod_ds = DirectionState(
+            direction=Direction.PRODUCTION,
+            due_date=today,
+            stability=2.0,
+            difficulty=6.5,
+            reps=27,
+            lapses=1,
+            state=SRSState.REVIEW,
+            last_review=datetime.now(UTC) - timedelta(days=1),
+        )
+        db.update_direction(item.guid, Direction.PRODUCTION, prod_ds)
+
+        # Recognition is NOT queued today: future due, fewer reps, no last_review.
+        rec_ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_date=today + timedelta(days=25),
+            stability=29.365,
+            difficulty=7.169,
+            reps=6,
+            lapses=0,
+            state=SRSState.REVIEW,
+            last_review=None,
+        )
+        db.update_direction(item.guid, Direction.RECOGNITION, rec_ds)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue")
+        assert resp.status_code == 200
+        queue = resp.json()["queue"]
+        hit = next(q for q in queue if q["text"] == "podpisati")
+        assert hit["direction"] == "production"
+        # Each of these is recognition's wrong value pre-fix.
+        assert hit["state"] == "review"
+        assert hit["reps"] == 27, f"reps must come from production; got {hit['reps']} (recognition has 6)"
+        assert hit["lapses"] == 1, f"lapses must come from production; got {hit['lapses']}"
+        assert hit["stability"] == 2.0, f"stability must come from production; got {hit['stability']}"
+        assert hit["difficulty"] == 6.5, f"difficulty must come from production; got {hit['difficulty']}"
+        assert hit["due_date"] == today.isoformat(), (
+            f"due_date must come from production; got {hit['due_date']} (recognition is +25d)"
+        )
+        assert hit["last_review"] is not None, "last_review must come from production (graded yesterday), not None"
+
 
 class TestAudioUrlGrammarNote:
     """Tests for audio_url, grammar, note in API responses."""
