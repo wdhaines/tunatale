@@ -8,9 +8,13 @@ The user grades the same deck in both Anki and TunaTale. Between syncs, both app
 
 Anki is the reference implementation. TunaTale mirrors Anki's algorithms — but **reads `collection.anki2` only at sync time**, never on the live request path. A request handler that consults Anki's collection is a regression unless it's `sync_pull`/`sync_push` itself.
 
-## Most common benign divergence: cutoff-frozen-at-last-grade
+## Two most common benign divergences
 
-**Before diving into the playbook, check this first.** As of Layers 36+, the dominant remaining "TT and Anki disagree on the head card" report is NOT a bug — it's the intentional stickiness of `learning_cutoff` (rule 11).
+The two patterns below account for the bulk of "TT and Anki disagree on head card" reports as of Layers 36+. **Check both before pattern-matching to anything algorithmic.** Both resolve at the next sync.
+
+### #1 — Cutoff frozen at last grade
+
+The intentional stickiness of `learning_cutoff` (rule 11).
 
 **Signature**: Anki serves a *learning* card, TT serves a *main/review* card, both apps have the card in question, and TT's `learning_cutoff` is within ~seconds-to-minutes of the learning card's `due_at`.
 
@@ -24,6 +28,28 @@ sqlite3 /tmp/tt_inspect.db "SELECT value FROM anki_state_cache WHERE key='learni
 sqlite3 /tmp/tt_inspect.db "SELECT c.text, cd.direction, cd.due_at FROM collocation_directions cd JOIN collocations c ON cd.collocation_id=c.id WHERE cd.state IN ('learning','relearning') ORDER BY cd.due_at LIMIT 5;"
 ```
 If the earliest learning `due_at` is just past the cutoff, you've found it. Move on.
+
+### #2 — Independent grading drift (same card graded at different instants)
+
+Each app stamps its own `last_review` at the moment the grade button fires, then computes `due_at = last_review + step + fuzz` independently. When you grade the same card in both apps, sub-second-to-few-seconds variation in human button-press timing produces `due_at` values that differ by 1–5 seconds. That's enough to invert the order of two cards whose underlying Anki gap is only 1 second.
+
+**Signature (cross-queue)**: TT shows a review/main card, Anki shows a learning card, both have the card, TT's `anki_due` for the card is many hours/days older than Anki's `cards.due`. Already documented under playbook "Queue head wrong (Anki shows learning, TT shows main…) case 2."
+
+**Signature (intra-learning-queue, more subtle)**: BOTH apps show a learning card at head, but *different* learning cards from the same stack. Both apps' learning queues contain the same N cards in nearly the same order — but positions 0 and 1 are swapped (or 0 and 2). Per-card `due_at` deltas between TT and Anki are O(seconds), not O(minutes).
+
+**Why it flips**: identical FSRS fuzz applied to slightly different grade timestamps. Worked example: peti graded in Anki 3s before TT, risati graded in Anki 2s after TT. Anki's queue: peti (due=X) → risati (due=X+1s). TT's queue: risati (due=X−2s) → peti (due=X+3s). The 5-second total swing inverts a 1-second Anki gap.
+
+**Resolution**: sync. `_direction_differs` includes `due_at` (rule 6); `sync_pull` writes Anki's `due_at` for cards where Anki's `mod` is later, `sync_push` writes TT's for cards where TT graded later. After one round-trip, both apps converge on the later grader's timestamp per card.
+
+**Diagnostic** to confirm:
+```bash
+echo "TT (last_review, due_at) vs Anki (mod, due) for current learning stack:"
+sqlite3 /tmp/tt_inspect.db "SELECT c.text || ' ' || cd.direction, cd.anki_card_id, strftime('%s', cd.last_review) as tt_grade, cast(strftime('%s', cd.due_at) as int) as tt_due FROM collocation_directions cd JOIN collocations c ON cd.collocation_id=c.id WHERE cd.state IN ('learning','relearning') ORDER BY cd.due_at LIMIT 8;" | while IFS='|' read card cid tt_grade tt_due; do
+  anki=$(sqlite3 /tmp/anki_inspect.db "SELECT mod || '|' || due FROM cards WHERE id=$cid")
+  echo "  $card  TT(grade=$tt_grade due=$tt_due) Anki=$anki"
+done
+```
+If per-card deltas are O(seconds) and the step (due − grade) matches between apps, it's drift, not a bug. **Do not** add code that "fixes" this by overwriting timestamps client-side — convergence is sync's job.
 
 ## Architectural principles (don't undo these)
 
@@ -106,7 +132,7 @@ When a "TT and Anki disagree" report comes in, walk this tree. Each leaf points 
 - Architectural note: `sync_pull` looks up TT rows by `anki_note_id`. If you ever add a code path that creates a second collocation for an existing Anki note (e.g. a homonym import script), you MUST also handle the dedupe — otherwise sync_pull silently picks the wrong one.
 
 **Queue head wrong (Anki shows learning card, TT shows main, both have it):**
-- **CHECK THIS FIRST — this is the #1 benign divergence as of Layers 36+** (see "Most common benign divergence" near top of file).
+- **CHECK THIS FIRST — top-of-file "Two most common benign divergences" #1 covers this.**
 - This is almost always one of two things — **NOT a bug**:
   1. **Cutoff frozen at last grade (Layer 13/36).** TT's `learning_cutoff` only advances on grade/session-start/sync/auto-bump. If the learning card's `due_at` is just after the cutoff (e.g. user graded, learning step expired 2 seconds later, user stared at the next card for a minute), TT keeps it in `pending_learning` → tail. Anki, in deck mode, may have advanced its own cutoff via the `counts.all_zero()` auto-bump trigger if its main was empty. Resolution: refresh `/review` (calls `?session_start=1` → cutoff = now) or grade any card.
   2. **Independent grading drift (no sync).** The user has graded the card in BOTH apps without syncing in between. Each app advances its own FSRS with its own fuzz seed, producing slightly-different next-step times. TT's `anki_due` will be stale (still showing the pre-divergence value). Resolution: Anki → File → Sync, then refresh TT.
@@ -134,6 +160,13 @@ When a "TT and Anki disagree" report comes in, walk this tree. Each leaf points 
   3. After `_bury_siblings_in_queue`: each collocation_id appears once, on the direction whose anki_due was higher (or ord=0 on ties).
   4. After the final stable sort by ord: all surviving recognition cards come before surviving production cards, gather order preserved within each ord group.
   5. **Don't re-introduce per-direction-only sorts in `get_new_items`.** Layer 25 tried that and it looked right in isolation, but the gather+bury+template pipeline requires the interleaved merge to land siblings in the correct relative position. The Layer-25 ORDER BY in `get_new_items` is fine (and necessary as the input ordering) but is NOT sufficient on its own — `_merge_directions` re-sorts the combined pool, and that re-sort is the load-bearing step.
+
+**Queue head wrong (both apps show learning, different card within the learning queue):**
+- **CHECK FIRST — top-of-file "Two most common benign divergences" #2 (independent grading drift) covers this.**
+- Signature: both apps' learning queues contain the same N cards in nearly the same order, but positions 0 and 1 (or 0 and 2) are swapped. Per-card `due_at` deltas between TT and Anki are O(seconds).
+- Root cause: identical FSRS fuzz applied to slightly different grade timestamps (you hit "Good" in each app a few seconds apart). The 5-second swing inverts a 1-second Anki gap.
+- Resolution: sync. Each card converges to the later grader's `due_at` per rule 6 / Layer 17.
+- Run the diagnostic in the top-of-file section to confirm. **Do not** chase this in queue-assembly code — TT's sort (by `due_at` ascending) and Anki's sort (by `cards.due` ascending) both work correctly; the inputs differ.
 
 **Queue head wrong (learning card re-appears immediately after grading):**
 - Anki's "collapse" (`rslib/scheduler/queue/learning.rs:94-113`) shifts a just-graded learning card past the next-soonest pending card when main is empty. TT mirrors this in `get_review_queue` by swapping `pending_learning[0]` and `[1]` when the head's `last_review == cutoff`. If you change the queue assembly, re-verify the collapse fires.
