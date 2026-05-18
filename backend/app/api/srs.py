@@ -10,8 +10,18 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
 
+from app.api.models import (
+    BulkDeleteRequest,
+    ClozeSettingRequest,
+    CreateItemRequest,
+    DrillRequest,
+    ListenRequest,
+    SetStateRequest,
+    SuspendRequest,
+    TranslateRequest,
+    UpdateItemRequest,
+)
 from app.audio.cloze_tts import synthesize_cloze_audios
 from app.llm.translate import translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
@@ -119,11 +129,6 @@ def _item_to_dict(
     }
 
 
-class ListenRequest(BaseModel):
-    lesson_id: str
-    word_ratings: dict[str, str] = {}  # lemma → "hard"|"easy"|"again"
-
-
 def _triples_to_dicts(db, triples: list[tuple[int, SRSItem, str]]) -> list[dict]:
     result = []
     seen_ids: set[int] = set()
@@ -165,12 +170,6 @@ async def get_new_collocations(request: Request, limit: int = 10, direction: str
         raise HTTPException(status_code=422, detail=f"Invalid direction: {direction!r}") from exc
     triples = db.get_new_items(limit=limit, direction=dir_enum)
     return {"new": _triples_to_dicts(db, triples)}
-
-
-class DrillRequest(BaseModel):
-    rating: str | None = None
-    signal: str | None = None
-    time_ms: int = 0
 
 
 @router.post("/items/{item_id}/direction/{direction}/feedback", status_code=200)
@@ -440,11 +439,6 @@ _TRANSLATE_BATCH_SIZE = 50
 _TRANSLATE_SYSTEM = "You are a translation assistant. Return ONLY valid JSON, no other text."
 
 
-class TranslateRequest(BaseModel):
-    text: str
-    language_code: str
-
-
 def _build_translate_prompt(words: list[str], language_name: str) -> str:
     word_list = "\n".join(f"- {w}" for w in words)
     return (
@@ -563,10 +557,6 @@ async def get_queue_stats(request: Request, response: Response):
 # ── Cloze settings ────────────────────────────────────────────────────────────
 
 
-class ClozeSettingRequest(BaseModel):
-    enabled: bool
-
-
 @router.get("/settings/cloze")
 async def get_cloze_setting(request: Request):
     db = request.app.state.srs_db
@@ -581,34 +571,6 @@ async def set_cloze_setting(body: ClozeSettingRequest, request: Request):
 
 
 # ── Admin endpoints ────────────────────────────────────────────────────────────
-
-
-class CreateItemRequest(BaseModel):
-    text: str
-    language_code: str
-    word_count: int
-    translation: str = ""
-    source_sentence: str = ""
-    source_lesson_id: str | None = None
-    source_line_index: int | None = None
-
-
-class UpdateItemRequest(BaseModel):
-    text: str
-    translation: str
-
-
-class BulkDeleteRequest(BaseModel):
-    ids: list[int]
-
-
-class SuspendRequest(BaseModel):
-    suspended: bool
-    direction: str | None = None
-
-
-class SetStateRequest(BaseModel):
-    state: str  # "new" | "learning" | "known" | "ignored"
 
 
 _VALID_USER_STATES = {"new", "learning", "known", "ignored"}

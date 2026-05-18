@@ -10,8 +10,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel
 
+from app.api.models import RenderAudioRequest
 from app.generation.section_builder import SECTION_TITLES
 from app.models.lesson import SectionType
 
@@ -35,10 +35,6 @@ def _build_section_filename(topic: str, day: int, section_index: int, section_ty
         title = section_type
     safe_title = _sanitize_filename(title)
     return f"{safe_topic}_Day{day:02d}_{section_index + 1:02d}_{safe_title}.wav"
-
-
-class RenderAudioRequest(BaseModel):
-    lesson_id: str
 
 
 @router.post("/render", status_code=202)

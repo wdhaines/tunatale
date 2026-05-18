@@ -6,8 +6,8 @@ import re
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
 
+from app.api.models import GenerateStoryRequest
 from app.models.strategy import ContentStrategy
 
 router = APIRouter(prefix="/api/story", tags=["generation"])
@@ -17,12 +17,6 @@ def _slug(text: str) -> str:
     text = text.lower()
     text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
     return text[:50]
-
-
-class GenerateStoryRequest(BaseModel):
-    curriculum_id: str
-    day: int = 1
-    strategy: str = "WIDER"
 
 
 @router.post("/generate", status_code=201)

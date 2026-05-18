@@ -6,7 +6,8 @@ import re
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+
+from app.api.models import GenerateCurriculumRequest
 
 router = APIRouter(prefix="/api/curriculum", tags=["curriculum"])
 
@@ -15,12 +16,6 @@ def _slug(text: str) -> str:
     text = text.lower()
     text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
     return text[:50]
-
-
-class GenerateCurriculumRequest(BaseModel):
-    topic: str
-    cefr_level: str = "A2"
-    num_days: int = 7
 
 
 @router.post("/generate", status_code=201)
