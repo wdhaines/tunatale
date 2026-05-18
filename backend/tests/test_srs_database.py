@@ -1885,6 +1885,64 @@ class TestGetAudioFilename:
         assert srs_db.get_audio_filename(99999) is None
 
 
+class TestGetSentenceAudioFilename:
+    """Tests for get_sentence_audio_filename."""
+
+    def test_returns_sentence_audio_when_present(self, srs_db):
+        from datetime import date
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        dirs = {Direction.RECOGNITION: DirectionState(Direction.RECOGNITION, date.today(), state=SRSState.NEW)}
+        coll_id = srs_db.upsert_by_guid(_unit("stol", "chair"), "sl", dirs)
+        srs_db.add_media(
+            coll_id,
+            kind="audio_tts_sentence",
+            filename="tts_sentence_abc123.mp3",
+            path="/tmp/tts_sentence_abc123.mp3",
+            anki_filename="",
+            sha256="s1",
+            size_bytes=100,
+        )
+        assert srs_db.get_sentence_audio_filename(coll_id) == "tts_sentence_abc123.mp3"
+
+    def test_returns_none_when_missing(self, srs_db):
+        from datetime import date
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        dirs = {Direction.RECOGNITION: DirectionState(Direction.RECOGNITION, date.today(), state=SRSState.NEW)}
+        coll_id = srs_db.upsert_by_guid(_unit("stol", "chair"), "sl", dirs)
+        srs_db.add_media(
+            coll_id,
+            kind="audio_tts",
+            filename="tts_stol.mp3",
+            path="/tmp/tts_stol.mp3",
+            anki_filename="tts_stol.mp3",
+            sha256="t1",
+            size_bytes=100,
+        )
+        assert srs_db.get_sentence_audio_filename(coll_id) is None
+
+    def test_ignores_word_audio_rows(self, srs_db):
+        from datetime import date
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        dirs = {Direction.RECOGNITION: DirectionState(Direction.RECOGNITION, date.today(), state=SRSState.NEW)}
+        coll_id = srs_db.upsert_by_guid(_unit("stol", "chair"), "sl", dirs)
+        srs_db.add_media(
+            coll_id,
+            kind="audio_tts",
+            filename="tts_stol.mp3",
+            path="/tmp/tts_stol.mp3",
+            anki_filename="tts_stol.mp3",
+            sha256="t1",
+            size_bytes=100,
+        )
+        assert srs_db.get_sentence_audio_filename(coll_id) is None
+
+
 class TestUpdateMediaFile:
     """Tests for update_media_file."""
 

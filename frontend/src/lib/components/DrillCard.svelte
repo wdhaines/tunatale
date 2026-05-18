@@ -15,6 +15,7 @@
 
 	let revealed = $state(false);
 	let audioEl: HTMLAudioElement | undefined = $state();
+	let wordAudioEl: HTMLAudioElement | undefined = $state();
 	const startedAt = performance.now();
 
 	function show() {
@@ -28,6 +29,10 @@
 
 	function playAudio() {
 		audioEl?.play().catch(() => {});
+	}
+
+	function playWordAudio() {
+		wordAudioEl?.play().catch(() => {});
 	}
 
 	function escapeRegex(s: string): string {
@@ -89,6 +94,10 @@
 						<button class="play-btn" onclick={playAudio} aria-label="Play audio">▶</button>
 					{/if}
 					<p class="main-text">{@html clozeAnswerHtml()}</p>
+					{#if item.word_audio_url}
+						<audio bind:this={wordAudioEl} src={item.word_audio_url} preload="auto"></audio>
+						<button class="word-audio-btn" onclick={playWordAudio} aria-label="Play word audio">🔊 {item.text}</button>
+					{/if}
 					{#if item.source_sentence_translation}
 						<p class="answer-text english">{item.source_sentence_translation}</p>
 					{/if}
@@ -189,6 +198,19 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
+	}
+	.word-audio-btn {
+		background: var(--color-primary);
+		border: 1px solid var(--color-primary);
+		border-radius: 4px;
+		cursor: pointer;
+		font-size: 0.85rem;
+		color: #fff;
+		margin-bottom: 0.75rem;
+		padding: 0.25rem 0.6rem;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
 	}
 	.ratings {
 		display: flex;

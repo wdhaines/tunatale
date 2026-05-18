@@ -2531,3 +2531,222 @@ class TestCreatePhraseIntegration:
         assert mesta["collocation_span_id"] is not None
         assert centru["collocation_span_id"] == mesta["collocation_span_id"]
         assert centru["collocation_lemma"] == "centru mesta"
+
+
+class TestClozeTTSIntegration:
+    """Tests for cloze TTS audio generation via /listen and /review-queue."""
+
+    async def test_listen_creates_media_for_new_cloze(self, monkeypatch):
+        """New cloze from /listen gets both audio_tts_sentence and audio_tts media rows."""
+        import app.audio.cloze_tts as cloze_tts_mod
+
+        async def _fake_tts(text, voice="sl-SI-PetraNeural"):
+            return b"fake-mp3"
+
+        monkeypatch.setattr(cloze_tts_mod, "generate_tts_audio", _fake_tts)
+
+        from app.models.lesson import Lesson, Phrase, Section, SectionType
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text="Kje je banka?", voice_id="female-1", language_code="sl", role="female-1"),
+                    ],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        db.set_enable_cloze_cards(True)
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-ct", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-ct"})
+        assert response.status_code == 200
+
+        for lemma in ("kje", "je"):
+            coll = db.get_collocation_by_lemma_with_id(lemma)
+            assert coll is not None, f"{lemma} should exist"
+            coll_id, _ = coll
+            sent_fn = db.get_sentence_audio_filename(coll_id)
+            word_fn = db.get_audio_filename(coll_id)
+            assert sent_fn is not None, f"{lemma} missing sentence audio filename"
+            assert word_fn is not None, f"{lemma} missing word audio filename"
+            assert sent_fn.startswith("tts_sentence_")
+            assert word_fn.startswith("tts_")
+
+    async def test_review_queue_returns_word_audio_url_for_cloze(self):
+        """Cloze cards in the review queue have word_audio_url set; vocab cards do not."""
+        from datetime import date
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(":memory:")
+        db.set_enable_cloze_cards(True)
+        app.state.srs_db = db
+
+        # Cloze collocation
+        cloze_unit = SyntacticUnit(
+            text="je",
+            translation="is",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="je",
+            card_type="cloze",
+            source_sentence="Kje je banka?",
+        )
+        cloze_dir = {
+            Direction.PRODUCTION: DirectionState(
+                Direction.PRODUCTION,
+                date.today(),
+                state=SRSState.NEW,
+            )
+        }
+        cloze_id = db.upsert_by_guid(cloze_unit, "sl", cloze_dir)
+
+        db.add_media(cloze_id, "audio_tts_sentence", "tts_sentence_abc.mp3", "/tmp/s.mp3", "", "s1", 100)
+        db.add_media(cloze_id, "audio_tts", "tts_je.mp3", "/tmp/w.mp3", "", "w1", 100)
+
+        # Vocab collocation
+        vocab_unit = SyntacticUnit(
+            text="banka",
+            translation="bank",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="banka",
+        )
+        dirs = {
+            Direction.RECOGNITION: DirectionState(Direction.RECOGNITION, date.today(), state=SRSState.NEW),
+            Direction.PRODUCTION: DirectionState(Direction.PRODUCTION, date.today(), state=SRSState.NEW),
+        }
+        vocab_id = db.upsert_by_guid(vocab_unit, "sl", dirs)
+        db.add_media(vocab_id, "audio_tts", "tts_banka.mp3", "/tmp/w.mp3", "", "w2", 100)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/review-queue", params={"session_start": "1"})
+        assert response.status_code == 200
+
+        items = response.json()["queue"]
+        cloze_items = [i for i in items if i.get("card_type") == "cloze"]
+        vocab_items = [i for i in items if i.get("card_type") == "vocab"]
+
+        assert len(cloze_items) >= 1
+        assert len(vocab_items) >= 1
+
+        for ci in cloze_items:
+            assert ci.get("word_audio_url") is not None, f"cloze {ci['text']} missing word_audio_url"
+            assert ci.get("audio_url") is not None, f"cloze {ci['text']} missing audio_url"
+
+        for vi in vocab_items:
+            assert vi.get("word_audio_url") is None, f"vocab {vi['text']} should not have word_audio_url"
+            assert vi.get("audio_url") is not None, f"vocab {vi['text']} missing audio_url"
+
+    async def test_listen_tolerates_synthesizer_error_new_cloze(self, monkeypatch):
+        """New cloze card is created even if TTS synthesis fails."""
+        import app.api.srs as srs_mod
+
+        async def _broken_synth(db, collocation_id, sentence, word):
+            raise RuntimeError("TTS failed")
+
+        monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", _broken_synth)
+
+        from app.models.lesson import Lesson, Phrase, Section, SectionType
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text="Kje je banka?", voice_id="female-1", language_code="sl", role="female-1"),
+                    ],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        db.set_enable_cloze_cards(True)
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-ct2", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-ct2"})
+        assert response.status_code == 200
+
+        # Cloze card should still exist
+        coll = db.get_collocation_by_lemma("kje")
+        assert coll is not None
+
+    async def test_listen_tolerates_synthesizer_error_existing_cloze(self, monkeypatch):
+        """Existing cloze card audio backfill failure doesn't crash the endpoint."""
+        import app.api.srs as srs_mod
+
+        calls = [0]
+
+        async def _succeed_once_then_fail(db, collocation_id, sentence, word):
+            calls[0] += 1
+            if calls[0] > 1:
+                raise RuntimeError("TTS failed on second call")
+            return None
+
+        monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", _succeed_once_then_fail)
+
+        from app.models.lesson import Lesson, Phrase, Section, SectionType
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text="Kje je banka?", voice_id="female-1", language_code="sl", role="female-1"),
+                    ],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        db.set_enable_cloze_cards(True)
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-ct3", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        # First listen creates cloze cards and succeeds at TTS
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-ct3"})
+        assert response.status_code == 200
+        assert calls[0] >= 1  # at least one TTS call succeeded
+
+        # Second listen should hit the existing cloze backfill path with failure
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-ct3"})
+        assert response.status_code == 200
+
+        # Cloze card should still exist
+        coll = db.get_collocation_by_lemma("kje")
+        assert coll is not None

@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from app.audio.cloze_tts import synthesize_cloze_audios
 from app.llm.translate import translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -33,6 +34,8 @@ from app.srs.queue_stats import (
 )
 from app.srs.tokenizer import tokenize
 from app.srs.transcript import extract_transcript
+
+_logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/srs", tags=["srs"])
 _MEDIA_DIR = Path(__file__).parent.parent.parent / "media"
@@ -312,6 +315,13 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 source_sentence_translation=sentence_translations.get(sent, ""),
             )
             db.add_collocation(unit, language_code=lesson.language_code)
+            if is_func:
+                coll = db.get_collocation_by_lemma_with_id(lemma)
+                new_id, _ = coll
+                try:
+                    await synthesize_cloze_audios(db, new_id, sent, lemma)
+                except Exception:
+                    _logger.warning("Failed to synthesize cloze audio for %r", lemma)
             created_count += 1
         else:
             # ── Existing row — skip cloze, grade recognition for eligible vocab ──
@@ -325,6 +335,15 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                     new_st = sentence_translations.get(sent, "")
                     if new_st:
                         db.set_sentence_translation_dirty(existing.guid, new_st)
+                # Try to generate missing audio for existing cloze rows
+                coll_with_id = db.get_collocation_by_lemma_with_id(lemma)
+                existing_id, existing_item = coll_with_id
+                src_sent = existing_item.syntactic_unit.source_sentence
+                if src_sent and not db.get_sentence_audio_filename(existing_id):
+                    try:
+                        await synthesize_cloze_audios(db, existing_id, src_sent, lemma)
+                    except Exception:
+                        _logger.warning("Failed to synthesize cloze audio for %r", lemma)
                 continue
 
             rec = existing.directions.get(Direction.RECOGNITION)
@@ -418,7 +437,6 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
 
 _TRANSLATE_BATCH_SIZE = 50
 _TRANSLATE_SYSTEM = "You are a translation assistant. Return ONLY valid JSON, no other text."
-_logger = logging.getLogger(__name__)
 
 
 class TranslateRequest(BaseModel):
@@ -898,10 +916,18 @@ def _spread_mix(
 def _queue_item_to_dict(row_id: int, item: SRSItem, lang: str, direction: Direction, db) -> dict:
     img = db.get_image_filename(row_id)
     image_url = f"/api/srs/media/{img}" if img else None
-    aud = db.get_audio_filename(row_id)
-    audio_url = f"/api/srs/media/{aud}" if aud else None
+    if item.syntactic_unit.card_type == "cloze":
+        sent_aud = db.get_sentence_audio_filename(row_id)
+        audio_url = f"/api/srs/media/{sent_aud}" if sent_aud else None
+        word_aud = db.get_audio_filename(row_id)
+        word_audio_url = f"/api/srs/media/{word_aud}" if word_aud else None
+    else:
+        aud = db.get_audio_filename(row_id)
+        audio_url = f"/api/srs/media/{aud}" if aud else None
+        word_audio_url = None
     base = _item_to_dict(row_id, item, lang, image_url, audio_url)
     base["direction"] = direction.value
+    base["word_audio_url"] = word_audio_url
     # Override flat state with per-direction state
     base["state"] = item.directions[direction].state.value
     return base

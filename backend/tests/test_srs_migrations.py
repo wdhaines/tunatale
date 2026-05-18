@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 21
+        assert CURRENT_VERSION == 22
 
     def test_migrates_v15_to_v16_deletes_phantom_directions(self, tmp_path):
         """v16 deletes direction rows that were auto-filled by the pre-fix
@@ -297,6 +297,42 @@ class TestMigrations:
         # Idempotent
         migrate_v20_to_v21(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 21
+
+    def test_migrates_v21_to_v22_expands_media_kind(self, tmp_path):
+        """v22 recreates media table without CHECK constraint, allowing audio_tts_sentence."""
+        import sqlite3
+
+        from app.srs.migrations import _set_version, migrate_v21_to_v22
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.row_factory = sqlite3.Row
+        conn.execute("""CREATE TABLE media (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            collocation_id INTEGER,
+            kind TEXT NOT NULL CHECK(kind IN ('image','audio_forvo','audio_tts')),
+            filename TEXT NOT NULL,
+            path TEXT,
+            anki_filename TEXT,
+            sha256 TEXT,
+            bytes INTEGER,
+            created_at TEXT DEFAULT (datetime('now'))
+        )""")
+        conn.execute("INSERT INTO media (kind, filename) VALUES ('audio_tts', 'tts_test.mp3')")
+        _set_version(conn, 21)
+
+        migrate_v21_to_v22(conn)
+
+        # Verify we can insert audio_tts_sentence now
+        conn.execute(
+            "INSERT INTO media (collocation_id, kind, filename) VALUES (1, 'audio_tts_sentence', 'tts_sentence_abc.mp3')",
+        )
+        rows = conn.execute("SELECT kind FROM media WHERE kind = 'audio_tts_sentence'").fetchall()
+        assert len(rows) == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 22
+
+        # Idempotent
+        migrate_v21_to_v22(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 22
 
     def test_migrates_v14_to_v15_fills_null_lemma(self, tmp_path):
         """v15 fills lemma for single-word rows that have lemma=NULL."""

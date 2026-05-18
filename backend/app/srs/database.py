@@ -754,6 +754,15 @@ class SRSDatabase:
             ).fetchone()
         return row["filename"] if row is not None else None
 
+    def get_sentence_audio_filename(self, collocation_id: int) -> str | None:
+        """Return filename of the audio_tts_sentence media row, or None."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT filename FROM media WHERE collocation_id = ? AND kind = 'audio_tts_sentence' LIMIT 1",
+                (collocation_id,),
+            ).fetchone()
+        return row["filename"] if row is not None else None
+
     def get_created_at_by_guid(self, guid: str) -> str | None:
         """Return the ISO timestamp from collocations.created_at for the given guid,
         or None if no row matches. Used by sync_create_new to sort items so newer

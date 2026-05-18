@@ -233,6 +233,52 @@ describe("DrillCard", () => {
       expect(await findByText("every")).toBeTruthy();
     });
 
+    it("reveal shows word audio button when word_audio_url is present", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({
+        text: "vsak",
+        translation: "every",
+        card_type: "cloze",
+        source_sentence: "Odprto je vsak dan",
+        source_sentence_translation: "It is open every day",
+        audio_url: "/api/media/sentence.mp3",
+        word_audio_url: "/api/media/tts_vsak.mp3",
+      });
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "production",
+        onRate,
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      const audios = container.querySelectorAll("audio");
+      expect(audios.length).toBe(2);
+      const wordBtn = container.querySelector('button[aria-label="Play word audio"]');
+      expect(wordBtn).toBeTruthy();
+      expect(container.textContent).toContain("vsak");
+    });
+
+    it("reveal renders gracefully without word_audio_url", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({
+        text: "še",
+        translation: "still",
+        card_type: "cloze",
+        source_sentence: "Ja, še nisem videl.",
+        source_sentence_translation: "Yes, I haven't seen yet.",
+        audio_url: "/api/media/sentence.mp3",
+      });
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "production",
+        onRate,
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      const audios = container.querySelectorAll("audio");
+      expect(audios.length).toBe(1);
+      const wordBtn = container.querySelector('button[aria-label="Play word audio"]');
+      expect(wordBtn).toBeNull();
+    });
+
     it("masks non-ASCII Slovene word (še) with Unicode-aware word boundary", async () => {
       const onRate = vi.fn().mockResolvedValue(undefined);
       const item = makeSRSItemDetail({

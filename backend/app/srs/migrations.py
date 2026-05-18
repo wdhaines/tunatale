@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 21
+CURRENT_VERSION = 22
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -599,6 +599,54 @@ def migrate_v20_to_v21(conn: sqlite3.Connection) -> None:
     _set_version(conn, 21)
 
 
+def migrate_v21_to_v22(conn: sqlite3.Connection) -> None:
+    """Expand media.kind CHECK constraint to allow 'audio_tts_sentence'.
+
+    The v1→v2 migration created media with a CHECK constraint restricting kind
+    to ('image','audio_forvo','audio_tts'), which rejects 'audio_tts_sentence'.
+    This migration recreates the table without the CHECK. No data is moved —
+    the schema is the same except for the constraint. See the v3→v4 pattern.
+    """
+    # Heuristic: if any row already uses the new kind, we've already migrated.
+    row = conn.execute(
+        "SELECT COUNT(*) FROM media WHERE kind = 'audio_tts_sentence'",
+    ).fetchone()
+    if row and row[0] > 0:
+        _set_version(conn, 22)
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("""
+            CREATE TABLE _media_v22 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                collocation_id INTEGER REFERENCES collocations(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                path TEXT,
+                anki_filename TEXT,
+                sha256 TEXT,
+                bytes INTEGER,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            INSERT INTO _media_v22
+                (id, collocation_id, kind, filename, path, anki_filename, sha256, bytes, created_at)
+            SELECT id, collocation_id, kind, filename, path, anki_filename, sha256, bytes, created_at
+            FROM media
+        """)
+        for idx in ("idx_media_collocation", "idx_media_anki_filename"):
+            conn.execute(f"DROP INDEX IF EXISTS {idx}")
+        conn.execute("DROP TABLE media")
+        conn.execute("ALTER TABLE _media_v22 RENAME TO media")
+        conn.execute("CREATE INDEX idx_media_collocation ON media(collocation_id)")
+        conn.execute("CREATE INDEX idx_media_anki_filename ON media(anki_filename)")
+        _set_version(conn, 22)
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -621,6 +669,7 @@ _MIGRATIONS = {
     18: migrate_v18_to_v19,
     19: migrate_v19_to_v20,
     20: migrate_v20_to_v21,
+    21: migrate_v21_to_v22,
 }
 
 

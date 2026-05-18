@@ -157,6 +157,7 @@ export interface SRSItemDetail {
   source_sentence_translation?: string;
   image_url?: string | null;
   audio_url?: string | null;
+  word_audio_url?: string | null;
   grammar?: string;
   note?: string;
 }
