@@ -1221,6 +1221,16 @@ class AnkiSync:
                 resolution=resolution,
             )
 
+    def _pull_unbury_sweep(self, dry_run: bool) -> None:
+        """Anki-parity daily unbury sweep. Run BEFORE processing Anki records.
+
+        The idempotency guard in ``unbury_if_needed`` prevents re-sweep within the
+        same day, so state='buried' rows set by the current pull (today's sibling-
+        buries from Anki) stick.
+        """
+        if not dry_run:
+            self._db.unbury_if_needed(date.today())
+
     def _pull_advance_learning_cutoff(self, max_revlog_ms: int, dry_run: bool) -> None:
         """Advance the learning cutoff to the most recent Anki revlog timestamp ingested.
 
@@ -1262,12 +1272,7 @@ class AnkiSync:
             "buried_state_match_no_write": 0,  # both BURIED, all fields incl. kind match
         }
 
-        # Anki-parity daily unbury sweep. Run BEFORE processing Anki records so
-        # that any state='buried' rows that this pull lands (today's sibling-
-        # buries from Anki) stick — the idempotency guard prevents re-sweep
-        # later within the same day.
-        if not dry_run:
-            self._db.unbury_if_needed(date.today())
+        self._pull_unbury_sweep(dry_run)
 
         # Local-today's UTC start, used to infer `prior_state='new'` for cards
         # whose first revlog is today but TT lost the transition (synced before
