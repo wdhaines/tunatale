@@ -39,6 +39,10 @@ _NEW_SPREAD_FIELD = 30  # VARINT uint32 (0=mix, 1=after_reviews, 2=before_review
 _DESIRED_RETENTION_FIELD = 37  # FIXED32 float — per /tmp/anki-source/proto/anki/deck_config.proto:188
 # Field 40 is historical_retention; pre-2026-05-16 code read 40 thinking it was desired_retention.
 
+# Protobuf wire types
+_WIRE_TYPE_VARINT = 0
+_WIRE_TYPE_FIXED32 = 5
+
 
 def _read_conf_id_for_deck(conn: sqlite3.Connection, deck_name: str) -> int | None:
     """Return the conf_id for the given deck name, or None if not found.
@@ -225,7 +229,9 @@ def _read_fsrs_params_from_deck_config_table(conn: sqlite3.Connection, deck_name
 
 def _read_new_per_day_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> int | None:
     """Read new-per-day (field 9 VARINT) from deck_config.config."""
-    return _read_config_value_from_deck_config_table(conn, deck_name, proto_field=_NEW_PER_DAY_FIELD, wire_type=0)
+    return _read_config_value_from_deck_config_table(
+        conn, deck_name, proto_field=_NEW_PER_DAY_FIELD, wire_type=_WIRE_TYPE_VARINT
+    )
 
 
 def _read_new_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int | None:
@@ -235,7 +241,7 @@ def _read_new_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int
     format (deck_config table, Anki =2.1.55).
     """
     return _read_config_value_from_deck_config_table(
-        conn, deck_name, proto_field=_NEW_PER_DAY_FIELD, wire_type=0, legacy_keys=("new", "perDay")
+        conn, deck_name, proto_field=_NEW_PER_DAY_FIELD, wire_type=_WIRE_TYPE_VARINT, legacy_keys=("new", "perDay")
     )
 
 
@@ -248,7 +254,9 @@ def refresh_daily_new_cap(db: SRSDatabase, conn: sqlite3.Connection, deck_name: 
 
 def _read_reviews_per_day_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> int | None:
     """Read reviews-per-day (field 10 VARINT) from deck_config.config."""
-    return _read_config_value_from_deck_config_table(conn, deck_name, proto_field=_REVIEWS_PER_DAY_FIELD, wire_type=0)
+    return _read_config_value_from_deck_config_table(
+        conn, deck_name, proto_field=_REVIEWS_PER_DAY_FIELD, wire_type=_WIRE_TYPE_VARINT
+    )
 
 
 def _read_reviews_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int | None:
@@ -259,7 +267,7 @@ def _read_reviews_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) ->
     but reads rev.perDay instead of new.perDay.
     """
     return _read_config_value_from_deck_config_table(
-        conn, deck_name, proto_field=_REVIEWS_PER_DAY_FIELD, wire_type=0, legacy_keys=("rev", "perDay")
+        conn, deck_name, proto_field=_REVIEWS_PER_DAY_FIELD, wire_type=_WIRE_TYPE_VARINT, legacy_keys=("rev", "perDay")
     )
 
 
@@ -273,7 +281,9 @@ def refresh_daily_review_cap(db: SRSDatabase, conn: sqlite3.Connection, deck_nam
 
 def _read_desired_retention_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> float | None:
     """Read FSRS desired_retention (field 37 FIXED32) from deck_config.config."""
-    return _read_config_value_from_deck_config_table(conn, deck_name, proto_field=_DESIRED_RETENTION_FIELD, wire_type=5)
+    return _read_config_value_from_deck_config_table(
+        conn, deck_name, proto_field=_DESIRED_RETENTION_FIELD, wire_type=_WIRE_TYPE_FIXED32
+    )
 
 
 def refresh_desired_retention(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
