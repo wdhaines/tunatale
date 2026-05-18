@@ -27,8 +27,15 @@ if TYPE_CHECKING:
 _CACHE_MAX_AGE_DAYS = 30
 
 # Field numbers in DeckConfig.Config protobuf (Anki ≥24.04)
+_LEARN_STEPS_FIELD = 1  # VARINT uint32 → packed float (learn steps in minutes)
+_RELEARN_STEPS_FIELD = 2  # VARINT uint32 → packed float (relearn steps in minutes)
 _FSRS5_WEIGHTS_FIELD = 5  # LEN-delimited packed f32; 19 floats for FSRS-5
 _FSRS6_WEIGHTS_FIELD = 6  # LEN-delimited packed f32; 21 floats for FSRS-6
+_NEW_PER_DAY_FIELD = 9  # VARINT uint32
+_REVIEWS_PER_DAY_FIELD = 10  # VARINT uint32
+_BURY_NEW_FIELD = 27  # VARINT bool
+_BURY_REVIEW_FIELD = 28  # VARINT bool
+_NEW_SPREAD_FIELD = 30  # VARINT uint32 (0=mix, 1=after_reviews, 2=before_reviews)
 _DESIRED_RETENTION_FIELD = 37  # FIXED32 float — per /tmp/anki-source/proto/anki/deck_config.proto:188
 # Field 40 is historical_retention; pre-2026-05-16 code read 40 thinking it was desired_retention.
 
@@ -218,7 +225,7 @@ def _read_fsrs_params_from_deck_config_table(conn: sqlite3.Connection, deck_name
 
 def _read_new_per_day_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> int | None:
     """Read new-per-day (field 9 VARINT) from deck_config.config."""
-    return _read_config_value_from_deck_config_table(conn, deck_name, proto_field=9, wire_type=0)
+    return _read_config_value_from_deck_config_table(conn, deck_name, proto_field=_NEW_PER_DAY_FIELD, wire_type=0)
 
 
 def _read_new_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int | None:
@@ -228,7 +235,7 @@ def _read_new_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int
     format (deck_config table, Anki =2.1.55).
     """
     return _read_config_value_from_deck_config_table(
-        conn, deck_name, proto_field=9, wire_type=0, legacy_keys=("new", "perDay")
+        conn, deck_name, proto_field=_NEW_PER_DAY_FIELD, wire_type=0, legacy_keys=("new", "perDay")
     )
 
 
@@ -237,9 +244,6 @@ def refresh_daily_new_cap(db: SRSDatabase, conn: sqlite3.Connection, deck_name: 
     cap = _read_new_per_day_from_anki(conn, deck_name)
     if cap is not None:
         db.set_anki_state_cache("daily_new_cap", str(cap))
-
-
-_REVIEWS_PER_DAY_FIELD = 10  # VARINT uint32 in DeckConfig.Config
 
 
 def _read_reviews_per_day_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> int | None:
@@ -362,18 +366,15 @@ def refresh_review_settings(db: SRSDatabase, conn: sqlite3.Connection, deck_name
 
     config_blob = bytes(config_row[0]) if isinstance(config_row[0], memoryview) else config_row[0]
 
-    # new_mix (newSpread): field 30 (VARINT) — 0=mix, 1=after_reviews, 2=before_reviews
-    new_spread = find_varint_field(config_blob, 30)
+    new_spread = find_varint_field(config_blob, _NEW_SPREAD_FIELD)
     if new_spread is not None and new_spread in (0, 1, 2):
         db.set_anki_state_cache("new_spread", str(new_spread))
 
-    # bury_new: field 27 (VARINT/bool) — default false
-    bury_new_raw = find_varint_field(config_blob, 27)
+    bury_new_raw = find_varint_field(config_blob, _BURY_NEW_FIELD)
     if bury_new_raw is not None:
         db.set_anki_state_cache("bury_new", str(bool(bury_new_raw)))
 
-    # bury_reviews: field 28 (VARINT/bool) — default false
-    bury_reviews_raw = find_varint_field(config_blob, 28)
+    bury_reviews_raw = find_varint_field(config_blob, _BURY_REVIEW_FIELD)
     if bury_reviews_raw is not None:
         db.set_anki_state_cache("bury_review", str(bool(bury_reviews_raw)))
 
@@ -647,11 +648,6 @@ def resolve_fsrs_params(db: SRSDatabase | None = None) -> tuple[FSRSParams, str]
                 pass
 
     return (DEFAULT_FSRS5_PARAMS, "default")
-
-
-# Field numbers in DeckConfig.Config protobuf for learning steps
-_LEARN_STEPS_FIELD = 1  # packed float: learn steps in minutes
-_RELEARN_STEPS_FIELD = 2  # packed float: relearn steps in minutes
 
 
 def _read_learning_steps_from_deck_config_table(
