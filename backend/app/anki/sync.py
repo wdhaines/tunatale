@@ -1257,6 +1257,329 @@ class AnkiSync:
             * 1000
         )
 
+    def _pull_merge_direction(
+        self,
+        card_rec: CardRecord,
+        local_dir: DirectionState,
+        guid: str,
+        direction: Direction,
+        resolved_last_review: datetime | None,
+        today_start_ms: int,
+        anki_last_ms: int,
+        report: PullReport,
+        dry_run: bool,
+    ) -> DirectionState:
+        """Compute the merged DirectionState for a single card during sync_pull.
+
+        Handles the 9-branch decision tree (dirty_fsrs timestamp conflict,
+        suspension, bury, state-class divergence, step progress, fsrs_known,
+        and the default fsrs_unknown path). The caller owns BURY_TRACE,
+        bury_stats, _direction_differs, and the DB write.
+        """
+        local_last_ms = int(local_dir.last_review.timestamp() * 1000) if local_dir.last_review else 0
+
+        if local_dir.dirty_fsrs and anki_last_ms > local_last_ms:
+            new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
+            new_dir_state = DirectionState(
+                direction=direction,
+                due_date=card_rec.due_date,
+                stability=card_rec.stability,
+                difficulty=card_rec.difficulty,
+                reps=card_rec.reps,
+                lapses=card_rec.lapses,
+                state=new_state,
+                prior_state=_resolve_prior_state(
+                    local_dir,
+                    new_state,
+                    first_review_ms=card_rec.first_review_ms,
+                    today_start_ms=today_start_ms,
+                ),
+                introduced_at=_resolve_introduced_at(
+                    local_dir,
+                    new_state,
+                    first_review_ms=card_rec.first_review_ms,
+                ),
+                dirty_fsrs=False,
+                anki_card_id=card_rec.anki_card_id,
+                anki_card_mod=card_rec.anki_card_mod,
+                anki_due=card_rec.anki_due,
+                last_review=local_dir.last_review,
+                last_review_time_ms=local_dir.last_review_time_ms,
+                last_synced_at=datetime.now(UTC).isoformat(),
+                last_rating=local_dir.last_rating,
+                left=card_rec.left,
+                due_at=card_rec.due_at,
+                bury_kind=_bury_kind_from_queue(card_rec.queue),
+            )
+            self._record_conflict(
+                report,
+                guid=guid,
+                direction=direction.value,
+                field="schedule",
+                local=str(local_dir.last_review),
+                remote=str(card_rec.last_review),
+                resolution="anki_wins_by_timestamp",
+                dry_run=dry_run,
+            )
+            return new_dir_state
+
+        if local_dir.dirty_fsrs:
+            anki_in_learning = card_rec.queue in (1, 3)
+            local_in_learning = local_dir.state in (SRSState.LEARNING, SRSState.RELEARNING)
+
+            if card_rec.queue == -1:
+                return replace(
+                    local_dir,
+                    state=SRSState.SUSPENDED,
+                    prior_state=_resolve_prior_state(
+                        local_dir,
+                        SRSState.SUSPENDED,
+                        first_review_ms=card_rec.first_review_ms,
+                        today_start_ms=today_start_ms,
+                    ),
+                    introduced_at=_resolve_introduced_at(
+                        local_dir,
+                        SRSState.SUSPENDED,
+                        first_review_ms=card_rec.first_review_ms,
+                    ),
+                    anki_card_id=card_rec.anki_card_id,
+                    anki_card_mod=card_rec.anki_card_mod,
+                    anki_due=card_rec.anki_due,
+                    last_synced_at=datetime.now(UTC).isoformat(),
+                    bury_kind=None,
+                )
+
+            if card_rec.queue in (-2, -3):
+                return replace(
+                    local_dir,
+                    state=SRSState.BURIED,
+                    prior_state=_resolve_prior_state(
+                        local_dir,
+                        SRSState.BURIED,
+                        first_review_ms=card_rec.first_review_ms,
+                        today_start_ms=today_start_ms,
+                    ),
+                    introduced_at=_resolve_introduced_at(
+                        local_dir,
+                        SRSState.BURIED,
+                        first_review_ms=card_rec.first_review_ms,
+                    ),
+                    anki_card_id=card_rec.anki_card_id,
+                    anki_card_mod=card_rec.anki_card_mod,
+                    anki_due=card_rec.anki_due,
+                    last_synced_at=datetime.now(UTC).isoformat(),
+                    bury_kind=_bury_kind_from_queue(card_rec.queue),
+                )
+
+            if anki_in_learning and not local_in_learning:
+                new_state = (
+                    SRSState.RELEARNING if (card_rec.queue == 3 or card_rec.card_type == 3) else SRSState.LEARNING
+                )
+                new_dir_state = DirectionState(
+                    direction=direction,
+                    due_date=card_rec.due_date,
+                    stability=card_rec.stability,
+                    difficulty=card_rec.difficulty,
+                    reps=card_rec.reps,
+                    lapses=card_rec.lapses,
+                    state=new_state,
+                    prior_state=_resolve_prior_state(
+                        local_dir,
+                        new_state,
+                        first_review_ms=card_rec.first_review_ms,
+                        today_start_ms=today_start_ms,
+                    ),
+                    introduced_at=_resolve_introduced_at(
+                        local_dir,
+                        new_state,
+                        first_review_ms=card_rec.first_review_ms,
+                    ),
+                    dirty_fsrs=False,
+                    anki_card_id=card_rec.anki_card_id,
+                    anki_card_mod=card_rec.anki_card_mod,
+                    anki_due=card_rec.anki_due,
+                    last_review=resolved_last_review,
+                    last_synced_at=datetime.now(UTC).isoformat(),
+                    left=card_rec.left,
+                    due_at=card_rec.due_at,
+                    bury_kind=_bury_kind_from_queue(card_rec.queue),
+                )
+                self._record_conflict(
+                    report,
+                    guid=guid,
+                    direction=direction.value,
+                    field="state_class",
+                    local=local_dir.state.value,
+                    remote=new_state.value,
+                    resolution="anki_wins_state_class_divergence",
+                    dry_run=dry_run,
+                )
+                return new_dir_state
+
+            if local_in_learning and card_rec.queue == 2:
+                new_dir_state = DirectionState(
+                    direction=direction,
+                    due_date=card_rec.due_date,
+                    stability=card_rec.stability,
+                    difficulty=card_rec.difficulty,
+                    reps=card_rec.reps,
+                    lapses=card_rec.lapses,
+                    state=SRSState.REVIEW,
+                    prior_state=_resolve_prior_state(
+                        local_dir,
+                        SRSState.REVIEW,
+                        first_review_ms=card_rec.first_review_ms,
+                        today_start_ms=today_start_ms,
+                    ),
+                    introduced_at=_resolve_introduced_at(
+                        local_dir,
+                        SRSState.REVIEW,
+                        first_review_ms=card_rec.first_review_ms,
+                    ),
+                    dirty_fsrs=False,
+                    anki_card_id=card_rec.anki_card_id,
+                    anki_card_mod=card_rec.anki_card_mod,
+                    anki_due=card_rec.anki_due,
+                    last_review=resolved_last_review,
+                    last_synced_at=datetime.now(UTC).isoformat(),
+                    left=card_rec.left,
+                    due_at=card_rec.due_at,
+                    bury_kind=None,
+                )
+                self._record_conflict(
+                    report,
+                    guid=guid,
+                    direction=direction.value,
+                    field="state_class",
+                    local=local_dir.state.value,
+                    remote=SRSState.REVIEW.value,
+                    resolution="anki_wins_state_class_divergence",
+                    dry_run=dry_run,
+                )
+                return new_dir_state
+
+            if anki_in_learning and local_in_learning and _anki_step_ahead(card_rec.left, local_dir.left):
+                new_dir_state = replace(
+                    local_dir,
+                    stability=card_rec.stability,
+                    difficulty=card_rec.difficulty,
+                    reps=card_rec.reps,
+                    lapses=card_rec.lapses,
+                    left=card_rec.left,
+                    due_at=card_rec.due_at,
+                    prior_state=_resolve_prior_state(
+                        local_dir,
+                        local_dir.state,
+                        first_review_ms=card_rec.first_review_ms,
+                        today_start_ms=today_start_ms,
+                    ),
+                    introduced_at=_resolve_introduced_at(
+                        local_dir,
+                        local_dir.state,
+                        first_review_ms=card_rec.first_review_ms,
+                    ),
+                    dirty_fsrs=False,
+                    anki_card_id=card_rec.anki_card_id,
+                    anki_card_mod=card_rec.anki_card_mod,
+                    anki_due=card_rec.anki_due,
+                    last_review=resolved_last_review,
+                    last_synced_at=datetime.now(UTC).isoformat(),
+                )
+                self._record_conflict(
+                    report,
+                    guid=guid,
+                    direction=direction.value,
+                    field="step_progress",
+                    local=str(local_dir.left),
+                    remote=str(card_rec.left),
+                    resolution="anki_wins_step_progress",
+                    dry_run=dry_run,
+                )
+                return new_dir_state
+
+            return replace(
+                local_dir,
+                state=local_dir.state,
+                prior_state=_resolve_prior_state(
+                    local_dir,
+                    local_dir.state,
+                    first_review_ms=card_rec.first_review_ms,
+                    today_start_ms=today_start_ms,
+                ),
+                introduced_at=_resolve_introduced_at(
+                    local_dir,
+                    local_dir.state,
+                    first_review_ms=card_rec.first_review_ms,
+                ),
+                anki_card_id=card_rec.anki_card_id,
+                anki_card_mod=card_rec.anki_card_mod,
+                anki_due=card_rec.anki_due,
+                last_synced_at=datetime.now(UTC).isoformat(),
+            )
+
+        if card_rec.fsrs_known:
+            new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
+            return DirectionState(
+                direction=direction,
+                due_date=card_rec.due_date,
+                stability=card_rec.stability,
+                difficulty=card_rec.difficulty,
+                reps=card_rec.reps,
+                lapses=card_rec.lapses,
+                state=new_state,
+                prior_state=_resolve_prior_state(
+                    local_dir,
+                    new_state,
+                    first_review_ms=card_rec.first_review_ms,
+                    today_start_ms=today_start_ms,
+                ),
+                introduced_at=_resolve_introduced_at(
+                    local_dir,
+                    new_state,
+                    first_review_ms=card_rec.first_review_ms,
+                ),
+                dirty_fsrs=False,
+                anki_card_id=card_rec.anki_card_id,
+                anki_card_mod=card_rec.anki_card_mod,
+                anki_due=card_rec.anki_due,
+                last_review=resolved_last_review,
+                last_synced_at=datetime.now(UTC).isoformat(),
+                left=card_rec.left,
+                due_at=card_rec.due_at,
+                bury_kind=_bury_kind_from_queue(card_rec.queue),
+            )
+
+        new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
+        return DirectionState(
+            direction=direction,
+            due_date=card_rec.due_date,
+            stability=local_dir.stability,
+            difficulty=local_dir.difficulty,
+            reps=card_rec.reps,
+            lapses=card_rec.lapses,
+            state=new_state,
+            prior_state=_resolve_prior_state(
+                local_dir,
+                new_state,
+                first_review_ms=card_rec.first_review_ms,
+                today_start_ms=today_start_ms,
+            ),
+            introduced_at=_resolve_introduced_at(
+                local_dir,
+                new_state,
+                first_review_ms=card_rec.first_review_ms,
+            ),
+            dirty_fsrs=False,
+            anki_card_id=card_rec.anki_card_id,
+            anki_card_mod=card_rec.anki_card_mod,
+            anki_due=card_rec.anki_due,
+            last_review=resolved_last_review,
+            last_synced_at=datetime.now(UTC).isoformat(),
+            left=card_rec.left,
+            due_at=card_rec.due_at,
+            bury_kind=_bury_kind_from_queue(card_rec.queue),
+        )
+
     def _pull_advance_learning_cutoff(self, max_revlog_ms: int, dry_run: bool) -> None:
         """Advance the learning cutoff to the most recent Anki revlog timestamp ingested.
 
@@ -1366,282 +1689,21 @@ class AnkiSync:
                 if local_dir is None:
                     continue
 
-                def _prior(
-                    local_dir: DirectionState,
-                    new_state: SRSState,
-                    _first_review_ms: int = card_rec.first_review_ms,
-                    _today_start_ms: int = today_start_ms,
-                ) -> SRSState | None:
-                    return _resolve_prior_state(
-                        local_dir,
-                        new_state,
-                        first_review_ms=_first_review_ms,
-                        today_start_ms=_today_start_ms,
-                    )
-
-                def _intro_at(
-                    local_dir: DirectionState,
-                    new_state: SRSState,
-                    _first_review_ms: int = card_rec.first_review_ms,
-                ) -> datetime | None:
-                    return _resolve_introduced_at(
-                        local_dir,
-                        new_state,
-                        first_review_ms=_first_review_ms,
-                    )
-
-                # Compute timestamps for conflict resolution
-                local_last_ms = int(local_dir.last_review.timestamp() * 1000) if local_dir.last_review else 0
                 anki_last_ms = card_rec.last_review_ms or 0
                 if anki_last_ms > max_revlog_ms:
                     max_revlog_ms = anki_last_ms
 
-                # `card_rec.last_review` is the FSRS-scheduler-effective timestamp
-                # — populated from cards.data.lrt by `parse_fsrs_data` when
-                # available, else day-level via `_compute_last_review`. This is
-                # what Anki's `extract_fsrs_retrievability` SQL uses for R, so
-                # mirroring it gives R-asc parity. The earlier Layer-10
-                # preference for MAX(revlog.id) per card was wrong: for cards
-                # graded multiple times in one session (Again → relearning step
-                # → Hard), revlog-max advances on every step while lrt sticks
-                # to the FSRS-touched grade, producing shorter elapsed → higher
-                # R → wrong R-asc position.
-                resolved_last_review = card_rec.last_review
-
-                if local_dir.dirty_fsrs and anki_last_ms > local_last_ms:
-                    # Anki's review is newer than TunaTale's pending grade.
-                    # Anki wins for cards.due/ivl/factor. TunaTale's grade still
-                    # becomes a revlog row in Anki (push will handle it).
-                    new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
-                    new_dir_state = DirectionState(
-                        direction=direction,
-                        due_date=card_rec.due_date,
-                        stability=card_rec.stability,
-                        difficulty=card_rec.difficulty,
-                        reps=card_rec.reps,
-                        lapses=card_rec.lapses,
-                        state=new_state,
-                        prior_state=_prior(local_dir, new_state),
-                        introduced_at=_intro_at(local_dir, new_state),
-                        dirty_fsrs=False,  # cleared so push won't overwrite Anki
-                        anki_card_id=card_rec.anki_card_id,
-                        anki_card_mod=card_rec.anki_card_mod,
-                        anki_due=card_rec.anki_due,
-                        last_review=local_dir.last_review,  # preserve TunaTale's timestamp for revlog ID
-                        last_review_time_ms=local_dir.last_review_time_ms,  # preserve duration
-                        last_synced_at=datetime.now(UTC).isoformat(),
-                        last_rating=local_dir.last_rating,  # preserve for push revlog
-                        left=card_rec.left,
-                        due_at=card_rec.due_at,
-                        bury_kind=_bury_kind_from_queue(card_rec.queue),
-                    )
-                    self._record_conflict(
-                        report,
-                        guid=guid,
-                        direction=direction.value,
-                        field="schedule",
-                        local=str(local_dir.last_review),
-                        remote=str(card_rec.last_review),
-                        resolution="anki_wins_by_timestamp",
-                        dry_run=dry_run,
-                    )
-                elif local_dir.dirty_fsrs:
-                    # TunaTale's grade is the latest event. Preserve local FSRS,
-                    # let push flush. (anki_card_id / anki_due / last_synced_at refresh.)
-                    # Still apply Anki's bury/suspend state if present — these are
-                    # manual user actions that must win regardless of timestamp.
-                    anki_in_learning = card_rec.queue in (1, 3)
-                    local_in_learning = local_dir.state in (SRSState.LEARNING, SRSState.RELEARNING)
-
-                    if card_rec.queue == -1:
-                        new_dir_state = replace(
-                            local_dir,
-                            state=SRSState.SUSPENDED,
-                            prior_state=_prior(local_dir, SRSState.SUSPENDED),
-                            introduced_at=_intro_at(local_dir, SRSState.SUSPENDED),
-                            anki_card_id=card_rec.anki_card_id,
-                            anki_card_mod=card_rec.anki_card_mod,
-                            anki_due=card_rec.anki_due,
-                            last_synced_at=datetime.now(UTC).isoformat(),
-                            bury_kind=None,
-                        )
-                    elif card_rec.queue in (-2, -3):
-                        new_dir_state = replace(
-                            local_dir,
-                            state=SRSState.BURIED,
-                            prior_state=_prior(local_dir, SRSState.BURIED),
-                            introduced_at=_intro_at(local_dir, SRSState.BURIED),
-                            anki_card_id=card_rec.anki_card_id,
-                            anki_card_mod=card_rec.anki_card_mod,
-                            anki_due=card_rec.anki_due,
-                            last_synced_at=datetime.now(UTC).isoformat(),
-                            bury_kind=_bury_kind_from_queue(card_rec.queue),
-                        )
-                    elif anki_in_learning and not local_in_learning:
-                        # State-class divergence: Anki has the card mid-learning but
-                        # the local grade graduated it. The local grade was applied
-                        # against a stale prior state (the missing-left/due_at bug);
-                        # preserving and pushing it would erase Anki's learning step.
-                        # Defer to Anki, drop the local grade, surface a conflict.
-                        new_state = (
-                            SRSState.RELEARNING
-                            if (card_rec.queue == 3 or card_rec.card_type == 3)
-                            else SRSState.LEARNING
-                        )
-                        new_dir_state = DirectionState(
-                            direction=direction,
-                            due_date=card_rec.due_date,
-                            stability=card_rec.stability,
-                            difficulty=card_rec.difficulty,
-                            reps=card_rec.reps,
-                            lapses=card_rec.lapses,
-                            state=new_state,
-                            prior_state=_prior(local_dir, new_state),
-                            introduced_at=_intro_at(local_dir, new_state),
-                            dirty_fsrs=False,
-                            anki_card_id=card_rec.anki_card_id,
-                            anki_card_mod=card_rec.anki_card_mod,
-                            anki_due=card_rec.anki_due,
-                            last_review=resolved_last_review,
-                            last_synced_at=datetime.now(UTC).isoformat(),
-                            left=card_rec.left,
-                            due_at=card_rec.due_at,
-                            bury_kind=_bury_kind_from_queue(card_rec.queue),
-                        )
-                        self._record_conflict(
-                            report,
-                            guid=guid,
-                            direction=direction.value,
-                            field="state_class",
-                            local=local_dir.state.value,
-                            remote=new_state.value,
-                            resolution="anki_wins_state_class_divergence",
-                            dry_run=dry_run,
-                        )
-                    elif local_in_learning and card_rec.queue == 2:
-                        # Inverse state-class divergence: local thinks LEARNING but
-                        # Anki has already graduated (queue=2). Anki has more
-                        # progress; TT's pending grade is stale. Same shape as
-                        # the previous branch — Anki wins, drop dirty, surface a
-                        # conflict so the divergence is visible.
-                        new_dir_state = DirectionState(
-                            direction=direction,
-                            due_date=card_rec.due_date,
-                            stability=card_rec.stability,
-                            difficulty=card_rec.difficulty,
-                            reps=card_rec.reps,
-                            lapses=card_rec.lapses,
-                            state=SRSState.REVIEW,
-                            prior_state=_prior(local_dir, SRSState.REVIEW),
-                            introduced_at=_intro_at(local_dir, SRSState.REVIEW),
-                            dirty_fsrs=False,
-                            anki_card_id=card_rec.anki_card_id,
-                            anki_card_mod=card_rec.anki_card_mod,
-                            anki_due=card_rec.anki_due,
-                            last_review=resolved_last_review,
-                            last_synced_at=datetime.now(UTC).isoformat(),
-                            left=card_rec.left,
-                            due_at=card_rec.due_at,
-                            bury_kind=None,
-                        )
-                        self._record_conflict(
-                            report,
-                            guid=guid,
-                            direction=direction.value,
-                            field="state_class",
-                            local=local_dir.state.value,
-                            remote=SRSState.REVIEW.value,
-                            resolution="anki_wins_state_class_divergence",
-                            dry_run=dry_run,
-                        )
-                    elif anki_in_learning and local_in_learning and _anki_step_ahead(card_rec.left, local_dir.left):
-                        # Both in learning, but Anki has graded the card more
-                        # times than TT (smaller total_remaining). Take Anki's
-                        # left/due_at + FSRS state; clear dirty_fsrs so push
-                        # doesn't write TT's stale view back over Anki's
-                        # progress. Surface as a "step_progress" conflict.
-                        new_dir_state = replace(
-                            local_dir,
-                            stability=card_rec.stability,
-                            difficulty=card_rec.difficulty,
-                            reps=card_rec.reps,
-                            lapses=card_rec.lapses,
-                            left=card_rec.left,
-                            due_at=card_rec.due_at,
-                            prior_state=_prior(local_dir, local_dir.state),
-                            introduced_at=_intro_at(local_dir, local_dir.state),
-                            dirty_fsrs=False,
-                            anki_card_id=card_rec.anki_card_id,
-                            anki_card_mod=card_rec.anki_card_mod,
-                            anki_due=card_rec.anki_due,
-                            last_review=resolved_last_review,
-                            last_synced_at=datetime.now(UTC).isoformat(),
-                        )
-                        self._record_conflict(
-                            report,
-                            guid=guid,
-                            direction=direction.value,
-                            field="step_progress",
-                            local=str(local_dir.left),
-                            remote=str(card_rec.left),
-                            resolution="anki_wins_step_progress",
-                            dry_run=dry_run,
-                        )
-                    else:
-                        new_dir_state = replace(
-                            local_dir,
-                            state=local_dir.state,
-                            prior_state=_prior(local_dir, local_dir.state),
-                            introduced_at=_intro_at(local_dir, local_dir.state),
-                            anki_card_id=card_rec.anki_card_id,
-                            anki_card_mod=card_rec.anki_card_mod,
-                            anki_due=card_rec.anki_due,
-                            last_synced_at=datetime.now(UTC).isoformat(),
-                        )
-                elif card_rec.fsrs_known:
-                    new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
-                    new_dir_state = DirectionState(
-                        direction=direction,
-                        due_date=card_rec.due_date,
-                        stability=card_rec.stability,
-                        difficulty=card_rec.difficulty,
-                        reps=card_rec.reps,
-                        lapses=card_rec.lapses,
-                        state=new_state,
-                        prior_state=_prior(local_dir, new_state),
-                        introduced_at=_intro_at(local_dir, new_state),
-                        dirty_fsrs=False,
-                        anki_card_id=card_rec.anki_card_id,
-                        anki_card_mod=card_rec.anki_card_mod,
-                        anki_due=card_rec.anki_due,
-                        last_review=resolved_last_review,
-                        last_synced_at=datetime.now(UTC).isoformat(),
-                        left=card_rec.left,
-                        due_at=card_rec.due_at,
-                        bury_kind=_bury_kind_from_queue(card_rec.queue),
-                    )
-                else:
-                    new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
-                    new_dir_state = DirectionState(
-                        direction=direction,
-                        due_date=card_rec.due_date,
-                        stability=local_dir.stability,
-                        difficulty=local_dir.difficulty,
-                        reps=card_rec.reps,
-                        lapses=card_rec.lapses,
-                        state=new_state,
-                        prior_state=_prior(local_dir, new_state),
-                        introduced_at=_intro_at(local_dir, new_state),
-                        dirty_fsrs=False,
-                        anki_card_id=card_rec.anki_card_id,
-                        anki_card_mod=card_rec.anki_card_mod,
-                        anki_due=card_rec.anki_due,
-                        last_review=resolved_last_review,
-                        last_synced_at=datetime.now(UTC).isoformat(),
-                        left=card_rec.left,
-                        due_at=card_rec.due_at,
-                        bury_kind=_bury_kind_from_queue(card_rec.queue),
-                    )
+                new_dir_state = self._pull_merge_direction(
+                    card_rec,
+                    local_dir,
+                    guid,
+                    direction,
+                    card_rec.last_review,
+                    today_start_ms,
+                    anki_last_ms,
+                    report,
+                    dry_run,
+                )
                 differs = _direction_differs(local_dir, new_dir_state)
                 # Forensic trace for any direction whose Anki state OR TT state
                 # touches BURIED. Lets future investigators reconstruct exactly
