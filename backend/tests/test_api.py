@@ -809,7 +809,7 @@ class TestSRSEndpoints:
 
         items_without_anki = db.list_items_without_anki_note()
         assert len(items_without_anki) == 2
-        for _guid, item in items_without_anki:
+        for _guid, item, _coll_id in items_without_anki:
             assert item.anki_note_id is None
 
     async def test_listen_key_phrases_state_is_new_on_first_listen(self):

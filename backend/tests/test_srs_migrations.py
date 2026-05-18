@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 22
+        assert CURRENT_VERSION == 23
 
     def test_migrates_v15_to_v16_deletes_phantom_directions(self, tmp_path):
         """v16 deletes direction rows that were auto-filled by the pre-fix
@@ -333,6 +333,97 @@ class TestMigrations:
         # Idempotent
         migrate_v21_to_v22(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 22
+
+    def test_migrate_v22_to_v23_marks_audio_dirty_on_synthesized_cloze(self, tmp_path):
+        """v23 marks audio dirty on cloze rows with sentence audio + anki_note_id."""
+        import sqlite3
+
+        from app.srs.migrations import _set_version, migrate_v22_to_v23
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            CREATE TABLE collocations (
+                id INTEGER PRIMARY KEY,
+                guid TEXT,
+                card_type TEXT,
+                anki_note_id INTEGER,
+                dirty_fields TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE media (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                collocation_id INTEGER,
+                kind TEXT
+            )
+        """)
+        # Cloze with audio + anki_note_id → should be marked
+        conn.execute(
+            "INSERT INTO collocations (id, guid, card_type, anki_note_id, dirty_fields) VALUES (1, 'g1', 'cloze', 100, '')"
+        )
+        # Cloze without audio → should NOT be marked
+        conn.execute(
+            "INSERT INTO collocations (id, guid, card_type, anki_note_id, dirty_fields) VALUES (2, 'g2', 'cloze', 101, '')"
+        )
+        # Vocab with audio → should NOT be marked
+        conn.execute(
+            "INSERT INTO collocations (id, guid, card_type, anki_note_id, dirty_fields) VALUES (3, 'g3', 'vocab', 102, '')"
+        )
+        # Cloze with audio but no anki_note_id → should NOT be marked
+        conn.execute(
+            "INSERT INTO collocations (id, guid, card_type, anki_note_id, dirty_fields) VALUES (4, 'g4', 'cloze', NULL, '')"
+        )
+        conn.execute("INSERT INTO media (collocation_id, kind) VALUES (1, 'audio_tts_sentence')")
+        _set_version(conn, 22)
+
+        migrate_v22_to_v23(conn)
+
+        rows = {
+            r["id"]: r["dirty_fields"] for r in conn.execute("SELECT id, dirty_fields FROM collocations").fetchall()
+        }
+        assert rows[1] == "audio"  # cloze + audio + anki_note_id
+        assert rows[2] == ""  # cloze + no audio
+        assert rows[3] == ""  # vocab
+        assert rows[4] == ""  # cloze + no anki_note_id
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 23
+
+    def test_migrate_v22_to_v23_idempotent(self, tmp_path):
+        """Running v23 migration twice leaves dirty_fields unchanged."""
+        import sqlite3
+
+        from app.srs.migrations import _set_version, migrate_v22_to_v23
+
+        conn = sqlite3.connect(str(tmp_path / "test2.db"))
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            CREATE TABLE collocations (
+                id INTEGER PRIMARY KEY,
+                guid TEXT,
+                card_type TEXT,
+                anki_note_id INTEGER,
+                dirty_fields TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE media (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                collocation_id INTEGER,
+                kind TEXT
+            )
+        """)
+        conn.execute(
+            "INSERT INTO collocations (id, guid, card_type, anki_note_id, dirty_fields) VALUES (1, 'g1', 'cloze', 100, '')"
+        )
+        conn.execute("INSERT INTO media (collocation_id, kind) VALUES (1, 'audio_tts_sentence')")
+        _set_version(conn, 22)
+
+        migrate_v22_to_v23(conn)
+        migrate_v22_to_v23(conn)
+
+        rows = conn.execute("SELECT dirty_fields FROM collocations WHERE id = 1").fetchall()
+        assert rows[0]["dirty_fields"] == "audio"
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 23
 
     def test_migrates_v14_to_v15_fills_null_lemma(self, tmp_path):
         """v15 fills lemma for single-word rows that have lemma=NULL."""

@@ -1850,6 +1850,20 @@ class SRSDatabase:
             )
             self._commit(conn)
 
+    def add_dirty_field(self, guid: str, field: str) -> None:
+        """Append *field* to the comma-separated dirty_fields set (no dupes)."""
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT dirty_fields FROM collocations WHERE guid = ?", (guid,)).fetchone()
+            if row is None:
+                return
+            existing = {f for f in (row["dirty_fields"] or "").split(",") if f}
+            existing.add(field)
+            conn.execute(
+                "UPDATE collocations SET dirty_fields = ? WHERE guid = ?",
+                (",".join(sorted(existing)), guid),
+            )
+            self._commit(conn)
+
     def get_dirty_fields(self, guid: str) -> str:
         """Return dirty_fields for the collocation identified by guid, or ''."""
         with self._get_conn() as conn:
@@ -1901,18 +1915,19 @@ class SRSDatabase:
             )
             self._commit(conn)
 
-    def list_items_without_anki_note(self) -> list[tuple[str, SRSItem]]:
-        """Return (guid, SRSItem) for collocations with no anki_note_id set."""
+    def list_items_without_anki_note(self) -> list[tuple[str, SRSItem, int]]:
+        """Return (guid, SRSItem, id) for collocations with no anki_note_id set."""
         with self._get_conn() as conn:
             rows = conn.execute("SELECT * FROM collocations WHERE anki_note_id IS NULL").fetchall()
-            return [(row["guid"], self._row_to_item(conn, row)) for row in rows]
+            return [(row["guid"], self._row_to_item(conn, row), row["id"]) for row in rows]
 
-    def list_dirty_field_edits(self) -> list[tuple[str, int | None, str, SRSItem]]:
-        """Return (guid, anki_note_id, dirty_fields_str, SRSItem) for rows with non-empty dirty_fields."""
+    def list_dirty_field_edits(self) -> list[tuple[str, int | None, str, SRSItem, int]]:
+        """Return (guid, anki_note_id, dirty_fields_str, SRSItem, id) for rows with non-empty dirty_fields."""
         with self._get_conn() as conn:
             rows = conn.execute(
                 "SELECT * FROM collocations WHERE dirty_fields IS NOT NULL AND dirty_fields != ''"
             ).fetchall()
             return [
-                (row["guid"], row["anki_note_id"], row["dirty_fields"], self._row_to_item(conn, row)) for row in rows
+                (row["guid"], row["anki_note_id"], row["dirty_fields"], self._row_to_item(conn, row), row["id"])
+                for row in rows
             ]

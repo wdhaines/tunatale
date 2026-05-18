@@ -520,6 +520,46 @@ class TestSyncCreateNewRouting:
         assert "<i>every</i>" in flds[1]
         assert '<span class="st">It is open every day</span>' in flds[1]
 
+    async def test_sync_create_new_cloze_with_audio_writes_sound_tag_and_copies_mp3(self, tmp_path):
+        """Cloze with sentence audio: back_extra has [sound:...] and media file is stored."""
+        db = _make_db()
+        unit = SyntacticUnit(
+            text="še",
+            translation="yet",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="še",
+            source_sentence="Ja, še nisem videl.",
+            card_type="cloze",
+        )
+        db.add_collocation(unit)
+        item = db.get_collocation_by_lemma("še")
+        assert item is not None
+        coll_id = db.get_collocation_by_lemma_with_id("še")[0]
+        # Seed audio media row + file
+        (tmp_path / "tts_sentence_abc.mp3").write_bytes(b"fake-mp3")
+        db.add_media(
+            collocation_id=coll_id,
+            kind="audio_tts_sentence",
+            filename="tts_sentence_abc.mp3",
+            path=str(tmp_path / "tts_sentence_abc.mp3"),
+            anki_filename="",
+            sha256="abc",
+            size_bytes=8,
+        )
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn, media_dir=tmp_path)
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        notes = anki_conn.execute("SELECT n.flds FROM notes n").fetchall()
+        assert len(notes) == 1
+        flds = notes[0][0].split("\x1f")
+        assert "[sound:tts_sentence_abc.mp3]" in flds[1]
+
     async def test_sync_create_new_routes_vocab_items_to_create_note(self):
         """Vocab items go through existing create_note path."""
         db = _make_db()

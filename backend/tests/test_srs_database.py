@@ -2123,7 +2123,7 @@ class TestSourceContextFields:
         items = srs_db.list_items_without_anki_note()
         assert len(items) > 0
         # Find our item
-        for _, item in items:
+        for _, item, _ in items:
             if item.syntactic_unit.text == "nova fraza":
                 assert item.syntactic_unit.source_sentence == "Nova fraza v kontekstu."
                 assert item.syntactic_unit.source_lesson_id == "lesson-789"
@@ -2131,6 +2131,46 @@ class TestSourceContextFields:
                 break
         else:
             pytest.fail("nova fraza not found in items without anki note")
+
+
+class TestAddDirtyField:
+    """Tests for add_dirty_field on collocations."""
+
+    def test_add_dirty_field_appends_to_empty(self, srs_db):
+        unit = _unit()
+        srs_db.add_collocation(unit, language_code="sl")
+        item = srs_db.get_collocation("dober dan")
+        assert item is not None
+        guid = item.guid
+
+        srs_db.add_dirty_field(guid, "x")
+        assert srs_db.get_dirty_fields(guid) == "x"
+
+    def test_add_dirty_field_no_duplicate(self, srs_db):
+        unit = _unit()
+        srs_db.add_collocation(unit, language_code="sl")
+        item = srs_db.get_collocation("dober dan")
+        assert item is not None
+        guid = item.guid
+
+        srs_db.set_dirty_fields(guid, "x,y")
+        srs_db.add_dirty_field(guid, "x")
+        assert srs_db.get_dirty_fields(guid) == "x,y"
+
+    def test_add_dirty_field_nonexistent_guid_does_not_raise(self, srs_db):
+        """Calling add_dirty_field with a non-existent guid is a no-op."""
+        srs_db.add_dirty_field(guid="nonexistent-guid", field="x")
+
+    def test_add_dirty_field_sorts(self, srs_db):
+        unit = _unit()
+        srs_db.add_collocation(unit, language_code="sl")
+        item = srs_db.get_collocation("dober dan")
+        assert item is not None
+        guid = item.guid
+
+        srs_db.set_dirty_fields(guid, "y")
+        srs_db.add_dirty_field(guid, "a")
+        assert srs_db.get_dirty_fields(guid) == "a,y"
 
 
 class TestSetSentenceTranslationDirty:

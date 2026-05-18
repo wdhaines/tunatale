@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 22
+CURRENT_VERSION = 23
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -647,6 +647,28 @@ def migrate_v21_to_v22(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA foreign_keys = ON")
 
 
+def migrate_v22_to_v23(conn: sqlite3.Connection) -> None:
+    r"""Mark `audio` dirty on cloze collocations with sentence audio + anki_note_id.
+
+    One-shot: gets pre-existing cloze rows that were synthesized by the TTS
+    backfill primed for the next sync_push, which will attach [sound:...] to
+    Back Extra and copy the MP3 into Anki's collection.media/. Idempotent
+    for the 'audio' token.
+    """
+    conn.execute(r"""
+        UPDATE collocations
+        SET dirty_fields = CASE
+            WHEN dirty_fields IS NULL OR dirty_fields = '' THEN 'audio'
+            WHEN ',' || dirty_fields || ',' LIKE '%,audio,%' THEN dirty_fields
+            ELSE dirty_fields || ',audio'
+        END
+        WHERE card_type = 'cloze'
+          AND anki_note_id IS NOT NULL
+          AND id IN (SELECT DISTINCT collocation_id FROM media WHERE kind = 'audio_tts_sentence')
+    """)
+    _set_version(conn, 23)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -670,6 +692,7 @@ _MIGRATIONS = {
     19: migrate_v19_to_v20,
     20: migrate_v20_to_v21,
     21: migrate_v21_to_v22,
+    22: migrate_v22_to_v23,
 }
 
 

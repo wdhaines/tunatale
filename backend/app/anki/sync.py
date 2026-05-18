@@ -41,11 +41,25 @@ _log = logging.getLogger(__name__)
 
 KNOWN_ANKI_SCHEMA_VER = 18
 
+_MEDIA_DIR = Path(__file__).parent.parent.parent / "media"
+
 
 def _safe_stem(word: str, prefix: str) -> str:
     """Sanitize word for use as a media filename stem: keep letters/digits/underscores."""
     sanitized = re.sub(r"[^\w\s]", "", word).replace(" ", "_")
     return f"{prefix}_{sanitized}"
+
+
+def _copy_tt_media_to_anki(writer: OfflineWriter, filename: str) -> None:
+    """Copy a media file from TT's media dir into Anki's collection.media via the writer.
+
+    Silently skips if the file doesn't exist on disk (logs a warning).
+    """
+    src = _MEDIA_DIR / filename
+    if not src.exists():
+        _log.warning("Media file not found, skipping copy to Anki: %s", src)
+        return
+    writer.store_media_file(filename, src.read_bytes())
 
 
 class DuplicateNoteError(Exception):
@@ -190,10 +204,19 @@ _BACK_EXTRA_TRANS = re.compile(r"^\s*<i>([^<]+)</i>\s*<br\s*/?>\s*<br\s*/?>\s*(.
 _BACK_EXTRA_SENT = re.compile(
     r"^\s*<i>([^<]+)</i>\s*<br\s*/?>\s*<br\s*/?>\s*<span class=\"st\">([^<]*)</span>\s*(.*)", re.DOTALL
 )
+_SOUND_TAG = re.compile(r"\s*\[sound:[^\]]+\]\s*")
+
+
+def _strip_sound_tags(back_extra: str) -> str:
+    """Remove trailing [sound:...] tags + trailing <br> from a Back Extra string."""
+    stripped = _SOUND_TAG.sub("", back_extra)
+    stripped = re.sub(r"(?:<br\s*/?>)*\s*$", "", stripped)
+    return stripped.rstrip()
 
 
 def extract_cloze_translation(back_extra: str) -> str:
     """Extract word-level translation from a Cloze note's back_extra (<i>…) field."""
+    back_extra = _strip_sound_tags(back_extra)
     m = _BACK_EXTRA_SENT.match(back_extra) or _BACK_EXTRA_TRANS.match(back_extra)
     if m:
         return m.group(1).strip()
@@ -202,16 +225,19 @@ def extract_cloze_translation(back_extra: str) -> str:
 
 def extract_cloze_sentence_translation(back_extra: str) -> str:
     """Extract sentence-level translation from a Cloze note's back_extra (<span class="st">…)."""
+    back_extra = _strip_sound_tags(back_extra)
     m = _BACK_EXTRA_SENT.match(back_extra)
     if m:
         return m.group(2).strip()
     return ""
 
 
-def build_cloze_back_extra(translation: str, sentence_translation: str, note: str = "") -> str:
+def build_cloze_back_extra(
+    translation: str, sentence_translation: str, note: str = "", sentence_audio_filename: str | None = None
+) -> str:
     """Compose a Cloze note's `Back Extra` field from its parts.
 
-    Format: `<i>WORD</i><br><br><span class="st">SENTENCE</span><br><br>NOTE`,
+    Format: `<i>WORD</i><br><br><span class="st">SENTENCE</span><br><br>NOTE<br><br>[sound:filename]`,
     skipping any empty part. Single source of truth for both card creation
     (sync_create_new) and edit-push (sync_push).
     """
@@ -222,11 +248,14 @@ def build_cloze_back_extra(translation: str, sentence_translation: str, note: st
         parts.append(f'<span class="st">{sentence_translation}</span>')
     if note:
         parts.append(note)
+    if sentence_audio_filename:
+        parts.append(f"[sound:{sentence_audio_filename}]")
     return "<br><br>".join(parts)
 
 
 def extract_cloze_note(back_extra: str) -> str:
     """Extract note body from a Cloze note's back_extra (after translation/sentence spans)."""
+    back_extra = _strip_sound_tags(back_extra)
     m = _BACK_EXTRA_SENT.match(back_extra)
     if m:
         return re.sub(r"^(?:<br\s*/?>)+", "", m.group(3).strip()).strip()
@@ -1690,20 +1719,24 @@ class AnkiSync:
         """Push TunaTale → Anki. Returns a PushReport summarising changes."""
         report = PushReport()
 
-        for guid, anki_note_id, dirty_fields_str, item in self._db.list_dirty_field_edits():
+        for guid, anki_note_id, dirty_fields_str, item, coll_id in self._db.list_dirty_field_edits():
             if anki_note_id is None:
                 continue
             dirty_set = {f for f in dirty_fields_str.split(",") if f}
             fields: dict[str, str] = {}
             if item.syntactic_unit.card_type == "cloze":
-                # Cloze notes: any of {translation, sentence_translation, note}
+                # Cloze notes: any of {translation, sentence_translation, note, audio}
                 # dirty → rebuild Back Extra. Cloze has no separate "English" field.
-                if dirty_set & {"translation", "sentence_translation", "note"}:
+                if dirty_set & {"translation", "sentence_translation", "note", "audio"}:
+                    sentence_audio = self._db.get_sentence_audio_filename(coll_id)
                     fields["Back Extra"] = build_cloze_back_extra(
                         item.syntactic_unit.translation,
                         item.syntactic_unit.source_sentence_translation,
                         item.syntactic_unit.note,
+                        sentence_audio_filename=sentence_audio,
                     )
+                    if sentence_audio and not dry_run:
+                        _copy_tt_media_to_anki(self._writer, sentence_audio)
             else:
                 if "translation" in dirty_set:
                     fields["English"] = item.syntactic_unit.translation
@@ -1873,7 +1906,7 @@ class AnkiSync:
         linked = 0
         skipped = 0
 
-        for guid, item in items:
+        for guid, item, coll_id in items:
             from app.srs.function_words import make_cloze_text
 
             if item.syntactic_unit.card_type == "cloze":
@@ -1881,9 +1914,11 @@ class AnkiSync:
                     item.syntactic_unit.text,
                     item.syntactic_unit.source_sentence or "",
                 )
+                sentence_audio = self._db.get_sentence_audio_filename(coll_id)
                 back_extra = build_cloze_back_extra(
                     item.syntactic_unit.translation,
                     item.syntactic_unit.source_sentence_translation,
+                    sentence_audio_filename=sentence_audio,
                 )
                 try:
                     note_id = self._writer.create_cloze_note(
@@ -1896,6 +1931,9 @@ class AnkiSync:
                 except DuplicateNoteError as exc:
                     note_id = exc.note_id
                     linked += 1
+
+                if sentence_audio and not dry_run:
+                    _copy_tt_media_to_anki(self._writer, sentence_audio)
 
                 cards_by_ord = self._writer.get_cards_for_note(note_id)
                 # Cloze notetype has exactly one template (ord=0)

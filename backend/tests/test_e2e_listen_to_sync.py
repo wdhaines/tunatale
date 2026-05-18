@@ -176,7 +176,7 @@ class TestListenToSyncRoundTrip:
             assert "tunatale" in note["tags"]
             flds = note["flds"].split("\x1f")
             assert "{{c1::" in flds[0]
-            assert flds[1] == ""
+            assert "[sound:tts_sentence_" in flds[1]
 
         # ── 4. Verify each cloze note has exactly one card ────────────────
         for note in cloze_notes:

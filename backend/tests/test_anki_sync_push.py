@@ -147,6 +147,9 @@ class FakeWriter:
     def set_deck_new_today(self, deck_id: int, today_day_index: int, new_today: int) -> None:
         self.calls.append(("set_deck_new_today", deck_id, today_day_index, new_today))
 
+    def store_media_file(self, filename: str, data: bytes) -> None:
+        self.calls.append(("store_media_file", filename, len(data)))
+
     def action_names(self) -> list[str]:
         return [c[0] for c in self.calls]
 
@@ -181,7 +184,7 @@ class TestListDirtyFieldEdits:
         db.set_dirty_fields(guid, "translation")
         rows = db.list_dirty_field_edits()
         assert len(rows) == 1
-        row_guid, anki_note_id, dirty_str, item = rows[0]
+        row_guid, anki_note_id, dirty_str, item, _ = rows[0]
         assert row_guid == guid
         assert anki_note_id == 9001
         assert dirty_str == "translation"
@@ -297,6 +300,24 @@ class TestBuildClozeBackExtra:
         assert '<span class="st">It is open every day</span>' in result
         assert "user note here" in result
         assert result.count("<br>") >= 4  # two separators → 4 <br> chars
+
+    def test_build_cloze_back_extra_with_audio(self):
+        """sentence_audio_filename appends [sound:...] at the end."""
+        result = build_cloze_back_extra(
+            translation="every",
+            sentence_translation="It is open every day",
+            sentence_audio_filename="x.mp3",
+        )
+        assert result.endswith("[sound:x.mp3]")
+
+    def test_build_cloze_back_extra_audio_only(self):
+        """With no other parts, returns just [sound:...]."""
+        result = build_cloze_back_extra(
+            translation="",
+            sentence_translation="",
+            sentence_audio_filename="x.mp3",
+        )
+        assert result == "[sound:x.mp3]"
 
 
 class TestOfflineWriter:
@@ -630,6 +651,157 @@ class TestSyncPush:
         assert "update_note_fields" not in writer.action_names()
         # Dirty fields preserved since nothing was pushed
         assert db.get_dirty_fields(guid) == "direction"
+
+    def test_sync_push_writes_sound_tag_for_cloze_with_audio_and_copies_media(self, tmp_path):
+        """Audio-dirty cloze: writes [sound:...] in Back Extra, copies MP3, clears dirty."""
+        db = _make_tt_db()
+        unit = SyntacticUnit(
+            text="še",
+            translation="yet",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="še",
+            card_type="cloze",
+            source_sentence="Ja, še nisem videl.",
+        )
+        db.add_collocation(unit, language_code="sl")
+        coll_id, item = db.get_collocation_by_lemma_with_id("še")
+        guid = item.guid
+        db.set_anki_ids(guid, 813, {Direction.PRODUCTION: 70001})
+        # Seed a sentence-audio media row + the actual file
+        (tmp_path / "tts_sentence_abc.mp3").write_bytes(b"fake-mp3")
+        db.add_media(
+            collocation_id=coll_id,
+            kind="audio_tts_sentence",
+            filename="tts_sentence_abc.mp3",
+            path=str(tmp_path / "tts_sentence_abc.mp3"),
+            anki_filename="",
+            sha256="abc",
+            size_bytes=8,
+        )
+        db.set_dirty_fields(guid, "audio")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert "update_note_fields" in writer.action_names()
+        call = next(c for c in writer.calls if c[0] == "update_note_fields")
+        assert "[sound:tts_sentence_abc.mp3]" in call[2]["Back Extra"]
+        assert db.get_dirty_fields(guid) == ""
+
+    def test_sync_push_skips_audio_copy_when_file_missing(self, tmp_path):
+        """Audio-dirty cloze: media row exists but MP3 absent — tag still written, no store_media_file."""
+        db = _make_tt_db()
+        unit = SyntacticUnit(
+            text="še",
+            translation="yet",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="še",
+            card_type="cloze",
+            source_sentence="Ja, še nisem videl.",
+        )
+        db.add_collocation(unit, language_code="sl")
+        coll_id, item = db.get_collocation_by_lemma_with_id("še")
+        guid = item.guid
+        db.set_anki_ids(guid, 813, {Direction.PRODUCTION: 70001})
+        # Media row exists but NO file on disk
+        db.add_media(
+            collocation_id=coll_id,
+            kind="audio_tts_sentence",
+            filename="tts_sentence_nonexistent.mp3",
+            path="/nonexistent/tts_sentence_nonexistent.mp3",
+            anki_filename="",
+            sha256="abc",
+            size_bytes=8,
+        )
+        db.set_dirty_fields(guid, "audio")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert "update_note_fields" in writer.action_names()
+        call = next(c for c in writer.calls if c[0] == "update_note_fields")
+        assert "[sound:tts_sentence_nonexistent.mp3]" in call[2]["Back Extra"]
+        assert "store_media_file" not in writer.action_names()
+        assert db.get_dirty_fields(guid) == ""
+
+    def test_sync_push_audio_dirty_plus_other_fields_rebuilds_once(self, tmp_path):
+        """Cloze with audio+translation dirty: single back_extra rebuild includes both."""
+        db = _make_tt_db()
+        unit = SyntacticUnit(
+            text="še",
+            translation="yet",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="še",
+            card_type="cloze",
+            source_sentence="Ja, še nisem videl.",
+            source_sentence_translation="Yes, I haven't seen yet.",
+        )
+        db.add_collocation(unit, language_code="sl")
+        coll_id, item = db.get_collocation_by_lemma_with_id("še")
+        guid = item.guid
+        db.set_anki_ids(guid, 813, {Direction.PRODUCTION: 70001})
+        db.add_media(
+            collocation_id=coll_id,
+            kind="audio_tts_sentence",
+            filename="tts_sentence_abc.mp3",
+            path=str(tmp_path / "tts_sentence_abc.mp3"),
+            anki_filename="",
+            sha256="abc",
+            size_bytes=8,
+        )
+        (tmp_path / "tts_sentence_abc.mp3").write_bytes(b"fake-mp3")
+        db.set_dirty_fields(guid, "audio,translation")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        call = next(c for c in writer.calls if c[0] == "update_note_fields")
+        be = call[2]["Back Extra"]
+        assert "<i>yet</i>" in be
+        assert "[sound:tts_sentence_abc.mp3]" in be
+        assert db.get_dirty_fields(guid) == ""
+
+    def test_sync_push_audio_only_dry_run_does_not_copy_media(self, tmp_path):
+        """Dry-run sync_push with audio dirty: no store_media_file call."""
+        db = _make_tt_db()
+        unit = SyntacticUnit(
+            text="še",
+            translation="yet",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="še",
+            card_type="cloze",
+            source_sentence="Ja, še nisem videl.",
+        )
+        db.add_collocation(unit, language_code="sl")
+        coll_id, item = db.get_collocation_by_lemma_with_id("še")
+        guid = item.guid
+        db.set_anki_ids(guid, 813, {Direction.PRODUCTION: 70001})
+        db.add_media(
+            collocation_id=coll_id,
+            kind="audio_tts_sentence",
+            filename="tts_sentence_abc.mp3",
+            path=str(tmp_path / "tts_sentence_abc.mp3"),
+            anki_filename="",
+            sha256="abc",
+            size_bytes=8,
+        )
+        (tmp_path / "tts_sentence_abc.mp3").write_bytes(b"fake-mp3")
+        db.set_dirty_fields(guid, "audio")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push(dry_run=True)
+
+        assert "update_note_fields" not in writer.action_names()
+        assert "store_media_file" not in writer.action_names()
+        assert db.get_dirty_fields(guid) == "audio"
 
     def test_dirty_direction_calls_set_due_date(self):
         db = _make_tt_db()

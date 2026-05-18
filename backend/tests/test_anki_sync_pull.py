@@ -154,6 +154,24 @@ class TestClozeExtractors:
     def test_extract_cloze_note_no_body(self):
         assert extract_cloze_note("<i>every</i><br><br>") == ""
 
+    def test_extract_cloze_translation_with_sound_tag(self):
+        """Trailing [sound:...] is stripped before extraction."""
+        back_extra = "<i>x</i><br><br>extra<br><br>[sound:y.mp3]"
+        assert extract_cloze_translation(back_extra) == "x"
+
+    def test_extract_cloze_sentence_translation_with_sound_tag(self):
+        back_extra = '<i>x</i><br><br><span class="st">y</span><br><br>[sound:z.mp3]'
+        assert extract_cloze_sentence_translation(back_extra) == "y"
+
+    def test_extract_cloze_note_with_sound_tag(self):
+        back_extra = "<i>x</i><br><br>note body<br><br>[sound:z.mp3]"
+        assert extract_cloze_note(back_extra) == "note body"
+
+    def test_extract_cloze_note_only_sound_tag(self):
+        """When back_extra is only translation/sentence + sound tag, note is empty."""
+        back_extra = '<i>x</i><br><br><span class="st">y</span><br><br>[sound:z.mp3]'
+        assert extract_cloze_note(back_extra) == ""
+
 
 # ── OfflineReader ─────────────────────────────────────────────────────────────
 

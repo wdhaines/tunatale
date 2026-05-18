@@ -171,3 +171,50 @@ async def test_synthesize_skips_on_tts_failure(monkeypatch, tmp_path):
         ).fetchone()[0]
 
     assert count == 0
+
+
+async def test_synthesize_marks_audio_dirty(monkeypatch, tmp_path):
+    """After sentence audio synthesis, the collocation's dirty_fields includes 'audio'."""
+    from app.srs.database import SRSDatabase
+
+    db = SRSDatabase(":memory:")
+    collocation_id = _add_cloze_collocation(db)
+
+    async def _fake_tts(text, voice="sl-SI-PetraNeural"):
+        return b"fake-mp3"
+
+    import app.audio.cloze_tts as cloze_tts_mod
+
+    monkeypatch.setattr(cloze_tts_mod, "generate_tts_audio", _fake_tts)
+
+    await synthesize_cloze_audios(db, collocation_id, "Odprto je vsak dan", "vsak", media_dir=tmp_path)
+
+    item = db.get_collocation_by_lemma("vsak")
+    assert item is not None
+    dirty = db.get_dirty_fields(item.guid)
+    assert "audio" in dirty.split(",")
+
+
+async def test_synthesize_idempotent_dirty_marking(monkeypatch, tmp_path):
+    """Re-running synthesize_cloze_audios does not duplicate the 'audio' token in dirty_fields."""
+    from app.srs.database import SRSDatabase
+
+    db = SRSDatabase(":memory:")
+    collocation_id = _add_cloze_collocation(db)
+
+    async def _fake_tts(text, voice="sl-SI-PetraNeural"):
+        return b"fake-mp3"
+
+    import app.audio.cloze_tts as cloze_tts_mod
+
+    monkeypatch.setattr(cloze_tts_mod, "generate_tts_audio", _fake_tts)
+
+    await synthesize_cloze_audios(db, collocation_id, "Odprto je vsak dan", "vsak", media_dir=tmp_path)
+    await synthesize_cloze_audios(db, collocation_id, "Odprto je vsak dan", "vsak", media_dir=tmp_path)
+
+    item = db.get_collocation_by_lemma("vsak")
+    assert item is not None
+    dirty = db.get_dirty_fields(item.guid)
+    tokens = dirty.split(",")
+    assert tokens == sorted(set(tokens))  # no dupes
+    assert "audio" in tokens

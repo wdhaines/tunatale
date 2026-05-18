@@ -49,6 +49,7 @@ async def synthesize_cloze_audios(
         else:
             logger.warning("Failed to synthesize sentence audio for %r", sentence[:60])
 
+    wrote_sentence = False
     if _missing_media_row(db, collocation_id, "audio_tts_sentence") and sentence_path.exists():
         size_bytes = sentence_path.stat().st_size
         sha = hashlib.sha256(sentence_path.read_bytes()).hexdigest()
@@ -61,6 +62,7 @@ async def synthesize_cloze_audios(
             sha256=sha,
             size_bytes=size_bytes,
         )
+        wrote_sentence = True
 
     # ── Word audio ──────────────────────────────────────────────────────
     stem = _safe_stem(word, "tts")
@@ -87,6 +89,11 @@ async def synthesize_cloze_audios(
             sha256=sha,
             size_bytes=size_bytes,
         )
+
+    if wrote_sentence:
+        with db._get_conn() as conn:
+            guid = conn.execute("SELECT guid FROM collocations WHERE id = ?", (collocation_id,)).fetchone()["guid"]
+        db.add_dirty_field(guid, "audio")
 
 
 def _missing_media_row(db, collocation_id: int, kind: str) -> bool:
