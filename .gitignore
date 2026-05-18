@@ -35,8 +35,10 @@ node_modules/
 frontend/.svelte-kit/
 frontend/build/
 
-# Claude Code local settings (user-specific)
-.claude/
+# Claude Code: team-shared rules + settings.json are tracked.
+# Only per-user / scratch files stay local.
+.claude/settings.local.json
+.claude/plans/
 
 # Editor / OS
 .DS_Store
