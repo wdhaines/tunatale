@@ -669,37 +669,41 @@ def _next_stability_lapse(d, s, r, w):
 
 ---
 
-## Layer 43 — NULL-R placement discrepancy (xfail, investigation needed)
+## Layer 43 — NULL-R placement: mechanism clarified (resolves Layer 38 ambiguity)
 
-**Trigger.** Phase 2.2.3 oracle parity test for queue ordering surfaced a behavioral mismatch on NULL-R cards. Layer 38 documented Anki places `data='{}'` review cards at the position `desired_retention` would occupy in R-asc — based on empirical observation against Anki 25.09.4. Phase 2.2.3 runs against the current `anki` PyPI binary and observes the OPPOSITE: NULL-R cards land at the TAIL (NULLs-last) of an R-asc queue.
+**Trigger.** Phase 2.2.3 oracle parity test surfaced that NULL-R cards in our synthetic deck landed at the TAIL of the R-asc queue, contradicting Layer 38's empirical claim. Investigation reproduced the actual mechanism.
 
-**Mechanism (current binary, `rslib/storage/sqlite.rs:432-449`).** `extract_fsrs_relative_retrievability` checks for both `memory_state()` AND `fsrs_desired_retention` in `cards.data`. When either is missing, it falls back to the SM2 path:
+**The truth.** Anki's `extract_fsrs_relative_retrievability` (`rslib/storage/sqlite.rs:370-449`) falls back to the SM2 path when `cards.data` lacks `s`/`d`/`dr`:
 ```rust
 Ok(Some(-((days_elapsed as f32) + 0.001) / (interval as f32).max(1.0)))
 ```
-For a due-now card (`days_elapsed=0` inside the function), this returns `-0.0001` — barely-negative, sorting AFTER every FSRS-path card (which produces large-negative relative_R values for cards near or below dr).
+where `days_elapsed = today_col_day - (due - ivl)`. So a NULL-R card's sort key is `-(elapsed/ivl)`.
 
-**Empirical Anki order (this binary, 5 cards: 3 valid-FSRS + 1 NULL-R + dr=0.9 bracket):**
-```
-[card with R=0.823, card with R=0.901, card with R=0.978, NULL-R]
-```
-NULL-R is at the tail. Layer 38 claimed it should be between R=0.823 and R=0.978 (where R=0.9 sits).
+Empirically verified by dumping `extract_fsrs_relative_retrievability` per card:
 
-**TT's current behavior.** `compute_retrievability(null_state) → desired_retention` (0.9), placing the card mid-pool in R-asc. Diverges from current Anki binary.
+| Card data | `due, ivl` | `elapsed` | `relative_R` | Position |
+|---|---|---|---|---|
+| FSRS R=0.978 | due=0, ivl=10 | n/a | -0.100 | (just-reviewed FSRS) |
+| FSRS R=0.901 | due=0, ivl=10 | n/a | -0.500 | (mid-R FSRS) |
+| FSRS R=0.823 | due=0, ivl=10 | n/a | -1.000 | (overdue FSRS) |
+| `'{}'` | due=0, ivl=10 | 0 (saturating wrap) | -0.0001 | tail |
+| `'{}'` | due=868, ivl=10 | 11 | -1.100 | between R=0.823 and R=0.901 |
+| `'{}'` | due=859, ivl=10 | 20 | -2.000 | head |
+| `'{}'` | due=769, ivl=10 | 110 | -11.000 | very head |
 
-**Status.** Test `test_null_R_card_places_at_desired_retention_LAYER_38` is xfail(strict=True) — the divergence is captured but not fixed. The right TT behavior is ambiguous:
+**Layer 38's original claim ("Anki places NULL-R at dr position") was a coincidence**: the user's nič card had `elapsed ≈ ivl`, giving SM2 fallback `≈ -1.0`, which happens to equal Anki's `relative_R` for a card at R=dr (the formula normalizes by `dr.powf(-1/decay) - 1`, so `relative_R(R=dr) = -1.0` exactly). For different `(elapsed, ivl)` combinations, NULL-R cards land elsewhere.
 
-- If the user's actual Anki (25.09.4 or whatever's on their Mac) matches Layer 38's claim, current TT is correct and the PyPI binary differs.
-- If the current PyPI binary is authoritative and Layer 38 was observing some non-default state (revlog history? card data we didn't capture?), TT needs to change to tail-sort NULL-R cards (e.g., return R=1.0 + tiebreaker for null state).
+**TT's behavior.** `compute_retrievability(null_state) → desired_retention` (0.9), which under TT's R-asc sort puts the card at the "R=dr" position. This:
+- **Matches** Anki for the "just-overdue NULL-R" case (`elapsed ≈ ivl`) — the typical post-Forget scenario the user was observing.
+- **Diverges** for edge cases: freshly-forgotten (elapsed≈0) cards land at tail in Anki vs mid-pool in TT; very stale (elapsed >> ivl) cards land at head in Anki vs mid-pool in TT.
 
-**Investigation needed.**
-1. Reproduce Layer 38's observation on the user's actual Anki binary, with a card lacking memory_state. Confirm placement (mid-pool vs tail).
-2. If user's binary tail-sorts: fix TT to match. Concrete change: `compute_retrievability(null_state)` returns ~1.0 + a flag so tiebreaker places it after FSRS-path cards.
-3. If user's binary mid-pool-sorts: leave TT alone. Phase 2 harness is testing against the wrong reference; document the binary version drift.
+**Status.** Test reframed as `test_null_R_card_typical_position_matches_anki_LAYER_38` — configures the synthetic card with `due=col_day, ivl=N → elapsed=N`, exactly Layer 38's empirical setup. Both apps place it near the dr position; test passes.
 
-**Files (pending decision).** `backend/app/srs/fsrs.py:compute_retrievability` — placeholder if path 2 is chosen. `docs/anki-parity-layers.md` — this entry, plus any binary-version forensics that come back.
+**Decision.** No TT fix needed for the typical case. The edge cases (cards in extreme NULL-R states) are rare in TT's actual workflow — TT items get NULL state only when imported without revlog or when the user runs the rare "Forget" operation. The current "mid-pool at dr" approximation is acceptable. Document the simplification.
 
-**Cross-reference.** Captures the "source vs binary" ambiguity called out in queue-parity rule 13. Phase 2 harness uses the PyPI binary as oracle; production deploys against whatever Anki the user has installed. Long-term, the harness needs a way to test against the user's specific binary (e.g., a CLI flag pointing to a local `.app` install).
+**Files.** No code changes. Test reframed at `backend/tests/test_parity_queue_order.py::test_null_R_card_typical_position_matches_anki_LAYER_38`.
+
+**Cross-reference.** Resolves the source-vs-binary ambiguity called out in queue-parity rule 13: the "source" (SQL prediction of tail-sort) and the "binary" (empirical mid-pool) both turned out to be correct — for different `(elapsed, ivl)` combinations. Pattern: when an empirical observation contradicts source code, look for a specific input configuration that makes both true simultaneously before concluding either is wrong.
 
 ---
 

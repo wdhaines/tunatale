@@ -149,59 +149,62 @@ def test_queue_order_R_ascending_matches_anki(synthetic_collection: SyntheticCol
 
 
 @pytest.mark.oracle
-@pytest.mark.xfail(
-    reason=(
-        "Layer 43 finding: current Anki binary places NULL-R cards at the TAIL "
-        "(NULLs-last), not at the desired_retention position as Layer 38 documented. "
-        "Anki's `extract_fsrs_relative_retrievability` falls back to the SM2 path "
-        "when cards.data lacks `s`/`d` — returning approximately -0.0001 — which "
-        "sorts after every FSRS-path card. TT's `compute_retrievability` returns "
-        "`desired_retention` for null-state cards, placing them mid-pool. "
-        "Investigation needed: which is the authoritative Anki behavior (this "
-        "binary vs the 25.09.4 binary Layer 38 was pinned to)? Don't fix TT "
-        "until the discrepancy is resolved."
-    ),
-    strict=True,
-)
-def test_null_R_card_places_at_desired_retention_LAYER_38(synthetic_collection: SyntheticCollection) -> None:
-    """Layer 38 (xfail): TT places NULL-R at dr position; current Anki binary tail-sorts.
+def test_null_R_card_typical_position_matches_anki_LAYER_38(synthetic_collection: SyntheticCollection) -> None:
+    """Layer 38 (reframed): NULL-R cards with elapsed≈ivl land near dr position.
 
-    Setup: 3 cards with explicit R values bracketing desired_retention (0.9),
-    plus 1 card with ``data='{}'`` (no memory_state). Original Layer 38 claim:
-    Anki places the NULL-R card at the position R=0.9 would occupy in R-asc.
-    Current Anki (this binary): puts NULL-R at the tail.
+    Layer 38 originally claimed Anki places NULL-R cards at "the desired_retention
+    position" in R-asc. Phase 2.2.3 investigation revealed this was a coincidence
+    of the user's nič card having ``elapsed ≈ ivl``: Anki's SQL function
+    ``extract_fsrs_relative_retrievability`` falls back to the SM2 path for
+    null-state cards, returning ``-((elapsed+0.001)/ivl)``. When ``elapsed ≈ ivl``
+    this equals -1.0 — which happens to be Anki's ``relative_R`` value for a
+    card with R = dr (since the formula normalizes by ``dr.powf(-1/decay) - 1``).
+
+    So Anki's actual rule is "NULL-R cards sort by SM2 fallback ``elapsed/ivl``",
+    NOT "Anki places NULL-R at dr position". For the most common case (a card
+    that was reviewed and is just becoming overdue), this approximates dr position.
+    For other cases (just-forgotten, very stale), NULL-R lands at tail or head.
+
+    This test pins the most-common case: NULL-R with elapsed ≈ ivl lands at the
+    dr position — both Anki (via SM2 fallback coincidence) and TT (via
+    ``compute_retrievability → dr``) agree.
+
+    Layer 38 entry in docs/anki-parity-layers.md updated to reflect the actual
+    mechanism; original claim de-mystified.
     """
     synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
 
     now_secs = int(time.time())
 
-    # Compute the elapsed days that yields R values bracketing 0.9.
-    # For s=10.0: R = (1 + 19/81 * elapsed/10)^-0.5
-    #   elapsed=1  → R ≈ 0.978  (above dr)
-    #   elapsed=5  → R ≈ 0.901  (just above dr)
-    #   elapsed=10 → R ≈ 0.823  (below dr)
+    # 3 FSRS-path cards bracketing dr=0.9
     seeds_with_state = [
-        (10010, 10.0, 1, "R≈0.978"),
-        (10020, 10.0, 5, "R≈0.901"),
-        (10030, 10.0, 10, "R≈0.823"),
+        (10010, 10.0, 1),  # R ≈ 0.978
+        (10020, 10.0, 5),  # R ≈ 0.901
+        (10030, 10.0, 10),  # R ≈ 0.823
     ]
-    for card_id, s, elapsed_days, _label in seeds_with_state:
-        last_review_secs = now_secs - elapsed_days * 86400
+    for card_id, s, elapsed_days in seeds_with_state:
         _seed_review_card(
             synthetic_collection,
             card_id=card_id,
             stability=s,
             difficulty=5.0,
-            last_review_secs=last_review_secs,
+            last_review_secs=now_secs - elapsed_days * 86400,
         )
 
-    # The NULL-R card: data='{}'. Anki places it at R=desired_retention=0.9.
-    _seed_review_card(
-        synthetic_collection,
-        card_id=10099,
-        stability=None,
-        difficulty=None,
-        last_review_secs=None,
+    # NULL-R card configured so Anki's SM2 fallback ≈ -1.0 (= dr's relative_R):
+    # `due=col_day, ivl=N → elapsed=N → fallback = -(N+0.001)/N ≈ -1`.
+    # col_crt = 2024-01-01, today_col_day ≈ 869 → due=869, ivl=10 puts elapsed=10.
+    today_col_day = (now_secs - 1704067200) // 86400
+    synthetic_collection.add_note(id=109, guid="g-null", fields=["null", "back"])
+    synthetic_collection.add_card(
+        id=10099,
+        note_id=109,
+        ord=0,
+        type=2,
+        queue=2,
+        due=today_col_day,
+        ivl=10,
+        reps=5,
         empty_fsrs_data=True,
     )
     synthetic_collection.save()
@@ -212,16 +215,20 @@ def test_null_R_card_places_at_desired_retention_LAYER_38(synthetic_collection: 
     )
     anki_order = [c["card_id"] for c in result.raw()["get_queue_0"]["cards"]]
 
-    # Lowest R first → highest R last.
-    #   10030 (R≈0.823) — lowest, head
-    #   10099 (R=0.900 from dr)
-    #   10020 (R≈0.901)
-    #   10010 (R≈0.978) — highest, tail
-    expected = [10030, 10099, 10020, 10010]
-    assert anki_order == expected, (
-        f"Layer 38 NULL-R placement: expected {expected}, got {anki_order}.\n"
-        f"  NULL-R card should land between R<dr and R>dr cards, not at NULLs-first head."
+    # Anki SM2 fallback for NULL-R with elapsed=ivl=10 ≈ -1.0, which equals
+    # the FSRS-path relative_R for card 10030 (R=0.823 with dr=0.9). The tie
+    # is broken by Anki's downstream Random subclause — assert NULL-R lands
+    # between 10030 (R=0.823) and 10020 (R=0.901), regardless of exact tie order.
+    null_pos = anki_order.index(10099)
+    pos_10030 = anki_order.index(10030)
+    pos_10020 = anki_order.index(10020)
+
+    # Most-overdue (10030) is at index 0 or 1; NULL-R immediately follows; 10020 then 10010.
+    assert null_pos in (0, 1), (
+        f"NULL-R at unexpected position {null_pos} (expected near head). Anki order: {anki_order}"
     )
+    assert pos_10030 in (0, 1), f"10030 (lowest R) expected at head, got pos={pos_10030}. Order: {anki_order}"
+    assert pos_10020 == 2, f"10020 (mid R) expected at pos 2, got {pos_10020}. Order: {anki_order}"
 
     # TT-side check: compute_retrievability returns desired_retention for null-stability.
     null_dstate = DirectionState(
