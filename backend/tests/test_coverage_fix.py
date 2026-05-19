@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from typing import Any
 
 from app.anki.sync import AnkiSync, CardRecord, NoteRecord
@@ -91,7 +91,7 @@ class TestConflictRecordDryRun:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=grade_time.date(),
+                due_at=datetime.combine(grade_time.date(), time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=3,
@@ -124,7 +124,7 @@ class TestConflictRecordDryRun:
                         lapses=0,
                         stability=5.0,
                         difficulty=4.5,
-                        due_date=date(2026, 5, 10),
+                        due_at=datetime.combine(date(2026, 5, 10), time(4, 0), tzinfo=UTC),
                         fsrs_known=True,
                         last_review_ms=int(anki_time.timestamp() * 1000),
                     )

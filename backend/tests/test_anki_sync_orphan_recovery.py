@@ -10,7 +10,7 @@ preserves FSRS state on the recreated card.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 
@@ -268,7 +268,7 @@ class TestSyncPushHonorsRecoveryFlag:
         rec.last_review = datetime.now(UTC) - timedelta(minutes=5)
         rec.last_rating = 3
         rec.dirty_fsrs = True
-        rec.due_date = date.today()
+        rec.due_at = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
         db.update_direction(guid, Direction.RECOGNITION, rec)
 
         writer = FakeWriter()

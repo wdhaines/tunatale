@@ -13,7 +13,7 @@ are scheduled for removal in Stage 3.5 of the Anki sync plan.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime, time
 from enum import Enum
 
 from .syntactic_unit import SyntacticUnit
@@ -49,10 +49,14 @@ class Direction(Enum):
 
 @dataclass
 class DirectionState:
-    """FSRS scheduling state for one direction of a collocation."""
+    """FSRS scheduling state for one direction of a collocation.
+
+    Single source of truth for due-time: ``due_at`` (TEXT iso datetime, UTC).
+    Extended to all states (review/new included), NOT NULL.
+    """
 
     direction: Direction
-    due_date: date
+    due_at: datetime
     stability: float = 1.0
     difficulty: float = 5.0
     reps: int = 0
@@ -73,7 +77,6 @@ class DirectionState:
     last_synced_at: str | None = None
     last_rating: int | None = None
     left: int | None = None
-    due_at: datetime | None = None
     # Prior-grade snapshot used to construct a correct Anki revlog row at
     # push time. Set by `app.srs.fsrs.schedule` before each `replace`,
     # cleared by `mark_direction_clean` once the row has been pushed.
@@ -124,11 +127,12 @@ class SRSItem:
         if directions is not None:
             self.directions = directions
         else:
-            recognition_due = due_date if due_date is not None else date.today()
+            rec_due = due_date if due_date is not None else date.today()
+            recognition_due_at = datetime.combine(rec_due, time(4, 0), tzinfo=UTC)
             self.directions = {
                 Direction.RECOGNITION: DirectionState(
                     direction=Direction.RECOGNITION,
-                    due_date=recognition_due,
+                    due_at=recognition_due_at,
                     stability=stability,
                     difficulty=difficulty,
                     reps=reps,
@@ -138,7 +142,7 @@ class SRSItem:
                 ),
                 Direction.PRODUCTION: DirectionState(
                     direction=Direction.PRODUCTION,
-                    due_date=recognition_due,
+                    due_at=recognition_due_at,
                 ),
             }
 
@@ -159,11 +163,11 @@ class SRSItem:
 
     @property
     def due_date(self) -> date:
-        return self._rec.due_date
+        return self._rec.due_at.date()
 
     @due_date.setter
     def due_date(self, value: date) -> None:
-        self._rec.due_date = value
+        self._rec.due_at = datetime.combine(value, time.min).replace(tzinfo=UTC)
 
     @property
     def stability(self) -> float:

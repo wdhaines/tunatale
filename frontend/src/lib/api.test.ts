@@ -349,7 +349,7 @@ describe("TunaTaleAPI", () => {
         translation: "bank",
         word_count: 1,
         state: "review",
-        due_date: "2026-04-18",
+        due_at: "2026-04-18",
         stability: 5.0,
         difficulty: 4.0,
         reps: 3,
@@ -360,7 +360,7 @@ describe("TunaTaleAPI", () => {
         directions: {
           recognition: {
             state: "review",
-            due_date: "2026-04-18",
+            due_at: "2026-04-18",
             stability: 5.0,
             difficulty: 4.0,
             reps: 3,
@@ -370,7 +370,7 @@ describe("TunaTaleAPI", () => {
           },
           production: {
             state: "new",
-            due_date: "2026-04-18",
+            due_at: "2026-04-18",
             stability: 1.0,
             difficulty: 5.0,
             reps: 0,
@@ -402,7 +402,7 @@ describe("TunaTaleAPI", () => {
       const mockResp = {
         status: "ok",
         direction: "recognition",
-        new_due_date: "2026-04-25",
+        new_due_at: "2026-04-25",
         new_state: "review",
       };
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(mockResp)));
@@ -416,7 +416,7 @@ describe("TunaTaleAPI", () => {
           body: JSON.stringify({ rating: "good" }),
         }),
       );
-      expect(result.new_due_date).toBe("2026-04-25");
+      expect(result.new_due_at).toBe("2026-04-25");
       expect(result.new_state).toBe("review");
     });
 
@@ -427,7 +427,7 @@ describe("TunaTaleAPI", () => {
           mockOk({
             status: "ok",
             direction: "production",
-            new_due_date: "2026-04-30",
+            new_due_at: "2026-04-30",
             new_state: "review",
           }),
         ),
@@ -439,7 +439,7 @@ describe("TunaTaleAPI", () => {
         `${BASE}/api/srs/items/7/direction/production/feedback`,
         expect.objectContaining({ method: "POST", body: JSON.stringify({ rating: "easy" }) }),
       );
-      expect(result.new_due_date).toBe("2026-04-30");
+      expect(result.new_due_at).toBe("2026-04-30");
     });
   });
 
@@ -479,7 +479,7 @@ describe("TunaTaleAPI", () => {
         text: "banka",
         translation: "bank",
         state: "new",
-        due_date: "2026-04-14",
+        due_at: "2026-04-14",
         stability: 1.0,
         difficulty: 5.0,
         reps: 0,
@@ -544,7 +544,7 @@ describe("TunaTaleAPI", () => {
         text: "dober",
         translation: "good",
         state: "new" as const,
-        due_date: "2026-04-01",
+        due_at: "2026-04-01",
         stability: 1,
         difficulty: 5,
         reps: 0,
@@ -595,7 +595,7 @@ describe("TunaTaleAPI", () => {
         text: "test",
         translation: "",
         state: "new" as const,
-        due_date: "2026-04-01",
+        due_at: "2026-04-01",
         stability: 1,
         difficulty: 5,
         reps: 0,
@@ -619,7 +619,7 @@ describe("TunaTaleAPI", () => {
         text: "test",
         translation: "",
         state: "suspended" as const,
-        due_date: "2026-04-01",
+        due_at: "2026-04-01",
         stability: 1,
         difficulty: 5,
         reps: 0,
@@ -646,7 +646,7 @@ describe("TunaTaleAPI", () => {
         text: "zdravo",
         translation: "",
         state: "known" as const,
-        due_date: "2026-04-14",
+        due_at: "2026-04-14",
         stability: 1.0,
         difficulty: 5.0,
         reps: 0,
@@ -685,7 +685,7 @@ describe("TunaTaleAPI", () => {
           id: 3,
           text: "zdravo",
           state: "suspended",
-          due_date: "2026-04-14",
+          due_at: "2026-04-14",
           stability: 1.0,
           difficulty: 5.0,
           reps: 0,

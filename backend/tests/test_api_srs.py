@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import UTC, date, datetime, time
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -23,7 +23,7 @@ def _add_review_due_collocation(db, text: str, today: date):
     for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
         ds = DirectionState(
             direction=direction,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             stability=5.0,
             difficulty=4.0,
             reps=5,
@@ -89,7 +89,7 @@ class TestQueueStats:
         for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
             ds = DirectionState(
                 direction=direction,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                 stability=1.0,
                 difficulty=5.0,
                 reps=1,
@@ -102,7 +102,7 @@ class TestQueueStats:
         for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
             ds = DirectionState(
                 direction=direction,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                 stability=1.0,
                 difficulty=5.0,
                 reps=5,
@@ -253,7 +253,7 @@ class TestQueueStats:
             DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.REVIEW,
-                due_date=today + timedelta(days=3),
+                due_at=datetime.combine(today + timedelta(days=3), time(4, 0), tzinfo=UTC),
                 stability=2.0,
                 difficulty=5.0,
                 reps=6,
@@ -282,7 +282,7 @@ class TestQueueStats:
         for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
             ds = DirectionState(
                 direction=direction,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                 stability=1.0,
                 difficulty=5.0,
                 reps=5,
@@ -411,14 +411,14 @@ class TestReviewQueue:
         rec_dir = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.REVIEW,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             last_review=today,
         )
         db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
         prod_dir = DirectionState(
             direction=Direction.PRODUCTION,
             state=SRSState.REVIEW,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             last_review=today,
         )
         db.update_direction_by_id(row_id, Direction.PRODUCTION, prod_dir)
@@ -450,7 +450,7 @@ class TestReviewQueue:
         rec_dir = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.REVIEW,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
         )
         db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
 
@@ -488,7 +488,7 @@ class TestReviewQueue:
             rec_dir = DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.REVIEW,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             )
             db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
 
@@ -524,7 +524,7 @@ class TestReviewQueue:
         rec_dir = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.REVIEW,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
         )
         db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
 
@@ -557,12 +557,22 @@ class TestReviewQueue:
         db.update_direction_by_id(
             row_id,
             Direction.RECOGNITION,
-            DirectionState(direction=Direction.RECOGNITION, due_date=today, state=SRSState.REVIEW, stability=0.1),
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
+                state=SRSState.REVIEW,
+                stability=0.1,
+            ),
         )
         db.update_direction_by_id(
             row_id,
             Direction.PRODUCTION,
-            DirectionState(direction=Direction.PRODUCTION, due_date=today, state=SRSState.REVIEW, stability=0.2),
+            DirectionState(
+                direction=Direction.PRODUCTION,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
+                state=SRSState.REVIEW,
+                stability=0.2,
+            ),
         )
         db.set_anki_state_cache("bury_review", "False")
 
@@ -580,7 +590,7 @@ class TestReviewQueue:
         from datetime import UTC, date, datetime
 
         db = api_app_state
-        today = date.today()
+        date.today()
         past_due_at = datetime(2020, 1, 1, tzinfo=UTC)
 
         from app.models.syntactic_unit import SyntacticUnit
@@ -595,7 +605,6 @@ class TestReviewQueue:
         rec_dir = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.RELEARNING,
-            due_date=today,
             due_at=past_due_at,
             stability=1.0,
             difficulty=5.0,
@@ -608,7 +617,6 @@ class TestReviewQueue:
         prod_dir = DirectionState(
             direction=Direction.PRODUCTION,
             state=SRSState.RELEARNING,
-            due_date=today,
             due_at=past_due_at,
             stability=1.0,
             difficulty=5.0,
@@ -651,7 +659,7 @@ class TestReviewQueue:
             new_dir = DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.NEW,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                 stability=orig.stability,
                 difficulty=orig.difficulty,
                 reps=orig.reps,
@@ -768,7 +776,7 @@ class TestReviewQueue:
         # Create the specified direction
         dir_state = DirectionState(
             direction=direction,
-            due_date=due,
+            due_at=datetime.combine(due, time(4, 0), tzinfo=UTC),
             state=SRSState.REVIEW,
             anki_card_id=anki_id,
             anki_due=anki_due,
@@ -779,7 +787,7 @@ class TestReviewQueue:
         opposite = Direction.PRODUCTION if direction == Direction.RECOGNITION else Direction.RECOGNITION
         opposite_state = DirectionState(
             direction=opposite,
-            due_date=due,
+            due_at=datetime.combine(due, time(4, 0), tzinfo=UTC),
             state=SRSState.REVIEW,
             stability=1.0,
             last_review=None,
@@ -831,7 +839,7 @@ class TestReviewQueue:
             DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.NEW,
-                due_date=date.today(),
+                due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                 anki_card_id=596,
                 anki_due=596,
             ),
@@ -842,7 +850,7 @@ class TestReviewQueue:
             DirectionState(
                 direction=Direction.PRODUCTION,
                 state=SRSState.NEW,
-                due_date=date.today(),
+                due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                 anki_card_id=597,
                 anki_due=597,
             ),
@@ -854,7 +862,7 @@ class TestReviewQueue:
             DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.NEW,
-                due_date=date.today(),
+                due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                 anki_card_id=200,
                 anki_due=200,
             ),
@@ -865,7 +873,7 @@ class TestReviewQueue:
             DirectionState(
                 direction=Direction.PRODUCTION,
                 state=SRSState.NEW,
-                due_date=date.today(),
+                due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                 anki_card_id=201,
                 anki_due=201,
             ),
@@ -941,7 +949,7 @@ class TestReviewQueue:
         rec_dir = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.BURIED,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
         )
         db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
 
@@ -982,7 +990,7 @@ class TestReviewQueue:
             DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.BURIED,
-                due_date=orig.due_date,
+                due_at=datetime.combine(orig.due_at.date(), time(4, 0), tzinfo=UTC),
                 stability=orig.stability,
                 difficulty=orig.difficulty,
                 reps=4,
@@ -1063,7 +1071,7 @@ class TestReviewQueue:
                 DirectionState(
                     direction=Direction.RECOGNITION,
                     state=SRSState.REVIEW,
-                    due_date=today + timedelta(days=30),
+                    due_at=datetime.combine(today + timedelta(days=30), time(4, 0), tzinfo=UTC),
                     anki_card_id=anki_due_prod - 1,
                     anki_due=anki_due_prod - 1,
                     stability=10.0,
@@ -1075,7 +1083,7 @@ class TestReviewQueue:
                 DirectionState(
                     direction=Direction.PRODUCTION,
                     state=SRSState.NEW,
-                    due_date=today,
+                    due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                     anki_card_id=anki_due_prod,
                     anki_due=anki_due_prod,
                 ),
@@ -1093,14 +1101,22 @@ class TestReviewQueue:
             row_id,
             Direction.RECOGNITION,
             DirectionState(
-                direction=Direction.RECOGNITION, state=SRSState.NEW, due_date=today, anki_card_id=10, anki_due=10
+                direction=Direction.RECOGNITION,
+                state=SRSState.NEW,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
+                anki_card_id=10,
+                anki_due=10,
             ),
         )
         db.update_direction_by_id(
             row_id,
             Direction.PRODUCTION,
             DirectionState(
-                direction=Direction.PRODUCTION, state=SRSState.NEW, due_date=today, anki_card_id=11, anki_due=11
+                direction=Direction.PRODUCTION,
+                state=SRSState.NEW,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
+                anki_card_id=11,
+                anki_due=11,
             ),
         )
 
@@ -1145,7 +1161,7 @@ class TestReviewQueue:
                 DirectionState(
                     direction=Direction.RECOGNITION,
                     state=SRSState.NEW,
-                    due_date=today,
+                    due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                     anki_card_id=rec_due,
                     anki_due=rec_due,
                 ),
@@ -1156,7 +1172,7 @@ class TestReviewQueue:
                 DirectionState(
                     direction=Direction.PRODUCTION,
                     state=SRSState.NEW,
-                    due_date=today,
+                    due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                     anki_card_id=prod_due,
                     anki_due=prod_due,
                 ),
@@ -1254,7 +1270,7 @@ class TestReviewQueue:
         # Production is the QUEUED direction: due today, heavily reviewed.
         prod_ds = DirectionState(
             direction=Direction.PRODUCTION,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             stability=2.0,
             difficulty=6.5,
             reps=27,
@@ -1267,7 +1283,7 @@ class TestReviewQueue:
         # Recognition is NOT queued today: future due, fewer reps, no last_review.
         rec_ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=today + timedelta(days=25),
+            due_at=datetime.combine(today + timedelta(days=25), time(4, 0), tzinfo=UTC),
             stability=29.365,
             difficulty=7.169,
             reps=6,
@@ -1289,8 +1305,8 @@ class TestReviewQueue:
         assert hit["lapses"] == 1, f"lapses must come from production; got {hit['lapses']}"
         assert hit["stability"] == 2.0, f"stability must come from production; got {hit['stability']}"
         assert hit["difficulty"] == 6.5, f"difficulty must come from production; got {hit['difficulty']}"
-        assert hit["due_date"] == today.isoformat(), (
-            f"due_date must come from production; got {hit['due_date']} (recognition is +25d)"
+        assert hit["due_at"].startswith(today.isoformat()), (
+            f"due_at must come from production; got {hit['due_at']} (recognition is +25d)"
         )
         assert hit["last_review"] is not None, "last_review must come from production (graded yesterday), not None"
 
@@ -1327,7 +1343,11 @@ class TestAudioUrlGrammarNote:
             size_bytes=100,
         )
         # Set to REVIEW so it appears in /due
-        rec_dir = DirectionState(direction=Direction.RECOGNITION, due_date=date.today(), state=SRSState.REVIEW)
+        rec_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+            state=SRSState.REVIEW,
+        )
         db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1351,7 +1371,11 @@ class TestAudioUrlGrammarNote:
         db.add_collocation(unit, language_code="sl")
         rows, _ = db.list_collocations(search="miza", limit=1)
         row_id = rows[0][0]
-        rec_dir = DirectionState(direction=Direction.RECOGNITION, due_date=date.today(), state=SRSState.REVIEW)
+        rec_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+            state=SRSState.REVIEW,
+        )
         db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1622,7 +1646,7 @@ class TestLearningStatePriority:
         rec_dir = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.REVIEW,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             last_review=today,
         )
         db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
@@ -1630,7 +1654,7 @@ class TestLearningStatePriority:
         prod_dir = DirectionState(
             direction=Direction.PRODUCTION,
             state=SRSState.LEARNING,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             stability=0.01,
         )
         db.update_direction_by_id(row_id, Direction.PRODUCTION, prod_dir)
@@ -2161,7 +2185,7 @@ class TestSessionMainQueueFreeze:
                     DirectionState(
                         direction=Direction.RECOGNITION,
                         state=SRSState.REVIEW,
-                        due_date=today + timedelta(days=10),
+                        due_at=datetime.combine(today + timedelta(days=10), time(4, 0), tzinfo=UTC),
                         stability=10.0,
                         anki_card_id=anki_id,
                     ),
@@ -2358,7 +2382,7 @@ class TestSessionMainQueueFreeze:
                 DirectionState(
                     direction=Direction.RECOGNITION,
                     state=SRSState.REVIEW,
-                    due_date=today + timedelta(days=3),
+                    due_at=datetime.combine(today + timedelta(days=3), time(4, 0), tzinfo=UTC),
                     stability=2.0,
                     reps=6,
                     lapses=0,
@@ -2379,7 +2403,7 @@ class TestSessionMainQueueFreeze:
                 DirectionState(
                     direction=Direction.RECOGNITION,
                     state=SRSState.LEARNING,
-                    due_date=today + timedelta(days=1),
+                    due_at=datetime.combine(today + timedelta(days=1), time(4, 0), tzinfo=UTC),
                     stability=1.0,
                     reps=1,
                     lapses=0,
@@ -2520,7 +2544,7 @@ class TestSessionMainQueueFreeze:
                 DirectionState(
                     direction=Direction.RECOGNITION,
                     state=SRSState.REVIEW,
-                    due_date=today,
+                    due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                     stability=stab,
                     anki_card_id=anki_id,
                 ),
@@ -2585,7 +2609,6 @@ class TestLearningStepFeedback:
         dstate = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.LEARNING,
-            due_date=now.date(),
             stability=1.0,
             left=2,
             due_at=now + timedelta(minutes=1),  # Step 0: 1 minute
@@ -2602,15 +2625,15 @@ class TestLearningStepFeedback:
 
         # Should return learning state with due_at
         assert data["new_state"] == "learning"
-        assert "due_at" in data, "Response should include due_at for learning cards"
+        assert "new_due_at" in data, "Response should include new_due_at for learning cards"
         assert "left" in data, "Response should include left for learning cards"
         assert data["left"] == 1, f"Expected left=1 (total_remaining=1) after GOOD, got {data.get('left')}"
 
-        # Parse due_at and verify it's in the future
+        # Parse new_due_at and verify it's in the future
         from datetime import datetime
 
-        due_at = datetime.fromisoformat(data["due_at"])
-        assert due_at > datetime.now(UTC), "due_at should be in the future"
+        due_at = datetime.fromisoformat(data["new_due_at"])
+        assert due_at > datetime.now(UTC), "new_due_at should be in the future"
 
     async def test_future_due_learning_sorts_after_reviews(self, api_app_state):
         """Anki parity: when a learning card's next step is in the future,
@@ -2639,7 +2662,6 @@ class TestLearningStepFeedback:
             DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.LEARNING,
-                due_date=today,
                 stability=0.5,
                 left=1002,
                 due_at=now - timedelta(minutes=1),
@@ -2658,7 +2680,7 @@ class TestLearningStepFeedback:
             DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.REVIEW,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=5.0,
                 reps=4,
@@ -2679,7 +2701,6 @@ class TestLearningStepFeedback:
             DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.LEARNING,
-                due_date=today,
                 stability=0.5,
                 left=1002,
                 due_at=now + timedelta(minutes=10),
@@ -2713,7 +2734,7 @@ class TestLearningStepFeedback:
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        date.today()
         now = datetime.now(UTC)
 
         unit = SyntacticUnit(text="glasbilo_t", translation="instrument", word_count=1, difficulty=1, source="test")
@@ -2727,7 +2748,7 @@ class TestLearningStepFeedback:
             DirectionState(
                 direction=Direction.PRODUCTION,
                 state=SRSState.LEARNING,
-                due_date=today + timedelta(days=1),  # FSRS rolled past local midnight
+                # FSRS rolled past local midnight
                 stability=0.2,
                 left=1002,
                 due_at=now + timedelta(minutes=10),
@@ -2779,7 +2800,6 @@ class TestLearningStepFeedback:
             DirectionState(
                 direction=Direction.PRODUCTION,
                 state=SRSState.LEARNING,
-                due_date=today,
                 stability=0.2,
                 left=1002,
                 due_at=now + timedelta(minutes=10),
@@ -2797,7 +2817,7 @@ class TestLearningStepFeedback:
             DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.REVIEW,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=5.0,
                 reps=4,
@@ -2838,7 +2858,6 @@ class TestLearningStepFeedback:
             DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.LEARNING,
-                due_date=now.date(),
                 stability=1.0,
                 left=1002,
                 due_at=now - timedelta(minutes=1),
@@ -2859,7 +2878,6 @@ class TestLearningStepFeedback:
             DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.LEARNING,
-                due_date=now.date(),
                 stability=1.0,
                 left=1002,
                 due_at=now + timedelta(minutes=10),
@@ -2895,7 +2913,6 @@ class TestLearningStepFeedback:
         dstate = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.LEARNING,
-            due_date=now.date(),
             stability=1.0,
             left=1002,
             due_at=now - timedelta(minutes=1),  # Past due_at

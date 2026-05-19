@@ -64,7 +64,7 @@ _WORD_RATING_MAP: dict[str, Rating] = {
 def _direction_to_dict(ds: DirectionState) -> dict:
     result = {
         "state": ds.state.value,
-        "due_date": ds.due_date.isoformat(),
+        "due_at": ds.due_at.isoformat(),
         "stability": ds.stability,
         "difficulty": ds.difficulty,
         "reps": ds.reps,
@@ -73,8 +73,6 @@ def _direction_to_dict(ds: DirectionState) -> dict:
         "last_review_time_ms": ds.last_review_time_ms,
         "anki_card_id": ds.anki_card_id,
     }
-    if ds.due_at is not None:
-        result["due_at"] = ds.due_at.isoformat()
     if ds.left is not None:
         result["left"] = ds.left
     return result
@@ -99,7 +97,7 @@ def _item_to_dict(
     flat_src = prod if item.syntactic_unit.card_type == "cloze" else rec
     flat: dict[str, object] = {
         "state": flat_src.state.value if flat_src else SRSState.NEW.value,
-        "due_date": flat_src.due_date.isoformat() if flat_src else None,
+        "due_at": flat_src.due_at.isoformat() if flat_src else None,
         "stability": flat_src.stability if flat_src else 1.0,
         "difficulty": flat_src.difficulty if flat_src else 5.0,
         "reps": flat_src.reps if flat_src else 0,
@@ -205,13 +203,11 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
     response = {
         "status": "ok",
         "direction": dir_enum.value,
-        "new_due_date": new_dir.due_date.isoformat(),
+        "new_due_at": new_dir.due_at.isoformat(),
         "new_state": new_dir.state.value,
     }
     if new_dir.left is not None:
         response["left"] = new_dir.left
-    if new_dir.due_at is not None:
-        response["due_at"] = new_dir.due_at.isoformat()
     return response
 
 
@@ -901,7 +897,7 @@ def _queue_item_to_dict(row_id: int, item: SRSItem, lang: str, direction: Direct
     # field with the queued direction's authoritative value.
     ds = item.directions[direction]
     base["state"] = ds.state.value
-    base["due_date"] = ds.due_date.isoformat()
+    base["due_at"] = ds.due_at.isoformat()
     base["stability"] = ds.stability
     base["difficulty"] = ds.difficulty
     base["reps"] = ds.reps

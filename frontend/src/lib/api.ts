@@ -120,14 +120,13 @@ export interface LessonAudio {
 
 export interface DirectionState {
   state: string;
-  due_date: string;
+  due_at: string;
   stability: number;
   difficulty: number;
   reps: number;
   lapses: number;
   last_review: string | null;
   anki_card_id: number | null;
-  due_at?: string;
   left?: number;
 }
 
@@ -137,7 +136,7 @@ export interface SRSItemDetail {
   translation: string;
   word_count?: number;
   state: "new" | "learning" | "review" | "relearning" | "suspended" | "known";
-  due_date: string;
+  due_at: string;
   stability: number;
   difficulty: number;
   reps: number;
@@ -174,7 +173,7 @@ export interface SRSListParams {
     | "text"
     | "translation"
     | "state"
-    | "due_date"
+    | "due_at"
     | "fsrs_difficulty"
     | "reps"
     | "lapses"
@@ -335,7 +334,7 @@ export class TunaTaleAPI {
     direction: "recognition" | "production",
     rating: "again" | "hard" | "good" | "easy",
     timeMs?: number,
-  ): Promise<{ new_due_date: string; new_state: string; due_at?: string; left?: number }> {
+  ): Promise<{ new_due_at: string; new_state: string; left?: number }> {
     return this.request(`/api/srs/items/${itemId}/direction/${direction}/feedback`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

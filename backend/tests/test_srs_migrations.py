@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 23
+        assert CURRENT_VERSION == 25
 
     def test_migrates_v15_to_v16_deletes_phantom_directions(self, tmp_path):
         """v16 deletes direction rows that were auto-filled by the pre-fix
@@ -539,16 +539,18 @@ class TestMigrations:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         assert "collocation_tags" in tables
 
-    def test_production_due_dates_seeded_to_today(self):
+    def test_production_due_ats_seeded_to_today(self):
         conn = _make_v1_conn()
         for i in range(3):
             _insert(conn, f"word{i}", due_date="2026-01-01")
         migrate(conn)
-        today = date.today()
-        rows = conn.execute("SELECT due_date FROM collocation_directions WHERE direction = 'production'").fetchall()
+        today_iso = date.today().isoformat()
+        rows = conn.execute("SELECT due_at FROM collocation_directions WHERE direction = 'production'").fetchall()
         assert len(rows) == 3
         for row in rows:
-            assert row["due_date"] == today.isoformat(), f"production due_date should be today, got {row['due_date']}"
+            assert row["due_at"].startswith(today_iso), (
+                f"production due_at should start with today, got {row['due_at']}"
+            )
 
     def test_idempotent_on_rerun(self):
         conn = _make_v1_conn()
@@ -557,6 +559,41 @@ class TestMigrations:
         migrate(conn)  # should not raise or duplicate rows
         rows = conn.execute("SELECT * FROM collocation_directions").fetchall()
         assert len(rows) == 2
+
+    def test_v23_to_v24_learning_state_uses_midnight_due_at(self, monkeypatch):
+        """Learning/relearning rows reconstruct due_at at midnight (sub-day
+        precision is lost — the safest start-of-day fallback)."""
+        from app.srs import migrations as M
+
+        conn = _make_v1_conn()
+        _insert(conn, "lstep", state="learning", due_date="2026-05-01")
+        # Migrate up to v23 only, then exercise v23_to_v24 in isolation so the
+        # later v24→v25 doesn't tighten due_at NOT NULL on the rows we want to
+        # null out.
+        monkeypatch.setattr(M, "CURRENT_VERSION", 23)
+        migrate(conn)
+        conn.execute(
+            "UPDATE collocation_directions SET due_at = NULL, state='learning' WHERE direction = 'recognition'"
+        )
+        conn.commit()
+        M.migrate_v23_to_v24(conn)
+        row = conn.execute("SELECT due_at FROM collocation_directions WHERE direction='recognition'").fetchone()
+        assert row["due_at"].endswith("T00:00:00+00:00"), row["due_at"]
+
+    def test_v24_to_v25_no_op_when_due_date_already_dropped(self):
+        """Idempotency: re-running v24→v25 on a DB where due_date is gone is a no-op."""
+        from app.srs.migrations import migrate_v24_to_v25
+
+        conn = _make_v1_conn()
+        _insert(conn, "banka")
+        migrate(conn)  # gets us to current_version (25) — due_date is already dropped
+        # Pretend we're at v24 with due_date already missing (inconsistent but possible
+        # if migrations were rolled forward and back).
+        conn.execute("PRAGMA user_version = 24")
+        conn.commit()
+        migrate_v24_to_v25(conn)  # should detect missing due_date and short-circuit
+        ver = conn.execute("PRAGMA user_version").fetchone()[0]
+        assert ver == 25
 
     def test_multiple_collocations(self):
         conn = _make_v1_conn()

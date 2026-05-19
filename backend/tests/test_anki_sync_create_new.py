@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import UTC, date, datetime, time
 
 import httpx
 import pytest
@@ -1203,7 +1203,7 @@ class TestReverseImportLayer22:
                             lapses=0,
                             stability=5.0,
                             difficulty=4.0,
-                            due_date=date.today(),
+                            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                             anki_due=10,
                             anki_card_mod=100,
                         ),
@@ -1248,7 +1248,7 @@ class TestReverseImportLayer22:
                             lapses=0,
                             stability=0.0,
                             difficulty=0.0,
-                            due_date=date.today(),
+                            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                             anki_due=10,
                             anki_card_mod=0,
                         ),
@@ -1290,7 +1290,7 @@ class TestReverseImportLayer22:
                             lapses=0,
                             stability=5.0,
                             difficulty=4.0,
-                            due_date=date.today(),
+                            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                             anki_due=10,
                         ),
                     ],
@@ -1326,7 +1326,7 @@ class TestReverseImportLayer22:
                             lapses=0,
                             stability=1.0,
                             difficulty=5.0,
-                            due_date=date.today(),
+                            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                             anki_due=0,
                         ),
                     ],
@@ -1370,7 +1370,7 @@ class TestReverseImportLayer22:
                             lapses=0,
                             stability=5.0,
                             difficulty=4.0,
-                            due_date=date.today(),
+                            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                             anki_due=10,
                             anki_card_mod=100,
                         ),
@@ -1382,7 +1382,7 @@ class TestReverseImportLayer22:
                             lapses=1,
                             stability=3.0,
                             difficulty=5.0,
-                            due_date=date.today(),
+                            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                             anki_due=20,
                             anki_card_mod=101,
                         ),
@@ -1394,7 +1394,7 @@ class TestReverseImportLayer22:
                             lapses=0,
                             stability=1.0,
                             difficulty=5.0,
-                            due_date=date.today(),
+                            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                             anki_due=0,
                             anki_card_mod=102,
                         ),

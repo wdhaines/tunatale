@@ -23,7 +23,7 @@ export function makeReviewQueueItem(overrides: Partial<ReviewQueueItem> = {}): R
     translation: "bank",
     word_count: 2,
     state: "review",
-    due_date: "2026-04-18",
+    due_at: "2026-04-18",
     stability: 5.0,
     difficulty: 4.0,
     reps: 3,
@@ -39,7 +39,7 @@ export function makeReviewQueueItem(overrides: Partial<ReviewQueueItem> = {}): R
     directions: {
       recognition: {
         state: "review",
-        due_date: "2026-04-18",
+        due_at: "2026-04-18",
         stability: 5.0,
         difficulty: 4.0,
         reps: 3,
@@ -49,7 +49,7 @@ export function makeReviewQueueItem(overrides: Partial<ReviewQueueItem> = {}): R
       },
       production: {
         state: "new",
-        due_date: "2026-04-18",
+        due_at: "2026-04-18",
         stability: 1.0,
         difficulty: 5.0,
         reps: 0,
@@ -70,7 +70,7 @@ export function makeSRSItemDetail(overrides: Partial<SRSItemDetail> = {}): SRSIt
     translation: "bank",
     word_count: 1,
     state: "review",
-    due_date: "2026-04-18",
+    due_at: "2026-04-18",
     stability: 5.0,
     difficulty: 4.0,
     reps: 3,
@@ -86,7 +86,7 @@ export function makeSRSItemDetail(overrides: Partial<SRSItemDetail> = {}): SRSIt
     directions: {
       recognition: {
         state: "review",
-        due_date: "2026-04-18",
+        due_at: "2026-04-18",
         stability: 5.0,
         difficulty: 4.0,
         reps: 3,
@@ -96,7 +96,7 @@ export function makeSRSItemDetail(overrides: Partial<SRSItemDetail> = {}): SRSIt
       },
       production: {
         state: "new",
-        due_date: "2026-04-18",
+        due_at: "2026-04-18",
         stability: 1.0,
         difficulty: 5.0,
         reps: 0,

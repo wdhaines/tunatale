@@ -1,6 +1,6 @@
 """Tests for FSRS scheduler with learning step semantics."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 
 import pytest
 
@@ -15,7 +15,6 @@ def _make_item(state: SRSState = SRSState.NEW, left: int = None, due_at: datetim
     unit = SyntacticUnit(text="test", translation="test", word_count=2, difficulty=1, source="corpus")
     rec_dir = DirectionState(
         direction=Direction.RECOGNITION,
-        due_date=datetime.now().date(),
         state=state,
         left=left,
         due_at=due_at,
@@ -340,7 +339,7 @@ class TestLearningStepFuzz:
         # Override anki_card_id so the seed is deterministic-but-nontrivial.
         item.directions[Direction.RECOGNITION] = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=now.date(),
+            due_at=datetime.combine(now.date(), time(4, 0), tzinfo=UTC),
             state=SRSState.NEW,
             anki_card_id=12345,
             reps=3,
@@ -359,7 +358,7 @@ class TestLearningStepFuzz:
             item = _make_item(state=SRSState.NEW)
             item.directions[Direction.RECOGNITION] = DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=now.date(),
+                due_at=datetime.combine(now.date(), time(4, 0), tzinfo=UTC),
                 state=SRSState.NEW,
                 anki_card_id=98765,
                 reps=7,
@@ -378,7 +377,7 @@ class TestLearningStepFuzz:
             item = _make_item(state=SRSState.NEW)
             item.directions[Direction.RECOGNITION] = DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=now.date(),
+                due_at=datetime.combine(now.date(), time(4, 0), tzinfo=UTC),
                 state=SRSState.NEW,
                 anki_card_id=42,
                 reps=reps,
@@ -398,7 +397,7 @@ class TestLearningStepFuzz:
         item = _make_item(state=SRSState.NEW)
         item.directions[Direction.RECOGNITION] = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=now.date(),
+            due_at=datetime.combine(now.date(), time(4, 0), tzinfo=UTC),
             state=SRSState.NEW,
             anki_card_id=999,
             reps=1,
@@ -407,7 +406,7 @@ class TestLearningStepFuzz:
         # (transitions to step 1 = 10m). 0.25 * 600 = 150 → range [600, 750).
         item.directions[Direction.RECOGNITION] = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=now.date(),
+            due_at=datetime.combine(now.date(), time(4, 0), tzinfo=UTC),
             state=SRSState.LEARNING,
             left=2,  # 2 steps total, currently at step 0
             anki_card_id=999,
@@ -592,7 +591,6 @@ class TestShortTermAppliesInSteps:
         item = _make_item(state=SRSState.LEARNING, left=2)
         item.directions[Direction.RECOGNITION] = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=datetime.now().date(),
             state=SRSState.LEARNING,
             stability=0.5,
             difficulty=5.0,
@@ -612,7 +610,6 @@ class TestShortTermAppliesInSteps:
         item = _make_item(state=SRSState.LEARNING, left=2)
         item.directions[Direction.RECOGNITION] = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=datetime.now().date(),
             state=SRSState.LEARNING,
             stability=1.0,
             difficulty=5.0,
@@ -636,7 +633,7 @@ class TestShortTermAppliesInSteps:
         item = _make_item(state=SRSState.REVIEW)
         item.directions[Direction.RECOGNITION] = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=now.date(),
+            due_at=datetime.combine(now.date(), time(4, 0), tzinfo=UTC),
             state=SRSState.REVIEW,
             stability=2.0,
             difficulty=5.0,
@@ -658,7 +655,7 @@ class TestShortTermAppliesInSteps:
         item = _make_item(state=SRSState.REVIEW)
         item.directions[Direction.RECOGNITION] = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=(now - timedelta(days=5)).date(),
+            due_at=datetime.combine((now - timedelta(days=5)).date(), time(4, 0), tzinfo=UTC),
             state=SRSState.REVIEW,
             stability=2.0,
             difficulty=5.0,

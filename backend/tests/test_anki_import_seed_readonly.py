@@ -191,10 +191,10 @@ class TestGuidCollisionSkip:
                 ("DIFFERENT_TEXT", "bank", "sl", 1, 1, "corpus", 0, guid),
             )
             conn.execute(
-                "INSERT INTO collocation_directions (collocation_id, direction, due_date) VALUES (last_insert_rowid(), 'recognition', date('now'))"
+                "INSERT INTO collocation_directions (collocation_id, direction, due_at) VALUES (last_insert_rowid(), 'recognition', strftime('%Y-%m-%dT04:00:00+00:00', 'now'))"
             )
             conn.execute(
-                "INSERT INTO collocation_directions (collocation_id, direction, due_date) VALUES ((SELECT id FROM collocations WHERE guid=?), 'production', date('now'))",
+                "INSERT INTO collocation_directions (collocation_id, direction, due_at) VALUES ((SELECT id FROM collocations WHERE guid=?), 'production', strftime('%Y-%m-%dT04:00:00+00:00', 'now'))",
                 (guid,),
             )
             db._commit(conn)

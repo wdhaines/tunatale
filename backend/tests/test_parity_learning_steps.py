@@ -25,7 +25,7 @@ What this test does NOT cover (deferred):
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 
 import pytest
 
@@ -59,7 +59,7 @@ def _make_tt_learning_item(
     """Build an SRSItem with a single LEARNING/RELEARNING direction matching Anki state."""
     direction = DirectionState(
         direction=Direction.RECOGNITION,
-        due_date=date.today(),
+        due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
         state=state,
         stability=stability,
         difficulty=difficulty,

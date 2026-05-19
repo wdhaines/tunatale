@@ -4,7 +4,7 @@ import contextlib
 import json
 import os
 import sqlite3
-from datetime import date
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 
 import pytest
@@ -65,13 +65,16 @@ def make_card_record(
     stability: float = 5.0,
     difficulty: float = 4.5,
     due_date: date | None = None,
+    due_at: datetime | None = None,
     fsrs_known: bool = True,
     card_type: int = 0,  # Anki's cards.type (0=New, 1=Learn, 2=Review, 3=Relearn)
     **overrides,
 ) -> CardRecord:
     """Create a CardRecord with sensible defaults for sync tests."""
-    if due_date is None:
-        due_date = date.today()
+    if due_at is None:
+        if due_date is None:
+            due_date = date.today()
+        due_at = datetime.combine(due_date, time(4, 0), tzinfo=UTC)
     return CardRecord(
         anki_card_id=anki_card_id,
         ord=ord,
@@ -81,7 +84,7 @@ def make_card_record(
         card_type=card_type,
         stability=stability,
         difficulty=difficulty,
-        due_date=due_date,
+        due_at=due_at,
         fsrs_known=fsrs_known,
         **overrides,
     )
@@ -486,6 +489,7 @@ def seed_direction(
     direction=None,
     state=None,
     due_date: date | None = None,
+    due_at: datetime | None = None,
     stability: float = 1.0,
     difficulty: float = 5.0,
     reps: int = 0,
@@ -511,10 +515,12 @@ def seed_direction(
     with db._get_conn() as conn:
         row_id = conn.execute("SELECT id FROM collocations WHERE text = ?", (text,)).fetchone()
     assert row_id is not None, f"seed_direction: id for '{text}' not found"
+    if due_at is None:
+        due_at = datetime.combine(due_date or date.today(), time(4, 0), tzinfo=UTC)
     dstate = DirectionState(
         direction=_direction,
         state=_state,
-        due_date=due_date or date.today(),
+        due_at=due_at,
         stability=stability,
         difficulty=difficulty,
         reps=reps,

@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 from app.models.srs_item import Direction, DirectionState, Rating, SRSItem, SRSState
-from app.srs._anki_rng import ChaCha12Rng, random_range_u32
+from app.srs._anki_rng import ChaCha12Rng, random_range_f32, random_range_u32
 
 
 def _learning_step_fuzz_seconds(anki_card_id: int | None, reps: int, step_seconds: int) -> int:
@@ -39,6 +39,73 @@ def _due_at_after_step(now: datetime, prev: DirectionState, delay_min: float) ->
     step_seconds = int(round(delay_min * 60))
     fuzzed = _learning_step_fuzz_seconds(prev.anki_card_id, prev.reps, step_seconds)
     return now + timedelta(seconds=fuzzed)
+
+
+_FUZZ_RANGES: tuple[tuple[float, float, float], ...] = (
+    (2.5, 7.0, 0.15),
+    (7.0, 20.0, 0.10),
+    (20.0, float("inf"), 0.05),
+)
+
+
+def _rust_round_half_away(x: float) -> int:
+    """Mirror Rust's ``f32::round`` — half away from zero, not banker's rounding."""
+    if x >= 0:
+        return int(x + 0.5)
+    return -int(-x + 0.5)
+
+
+def _fuzz_delta(interval: float) -> float:
+    """Port of ``fuzz_delta`` (rslib/.../states/fuzz.rs:111-119).
+
+    Cumulative ±-band starting at 1.0, accumulating ``range.factor *
+    (min(iv, range.end) - range.start).max(0)`` across all three FUZZ_RANGES.
+    Not a single-range pick — interval=101 yields delta=7.025, not 5.05.
+    """
+    if interval < 2.5:
+        return 0.0
+    delta = 1.0
+    for start, end, factor in _FUZZ_RANGES:
+        delta += factor * max(0.0, min(interval, end) - start)
+    return delta
+
+
+def _constrained_fuzz_bounds(interval: float, minimum: int, maximum: int) -> tuple[int, int]:
+    """Port of ``constrained_fuzz_bounds`` (rslib/.../states/fuzz.rs:82-97)."""
+    minimum = min(minimum, maximum)
+    interval = max(float(minimum), min(float(maximum), interval))
+    delta = _fuzz_delta(interval)
+    lower = max(minimum, min(maximum, _rust_round_half_away(interval - delta)))
+    upper = max(minimum, min(maximum, _rust_round_half_away(interval + delta)))
+    if upper == lower and upper > 2 and upper < maximum:  # pragma: no cover
+        # Defensive parity with rslib/.../states/fuzz.rs:92-94. Not reachable
+        # with our `_fuzz_delta` (which is either 0 below 2.5 or ≥ 1 above) and
+        # `_rust_round_half_away`, but mirrored exactly so source-side changes
+        # transfer cleanly.
+        upper = lower + 1
+    return lower, upper
+
+
+def _review_interval_fuzz(
+    raw_interval_days: float,
+    anki_card_id: int | None,
+    reps: int,
+    max_interval: int = 36500,
+) -> int:
+    """Mirror Anki's ``with_review_fuzz`` bit-exact (rslib/.../states/fuzz.rs:65-77).
+
+    Seed = ``(anki_card_id or 0) + reps`` mod 2^64 (rslib/.../answering/mod.rs:642-647).
+    Factor is sampled via ``ChaCha12Rng(seed).random_range(0.0..1.0)`` for ``f32``;
+    ``random_range_f32`` mirrors Rust's canonical 24-bit-mantissa formula.
+
+    ``reps`` is the value at grade time (Anki ``card.reps`` *before* the increment).
+    For reschedule of an existing graded row, pass ``current_reps - 1`` to recover
+    the at-grade seed (Anki ``for_reschedule=true``).
+    """
+    lower, upper = _constrained_fuzz_bounds(raw_interval_days, 1, max_interval)
+    seed = ((anki_card_id or 0) + reps) & 0xFFFFFFFFFFFFFFFF
+    factor = random_range_f32(ChaCha12Rng(seed))
+    return lower + int(factor * (1 + upper - lower))
 
 
 # FSRS-5 default parameters (w vector, 19 values)
@@ -103,6 +170,7 @@ class FSRSParams:
     desired_retention: float = 0.9
     decay: float = 0.5
     version: int = 5
+    maximum_review_interval: int = 36500
 
     def __post_init__(self) -> None:
         n = len(self.weights)
@@ -390,14 +458,15 @@ def schedule(
 
     new_stability = max(0.1, new_stability)
     new_difficulty = max(1.0, min(10.0, new_difficulty))
-    interval = _next_interval(new_stability, params.desired_retention, neg_decay)
-    new_due = review_date + timedelta(days=interval)
+    raw_interval = _next_interval(new_stability, params.desired_retention, neg_decay)
+    interval = _review_interval_fuzz(raw_interval, prev.anki_card_id, prev.reps, params.maximum_review_interval)
+    new_due_at = datetime.combine(review_date + timedelta(days=interval), time(0, 0), tzinfo=UTC)
 
     new_dir = replace(
         prev,
         stability=new_stability,
         difficulty=new_difficulty,
-        due_date=new_due,
+        due_at=new_due_at,
         reps=new_reps,
         lapses=new_lapses,
         state=new_state,
@@ -476,7 +545,6 @@ def _schedule_new(
     new_dir = replace(
         prev,
         state=SRSState.LEARNING,
-        due_date=new_due_at.date(),
         due_at=new_due_at,
         left=new_left,
         stability=new_stability,
@@ -551,7 +619,6 @@ def _schedule_review_again(
         stability=new_stability,
         difficulty=new_difficulty,
         state=SRSState.RELEARNING,
-        due_date=new_due_at.date(),
         due_at=new_due_at,
         left=new_left,
         reps=prev.reps + 1,
@@ -622,7 +689,6 @@ def _schedule_with_steps(
 
         new_dir = replace(
             prev,
-            due_date=new_due_at.date(),
             due_at=new_due_at,
             left=new_left,
             stability=new_stability,
@@ -657,7 +723,6 @@ def _schedule_with_steps(
 
         new_dir = replace(
             prev,
-            due_date=new_due_at.date(),
             due_at=new_due_at,
             left=new_left,
             stability=new_stability,
@@ -691,7 +756,6 @@ def _schedule_with_steps(
 
         new_dir = replace(
             prev,
-            due_date=new_due_at.date(),
             due_at=new_due_at,
             left=new_left,
             stability=new_stability,
@@ -754,15 +818,15 @@ def _graduate_to_review(
 
     new_stability = max(0.1, new_stability)
     new_difficulty = max(1.0, min(10.0, new_difficulty))
-    interval = _next_interval(new_stability, params.desired_retention, neg_decay)
-    new_due = date.today() + timedelta(days=interval)
+    raw_interval = _next_interval(new_stability, params.desired_retention, neg_decay)
+    interval = _review_interval_fuzz(raw_interval, prev.anki_card_id, prev.reps, params.maximum_review_interval)
+    new_due_at = datetime.combine(date.today() + timedelta(days=interval), time(0, 0), tzinfo=UTC)
 
     new_dir = replace(
         prev,
         stability=new_stability,
         difficulty=new_difficulty,
-        due_date=new_due,
-        due_at=None,  # No longer need sub-day precision
+        due_at=new_due_at,
         left=None,  # No longer in learning
         reps=prev.reps + 1,
         # prev.lapses already reflects the post-lapse count from the prior REVIEW+AGAIN rating

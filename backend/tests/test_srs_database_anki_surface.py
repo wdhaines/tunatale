@@ -1,6 +1,6 @@
 """Tests for the Anki-surface database methods: upsert_by_guid, set_anki_ids, add_media."""
 
-from datetime import date
+from datetime import UTC, date, datetime, time
 
 import pytest
 
@@ -18,7 +18,7 @@ def _dirs(reps_rec: int = 5, reps_prod: int = 3, stability: float = 12.5) -> dic
     return {
         Direction.RECOGNITION: DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             stability=stability,
             difficulty=4.8,
             reps=reps_rec,
@@ -26,7 +26,7 @@ def _dirs(reps_rec: int = 5, reps_prod: int = 3, stability: float = 12.5) -> dic
         ),
         Direction.PRODUCTION: DirectionState(
             direction=Direction.PRODUCTION,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             stability=stability / 2,
             difficulty=5.1,
             reps=reps_prod,
@@ -64,7 +64,7 @@ class TestUpsertByGuid:
         new_dirs = {
             Direction.RECOGNITION: DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=date.today(),
+                due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                 stability=99.0,
                 difficulty=1.0,
                 reps=5,
@@ -72,7 +72,7 @@ class TestUpsertByGuid:
             ),
             Direction.PRODUCTION: DirectionState(
                 direction=Direction.PRODUCTION,
-                due_date=date.today(),
+                due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                 stability=99.0,
                 difficulty=1.0,
                 reps=3,
@@ -87,19 +87,31 @@ class TestUpsertByGuid:
     def test_refreshes_direction_when_reps_zero(self, srs_db):
         zero_dirs = {
             Direction.RECOGNITION: DirectionState(
-                direction=Direction.RECOGNITION, due_date=date.today(), stability=1.0, reps=0
+                direction=Direction.RECOGNITION,
+                due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+                stability=1.0,
+                reps=0,
             ),
             Direction.PRODUCTION: DirectionState(
-                direction=Direction.PRODUCTION, due_date=date.today(), stability=1.0, reps=0
+                direction=Direction.PRODUCTION,
+                due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+                stability=1.0,
+                reps=0,
             ),
         }
         srs_db.upsert_by_guid(_unit("hiša", "house"), "sl", zero_dirs)
         updated_dirs = {
             Direction.RECOGNITION: DirectionState(
-                direction=Direction.RECOGNITION, due_date=date.today(), stability=20.0, reps=0
+                direction=Direction.RECOGNITION,
+                due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+                stability=20.0,
+                reps=0,
             ),
             Direction.PRODUCTION: DirectionState(
-                direction=Direction.PRODUCTION, due_date=date.today(), stability=10.0, reps=0
+                direction=Direction.PRODUCTION,
+                due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+                stability=10.0,
+                reps=0,
             ),
         }
         srs_db.upsert_by_guid(_unit("hiša", "house"), "sl", updated_dirs)
@@ -113,10 +125,16 @@ class TestUpsertByGuid:
         today = date.today()
         dirs = {
             Direction.RECOGNITION: DirectionState(
-                direction=Direction.RECOGNITION, due_date=today, reps=0, anki_due=4564
+                direction=Direction.RECOGNITION,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
+                reps=0,
+                anki_due=4564,
             ),
             Direction.PRODUCTION: DirectionState(
-                direction=Direction.PRODUCTION, due_date=today, reps=0, anki_due=1001968
+                direction=Direction.PRODUCTION,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
+                reps=0,
+                anki_due=1001968,
             ),
         }
         srs_db.upsert_by_guid(_unit("ulica", "street"), "sl", dirs, anki_note_id=42)
@@ -132,17 +150,26 @@ class TestUpsertByGuid:
         # Seed with recognition only.
         rec_only = {
             Direction.RECOGNITION: DirectionState(
-                direction=Direction.RECOGNITION, due_date=today, reps=0, anki_due=4564
+                direction=Direction.RECOGNITION,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
+                reps=0,
+                anki_due=4564,
             ),
         }
         srs_db.upsert_by_guid(_unit("ulica", "street"), "sl", rec_only, anki_note_id=42)
         # Now upsert with both directions; production is missing on the existing collocation.
         both = {
             Direction.RECOGNITION: DirectionState(
-                direction=Direction.RECOGNITION, due_date=today, reps=0, anki_due=4564
+                direction=Direction.RECOGNITION,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
+                reps=0,
+                anki_due=4564,
             ),
             Direction.PRODUCTION: DirectionState(
-                direction=Direction.PRODUCTION, due_date=today, reps=0, anki_due=1001968
+                direction=Direction.PRODUCTION,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
+                reps=0,
+                anki_due=1001968,
             ),
         }
         srs_db.upsert_by_guid(_unit("ulica", "street"), "sl", both, anki_note_id=42)
@@ -157,14 +184,14 @@ class TestUpsertByGuid:
         dirs_old = {
             Direction.RECOGNITION: DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                 reps=5,
                 state=SRSState.REVIEW,
                 anki_due=4000,
             ),
             Direction.PRODUCTION: DirectionState(
                 direction=Direction.PRODUCTION,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                 reps=3,
                 state=SRSState.REVIEW,
                 anki_due=2000,
@@ -175,14 +202,14 @@ class TestUpsertByGuid:
         dirs_new = {
             Direction.RECOGNITION: DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                 reps=5,
                 state=SRSState.REVIEW,
                 anki_due=4564,
             ),
             Direction.PRODUCTION: DirectionState(
                 direction=Direction.PRODUCTION,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                 reps=3,
                 state=SRSState.REVIEW,
                 anki_due=1001968,
@@ -198,13 +225,19 @@ class TestUpsertByGuid:
         today = date.today()
         dirs_old = {
             Direction.RECOGNITION: DirectionState(
-                direction=Direction.RECOGNITION, due_date=today, reps=0, anki_due=None
+                direction=Direction.RECOGNITION,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
+                reps=0,
+                anki_due=None,
             ),
         }
         srs_db.upsert_by_guid(_unit("ulica", "street"), "sl", dirs_old, anki_note_id=42)
         dirs_new = {
             Direction.RECOGNITION: DirectionState(
-                direction=Direction.RECOGNITION, due_date=today, reps=0, anki_due=4564
+                direction=Direction.RECOGNITION,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
+                reps=0,
+                anki_due=4564,
             ),
         }
         srs_db.upsert_by_guid(_unit("ulica", "street"), "sl", dirs_new, anki_note_id=42)
@@ -214,19 +247,33 @@ class TestUpsertByGuid:
     def test_preserves_anki_card_id_even_when_reps_gt_zero(self, srs_db):
         dirs_no_card_id = {
             Direction.RECOGNITION: DirectionState(
-                direction=Direction.RECOGNITION, due_date=date.today(), reps=5, anki_card_id=None
+                direction=Direction.RECOGNITION,
+                due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+                reps=5,
+                anki_card_id=None,
             ),
             Direction.PRODUCTION: DirectionState(
-                direction=Direction.PRODUCTION, due_date=date.today(), reps=3, anki_card_id=None
+                direction=Direction.PRODUCTION,
+                due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+                reps=3,
+                anki_card_id=None,
             ),
         }
         srs_db.upsert_by_guid(_unit("miza", "table"), "sl", dirs_no_card_id)
         dirs_with_card_id = {
             Direction.RECOGNITION: DirectionState(
-                direction=Direction.RECOGNITION, due_date=date.today(), stability=99.0, reps=5, anki_card_id=10010
+                direction=Direction.RECOGNITION,
+                due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+                stability=99.0,
+                reps=5,
+                anki_card_id=10010,
             ),
             Direction.PRODUCTION: DirectionState(
-                direction=Direction.PRODUCTION, due_date=date.today(), stability=99.0, reps=3, anki_card_id=10011
+                direction=Direction.PRODUCTION,
+                due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+                stability=99.0,
+                reps=3,
+                anki_card_id=10011,
             ),
         }
         srs_db.upsert_by_guid(_unit("miza", "table"), "sl", dirs_with_card_id)
@@ -343,9 +390,9 @@ class TestAddMedia:
                 ("stol", "chair", "sl", 1, 1, "anki", 0, guid),
             )
             conn.execute(
-                "INSERT INTO collocation_directions (collocation_id,direction,due_date)"
+                "INSERT INTO collocation_directions (collocation_id,direction,due_at)"
                 " VALUES (last_insert_rowid(),'recognition',?)",
-                (today,),
+                (f"{today}T04:00:00+00:00",),
             )
             srs_db._commit(conn)
         # Now upsert with both directions — production direction should be inserted

@@ -12,7 +12,10 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 23
+CURRENT_VERSION = 25
+
+# Default 4am UTC for new cards / cards without a valid due_at
+_DEFAULT_DUE_AT = "04:00:00+00:00"
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
@@ -669,6 +672,123 @@ def migrate_v22_to_v23(conn: sqlite3.Connection) -> None:
     _set_version(conn, 23)
 
 
+def migrate_v23_to_v24(conn: sqlite3.Connection) -> None:
+    r"""Backfill ``due_at`` for every row where it is NULL.
+
+    Phase 1 of the ``due_date``→``due_at`` schema collapse. After this
+    migration every row has ``due_at`` populated. The column stays nullable
+    only until v25 drops ``due_date``.
+    """
+    rows = conn.execute(
+        """
+        SELECT collocation_id, direction, due_date, due_at, state, anki_due
+        FROM collocation_directions
+        WHERE due_at IS NULL
+        """
+    ).fetchall()
+    for r in rows:
+        # Learning/relearning rows persist sub-day due_at; without their original
+        # timestamp the safest reconstruction is the start of the date. All other
+        # states sit at the rollover hour (4am UTC) on the date.
+        if r["state"] in ("learning", "relearning"):
+            due_at = f"{r['due_date']}T00:00:00+00:00"
+        else:
+            due_at = f"{r['due_date']}T04:00:00+00:00"
+        conn.execute(
+            "UPDATE collocation_directions SET due_at = ? WHERE collocation_id = ? AND direction = ?",
+            (due_at, r["collocation_id"], r["direction"]),
+        )
+    _set_version(conn, 24)
+
+
+def migrate_v24_to_v25(conn: sqlite3.Connection) -> None:
+    r"""Drop ``due_date`` column from ``collocation_directions``.
+
+    Phase 4 of the ``due_date``→``due_at`` schema collapse. ``due_at`` is now
+    the single source of truth for due-time. The column is ``NOT NULL`` after
+    this migration.
+    """
+    has_due_date = _column_exists(conn, "collocation_directions", "due_date")
+    if not has_due_date:
+        _set_version(conn, 25)
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        for idx in (
+            "idx_directions_due_date",
+            "idx_directions_state",
+            "idx_directions_anki_card_id",
+            "idx_directions_introduced_at",
+        ):
+            conn.execute(f"DROP INDEX IF EXISTS {idx}")
+
+        conn.execute("DROP TABLE IF EXISTS _cd_v25")
+        conn.execute("""
+            CREATE TABLE _cd_v25 (
+                collocation_id INTEGER NOT NULL REFERENCES collocations(id) ON DELETE CASCADE,
+                direction TEXT NOT NULL CHECK(direction IN ('recognition','production')),
+                stability REAL NOT NULL DEFAULT 1.0,
+                fsrs_difficulty REAL NOT NULL DEFAULT 5.0,
+                due_at TEXT NOT NULL,
+                reps INTEGER NOT NULL DEFAULT 0,
+                lapses INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL DEFAULT 'new',
+                last_review TEXT,
+                last_review_time_ms INTEGER NOT NULL DEFAULT 0,
+                anki_card_id INTEGER,
+                anki_card_mod INTEGER,
+                anki_due INTEGER,
+                dirty_fsrs INTEGER NOT NULL DEFAULT 0,
+                last_synced_at TEXT,
+                last_rating INTEGER,
+                left INTEGER,
+                prior_state TEXT,
+                prior_left INTEGER,
+                prior_stability REAL,
+                introduced_at TEXT,
+                bury_kind TEXT,
+                PRIMARY KEY (collocation_id, direction)
+            )
+        """)
+
+        conn.execute("""
+            INSERT INTO _cd_v25
+                (collocation_id, direction, stability, fsrs_difficulty, due_at,
+                 reps, lapses, state, last_review, last_review_time_ms,
+                 anki_card_id, anki_card_mod, anki_due, dirty_fsrs, last_synced_at,
+                 last_rating, left, prior_state, prior_left, prior_stability,
+                 introduced_at, bury_kind)
+            SELECT
+                collocation_id, direction, stability, fsrs_difficulty,
+                COALESCE(due_at, date(due_date) || 'T04:00:00+00:00'),
+                reps, lapses, state, last_review, last_review_time_ms,
+                anki_card_id, anki_card_mod, anki_due, dirty_fsrs, last_synced_at,
+                last_rating, left, prior_state, prior_left, prior_stability,
+                introduced_at, bury_kind
+            FROM collocation_directions
+        """)
+
+        conn.execute("DROP TABLE collocation_directions")
+        conn.execute("ALTER TABLE _cd_v25 RENAME TO collocation_directions")
+        conn.execute("CREATE INDEX idx_directions_state ON collocation_directions(state)")
+        conn.execute("CREATE INDEX idx_directions_anki_card_id ON collocation_directions(anki_card_id)")
+        conn.execute("CREATE INDEX idx_directions_introduced_at ON collocation_directions(introduced_at)")
+        conn.execute("CREATE INDEX idx_directions_due_at ON collocation_directions(due_at)")
+
+        null_count = conn.execute("SELECT COUNT(*) FROM collocation_directions WHERE due_at IS NULL").fetchone()[0]
+        if null_count > 0:  # pragma: no cover
+            # Defensive: v23→v24 must have populated due_at for every row, and the
+            # COALESCE in the INSERT above re-fills any that slipped through.
+            # Reaching this branch implies an inconsistent DB; the explicit raise
+            # surfaces it rather than letting NOT NULL violate downstream.
+            raise RuntimeError(f"v25 migration: {null_count} rows still have NULL due_at")
+
+        _set_version(conn, 25)
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -693,6 +813,8 @@ _MIGRATIONS = {
     20: migrate_v20_to_v21,
     21: migrate_v21_to_v22,
     22: migrate_v22_to_v23,
+    23: migrate_v23_to_v24,
+    24: migrate_v24_to_v25,
 }
 
 

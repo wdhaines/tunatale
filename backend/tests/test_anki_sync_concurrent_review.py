@@ -12,7 +12,7 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from typing import Any
 
 from app.anki.sync import AnkiSync, CardRecord, NoteRecord
@@ -105,7 +105,7 @@ class TestTunaTaleGradeOnlyPushesNormally:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=grade_time.date(),
+                due_at=datetime.combine(grade_time.date(), time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=1,
@@ -139,7 +139,7 @@ class TestTunaTaleGradeOnlyPushesNormally:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=grade_time.date(),
+                due_at=datetime.combine(grade_time.date(), time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=1,
@@ -156,14 +156,14 @@ class TestTunaTaleGradeOnlyPushesNormally:
         writer = _FakeWriter()
         sync = AnkiSync(db=db, _reader=_FakeReader([]), _writer=writer)
 
-        import time
+        import time as _time
 
-        real_time = time.time
-        time.time = lambda: 1_700_000_000
+        real_time = _time.time
+        _time.time = lambda: 1_700_000_000
         try:
             sync.sync_push()
         finally:
-            time.time = real_time
+            _time.time = real_time
 
         assert len(writer.write_revlog_calls) == 1
         call = writer.write_revlog_calls[0]
@@ -197,7 +197,7 @@ class TestAnkiGradeOnlyPullsNormally:
                         lapses=0,
                         stability=7.5,
                         difficulty=4.8,
-                        due_date=date(2026, 5, 10),
+                        due_at=datetime.combine(date(2026, 5, 10), time(4, 0), tzinfo=UTC),
                         fsrs_known=True,
                         last_review_ms=int(anki_time.timestamp() * 1000),
                     )
@@ -227,7 +227,7 @@ class TestAnkiNewerThanTunaTale:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=grade_time.date(),
+                due_at=datetime.combine(grade_time.date(), time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=1,
@@ -261,7 +261,7 @@ class TestAnkiNewerThanTunaTale:
                         lapses=0,
                         stability=8.0,
                         difficulty=4.6,
-                        due_date=date(2026, 5, 12),
+                        due_at=datetime.combine(date(2026, 5, 12), time(4, 0), tzinfo=UTC),
                         fsrs_known=True,
                         last_review_ms=int(anki_time.timestamp() * 1000),
                     )
@@ -291,7 +291,7 @@ class TestAnkiNewerThanTunaTale:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=grade_time.date(),
+                due_at=datetime.combine(grade_time.date(), time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=1,
@@ -325,7 +325,7 @@ class TestAnkiNewerThanTunaTale:
                         lapses=0,
                         stability=8.0,
                         difficulty=4.6,
-                        due_date=date(2026, 5, 12),
+                        due_at=datetime.combine(date(2026, 5, 12), time(4, 0), tzinfo=UTC),
                         fsrs_known=True,
                         last_review_ms=int(anki_time.timestamp() * 1000),
                     )
@@ -367,7 +367,7 @@ class TestTunaTaleNewerThanAnki:
                         lapses=0,
                         stability=7.5,
                         difficulty=4.8,
-                        due_date=date(2026, 5, 10),
+                        due_at=datetime.combine(date(2026, 5, 10), time(4, 0), tzinfo=UTC),
                         fsrs_known=True,
                         last_review_ms=int(anki_time.timestamp() * 1000),
                     )
@@ -385,7 +385,7 @@ class TestTunaTaleNewerThanAnki:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=grade_time.date(),
+                due_at=datetime.combine(grade_time.date(), time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=1,
@@ -417,7 +417,7 @@ class TestReviewDurationPropagates:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=grade_time.date(),
+                due_at=datetime.combine(grade_time.date(), time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=1,
@@ -478,7 +478,7 @@ class TestSecondPushDoesNotReFire:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=grade_time.date(),
+                due_at=datetime.combine(grade_time.date(), time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=1,
@@ -516,7 +516,7 @@ class TestSecondPushDoesNotReFire:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=grade_time.date(),
+                due_at=datetime.combine(grade_time.date(), time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=1,
@@ -556,7 +556,7 @@ class TestAnkiWinsByTimestampQueueMappings:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=grade_time.date(),
+                due_at=datetime.combine(grade_time.date(), time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=3,
@@ -594,7 +594,7 @@ class TestAnkiWinsByTimestampQueueMappings:
                         lapses=0,
                         stability=5.0,
                         difficulty=4.5,
-                        due_date=date(2026, 5, 10),
+                        due_at=datetime.combine(date(2026, 5, 10), time(4, 0), tzinfo=UTC),
                         fsrs_known=True,
                         last_review_ms=int(anki_time.timestamp() * 1000),
                     )
@@ -629,7 +629,7 @@ class TestAnkiWinsByTimestampQueueMappings:
                         lapses=0,
                         stability=5.0,
                         difficulty=4.5,
-                        due_date=date(2026, 5, 10),
+                        due_at=datetime.combine(date(2026, 5, 10), time(4, 0), tzinfo=UTC),
                         fsrs_known=True,
                         last_review_ms=int(anki_time.timestamp() * 1000),
                     )
@@ -664,7 +664,7 @@ class TestAnkiWinsByTimestampQueueMappings:
                         lapses=0,
                         stability=2.0,
                         difficulty=4.0,
-                        due_date=date(2026, 5, 5),
+                        due_at=datetime.combine(date(2026, 5, 5), time(4, 0), tzinfo=UTC),
                         fsrs_known=True,
                         last_review_ms=int(anki_time.timestamp() * 1000),
                     )
@@ -699,7 +699,7 @@ class TestAnkiWinsByTimestampQueueMappings:
                         lapses=1,
                         stability=4.0,
                         difficulty=5.0,
-                        due_date=date(2026, 5, 8),
+                        due_at=datetime.combine(date(2026, 5, 8), time(4, 0), tzinfo=UTC),
                         fsrs_known=True,
                         last_review_ms=int(anki_time.timestamp() * 1000),
                     )
@@ -734,7 +734,7 @@ class TestAnkiWinsByTimestampQueueMappings:
                         lapses=0,
                         stability=0.0,
                         difficulty=0.0,
-                        due_date=date(2026, 5, 4),
+                        due_at=datetime.combine(date(2026, 5, 4), time(4, 0), tzinfo=UTC),
                         fsrs_known=False,
                         last_review_ms=int(anki_time.timestamp() * 1000),
                     )
@@ -761,7 +761,7 @@ class TestSecondPushLoopEdgeCases:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=grade_time.date(),
+                due_at=datetime.combine(grade_time.date(), time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=1,
@@ -789,7 +789,7 @@ class TestSecondPushLoopEdgeCases:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=grade_time.date(),
+                due_at=datetime.combine(grade_time.date(), time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=0,  # reps=0
@@ -822,7 +822,7 @@ class TestRecordConflictToDB:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=grade_time.date(),
+                due_at=datetime.combine(grade_time.date(), time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=3,
@@ -855,7 +855,7 @@ class TestRecordConflictToDB:
                         lapses=0,
                         stability=5.0,
                         difficulty=4.5,
-                        due_date=date(2026, 5, 10),
+                        due_at=datetime.combine(date(2026, 5, 10), time(4, 0), tzinfo=UTC),
                         fsrs_known=True,
                         last_review_ms=int(anki_time.timestamp() * 1000),
                     )
@@ -884,7 +884,7 @@ class TestSecondPushLoopDryRun:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=grade_time.date(),
+                due_at=datetime.combine(grade_time.date(), time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=1,

@@ -43,7 +43,11 @@ def _advance_recognition_due(db: SRSDatabase, text: str) -> None:
     item = db.get_collocation(text)
     assert item is not None
     rec = item.directions[Direction.RECOGNITION]
-    rec.due_date = datetime.date.today() - datetime.timedelta(days=1)
+    rec.due_at = datetime.datetime.combine(
+        datetime.date.today() - datetime.timedelta(days=1),
+        datetime.time(4, 0),
+        tzinfo=datetime.UTC,
+    )
     rec.state = SRSState.REVIEW
     db.update_direction(item.guid, Direction.RECOGNITION, rec)
 
@@ -53,7 +57,11 @@ def _advance_production_due(db: SRSDatabase, text: str) -> None:
     item = db.get_collocation(text)
     assert item is not None
     prod = item.directions[Direction.PRODUCTION]
-    prod.due_date = datetime.date.today() - datetime.timedelta(days=1)
+    prod.due_at = datetime.datetime.combine(
+        datetime.date.today() - datetime.timedelta(days=1),
+        datetime.time(4, 0),
+        tzinfo=datetime.UTC,
+    )
     prod.state = SRSState.REVIEW
     db.update_direction(item.guid, Direction.PRODUCTION, prod)
 
@@ -178,7 +186,7 @@ class TestItemDictShape:
         # Flat shims still present
         assert "text" in item
         assert "state" in item
-        assert "due_date" in item
+        assert "due_at" in item
 
         # directions block present
         assert "directions" in item
@@ -187,7 +195,7 @@ class TestItemDictShape:
         assert "production" in dirs
 
         rec = dirs["recognition"]
-        for key in ("state", "due_date", "stability", "difficulty", "reps", "lapses", "last_review", "anki_card_id"):
+        for key in ("state", "due_at", "stability", "difficulty", "reps", "lapses", "last_review", "anki_card_id"):
             assert key in rec, f"Missing key {key!r} in recognition direction"
 
     async def test_due_item_has_id(self):
@@ -254,7 +262,7 @@ class TestDrillEndpoint:
         body = r.json()
         assert body["status"] == "ok"
         assert body["direction"] == "recognition"
-        assert "new_due_date" in body
+        assert "new_due_at" in body
         assert "new_state" in body
 
         # production direction should still be NEW
@@ -380,7 +388,11 @@ class TestUpdateDirectionByIdMissing:
         db = _db()
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=datetime.date.today(),
+            due_at=datetime.datetime.combine(
+                datetime.date.today(),
+                datetime.time(4, 0),
+                tzinfo=datetime.UTC,
+            ),
             state=SRSState.NEW,
         )
         db.update_direction_by_id(99999, Direction.RECOGNITION, ds)  # should not raise

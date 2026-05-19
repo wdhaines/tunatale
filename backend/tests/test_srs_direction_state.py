@@ -34,7 +34,7 @@ class TestDirectionState:
     def test_recognition_shim_due_date_matches_direction(self, srs_db):
         srs_db.add_collocation(_unit(), language_code="sl")
         item = srs_db.get_collocation("banka")
-        assert item.due_date == item.directions[Direction.RECOGNITION].due_date
+        assert item.due_date == item.directions[Direction.RECOGNITION].due_at.date()
 
     def test_recognition_shim_stability_matches_direction(self, srs_db):
         srs_db.add_collocation(_unit(), language_code="sl")
@@ -106,7 +106,7 @@ class TestDirectionState:
 
         srs_db.add_collocation(_unit(), language_code="sl")
         item = srs_db.get_collocation("banka")
-        prod_due = item.directions[Direction.PRODUCTION].due_date
+        prod_due = item.directions[Direction.PRODUCTION].due_at.date()
         today = date.today()
         assert today <= prod_due <= today + timedelta(days=30)
 

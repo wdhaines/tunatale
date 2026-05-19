@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime, time, timedelta
 import pytest
 
 from app.anki.sqlite_reader import (
-    compute_due_date,
+    compute_due_at,
     extract_l2,
     extract_l2_from_fields,
     fetch_cards_for_notes,
@@ -20,56 +20,54 @@ from app.anki.sqlite_reader import (
 from app.models.srs_item import Direction, SRSState
 
 
-class TestComputeDueDate:
-    """Tests for compute_due_date overflow handling."""
+class TestComputeDueAt:
+    """Tests for compute_due_at overflow handling."""
 
     def test_queue_2_normal_days(self):
-        """queue 2: due_raw is days since col_crt."""
+        """queue 2: due_raw is days since col_crt → midnight + 4h UTC."""
         col_crt = 1388836800  # 2014-01-04
-        # due_raw=10 means 10 days after col_crt
-        result = compute_due_date(queue=2, due_raw=10, col_crt=col_crt)
-        expected = date(2014, 1, 14)
+        result = compute_due_at(queue=2, due_raw=10, col_crt=col_crt)
+        expected = datetime(2014, 1, 14, 4, 0, tzinfo=UTC)
         assert result == expected
 
     def test_queue_3_normal_days(self):
         """queue 3: due_raw is days since col_crt."""
         col_crt = 1388836800
-        result = compute_due_date(queue=3, due_raw=5, col_crt=col_crt)
-        expected = date(2014, 1, 9)
+        result = compute_due_at(queue=3, due_raw=5, col_crt=col_crt)
+        expected = datetime(2014, 1, 9, 4, 0, tzinfo=UTC)
         assert result == expected
 
     def test_overflow_large_due_raw(self):
         """Large due_raw values (Unix timestamps) are detected by heuristic."""
         col_crt = 1388836800
-        # due_raw=1777999998 is a Unix timestamp (seconds), not days
-        result = compute_due_date(queue=2, due_raw=1777999998, col_crt=col_crt)
-        # 1777999998 seconds since epoch = 2026-05-05
-        expected = date(2026, 5, 5)
+        result = compute_due_at(queue=2, due_raw=1777999998, col_crt=col_crt)
+        expected = datetime.fromtimestamp(1777999998, tz=UTC)
         assert result == expected
 
     def test_queue_2_due_raw_as_days(self):
         """Normal queue=2: due_raw is days since col_crt."""
         col_crt = 1388836800  # 2014-01-04
-        result = compute_due_date(queue=2, due_raw=4503, col_crt=col_crt)
-        # 4503 days after 2014-01-04 = 2026-05-04
-        expected = date(2026, 5, 4)
+        result = compute_due_at(queue=2, due_raw=4503, col_crt=col_crt)
+        expected = datetime(2026, 5, 4, 4, 0, tzinfo=UTC)
         assert result == expected
 
     def test_queue_1_unix_timestamp(self):
         """queue 1: due_raw is absolute Unix timestamp."""
-        result = compute_due_date(queue=1, due_raw=1777999998, col_crt=0)
-        expected = date(2026, 5, 5)  # 1777999998 seconds = 2026-05-05 12:53:18
+        result = compute_due_at(queue=1, due_raw=1777999998, col_crt=0)
+        expected = datetime.fromtimestamp(1777999998, tz=UTC)
         assert result == expected
 
     def test_queue_0_fallback_to_today(self):
-        """queue 0: fall back to today."""
-        result = compute_due_date(queue=0, due_raw=999, col_crt=0)
-        assert result == date.today()
+        """queue 0: fall back to today at 04:00 UTC."""
+        result = compute_due_at(queue=0, due_raw=999, col_crt=0)
+        expected = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        assert result == expected
 
     def test_queue_minus_1_suspended(self):
-        """queue -1: suspended, fall back to today."""
-        result = compute_due_date(queue=-1, due_raw=0, col_crt=0)
-        assert result == date.today()
+        """queue -1: suspended, fall back to today at 04:00 UTC."""
+        result = compute_due_at(queue=-1, due_raw=0, col_crt=0)
+        expected = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        assert result == expected
 
 
 class TestFindDeckId:
@@ -312,7 +310,7 @@ class TestParseFsrsData:
             ivl=2,
         )
         # day-level: midnight UTC of (col_crt + due - ivl) days
-        from datetime import UTC, datetime, time, timedelta
+        from datetime import UTC, datetime, time
 
         expected = datetime.combine(
             datetime.fromtimestamp(1704067200, tz=UTC).date() + timedelta(days=8),
@@ -321,8 +319,8 @@ class TestParseFsrsData:
         )
         assert state.last_review == expected
 
-    def test_queue_2_card_due_date_uses_col_crt(self):
-        """queue=2 (review): due_date = date.fromtimestamp(col_crt) + timedelta(days=due_raw)."""
+    def test_queue_2_card_due_at_uses_col_crt(self):
+        """queue=2 (review): due_at = datetime based on col_crt + due_raw days + 4h UTC."""
         col_crt = 1704067200  # 2024-01-01 00:00:00 UTC
         due_raw = 10
         state = parse_fsrs_data(
@@ -335,11 +333,11 @@ class TestParseFsrsData:
             col_crt=col_crt,
             due_raw=due_raw,
         )
-        expected = date.fromtimestamp(col_crt) + timedelta(days=due_raw)
-        assert state.due_date == expected
+        expected = datetime(2024, 1, 11, 4, 0, tzinfo=UTC)
+        assert state.due_at == expected
 
-    def test_queue_1_card_due_date_uses_epoch_seconds(self):
-        """queue=1 (learning): due_date = datetime.fromtimestamp(due_raw).date()."""
+    def test_queue_1_card_due_at_uses_epoch_seconds(self):
+        """queue=1 (learning): due_at = datetime.fromtimestamp(due_raw, tz=UTC)."""
         due_raw = 1704067200 + 86400 * 5  # 5 days after col_crt epoch
         state = parse_fsrs_data(
             card_id=2,
@@ -351,11 +349,11 @@ class TestParseFsrsData:
             col_crt=1704067200,
             due_raw=due_raw,
         )
-        expected = datetime.fromtimestamp(due_raw).date()
-        assert state.due_date == expected
+        expected = datetime.fromtimestamp(due_raw, tz=UTC)
+        assert state.due_at == expected
 
     def test_new_card_falls_back_to_today(self):
-        """queue=0 (new card): due_raw is a position, not a date — fall back to today."""
+        """queue=0 (new card): due_raw is a position, not a date — fall back to today at 04:00 UTC."""
         state = parse_fsrs_data(
             card_id=3,
             ord=0,
@@ -366,7 +364,7 @@ class TestParseFsrsData:
             col_crt=1704067200,
             due_raw=5,
         )
-        assert state.due_date == date.today()
+        assert state.due_at == datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
         assert state.anki_due == 5
 
     def test_review_card_captures_anki_due(self):
@@ -866,14 +864,14 @@ class TestLeftAndDueAtFromCards:
         state = cards[0].fsrs_state
         assert state.left == 1001
         assert state.due_at is not None
-        # due_at for queue=3: col_crt + due days → midnight UTC
+        # due_at for queue=3: col_crt + due days → 4am UTC
         expected_due_at = datetime.datetime.fromtimestamp(1704067200 + 5 * 86400, tz=datetime.UTC).replace(
-            hour=0, minute=0, second=0, microsecond=0
+            hour=4, minute=0, second=0, microsecond=0
         )
         assert state.due_at == expected_due_at
 
-    def test_new_card_has_no_left_or_due_at(self, tmp_path):
-        """queue=0 (new): left may be present but due_at is None (not a learning card)."""
+    def test_new_card_has_no_left_and_today_due_at(self, tmp_path):
+        """queue=0 (new): left is None, due_at falls back to today at 4am UTC."""
         db_path = self._make_db(
             tmp_path,
             [(3, 1003, 12345, 0, 0, 0, 0, "", 0, 0, 0, 0)],
@@ -884,10 +882,10 @@ class TestLeftAndDueAtFromCards:
         assert len(cards) == 1
         state = cards[0].fsrs_state
         assert state.left is None
-        assert state.due_at is None
+        assert state.due_at == datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
 
-    def test_review_card_has_no_due_at(self, tmp_path):
-        """queue=2 (review): left ignored, due_at is None (not sub-day learning)."""
+    def test_review_card_due_at_uses_col_crt(self, tmp_path):
+        """queue=2 (review): left is None, due_at = col_crt + due days at 4am UTC."""
         db_path = self._make_db(
             tmp_path,
             [(4, 1004, 12345, 0, 2, 10, 1, '{"s": 100.0, "d": 3.0}', 50, 50, 0, 0)],
@@ -898,4 +896,7 @@ class TestLeftAndDueAtFromCards:
         assert len(cards) == 1
         state = cards[0].fsrs_state
         assert state.left is None
-        assert state.due_at is None
+        expected = datetime.fromtimestamp(1704067200 + 50 * 86400, tz=UTC).replace(
+            hour=4, minute=0, second=0, microsecond=0
+        )
+        assert state.due_at == expected

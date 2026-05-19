@@ -6,7 +6,7 @@ import inspect
 import json
 import sqlite3
 from dataclasses import replace
-from datetime import UTC, date, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from datetime import datetime as _dt
 from datetime import time as _time
 
@@ -500,7 +500,7 @@ class TestSyncPull:
         item = db.get_collocation_by_guid(guid)
         ds_dirty = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=item.directions[Direction.RECOGNITION].due_date,
+            due_at=datetime.combine(item.directions[Direction.RECOGNITION].due_at.date(), time(4, 0), tzinfo=UTC),
             stability=5.0,
             difficulty=4.8,
             reps=3,
@@ -568,7 +568,7 @@ class TestSyncPull:
         item = db.get_collocation_by_guid(guid)
         ds_dirty = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=item.directions[Direction.RECOGNITION].due_date,
+            due_at=datetime.combine(item.directions[Direction.RECOGNITION].due_at.date(), time(4, 0), tzinfo=UTC),
             stability=5.0,
             difficulty=4.8,
             reps=3,
@@ -613,7 +613,7 @@ class TestSyncPull:
         local_due = date.today() + timedelta(days=42)
         ds_local = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=local_due,
+            due_at=datetime.combine(local_due, time(4, 0), tzinfo=UTC),
             stability=12.0,
             difficulty=4.5,
             reps=3,
@@ -632,7 +632,7 @@ class TestSyncPull:
         rec = updated.directions[Direction.RECOGNITION]
         assert rec.stability == 12.0
         assert rec.difficulty == 4.5
-        assert rec.due_date == local_due
+        assert rec.due_at.date() == local_due
         assert rec.dirty_fsrs is True  # still dirty — push can flush
 
     def test_fsrs_known_false_still_applies_suspension(self):
@@ -722,7 +722,7 @@ class TestSyncPull:
         item = db.get_collocation_by_guid(guid)
         ds_dirty = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=item.directions[Direction.RECOGNITION].due_date,
+            due_at=datetime.combine(item.directions[Direction.RECOGNITION].due_at.date(), time(4, 0), tzinfo=UTC),
             stability=0.10,
             difficulty=9.8,
             reps=21,
@@ -769,7 +769,7 @@ class TestSyncPull:
         item = db.get_collocation_by_guid(guid)
         ds_dirty = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=item.directions[Direction.RECOGNITION].due_date,
+            due_at=datetime.combine(item.directions[Direction.RECOGNITION].due_at.date(), time(4, 0), tzinfo=UTC),
             stability=0.10,
             difficulty=9.8,
             reps=21,
@@ -811,11 +811,10 @@ class TestSyncPull:
         db = _make_tt_db()
         guid = _add_banka(db)
 
-        item = db.get_collocation_by_guid(guid)
+        db.get_collocation_by_guid(guid)
         local_due_at = _dt.now(UTC) + timedelta(minutes=10)
         ds_dirty = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=item.directions[Direction.RECOGNITION].due_date,
             stability=0.5,
             difficulty=8.0,
             reps=4,
@@ -859,7 +858,7 @@ class TestSyncPull:
         base = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.LEARNING,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=0.5,
             difficulty=8.0,
             reps=3,
@@ -880,7 +879,6 @@ class TestSyncPull:
         base = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.LEARNING,
-            due_date=date.today(),
             stability=0.5,
             difficulty=8.0,
             reps=3,
@@ -903,11 +901,10 @@ class TestSyncPull:
         db = _make_tt_db()
         guid = _add_banka(db)
 
-        item = db.get_collocation_by_guid(guid)
+        db.get_collocation_by_guid(guid)
         # TT: dirty LEARNING, total_remaining=2 (left=1002).
         ds_dirty = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=item.directions[Direction.RECOGNITION].due_date,
             stability=0.4,
             difficulty=8.0,
             reps=3,
@@ -1013,11 +1010,10 @@ class TestSyncPull:
         """
         db = _make_tt_db()
         guid = _add_banka(db)
-        item = db.get_collocation_by_guid(guid)
+        db.get_collocation_by_guid(guid)
         # Stale TT state: LEARNING with prior_state=None (pre-fix sync result).
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=item.directions[Direction.RECOGNITION].due_date,
             stability=0.5,
             difficulty=8.0,
             reps=3,
@@ -1068,7 +1064,7 @@ class TestSyncPull:
         item = db.get_collocation_by_guid(guid)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=item.directions[Direction.RECOGNITION].due_date,
+            due_at=datetime.combine(item.directions[Direction.RECOGNITION].due_at.date(), time(4, 0), tzinfo=UTC),
             stability=2.0,
             difficulty=5.0,
             reps=4,
@@ -1112,7 +1108,7 @@ class TestSyncPull:
         item = db.get_collocation_by_guid(guid)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=item.directions[Direction.RECOGNITION].due_date,
+            due_at=datetime.combine(item.directions[Direction.RECOGNITION].due_at.date(), time(4, 0), tzinfo=UTC),
             stability=2.0,
             difficulty=5.0,
             reps=5,
@@ -1154,7 +1150,7 @@ class TestSyncPull:
         # Seed a REVIEW direction with an existing prior_state.
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=item.directions[Direction.RECOGNITION].due_date,
+            due_at=datetime.combine(item.directions[Direction.RECOGNITION].due_at.date(), time(4, 0), tzinfo=UTC),
             stability=2.0,
             difficulty=5.0,
             reps=3,
@@ -1190,10 +1186,9 @@ class TestSyncPull:
         does not write the conflict row or mutate the direction."""
         db = _make_tt_db()
         guid = _add_banka(db)
-        item = db.get_collocation_by_guid(guid)
+        db.get_collocation_by_guid(guid)
         ds_dirty = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=item.directions[Direction.RECOGNITION].due_date,
             stability=0.4,
             difficulty=8.0,
             reps=3,
@@ -1232,10 +1227,9 @@ class TestSyncPull:
         without writing the conflict row or mutating the direction."""
         db = _make_tt_db()
         guid = _add_banka(db)
-        item = db.get_collocation_by_guid(guid)
+        db.get_collocation_by_guid(guid)
         ds_dirty = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=item.directions[Direction.RECOGNITION].due_date,
             stability=0.4,
             difficulty=8.0,
             reps=4,
@@ -1276,10 +1270,9 @@ class TestSyncPull:
         db = _make_tt_db()
         guid = _add_banka(db)
 
-        item = db.get_collocation_by_guid(guid)
+        db.get_collocation_by_guid(guid)
         ds_dirty = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=item.directions[Direction.RECOGNITION].due_date,
             stability=0.4,
             difficulty=8.0,
             reps=4,
@@ -1331,7 +1324,7 @@ class TestSyncPullNoOp:
         ]:
             ds = DirectionState(
                 direction=direction,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=3,
@@ -1360,7 +1353,7 @@ class TestSyncPullNoOp:
 
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             stability=5.0,
             difficulty=4.5,
             reps=3,
@@ -1768,7 +1761,7 @@ class TestSyncPullInvalidatesSessionMainQueue:
             DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.REVIEW,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                 stability=1.0,
                 reps=5,
                 anki_card_id=100,
@@ -1826,7 +1819,7 @@ class TestDirectionDiffersDetectsLastReviewTransition:
 
         local = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=7.5,
             difficulty=4.8,
             reps=5,
@@ -1844,7 +1837,7 @@ class TestDirectionDiffersDetectsLastReviewTransition:
 
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=7.5,
             difficulty=4.8,
             reps=5,
@@ -1873,7 +1866,7 @@ class TestDirectionDiffersDetectsLastReviewTransition:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=3,
@@ -1930,7 +1923,7 @@ class TestDirectionDiffersDetectsLastReviewTransition:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=3,
@@ -1991,7 +1984,7 @@ class TestDirectionDiffersDetectsLastReviewTransition:
         now_ts = _dt.now(UTC)
         common = dict(
             direction=Direction.RECOGNITION,
-            due_date=today,
+            due_at=_dt.combine(today, _time(4, 0), tzinfo=UTC),
             stability=5.0,
             difficulty=4.5,
             reps=3,
@@ -2093,7 +2086,7 @@ class TestDirectionDiffersDetectsLastReviewTransition:
         base = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.BURIED,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=0.5,
             difficulty=8.0,
             reps=3,
@@ -2119,7 +2112,7 @@ class TestDirectionDiffersDetectsLastReviewTransition:
         base = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.REVIEW,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=5.0,
             difficulty=4.5,
             reps=3,
@@ -2157,7 +2150,7 @@ class TestDirectionDiffersDetectsLastReviewTransition:
             DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.REVIEW,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=3,
@@ -2252,7 +2245,7 @@ class TestDirtyFsrsBuriedSyncRegression:
         recent_review = _dt.combine(date.today(), _time.min, tzinfo=UTC)
         ds_rec = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=5.0,
             difficulty=4.5,
             reps=3,
@@ -2267,7 +2260,7 @@ class TestDirtyFsrsBuriedSyncRegression:
         # Production is clean (already synced, not dirty)
         ds_prod = DirectionState(
             direction=Direction.PRODUCTION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=5.0,
             difficulty=4.5,
             reps=3,
@@ -2318,7 +2311,7 @@ class TestDirtyFsrsBuriedSyncRegression:
         recent_review = _dt.combine(date.today(), _time.min, tzinfo=UTC)
         ds_rec = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=5.0,
             difficulty=4.5,
             reps=3,
@@ -2363,7 +2356,7 @@ class TestDirtyFsrsBuriedSyncRegression:
         recent_review = _dt.combine(today, _time.min, tzinfo=UTC)
         ds_rec = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             stability=5.0,
             difficulty=4.5,
             reps=3,
@@ -2378,7 +2371,7 @@ class TestDirtyFsrsBuriedSyncRegression:
         # Production is clean, also due today
         ds_prod = DirectionState(
             direction=Direction.PRODUCTION,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             stability=5.0,
             difficulty=4.5,
             reps=3,
@@ -2401,7 +2394,9 @@ class TestDirtyFsrsBuriedSyncRegression:
         assert updated.directions[Direction.PRODUCTION].state == SRSState.REVIEW
 
         # Only 1 direction should be counted as review-due (not the buried one)
-        review_count = sum(1 for d in updated.directions.values() if d.state == SRSState.REVIEW and d.due_date <= today)
+        review_count = sum(
+            1 for d in updated.directions.values() if d.state == SRSState.REVIEW and d.due_at.date() <= today
+        )
         assert review_count == 1  # Only production, not buried recognition
 
 
@@ -2606,7 +2601,7 @@ class TestResolveIntroducedAt:
         existing = _dt(2026, 1, 15, 10, 30, tzinfo=UTC)
         local_dir = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=_date(2026, 5, 1),
+            due_at=datetime.combine(_date(2026, 5, 1), time(4, 0), tzinfo=UTC),
             state=SRSState.REVIEW,
             introduced_at=existing,
         )
@@ -2621,7 +2616,7 @@ class TestResolveIntroducedAt:
 
         local_dir = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=_date(2026, 5, 1),
+            due_at=datetime.combine(_date(2026, 5, 1), time(4, 0), tzinfo=UTC),
             state=SRSState.NEW,
         )
         assert _resolve_introduced_at(local_dir, SRSState.NEW, first_review_ms=123) is None
@@ -2634,7 +2629,7 @@ class TestResolveIntroducedAt:
 
         local_dir = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=_date(2026, 5, 1),
+            due_at=datetime.combine(_date(2026, 5, 1), time(4, 0), tzinfo=UTC),
             state=SRSState.NEW,
         )
         assert _resolve_introduced_at(local_dir, SRSState.REVIEW, first_review_ms=None) is None
@@ -2647,7 +2642,7 @@ class TestResolveIntroducedAt:
 
         local_dir = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=_date(2026, 5, 1),
+            due_at=datetime.combine(_date(2026, 5, 1), time(4, 0), tzinfo=UTC),
             state=SRSState.NEW,
         )
         first_ms = 1_700_000_000_000  # 2023-11-14

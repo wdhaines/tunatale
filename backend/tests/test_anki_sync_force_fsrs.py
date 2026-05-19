@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 import httpx
 import pytest
@@ -59,7 +59,7 @@ def _mark_direction_dirty(
 ) -> None:
     ds = DirectionState(
         direction=direction,
-        due_date=due_date or (date.today() + timedelta(days=10)),
+        due_at=datetime.combine(due_date or (date.today() + timedelta(days=10)), time(4, 0), tzinfo=UTC),
         stability=stability,
         difficulty=difficulty,
         reps=reps,

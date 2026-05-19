@@ -7,7 +7,7 @@ to flush — grades reviewed in TunaTale were silently discarded.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from unittest.mock import patch
 
 from app.anki.sync import AnkiSync, CardRecord, NoteRecord
@@ -101,7 +101,7 @@ def test_pull_then_push_after_local_grade_flushes_review_to_anki():
         Direction.RECOGNITION,
         DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=due_after_grade,
+            due_at=datetime.combine(due_after_grade, time(4, 0), tzinfo=UTC),
             stability=5.0,
             difficulty=4.5,
             reps=1,
@@ -132,7 +132,7 @@ def test_pull_then_push_after_local_grade_flushes_review_to_anki():
                     lapses=0,
                     stability=0.0,
                     difficulty=0.0,
-                    due_date=date.today(),
+                    due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                     fsrs_known=True,
                 ),
             ],
@@ -157,7 +157,7 @@ def test_pull_then_push_after_local_grade_flushes_review_to_anki():
     # Local state must not have been reverted by pull
     after = db.get_collocation_by_guid(guid)
     rec = after.directions[Direction.RECOGNITION]
-    assert rec.due_date == due_after_grade, f"due_date reverted: got {rec.due_date}"
+    assert rec.due_at.date() == due_after_grade, f"due_date reverted: got {rec.due_at.date()}"
     assert rec.reps == 1, f"reps reverted: got {rec.reps}"
 
     # dirty_fsrs cleared by push (grade was sent)
@@ -178,7 +178,7 @@ def test_dirty_new_card_preserves_review_state_through_pull():
         Direction.RECOGNITION,
         DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=due_after_grade,
+            due_at=datetime.combine(due_after_grade, time(4, 0), tzinfo=UTC),
             stability=3.0,
             difficulty=5.0,
             reps=1,
@@ -208,7 +208,7 @@ def test_dirty_new_card_preserves_review_state_through_pull():
                     lapses=0,
                     stability=0.0,
                     difficulty=0.0,
-                    due_date=date.today(),
+                    due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                     fsrs_known=True,
                 ),
             ],
@@ -255,7 +255,7 @@ def test_promote_to_learning_dirty_cleared_by_push():
                         lapses=0,
                         stability=0.0,
                         difficulty=0.0,
-                        due_date=date.today(),
+                        due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                         fsrs_known=True,
                     ),
                     CardRecord(
@@ -266,7 +266,7 @@ def test_promote_to_learning_dirty_cleared_by_push():
                         lapses=0,
                         stability=0.0,
                         difficulty=0.0,
-                        due_date=date.today(),
+                        due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                         fsrs_known=True,
                     ),
                 ],
@@ -316,7 +316,7 @@ def test_untrack_suspend_dirty_cleared_by_push():
                         lapses=0,
                         stability=0.0,
                         difficulty=0.0,
-                        due_date=date.today(),
+                        due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                         fsrs_known=True,
                     ),
                     CardRecord(
@@ -327,7 +327,7 @@ def test_untrack_suspend_dirty_cleared_by_push():
                         lapses=0,
                         stability=0.0,
                         difficulty=0.0,
-                        due_date=date.today(),
+                        due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                         fsrs_known=True,
                     ),
                 ],
@@ -371,7 +371,7 @@ def test_pull_syncs_note_field():
                         lapses=0,
                         stability=0.0,
                         difficulty=0.0,
-                        due_date=date.today(),
+                        due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                         fsrs_known=True,
                     ),
                 ],
@@ -401,7 +401,7 @@ def test_sync_pull_state_not_clobbered_by_media_refresh():
         Direction.RECOGNITION,
         DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=1.0,
             difficulty=5.0,
             reps=0,
@@ -430,7 +430,7 @@ def test_sync_pull_state_not_clobbered_by_media_refresh():
                     lapses=0,
                     stability=0.0,
                     difficulty=0.0,
-                    due_date=date.today(),
+                    due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
                     anki_due=10,
                     anki_card_mod=0,
                 ),

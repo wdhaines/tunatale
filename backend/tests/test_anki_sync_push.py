@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 import httpx
 
@@ -59,7 +59,7 @@ def _mark_direction_dirty(
     """Update a direction to dirty_fsrs=True, simulating a TT review."""
     ds = DirectionState(
         direction=direction,
-        due_date=due_date or (date.today() + timedelta(days=10)),
+        due_at=datetime.combine(due_date or (date.today() + timedelta(days=10)), time(4, 0), tzinfo=UTC),
         stability=stability,
         difficulty=4.8,
         reps=reps,
@@ -929,7 +929,6 @@ class TestSyncPush:
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
             stability=0.5,
             difficulty=5.5,
             reps=4,
@@ -1023,7 +1022,7 @@ class TestSyncPush:
         # Mark dirty without setting anki_card_id
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=5),
+            due_at=datetime.combine(date.today() + timedelta(days=5), time(4, 0), tzinfo=UTC),
             stability=5.0,
             difficulty=4.8,
             reps=3,
@@ -1092,7 +1091,6 @@ class TestSyncPushGuardsAgainstAnkiAhead:
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=1),
             state=SRSState.LEARNING,
             left=1001,
             due_at=_dt.now(UTC) + timedelta(minutes=10),
@@ -1119,7 +1117,6 @@ class TestSyncPushGuardsAgainstAnkiAhead:
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=1),
             state=SRSState.LEARNING,
             left=1002,  # TT: total_remaining=2 (first of 2 steps)
             due_at=_dt.now(UTC) + timedelta(minutes=1),
@@ -1145,7 +1142,6 @@ class TestSyncPushGuardsAgainstAnkiAhead:
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=1),
             state=SRSState.LEARNING,
             left=1001,
             due_at=_dt.now(UTC) + timedelta(minutes=10),
@@ -1171,7 +1167,6 @@ class TestSyncPushGuardsAgainstAnkiAhead:
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=1),
             state=SRSState.LEARNING,
             left=1001,
             due_at=_dt.now(UTC) + timedelta(minutes=10),
@@ -1221,7 +1216,7 @@ class TestSyncPushEase:
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=10),
+            due_at=datetime.combine(date.today() + timedelta(days=10), time(4, 0), tzinfo=UTC),
             stability=10.5,
             difficulty=4.8,
             reps=3,
@@ -1280,7 +1275,7 @@ class TestSyncPushEase:
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=10),
+            due_at=datetime.combine(date.today() + timedelta(days=10), time(4, 0), tzinfo=UTC),
             stability=10.5,
             difficulty=4.8,
             reps=3,
@@ -1326,7 +1321,6 @@ class TestSyncPushRevlogTransitions:
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
             stability=0.5,  # post-lapse stability (small)
             difficulty=5.5,
             reps=4,
@@ -1360,7 +1354,7 @@ class TestSyncPushRevlogTransitions:
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=15),
+            due_at=datetime.combine(date.today() + timedelta(days=15), time(4, 0), tzinfo=UTC),
             stability=15.3,  # post-good stability (grew)
             difficulty=4.8,
             reps=5,
@@ -1396,7 +1390,6 @@ class TestSyncPushRevlogTransitions:
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
             stability=1.0,
             difficulty=5.0,
             reps=2,
@@ -1432,7 +1425,6 @@ class TestSyncPushRevlogTransitions:
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
             stability=1.0,
             difficulty=5.0,
             reps=1,
@@ -1465,7 +1457,6 @@ class TestSyncPushRevlogTransitions:
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=4),
             stability=4.0,
             difficulty=5.0,
             reps=3,
@@ -1475,7 +1466,7 @@ class TestSyncPushRevlogTransitions:
             anki_card_id=rec_cid,
             last_rating=3,
             left=None,
-            due_at=None,
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             prior_state=SRSState.LEARNING,
             prior_left=1,  # total_remaining=1 → idx=1 (10min step, last)
             prior_stability=1.0,
@@ -1500,7 +1491,6 @@ class TestSyncPushRevlogTransitions:
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
             stability=0.3,
             difficulty=6.0,
             reps=5,
@@ -1607,7 +1597,7 @@ class TestRevlogShapeHelpers:
 
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=2.0,
             state=SRSState.LEARNING,
             prior_state=None,
@@ -1623,7 +1613,7 @@ class TestRevlogShapeHelpers:
 
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=2.0,
             state=SRSState.RELEARNING,
             prior_state=None,
@@ -1637,7 +1627,7 @@ class TestRevlogShapeHelpers:
 
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=0.5,
             state=SRSState.RELEARNING,
             left=None,
@@ -1656,7 +1646,7 @@ class TestRevlogShapeHelpers:
 
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=4.0,
             state=SRSState.REVIEW,
             prior_state=SRSState.BURIED,
@@ -1685,7 +1675,6 @@ class TestRevlogShapeHelpers:
         due_at = last_review + timedelta(seconds=330)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
             stability=1.7,
             state=SRSState.LEARNING,
             left=2,  # all steps remaining = at step 0
@@ -1785,7 +1774,7 @@ class TestRevlogFactor:
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=10),
+            due_at=datetime.combine(date.today() + timedelta(days=10), time(4, 0), tzinfo=UTC),
             stability=10.5,
             difficulty=difficulty,
             reps=3,
@@ -1917,7 +1906,6 @@ class TestPushLearningCardLeftAndDue:
         now = dt.now(UTC)
         rec_state = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=now.date(),
             stability=1.0,
             difficulty=5.0,
             reps=1,
@@ -2012,7 +2000,6 @@ class TestPushLearningCardLeftAndDue:
         rec_state = item.directions[Direction.RECOGNITION]
         rec_state = DirectionState(
             direction=rec_state.direction,
-            due_date=rec_state.due_date,
             stability=rec_state.stability,
             difficulty=rec_state.difficulty,
             reps=rec_state.reps,
@@ -2021,7 +2008,7 @@ class TestPushLearningCardLeftAndDue:
             anki_card_id=rec_state.anki_card_id,
             anki_due=rec_state.anki_due,
             left=None,
-            due_at=None,
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             dirty_fsrs=True,
         )
         db.update_direction(guid, Direction.RECOGNITION, rec_state)
@@ -2071,7 +2058,7 @@ class TestSyncPushBumpNewToday:
         col_crt = 1704067200
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=1),
+            due_at=datetime.combine(date.today() + timedelta(days=1), time(4, 0), tzinfo=UTC),
             stability=1.0,
             difficulty=5.0,
             reps=1,
@@ -2122,7 +2109,7 @@ class TestSyncPushBumpNewToday:
         col_crt = 1704067200
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=10),
+            due_at=datetime.combine(date.today() + timedelta(days=10), time(4, 0), tzinfo=UTC),
             stability=10.0,
             difficulty=4.8,
             reps=3,
@@ -2158,7 +2145,7 @@ class TestSyncPushBumpNewToday:
         col_crt = 1704067200
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=10),
+            due_at=datetime.combine(date.today() + timedelta(days=10), time(4, 0), tzinfo=UTC),
             stability=10.0,
             difficulty=4.8,
             reps=3,
@@ -2196,7 +2183,7 @@ class TestSyncPushBumpNewToday:
         col_crt = 1704067200
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=10),
+            due_at=datetime.combine(date.today() + timedelta(days=10), time(4, 0), tzinfo=UTC),
             stability=10.0,
             difficulty=4.8,
             reps=3,
@@ -2247,7 +2234,7 @@ class TestSyncPushBumpNewToday:
         col_crt = 1704067200
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=10),
+            due_at=datetime.combine(date.today() + timedelta(days=10), time(4, 0), tzinfo=UTC),
             stability=10.0,
             difficulty=4.8,
             reps=3,
@@ -2281,7 +2268,7 @@ class TestSyncPushBumpNewToday:
         col_crt = 1704067200
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=10),
+            due_at=datetime.combine(date.today() + timedelta(days=10), time(4, 0), tzinfo=UTC),
             stability=10.0,
             difficulty=4.8,
             reps=3,
@@ -2315,7 +2302,7 @@ class TestSyncPushBumpNewToday:
         col_crt = 1704067200
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=1),
+            due_at=datetime.combine(date.today() + timedelta(days=1), time(4, 0), tzinfo=UTC),
             stability=1.0,
             difficulty=5.0,
             reps=1,
@@ -2368,7 +2355,7 @@ class TestSyncPushBumpNewToday:
         col_crt = 1704067200
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=1.0,
             difficulty=5.0,
             reps=1,
@@ -2419,7 +2406,7 @@ class TestSyncPushBumpNewToday:
         # First push: NEW→LEARNING, left=2
         ds1 = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=1.0,
             difficulty=5.0,
             reps=1,
@@ -2451,7 +2438,7 @@ class TestSyncPushBumpNewToday:
         # Second push: user graded again, still in learning. prior_state STAYS new (sticky).
         ds2 = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=1.5,
             difficulty=5.0,
             reps=2,
@@ -2499,7 +2486,7 @@ class TestSyncPushBumpNewToday:
         col_crt = 1704067200
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today() + timedelta(days=10),
+            due_at=datetime.combine(date.today() + timedelta(days=10), time(4, 0), tzinfo=UTC),
             stability=10.0,
             difficulty=4.8,
             reps=3,

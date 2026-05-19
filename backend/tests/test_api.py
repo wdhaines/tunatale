@@ -1,6 +1,6 @@
 """API endpoint tests."""
 
-from datetime import UTC
+from datetime import UTC, datetime, time
 from unittest.mock import AsyncMock
 
 import pytest
@@ -1013,7 +1013,7 @@ class TestListenClozeIntegration:
 
     async def test_listen_grades_recognition_when_review_first_time_today(self):
         """Pre-existing vocab with rec state=REVIEW, last_review 2 days ago → graded."""
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
         from app.models.srs_item import Direction, SRSState
 
@@ -1038,7 +1038,6 @@ class TestListenClozeIntegration:
 
     async def test_listen_skips_recognition_when_review_already_today(self):
         """Pre-existing vocab with rec state=REVIEW, last_review today → no grade."""
-        from datetime import datetime
 
         from app.models.srs_item import Direction, SRSState
 
@@ -1285,7 +1284,7 @@ class TestListenClozeIntegration:
 
     async def test_listen_grades_key_phrase_when_review_first_time_today(self):
         """Pre-existing KP with rec state=REVIEW, last_review 2 days ago → graded (reps+1)."""
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
         from app.models.srs_item import Direction, SRSState
         from app.storage.store import ContentStore
@@ -1316,7 +1315,6 @@ class TestListenClozeIntegration:
 
     async def test_listen_skips_key_phrase_when_review_already_today(self):
         """Pre-existing KP with rec state=REVIEW, last_review today → no grade."""
-        from datetime import datetime
 
         from app.models.srs_item import Direction, SRSState
         from app.storage.store import ContentStore
@@ -1638,21 +1636,20 @@ class TestListenGradeEligible:
     """Direct unit tests for _listen_grade_eligible edge cases."""
 
     def test_rec_is_none_returns_false(self):
-        from datetime import datetime
 
         from app.api.srs import _listen_grade_eligible
 
         assert _listen_grade_eligible(None, datetime.now(UTC), datetime.now(UTC)) is False
 
     def test_legacy_date_last_review_returns_true(self):
-        from datetime import date, datetime, timedelta
+        from datetime import date, timedelta
 
         from app.api.srs import _listen_grade_eligible
         from app.models.srs_item import Direction, DirectionState, SRSState
 
         rec = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             state=SRSState.REVIEW,
             reps=5,
             last_review=date(2026, 5, 1),  # legacy date, not datetime
@@ -1690,7 +1687,7 @@ class TestListenGradeEligible:
         assert Direction.RECOGNITION not in item.directions
         assert item.syntactic_unit.card_type == "vocab"
 
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
         from app.api.srs import _listen_grade_eligible
 

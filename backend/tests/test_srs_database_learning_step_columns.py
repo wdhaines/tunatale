@@ -1,6 +1,6 @@
 """Tests for learning step columns (left, due_at) on collocation_directions."""
 
-from datetime import datetime
+from datetime import UTC, datetime, time
 
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -17,19 +17,19 @@ class TestLearningStepColumns:
         """DirectionState should have left: int | None field."""
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=datetime.now().date(),
+            due_at=datetime.combine(datetime.now().date(), time(4, 0), tzinfo=UTC),
         )
         assert hasattr(ds, "left")
         assert ds.left is None
 
     def test_direction_state_has_due_at_field(self):
-        """DirectionState should have due_at: datetime | None field."""
+        """DirectionState should have due_at: datetime field (required, NOT NULL)."""
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=datetime.now().date(),
+            due_at=datetime.combine(datetime.now().date(), time(4, 0), tzinfo=UTC),
         )
         assert hasattr(ds, "due_at")
-        assert ds.due_at is None
+        assert ds.due_at is not None
 
     def test_update_direction_round_trips_left(self, srs_db):
         """update_direction preserves left value through round-trip."""
@@ -76,19 +76,20 @@ class TestLearningStepColumns:
         reloaded = srs_db.get_collocation("word3")
         assert reloaded.directions[Direction.RECOGNITION].left is None
 
-    def test_update_direction_due_at_none_stores_null(self, srs_db):
-        """due_at=None stores as NULL in DB."""
+    def test_update_direction_due_at_round_trips_naive_datetime(self, srs_db):
+        """due_at column is NOT NULL — naive datetimes round-trip (used by some legacy paths)."""
         unit = _unit("word4", "translation4")
         srs_db.add_collocation(unit, language_code="sl")
         item = srs_db.get_collocation("word4")
         guid = item.guid
 
+        naive = datetime(2026, 5, 19, 12, 0)
         rec_dir = item.directions[Direction.RECOGNITION]
-        rec_dir.due_at = None
+        rec_dir.due_at = naive
         srs_db.update_direction(guid, Direction.RECOGNITION, rec_dir)
 
         reloaded = srs_db.get_collocation("word4")
-        assert reloaded.directions[Direction.RECOGNITION].due_at is None
+        assert reloaded.directions[Direction.RECOGNITION].due_at == naive
 
     def test_get_collocation_by_id_round_trips_learning_fields(self, srs_db):
         """get_collocation_by_id preserves left and due_at."""
@@ -117,13 +118,13 @@ class TestLearningStepColumns:
         assert reloaded_dir.due_at is not None
         assert reloaded_dir.state == SRSState.LEARNING
 
-    def test_new_direction_defaults_have_no_learning_fields(self, srs_db):
-        """Newly added collocations have left=None, due_at=None."""
+    def test_new_direction_defaults_have_no_left_and_today_due_at(self, srs_db):
+        """Newly added collocations have left=None and due_at = today midnight UTC."""
         unit = _unit("word6", "translation6")
         srs_db.add_collocation(unit, language_code="sl")
         item = srs_db.get_collocation("word6")
 
         rec_dir = item.directions[Direction.RECOGNITION]
         assert rec_dir.left is None
-        assert rec_dir.due_at is None
+        assert rec_dir.due_at is not None
         assert rec_dir.state == SRSState.NEW

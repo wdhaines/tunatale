@@ -37,27 +37,25 @@ class AnkiCard:
     mod: int = 0  # Anki's cards.mod — needed for fnvhash(id, mod) sort tiebreak
 
 
-def compute_due_date(queue: int, due_raw: int, col_crt: int) -> date:
-    """Convert Anki's queue-dependent due field to a Python date.
+def compute_due_at(queue: int, due_raw: int, col_crt: int) -> datetime:
+    """Convert Anki's queue-dependent due field to a UTC datetime.
 
-    queue 2/3 (review/day-learn): due_raw is days since col.crt epoch.
+    queue 2/3 (review/day-learn): due_raw is days since col.crt epoch → midnight UTC.
     queue 1 (learning): due_raw is an absolute unix timestamp (seconds).
-    queue 0 (new) or -1 (suspended): due_raw is a queue position — fall back to today.
+    queue 0 (new) or -1 (suspended): due_raw is a queue position → today at 04:00 UTC.
 
     Database corruption: some queue=2/3 cards have Unix timestamps in due_raw
     instead of days since col.crt. Detect this by checking if the value is too large
     to be days since col.crt (i.e., it's a Unix timestamp).
     """
     if queue in (2, 3):
-        # Heuristic: if due_raw looks like a Unix timestamp (seconds since epoch),
-        # treat it as such. Otherwise, treat as days since col.crt.
-        # Unix timestamp for year 2000 ≈ 946684800
-        if due_raw > 1000000000:  # Likely a Unix timestamp in seconds
-            return datetime.fromtimestamp(due_raw).date()
-        return date.fromtimestamp(col_crt) + timedelta(days=due_raw)
+        if due_raw > 1000000000:
+            return datetime.fromtimestamp(due_raw, tz=UTC)
+        due_date = datetime.fromtimestamp(col_crt, tz=UTC).date() + timedelta(days=due_raw)
+        return datetime.combine(due_date, time(4, 0), tzinfo=UTC)
     if queue == 1:
-        return datetime.fromtimestamp(due_raw).date()
-    return date.today()
+        return datetime.fromtimestamp(due_raw, tz=UTC)
+    return datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
 
 
 def find_deck_id(conn: sqlite3.Connection, deck_name: str) -> int | None:
@@ -187,22 +185,11 @@ def parse_fsrs_data(
     """Parse FSRS state from cards.data JSON. Falls back to NEW on missing/malformed data."""
 
     direction = Direction.RECOGNITION if ord == 0 else Direction.PRODUCTION
-    due_date = compute_due_date(queue, due_raw, col_crt)
+    due_at = compute_due_at(queue, due_raw, col_crt)
 
     # Compute last_review for review/relearning queues
     # BUT: if reps=0, the card is NEW regardless of queue, so last_review must be None
     last_review = None if reps == 0 else _compute_last_review(queue, due_raw, ivl, col_crt)
-
-    # Compute due_at for learning/relearning cards (sub-day learning)
-    due_at = None
-    if queue == 1:
-        # queue=1: due_raw is an absolute unix timestamp (seconds)
-        due_at = datetime.fromtimestamp(due_raw, tz=UTC)
-    elif queue == 3:
-        # queue=3: due_raw is days since col_crt epoch; set to midnight UTC
-        due_at = datetime.fromtimestamp(col_crt, tz=UTC).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(
-            days=due_raw
-        )
 
     if queue == -1:
         state = SRSState.SUSPENDED
@@ -240,7 +227,7 @@ def parse_fsrs_data(
             )
             return DirectionState(
                 direction=direction,
-                due_date=due_date,
+                due_at=due_at,
                 stability=stability,
                 difficulty=difficulty,
                 reps=reps,
@@ -250,7 +237,6 @@ def parse_fsrs_data(
                 anki_due=due_raw,
                 last_review=resolved_last_review,
                 left=left if left != 0 else None,
-                due_at=due_at,
             )
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         pass
@@ -263,7 +249,7 @@ def parse_fsrs_data(
 
     return DirectionState(
         direction=direction,
-        due_date=due_date,
+        due_at=due_at,
         stability=1.0,
         difficulty=5.0,
         reps=reps,
@@ -273,7 +259,6 @@ def parse_fsrs_data(
         anki_due=due_raw,
         last_review=last_review,
         left=left if left != 0 else None,
-        due_at=due_at,
     )
 
 

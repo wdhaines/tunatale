@@ -1,6 +1,6 @@
 """FSRS algorithm tests."""
 
-from datetime import UTC, date, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 from app.models.srs_item import Direction, DirectionState, Rating, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -342,7 +342,7 @@ class TestFSRSParams:
 
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=3.0,
             difficulty=5.0,
             reps=5,
@@ -358,7 +358,7 @@ class TestFSRSParams:
         """compute_retrievability handles last_review as date (line 157)."""
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=3.0,
             difficulty=5.0,
             reps=5,

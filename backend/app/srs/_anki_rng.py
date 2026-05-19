@@ -159,3 +159,18 @@ def random_range_u32(rng: ChaCha12Rng, low: int, high_exclusive: int) -> int:
         if is_overflow:
             result = (result + 1) & _U32_MASK
     return (low + result) & _U32_MASK
+
+
+def random_range_f32(rng: ChaCha12Rng) -> float:
+    """Sample a uniform f32 in [0, 1) — mirrors Rust's ``random_range(0.0..1.0)``.
+
+    Rust's ``rand`` 0.9 samples ``f32`` from a ``u32`` via the canonical
+    24-bit mantissa formula::
+
+        (u32 >> 8) as f32 * (1.0 / (1u32 << 24) as f32)
+
+    This is the same approach used by ``rand 0.9``'s ``StandardUniform``
+    for ``f32`` (see ``rand_distr/src/float_impls.rs``).
+    """
+    u = rng.next_u32()
+    return float(u >> 8) / float(1 << 24)

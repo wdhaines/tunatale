@@ -1,6 +1,6 @@
 """Tests for FSRS retrievability computation and short-term scheduler."""
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from app.models.srs_item import Direction, DirectionState, Rating, SRSItem, SRSState
@@ -35,7 +35,7 @@ class TestComputeRetrievability:
         """Null stability → return desired_retention (mirrors Anki's R-asc placement)."""
         state = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=None,
             last_review=date.today(),
         )
@@ -48,7 +48,7 @@ class TestComputeRetrievability:
         """Null last_review → return desired_retention."""
         state = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=0.5,
             last_review=None,
         )
@@ -60,7 +60,7 @@ class TestComputeRetrievability:
     def test_both_null_returns_desired_retention(self):
         state = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=None,
             last_review=None,
         )
@@ -73,7 +73,7 @@ class TestComputeRetrievability:
         today = date(2026, 5, 2)
         state = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             stability=0.086,
             last_review=today,
         )
@@ -105,7 +105,7 @@ class TestComputeRetrievability:
         now = datetime(2026, 5, 11, 10, 0, 0, tzinfo=UTC)
         state = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             stability=0.0127,
             last_review=last_review,
         )
@@ -122,7 +122,7 @@ class TestComputeRetrievability:
         now = datetime(2026, 5, 11, 10, 0, 0, tzinfo=UTC)
         state = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             stability=0.5,
             last_review=now,
         )
@@ -141,7 +141,7 @@ class TestComputeRetrievability:
         last_review = datetime.now(UTC) - timedelta(hours=12)
         state = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             stability=0.1,
             last_review=last_review,
         )
@@ -169,7 +169,7 @@ class TestComputeRetrievability:
         today = date(2026, 5, 11)
         state = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date(2026, 5, 11),
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             stability=1.282,
             last_review=last_review,
         )
@@ -195,7 +195,7 @@ class TestComputeRetrievability:
         today = date(2026, 5, 11)
         state = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             stability=0.0127,
             last_review=last_review,
         )
@@ -220,7 +220,7 @@ class TestRelearnGraduation:
 
         dir_state = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date(2026, 5, 1),
+            due_at=now,
             stability=stability,
             difficulty=difficulty,
             reps=reps,
@@ -229,7 +229,6 @@ class TestRelearnGraduation:
             last_review=last_review,
             last_review_time_ms=60000,
             left=1001,  # 1 step remaining, 1 total step
-            due_at=now,
             dirty_fsrs=False,
         )
         return SRSItem(
@@ -258,10 +257,9 @@ class TestRelearnGraduation:
         recog = result.directions[Direction.RECOGNITION]
         # Should graduate to REVIEW
         assert recog.state == SRSState.REVIEW, f"Expected REVIEW, got {recog.state}"
-        # due_date should be set (days-based, not sub-day)
-        assert recog.due_date is not None
-        # due_at should be None (no longer in learning)
-        assert recog.due_at is None
+        # Post-collapse: due_at is always set, points to a day boundary
+        assert recog.due_at is not None
+        assert recog.due_at.hour == 0  # midnight UTC for graduated cards
 
     def test_review_again_then_good_graduates_to_review(self):
         """REVIEW + AGAIN + GOOD graduates to REVIEW (Anki behavior with non-empty relearn_steps).
@@ -279,7 +277,7 @@ class TestRelearnGraduation:
 
         dir_state = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date(2026, 4, 24),  # 7 days ago
+            due_at=datetime.combine(date(2026, 4, 24), time(4, 0), tzinfo=utc),  # 7 days ago
             stability=0.086,  # Low stability
             difficulty=5.0,
             reps=18,
@@ -320,10 +318,10 @@ class TestRelearnGraduation:
         )
         state2 = result2.directions[Direction.RECOGNITION]
         assert state2.state == SRSState.REVIEW, f"Step 2: Expected REVIEW, got {state2.state}"
-        # Should have graduated: no left/due_at
+        # Should have graduated: no `left`, due_at points to a day boundary
         assert state2.left is None
-        assert state2.due_at is None
-        assert state2.due_date is not None
+        assert state2.due_at is not None
+        assert state2.due_at.hour == 0  # midnight UTC for graduated cards
 
 
 class TestPriorStateStickyNew:
@@ -342,7 +340,6 @@ class TestPriorStateStickyNew:
             direction=Direction.RECOGNITION,
             state=SRSState.LEARNING,
             prior_state=prior_state,
-            due_date=date.today(),
             stability=0.5,
             difficulty=8.0,
             reps=1,
@@ -354,7 +351,7 @@ class TestPriorStateStickyNew:
         prod = DirectionState(
             direction=Direction.PRODUCTION,
             state=SRSState.NEW,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             anki_card_id=101,
         )
         return SRSItem(
@@ -427,7 +424,7 @@ class TestPriorStateStickyNew:
             direction=Direction.RECOGNITION,
             state=SRSState.REVIEW,
             prior_state=SRSState.NEW,  # introduced + graduated today
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=2.0,
             difficulty=8.0,
             reps=3,
@@ -437,7 +434,7 @@ class TestPriorStateStickyNew:
         prod = DirectionState(
             direction=Direction.PRODUCTION,
             state=SRSState.NEW,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             anki_card_id=101,
         )
         item = SRSItem(
@@ -464,7 +461,6 @@ class TestPriorStateStickyNew:
             direction=Direction.RECOGNITION,
             state=SRSState.RELEARNING,
             prior_state=SRSState.REVIEW,  # lapsed from review earlier today
-            due_date=date.today(),
             stability=0.5,
             difficulty=8.0,
             reps=10,
@@ -474,7 +470,10 @@ class TestPriorStateStickyNew:
             anki_card_id=100,
         )
         prod = DirectionState(
-            direction=Direction.PRODUCTION, state=SRSState.NEW, due_date=date.today(), anki_card_id=101
+            direction=Direction.PRODUCTION,
+            state=SRSState.NEW,
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+            anki_card_id=101,
         )
         item = SRSItem(
             syntactic_unit=unit,

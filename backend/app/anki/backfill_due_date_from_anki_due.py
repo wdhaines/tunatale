@@ -26,7 +26,7 @@ import sqlite3
 from pathlib import Path
 
 from app.anki.safety import safe_open
-from app.anki.sqlite_reader import compute_due_date
+from app.anki.sqlite_reader import compute_due_at
 from app.config import settings
 
 
@@ -45,7 +45,7 @@ def repair_due_dates(tt_db_path: Path, anki_col_path: Path, *, dry_run: bool = F
         try:
             rows = tt.execute(
                 """
-                SELECT collocation_id, direction, due_date, anki_card_id
+                SELECT collocation_id, direction, due_at, anki_card_id
                 FROM collocation_directions
                 WHERE anki_card_id IS NOT NULL
                   AND state IN ('review', 'learning', 'relearning', 'buried')
@@ -61,15 +61,15 @@ def repair_due_dates(tt_db_path: Path, anki_col_path: Path, *, dry_run: bool = F
                 if a is None:
                     continue
                 queue, due_raw = a[0], a[1]
-                expected = compute_due_date(queue, due_raw, col_crt)
-                if expected.isoformat() != r["due_date"]:
-                    mismatched.append((r["collocation_id"], r["direction"], r["due_date"], expected.isoformat()))
+                expected = compute_due_at(queue, due_raw, col_crt)
+                if expected.isoformat() != r["due_at"]:
+                    mismatched.append((r["collocation_id"], r["direction"], r["due_at"], expected.isoformat()))
 
             written = 0
             if not dry_run:
                 for coll_id, direction, _old, new_iso in mismatched:
                     tt.execute(
-                        "UPDATE collocation_directions SET due_date = ? WHERE collocation_id = ? AND direction = ?",
+                        "UPDATE collocation_directions SET due_at = ? WHERE collocation_id = ? AND direction = ?",
                         (new_iso, coll_id, direction),
                     )
                     written += 1

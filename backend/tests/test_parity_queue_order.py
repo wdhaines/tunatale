@@ -25,8 +25,8 @@ What this test does NOT cover (deferred or owned elsewhere):
 
 from __future__ import annotations
 
-import time
-from datetime import UTC, date, datetime
+import time as _time
+from datetime import UTC, date, datetime, time
 
 import pytest
 
@@ -81,7 +81,7 @@ def _tt_compute_R(s: float, last_review_secs: int, now_secs: int, *, dr: float =
     """Replicate TT's compute_retrievability with explicit elapsed-days."""
     dstate = DirectionState(
         direction=Direction.RECOGNITION,
-        due_date=date.today(),
+        due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
         state=SRSState.REVIEW,
         stability=s,
         difficulty=5.0,
@@ -106,7 +106,7 @@ def test_queue_order_R_ascending_matches_anki(synthetic_collection: SyntheticCol
     """
     synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
 
-    now_secs = int(time.time())
+    now_secs = int(_time.time())
 
     seeds = [
         # (card_id, stability, elapsed_days) — chosen for distinct R values
@@ -174,7 +174,7 @@ def test_null_R_card_typical_position_matches_anki_LAYER_38(synthetic_collection
     """
     synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
 
-    now_secs = int(time.time())
+    now_secs = int(_time.time())
 
     # 3 FSRS-path cards bracketing dr=0.9
     seeds_with_state = [
@@ -233,7 +233,7 @@ def test_null_R_card_typical_position_matches_anki_LAYER_38(synthetic_collection
     # TT-side check: compute_retrievability returns desired_retention for null-stability.
     null_dstate = DirectionState(
         direction=Direction.RECOGNITION,
-        due_date=date.today(),
+        due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
         state=SRSState.REVIEW,
         stability=None,
         difficulty=None,
@@ -262,7 +262,7 @@ def test_fnv_tiebreaker_on_card_mod_LAYER_37(synthetic_collection: SyntheticColl
 
     synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
 
-    now_secs = int(time.time())
+    now_secs = int(_time.time())
     last_review_secs = now_secs - 5 * 86400  # all same elapsed → same R
 
     # Three cards with same R, distinct mod values.

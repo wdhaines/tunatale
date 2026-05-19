@@ -133,7 +133,7 @@ class CardRecord:
     lapses: int
     stability: float
     difficulty: float
-    due_date: date
+    due_at: datetime
     anki_due: int | None = None
     anki_card_mod: int | None = None
     last_review: datetime | None = None
@@ -143,14 +143,13 @@ class CardRecord:
     # written before prior_state was set during sync; self-heal on re-sync).
     first_review_ms: int | None = None
     # False when the source (e.g. AnkiConnect cardsInfo) does not reliably expose
-    # FSRS stability/difficulty/due_date — sync_pull then preserves local FSRS
+    # FSRS stability/difficulty/due_at — sync_pull then preserves local FSRS
     # state instead of overwriting it with the placeholder values above.
     fsrs_known: bool = True
     card_type: int = 0  # Anki's cards.type (0=New, 1=Learn, 2=Review, 3=Relearn)
     # Required to mirror Anki's queue=1 learning state. Without these, a graded
     # card resumes through the FSRS REVIEW branch and graduates prematurely.
     left: int | None = None
-    due_at: datetime | None = None
 
 
 @dataclass
@@ -352,14 +351,13 @@ class OfflineReader:
                     card_type=c.card_type,
                     stability=c.fsrs_state.stability,
                     difficulty=c.fsrs_state.difficulty,
-                    due_date=c.fsrs_state.due_date,
+                    due_at=c.fsrs_state.due_at,
                     anki_due=c.fsrs_state.anki_due,
                     anki_card_mod=c.mod,
                     last_review=c.fsrs_state.last_review,
                     last_review_ms=last_revlog_ms.get(c.id),
                     first_review_ms=first_revlog_ms.get(c.id),
                     left=c.fsrs_state.left,
-                    due_at=c.fsrs_state.due_at,
                 )
                 for c in cards_by_note.get(note.id, [])
             ]
@@ -879,7 +877,7 @@ def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool
         local.state != candidate.state
         or local.stability != candidate.stability
         or local.difficulty != candidate.difficulty
-        or local.due_date != candidate.due_date
+        or local.due_at != candidate.due_at
         or local.reps != candidate.reps
         or local.lapses != candidate.lapses
         or local.dirty_fsrs != candidate.dirty_fsrs
@@ -887,7 +885,6 @@ def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool
         or local.anki_due != candidate.anki_due
         or local.last_review != candidate.last_review
         or local.left != candidate.left
-        or local.due_at != candidate.due_at
         or local.prior_state != candidate.prior_state
         # Without bury_kind in the diff, a state-matched / kind-only flip
         # (e.g. migration's pessimistic 'user' default vs candidate 'sched')
@@ -1282,7 +1279,7 @@ class AnkiSync:
             new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
             new_dir_state = DirectionState(
                 direction=direction,
-                due_date=card_rec.due_date,
+                due_at=card_rec.due_at,
                 stability=card_rec.stability,
                 difficulty=card_rec.difficulty,
                 reps=card_rec.reps,
@@ -1308,7 +1305,6 @@ class AnkiSync:
                 last_synced_at=datetime.now(UTC).isoformat(),
                 last_rating=local_dir.last_rating,
                 left=card_rec.left,
-                due_at=card_rec.due_at,
                 bury_kind=_bury_kind_from_queue(card_rec.queue),
             )
             self._record_conflict(
@@ -1377,7 +1373,7 @@ class AnkiSync:
                 )
                 new_dir_state = DirectionState(
                     direction=direction,
-                    due_date=card_rec.due_date,
+                    due_at=card_rec.due_at,
                     stability=card_rec.stability,
                     difficulty=card_rec.difficulty,
                     reps=card_rec.reps,
@@ -1401,7 +1397,6 @@ class AnkiSync:
                     last_review=resolved_last_review,
                     last_synced_at=datetime.now(UTC).isoformat(),
                     left=card_rec.left,
-                    due_at=card_rec.due_at,
                     bury_kind=_bury_kind_from_queue(card_rec.queue),
                 )
                 self._record_conflict(
@@ -1419,7 +1414,7 @@ class AnkiSync:
             if local_in_learning and card_rec.queue == 2:
                 new_dir_state = DirectionState(
                     direction=direction,
-                    due_date=card_rec.due_date,
+                    due_at=card_rec.due_at,
                     stability=card_rec.stability,
                     difficulty=card_rec.difficulty,
                     reps=card_rec.reps,
@@ -1443,7 +1438,6 @@ class AnkiSync:
                     last_review=resolved_last_review,
                     last_synced_at=datetime.now(UTC).isoformat(),
                     left=card_rec.left,
-                    due_at=card_rec.due_at,
                     bury_kind=None,
                 )
                 self._record_conflict(
@@ -1521,7 +1515,7 @@ class AnkiSync:
             new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
             return DirectionState(
                 direction=direction,
-                due_date=card_rec.due_date,
+                due_at=card_rec.due_at,
                 stability=card_rec.stability,
                 difficulty=card_rec.difficulty,
                 reps=card_rec.reps,
@@ -1545,14 +1539,13 @@ class AnkiSync:
                 last_review=resolved_last_review,
                 last_synced_at=datetime.now(UTC).isoformat(),
                 left=card_rec.left,
-                due_at=card_rec.due_at,
                 bury_kind=_bury_kind_from_queue(card_rec.queue),
             )
 
         new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
         return DirectionState(
             direction=direction,
-            due_date=card_rec.due_date,
+            due_at=card_rec.due_at,
             stability=local_dir.stability,
             difficulty=local_dir.difficulty,
             reps=card_rec.reps,
@@ -1576,7 +1569,6 @@ class AnkiSync:
             last_review=resolved_last_review,
             last_synced_at=datetime.now(UTC).isoformat(),
             left=card_rec.left,
-            due_at=card_rec.due_at,
             bury_kind=_bury_kind_from_queue(card_rec.queue),
         )
 
@@ -1843,7 +1835,7 @@ class AnkiSync:
             # fresh one, force_fsrs writes the TT-side stability/difficulty into
             # the new card's data JSON regardless of the global flag.
             row_force_fsrs = force_fsrs or (guid, direction.value) in recovered
-            days_str = str(max(0, (ds.due_date - date.today()).days))
+            days_str = str(max(0, (ds.due_at.date() - date.today()).days))
             if not dry_run:
                 # Snapshot Anki's pre-push card state for the anki_ahead
                 # conflict-resolution check. Must be captured BEFORE
@@ -2106,7 +2098,7 @@ class AnkiSync:
 
                 directions[direction] = DirectionState(
                     direction=direction,
-                    due_date=card.due_date,
+                    due_at=card.due_at,
                     stability=card.stability,
                     difficulty=card.difficulty,
                     reps=card.reps,
@@ -2117,12 +2109,11 @@ class AnkiSync:
                     anki_due=card.anki_due or 0,
                     anki_card_mod=card.anki_card_mod,
                     left=card.left,
-                    due_at=card.due_at,
                     dirty_fsrs=False,
                     last_synced_at=datetime.now(UTC).isoformat(),
                     prior_state=None,
                     introduced_at=_resolve_introduced_at(
-                        DirectionState(direction=direction, due_date=card.due_date),
+                        DirectionState(direction=direction, due_at=card.due_at),
                         state,
                         first_review_ms=card.first_review_ms,
                     ),

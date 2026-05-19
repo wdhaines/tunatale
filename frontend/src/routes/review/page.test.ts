@@ -44,7 +44,7 @@ beforeEach(() => {
     fsrs_source: "default",
   });
   mockFetchReviewQueue.mockResolvedValue({ queue: [] });
-  mockSubmitDrill.mockResolvedValue({ new_due_date: "2026-04-25", new_state: "review" });
+  mockSubmitDrill.mockResolvedValue({ new_due_at: "2026-04-25", new_state: "review" });
 });
 
 describe("review/+page.svelte", () => {
@@ -367,9 +367,8 @@ describe("review/+page.svelte", () => {
       state: "learning",
     });
     mockSubmitDrill.mockResolvedValue({
-      new_due_date: "2026-04-25",
+      new_due_at: "2026-04-25",
       new_state: "learning",
-      due_at: new Date(Date.now() + 600_000).toISOString(),
       left: 1002,
     });
     mockFetchReviewQueue
@@ -406,9 +405,8 @@ describe("review/+page.svelte", () => {
       .mockResolvedValueOnce({ queue: [item1, item2] })
       .mockResolvedValueOnce({ queue: [item2] });
     mockSubmitDrill.mockResolvedValue({
-      new_due_date: "2026-05-06",
+      new_due_at: new Date(t0 + 60_000).toISOString(),
       new_state: "learning",
-      due_at: new Date(t0 + 60_000).toISOString(),
       left: 1002,
     });
     const { findByRole, findByText, queryByText } = render(ReviewPage);
@@ -450,7 +448,7 @@ describe("review/+page.svelte", () => {
   });
 
   it("graduated card (server omits it) does not resurface", async () => {
-    mockSubmitDrill.mockResolvedValue({ new_due_date: "2026-04-25", new_state: "review" });
+    mockSubmitDrill.mockResolvedValue({ new_due_at: "2026-04-25", new_state: "review" });
     const item = makeReviewQueueItem({ id: 1, text: "okno", direction: "recognition" });
     mockFetchReviewQueue
       .mockResolvedValueOnce({ queue: [item] })
@@ -485,12 +483,11 @@ describe("review/+page.svelte", () => {
     });
     mockSubmitDrill
       .mockResolvedValueOnce({
-        new_due_date: "2026-04-25",
+        new_due_at: "2026-04-25",
         new_state: "learning",
-        due_at: new Date(Date.now() + 60_000).toISOString(),
         left: 1002,
       })
-      .mockResolvedValueOnce({ new_due_date: "2026-04-25", new_state: "review" });
+      .mockResolvedValueOnce({ new_due_at: "2026-04-25", new_state: "review" });
     mockFetchReviewQueue
       .mockResolvedValueOnce({ queue: [item1, item2] })
       .mockResolvedValueOnce({ queue: [item2, oknoLearning] }) // okno still pending after first grade

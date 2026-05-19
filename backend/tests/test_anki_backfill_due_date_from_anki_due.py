@@ -1,26 +1,24 @@
-"""Tests for backfill_due_date_from_anki_due."""
+"""Tests for backfill_due_date_from_anki_due (migrated to due_at)."""
 
 from __future__ import annotations
 
 import sqlite3
-from datetime import date
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 
 from app.anki.backfill_due_date_from_anki_due import repair_due_dates
-from app.anki.sqlite_reader import compute_due_date
+from app.anki.sqlite_reader import compute_due_at
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 from tests.conftest import build_minimal_anki_db
 
 _COL_CRT = 1704067200  # 2024-01-01 UTC — matches build_minimal_anki_db default.
-# Compute the same way the production code does, so the test isn't tz-flaky.
 _REC_CARDS_DUE = 10  # build_minimal_anki_db default for ord=0
-_EXPECTED_DUE = compute_due_date(2, _REC_CARDS_DUE, _COL_CRT)
+_EXPECTED_DUE = compute_due_at(2, _REC_CARDS_DUE, _COL_CRT)
 
 
 def _seed_tt(tt_path: Path, *, stale_due: date, anki_card_id: int) -> str:
-    """Add a single review-state row whose stored due_date is stale vs anki_due."""
     db = SRSDatabase(str(tt_path))
     unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="anki", lemma="banka")
     db.upsert_by_guid(
@@ -29,13 +27,13 @@ def _seed_tt(tt_path: Path, *, stale_due: date, anki_card_id: int) -> str:
         {
             Direction.RECOGNITION: DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=stale_due,
+                due_at=datetime.combine(stale_due, time(4, 0), tzinfo=UTC),
                 stability=10.0,
                 difficulty=5.0,
                 reps=3,
                 state=SRSState.REVIEW,
                 anki_card_id=anki_card_id,
-                anki_due=10,  # ← matches build_minimal_anki_db default for ord=0
+                anki_due=10,
             )
         },
         anki_note_id=1001,
@@ -45,10 +43,7 @@ def _seed_tt(tt_path: Path, *, stale_due: date, anki_card_id: int) -> str:
 
 
 class TestRepairDueDates:
-    def test_rewrites_stale_due_date_to_match_anki_due(self, tmp_path: Path):
-        """Live anki cards.due for note 1001 ord=0 is 10 → due_date should be
-        2024-01-01 + 10 days = 2024-01-11. A TT row pinned at 2026-05-17 must
-        be repaired to 2024-01-11."""
+    def test_rewrites_stale_due_at_to_match_anki_due(self, tmp_path: Path):
         anki_path = build_minimal_anki_db(tmp_path)
         tt_path = tmp_path / "tt.db"
         _seed_tt(tt_path, stale_due=date(2026, 5, 17), anki_card_id=10010)
@@ -58,15 +53,14 @@ class TestRepairDueDates:
         assert summary["mismatched"] == 1
         assert summary["written"] == 1
 
-        # Verify the actual write.
         conn = sqlite3.connect(str(tt_path))
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT due_date FROM collocation_directions WHERE anki_card_id = ?",
+            "SELECT due_at FROM collocation_directions WHERE anki_card_id = ?",
             (10010,),
         ).fetchone()
         conn.close()
-        assert row["due_date"] == _EXPECTED_DUE.isoformat()
+        assert row["due_at"] == _EXPECTED_DUE.isoformat()
 
     def test_dry_run_reports_but_does_not_write(self, tmp_path: Path):
         anki_path = build_minimal_anki_db(tmp_path)
@@ -81,16 +75,17 @@ class TestRepairDueDates:
         conn = sqlite3.connect(str(tt_path))
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT due_date FROM collocation_directions WHERE anki_card_id = ?",
+            "SELECT due_at FROM collocation_directions WHERE anki_card_id = ?",
             (10010,),
         ).fetchone()
         conn.close()
-        assert row["due_date"] == "2026-05-17"  # untouched
+        expected_stale = datetime.combine(date(2026, 5, 17), time(4, 0), tzinfo=UTC).isoformat()
+        assert row["due_at"] == expected_stale
 
     def test_already_consistent_rows_are_no_op(self, tmp_path: Path):
         anki_path = build_minimal_anki_db(tmp_path)
         tt_path = tmp_path / "tt.db"
-        _seed_tt(tt_path, stale_due=_EXPECTED_DUE, anki_card_id=10010)
+        _seed_tt(tt_path, stale_due=_EXPECTED_DUE.date(), anki_card_id=10010)
 
         summary = repair_due_dates(tt_path, anki_path)
 
@@ -99,7 +94,6 @@ class TestRepairDueDates:
         assert summary["written"] == 0
 
     def test_main_cli_dry_run(self, tmp_path: Path, monkeypatch, capsys):
-        """End-to-end CLI smoke: argparse + settings wiring + summary print."""
         from app.anki import backfill_due_date_from_anki_due as mod
 
         anki_path = build_minimal_anki_db(tmp_path)
@@ -133,14 +127,11 @@ class TestRepairDueDates:
         assert "written=1" in out
 
     def test_skips_rows_whose_anki_card_no_longer_exists(self, tmp_path: Path):
-        """A TT row pointing at a deleted Anki card is silently skipped — orphan
-        reset is a different code path's job (reset_orphaned_anki_ids)."""
         anki_path = build_minimal_anki_db(tmp_path)
         tt_path = tmp_path / "tt.db"
         _seed_tt(tt_path, stale_due=date(2026, 5, 17), anki_card_id=9_999_999)
 
         summary = repair_due_dates(tt_path, anki_path)
-        # The row is "checked" (matched the SELECT filter) but no Anki match → skip.
         assert summary["checked"] == 1
         assert summary["mismatched"] == 0
         assert summary["written"] == 0
@@ -158,14 +149,13 @@ class TestRepairDueDates:
             {
                 Direction.RECOGNITION: DirectionState(
                     direction=Direction.RECOGNITION,
-                    due_date=date(2026, 5, 17),
+                    due_at=datetime(2026, 5, 17, 4, 0, tzinfo=UTC),
                     state=SRSState.REVIEW,
                     reps=1,
-                    anki_card_id=None,  # orphan — can't look up in Anki
+                    anki_card_id=None,
                 )
             },
         )
 
         summary = repair_due_dates(tt_path, anki_path)
-        # Row excluded by query filter (anki_card_id IS NOT NULL).
         assert summary["mismatched"] == 0

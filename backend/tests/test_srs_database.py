@@ -280,7 +280,7 @@ class TestCRUD:
             {
                 Direction.RECOGNITION: DirectionState(
                     direction=Direction.RECOGNITION,
-                    due_date=initial_due,
+                    due_at=datetime.combine(initial_due, time(4, 0), tzinfo=UTC),
                     stability=10.0,
                     difficulty=5.0,
                     reps=3,
@@ -303,7 +303,7 @@ class TestCRUD:
             {
                 Direction.RECOGNITION: DirectionState(
                     direction=Direction.RECOGNITION,
-                    due_date=advanced_due,
+                    due_at=datetime.combine(advanced_due, time(4, 0), tzinfo=UTC),
                     stability=15.0,
                     difficulty=5.2,
                     reps=4,
@@ -319,8 +319,8 @@ class TestCRUD:
         assert item is not None
         rec = item.directions[Direction.RECOGNITION]
         assert rec.anki_due == 4526, "anki_due refresh path is the obvious one"
-        assert rec.due_date == advanced_due, (
-            f"due_date must follow anki_due. Got {rec.due_date}, "
+        assert rec.due_at.date() == advanced_due, (
+            f"due_date must follow anki_due. Got {rec.due_at.date()}, "
             f"expected {advanced_due}. Bug: reps>0 branch ignores due_date."
         )
 
@@ -419,7 +419,7 @@ class TestDueQueries:
                 DirectionState(
                     direction=Direction.RECOGNITION,
                     state=SRSState.NEW,
-                    due_date=orig.due_date,
+                    due_at=datetime.combine(orig.due_at.date(), time(4, 0), tzinfo=UTC),
                     stability=orig.stability,
                     difficulty=orig.difficulty,
                     reps=orig.reps,
@@ -444,7 +444,7 @@ class TestDueQueries:
             DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.NEW,
-                due_date=orig.due_date,
+                due_at=datetime.combine(orig.due_at.date(), time(4, 0), tzinfo=UTC),
                 stability=orig.stability,
                 difficulty=orig.difficulty,
                 reps=orig.reps,
@@ -486,7 +486,7 @@ class TestDueQueries:
                 DirectionState(
                     direction=Direction.RECOGNITION,
                     state=SRSState.NEW,
-                    due_date=orig.due_date,
+                    due_at=datetime.combine(orig.due_at.date(), time(4, 0), tzinfo=UTC),
                     stability=orig.stability,
                     difficulty=orig.difficulty,
                     reps=orig.reps,
@@ -530,7 +530,7 @@ class TestDueQueries:
             new_dir = DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.REVIEW,
-                due_date=today - timedelta(days=days_ago),
+                due_at=datetime.combine(today - timedelta(days=days_ago), time(4, 0), tzinfo=UTC),
                 stability=orig.stability,
                 difficulty=orig.difficulty,
                 reps=orig.reps,
@@ -560,7 +560,7 @@ class TestDueQueries:
             new_dir = DirectionState(
                 direction=Direction.RECOGNITION,
                 state=SRSState.REVIEW,
-                due_date=due_date,
+                due_at=datetime.combine(due_date, time(4, 0), tzinfo=UTC),
                 stability=stab,
                 difficulty=orig.difficulty,
                 reps=orig.reps,
@@ -694,7 +694,7 @@ class TestUnburyIfNeeded:
             DirectionState(
                 direction=direction,
                 state=SRSState.BURIED,
-                due_date=orig.due_date,
+                due_at=datetime.combine(orig.due_at.date(), time(4, 0), tzinfo=UTC),
                 stability=orig.stability,
                 difficulty=orig.difficulty,
                 reps=reps,
@@ -787,7 +787,7 @@ class TestReviewedToday:
         new_dir = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.REVIEW,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             stability=orig.stability,
             difficulty=orig.difficulty,
             reps=orig.reps,
@@ -820,7 +820,7 @@ class TestReviewedToday:
             new_dir = DirectionState(
                 direction=dir,
                 state=SRSState.REVIEW,
-                due_date=today,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
                 stability=orig.stability,
                 difficulty=orig.difficulty,
                 reps=orig.reps,
@@ -851,7 +851,7 @@ class TestReviewedToday:
         new_dir = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.REVIEW,
-            due_date=today,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
             stability=orig.stability,
             difficulty=orig.difficulty,
             reps=orig.reps,
@@ -878,11 +878,11 @@ class TestReviewedToday:
         moment, silently mis-burying / un-burying siblings near midnight.
         Force tz=PDT so the bug is deterministic regardless of host tz.
         """
-        import time
+        import time as _time
         from datetime import datetime
 
         monkeypatch.setenv("TZ", "America/Los_Angeles")
-        time.tzset()
+        _time.tzset()
 
         srs_db.add_collocation(_unit("late_evening"), language_code="sl")
         rows, _ = srs_db.list_collocations(search="late_evening", limit=1)
@@ -909,7 +909,7 @@ class TestReviewedToday:
                 DirectionState(
                     direction=Direction.RECOGNITION,
                     state=SRSState.REVIEW,
-                    due_date=today_local,
+                    due_at=datetime.combine(today_local, time(4, 0), tzinfo=UTC),
                     stability=orig.stability,
                     difficulty=orig.difficulty,
                     reps=orig.reps,
@@ -953,7 +953,7 @@ class TestCountNewIntroducedToday:
         new_dir = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.REVIEW,
-            due_date=orig.due_date,
+            due_at=datetime.combine(orig.due_at.date(), time(4, 0), tzinfo=UTC),
             stability=1.0,
             difficulty=5.0,
             reps=reps,
@@ -1018,7 +1018,7 @@ class TestCountNewIntroducedToday:
             DirectionState(
                 direction=Direction.PRODUCTION,
                 state=SRSState.REVIEW,
-                due_date=orig_prod.due_date,
+                due_at=orig_prod.due_at,
                 stability=1.0,
                 reps=1,
                 last_review=datetime.fromisoformat(today_noon),
@@ -1048,7 +1048,7 @@ class TestCountReviewsCompletedToday:
         new_dir = DirectionState(
             direction=Direction.RECOGNITION,
             state=state,
-            due_date=dt if today_due else orig.due_date,
+            due_at=datetime.combine(dt if today_due else orig.due_at.date(), time(4, 0), tzinfo=UTC),
             stability=1.0,
             difficulty=5.0,
             reps=5 if state != SRSState.NEW else 0,
@@ -1122,7 +1122,7 @@ class TestCountReviewsCompletedToday:
                 DirectionState(
                     direction=direction,
                     state=state,
-                    due_date=orig.due_date,
+                    due_at=datetime.combine(orig.due_at.date(), time(4, 0), tzinfo=UTC),
                     stability=1.0,
                     difficulty=5.0,
                     reps=5,
@@ -1360,7 +1360,7 @@ class TestUnsuspendRestoresState:
         guid = db.get_collocation(text).guid
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=stability,
             difficulty=4.5,
             reps=reps,
@@ -1556,7 +1556,7 @@ class TestPromoteToLearning:
         assert item.directions[Direction.PRODUCTION].state == SRSState.LEARNING
         assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
         assert item.directions[Direction.PRODUCTION].dirty_fsrs is True
-        assert item.directions[Direction.RECOGNITION].due_date == date.today()
+        assert item.directions[Direction.RECOGNITION].due_at.date() == date.today()
         assert item.directions[Direction.RECOGNITION].last_review is not None
 
     def test_promote_single_direction(self, srs_db):
@@ -1736,7 +1736,7 @@ class TestLastRatingPersistence:
 
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=5.0,
             difficulty=4.5,
             reps=3,
@@ -1759,7 +1759,7 @@ class TestLastRatingPersistence:
 
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=5.0,
             difficulty=4.5,
             reps=3,
@@ -1790,7 +1790,7 @@ class TestQueueStatHelpers:
         for direction, state in [(Direction.RECOGNITION, rec_state), (Direction.PRODUCTION, prod_state)]:
             ds = DirectionState(
                 direction=direction,
-                due_date=due,
+                due_at=datetime.combine(due, time(4, 0), tzinfo=UTC),
                 stability=1.0,
                 difficulty=5.0,
                 reps=0 if state == SRSState.NEW else 1,
@@ -2029,7 +2029,11 @@ class TestUpdateMediaFile:
         from app.models.syntactic_unit import SyntacticUnit
 
         unit = SyntacticUnit(text="test_media", translation="test", word_count=2, difficulty=1, source="test")
-        dirs = {Direction.RECOGNITION: DirectionState(direction=Direction.RECOGNITION, due_date=date.today())}
+        dirs = {
+            Direction.RECOGNITION: DirectionState(
+                direction=Direction.RECOGNITION, due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+            )
+        }
         coll_id = db.upsert_by_guid(unit, "sl", dirs)
         db.add_media(
             coll_id,
@@ -2314,7 +2318,7 @@ class TestListRecentlyGradedCleanWithDirection:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=grade_time.date(),
+                due_at=datetime.combine(grade_time.date(), time(4, 0), tzinfo=UTC),
                 stability=5.0,
                 difficulty=4.5,
                 reps=1,
@@ -2365,7 +2369,6 @@ class TestListRecentlyGradedCleanDueAt:
             Direction.RECOGNITION,
             DirectionState(
                 direction=Direction.RECOGNITION,
-                due_date=grade_time.date(),
                 stability=1.0,
                 difficulty=5.0,
                 reps=1,

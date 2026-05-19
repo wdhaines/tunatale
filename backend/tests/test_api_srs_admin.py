@@ -1,6 +1,6 @@
 """Admin SRS API endpoint tests."""
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -402,7 +402,7 @@ class TestSetState:
         assert item.directions[Direction.RECOGNITION].state == SRSState.LEARNING
         assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
         assert item.directions[Direction.PRODUCTION].dirty_fsrs is True
-        assert item.directions[Direction.RECOGNITION].due_date == date.today()
+        assert item.directions[Direction.RECOGNITION].due_at.date() == date.today()
 
     async def test_set_state_to_new(self):
         db = _db()
@@ -553,7 +553,7 @@ class TestResetSuspend:
         guid = db.get_collocation("banka").guid
         ds = DirectionState(
             direction=Direction.RECOGNITION,
-            due_date=date.today(),
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             stability=15.0,
             difficulty=4.5,
             reps=5,

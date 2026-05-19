@@ -246,7 +246,7 @@
 			<button class="col-text sort-btn" onclick={() => setSort('text')}>text{sortIndicator('text')}</button>
 			<button class="col-trans sort-btn" onclick={() => setSort('translation')}>translation{sortIndicator('translation')}</button>
 			<button class="col-state sort-btn" onclick={() => setSort('state')}>state{sortIndicator('state')}</button>
-			<button class="col-due sort-btn" onclick={() => setSort('due_date')}>due{sortIndicator('due_date')}</button>
+			<button class="col-due sort-btn" onclick={() => setSort('due_at')}>due{sortIndicator('due_at')}</button>
 			<button class="col-reps sort-btn" onclick={() => setSort('reps')}>reps{sortIndicator('reps')}</button>
 			<span class="col-actions">actions</span>
 		</div>
@@ -263,7 +263,7 @@
 						<input class="col-text" bind:value={editText} />
 						<input class="col-trans" bind:value={editTranslation} />
 						<span class="col-state">{item.state}</span>
-						<span class="col-due">{item.due_date}</span>
+						<span class="col-due">{item.due_at}</span>
 						<span class="col-reps">{item.reps}</span>
 						<span class="col-actions">
 							<button onclick={() => saveEdit(item.id)}>Save</button>
@@ -278,7 +278,7 @@
 						<span class="col-text">{item.text}</span>
 						<span class="col-trans">{item.translation}</span>
 						<span class="col-state state-{item.state}">{item.state}</span>
-						<span class="col-due">{item.due_date}</span>
+						<span class="col-due">{item.due_at}</span>
 						<span class="col-reps">{item.reps}</span>
 						<span class="col-actions">
 							<button onclick={() => startEdit(item)}>Edit</button>
