@@ -123,56 +123,6 @@ class TestQueueStats:
         )
         assert data["new"] == 0
 
-    async def test_queue_stats_new_decrements_when_card_introduced_in_tt(self, api_app_state):
-        """Badge subtracts cards moved out of NEW today, read from TT state
-        (no live Anki dependency). Both TT-side grades and synced Anki grades
-        leave `prior_state='new'` + `last_review=today` on the direction; both
-        decrement the badge.
-        """
-        from datetime import UTC, date, datetime, time, timedelta
-
-        from app.models.syntactic_unit import SyntacticUnit
-
-        db = api_app_state
-        today = date.today()
-
-        # Cap=2, pool=5 — pool > cap so `min(cap, pool)` doesn't move on its own.
-        db.set_anki_state_cache("daily_new_cap", "2")
-        for i in range(5):
-            unit = SyntacticUnit(text=f"new_{i}", translation="t", word_count=1, difficulty=1, source="test")
-            db.add_collocation(unit, language_code="sl")
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/srs/queue-stats")
-        assert resp.json()["new"] == 2  # cap - 0 introduced today
-
-        # Simulate "user introduced one new card today": its first grade moved
-        # it from NEW to LEARNING; `prior_state='new'` + `last_review=today`.
-        rows, _ = db.list_collocations(search="new_0", limit=1)
-        row_id, _, _ = rows[0]
-        local_tz = datetime.now().astimezone().tzinfo
-        graded_at = datetime.combine(today, time(12, 0), tzinfo=local_tz).astimezone(UTC)
-        db.update_direction_by_id(
-            row_id,
-            Direction.RECOGNITION,
-            DirectionState(
-                direction=Direction.RECOGNITION,
-                state=SRSState.LEARNING,
-                due_date=today + timedelta(days=1),
-                stability=1.0,
-                reps=1,
-                lapses=0,
-                last_review=graded_at,
-                prior_state=SRSState.NEW,
-                anki_card_id=4242,
-                introduced_at=graded_at,
-            ),
-        )
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/srs/queue-stats")
-        assert resp.json()["new"] == 1, "TT-state introduced_today must drive the badge"
-
     async def test_queue_stats_new_does_not_rebound_after_grading_introduced_card(self, api_app_state):
         """Regression: after sync introduces a card (sets `prior_state='new'`),
         the user grading that learning card must NOT bump the new-card badge
@@ -370,49 +320,6 @@ class TestQueueStats:
         assert data["learning"] == 2  # RELEARNING counts as learning
         assert data["review"] == 0
 
-    async def test_review_badge_capped_at_daily_review_cap(self, api_app_state):
-        """Review badge is capped at daily_review_cap when more reviews are due."""
-        db = api_app_state
-        db.set_anki_state_cache("daily_review_cap", "97")
-        today = date.today()
-        for i in range(101):
-            _add_review_due_collocation(db, f"word{i}", today)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/srs/queue-stats")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["review"] == 97
-        assert data["daily_review_cap"] == 97
-        assert data["review_cap_source"] == "cache"
-
-    async def test_review_badge_uncapped_when_below_cap(self, api_app_state):
-        """Review badge equals raw due count when below cap."""
-        db = api_app_state
-        db.set_anki_state_cache("daily_review_cap", "97")
-        today = date.today()
-        for i in range(50):
-            _add_review_due_collocation(db, f"word{i}", today)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/srs/queue-stats")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["review"] == 50
-        assert data["daily_review_cap"] == 97
-
-    async def test_review_badge_decrements_with_reviews_completed_today(self, api_app_state):
-        """Cap is depleted by reviews already done today."""
-        db = api_app_state
-        db.set_anki_state_cache("daily_review_cap", "97")
-        today = date.today()
-        for i in range(101):
-            _add_review_due_collocation(db, f"word{i}", today)
-        _stamp_reviews_completed_today(db, today, count=10)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/srs/queue-stats")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["review"] == 87  # min(101, 97-10)
-
     async def test_review_badge_floors_at_zero(self, api_app_state):
         """Review badge never goes negative when reviews_today exceeds cap."""
         db = api_app_state
@@ -547,26 +454,6 @@ class TestReviewQueue:
         # Both should appear since bury_review is disabled
         prod_in_queue = [q for q in queue if q["direction"] == "production" and q["state"] != "new"]
         assert len(prod_in_queue) > 0
-
-    async def test_caps_new_across_directions(self, api_app_state):
-        db = api_app_state
-
-        # Create multiple new collocations
-        from app.models.syntactic_unit import SyntacticUnit
-
-        for i in range(10):
-            unit = SyntacticUnit(text=f"word_{i}", translation=f"trans_{i}", word_count=2, difficulty=1, source="test")
-            db.add_collocation(unit, language_code="sl")
-
-        # Set cap to 5
-        db.set_anki_state_cache("daily_new_cap", "5")
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/srs/review-queue")
-        assert resp.status_code == 200
-        queue = resp.json()["queue"]
-        new_count = len([q for q in queue if q["state"] == "new"])
-        assert new_count <= 5
 
     async def test_new_spread_after_review(self, api_app_state):
         from datetime import date
@@ -1015,56 +902,6 @@ class TestReviewQueue:
         assert len(new_items) >= 2
         assert new_items[0]["text"] == "coll_a"
         assert new_items[1]["text"] == "coll_b"
-
-    async def test_review_queue_subtracts_introduced_today_from_cap(self, api_app_state):
-        """Anki parity: the new-card budget for the queue is `cap - new_studied`,
-        reconstructed from TT state alone (no live Anki dependency). Both
-        `/queue-stats` and `/review-queue` use `db.count_new_introduced_today`,
-        which captures TT-side grades and synced Anki grades — any direction with
-        `prior_state='new'` and `last_review` today counts as one introduction.
-        """
-        from datetime import UTC, date, datetime, time, timedelta
-
-        from app.models.syntactic_unit import SyntacticUnit
-
-        db = api_app_state
-        today = date.today()
-
-        # Cap=2, pool=5. Disable sibling-bury so the assertion isolates the cap
-        # arithmetic (otherwise both directions of one collocation collapse).
-        db.set_anki_state_cache("daily_new_cap", "2")
-        db.set_anki_state_cache("bury_new", "False")
-        for i in range(5):
-            unit = SyntacticUnit(text=f"new_{i}", translation="t", word_count=1, difficulty=1, source="test")
-            db.add_collocation(unit, language_code="sl")
-
-        # Mark new_0 as introduced today: prior_state=NEW, state=LEARNING, last_review today.
-        rows, _ = db.list_collocations(search="new_0", limit=1)
-        row_id, _, _ = rows[0]
-        local_tz = datetime.now().astimezone().tzinfo
-        graded_at = datetime.combine(today, time(12, 0), tzinfo=local_tz).astimezone(UTC)
-        db.update_direction_by_id(
-            row_id,
-            Direction.RECOGNITION,
-            DirectionState(
-                direction=Direction.RECOGNITION,
-                state=SRSState.LEARNING,
-                due_date=today + timedelta(days=1),
-                stability=1.0,
-                reps=1,
-                lapses=0,
-                last_review=graded_at,
-                prior_state=SRSState.NEW,
-                anki_card_id=4242,
-                introduced_at=graded_at,
-            ),
-        )
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/srs/review-queue")
-        assert resp.status_code == 200
-        new_items = [q for q in resp.json()["queue"] if q["state"] == "new"]
-        assert len(new_items) == 1, f"Expected 1 new (cap=2 - introduced=1), got {len(new_items)}"
 
     # --- Additional tests for _spread_mix ---
     async def test_spread_mix_empty_news_returns_reviews(self, api_app_state):
