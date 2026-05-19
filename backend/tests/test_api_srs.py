@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.main import app
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
+from tests.conftest import seed_direction
 
 
 def _add_review_due_collocation(db, text: str, today: date):
@@ -148,29 +149,25 @@ class TestQueueStats:
             )
         # Seed one collocation that's already been introduced today: sync would have
         # set state=LEARNING, prior_state=NEW, last_review=today.
-        unit = SyntacticUnit(text="intro_card", translation="t", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit, language_code="sl")
-        item = db.get_collocation("intro_card")
         local_tz = datetime.now().astimezone().tzinfo
         graded_at = datetime.combine(today, time(12, 0), tzinfo=local_tz).astimezone(UTC)
-        db.update_direction(
-            item.guid,
-            Direction.RECOGNITION,
-            DirectionState(
-                direction=Direction.RECOGNITION,
-                state=SRSState.LEARNING,
-                prior_state=SRSState.NEW,
-                due_date=today + timedelta(days=1),
-                stability=0.5,
-                difficulty=8.0,
-                reps=1,
-                lapses=0,
-                left=1002,
-                due_at=datetime.now(UTC) + timedelta(minutes=1),
-                last_review=graded_at,
-                anki_card_id=4242,
-                introduced_at=graded_at,
-            ),
+        row_id = seed_direction(
+            db,
+            text="intro_card",
+            translation="t",
+            direction=Direction.RECOGNITION,
+            state=SRSState.LEARNING,
+            due_date=today + timedelta(days=1),
+            stability=0.5,
+            difficulty=8.0,
+            reps=1,
+            lapses=0,
+            anki_card_id=4242,
+            left=1002,
+            due_at=datetime.now(UTC) + timedelta(minutes=1),
+            last_review=graded_at,
+            introduced_at=graded_at,
+            prior_state=SRSState.NEW,
         )
 
         # Baseline: badge subtracts 1 introduction (cap 30, introduced 1 → 29).
@@ -179,9 +176,6 @@ class TestQueueStats:
         assert before["new"] == 29, before
 
         # Grade Good on the learning card → advances step, still LEARNING.
-        # We need a row_id and to mimic the API flow precisely.
-        rows, _ = db.list_collocations(search="intro_card", limit=1)
-        row_id = rows[0][0]
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 f"/api/srs/items/{row_id}/direction/recognition/feedback",
@@ -203,26 +197,19 @@ class TestQueueStats:
         """
         from datetime import date, timedelta
 
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
         today = date.today()
-        unit = SyntacticUnit(text="future_learn", translation="t", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit, language_code="sl")
-        item = db.get_collocation("future_learn")
-
-        # FSRS-engine output after Good late at night: due_date jumped to tomorrow.
-        ds = DirectionState(
+        seed_direction(
+            db,
+            text="future_learn",
+            translation="t",
             direction=Direction.RECOGNITION,
             state=SRSState.LEARNING,
             due_date=today + timedelta(days=1),
             stability=0.5,
-            difficulty=5.0,
             reps=2,
-            lapses=0,
             left=1002,
         )
-        db.update_direction(item.guid, Direction.RECOGNITION, ds)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/srs/queue-stats")
@@ -237,29 +224,20 @@ class TestQueueStats:
         """
         from datetime import date, timedelta
 
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
         today = date.today()
 
         # Seed 3 review-state cards due today.
         for i in range(3):
-            unit = SyntacticUnit(text=f"rev_{i}", translation="t", word_count=1, difficulty=1, source="test")
-            db.add_collocation(unit, language_code="sl")
-            item = db.get_collocation(f"rev_{i}")
-            db.update_direction(
-                item.guid,
-                Direction.RECOGNITION,
-                DirectionState(
-                    direction=Direction.RECOGNITION,
-                    state=SRSState.REVIEW,
-                    due_date=today,
-                    stability=1.0,
-                    difficulty=5.0,
-                    reps=5,
-                    lapses=0,
-                    anki_card_id=100 + i,
-                ),
+            seed_direction(
+                db,
+                text=f"rev_{i}",
+                translation="t",
+                direction=Direction.RECOGNITION,
+                state=SRSState.REVIEW,
+                due_date=today,
+                reps=5,
+                anki_card_id=100 + i,
             )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1195,14 +1173,15 @@ class TestReviewQueue:
     async def test_review_queue_includes_audio_url_when_audio_exists(self, api_app_state):
         from datetime import date
 
-        from app.models.srs_item import Direction, DirectionState, SRSState
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
-        unit = SyntacticUnit(text="mleko", translation="milk", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit, language_code="sl")
-        rows, _ = db.list_collocations(search="mleko", limit=1)
-        row_id = rows[0][0]
+        row_id = seed_direction(
+            db,
+            text="mleko",
+            translation="milk",
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=date.today(),
+        )
         db.add_media(
             row_id,
             kind="audio_forvo",
@@ -1212,8 +1191,6 @@ class TestReviewQueue:
             sha256="abc",
             size_bytes=100,
         )
-        rec_dir = DirectionState(direction=Direction.RECOGNITION, due_date=date.today(), state=SRSState.REVIEW)
-        db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/srs/review-queue")
@@ -1225,14 +1202,15 @@ class TestReviewQueue:
     async def test_review_queue_includes_image_url_when_image_exists(self, api_app_state):
         from datetime import date
 
-        from app.models.srs_item import Direction, DirectionState, SRSState
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
-        unit = SyntacticUnit(text="jabolko", translation="apple", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit, language_code="sl")
-        rows, _ = db.list_collocations(search="jabolko", limit=1)
-        row_id = rows[0][0]
+        row_id = seed_direction(
+            db,
+            text="jabolko",
+            translation="apple",
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=date.today(),
+        )
         db.add_media(
             row_id,
             kind="image",
@@ -1242,8 +1220,6 @@ class TestReviewQueue:
             sha256="def",
             size_bytes=200,
         )
-        rec_dir = DirectionState(direction=Direction.RECOGNITION, due_date=date.today(), state=SRSState.REVIEW)
-        db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/srs/review-queue")
@@ -1534,38 +1510,31 @@ class TestLearningStatePriority:
         """Regression: ženska prod (learning) should appear before tovornjak prod (overdue review)."""
         from datetime import date, timedelta
 
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
         today = date.today()
 
         # tovornjak prod: state=review, due_date=yesterday (overdue), stability=0.116
-        unit1 = SyntacticUnit(text="tovornjak", translation="truck", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit1, language_code="sl")
-        rows, _ = db.list_collocations(search="tovornjak", limit=1)
-        row_id1, item1, _ = rows[0]
-        tovornjak_prod = DirectionState(
+        seed_direction(
+            db,
+            text="tovornjak",
+            translation="truck",
             direction=Direction.PRODUCTION,
             state=SRSState.REVIEW,
             due_date=today - timedelta(days=1),
             stability=0.116,
             last_review=today - timedelta(days=2),
         )
-        db.update_direction_by_id(row_id1, Direction.PRODUCTION, tovornjak_prod)
 
         # ženska prod: state=learning, due_date=today, stability=0.036, last_review=NULL
-        unit2 = SyntacticUnit(text="ženska", translation="woman", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit2, language_code="sl")
-        rows, _ = db.list_collocations(search="ženska", limit=1)
-        row_id2, item2, _ = rows[0]
-        zenska_prod = DirectionState(
+        seed_direction(
+            db,
+            text="ženska",
+            translation="woman",
             direction=Direction.PRODUCTION,
             state=SRSState.LEARNING,
             due_date=today,
             stability=0.036,
-            last_review=None,
         )
-        db.update_direction_by_id(row_id2, Direction.PRODUCTION, zenska_prod)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/srs/review-queue")
@@ -1591,8 +1560,6 @@ class TestLearningStatePriority:
         """
         from datetime import date
 
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
         today = date.today()
 
@@ -1605,18 +1572,16 @@ class TestLearningStatePriority:
             ("dekle", 302, 0.05),  # highest id, middle stability
         ]
         for text, anki_id, stability in cards:
-            unit = SyntacticUnit(text=text, translation=f"trans_{text}", word_count=1, difficulty=1, source="test")
-            db.add_collocation(unit, language_code="sl")
-            rows, _ = db.list_collocations(search=text, limit=1)
-            row_id, item, _ = rows[0]
-            dstate = DirectionState(
+            seed_direction(
+                db,
+                text=text,
+                translation=f"trans_{text}",
                 direction=Direction.PRODUCTION,
                 state=SRSState.LEARNING,
                 due_date=today,
                 stability=stability,
                 anki_card_id=anki_id,
             )
-            db.update_direction_by_id(row_id, Direction.PRODUCTION, dstate)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/srs/review-queue")
@@ -1690,8 +1655,6 @@ class TestLearningStatePriority:
         """
         from datetime import date
 
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
         today = date.today()
 
@@ -1703,11 +1666,10 @@ class TestLearningStatePriority:
             ("zenska", 1775264031927, 0.036, 1777834178),  # higher stability, earlier sub-day due
         ]
         for text, anki_id, stability, anki_due_ts in cards:
-            unit = SyntacticUnit(text=text, translation=f"trans_{text}", word_count=1, difficulty=1, source="test")
-            db.add_collocation(unit, language_code="sl")
-            rows, _ = db.list_collocations(search=text, limit=1)
-            row_id, item, _ = rows[0]
-            dstate = DirectionState(
+            seed_direction(
+                db,
+                text=text,
+                translation=f"trans_{text}",
                 direction=Direction.PRODUCTION,
                 state=SRSState.LEARNING,
                 due_date=today,
@@ -1715,7 +1677,6 @@ class TestLearningStatePriority:
                 anki_card_id=anki_id,
                 anki_due=anki_due_ts,
             )
-            db.update_direction_by_id(row_id, Direction.PRODUCTION, dstate)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/srs/review-queue")
@@ -1738,8 +1699,6 @@ class TestLearningStatePriority:
         """
         from datetime import UTC, date, datetime
 
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
         today = date.today()
         # Both cards lapsed in the same review session: identical due_at, identical anki_due.
@@ -1753,11 +1712,10 @@ class TestLearningStatePriority:
             ("vrh", 1775264032476, 0.659),  # higher id, lower stability
         ]
         for text, anki_id, stability in cards:
-            unit = SyntacticUnit(text=text, translation=f"trans_{text}", word_count=1, difficulty=1, source="test")
-            db.add_collocation(unit, language_code="sl")
-            rows, _ = db.list_collocations(search=text, limit=1)
-            row_id, item, _ = rows[0]
-            dstate = DirectionState(
+            seed_direction(
+                db,
+                text=text,
+                translation=f"trans_{text}",
                 direction=Direction.PRODUCTION,
                 state=SRSState.RELEARNING,
                 due_date=today,
@@ -1766,7 +1724,6 @@ class TestLearningStatePriority:
                 anki_due=shared_anki_due,
                 due_at=shared_due_at,
             )
-            db.update_direction_by_id(row_id, Direction.PRODUCTION, dstate)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/srs/review-queue")
@@ -1792,8 +1749,6 @@ class TestLearningStatePriority:
         """
         from datetime import UTC, date, datetime, timedelta
 
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
         today = date.today()
         now = datetime.now(UTC)
@@ -1806,38 +1761,28 @@ class TestLearningStatePriority:
         # At cutoff time, this card was 4 minutes away from due. Anki's frozen cutoff has
         # not advanced, so it must remain pending.
         learning_due_at = now - timedelta(minutes=1)
-        unit_lc = SyntacticUnit(text="late_learn", translation="trans", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit_lc, language_code="sl")
-        rows, _ = db.list_collocations(search="late_learn", limit=1)
-        lc_row_id, _, _ = rows[0]
-        db.update_direction_by_id(
-            lc_row_id,
-            Direction.PRODUCTION,
-            DirectionState(
-                direction=Direction.PRODUCTION,
-                state=SRSState.LEARNING,
-                due_date=today,
-                stability=1.0,
-                due_at=learning_due_at,
-                anki_card_id=42,
-            ),
+        seed_direction(
+            db,
+            text="late_learn",
+            translation="trans",
+            direction=Direction.PRODUCTION,
+            state=SRSState.LEARNING,
+            due_date=today,
+            stability=1.0,
+            due_at=learning_due_at,
+            anki_card_id=42,
         )
 
         # New card: should be served first because the learning card is still pending vs cutoff.
-        unit_new = SyntacticUnit(text="newcard", translation="trans", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit_new, language_code="sl")
-        rows, _ = db.list_collocations(search="newcard", limit=1)
-        new_row_id, _, _ = rows[0]
-        db.update_direction_by_id(
-            new_row_id,
-            Direction.PRODUCTION,
-            DirectionState(
-                direction=Direction.PRODUCTION,
-                state=SRSState.NEW,
-                due_date=today,
-                anki_card_id=43,
-                anki_due=1,
-            ),
+        seed_direction(
+            db,
+            text="newcard",
+            translation="trans",
+            direction=Direction.PRODUCTION,
+            state=SRSState.NEW,
+            due_date=today,
+            anki_card_id=43,
+            anki_due=1,
         )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1865,8 +1810,6 @@ class TestLearningStatePriority:
         """Anki-parity auto-bump behavior across 4 scenarios (see parametrize table)."""
         from datetime import UTC, date, datetime, timedelta
 
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
         today = date.today()
         now = datetime.now(UTC)
@@ -1874,27 +1817,28 @@ class TestLearningStatePriority:
         db.set_anki_state_cache("learning_cutoff", cutoff.isoformat())
 
         def _add_learning(text: str, due_at: datetime, cid: int):
-            unit = SyntacticUnit(text=text, translation="trans", word_count=1, difficulty=1, source="test")
-            db.add_collocation(unit, language_code="sl")
-            rows, _ = db.list_collocations(search=text, limit=1)
-            db.update_direction_by_id(
-                rows[0][0], Direction.PRODUCTION,
-                DirectionState(
-                    direction=Direction.PRODUCTION, state=SRSState.LEARNING,
-                    due_date=today, stability=1.0, due_at=due_at, anki_card_id=cid,
-                ),
+            seed_direction(
+                db,
+                text=text,
+                translation="trans",
+                direction=Direction.PRODUCTION,
+                state=SRSState.LEARNING,
+                due_date=today,
+                stability=1.0,
+                due_at=due_at,
+                anki_card_id=cid,
             )
 
         def _add_new_card(text: str, cid: int):
-            unit = SyntacticUnit(text=text, translation="trans", word_count=1, difficulty=1, source="test")
-            db.add_collocation(unit, language_code="sl")
-            rows, _ = db.list_collocations(search=text, limit=1)
-            db.update_direction_by_id(
-                rows[0][0], Direction.PRODUCTION,
-                DirectionState(
-                    direction=Direction.PRODUCTION, state=SRSState.NEW,
-                    due_date=today, anki_card_id=cid, anki_due=1,
-                ),
+            seed_direction(
+                db,
+                text=text,
+                translation="trans",
+                direction=Direction.PRODUCTION,
+                state=SRSState.NEW,
+                due_date=today,
+                anki_card_id=cid,
+                anki_due=1,
             )
 
         if ripe:
@@ -1930,8 +1874,6 @@ class TestLearningStatePriority:
         """
         from datetime import UTC, date, datetime, timedelta
 
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
         today = date.today()
 
@@ -1939,19 +1881,14 @@ class TestLearningStatePriority:
         stale_cutoff = datetime(2020, 1, 1, tzinfo=UTC)
         db.set_anki_state_cache("learning_cutoff", stale_cutoff.isoformat())
 
-        unit = SyntacticUnit(text="grade_test", translation="trans", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit, language_code="sl")
-        rows, _ = db.list_collocations(search="grade_test", limit=1)
-        row_id, _, _ = rows[0]
-        db.update_direction_by_id(
-            row_id,
-            Direction.RECOGNITION,
-            DirectionState(
-                direction=Direction.RECOGNITION,
-                state=SRSState.REVIEW,
-                due_date=today,
-                stability=1.0,
-            ),
+        row_id = seed_direction(
+            db,
+            text="grade_test",
+            translation="trans",
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=today,
+            stability=1.0,
         )
 
         before = datetime.now(UTC)
@@ -1983,7 +1920,6 @@ class TestJustGradedLearningCollapse:
         """
         from datetime import UTC, date, datetime, timedelta
 
-        from app.models.syntactic_unit import SyntacticUnit
         from app.srs.queue_stats import advance_learning_cutoff
 
         db = api_app_state
@@ -1995,38 +1931,31 @@ class TestJustGradedLearningCollapse:
 
         # Two pending learning cards: srebro (just graded, head) and družina.
         for text, due_offset_min, last_review in [
-            ("srebro", 1, now),  # just graded → last_review == cutoff
-            ("družina", 9, now - timedelta(hours=1)),  # graded earlier
+            ("srebro", 1, now),
+            ("družina", 9, now - timedelta(hours=1)),
         ]:
-            unit = SyntacticUnit(text=text, translation="t", word_count=1, difficulty=1, source="test")
-            db.add_collocation(unit, language_code="sl")
-            rows, _ = db.list_collocations(search=text, limit=1)
-            row_id = rows[0][0]
-            db.update_direction_by_id(
-                row_id,
-                Direction.RECOGNITION,
-                DirectionState(
-                    direction=Direction.RECOGNITION,
-                    state=SRSState.LEARNING,
-                    due_date=today + timedelta(days=1),
-                    stability=0.5,
-                    difficulty=8.0,
-                    reps=2,
-                    lapses=0,
-                    left=1001,
-                    due_at=now + timedelta(minutes=due_offset_min),
-                    last_review=last_review,
-                    anki_card_id=100 + due_offset_min,
-                ),
+            seed_direction(
+                db,
+                text=text,
+                translation="t",
+                direction=Direction.RECOGNITION,
+                state=SRSState.LEARNING,
+                due_date=today + timedelta(days=1),
+                stability=0.5,
+                difficulty=8.0,
+                reps=2,
+                lapses=0,
+                left=1001,
+                due_at=now + timedelta(minutes=due_offset_min),
+                last_review=last_review,
+                anki_card_id=100 + due_offset_min,
             )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/srs/review-queue")
         queue = resp.json()["queue"]
         # Without collapse: queue[0] = srebro. With collapse: queue[0] = družina.
-        assert queue[0]["text"] == "družina", (
-            f"just-graded srebro must yield to družina (Anki's collapse); got {queue[0]['text']}"
-        )
+        assert queue[0]["text"] == "družina"
         assert queue[1]["text"] == "srebro"
 
     async def test_collapse_does_not_fire_when_head_was_not_just_graded(self, api_app_state):
@@ -2036,7 +1965,6 @@ class TestJustGradedLearningCollapse:
         """
         from datetime import UTC, date, datetime, timedelta
 
-        from app.models.syntactic_unit import SyntacticUnit
         from app.srs.queue_stats import advance_learning_cutoff
 
         db = api_app_state
@@ -2046,25 +1974,21 @@ class TestJustGradedLearningCollapse:
         advance_learning_cutoff(db, now)
 
         for text, due_offset_min in [("first", 1), ("second", 9)]:
-            unit = SyntacticUnit(text=text, translation="t", word_count=1, difficulty=1, source="test")
-            db.add_collocation(unit, language_code="sl")
-            rows, _ = db.list_collocations(search=text, limit=1)
-            db.update_direction_by_id(
-                rows[0][0],
-                Direction.RECOGNITION,
-                DirectionState(
-                    direction=Direction.RECOGNITION,
-                    state=SRSState.LEARNING,
-                    due_date=today + timedelta(days=1),
-                    stability=0.5,
-                    difficulty=8.0,
-                    reps=2,
-                    lapses=0,
-                    left=1001,
-                    due_at=now + timedelta(minutes=due_offset_min),
-                    last_review=now - timedelta(hours=1),  # NOT just graded
-                    anki_card_id=100 + due_offset_min,
-                ),
+            seed_direction(
+                db,
+                text=text,
+                translation="t",
+                direction=Direction.RECOGNITION,
+                state=SRSState.LEARNING,
+                due_date=today + timedelta(days=1),
+                stability=0.5,
+                difficulty=8.0,
+                reps=2,
+                lapses=0,
+                left=1001,
+                due_at=now + timedelta(minutes=due_offset_min),
+                last_review=now - timedelta(hours=1),
+                anki_card_id=100 + due_offset_min,
             )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -2078,7 +2002,6 @@ class TestJustGradedLearningCollapse:
         next, so the just-graded card stays in pending naturally."""
         from datetime import UTC, date, datetime, timedelta
 
-        from app.models.syntactic_unit import SyntacticUnit
         from app.srs.queue_stats import advance_learning_cutoff
 
         db = api_app_state
@@ -2087,20 +2010,16 @@ class TestJustGradedLearningCollapse:
         advance_learning_cutoff(db, now)
 
         # One due review (populates main).
-        unit_rev = SyntacticUnit(text="rev_card", translation="t", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit_rev, language_code="sl")
-        rows, _ = db.list_collocations(search="rev_card", limit=1)
-        db.update_direction_by_id(
-            rows[0][0],
-            Direction.RECOGNITION,
-            DirectionState(
-                direction=Direction.RECOGNITION,
-                state=SRSState.REVIEW,
-                due_date=today,
-                stability=1.0,
-                reps=5,
-                anki_card_id=500,
-            ),
+        seed_direction(
+            db,
+            text="rev_card",
+            translation="t",
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=today,
+            stability=1.0,
+            reps=5,
+            anki_card_id=500,
         )
 
         # Two pending learning cards, head just graded.
@@ -2108,25 +2027,21 @@ class TestJustGradedLearningCollapse:
             ("srebro", 1, now),
             ("družina", 9, now - timedelta(hours=1)),
         ]:
-            unit = SyntacticUnit(text=text, translation="t", word_count=1, difficulty=1, source="test")
-            db.add_collocation(unit, language_code="sl")
-            rows, _ = db.list_collocations(search=text, limit=1)
-            db.update_direction_by_id(
-                rows[0][0],
-                Direction.RECOGNITION,
-                DirectionState(
-                    direction=Direction.RECOGNITION,
-                    state=SRSState.LEARNING,
-                    due_date=today + timedelta(days=1),
-                    stability=0.5,
-                    difficulty=8.0,
-                    reps=2,
-                    lapses=0,
-                    left=1001,
-                    due_at=now + timedelta(minutes=due_offset_min),
-                    last_review=last_review,
-                    anki_card_id=100 + due_offset_min,
-                ),
+            seed_direction(
+                db,
+                text=text,
+                translation="t",
+                direction=Direction.RECOGNITION,
+                state=SRSState.LEARNING,
+                due_date=today + timedelta(days=1),
+                stability=0.5,
+                difficulty=8.0,
+                reps=2,
+                lapses=0,
+                left=1001,
+                due_at=now + timedelta(minutes=due_offset_min),
+                last_review=last_review,
+                anki_card_id=100 + due_offset_min,
             )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -2153,41 +2068,29 @@ class TestSessionMainQueueFreeze:
         """The frozen main queue must not reorder between calls when underlying state is stable."""
         from datetime import date
 
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
         today = date.today()
         # Two reviews with very different retrievabilities — the lower-R one would
         # jump to the head if we recomputed instead of using the cached order.
-        review_high_r = SyntacticUnit(text="high_r", translation="hr", word_count=1, difficulty=1, source="test")
-        review_low_r = SyntacticUnit(text="low_r", translation="lr", word_count=1, difficulty=1, source="test")
-        db.add_collocation(review_high_r, language_code="sl")
-        db.add_collocation(review_low_r, language_code="sl")
-        rows_h, _ = db.list_collocations(search="high_r", limit=1)
-        row_h, _, _ = rows_h[0]
-        rows_l, _ = db.list_collocations(search="low_r", limit=1)
-        row_l, _, _ = rows_l[0]
-        db.update_direction_by_id(
-            row_h,
-            Direction.RECOGNITION,
-            DirectionState(
-                direction=Direction.RECOGNITION,
-                state=SRSState.REVIEW,
-                due_date=today,
-                stability=100.0,
-                anki_card_id=1,
-            ),
+        seed_direction(
+            db,
+            text="high_r",
+            translation="hr",
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=today,
+            stability=100.0,
+            anki_card_id=1,
         )
-        db.update_direction_by_id(
-            row_l,
-            Direction.RECOGNITION,
-            DirectionState(
-                direction=Direction.RECOGNITION,
-                state=SRSState.REVIEW,
-                due_date=today,
-                stability=0.05,
-                anki_card_id=2,
-            ),
+        seed_direction(
+            db,
+            text="low_r",
+            translation="lr",
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=today,
+            stability=0.05,
+            anki_card_id=2,
         )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -2204,8 +2107,6 @@ class TestSessionMainQueueFreeze:
         """
         from datetime import date, timedelta
 
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
         today = date.today()
 
@@ -2221,36 +2122,26 @@ class TestSessionMainQueueFreeze:
             ("rev3", 0.20, 1004),
         ]
         for text, stab, anki_id in review_specs:
-            unit = SyntacticUnit(text=text, translation=f"t_{text}", word_count=1, difficulty=1, source="test")
-            db.add_collocation(unit, language_code="sl")
-            rows, _ = db.list_collocations(search=text, limit=1)
-            row_id, _, _ = rows[0]
-            db.update_direction_by_id(
-                row_id,
-                Direction.RECOGNITION,
-                DirectionState(
-                    direction=Direction.RECOGNITION,
-                    state=SRSState.REVIEW,
-                    due_date=today,
-                    stability=stab,
-                    anki_card_id=anki_id,
-                ),
+            seed_direction(
+                db,
+                text=text,
+                translation=f"t_{text}",
+                direction=Direction.RECOGNITION,
+                state=SRSState.REVIEW,
+                due_date=today,
+                stability=stab,
+                anki_card_id=anki_id,
             )
 
-        new_unit = SyntacticUnit(text="new0", translation="t_new0", word_count=1, difficulty=1, source="test")
-        db.add_collocation(new_unit, language_code="sl")
-        rows_n, _ = db.list_collocations(search="new0", limit=1)
-        row_new, _, _ = rows_n[0]
-        db.update_direction_by_id(
-            row_new,
-            Direction.RECOGNITION,
-            DirectionState(
-                direction=Direction.RECOGNITION,
-                state=SRSState.NEW,
-                due_date=today,
-                anki_card_id=2001,
-                anki_due=1,
-            ),
+        seed_direction(
+            db,
+            text="new0",
+            translation="t_new0",
+            direction=Direction.RECOGNITION,
+            state=SRSState.NEW,
+            due_date=today,
+            anki_card_id=2001,
+            anki_due=1,
         )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -2291,8 +2182,6 @@ class TestSessionMainQueueFreeze:
         import json
         from datetime import date, timedelta
 
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
         today = date.today()
 
@@ -2303,20 +2192,15 @@ class TestSessionMainQueueFreeze:
             json.dumps({"day": yesterday.isoformat(), "items": [{"cid": 99999, "dir": "recognition"}]}),
         )
 
-        unit = SyntacticUnit(text="fresh_card", translation="fc", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit, language_code="sl")
-        rows, _ = db.list_collocations(search="fresh_card", limit=1)
-        row_id, _, _ = rows[0]
-        db.update_direction_by_id(
-            row_id,
-            Direction.RECOGNITION,
-            DirectionState(
-                direction=Direction.RECOGNITION,
-                state=SRSState.REVIEW,
-                due_date=today,
-                stability=1.0,
-                anki_card_id=42,
-            ),
+        seed_direction(
+            db,
+            text="fresh_card",
+            translation="fc",
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=today,
+            stability=1.0,
+            anki_card_id=42,
         )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -2342,8 +2226,6 @@ class TestSessionMainQueueFreeze:
         """
         from datetime import UTC, date, datetime, timedelta
 
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
         today = date.today()
         now = datetime.now(UTC)
@@ -2355,37 +2237,28 @@ class TestSessionMainQueueFreeze:
         # Learning card: due_at is past `now` but FUTURE relative to the stale cutoff.
         # With the stale cutoff this card is `pending_learning`; only after the
         # session_start advance does it become `ready_learning`.
-        unit_lc = SyntacticUnit(text="late_learn", translation="trans", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit_lc, language_code="sl")
-        rows, _ = db.list_collocations(search="late_learn", limit=1)
-        lc_row, _, _ = rows[0]
-        db.update_direction_by_id(
-            lc_row,
-            Direction.PRODUCTION,
-            DirectionState(
-                direction=Direction.PRODUCTION,
-                state=SRSState.LEARNING,
-                due_date=today,
-                stability=1.0,
-                due_at=now - timedelta(minutes=1),  # past `now`, future vs stale cutoff
-                anki_card_id=42,
-            ),
+        seed_direction(
+            db,
+            text="late_learn",
+            translation="trans",
+            direction=Direction.PRODUCTION,
+            state=SRSState.LEARNING,
+            due_date=today,
+            stability=1.0,
+            due_at=now - timedelta(minutes=1),
+            anki_card_id=42,
         )
+
         # A review card so the queue has both candidates.
-        unit_rev = SyntacticUnit(text="rev_card", translation="rev", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit_rev, language_code="sl")
-        rows_r, _ = db.list_collocations(search="rev_card", limit=1)
-        rev_row, _, _ = rows_r[0]
-        db.update_direction_by_id(
-            rev_row,
-            Direction.RECOGNITION,
-            DirectionState(
-                direction=Direction.RECOGNITION,
-                state=SRSState.REVIEW,
-                due_date=today,
-                stability=1.0,
-                anki_card_id=43,
-            ),
+        seed_direction(
+            db,
+            text="rev_card",
+            translation="rev",
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=today,
+            stability=1.0,
+            anki_card_id=43,
         )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -2410,44 +2283,29 @@ class TestSessionMainQueueFreeze:
         import json
         from datetime import date
 
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
         today = date.today()
 
-        unit_a = SyntacticUnit(text="card_a", translation="ta", word_count=1, difficulty=1, source="test")
-        unit_new = SyntacticUnit(text="card_new", translation="tn", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit_a, language_code="sl")
-        db.add_collocation(unit_new, language_code="sl")
-        rows_a, _ = db.list_collocations(search="card_a", limit=1)
-        row_a, _, _ = rows_a[0]
-        rows_n, _ = db.list_collocations(search="card_new", limit=1)
-        row_new, _, _ = rows_n[0]
-
-        # card_a is a review card; card_new is a fresh new card (state=new is the default).
-        db.update_direction_by_id(
-            row_a,
-            Direction.RECOGNITION,
-            DirectionState(
-                direction=Direction.RECOGNITION,
-                state=SRSState.REVIEW,
-                due_date=today,
-                stability=1.0,
-                anki_card_id=100,
-            ),
+        row_a = seed_direction(
+            db,
+            text="card_a",
+            translation="ta",
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=today,
+            stability=1.0,
+            anki_card_id=100,
         )
-        # New card has anki_due so it shows up in the new pool ordering.
-        db.update_direction_by_id(
-            row_new,
-            Direction.RECOGNITION,
-            DirectionState(
-                direction=Direction.RECOGNITION,
-                state=SRSState.NEW,
-                due_date=today,
-                stability=1.0,
-                anki_card_id=200,
-                anki_due=1,
-            ),
+        seed_direction(
+            db,
+            text="card_new",
+            translation="tn",
+            direction=Direction.RECOGNITION,
+            state=SRSState.NEW,
+            due_date=today,
+            stability=1.0,
+            anki_card_id=200,
+            anki_due=1,
         )
 
         # Cache pretends only card_a was in the original frozen order.
@@ -2534,38 +2392,28 @@ class TestSessionMainQueueFreeze:
 
         # 4 review-state cards still due today (form the remaining review pool).
         for i in range(4):
-            unit = SyntacticUnit(text=f"rev_{i}", translation="t", word_count=1, difficulty=1, source="test")
-            db.add_collocation(unit, language_code="sl")
-            item = db.get_collocation(f"rev_{i}")
-            db.update_direction(
-                item.guid,
-                Direction.RECOGNITION,
-                DirectionState(
-                    direction=Direction.RECOGNITION,
-                    state=SRSState.REVIEW,
-                    due_date=today,
-                    stability=1.0,
-                    reps=5,
-                    lapses=0,
-                    anki_card_id=2000 + i,
-                ),
+            seed_direction(
+                db,
+                text=f"rev_{i}",
+                direction=Direction.RECOGNITION,
+                state=SRSState.REVIEW,
+                due_date=today,
+                stability=1.0,
+                reps=5,
+                lapses=0,
+                anki_card_id=2000 + i,
             )
 
         # 1 remaining new card.
-        unit = SyntacticUnit(text="new_remain", translation="t", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit, language_code="sl")
-        item = db.get_collocation("new_remain")
-        db.update_direction(
-            item.guid,
-            Direction.RECOGNITION,
-            DirectionState(
-                direction=Direction.RECOGNITION,
-                state=SRSState.NEW,
-                due_date=today,
-                stability=1.0,
-                anki_card_id=3000,
-                anki_due=1,
-            ),
+        seed_direction(
+            db,
+            text="new_remain",
+            direction=Direction.RECOGNITION,
+            state=SRSState.NEW,
+            due_date=today,
+            stability=1.0,
+            anki_card_id=3000,
+            anki_due=1,
         )
 
         # Sanity-check the inputs to the override.
@@ -2599,33 +2447,29 @@ class TestSessionMainQueueFreeze:
         import json
         from datetime import date
 
-        from app.models.syntactic_unit import SyntacticUnit
-
         db = api_app_state
         today = date.today()
 
-        unit_a = SyntacticUnit(text="cached_card", translation="ca", word_count=1, difficulty=1, source="test")
-        unit_g = SyntacticUnit(text="graduated_card", translation="gc", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit_a, language_code="sl")
-        db.add_collocation(unit_g, language_code="sl")
-        rows_a, _ = db.list_collocations(search="cached_card", limit=1)
-        row_a, _, _ = rows_a[0]
-        rows_g, _ = db.list_collocations(search="graduated_card", limit=1)
-        row_g, _, _ = rows_g[0]
-
-        # Both cards are review-state and due today.
-        for row_id, anki_id in [(row_a, 100), (row_g, 200)]:
-            db.update_direction_by_id(
-                row_id,
-                Direction.RECOGNITION,
-                DirectionState(
-                    direction=Direction.RECOGNITION,
-                    state=SRSState.REVIEW,
-                    due_date=today,
-                    stability=1.0,
-                    anki_card_id=anki_id,
-                ),
-            )
+        row_a = seed_direction(
+            db,
+            text="cached_card",
+            translation="ca",
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=today,
+            stability=1.0,
+            anki_card_id=100,
+        )
+        seed_direction(
+            db,
+            text="graduated_card",
+            translation="gc",
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_date=today,
+            stability=1.0,
+            anki_card_id=200,
+        )
 
         # Cache contains only cached_card — graduated_card is the "latecomer".
         db.set_anki_state_cache(
@@ -2690,20 +2534,15 @@ class TestSessionMainQueueFreeze:
             # Add a new review card with very low R — under a fresh rebuild it
             # would land at the head. Under the existing frozen cache it must
             # NOT appear (review-state latecomers are dropped per Layer 29).
-            gamma = SyntacticUnit(text="gamma", translation="g", word_count=1, difficulty=1, source="test")
-            db.add_collocation(gamma, language_code="sl")
-            rows, _ = db.list_collocations(search="gamma", limit=1)
-            row_g, _, _ = rows[0]
-            db.update_direction_by_id(
-                row_g,
-                Direction.RECOGNITION,
-                DirectionState(
-                    direction=Direction.RECOGNITION,
-                    state=SRSState.REVIEW,
-                    due_date=today,
-                    stability=0.01,
-                    anki_card_id=1003,
-                ),
+            seed_direction(
+                db,
+                text="gamma",
+                translation="g",
+                direction=Direction.RECOGNITION,
+                state=SRSState.REVIEW,
+                due_date=today,
+                stability=0.01,
+                anki_card_id=1003,
             )
 
             # Without session_start: frozen cache stands; gamma is excluded.

@@ -138,8 +138,16 @@ def test_extract_cloze_sentence_translation(label, back_extra, expected):
 @pytest.mark.parametrize(
     "label,back_extra,expected",
     [
-        ("returns_body", '<i>every</i><br><br><a href="https://forvo.com/word/vsak/">▶ Forvo</a>', '<a href="https://forvo.com/word/vsak/">▶ Forvo</a>'),
-        ("after_sentence", '<i>every</i><br><br><span class="st">It is open every day</span><br><br>some notes', "some notes"),
+        (
+            "returns_body",
+            '<i>every</i><br><br><a href="https://forvo.com/word/vsak/">▶ Forvo</a>',
+            '<a href="https://forvo.com/word/vsak/">▶ Forvo</a>',
+        ),
+        (
+            "after_sentence",
+            '<i>every</i><br><br><span class="st">It is open every day</span><br><br>some notes',
+            "some notes",
+        ),
         ("no_i_tag", "plain text", ""),
         ("empty", "", ""),
         ("no_body", "<i>every</i><br><br>", ""),

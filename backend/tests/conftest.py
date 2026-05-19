@@ -478,6 +478,54 @@ def fake_anki_db_slovene_pairs(tmp_path):
     return build_slovene_pairs_anki_db(tmp_path)
 
 
+def seed_direction(
+    db,
+    *,
+    text: str,
+    translation: str = "t",
+    direction=None,
+    state=None,
+    due_date: date | None = None,
+    stability: float = 1.0,
+    difficulty: float = 5.0,
+    reps: int = 0,
+    lapses: int = 0,
+    anki_card_id: int = 0,
+    **extra_dstate,
+) -> int:
+    """Create one collocation + one direction in TT's DB for tests.
+
+    Returns the row_id so tests can pass it to API routes or
+    db.update_direction_by_id().
+    """
+    from app.models.srs_item import Direction, DirectionState, SRSState
+    from app.models.syntactic_unit import SyntacticUnit
+
+    _direction = Direction.RECOGNITION if direction is None else direction
+    _state = SRSState.REVIEW if state is None else state
+
+    unit = SyntacticUnit(text=text, translation=translation, word_count=1, difficulty=1, source="test")
+    db.add_collocation(unit, language_code="sl")
+    item = db.get_collocation(text)
+    assert item is not None, f"seed_direction: collocation '{text}' not found after add_collocation"
+    with db._get_conn() as conn:
+        row_id = conn.execute("SELECT id FROM collocations WHERE text = ?", (text,)).fetchone()
+    assert row_id is not None, f"seed_direction: id for '{text}' not found"
+    dstate = DirectionState(
+        direction=_direction,
+        state=_state,
+        due_date=due_date or date.today(),
+        stability=stability,
+        difficulty=difficulty,
+        reps=reps,
+        lapses=lapses,
+        anki_card_id=anki_card_id,
+        **extra_dstate,
+    )
+    db.update_direction(item.guid, _direction, dstate)
+    return row_id["id"]
+
+
 _CASSETTES_DIR = Path(__file__).parent / "cassettes"
 
 
