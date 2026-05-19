@@ -94,6 +94,15 @@ CREATE TABLE IF NOT EXISTS tags (
 """
 
 
+def _packed_float_field(field_num: int, values: tuple[float, ...] | list[float]) -> bytes:
+    """Encode a ``repeated float`` proto field as a packed LEN-delimited block."""
+    if not values:
+        return b""
+    payload = struct.pack(f"<{len(values)}f", *values)
+    tag = encode_varint((field_num << 3) | 2)
+    return tag + encode_varint(len(payload)) + payload
+
+
 def _make_deck_config_blob(
     weights: tuple[float, ...] = DEFAULT_WEIGHTS,
     retention: float = DEFAULT_DESIRED_RETENTION,
@@ -108,18 +117,17 @@ def _make_deck_config_blob(
     queue-order and FSRS scheduling are emitted; callers that need additional
     protobuf fields (bury, new_spread, etc.) can append them after calling this
     helper.
+
+    ``learn_steps`` / ``relearn_steps`` are protobuf ``repeated float`` fields
+    — encoded packed (LEN-delimited, little-endian f32 payload). Earlier code
+    wrote them as VARINTs which Anki silently ignored, falling back to the
+    default [1.0, 10.0] / [10.0] steps.
     """
     blob = pb_varint_field(9, new_per_day)
     blob += pb_varint_field(10, reviews_per_day)
-    if learn_steps:
-        for step in learn_steps:
-            blob += pb_varint_field(1, int(round(step * 60 * 1000)))
-    if relearn_steps:
-        for step in relearn_steps:
-            blob += pb_varint_field(2, int(round(step * 60 * 1000)))
-    payload = struct.pack(f"<{len(weights)}f", *weights)
-    tag5 = encode_varint((FSRS5_WEIGHTS_FIELD << 3) | 2)
-    blob += tag5 + encode_varint(len(payload)) + payload
+    blob += _packed_float_field(1, learn_steps)
+    blob += _packed_float_field(2, relearn_steps)
+    blob += _packed_float_field(FSRS5_WEIGHTS_FIELD, weights)
     tag37 = encode_varint((DESIRED_RETENTION_FIELD << 3) | 5)
     blob += tag37 + struct.pack("<f", retention)
     return blob
@@ -148,6 +156,8 @@ class SyntheticCollection:
         self.desired_retention: float = DEFAULT_DESIRED_RETENTION
         self.new_per_day: int = 20
         self.reviews_per_day: int = 200
+        self.learn_steps: tuple[float, ...] = ()
+        self.relearn_steps: tuple[float, ...] = ()
         self.col_crt: int = COL_CRT
         self.notetypes: list[dict[str, Any]] = []
         self.fields: list[tuple[int, int, str]] = []
@@ -177,6 +187,19 @@ class SyntheticCollection:
     def set_daily_limits(self, new: int = 20, reviews: int = 200) -> None:
         self.new_per_day = new
         self.reviews_per_day = reviews
+
+    def set_learning_steps(
+        self,
+        learn_steps: tuple[float, ...] | list[float] = (),
+        relearn_steps: tuple[float, ...] | list[float] = (),
+    ) -> None:
+        """Override Anki's default learning/relearning steps (in minutes).
+
+        When either tuple is empty Anki falls back to its defaults:
+        ``[1.0, 10.0]`` for ``learn_steps`` and ``[10.0]`` for ``relearn_steps``.
+        """
+        self.learn_steps = tuple(learn_steps)
+        self.relearn_steps = tuple(relearn_steps)
 
     def add_notetype(self, id: int, name: str, field_names: tuple[str, ...], template_count: int = 1) -> None:
         self.notetypes.append({"id": id, "name": name})
@@ -357,6 +380,8 @@ class SyntheticCollection:
             retention=self.desired_retention,
             new_per_day=self.new_per_day,
             reviews_per_day=self.reviews_per_day,
+            learn_steps=self.learn_steps,
+            relearn_steps=self.relearn_steps,
         )
         conn.execute(
             "INSERT INTO deck_config VALUES (?, ?, 0, -1, ?)",
