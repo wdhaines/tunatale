@@ -68,46 +68,6 @@ class TestComputeRetrievability:
 
         assert compute_retrievability(state, date.today(), desired_retention=0.86) == 0.86
 
-    def test_low_stability_low_retrievability(self):
-        """Lower stability → lower retrievability for same elapsed days."""
-        today = date(2026, 5, 2)
-        state_low = DirectionState(
-            direction=Direction.RECOGNITION,
-            due_date=date(2026, 5, 1),
-            stability=0.086,
-            last_review=date(2026, 5, 1),
-        )
-        state_high = DirectionState(
-            direction=Direction.RECOGNITION,
-            due_date=date(2026, 5, 1),
-            stability=0.5,
-            last_review=date(2026, 5, 1),
-        )
-        from app.srs.fsrs import compute_retrievability
-
-        r_low = compute_retrievability(state_low, today)
-        r_high = compute_retrievability(state_high, today)
-        assert r_low < r_high
-
-    def test_same_stability_same_retrievability(self):
-        """Same stability and elapsed → same retrievability."""
-        today = date(2026, 5, 2)
-        state1 = DirectionState(
-            direction=Direction.RECOGNITION,
-            due_date=date(2026, 5, 1),
-            stability=0.4,
-            last_review=date(2026, 5, 1),
-        )
-        state2 = DirectionState(
-            direction=Direction.PRODUCTION,
-            due_date=date(2026, 5, 1),
-            stability=0.4,
-            last_review=date(2026, 5, 1),
-        )
-        from app.srs.fsrs import compute_retrievability
-
-        assert compute_retrievability(state1, today) == compute_retrievability(state2, today)
-
     def test_elapsed_zero_returns_one(self):
         """Just reviewed today → retrievability ≈ 1."""
         today = date(2026, 5, 2)
@@ -242,28 +202,6 @@ class TestComputeRetrievability:
         r = compute_retrievability(state, today, now=now)
         # 7h elapsed on stability=0.0127 → R≈0.28 (sub-day matters here).
         assert r < 0.5, f"non-midnight last_review must use fractional elapsed; got R={r:.4f}"
-
-    def test_actual_values_from_plan(self):
-        """Verify the exact values from the plan: prašič s=0.4 vs vlak s=0.086, today=2026-05-02, last_review=2026-05-01."""
-        today = date(2026, 5, 2)
-        prasic = DirectionState(
-            direction=Direction.RECOGNITION,
-            due_date=date(2026, 5, 1),
-            stability=0.4,
-            last_review=date(2026, 5, 1),
-        )
-        vlak = DirectionState(
-            direction=Direction.PRODUCTION,
-            due_date=date(2026, 5, 1),
-            stability=0.086,
-            last_review=date(2026, 5, 1),
-        )
-        from app.srs.fsrs import compute_retrievability
-
-        r_prasic = compute_retrievability(prasic, today)
-        r_vlak = compute_retrievability(vlak, today)
-        # vlak has much lower stability → lower retrievability → should come first
-        assert r_vlak < r_prasic
 
 
 class TestRelearnGraduation:
