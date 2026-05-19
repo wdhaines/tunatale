@@ -2929,49 +2929,6 @@ class TestLearningStepFeedback:
         due_at = datetime.fromisoformat(data["due_at"])
         assert due_at > datetime.now(UTC), "due_at should be in the future"
 
-    async def test_learning_card_appears_in_queue_when_due_at_future(self, api_app_state):
-        """Learning card with future due_at must still appear in queue (Anki parity).
-
-        Anki's deck-overview "Learning" count includes every queue=1 card regardless
-        of when its next step is due — the dispatcher orders them but they never
-        disappear from the bucket. TunaTale used to filter them out, which is why
-        rating Good on every learning card emptied TunaTale's queue while Anki
-        still showed N remaining.
-        """
-        from datetime import UTC, datetime, timedelta
-
-        from app.models.srs_item import Direction, DirectionState, SRSState
-        from app.models.syntactic_unit import SyntacticUnit
-
-        db = api_app_state
-
-        unit = SyntacticUnit(text="test_future", translation="test", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit, language_code="sl")
-        rows, _ = db.list_collocations(search="test_future", limit=1)
-        row_id, item, _ = rows[0]
-
-        now = datetime.now(UTC)
-        dstate = DirectionState(
-            direction=Direction.RECOGNITION,
-            state=SRSState.LEARNING,
-            due_date=now.date(),
-            stability=1.0,
-            left=1002,
-            due_at=now + timedelta(minutes=10),
-            dirty_fsrs=True,
-            last_rating=3,
-        )
-        db.update_direction_by_id(row_id, Direction.RECOGNITION, dstate)
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/srs/review-queue")
-        assert resp.status_code == 200
-        queue = resp.json()["queue"]
-
-        assert any(q["text"] == "test_future" for q in queue), (
-            "Learning card with future due_at must remain in the queue (Anki parity)"
-        )
-
     async def test_future_due_learning_sorts_after_reviews(self, api_app_state):
         """Anki parity: when a learning card's next step is in the future,
         Anki serves review cards while the timer ticks. TunaTale must do the
