@@ -108,69 +108,47 @@ class FakeReader:
 # ── Cloze helper functions ────────────────────────────────────────────────────
 
 
-class TestClozeExtractors:
-    """Unit tests for extract_cloze_translation / extract_cloze_sentence_translation / extract_cloze_note."""
+@pytest.mark.parametrize(
+    "label,back_extra,expected",
+    [
+        ("standard", '<i>every</i><br><br><a href="https://forvo.com/word/vsak/">▶ Forvo</a>', "every"),
+        ("with_sentence", '<i>every</i><br><br><span class="st">It is open every day</span>', "every"),
+        ("no_i_tag__fallback", "plain text", "plain text"),
+        ("empty", "", ""),
+        ("with_sound_tag__trailing_sound_stripped", "<i>x</i><br><br>extra<br><br>[sound:y.mp3]", "x"),
+    ],
+)
+def test_extract_cloze_translation(label, back_extra, expected):
+    assert extract_cloze_translation(back_extra) == expected
 
-    def test_extract_cloze_translation_standard(self):
-        back_extra = '<i>every</i><br><br><a href="https://forvo.com/word/vsak/">▶ Forvo</a>'
-        assert extract_cloze_translation(back_extra) == "every"
 
-    def test_extract_cloze_translation_with_sentence(self):
-        back_extra = '<i>every</i><br><br><span class="st">It is open every day</span>'
-        assert extract_cloze_translation(back_extra) == "every"
+@pytest.mark.parametrize(
+    "label,back_extra,expected",
+    [
+        ("standard", '<i>every</i><br><br><span class="st">It is open every day</span>', "It is open every day"),
+        ("no_span", '<i>every</i><br><br><a href="https://forvo.com/word/vsak/">▶ Forvo</a>', ""),
+        ("empty", "", ""),
+        ("with_sound_tag", '<i>x</i><br><br><span class="st">y</span><br><br>[sound:z.mp3]', "y"),
+    ],
+)
+def test_extract_cloze_sentence_translation(label, back_extra, expected):
+    assert extract_cloze_sentence_translation(back_extra) == expected
 
-    def test_extract_cloze_translation_no_i_tag(self):
-        """Fallback to extract_translation when there's no <i> tag."""
-        assert extract_cloze_translation("plain text") == "plain text"
 
-    def test_extract_cloze_translation_empty(self):
-        assert extract_cloze_translation("") == ""
-
-    def test_extract_cloze_sentence_translation_standard(self):
-        back_extra = '<i>every</i><br><br><span class="st">It is open every day</span>'
-        assert extract_cloze_sentence_translation(back_extra) == "It is open every day"
-
-    def test_extract_cloze_sentence_translation_no_span(self):
-        back_extra = '<i>every</i><br><br><a href="https://forvo.com/word/vsak/">▶ Forvo</a>'
-        assert extract_cloze_sentence_translation(back_extra) == ""
-
-    def test_extract_cloze_sentence_translation_empty(self):
-        assert extract_cloze_sentence_translation("") == ""
-
-    def test_extract_cloze_note_returns_body(self):
-        back_extra = '<i>every</i><br><br><a href="https://forvo.com/word/vsak/">▶ Forvo</a>'
-        assert extract_cloze_note(back_extra) == '<a href="https://forvo.com/word/vsak/">▶ Forvo</a>'
-
-    def test_extract_cloze_note_after_sentence(self):
-        back_extra = '<i>every</i><br><br><span class="st">It is open every day</span><br><br>some notes'
-        assert extract_cloze_note(back_extra) == "some notes"
-
-    def test_extract_cloze_note_no_i_tag(self):
-        assert extract_cloze_note("plain text") == ""
-
-    def test_extract_cloze_note_empty(self):
-        assert extract_cloze_note("") == ""
-
-    def test_extract_cloze_note_no_body(self):
-        assert extract_cloze_note("<i>every</i><br><br>") == ""
-
-    def test_extract_cloze_translation_with_sound_tag(self):
-        """Trailing [sound:...] is stripped before extraction."""
-        back_extra = "<i>x</i><br><br>extra<br><br>[sound:y.mp3]"
-        assert extract_cloze_translation(back_extra) == "x"
-
-    def test_extract_cloze_sentence_translation_with_sound_tag(self):
-        back_extra = '<i>x</i><br><br><span class="st">y</span><br><br>[sound:z.mp3]'
-        assert extract_cloze_sentence_translation(back_extra) == "y"
-
-    def test_extract_cloze_note_with_sound_tag(self):
-        back_extra = "<i>x</i><br><br>note body<br><br>[sound:z.mp3]"
-        assert extract_cloze_note(back_extra) == "note body"
-
-    def test_extract_cloze_note_only_sound_tag(self):
-        """When back_extra is only translation/sentence + sound tag, note is empty."""
-        back_extra = '<i>x</i><br><br><span class="st">y</span><br><br>[sound:z.mp3]'
-        assert extract_cloze_note(back_extra) == ""
+@pytest.mark.parametrize(
+    "label,back_extra,expected",
+    [
+        ("returns_body", '<i>every</i><br><br><a href="https://forvo.com/word/vsak/">▶ Forvo</a>', '<a href="https://forvo.com/word/vsak/">▶ Forvo</a>'),
+        ("after_sentence", '<i>every</i><br><br><span class="st">It is open every day</span><br><br>some notes', "some notes"),
+        ("no_i_tag", "plain text", ""),
+        ("empty", "", ""),
+        ("no_body", "<i>every</i><br><br>", ""),
+        ("with_sound_tag", "<i>x</i><br><br>note body<br><br>[sound:z.mp3]", "note body"),
+        ("only_sound_tag__note_empty", '<i>x</i><br><br><span class="st">y</span><br><br>[sound:z.mp3]', ""),
+    ],
+)
+def test_extract_cloze_note(label, back_extra, expected):
+    assert extract_cloze_note(back_extra) == expected
 
 
 # ── OfflineReader ─────────────────────────────────────────────────────────────
