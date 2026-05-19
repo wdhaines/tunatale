@@ -17,11 +17,12 @@ What this test does NOT cover (deferred):
   ``_next_interval`` doesn't. Tracked under "Pending work" in
   ``docs/anki-parity-layers.md``.
 
-Findings surfaced by Phase 2.2.1:
-- **Lapse stability ceiling missing** (xfail test below). fsrs-rs applies
+Findings surfaced by Phase 2.2.1, fixed in Layer 42:
+- **Lapse stability ceiling missing**. fsrs-rs applies
   ``new_s = min(new_s, last_s / exp(w[17] * w[18]))`` in
-  ``stability_after_failure``. TT's ``_next_stability_lapse`` doesn't —
-  produces too-high lapse stabilities for low-s cards.
+  ``stability_after_failure``. TT's ``_next_stability_lapse`` was missing this
+  bound, producing too-high lapse stabilities for low-s cards. Fix landed as
+  Layer 42; the low-stability seed below now passes alongside the others.
 
 Key gotcha surfaced during Phase 2.2.1 development: Anki's
 ``next_states(days_elapsed)`` reads ``days_elapsed`` from ``card.last_review_time``
@@ -62,11 +63,13 @@ from tests.anki_oracle.synthetic_collection import (
 FSRS_WEIGHTS = DEFAULT_FSRS5_PARAMS.weights
 
 
-# (s, d) pairs that don't trip the lapse-stability ceiling for s=1.5 (tracked
-# separately in the xfail test below). The included states cover well-known,
-# struggling-but-not-floored, and deeply-known cards.
+# (s, d) pairs covering the FSRS parameter space:
+#   (10.0, 4.0)  — mid-stability, low difficulty (well-known card)
+#   (1.5, 7.5)   — low stability, high difficulty (lapse-ceiling exercise)
+#   (50.0, 2.0)  — high stability, very low difficulty (deeply known card)
 SEED_STATES = [
     (10.0, 4.0),
+    (1.5, 7.5),
     (50.0, 2.0),
 ]
 
@@ -183,50 +186,6 @@ def test_fsrs_next_state_matches_anki_for_review_cards(synthetic_collection: Syn
                 )
 
     assert not failures, "FSRS parity divergence:\n  " + "\n  ".join(failures)
-
-
-@pytest.mark.oracle
-@pytest.mark.xfail(
-    reason=(
-        "TT's _next_stability_lapse is missing fsrs-rs's ceiling: "
-        "new_s = min(new_s, last_s / exp(w[17] * w[18])). For low-stability "
-        "cards the raw formula returns above this bound; fsrs-rs clamps. "
-        "Fix: add the ceiling in app/srs/fsrs.py:_next_stability_lapse."
-    ),
-    strict=True,
-)
-def test_fsrs_lapse_stability_ceiling_LAYER_42(synthetic_collection: SyntheticCollection) -> None:
-    """xfail: surfaces the lapse-stability ceiling missing from TT.
-
-    Once TT's ``_next_stability_lapse`` adds the ``new_s_min`` ceiling, this
-    test should pass — flip ``strict=True`` then remove the xfail marker.
-    """
-    synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
-    # Low-stability card: 1.5. The ceiling is tight here:
-    #   new_s_min = 1.5 / exp(0.51 * 0.435) ≈ 1.20
-    # Without the ceiling TT returns ~1.64; Anki applies the ceiling.
-    s, d = 1.5, 7.5
-    now_secs = int(time.time())
-    last_review_secs = now_secs - _ELAPSED_DAYS * 86400
-    _seed_review_card(
-        synthetic_collection,
-        card_id=10010,
-        stability=s,
-        difficulty=d,
-        last_review_secs=last_review_secs,
-    )
-    synthetic_collection.save()
-
-    result = run_oracle(
-        synthetic_collection.path,
-        [{"op": "get_queue", "deck_id": 1, "fetch_limit": 5}],
-    )
-    anki_again = result.raw()["get_queue_0"]["cards"][0]["states"]["again"]
-    anki_s = anki_again["stability"]
-
-    r = _forgetting_curve(_ELAPSED_DAYS, s, decay=-0.5)
-    tt_s = _next_stability_lapse(d, s, r, FSRS_WEIGHTS)
-    assert abs(tt_s - anki_s) / max(abs(anki_s), 1e-9) < 1e-2, f"lapse stability TT={tt_s:.6f} vs Anki={anki_s:.6f}"
 
 
 @pytest.mark.oracle

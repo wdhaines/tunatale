@@ -642,7 +642,7 @@ The `step_index == 0` guard was structurally tautological in `_schedule_new` (th
 
 ## Layer 42 — Lapse stability ceiling (surfaced by Phase 2.2.1 oracle harness)
 
-**Trigger.** First parity test in `backend/tests/test_parity_fsrs_schedule.py` (Phase 2.2.1, the FSRS-scheduling oracle test) flagged a divergence between TT's `_next_stability_lapse` and fsrs-rs's `stability_after_failure` for low-stability cards. For `(s=1.5, d=7.5)` graded Again, TT returned ~1.64 while Anki returned ~1.20. The difference is the ceiling that fsrs-rs applies and TT omits.
+**Trigger.** First parity test in `backend/tests/test_parity_fsrs_schedule.py` (Phase 2.2.1, the FSRS-scheduling oracle test) flagged a divergence between TT's `_next_stability_lapse` and fsrs-rs's `stability_after_failure` for low-stability cards. For `(s=1.5, d=7.5)` graded Again, TT returned ~1.64 while Anki returned ~1.20. The difference is the ceiling that fsrs-rs applies and TT omitted.
 
 **Mechanism (fsrs-rs, `src/model.rs:91-105`).**
 ```rust
@@ -653,11 +653,9 @@ fn stability_after_failure(&self, last_s, last_d, r) {
 }
 ```
 
-The ceiling `last_s / exp(w[17] * w[18])` bounds the post-lapse stability so a lapse can never *raise* stability above the pre-lapse value much. For low `last_s` the raw formula often exceeds this bound; the ceiling clamps it.
+The ceiling `last_s / exp(w[17] * w[18])` bounds the post-lapse stability. For low `last_s` the raw formula often exceeds this bound; the ceiling clamps it. Exact verification: with TT's weights (w[17]=0.51, w[18]=0.435) and s=1.5, the ceiling is `1.5 / exp(0.2219) = 1.2016`, matching Anki's reported `1.2015` to 4 decimal places.
 
-**Status.** Not yet fixed in TT. The harness test (`test_fsrs_lapse_stability_ceiling_LAYER_42`) is `xfail(strict=True)` so it surfaces in test output but doesn't block CI. Once `_next_stability_lapse` adds the ceiling, flip the xfail marker.
-
-**Fix sketch.**
+**Fix.** Added the ceiling to `_next_stability_lapse`:
 ```python
 def _next_stability_lapse(d, s, r, w):
     new_s = w[11] * d ** (-w[12]) * ((s + 1) ** w[13] - 1) * math.exp((1 - r) * w[14])
@@ -665,9 +663,9 @@ def _next_stability_lapse(d, s, r, w):
     return min(new_s, new_s_min)
 ```
 
-**Files (pending).** `backend/app/srs/fsrs.py:_next_stability_lapse` — add the ceiling.
+**Files.** `backend/app/srs/fsrs.py:_next_stability_lapse` (commit immediately following Phase 2.2.1's harness commit). Parity test in `backend/tests/test_parity_fsrs_schedule.py` now exercises `(s=1.5, d=7.5)` alongside `(10, 4)` and `(50, 2)` — all pass.
 
-**Cross-reference.** First Layer surfaced via the harness — validates the Phase 2 approach. The harness asserts parity end-to-end and pins this divergence with a precise reproducer instead of waiting for a user-visible badge mismatch.
+**Cross-reference.** First Layer surfaced via the harness — validates the Phase 2 approach. The harness asserted parity end-to-end and pinned this divergence with a precise reproducer instead of waiting for a user-visible badge mismatch. Pattern to repeat for the remaining Phase 2.2 domains.
 
 ---
 

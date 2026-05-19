@@ -226,7 +226,13 @@ def _next_stability_recall(d: float, s: float, r: float, rating: Rating, w: tupl
 
 
 def _next_stability_lapse(d: float, s: float, r: float, w: tuple[float, ...]) -> float:
-    return w[11] * d ** (-w[12]) * ((s + 1) ** w[13] - 1) * math.exp((1 - r) * w[14])
+    # fsrs-rs `stability_after_failure` (model.rs:91-105) caps the post-lapse
+    # stability at `last_s / exp(w[17] * w[18])`. Without this ceiling the raw
+    # formula overshoots for low-s cards; surfaced as Layer 42 via the
+    # `test_parity_fsrs_schedule` oracle harness.
+    new_s = w[11] * d ** (-w[12]) * ((s + 1) ** w[13] - 1) * math.exp((1 - r) * w[14])
+    new_s_min = s / math.exp(w[17] * w[18])
+    return min(new_s, new_s_min)
 
 
 def _stability_short_term(last_s: float, rating: Rating, params: FSRSParams) -> float:
