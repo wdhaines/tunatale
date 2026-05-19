@@ -730,6 +730,29 @@ class TestListMediaRefs:
         refs = list_media_refs(fields)
         assert set(refs) == {"a.mp3", "b.mp3", "c.jpg"}
 
+    def test_extracts_img_ref_when_alt_text_contains_gt(self):
+        """Regression: when an <img> tag's alt text contains literal `>` characters
+        (common when image alt is copied from a webpage breadcrumb), the regex
+        `<img[^>]+src="..."` terminates at the first `>` inside the alt text and
+        misses the actual src.
+
+        Discovered when user replaced vojak's image in Anki with a paste-hash JPG
+        whose alt text contained "Army Guard > National Guard >  State Partnership".
+        TT's sync_pull → refresh_media never extracted the new filename, so the
+        old img_soldier.png stayed in TT's media table indefinitely.
+        """
+        field = (
+            "<img alt=\"New York Sergeant is Army Guard's Best Warrior Soldier > "
+            'National Guard >  State Partnership Program News" '
+            'src="paste-259d6e7de97422167ab9a82060efc15be3c5bd63.jpg">'
+        )
+        assert list_media_refs([field]) == ["paste-259d6e7de97422167ab9a82060efc15be3c5bd63.jpg"]
+
+    def test_extracts_img_ref_when_src_appears_before_alt(self):
+        """Defensive: src= can appear in any order relative to other attrs."""
+        field = '<img src="first.jpg" alt="A > B">'
+        assert list_media_refs([field]) == ["first.jpg"]
+
 
 class TestReadFsrsStateForCards:
     def _write_db(self, tmp_path, rows: list[tuple[int, str | None]]):

@@ -321,11 +321,20 @@ def read_fsrs_state_for_cards(collection_path: str | Path, card_ids: list[int]) 
 
 
 def list_media_refs(fields: list[str]) -> list[str]:
-    """Extract media filenames referenced in field HTML."""
+    """Extract media filenames referenced in field HTML.
+
+    The img-src pattern handles `>` characters inside quoted attribute values
+    by matching either a non-quote chunk or a fully-quoted string between
+    `<img` and `src="..."`. Without this, an alt attribute like
+    `alt="Army Guard > National Guard"` would terminate `[^>]+` early and
+    the src filename would be missed — silently breaking
+    `_refresh_media_for_collocation` for any note whose alt text contains
+    `>` (common for pasted images from web breadcrumbs).
+    """
     refs: list[str] = []
     for field in fields:
         refs.extend(re.findall(r"\[sound:([^\]]+)\]", field))
-        refs.extend(re.findall(r'<img[^>]+src="([^"]+)"', field))
+        refs.extend(re.findall(r'<img(?:[^"]|"[^"]*")*?\bsrc="([^"]+)"', field))
     return refs
 
 
