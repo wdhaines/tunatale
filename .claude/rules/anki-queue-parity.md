@@ -320,7 +320,49 @@ Current model — TT reconstructs from TT state — has held through ~22 fixes. 
 
 Ask the subagent when in doubt: cites file:line, pairs Anki's behavior with TT's parallel code path.
 
+## Pre-Layer checklist — read before opening a new Layer fix
+
+Phase 1's elapsed-days collapse (commit `3ec0aa5`) and Phase 2.2.1's Layer 42 finding both came from the same shape: a Layer-style divergence fix was authored as fresh code that duplicated logic already living somewhere in TT. Before opening a new Layer fix, walk this list.
+
+**Step 1: name the divergence.** What's TT computing that doesn't match Anki? Be specific about *which output* — a stability number, a queue position, a badge count, a state transition.
+
+**Step 2: scan the load-bearing helpers for an existing implementation.** If your fix is going to compute X, and one of these helpers already computes something X-shaped, the fix should extend the helper, not reimplement it elsewhere.
+
+| Helper | Path | Covers |
+|---|---|---|
+| `_elapsed_days_for_fsrs` | `app/srs/fsrs.py` | Dual-branch fractional-vs-integer-day elapsed since `last_review`. Used by both R formula and FSRS scheduling. |
+| `compute_retrievability` | `app/srs/fsrs.py` | R formula (forgetting curve + null-state → desired_retention). |
+| `_next_stability_recall` / `_next_stability_lapse` / `_stability_short_term` | `app/srs/fsrs.py` | FSRS stability update for recall / lapse / same-day. Lapse path has fsrs-rs's ceiling (Layer 42). |
+| `_next_difficulty` | `app/srs/fsrs.py` | FSRS difficulty update with linear damping + reversion. |
+| `_schedule_with_steps` | `app/srs/fsrs.py` | LEARNING/RELEARNING step transitions + Layer 41 single-step Hard delay. |
+| `_pack_left` / `_parse_left` | `app/srs/fsrs.py` | Anki's `cards.left = today_left*1000 + total_remaining` encoding. |
+| `_merge_by_retrievability_ascending` | `app/api/srs.py` | R-asc queue sort + FNV tiebreaker (Layer 37). |
+| `_merge_directions` | `app/api/srs.py` | Cross-direction gather + sibling-bury + Template stable-sort (Layer 28). |
+| `_fnv1a_64_i64` | `app/api/srs.py` | Anki's tiebreaker hash; required identical port. |
+| `_pull_merge_direction` | `app/anki/sync.py` | Per-card sync_pull merge (post Phase 1.3 extraction). |
+| `_direction_differs` | `app/anki/sync.py` | Field-by-field diff for sync write-back; must include `left`, `due_at`, `prior_state`, `bury_kind`, `anki_card_mod` (rule 6, Layer 17, Layer 37). |
+| `_resolve_prior_state` / `_grade_prior_state` | `app/anki/sync.py` + `app/srs/fsrs.py` | Sticky-NEW `prior_state` (Layers 20-22). |
+| `_resolve_introduced_at` | `app/anki/sync.py` | One-shot intro stamp (Layer 26). |
+| `_anki_step_ahead` | `app/anki/sync.py` | "Anki's `left` is further along than TT's" check (Layers 18, 19). |
+| `_bury_kind_from_queue` | `app/anki/sync.py` | `queue=-2/-3 → 'sched'` mapping (Layer 35, Layer 39). |
+| `_queue_to_state` | `app/anki/sync.py` | `cards.queue → SRSState`, trusts queue not reps (Layer 30). |
+| `_read_config_value_from_deck_config_table` | `app/srs/queue_stats.py` | Unified deck-config protobuf/legacy-JSON reader (Phase 1.1). Use this for any new deck-config field. |
+| `unbury_if_needed` | `app/srs/database.py` | Daily unbury sweep (Layers 27, 35). |
+| `clear_session_main_queue` + `build_and_freeze_main_queue` | `app/srs/queue_stats.py` + `app/api/srs.py` | Session-queue cache management (Layers 4, 7, 29). |
+
+**Step 3: ask the duplication question.** *"Would my fix compute or branch on the same thing one of those helpers already does?"* If yes:
+- **Factor first.** Extend the existing helper (or extract a shared sub-helper, like `_elapsed_days_for_fsrs` did for Layers 11/15/40) before writing the fix at the new call site.
+- **Add ONE call site for the new path**, then verify the existing call sites still produce the right values for their cases.
+- *Then* write the Layer fix.
+
+If you skip Step 2/3, you'll end up with two independent code paths reverse-engineering the same Anki branch (Phase 1 Learning 1). The duplication won't show up in normal tests; it shows up the next time Anki changes that branch and only one of your two paths gets updated.
+
+**Step 4: check whether Phase 2's harness already covers this.** Run `cd backend && uv run pytest tests/test_parity_*.py --run-oracle --no-cov`. If a harness test fails on the input that triggered your divergence report, you've reproduced the bug — fix TT, the harness will re-go-green. If no harness test fails, consider whether the divergence is in a domain the harness should cover (see `.claude/rules/anki-oracle-harness.md` for when to add a new harness test).
+
+**Step 5: append to `docs/anki-parity-layers.md`.** Number the Layer (next free integer). Lead with the bug, then the mechanism, then files touched. Cross-link any helper you extended.
+
 ## Cross-references
 
 - `.claude/rules/anki-sync.md` — USN, safety envelope, schema-change workflow.
+- `.claude/rules/anki-oracle-harness.md` — Phase-2 parity harness: when to add harness vs unit tests, subprocess boundary, synthetic-collection gotchas.
 - `docs/anki-parity-layers.md` — full layer history.
