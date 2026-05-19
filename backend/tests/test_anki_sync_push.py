@@ -129,15 +129,6 @@ class FakeWriter:
     def get_current_card_state(self, card_id: int) -> dict | None:
         return self.current_states.get(card_id)
 
-    def count_revlog_before(self, cid: int, ts_ms: int) -> int:
-        return 0
-
-    def get_deck_id_for_card(self, cid: int) -> int | None:
-        return None
-
-    def bump_deck_new_today(self, deck_id: int, today_day_index: int) -> None:
-        self.calls.append(("bump_deck_new_today", deck_id, today_day_index))
-
     def list_decks_with_revlog_today(self, today_4am_ms: int) -> list[int]:
         return []
 
@@ -2219,8 +2210,7 @@ class TestSyncPushBumpNewToday:
         db.update_direction(guid, Direction.RECOGNITION, ds)
 
         class FakeWriterWithPriorRevlog(FakeWriter):
-            def count_revlog_before(self, cid: int, ts_ms: int) -> int:
-                return 1
+            pass
 
         writer = FakeWriterWithPriorRevlog()
         sync = AnkiSync(
