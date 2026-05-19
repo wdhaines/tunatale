@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import date, datetime
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
@@ -1851,17 +1852,17 @@ class TestLearningStatePriority:
             "relative to the frozen cutoff — Anki does not preempt the displayed card"
         )
 
-    async def test_review_queue_auto_advances_cutoff_when_main_and_ready_empty(self, api_app_state):
-        """Anki-parity auto-bump: when ready_learning + ordered_main are both empty
-        but a pending learning card has ripened past `now`, /review-queue must
-        advance the cutoff and surface the ripe learning card.
-
-        Mirrors `CardQueues::counts()` in `rslib/scheduler/queue/mod.rs:187-196`,
-        which calls `update_learning_cutoff_and_count` whenever counts.all_zero()
-        — i.e., when the user has nothing currently due to study. The next "give
-        me a card" call advances the cutoff so an intraday_ahead card whose timer
-        ripened can surface.
-        """
+    @pytest.mark.parametrize(
+        "label,ripe,has_future,main_card,expect_bump",
+        [
+            ("empty_main_ripe_pending", True, False, False, True),
+            ("empty_main_ripe_and_future", True, True, False, True),
+            ("nonempty_main_ripe_pending", True, False, True, False),
+            ("empty_main_only_future", False, True, False, False),
+        ],
+    )
+    async def test_review_queue_auto_bump(self, label, ripe, has_future, main_card, expect_bump, api_app_state):
+        """Anki-parity auto-bump behavior across 4 scenarios (see parametrize table)."""
         from datetime import UTC, date, datetime, timedelta
 
         from app.models.syntactic_unit import SyntacticUnit
@@ -1869,216 +1870,59 @@ class TestLearningStatePriority:
         db = api_app_state
         today = date.today()
         now = datetime.now(UTC)
-
-        # Cutoff frozen 5 minutes ago.
         cutoff = now - timedelta(minutes=5)
         db.set_anki_state_cache("learning_cutoff", cutoff.isoformat())
 
-        # ONE learning card whose timer expired 1 minute ago (past `now` but
-        # future relative to cutoff — would normally be classified pending).
-        learning_due_at = now - timedelta(minutes=1)
-        unit_lc = SyntacticUnit(text="ripe_pending", translation="trans", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit_lc, language_code="sl")
-        rows, _ = db.list_collocations(search="ripe_pending", limit=1)
-        lc_row_id, _, _ = rows[0]
-        db.update_direction_by_id(
-            lc_row_id,
-            Direction.PRODUCTION,
-            DirectionState(
-                direction=Direction.PRODUCTION,
-                state=SRSState.LEARNING,
-                due_date=today,
-                stability=1.0,
-                due_at=learning_due_at,
-                anki_card_id=42,
-            ),
-        )
+        def _add_learning(text: str, due_at: datetime, cid: int):
+            unit = SyntacticUnit(text=text, translation="trans", word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+            rows, _ = db.list_collocations(search=text, limit=1)
+            db.update_direction_by_id(
+                rows[0][0], Direction.PRODUCTION,
+                DirectionState(
+                    direction=Direction.PRODUCTION, state=SRSState.LEARNING,
+                    due_date=today, stability=1.0, due_at=due_at, anki_card_id=cid,
+                ),
+            )
 
-        # NO review or new cards available — main must be empty so the auto-bump fires.
+        def _add_new_card(text: str, cid: int):
+            unit = SyntacticUnit(text=text, translation="trans", word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+            rows, _ = db.list_collocations(search=text, limit=1)
+            db.update_direction_by_id(
+                rows[0][0], Direction.PRODUCTION,
+                DirectionState(
+                    direction=Direction.PRODUCTION, state=SRSState.NEW,
+                    due_date=today, anki_card_id=cid, anki_due=1,
+                ),
+            )
+
+        if ripe:
+            _add_learning("ripe_card", now - timedelta(minutes=1), 42)
+        if has_future:
+            _add_learning("future_card", now + timedelta(minutes=10), 43)
+        if main_card:
+            _add_new_card("main_card", 44)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/srs/review-queue")
         assert resp.status_code == 200
         queue = resp.json()["queue"]
 
-        assert len(queue) >= 1
-        assert queue[0]["text"] == "ripe_pending", (
-            "auto-bump must advance cutoff when ready+main empty so a ripe pending learning card surfaces"
-        )
-
-        # And the cutoff cache should have been bumped to ~now.
-        cached = db.get_anki_state_cache("learning_cutoff")
-        assert cached is not None
-        cached_at = datetime.fromisoformat(cached[0])
-        assert cached_at >= now - timedelta(seconds=1), "cutoff must advance to ~now on auto-bump"
-
-    async def test_review_queue_auto_bump_keeps_future_pending_pending(self, api_app_state):
-        """After auto-bump, learning cards whose due_at is still future relative
-        to the new (now) cutoff remain in pending_learning. Covers the re-split
-        else branch.
-        """
-        from datetime import UTC, date, datetime, timedelta
-
-        from app.models.syntactic_unit import SyntacticUnit
-
-        db = api_app_state
-        today = date.today()
-        now = datetime.now(UTC)
-
-        cutoff = now - timedelta(minutes=5)
-        db.set_anki_state_cache("learning_cutoff", cutoff.isoformat())
-
-        # Ripe pending: due 1 min ago.
-        ripe_due = now - timedelta(minutes=1)
-        unit_r = SyntacticUnit(text="ripe_one", translation="trans", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit_r, language_code="sl")
-        rows, _ = db.list_collocations(search="ripe_one", limit=1)
-        r_row_id, _, _ = rows[0]
-        db.update_direction_by_id(
-            r_row_id,
-            Direction.PRODUCTION,
-            DirectionState(
-                direction=Direction.PRODUCTION,
-                state=SRSState.LEARNING,
-                due_date=today,
-                stability=1.0,
-                due_at=ripe_due,
-                anki_card_id=42,
-            ),
-        )
-
-        # Truly future pending: due 10 min from now.
-        future_due = now + timedelta(minutes=10)
-        unit_f = SyntacticUnit(text="future_one", translation="trans", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit_f, language_code="sl")
-        rows, _ = db.list_collocations(search="future_one", limit=1)
-        f_row_id, _, _ = rows[0]
-        db.update_direction_by_id(
-            f_row_id,
-            Direction.PRODUCTION,
-            DirectionState(
-                direction=Direction.PRODUCTION,
-                state=SRSState.LEARNING,
-                due_date=today,
-                stability=1.0,
-                due_at=future_due,
-                anki_card_id=43,
-            ),
-        )
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/srs/review-queue")
-        queue = resp.json()["queue"]
-        ripe_idx = next(i for i, q in enumerate(queue) if q["text"] == "ripe_one")
-        future_idx = next(i for i, q in enumerate(queue) if q["text"] == "future_one")
-        # ripe surfaces at the head; future_one is still pending → tail.
-        assert ripe_idx == 0
-        assert future_idx > ripe_idx
-
-    async def test_review_queue_auto_bump_skipped_when_main_has_items(self, api_app_state):
-        """The auto-bump only fires when main is empty. With a review card in main,
-        the frozen cutoff is preserved — the ripe pending learning card stays at
-        the tail. Pins the "card on screen is sticky" invariant against the
-        auto-bump regression.
-        """
-        from datetime import UTC, date, datetime, timedelta
-
-        from app.models.syntactic_unit import SyntacticUnit
-
-        db = api_app_state
-        today = date.today()
-        now = datetime.now(UTC)
-
-        cutoff = now - timedelta(minutes=5)
-        db.set_anki_state_cache("learning_cutoff", cutoff.isoformat())
-
-        learning_due_at = now - timedelta(minutes=1)
-        unit_lc = SyntacticUnit(text="ripe_pending2", translation="trans", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit_lc, language_code="sl")
-        rows, _ = db.list_collocations(search="ripe_pending2", limit=1)
-        lc_row_id, _, _ = rows[0]
-        db.update_direction_by_id(
-            lc_row_id,
-            Direction.PRODUCTION,
-            DirectionState(
-                direction=Direction.PRODUCTION,
-                state=SRSState.LEARNING,
-                due_date=today,
-                stability=1.0,
-                due_at=learning_due_at,
-                anki_card_id=42,
-            ),
-        )
-
-        # Add a NEW card so main is non-empty.
-        unit_new = SyntacticUnit(text="some_new", translation="trans", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit_new, language_code="sl")
-        rows, _ = db.list_collocations(search="some_new", limit=1)
-        new_row_id, _, _ = rows[0]
-        db.update_direction_by_id(
-            new_row_id,
-            Direction.PRODUCTION,
-            DirectionState(
-                direction=Direction.PRODUCTION,
-                state=SRSState.NEW,
-                due_date=today,
-                anki_card_id=43,
-                anki_due=1,
-            ),
-        )
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/srs/review-queue")
-        queue = resp.json()["queue"]
-        new_idx = next(i for i, q in enumerate(queue) if q["text"] == "some_new")
-        learn_idx = next(i for i, q in enumerate(queue) if q["text"] == "ripe_pending2")
-        assert new_idx < learn_idx, "main has items, no bump, ripe learning stays at tail"
-
-        # Cutoff unchanged.
-        cached = db.get_anki_state_cache("learning_cutoff")
-        cached_at = datetime.fromisoformat(cached[0])
-        assert cached_at == cutoff, "cutoff must not advance when main has items"
-
-    async def test_review_queue_auto_bump_skipped_when_no_ripe_pending(self, api_app_state):
-        """No pending learning card has ripened → no auto-bump (nothing to surface)."""
-        from datetime import UTC, date, datetime, timedelta
-
-        from app.models.syntactic_unit import SyntacticUnit
-
-        db = api_app_state
-        today = date.today()
-        now = datetime.now(UTC)
-
-        cutoff = now - timedelta(minutes=5)
-        db.set_anki_state_cache("learning_cutoff", cutoff.isoformat())
-
-        # Pending learning card whose due_at is FUTURE relative to now (truly not yet due).
-        future_due = now + timedelta(minutes=10)
-        unit_lc = SyntacticUnit(text="future_pending", translation="trans", word_count=1, difficulty=1, source="test")
-        db.add_collocation(unit_lc, language_code="sl")
-        rows, _ = db.list_collocations(search="future_pending", limit=1)
-        lc_row_id, _, _ = rows[0]
-        db.update_direction_by_id(
-            lc_row_id,
-            Direction.PRODUCTION,
-            DirectionState(
-                direction=Direction.PRODUCTION,
-                state=SRSState.LEARNING,
-                due_date=today,
-                stability=1.0,
-                due_at=future_due,
-                anki_card_id=42,
-            ),
-        )
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/srs/review-queue")
-        assert resp.status_code == 200
-
-        # Cutoff unchanged because nothing ripe to surface.
-        cached = db.get_anki_state_cache("learning_cutoff")
-        cached_at = datetime.fromisoformat(cached[0])
-        assert cached_at == cutoff, "no ripe pending card → no bump"
+        if expect_bump:
+            assert queue[0]["text"] in ("ripe_card",), "ripe pending learning card must surface at head"
+            cached = db.get_anki_state_cache("learning_cutoff")
+            assert datetime.fromisoformat(cached[0]) >= now - timedelta(seconds=1)
+            if has_future:
+                future_idx = next(i for i, q in enumerate(queue) if q["text"] == "future_card")
+                assert future_idx > 0, "future learning card stays pending after bump"
+        else:
+            cached = db.get_anki_state_cache("learning_cutoff")
+            assert datetime.fromisoformat(cached[0]) == cutoff, "cutoff must not advance"
+            if main_card:
+                main_idx = next(i for i, q in enumerate(queue) if q["text"] == "main_card")
+                ripe_idx = next(i for i, q in enumerate(queue) if q["text"] == "ripe_card")
+                assert main_idx < ripe_idx, "main card precedes ripe learning when no bump"
 
     async def test_feedback_advances_learning_cutoff(self, api_app_state):
         """Grading any card must advance `learning_cutoff` to ~now, mirroring Anki's
