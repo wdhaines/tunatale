@@ -669,6 +669,40 @@ def _next_stability_lapse(d, s, r, w):
 
 ---
 
+## Layer 43 — NULL-R placement discrepancy (xfail, investigation needed)
+
+**Trigger.** Phase 2.2.3 oracle parity test for queue ordering surfaced a behavioral mismatch on NULL-R cards. Layer 38 documented Anki places `data='{}'` review cards at the position `desired_retention` would occupy in R-asc — based on empirical observation against Anki 25.09.4. Phase 2.2.3 runs against the current `anki` PyPI binary and observes the OPPOSITE: NULL-R cards land at the TAIL (NULLs-last) of an R-asc queue.
+
+**Mechanism (current binary, `rslib/storage/sqlite.rs:432-449`).** `extract_fsrs_relative_retrievability` checks for both `memory_state()` AND `fsrs_desired_retention` in `cards.data`. When either is missing, it falls back to the SM2 path:
+```rust
+Ok(Some(-((days_elapsed as f32) + 0.001) / (interval as f32).max(1.0)))
+```
+For a due-now card (`days_elapsed=0` inside the function), this returns `-0.0001` — barely-negative, sorting AFTER every FSRS-path card (which produces large-negative relative_R values for cards near or below dr).
+
+**Empirical Anki order (this binary, 5 cards: 3 valid-FSRS + 1 NULL-R + dr=0.9 bracket):**
+```
+[card with R=0.823, card with R=0.901, card with R=0.978, NULL-R]
+```
+NULL-R is at the tail. Layer 38 claimed it should be between R=0.823 and R=0.978 (where R=0.9 sits).
+
+**TT's current behavior.** `compute_retrievability(null_state) → desired_retention` (0.9), placing the card mid-pool in R-asc. Diverges from current Anki binary.
+
+**Status.** Test `test_null_R_card_places_at_desired_retention_LAYER_38` is xfail(strict=True) — the divergence is captured but not fixed. The right TT behavior is ambiguous:
+
+- If the user's actual Anki (25.09.4 or whatever's on their Mac) matches Layer 38's claim, current TT is correct and the PyPI binary differs.
+- If the current PyPI binary is authoritative and Layer 38 was observing some non-default state (revlog history? card data we didn't capture?), TT needs to change to tail-sort NULL-R cards (e.g., return R=1.0 + tiebreaker for null state).
+
+**Investigation needed.**
+1. Reproduce Layer 38's observation on the user's actual Anki binary, with a card lacking memory_state. Confirm placement (mid-pool vs tail).
+2. If user's binary tail-sorts: fix TT to match. Concrete change: `compute_retrievability(null_state)` returns ~1.0 + a flag so tiebreaker places it after FSRS-path cards.
+3. If user's binary mid-pool-sorts: leave TT alone. Phase 2 harness is testing against the wrong reference; document the binary version drift.
+
+**Files (pending decision).** `backend/app/srs/fsrs.py:compute_retrievability` — placeholder if path 2 is chosen. `docs/anki-parity-layers.md` — this entry, plus any binary-version forensics that come back.
+
+**Cross-reference.** Captures the "source vs binary" ambiguity called out in queue-parity rule 13. Phase 2 harness uses the PyPI binary as oracle; production deploys against whatever Anki the user has installed. Long-term, the harness needs a way to test against the user's specific binary (e.g., a CLI flag pointing to a local `.app` install).
+
+---
+
 ## Cleanup pass (post-Layer 23)
 
 After 23 layers, swept for dead code and duplication. Behavior unchanged.

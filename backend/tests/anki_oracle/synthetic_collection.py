@@ -103,6 +103,10 @@ def _packed_float_field(field_num: int, values: tuple[float, ...] | list[float])
     return tag + encode_varint(len(payload)) + payload
 
 
+REVIEW_ORDER_FIELD = 33  # DeckConfig.Config.review_order (enum)
+REVIEW_ORDER_RETRIEVABILITY_ASCENDING = 7  # ReviewCardOrder.RETRIEVABILITY_ASCENDING
+
+
 def _make_deck_config_blob(
     weights: tuple[float, ...] = DEFAULT_WEIGHTS,
     retention: float = DEFAULT_DESIRED_RETENTION,
@@ -110,6 +114,7 @@ def _make_deck_config_blob(
     reviews_per_day: int = 200,
     learn_steps: tuple[float, ...] = (),
     relearn_steps: tuple[float, ...] = (),
+    review_order: int = REVIEW_ORDER_RETRIEVABILITY_ASCENDING,
 ) -> bytes:
     """Build a DeckConfig.Config protobuf blob.
 
@@ -122,6 +127,10 @@ def _make_deck_config_blob(
     — encoded packed (LEN-delimited, little-endian f32 payload). Earlier code
     wrote them as VARINTs which Anki silently ignored, falling back to the
     default [1.0, 10.0] / [10.0] steps.
+
+    ``review_order`` defaults to RETRIEVABILITY_ASCENDING (TT's mode), not
+    Anki's app-default DAY — otherwise parity tests against TT's R-asc queue
+    assembly would compare different orderings on the two sides.
     """
     blob = pb_varint_field(9, new_per_day)
     blob += pb_varint_field(10, reviews_per_day)
@@ -130,6 +139,7 @@ def _make_deck_config_blob(
     blob += _packed_float_field(FSRS5_WEIGHTS_FIELD, weights)
     tag37 = encode_varint((DESIRED_RETENTION_FIELD << 3) | 5)
     blob += tag37 + struct.pack("<f", retention)
+    blob += pb_varint_field(REVIEW_ORDER_FIELD, review_order)
     return blob
 
 
@@ -243,17 +253,34 @@ class SyntheticCollection:
         odid: int = 0,
         factor: int = 0,
         last_review_secs: int | None = None,
+        mod: int = 0,
+        empty_fsrs_data: bool = False,
+        desired_retention: float | None = None,
     ) -> None:
-        # cards.data JSON carries the FSRS memory state. ``lrt`` (last review
-        # time in seconds) is what Anki's next_states() uses to compute
-        # days_elapsed. Without ``lrt`` Anki sees elapsed=0 and routes through
-        # the short-term stability formula instead of stability_after_success
-        # — silently changing which TT path the parity test exercises.
+        # cards.data JSON carries the FSRS memory state. Several keys must be
+        # present for Anki's queue-order machinery to pick up the FSRS path:
+        #   - ``s`` / ``d``: FSRS memory state (stability/difficulty).
+        #   - ``lrt``: last review time in seconds. Without it Anki's
+        #     ``next_states()`` sees elapsed=0 and uses ``stability_short_term``
+        #     instead of ``stability_after_success``.
+        #   - ``dr``: per-card desired_retention. Without it
+        #     ``extract_fsrs_relative_retrievability`` falls back to SM2
+        #     ordering — every FSRS-enabled card ties at the same SM2 score
+        #     and the queue order becomes pseudo-random.
+        #
+        # ``empty_fsrs_data=True`` writes the JSON literal ``'{}'`` — Anki's
+        # storage shape for cards that have been through "Forget" or were
+        # imported without FSRS state. Distinct from ``data=''`` (raw new card,
+        # no JSON at all) for Layer-38-style NULL-R placement.
         if stability is not None and difficulty is not None:
             data_obj: dict[str, Any] = {"s": stability, "d": difficulty}
             if last_review_secs is not None:
                 data_obj["lrt"] = last_review_secs
+            if desired_retention is not None:
+                data_obj["dr"] = desired_retention
             data = json.dumps(data_obj)
+        elif empty_fsrs_data:
+            data = "{}"
         else:
             data = ""
         self.cards.append(
@@ -262,7 +289,7 @@ class SyntheticCollection:
                 "nid": note_id,
                 "did": self.deck_id,
                 "ord": ord,
-                "mod": 0,
+                "mod": mod,
                 "usn": 0,
                 "type": type,
                 "queue": queue,
