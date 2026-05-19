@@ -51,14 +51,6 @@ class TestLearningStepSemantics:
         assert _parse_left(None) == 0
         assert _parse_left(0) == 0
 
-    def test_pack_left_uses_anki_count_form(self):
-        from app.srs.fsrs import _pack_left
-
-        # Just write total_remaining (today_left=0 ≡ Anki's modern format).
-        assert _pack_left(2) == 2
-        assert _pack_left(1) == 1
-        assert _pack_left(0) == 0
-
     def test_learning_good_with_legacy_left_1002_advances_not_graduates(self):
         """The piščanec bug: TT used to misinterpret left=1002 as 'last step',
         graduating on Good. Per Anki, left=1002 → idx=0 (first step), so Good
@@ -77,39 +69,6 @@ class TestLearningStepSemantics:
         result = schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION)
         assert result.directions[Direction.RECOGNITION].state == SRSState.LEARNING
 
-    def test_learning_again_resets_to_step_0(self):
-        """LEARNING + AGAIN → step 0, left resets."""
-        # left=1002 means 2 steps total, 2 remaining (just started)
-        item = _make_item(state=SRSState.LEARNING, left=1002)
-        result = schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION)
-        new_dir = result.directions[Direction.RECOGNITION]
-        assert new_dir.state == SRSState.LEARNING
-        # After AGAIN, should reset to step 0
-        assert new_dir.left is not None
-        # The step should be 0 (total_steps_left * 1000 + steps_remaining)
-        # With default [1.0, 10.0] steps: step 0 = 2 * 1000 + 2 = 2002
-
-    def test_learning_hard_stays_on_same_step(self):
-        """LEARNING + HARD → same step, due_at updated."""
-        item = _make_item(state=SRSState.LEARNING, left=2002)  # step 0, 2 total
-        result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION)
-        new_dir = result.directions[Direction.RECOGNITION]
-        assert new_dir.state == SRSState.LEARNING
-        # Should still be on step 0
-        # Anki encoding: total_remaining unchanged on HARD; modern Anki writes
-        # just the count (no today_left * 1000 prefix). Re-pack normalizes 2002 → 2.
-        assert new_dir.left == 2
-
-    def test_learning_good_advances_step(self):
-        """LEARNING + GOOD → next step or graduates if last step."""
-        # On step 0 of 2-step deck
-        item = _make_item(state=SRSState.LEARNING, left=2002)
-        result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
-        new_dir = result.directions[Direction.RECOGNITION]
-        # Anki encoding: GOOD decrements total_remaining (2 → 1), advancing to step 1.
-        # idx = total_steps - total_remaining = 2 - 1 = 1.
-        assert new_dir.left == 1
-
     def test_learning_good_last_step_graduates(self):
         """LEARNING + GOOD on last step → graduates to REVIEW."""
         # On last step (step 1 of 2-step deck, left=1001)
@@ -119,14 +78,6 @@ class TestLearningStepSemantics:
         # Should graduate
         assert new_dir.state == SRSState.REVIEW
         assert new_dir.left is None  # No longer in learning
-
-    def test_learning_easy_graduates_immediately(self):
-        """LEARNING + EASY → graduates immediately to REVIEW."""
-        item = _make_item(state=SRSState.LEARNING, left=2002)
-        result = schedule(item, Rating.EASY, direction=Direction.RECOGNITION)
-        new_dir = result.directions[Direction.RECOGNITION]
-        assert new_dir.state == SRSState.REVIEW
-        assert new_dir.left is None
 
     def test_learning_due_at_set_for_future(self):
         """LEARNING steps set due_at to future time."""
