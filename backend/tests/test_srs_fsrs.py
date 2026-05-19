@@ -389,7 +389,7 @@ class TestRelearnGraduation:
 
 
 class TestPriorStateStickyNew:
-    """Fix: prior_state='new' must stick across same-state-class grades so
+    """Fix: prior_state='new' must stick through learning steps and graduation so
     `count_new_introduced_today` keeps counting a freshly-introduced card
     through every grade made on it today. Without this, grading a learning
     card whose sync set prior_state=NEW overwrites prior_state to LEARNING
@@ -435,7 +435,7 @@ class TestPriorStateStickyNew:
         rec = result.directions[Direction.RECOGNITION]
         assert rec.state == SRSState.LEARNING, "still learning (advanced a step)"
         assert rec.prior_state == SRSState.NEW, (
-            "prior_state='new' must persist across same-class grades for the introduced-today count"
+            "prior_state='new' must persist through learning steps for the introduced-today count"
         )
 
     def test_again_on_learning_step_preserves_prior_state_new(self):
