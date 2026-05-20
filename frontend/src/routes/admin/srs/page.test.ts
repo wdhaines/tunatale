@@ -84,9 +84,7 @@ describe("admin/srs/+page.svelte", () => {
 
   it("formats due_at as a short human-readable date (no raw ISO)", async () => {
     mockList.mockResolvedValue({
-      items: [
-        makeSRSItemDetail({ id: 1, text: "Bog", due_at: "2026-09-15T04:00:00+00:00" }),
-      ],
+      items: [makeSRSItemDetail({ id: 1, text: "Bog", due_at: "2026-09-15T04:00:00+00:00" })],
       total: 1,
     });
     const { findByText, queryByText } = render(AdminSRSPage);
@@ -95,6 +93,27 @@ describe("admin/srs/+page.svelte", () => {
     expect(queryByText(/2026-09-15T04:00:00/)).toBeFalsy();
     // A short formatted date should appear (e.g. "Sep 15, 2026" in en-US)
     expect(await findByText(/Sep\s*1[45],?\s*2026/)).toBeTruthy();
+  });
+
+  it("shows empty string when due_at is empty string", async () => {
+    mockList.mockResolvedValue({
+      items: [makeSRSItemDetail({ id: 1, text: "empty_due", due_at: "" })],
+      total: 1,
+    });
+    const { findByText, container } = render(AdminSRSPage);
+    await findByText("empty_due");
+    // Empty due should not render any obvious text for the due column
+    expect(container.textContent).not.toContain("Invalid Date");
+  });
+
+  it("shows raw string when due_at is an invalid date", async () => {
+    mockList.mockResolvedValue({
+      items: [makeSRSItemDetail({ id: 1, text: "bad_date", due_at: "not-a-date" })],
+      total: 1,
+    });
+    const { findByText } = render(AdminSRSPage);
+    await findByText("bad_date");
+    expect(await findByText("not-a-date")).toBeTruthy();
   });
 
   it("typing in search re-queries after debounce", async () => {
