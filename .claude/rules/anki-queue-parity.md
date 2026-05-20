@@ -14,11 +14,13 @@ These three account for the bulk of "TT and Anki disagree on head card" reports.
 
 ### #1 — Cutoff frozen at last grade (rule 11)
 
-**Signature**: Anki serves a *learning* card, TT serves a *main/review* card, both apps have the card, TT's `learning_cutoff` is within seconds-to-minutes of the learning card's `due_at`.
+**Signature (TT-frozen)**: Anki serves a *learning* card, TT serves a *main/review* card, both apps have the card, TT's `learning_cutoff` is within seconds-to-minutes of the learning card's `due_at`.
+
+**Signature (Anki-frozen, mirror case)**: TT serves a *learning* card, Anki serves a *main/review* card. TT's `?session_start=1` advanced its cutoff (frontend `/review` mount), but Anki's cutoff froze at the last grade and the deck hasn't been rebuilt since. Same mechanism, opposite direction. Resolution is the same shape but applied to whichever side is behind.
 
 **Why**: cutoff advances only on grade / session-start / sync_pull / end-of-session auto-bump. If you grade in Anki 2s *after* the learning card ripens, Anki advances past `due` and serves it. TT, last graded *before* the ripening, keeps cutoff frozen and the card waits in `pending_learning` tail.
 
-**Resolution**: refresh `/review` (frontend `onMount` sends `?session_start=1` → cutoff = `now`) or grade any TT card. **Do not** add a "live `now`" path or per-poll cutoff advance — stickiness is intentional and Anki works the same way.
+**Resolution**: refresh `/review` (frontend `onMount` sends `?session_start=1` → cutoff = `now`) or grade any TT card. For the mirror case (TT ahead, Anki behind): grade any Anki card, deck-navigate away and back, or close+reopen Anki. **File→Sync alone won't help if sync brings no card changes** — see divergence #3. **Do not** add a "live `now`" path or per-poll cutoff advance — stickiness is intentional and Anki works the same way.
 
 **Diagnostic**:
 ```bash
@@ -52,7 +54,9 @@ If per-card deltas are O(seconds) and the step (due − grade) matches between a
 
 Both apps freeze the main review queue and never re-sort mid-session (Anki `CardQueues.main` is a `VecDeque`, pop-only; `rslib/.../queue/main.rs:8-46`). But **Anki's rebuild trigger set is much larger than TT's**, so the two frozen queues can capture different snapshots of the same state.
 
-**Anki rebuilds on** (`queue/mod.rs:207-215`): day rollover, **File→Sync** (and AnkiWeb auto-sync receiving remote changes incl. TT's push), **profile/collection reopen** (lazy-built on first access), **deck navigation**, deck-config/prefs change, undo, any non-grade card/deck mutation.
+**Anki rebuilds on** any op where `OpChanges::requires_study_queue_rebuild()` returns true (`rslib/src/ops.rs:168-181`): any card change (`c.card`, except `Op::SetFlag`), any deck change (`c.deck`), specific config ops (`SetCurrentDeck` / `UpdatePreferences` / `UpdateDeckConfig` / `ToggleLoadBalancer`), or any deck-config change (`c.deck_config`). The dispatch site is `queue/mod.rs:211-215`. In practice: day rollover, **profile/collection reopen** (lazy-built on first access), **deck navigation** (`SetCurrentDeck`), deck-config/prefs change, undo, and any non-grade card/deck mutation.
+
+**File→Sync is conditional**, not unconditional. A sync only triggers rebuild when AnkiWeb sends back actual card / deck / config mutations: TT push → AnkiWeb → another device's File→Sync pulls the row with a new `mod` → `c.card = true` → rebuild. A no-op round-trip (nothing changed remotely) returns `c.card = c.deck = c.deck_config = false` → no rebuild. End-of-session auto-bump (`queue/mod.rs:190-196`) only fires when `counts().all_zero()` — having any review/new/learning card with non-zero count blocks it.
 
 **TT rebuilds only on `sync_pull`** (rule 2). Grading does not rebuild in either app.
 
@@ -60,7 +64,7 @@ Both apps freeze the main review queue and never re-sort mid-session (Anki `Card
 
 **Signature**: both apps show a *review* card at head, same candidate set, two different cards with **wildly different stabilities** (e.g. s=0.65 vs s=7.5), R values near-tie (delta ~0.001–0.005). R decays at `1/(s·86400)`/sec, so low-s decays ~12× faster than high-s — small wall-clock gaps between rebuild moments invert near-tie pairs.
 
-**Worked example** (May 17, 2026): synced TT ~20:45 PDT. Frozen TT: prodati (R=0.8635) < cloze "se" (R=0.8639). At ~20:55 they crossed. At ~21:00 user hit **File→Sync in Anki**, clearing Anki's cache. Anki's next rebuild: cloze (R=0.8620) < prodati (R=0.8633). TT still showed prodati first.
+**Worked example** (May 17, 2026): synced TT ~20:45 PDT. Frozen TT: prodati (R=0.8635) < cloze "se" (R=0.8639). At ~20:55 they crossed. At ~21:00 user hit **File→Sync in Anki** which pulled card mutations TT had pushed to AnkiWeb earlier, satisfying `c.card = true` and clearing Anki's cache. Anki's next rebuild: cloze (R=0.8620) < prodati (R=0.8633). TT still showed prodati first. (Note: this only worked because the sync brought real card changes back. A no-op File→Sync would not have cleared the cache — see "File→Sync is conditional" above.)
 
 **Resolution**: `sync_pull` from TT to rebuild its frozen queue with current R values.
 
@@ -152,7 +156,7 @@ Walk this tree on a divergence report. Each leaf → mechanism that handles it; 
 **Queue head wrong (Anki=learning, TT=main, both have card):**
 - **CHECK FIRST** — top-of-file divergence #1. Almost always one of:
   1. **Cutoff frozen** — refresh `/review` or grade any card.
-  2. **Independent grading drift (no sync)** — File→Sync, refresh TT.
+  2. **Independent grading drift (no sync)** — sync TT then File→Sync in Anki (TT push brings card mods that satisfy Anki's `requires_study_queue_rebuild`); refresh TT.
 - Signature: TT's `anki_due` is much older than Anki's `cards.due`.
 
 **User-buried cards keep coming back in TT (Layer 35):**
