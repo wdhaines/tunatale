@@ -88,6 +88,17 @@ class _FakeWriter:
     def get_current_card_state(self, card_id: int) -> dict | None:
         return None
 
+    def bury_siblings(
+        self,
+        *,
+        graded_card_id: int,
+        graded_queue: int,
+        bury_new: bool = False,
+        bury_reviews: bool = False,
+        bury_interday_learning: bool = False,
+    ) -> int:
+        return 0
+
 
 def test_pull_then_push_after_local_grade_flushes_review_to_anki():
     """Regression: grading in TunaTale then syncing must push grade to Anki.

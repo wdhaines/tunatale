@@ -821,3 +821,37 @@ This is the col-day computation, matching Anki's `extract_fsrs_retrievability` f
 **Cleanup path for live data.** The existing `backfill_due_date_from_anki_due` migration now sees buried-state rows (was already included in its `state IN (...)` filter) and rewrites them correctly with the new `card_type`-aware `compute_due_at`. One `uv run python -m app.anki.backfill_due_date_from_anki_due` pass will repair the 22 stuck directions in the user's TT db.
 
 **Files.** `backend/app/anki/sqlite_reader.py:40-67` (`compute_due_at` rewrite + signature), `backend/app/anki/sqlite_reader.py:188` (`parse_fsrs_data` passes `card_type`), `backend/app/anki/backfill_due_date_from_anki_due.py:57-64` (migration script reads/passes `cards.type`). Tests: `backend/tests/test_anki_sqlite_reader.py` (6 unit + 1 integration test).
+
+## Layer 47 — `sync_push` replicates Anki's grade-time sibling-bury
+
+**Trigger.** Morning of 2026-05-20, after Layer 46 deploy + sync: TT review badge 185, Anki 186 — off by 1. Forensics pointed to `iti mimo`: TT excluded the collocation from today's pool (recognition direction graded today, `last_review = today_local`); Anki kept it in (production sibling still at `queue=2`, never buried). Initial speculation was that the grade was "ahead-of-schedule" via browser/custom-study; user corrected that. Re-reading the Anki revlog showed 19 different cards stamped at the exact same second (`2026-05-20 12:08:36`) — a TT sync_push burst, not 19 manual UI grades.
+
+**Root cause.** Anki's `maybe_bury_siblings` lives in the `answer_card` flow (`rslib/.../scheduler/answering/mod.rs:389`). TT's `sync_push` writes grades directly to `cards`/`revlog` via `OfflineWriter` and **never invokes `answer_card`**, so the sibling-bury side-effect never runs on the Anki side. Meanwhile TT's own `count_review_due_collocations` filter excludes the whole collocation when *any* direction has `last_review = today_local` (rule 3 / database.py:1681). Two halves of the same bury contract diverging: TT-side filter fires, Anki-side write does not → +1 drift per TT-graded card with a still-due sibling, persisting until the next rollover.
+
+**Fix.** New `OfflineWriter.bury_siblings(graded_card_id, graded_queue, bury_new, bury_reviews, bury_interday_learning)` mirrors Anki's two-step logic:
+
+1. `exclude_earlier_gathered_queues`: drop each flag whose target gather_ord is less than the graded card's. Mapping: Learn/PreviewRepeat=0, DayLearn=1, Review=2, New=3 (`rslib/.../bury_and_suspend.rs:146-152`).
+2. Find siblings (same `nid`, different `id`) whose queue ∈ {0 (New), 2 (Review), 3 (DayLearn)} subject to surviving flags. Write `queue=-2`, `mod=now`, `usn=-1`. Bump `col` if any row touched (`siblings_for_bury.sql`).
+
+The call site is a **backfill scan at the tail of `sync_push`** (`AnkiSync._backfill_bury_siblings_for_today_grades`), not the dirty-direction loop. The backfill scans every TT direction with `last_review` in today's local-day window via `SRSDatabase.list_anki_cards_graded_today` and calls `writer.bury_siblings` for each. This catches:
+
+- The new-grade case (this sync's TT-grades are also "today-graded" by definition), AND
+- The **backfill case**: directions graded earlier today whose grades were already pushed by a prior sync_push (pre-Layer-47), with `dirty_fsrs` cleared. The dirty-only loop misses these; the scan does not.
+
+Idempotency: `bury_siblings`'s `WHERE queue IN (allowed)` clause makes re-running the bury a no-op for siblings already at queue=-2/-3/-1. Deck-config flags come from existing `resolve_bury_new` / `resolve_bury_review` (`anki_state_cache`-backed). The mapping from TT `state` strings to Anki post-grade queue numbers lives in `_STATE_VALUE_TO_ANKI_QUEUE` (NEW→0, LEARNING/RELEARNING→1, REVIEW→2; SUSPENDED/BURIED absent → backfill skips). `bury_interday_learning` isn't cached yet; defaults to False, matching the user's deck config (`buryInterdayLearning: False`).
+
+**Initial implementation that didn't work** (recorded for the next maintainer who's tempted to do this): the first cut wired `bury_siblings` into the dirty-direction loop, right after `write_revlog`. Symptom: deploy + user sync → no change. Cause: directions already cleaned by a prior sync (the common case post-deploy) are no longer in `list_dirty()`, so the dirty-loop bury never fires for the backlog. The backfill scan is the right shape because the bury contract is "every today-graded direction has its sibling buried" — that's a property of TT state, not of the current sync's payload.
+
+The push-side does NOT bury on the "Anki-won-by-timestamp" path (`list_recently_graded_clean`) — Anki was the grading app there, so Anki's own `answer_card` flow already buried its sibling at grade time.
+
+**Verification.**
+- `test_bury_siblings_review_graded_buries_review_sibling` / `_new_grade_drops_review_and_interday` / `_learning_grade_buries_dayLearn_sibling` — `exclude_earlier_gathered_queues` per-graded-queue tables.
+- `_review_grade_excludes_interday_learning` — Review grade (gather_ord=2) drops `bury_interday_learning` flag.
+- `_skips_suspended_sibling` / `_skips_intraday_learning_sibling` — siblings at queue=-1 and queue=1 (Learn) stay untouched.
+- `_no_op_when_all_flags_false` / `_unknown_queue_drops_all_flags` / `_missing_card_returns_zero` — defensive paths.
+- `TestSyncPushBuriesSiblings.test_sync_push_buries_review_sibling_when_bury_review_enabled` / `_skips_bury_when_no_revlog_emitted` / `_passes_learning_queue_for_relearning_state` / `_skips_bury_when_state_is_suspended` — end-to-end via `AnkiSync.sync_push` against `FakeWriter`.
+- `test_state_to_anki_queue_mappings` — branch coverage on the state→queue helper.
+
+**Files.** `backend/app/anki/sync.py` (`OfflineWriter.bury_siblings`, `_state_to_anki_queue` + `_STATE_VALUE_TO_ANKI_QUEUE` helpers, `AnkiSync._backfill_bury_siblings_for_today_grades`, `resolve_bury_*` imports, `sync_push` tail call). `backend/app/srs/database.py` (`SRSDatabase.list_anki_cards_graded_today`). Tests: `backend/tests/test_anki_sync_push.py` (10 unit `bury_siblings` tests + 6 backfill integration tests + `_state_to_anki_queue` enum coverage), plus `bury_siblings` stubs added to four pre-existing `FakeWriter` classes in `test_anki_sync_orphan_recovery.py`, `test_anki_sync_force_fsrs.py`, `test_anki_sync_round_trip.py`, `test_anki_sync_concurrent_review.py`.
+
+**Future work.** `bury_interday_learning` deck-config flag isn't yet cached or threaded through; harmless until a user enables it (default False). When wiring it, add `resolve_bury_interday_learning` in `queue_stats.py`, add it to `refresh_deck_config_cache`, and pass `bury_interday_learning=...` from the backfill site.

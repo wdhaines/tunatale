@@ -94,6 +94,17 @@ class _FakeWriter:
     def set_learning_state(self, card_id: int, left: int, due_timestamp: int, type_: int) -> None:
         self.set_learning_state_calls.append((card_id, left, due_timestamp, type_))
 
+    def bury_siblings(
+        self,
+        *,
+        graded_card_id: int,
+        graded_queue: int,
+        bury_new: bool = False,
+        bury_reviews: bool = False,
+        bury_interday_learning: bool = False,
+    ) -> int:
+        return 0
+
 
 class TestTunaTaleGradeOnlyPushesNormally:
     """TunaTale grades, no Anki review since last sync → normal push."""

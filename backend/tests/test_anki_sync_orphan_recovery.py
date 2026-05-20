@@ -78,6 +78,17 @@ class FakeWriter:
     def set_specific_value_of_card(self, card_id, *, keys, new_values):
         self.specific_value_calls.append((card_id, keys, new_values))
 
+    def bury_siblings(
+        self,
+        *,
+        graded_card_id,
+        graded_queue,
+        bury_new=False,
+        bury_reviews=False,
+        bury_interday_learning=False,
+    ):
+        return 0
+
 
 class FakeReader:
     def __init__(self, records):

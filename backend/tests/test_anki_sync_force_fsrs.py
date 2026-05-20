@@ -117,6 +117,20 @@ class FakeWriter:
     def set_specific_value_of_card(self, card_id: int, keys: list[str], new_values: list[str]) -> None:
         self.calls.append(("set_specific_value_of_card", card_id, list(keys), list(new_values)))
 
+    def bury_siblings(
+        self,
+        *,
+        graded_card_id: int,
+        graded_queue: int,
+        bury_new: bool = False,
+        bury_reviews: bool = False,
+        bury_interday_learning: bool = False,
+    ) -> int:
+        self.calls.append(
+            ("bury_siblings", graded_card_id, graded_queue, bury_new, bury_reviews, bury_interday_learning)
+        )
+        return 0
+
     def action_names(self) -> list[str]:
         return [c[0] for c in self.calls]
 

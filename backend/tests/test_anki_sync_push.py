@@ -129,6 +129,20 @@ class FakeWriter:
     def get_current_card_state(self, card_id: int) -> dict | None:
         return self.current_states.get(card_id)
 
+    def bury_siblings(
+        self,
+        *,
+        graded_card_id: int,
+        graded_queue: int,
+        bury_new: bool = False,
+        bury_reviews: bool = False,
+        bury_interday_learning: bool = False,
+    ) -> int:
+        self.calls.append(
+            ("bury_siblings", graded_card_id, graded_queue, bury_new, bury_reviews, bury_interday_learning)
+        )
+        return 0
+
     def list_decks_with_revlog_today(self, today_4am_ms: int) -> list[int]:
         return []
 
@@ -510,6 +524,171 @@ class TestOfflineWriter:
         assert row["left"] == 1001
         assert row["due"] == 1778000000
         assert row["usn"] == -1
+
+    def test_bury_siblings_review_graded_buries_review_sibling(self):
+        """Layer 47: TT-graded Review card → Anki's bury_siblings writes queue=-2 to a queue=2 sibling.
+
+        Mirrors Anki's `bury_siblings` (rslib/.../bury_and_suspend.rs:132) + the
+        `siblings_for_bury.sql` query: sibling at queue=2 buried when bury_reviews=True.
+        """
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, queue=2, card_type=2)
+        writer = OfflineWriter(conn)
+        n = writer.bury_siblings(graded_card_id=90011, graded_queue=2, bury_reviews=True)
+
+        assert n == 1
+        row = conn.execute("SELECT queue, usn, mod FROM cards WHERE id=90010").fetchone()
+        assert row["queue"] == -2, "sibling must be sched-buried (queue=-2)"
+        assert row["usn"] == -1
+        assert row["mod"] > 100
+        # graded card itself untouched
+        graded = conn.execute("SELECT queue, mod FROM cards WHERE id=90011").fetchone()
+        assert graded["queue"] == 2
+        # col bumped
+        col = conn.execute("SELECT mod, usn FROM col").fetchone()
+        assert col["usn"] == -1
+
+    def test_bury_siblings_no_op_when_all_flags_false(self):
+        """bury_new=bury_reviews=bury_interday_learning=False → no writes."""
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, queue=2, card_type=2)
+        writer = OfflineWriter(conn)
+        n = writer.bury_siblings(graded_card_id=90011, graded_queue=2)
+
+        assert n == 0
+        row = conn.execute("SELECT queue FROM cards WHERE id=90010").fetchone()
+        assert row["queue"] == 2
+
+    def test_bury_siblings_skips_suspended_sibling(self):
+        """Suspended siblings (queue=-1) are NEVER buried."""
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, queue=-1, card_type=2)
+        writer = OfflineWriter(conn)
+        n = writer.bury_siblings(graded_card_id=90011, graded_queue=2, bury_reviews=True)
+
+        assert n == 0
+        row = conn.execute("SELECT queue FROM cards WHERE id=90010").fetchone()
+        assert row["queue"] == -1, "suspended sibling stays suspended"
+
+    def test_bury_siblings_skips_intraday_learning_sibling(self):
+        """queue=1 (intra-day Learn) siblings are NOT included in Anki's bury query.
+
+        Per `siblings_for_bury.sql`, only queue=New(0)/Review(2)/DayLearn(3) are eligible.
+        """
+        conn = _make_anki_full_db()
+        # Set the rec sibling (cid=90010) to queue=1 (learning)
+        _seed_note_and_cards(conn, queue=2, card_type=2)
+        conn.execute("UPDATE cards SET queue=1 WHERE id=90010")
+        conn.commit()
+        writer = OfflineWriter(conn)
+        n = writer.bury_siblings(
+            graded_card_id=90011,
+            graded_queue=2,
+            bury_new=True,
+            bury_reviews=True,
+            bury_interday_learning=True,
+        )
+        assert n == 0
+        row = conn.execute("SELECT queue FROM cards WHERE id=90010").fetchone()
+        assert row["queue"] == 1, "intra-day learning sibling stays unburied"
+
+    def test_bury_siblings_review_grade_excludes_interday_learning(self):
+        """Anki's `exclude_earlier_gathered_queues`: graded Review (gather_ord=2)
+        disables bury_interday_learning (which requires gather_ord ≤ 1).
+
+        bury_reviews kept (2 ≤ 2). So a queue=3 (DayLearn) sibling stays unburied
+        even with bury_interday_learning=True at the call site.
+        """
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, queue=2, card_type=2)
+        conn.execute("UPDATE cards SET queue=3 WHERE id=90010")  # DayLearn sibling
+        conn.commit()
+        writer = OfflineWriter(conn)
+        n = writer.bury_siblings(
+            graded_card_id=90011,
+            graded_queue=2,
+            bury_interday_learning=True,
+        )
+        assert n == 0
+        row = conn.execute("SELECT queue FROM cards WHERE id=90010").fetchone()
+        assert row["queue"] == 3, "DayLearn sibling kept (interday bury disabled for Review grade)"
+
+    def test_bury_siblings_learning_grade_buries_dayLearn_sibling(self):
+        """Graded Learn (q=1, gather_ord=0): both bury_reviews and bury_interday_learning kept."""
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, queue=2, card_type=2)
+        conn.execute("UPDATE cards SET queue=3 WHERE id=90010")  # DayLearn sibling
+        conn.commit()
+        writer = OfflineWriter(conn)
+        n = writer.bury_siblings(
+            graded_card_id=90011,
+            graded_queue=1,
+            bury_interday_learning=True,
+        )
+        assert n == 1
+        row = conn.execute("SELECT queue FROM cards WHERE id=90010").fetchone()
+        assert row["queue"] == -2
+
+    def test_bury_siblings_buries_new_sibling_when_bury_new_true(self):
+        """A queue=0 (New) sibling is buried when bury_new=True."""
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, queue=2, card_type=2)
+        conn.execute("UPDATE cards SET queue=0 WHERE id=90010")
+        conn.commit()
+        writer = OfflineWriter(conn)
+        n = writer.bury_siblings(graded_card_id=90011, graded_queue=2, bury_new=True)
+        assert n == 1
+        row = conn.execute("SELECT queue FROM cards WHERE id=90010").fetchone()
+        assert row["queue"] == -2
+
+    def test_bury_siblings_new_grade_drops_review_and_interday(self):
+        """Graded New (gather_ord=3): drops bury_reviews and bury_interday_learning
+        per exclude_earlier_gathered_queues. Only bury_new survives."""
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, queue=2, card_type=2)
+        writer = OfflineWriter(conn)
+        n = writer.bury_siblings(
+            graded_card_id=90011,
+            graded_queue=0,
+            bury_reviews=True,
+            bury_interday_learning=True,
+        )
+        assert n == 0, "review sibling NOT buried — bury_reviews dropped by New-grade gather_ord rule"
+
+    def test_bury_siblings_unknown_queue_drops_all_flags(self):
+        """An out-of-range graded_queue drops every flag — defensive: gather_ord=255
+        fails every `gather_ord <= N` check, including bury_new (3)."""
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, queue=2, card_type=2)
+        writer = OfflineWriter(conn)
+        n = writer.bury_siblings(
+            graded_card_id=90011,
+            graded_queue=99,
+            bury_new=True,
+            bury_reviews=True,
+            bury_interday_learning=True,
+        )
+        assert n == 0
+
+    def test_bury_siblings_missing_card_returns_zero(self):
+        """Graded card not present in cards table → no-op."""
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, queue=2, card_type=2)
+        writer = OfflineWriter(conn)
+        n = writer.bury_siblings(graded_card_id=999999, graded_queue=2, bury_reviews=True)
+        assert n == 0
+
+    def test_state_to_anki_queue_mappings(self):
+        """Cover all branches of _state_to_anki_queue: NEW→0, LEARNING/RELEARNING→1,
+        REVIEW→2, SUSPENDED/BURIED→None (bury skipped)."""
+        from app.anki.sync import _state_to_anki_queue
+
+        assert _state_to_anki_queue(SRSState.NEW) == 0
+        assert _state_to_anki_queue(SRSState.LEARNING) == 1
+        assert _state_to_anki_queue(SRSState.RELEARNING) == 1
+        assert _state_to_anki_queue(SRSState.REVIEW) == 2
+        assert _state_to_anki_queue(SRSState.SUSPENDED) is None
+        assert _state_to_anki_queue(SRSState.BURIED) is None
 
     def test_set_learning_state_preserves_suspension(self):
         """Suspended cards (queue=-1) must NOT be unsuspended by set_learning_state."""
@@ -2055,6 +2234,146 @@ def _make_anki_with_decks() -> sqlite3.Connection:
     conn.execute("INSERT INTO decks VALUES (1, '0. Slovene', 0, 0, ?)", (_REAL_BLOB,))
     conn.commit()
     return conn
+
+
+class TestSyncPushBuriesSiblings:
+    """Layer 47: sync_push must replicate Anki's grade-time sibling-bury.
+
+    The mechanism is a backfill scan after the main push loops: every TT
+    direction with ``last_review`` in today's local-day window triggers
+    ``writer.bury_siblings``. Covers (a) just-pushed grades AND (b) earlier
+    grades that were already cleaned by a prior push (e.g., before Layer 47
+    landed). Idempotent via ``bury_siblings`` ``WHERE queue IN (allowed)``.
+    """
+
+    def _make_graded_today(
+        self,
+        db,
+        guid: str,
+        rec_cid: int,
+        *,
+        state: SRSState = SRSState.REVIEW,
+        dirty_fsrs: bool = False,
+    ) -> None:
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.combine(date.today() + timedelta(days=18), time(4, 0), tzinfo=UTC),
+            stability=15.0,
+            difficulty=3.0,
+            reps=4,
+            lapses=0,
+            state=state,
+            dirty_fsrs=dirty_fsrs,
+            anki_card_id=rec_cid,
+            last_review=datetime.now(UTC),
+            last_rating=4,
+            prior_state=SRSState.REVIEW,
+            left=1001 if state in (SRSState.LEARNING, SRSState.RELEARNING) else None,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+    def test_backfill_fires_for_today_graded_dirty_direction(self):
+        """A still-dirty direction graded today triggers the backfill bury."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        db.set_anki_state_cache("bury_review", "True")
+        db.set_anki_state_cache("bury_new", "False")
+        self._make_graded_today(db, guid, rec_cid, dirty_fsrs=True)
+
+        writer = FakeWriter()
+        sync = AnkiSync(db=db, _reader=FakeReader(), _writer=writer, _anki_col_crt=1704067200)
+        sync.sync_push()
+
+        bury_calls = [c for c in writer.calls if c[0] == "bury_siblings"]
+        assert len(bury_calls) == 1
+        _, gcid, gq, b_new, b_rev, _ = bury_calls[0]
+        assert gcid == rec_cid
+        assert gq == 2
+        assert b_rev is True
+
+    def test_backfill_fires_for_today_graded_clean_direction(self):
+        """Layer 47 regression: a NON-dirty (already-pushed) direction graded
+        today STILL gets bury'd. This is the iti mimo case — the grade
+        propagated to Anki pre-Layer-47, ``dirty_fsrs`` cleared, but the
+        sibling was never buried. Subsequent sync_push must backfill it.
+        """
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        db.set_anki_state_cache("bury_review", "True")
+        self._make_graded_today(db, guid, rec_cid, dirty_fsrs=False)
+
+        writer = FakeWriter()
+        sync = AnkiSync(db=db, _reader=FakeReader(), _writer=writer, _anki_col_crt=1704067200)
+        sync.sync_push()
+
+        bury_calls = [c for c in writer.calls if c[0] == "bury_siblings"]
+        assert len(bury_calls) == 1, "backfill must fire for clean today-graded direction"
+
+    def test_backfill_skips_when_direction_has_no_last_review(self):
+        """Brand-new card with last_review=None must NOT trigger bury."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        db.set_anki_state_cache("bury_review", "True")
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.combine(date.today() + timedelta(days=1), time(4, 0), tzinfo=UTC),
+            stability=1.0,
+            difficulty=5.0,
+            reps=0,
+            lapses=0,
+            state=SRSState.NEW,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        sync = AnkiSync(db=db, _reader=FakeReader(), _writer=writer, _anki_col_crt=1704067200)
+        sync.sync_push()
+
+        assert not any(c[0] == "bury_siblings" for c in writer.calls)
+
+    def test_backfill_passes_learning_queue_for_relearning_state(self):
+        """RELEARNING → graded_queue=1 (intra-day Learn)."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        db.set_anki_state_cache("bury_review", "True")
+        self._make_graded_today(db, guid, rec_cid, state=SRSState.RELEARNING)
+
+        writer = FakeWriter()
+        sync = AnkiSync(db=db, _reader=FakeReader(), _writer=writer, _anki_col_crt=1704067200)
+        sync.sync_push()
+
+        bury_calls = [c for c in writer.calls if c[0] == "bury_siblings"]
+        assert len(bury_calls) == 1
+        assert bury_calls[0][2] == 1, "RELEARNING graded_queue must be 1"
+
+    def test_backfill_skips_suspended_state(self):
+        """SUSPENDED state → _state_to_anki_queue returns None → no bury fired."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        db.set_anki_state_cache("bury_review", "True")
+        self._make_graded_today(db, guid, rec_cid, state=SRSState.SUSPENDED)
+
+        writer = FakeWriter()
+        sync = AnkiSync(db=db, _reader=FakeReader(), _writer=writer, _anki_col_crt=1704067200)
+        sync.sync_push()
+
+        assert not any(c[0] == "bury_siblings" for c in writer.calls)
+
+    def test_backfill_short_circuits_when_all_flags_disabled(self):
+        """bury_new=False AND bury_review=False → backfill returns before scanning."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        db.set_anki_state_cache("bury_review", "False")
+        db.set_anki_state_cache("bury_new", "False")
+        self._make_graded_today(db, guid, rec_cid)
+
+        writer = FakeWriter()
+        sync = AnkiSync(db=db, _reader=FakeReader(), _writer=writer, _anki_col_crt=1704067200)
+        sync.sync_push()
+
+        assert not any(c[0] == "bury_siblings" for c in writer.calls)
 
 
 class TestSyncPushBumpNewToday:

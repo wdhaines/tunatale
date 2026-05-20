@@ -717,6 +717,33 @@ class SRSDatabase:
                 return
         self.update_direction(row["guid"], direction, state)
 
+    def list_anki_cards_graded_today(self, today: date) -> list[tuple[int, str]]:
+        """Return (anki_card_id, state) for every direction with last_review today.
+
+        Used by sync_push (Layer 47) to backfill sibling-bury writes into Anki.
+        Returns directions regardless of dirty_fsrs — covers cases where a
+        previous sync_push cleaned the direction without firing bury.
+
+        Filter mirrors ``list_collocations_reviewed_today``: date-aware on
+        local-day bounds, tolerant of both full-ISO and legacy date-only
+        timestamps.
+        """
+        local_tz = datetime.now().astimezone().tzinfo
+        start_utc = datetime.combine(today, time(0), tzinfo=local_tz).astimezone(UTC)
+        end_utc = datetime.combine(today + timedelta(days=1), time(0), tzinfo=local_tz).astimezone(UTC)
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT anki_card_id, state FROM collocation_directions
+                WHERE anki_card_id IS NOT NULL
+                  AND last_review IS NOT NULL
+                  AND ((length(last_review) > 10 AND last_review >= ? AND last_review < ?)
+                       OR (length(last_review) = 10 AND last_review = ?))
+                """,
+                (start_utc.isoformat(), end_utc.isoformat(), today.isoformat()),
+            ).fetchall()
+            return [(int(r[0]), r[1]) for r in rows]
+
     def list_collocations_reviewed_today(self, today: date) -> set[int]:
         """Return set of collocation IDs reviewed during the local day `today`.
 

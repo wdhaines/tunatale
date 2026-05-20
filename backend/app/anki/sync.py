@@ -35,7 +35,7 @@ from app.common.guid import compute_guid
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
-from app.srs.queue_stats import resolve_learning_steps, resolve_relearning_steps
+from app.srs.queue_stats import resolve_bury_new, resolve_bury_review, resolve_learning_steps, resolve_relearning_steps
 
 _log = logging.getLogger(__name__)
 
@@ -586,6 +586,90 @@ class OfflineWriter:
         self._bump_col(ts)
         self._conn.commit()
 
+    def bury_siblings(
+        self,
+        *,
+        graded_card_id: int,
+        graded_queue: int,
+        bury_new: bool = False,
+        bury_reviews: bool = False,
+        bury_interday_learning: bool = False,
+    ) -> int:
+        """Replicate Anki's grade-time sibling-bury for a TT-graded card.
+
+        Anki's ``answer_card`` calls ``maybe_bury_siblings`` → ``bury_siblings`` →
+        ``all_siblings_for_bury`` (rslib/.../bury_and_suspend.rs:132 +
+        siblings_for_bury.sql). TT's ``sync_push`` writes the grade directly into
+        the cards/revlog tables and never hits ``answer_card``, so without this
+        method TT-graded notes leave their siblings unburied on the Anki side —
+        Anki then keeps the sibling in today's review pool, diverging from TT
+        which excludes the whole note via the ``last_review=today`` filter.
+
+        ``graded_queue`` is the card's queue AFTER the grade. The
+        ``exclude_earlier_gathered_queues`` rule then drops bury flags whose
+        target queue has a higher ``gather_ord`` than the graded card:
+        Learn/PreviewRepeat=0, DayLearn=1, Review=2, New=3. Concretely:
+
+        - graded Review (gather_ord=2): bury_interday_learning (queue=3 has
+          gather_ord=1) gets dropped — wait, 1 ≤ 2 so it's KEPT under the
+          Anki rule ``self.bury_X &= queue.gather_ord() <= X.gather_ord()``.
+
+        Re-check: the Anki rule is keep-if `queue.gather_ord() <= X.gather_ord()`.
+        So ``bury_interday_learning`` (X=DayLearn=1) is kept only when graded
+        gather_ord ≤ 1. Review-graded has gather_ord=2, so interday is dropped.
+        ``bury_reviews`` (X=Review=2) is kept when graded gather_ord ≤ 2 (all
+        Learn/DayLearn/Review grades). ``bury_new`` (X=New=3) is kept when
+        graded gather_ord ≤ 3 — always true for any of these queues.
+
+        Only siblings at queue ∈ {0 (New), 2 (Review), 3 (DayLearn)} are
+        eligible; queue=1 (intra-day Learn) and queue=-1/-2/-3 (suspended /
+        already-buried) are never touched.
+
+        Writes queue=-2 (sched-buried) + ``mod``/``usn=-1`` on each affected
+        sibling, then bumps ``col``. Returns the count of buried siblings.
+        """
+        queue_to_gather_ord = {0: 3, 1: 0, 2: 2, 3: 1, 4: 0}
+        graded_gather_ord = queue_to_gather_ord.get(graded_queue, 255)
+        if graded_gather_ord > 1:
+            bury_interday_learning = False
+        if graded_gather_ord > 2:
+            bury_reviews = False
+        if graded_gather_ord > 3:
+            bury_new = False
+
+        allowed_queues: list[int] = []
+        if bury_new:
+            allowed_queues.append(0)
+        if bury_reviews:
+            allowed_queues.append(2)
+        if bury_interday_learning:
+            allowed_queues.append(3)
+        if not allowed_queues:
+            return 0
+
+        row = self._conn.execute("SELECT nid FROM cards WHERE id = ?", (graded_card_id,)).fetchone()
+        if row is None:
+            return 0
+        nid = row[0] if isinstance(row, (tuple, list)) else row["nid"]
+
+        ts = int(_time.time())
+        placeholders = ",".join("?" * len(allowed_queues))
+        cursor = self._conn.execute(
+            f"""
+            UPDATE cards
+            SET queue = -2, mod = ?, usn = -1
+            WHERE nid = ?
+              AND id != ?
+              AND queue IN ({placeholders})
+            """,
+            (ts, nid, graded_card_id, *allowed_queues),
+        )
+        count = cursor.rowcount
+        if count > 0:
+            self._bump_col(ts)
+        self._conn.commit()
+        return count
+
     def set_specific_value_of_card(self, card_id: int, keys: list[str], new_values: list[str]) -> None:
         pass  # deferred to S3.7
 
@@ -992,6 +1076,31 @@ def _anki_step_ahead(anki_left: int | None, local_left: int | None) -> bool:
 
 # Layer 35: bury_kind split (sched/user/None).
 # Layer 39 (2026-05-17): queue=-2 now maps to 'sched', not 'user'.
+def _state_to_anki_queue(state: SRSState) -> int | None:
+    """Map a TT SRSState to the Anki cards.queue value sync_push writes.
+
+    Returns ``None`` for SUSPENDED/BURIED so bury_siblings is skipped — those
+    aren't grade events.
+    """
+    if state == SRSState.NEW:
+        return 0
+    if state in (SRSState.LEARNING, SRSState.RELEARNING):
+        return 1
+    if state == SRSState.REVIEW:
+        return 2
+    return None
+
+
+# String-keyed mirror of `_state_to_anki_queue` used by the sync_push backfill,
+# which iterates raw DB rows. Avoids re-parsing into the SRSState enum.
+_STATE_VALUE_TO_ANKI_QUEUE: dict[str, int] = {
+    SRSState.NEW.value: 0,
+    SRSState.LEARNING.value: 1,
+    SRSState.RELEARNING.value: 1,
+    SRSState.REVIEW.value: 2,
+}
+
+
 def _bury_kind_from_queue(queue: int) -> str | None:
     """Return the bury kind for an Anki queue value, or None when not buried.
 
@@ -2005,12 +2114,41 @@ class AnkiSync:
                 self._db.mark_direction_clean(guid, direction)
             report.directions_pushed += 1
 
-        # Recompute Anki's deck.newToday from revlog reality. Runs after both
-        # push loops so it sees every revlog this push just wrote. Idempotent.
+        # Layer 47: backfill sibling-bury for every today-graded direction.
+        # Scans collocation_directions where last_review = today (local) and
+        # fires writer.bury_siblings for each — regardless of dirty_fsrs, so
+        # already-cleaned grades from earlier in the day also get propagated.
+        # bury_siblings's WHERE filter on Anki's sibling queue makes this
+        # idempotent: cards already at queue=-2 are no-ops.
         if not dry_run:
+            self._backfill_bury_siblings_for_today_grades()
             self._recompute_anki_new_today_all_decks()
 
         return report
+
+    def _backfill_bury_siblings_for_today_grades(self) -> None:
+        """Replay sibling-bury for every TT direction graded today (local).
+
+        Covers the case where a prior sync_push wrote the grade without
+        firing bury (pre-Layer-47), AND the normal case where this sync
+        just pushed a grade (idempotent re-bury). Reads deck config flags
+        once and short-circuits when both are disabled.
+        """
+        bury_new, _ = resolve_bury_new(self._db)
+        bury_review, _ = resolve_bury_review(self._db)
+        if not (bury_new or bury_review):
+            return
+        today = date.today()
+        for anki_card_id, state_value in self._db.list_anki_cards_graded_today(today):
+            graded_queue = _STATE_VALUE_TO_ANKI_QUEUE.get(state_value)
+            if graded_queue is None:
+                continue
+            self._writer.bury_siblings(
+                graded_card_id=anki_card_id,
+                graded_queue=graded_queue,
+                bury_new=bury_new,
+                bury_reviews=bury_review,
+            )
 
     async def sync_create_new(
         self,
