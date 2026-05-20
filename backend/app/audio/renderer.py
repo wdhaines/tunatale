@@ -129,7 +129,8 @@ class LessonRenderer:
                     sp = section_paths[section_idx]
                     sp.parent.mkdir(parents=True, exist_ok=True)
                     t0 = time.perf_counter()
-                    sec_seg.export(str(sp), format="wav")
+                    # pydub's export() returns an unclosed file handle; close it.
+                    sec_seg.export(str(sp), format="wav").close()
                     logger.debug("Section %d export → %.0f ms", section_idx, (time.perf_counter() - t0) * 1000)
 
             # Assemble full lesson: title + bs + sec0 + bs + sec1 + ...
@@ -141,7 +142,8 @@ class LessonRenderer:
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
-        combined.export(str(output_path), format="wav")
+        # pydub's export() returns an unclosed file handle; close it.
+        combined.export(str(output_path), format="wav").close()
         logger.debug("Full lesson export → %.0f ms", (time.perf_counter() - t0) * 1000)
         total_ms = (time.perf_counter() - t_start) * 1000
         logger.info(

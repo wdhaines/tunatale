@@ -13,7 +13,7 @@ backend/tests/anki_oracle/
 └── harness_fixtures.py       # pytest fixtures + run_oracle() helper
 ```
 
-Tests live alongside other tests as `backend/tests/test_parity_*.py`. They're opt-in via `--run-oracle` (default `./test.sh` skips them so CI doesn't depend on Anki being installable).
+Tests live alongside other tests as `backend/tests/test_parity_*.py`. They're opt-in via `--run-oracle`: `./test.sh` passes the flag so local pre-commit runs the harness, while CI (`.github/workflows/ci.yml`) runs `uv run pytest` without it so it doesn't depend on Anki being installable in the CI image. If you need to skip the harness locally for speed, run `cd backend && uv run pytest` directly.
 
 ## Subprocess boundary — never violate
 

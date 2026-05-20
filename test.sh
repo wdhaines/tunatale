@@ -10,7 +10,7 @@ echo "=== Ruff format check ==="
 uv run ruff format --check app tests
 
 echo "=== Tests ==="
-uv run pytest
+uv run pytest --run-oracle
 
 cd ../frontend
 

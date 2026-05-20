@@ -1536,6 +1536,11 @@ class TestLearningStatePriority:
 
         db = api_app_state
         today = date.today()
+        # Anchor learning due_at to a definite past instant, not today-04:00-UTC.
+        # `seed_direction(due_date=...)` derives due_at from `date + 04:00 UTC`,
+        # which lands in the future when CI runs between 00:00–04:00 UTC and
+        # drops the LEARNING card into pending_learning instead of ready_learning.
+        ready_due_at = datetime.now(UTC) - timedelta(minutes=5)
 
         # tovornjak prod: state=review, due_date=yesterday (overdue), stability=0.116
         seed_direction(
@@ -1549,14 +1554,14 @@ class TestLearningStatePriority:
             last_review=today - timedelta(days=2),
         )
 
-        # ženska prod: state=learning, due_date=today, stability=0.036, last_review=NULL
+        # ženska prod: state=learning, due_at = 5 minutes ago, stability=0.036, last_review=NULL
         seed_direction(
             db,
             text="ženska",
             translation="woman",
             direction=Direction.PRODUCTION,
             state=SRSState.LEARNING,
-            due_date=today,
+            due_at=ready_due_at,
             stability=0.036,
         )
 
