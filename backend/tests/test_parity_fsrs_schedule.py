@@ -233,3 +233,83 @@ def test_fsrs_short_term_stability_matches_anki(synthetic_collection: SyntheticC
         assert abs(tt_s - anki_s) / max(abs(anki_s), 1e-9) < 1e-3, (
             f"short-term stability mismatch for {rating_name}: TT={tt_s:.6f} vs Anki={anki_s:.6f}"
         )
+
+
+@pytest.mark.oracle
+def test_parity_graduation_after_many_agains(synthetic_collection: SyntheticCollection) -> None:
+    """After many AGAINs on a LEARNING card, a subsequent GOOD graduation must
+    produce a post-graduation stability that matches Anki's fsrs-rs output,
+    not TT's incorrect floor of 0.1.
+
+    The bug: ``_graduate_to_review`` and ``schedule()`` both clamp stability
+    to ``max(0.1, new_stability)`` while fsrs-rs uses ``S_MIN=0.001``
+    (``fsrs-rs/src/simulation.rs:41``).  For a LEARNING card whose stability
+    has decayed below 0.1 through repeated AGAINs, the GOOD graduation path
+    returns 0.1 instead of the correct sub-0.1 value.  Latent since 68a479c
+    (initial FSRS port), surfaced after heavy learning-step sessions.
+    """
+    from app.models.srs_item import Direction, SRSItem
+    from app.models.syntactic_unit import SyntacticUnit
+    from app.srs.fsrs import schedule
+
+    # Use explicit learning steps so both Anki and TT use the same 2-step ladder.
+    # Without explicit steps the synthetic protobuf encodes an empty list,
+    # which Anki interprets differently from its internal defaults.
+    synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
+    synthetic_collection.set_learning_steps(learn_steps=[1.0, 10.0], relearn_steps=[10.0])
+
+    # Create a NEW card
+    synthetic_collection.add_note(id=1001, guid="g-many-agains", fields=["front", "back"])
+    synthetic_collection.add_card(
+        id=10010,
+        note_id=1001,
+        ord=0,
+        type=0,
+        queue=0,
+        due=0,
+        ivl=0,
+        reps=0,
+        lapses=0,
+        left=0,
+    )
+    synthetic_collection.save()
+
+    # Oracle: 8×AGAIN (drive stability below 0.1) + 2×GOOD (step, then graduate)
+    n_agains = 8
+    operations = [{"op": "answer_card", "card_id": 10010, "rating": 1}] * n_agains
+    operations.append({"op": "answer_card", "card_id": 10010, "rating": 3})
+    operations.append({"op": "answer_card", "card_id": 10010, "rating": 3})
+    operations.append({"op": "get_card", "card_id": 10010})
+
+    result = run_oracle(synthetic_collection.path, operations)
+    raw = result.raw()
+    # answer_card operations are indexed sequentially; get_card is last
+    get_card_key = [k for k in raw if k.startswith("get_card_")][0]
+    anki_state = raw[get_card_key]
+    anki_s = anki_state["stability"]
+
+    # TT side: chain schedule() with matching ratings.
+    # TT's default learning steps resolve to [1.0, 10.0] (same as oracle).
+    unit = SyntacticUnit(text="test", translation="test", word_count=1, difficulty=1, source="test")
+    item = SRSItem(syntactic_unit=unit, guid="g-many-agains", anki_note_id=1001)
+
+    for _ in range(n_agains):
+        item = schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION)
+    for _ in range(2):  # advance step, then graduate
+        item = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
+
+    tt_s = item.directions[Direction.RECOGNITION].stability
+
+    # Three fixes land this exact-equal to Anki's 4dp-rounded value:
+    #   1. Lower stability floor from 0.1 to fsrs-rs's S_MIN=0.001 at
+    #      ``fsrs.py:459/819`` (pre-fix gap was 50×).
+    #   2. ``_graduate_to_review`` for non-NEW prev.state now calls
+    #      ``_stability_short_term`` to mirror fsrs-rs `model.rs:163`:
+    #      ``step()`` overrides success/failure with short-term whenever
+    #      ``delta_t == 0``. Previously TT used ``_next_stability_recall``
+    #      with r=1, which collapses to the identity ``s * 1`` and skipped
+    #      the graduation grade's stability bump.
+    #   3. Quantize stability to 4dp / difficulty to 3dp at every schedule
+    #      write site to mirror Anki's per-grade rounding in
+    #      ``rslib/src/storage/card/data.rs:95-98``.
+    assert tt_s == anki_s, f"Graduated stability: TT={tt_s:.6f} vs Anki={anki_s:.6f}"

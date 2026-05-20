@@ -268,6 +268,19 @@ def _next_interval(stability: float, desired_retention: float, decay: float = -0
     return max(1, min(round(interval), 36500))
 
 
+def _quantize_stability(s: float) -> float:
+    # Mirror Anki's per-grade rounding (rslib/src/storage/card/data.rs:95).
+    # Anki stores `cards.data.s` rounded to 4 dp and reads it back on the next
+    # grade; without matching this, TT propagates full f64 precision and drifts
+    # ~1% over a 10-grade learning sequence.
+    return round(s, 4)
+
+
+def _quantize_difficulty(d: float) -> float:
+    # Mirror Anki's per-grade rounding (rslib/src/storage/card/data.rs:98).
+    return round(d, 3)
+
+
 def _init_stability(rating: Rating, w: tuple[float, ...]) -> float:
     return w[rating.value - 1]
 
@@ -456,8 +469,10 @@ def schedule(
             new_lapses = prev.lapses
             new_state = SRSState.REVIEW
 
-    new_stability = max(0.1, new_stability)
-    new_difficulty = max(1.0, min(10.0, new_difficulty))
+    # fsrs-rs S_MIN = 0.001 (fsrs-rs/src/simulation.rs:41); 4dp/3dp rounding
+    # mirrors Anki's per-grade quantization in cards.data.
+    new_stability = _quantize_stability(max(0.001, new_stability))
+    new_difficulty = _quantize_difficulty(max(1.0, min(10.0, new_difficulty)))
     raw_interval = _next_interval(new_stability, params.desired_retention, neg_decay)
     interval = _review_interval_fuzz(raw_interval, prev.anki_card_id, prev.reps, params.maximum_review_interval)
     new_due_at = datetime.combine(review_date + timedelta(days=interval), time(0, 0), tzinfo=UTC)
@@ -526,8 +541,8 @@ def _schedule_new(
     # `_schedule_new` is only called when prev.state == NEW, so the seed
     # branch is unconditional here.
     w = params.weights
-    new_stability = _init_stability(rating, w)
-    new_difficulty = _init_difficulty(rating, w)
+    new_stability = _quantize_stability(_init_stability(rating, w))
+    new_difficulty = _quantize_difficulty(_init_difficulty(rating, w))
 
     # total_remaining = steps left until graduation = total_steps - step_index
     new_left = _pack_left(total_steps - step_index)
@@ -602,6 +617,8 @@ def _schedule_review_again(
         r = _forgetting_curve(elapsed, prev.stability, -params.decay) if prev.stability > 0 else 1.0
         new_stability = _next_stability_lapse(prev.difficulty, prev.stability, r, w)
         new_difficulty = _next_difficulty(prev.difficulty, rating, w)
+    new_stability = _quantize_stability(new_stability)
+    new_difficulty = _quantize_difficulty(new_difficulty)
 
     steps, _ = _get_steps_for_state(SRSState.RELEARNING)
 
@@ -676,8 +693,8 @@ def _schedule_with_steps(
     # deck option only governs card-state transitions, not memory_state itself.
     w = params.weights
     if prev.stability is not None:
-        new_stability = _stability_short_term(prev.stability, rating, params)
-        new_difficulty = _next_difficulty(prev.difficulty, rating, w)
+        new_stability = _quantize_stability(_stability_short_term(prev.stability, rating, params))
+        new_difficulty = _quantize_difficulty(_next_difficulty(prev.difficulty, rating, w))
     else:
         new_stability = prev.stability
         new_difficulty = prev.difficulty
@@ -805,19 +822,17 @@ def _graduate_to_review(
         new_stability = _init_stability(rating, w)
         new_difficulty = _init_difficulty(rating, w)
     else:
-        # Lapse or learning graduation
-        elapsed = 0  # Graduation = fresh start
-        r = _forgetting_curve(elapsed, prev.stability, neg_decay) if prev.stability > 0 else 1.0
+        # Same-day LEARNING/RELEARNING graduation. fsrs-rs `step()` overrides
+        # success/failure with `stability_short_term` whenever `delta_t == 0`
+        # (model.rs:163), regardless of rating. All graduations reached here
+        # are same-day grades on sub-day learning steps.
+        new_stability = _stability_short_term(prev.stability, rating, params)
+        new_difficulty = _next_difficulty(prev.difficulty, rating, w)
 
-        if prev.state == SRSState.RELEARNING:
-            new_stability = _next_stability_lapse(prev.difficulty, prev.stability, r, w)
-            new_difficulty = _next_difficulty(prev.difficulty, rating, w)
-        else:
-            new_stability = _next_stability_recall(prev.difficulty, prev.stability, r, rating, w)
-            new_difficulty = _next_difficulty(prev.difficulty, rating, w)
-
-    new_stability = max(0.1, new_stability)
-    new_difficulty = max(1.0, min(10.0, new_difficulty))
+    # fsrs-rs S_MIN = 0.001 (fsrs-rs/src/simulation.rs:41); 4dp/3dp rounding
+    # mirrors Anki's per-grade quantization in cards.data.
+    new_stability = _quantize_stability(max(0.001, new_stability))
+    new_difficulty = _quantize_difficulty(max(1.0, min(10.0, new_difficulty)))
     raw_interval = _next_interval(new_stability, params.desired_retention, neg_decay)
     interval = _review_interval_fuzz(raw_interval, prev.anki_card_id, prev.reps, params.maximum_review_interval)
     new_due_at = datetime.combine(date.today() + timedelta(days=interval), time(0, 0), tzinfo=UTC)

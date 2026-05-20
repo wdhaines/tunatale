@@ -24,6 +24,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -162,9 +163,71 @@ def _op_set_config(col: Any, op: dict) -> dict:
     return {"ok": True}
 
 
+def _op_answer_card(col: Any, op: dict) -> dict:
+    """Grade a card with the given ease rating (1-4) and return its post-grade state.
+
+    Calls the backend directly to avoid the timer-started requirement of the
+    legacy ``answerCard`` API.
+    """
+    from anki.scheduler_pb2 import CardAnswer
+
+    card_id = op["card_id"]
+    ease = op["rating"]  # 1=AGAIN, 2=HARD, 3=GOOD, 4=EASY
+
+    rating_map = {1: CardAnswer.AGAIN, 2: CardAnswer.HARD, 3: CardAnswer.GOOD, 4: CardAnswer.EASY}
+    rating = rating_map[ease]
+
+    states = col._backend.get_scheduling_states(card_id)
+
+    if rating == CardAnswer.AGAIN:
+        new_state = states.again
+    elif rating == CardAnswer.HARD:
+        new_state = states.hard
+    elif rating == CardAnswer.GOOD:
+        new_state = states.good
+    else:
+        new_state = states.easy
+
+    ans = CardAnswer(
+        card_id=card_id,
+        current_state=states.current,
+        new_state=new_state,
+        rating=rating,
+        answered_at_millis=int(time.time() * 1000),
+        milliseconds_taken=0,
+    )
+    col._backend.answer_card_raw(ans.SerializeToString())
+    # answer_card_raw persists the change; no explicit commit needed.
+    card = col.get_card(card_id)
+    ms = card.memory_state
+    return {
+        "card_id": card_id,
+        "queue": card.queue,
+        "type": card.type,
+        "stability": round(ms.stability, 6) if ms else None,
+        "difficulty": round(ms.difficulty, 6) if ms else None,
+    }
+
+
+def _op_get_card(col: Any, op: dict) -> dict:
+    """Read a card's current state without modifying it."""
+    card_id = op["card_id"]
+    card = col.get_card(card_id)
+    ms = card.memory_state
+    return {
+        "card_id": card_id,
+        "queue": card.queue,
+        "type": card.type,
+        "stability": round(ms.stability, 6) if ms else None,
+        "difficulty": round(ms.difficulty, 6) if ms else None,
+    }
+
+
 _OPERATIONS: dict[str, Any] = {
     "get_queue": _op_get_queue,
     "set_config": _op_set_config,
+    "answer_card": _op_answer_card,
+    "get_card": _op_get_card,
 }
 
 

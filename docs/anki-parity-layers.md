@@ -707,6 +707,39 @@ Empirically verified by dumping `extract_fsrs_relative_retrievability` per card:
 
 ---
 
+## Layer 44 — Graduation stability: 0.1 floor + recall-with-r=1 collapse + missing per-grade quantization
+
+**Trigger.** After heavy learning-step sessions (many AGAINs followed by GOOD graduation), TT's post-graduation stabilities landed at exactly 0.1 while Anki's fsrs-rs returned sub-0.01 values. Surfaced via a "first review card today" head divergence: TT served zmagati (s=0.0024, ingested from Anki via prior sync_pull) while Anki served dotikati se (s=0.0014, TT-side s=0.1). All four mismatched cards had `dirty_fsrs=1` — graded locally after the last sync.
+
+**Three bugs compounded.**
+
+*Bug 1: Stability floor of 0.1.* `schedule()` line 459 and `_graduate_to_review()` line 819 clamped `new_stability = max(0.1, …)`. fsrs-rs uses `S_MIN = 0.001` (`src/simulation.rs:41`). Latent since the initial FSRS port — typical review paths produce stabilities above 0.1, so the floor rarely fired.
+
+*Bug 2: Graduation used recall-with-r=1, which collapses to the identity.* `_graduate_to_review` for non-NEW `prev.state` called `_next_stability_recall(d, s, r=1, GOOD, w)`. With r=1, the formula's `(exp((1-r)·w[10]) - 1)` term is exactly 0, so the function returns `s` unchanged. This skipped the graduation grade's stability bump.
+
+fsrs-rs's `step()` (`model.rs:163`) handles this differently: when `delta_t == 0`, it overrides both `stability_after_success` and `stability_after_failure` with `stability_short_term(s, rating)`. So a same-day GOOD graduation in fsrs-rs multiplies `s` by `max(exp(w[17]·w[18]), 1) ≈ 1.25`. TT's recall path returned `s` unchanged. All `_graduate_to_review` paths reached from `_schedule_new` (EASY on NEW) and `_schedule_with_steps` (GOOD/EASY ending a learning sequence) are same-day grades on sub-day learning steps — every one of them should use short-term.
+
+*Bug 3: Missing per-grade quantization.* Anki rounds `cards.data.{s, d, dr, decay}` to 2-4 decimal places in `convert_to_json` (`rslib/src/storage/card/data.rs:95-105`) and reads the rounded value back on the next grade. TT propagated full f64 precision between grades. Each multiplier in the per-grade short-term sequence (e.g. 0.4501 for AGAIN, 1.2484 for GOOD with default weights) gets a different argument when fed a rounded vs unrounded `s`, so a 10-grade sequence diverged by ~1% even after Bugs 1 and 2 were fixed.
+
+Bug 1 (floor) hid the visible damage of Bug 2 by inflating output to 0.1. Bug 2 obscured Bug 3 — without short-term at graduation, the post-graduation `s` matched TT's pre-graduation `s` regardless of quantization. Each fix exposed the next.
+
+**Fix.**
+1. `app/srs/fsrs.py:459, 819` — replace `max(0.1, …)` with `max(0.001, …)` to match fsrs-rs's `S_MIN`.
+2. `app/srs/fsrs.py:_graduate_to_review` — for non-NEW `prev.state`, call `_stability_short_term(prev.stability, rating, params)` instead of the recall/lapse branches. Mirrors fsrs-rs `model.rs:163`.
+3. `app/srs/fsrs.py` — add `_quantize_stability(s)` (4 dp) and `_quantize_difficulty(d)` (3 dp) helpers, apply at every schedule write site (`_schedule_new`, `_schedule_with_steps` short-term update, `_schedule_review_again`, `schedule()` REVIEW non-AGAIN floor, `_graduate_to_review` floor). Mirrors Anki's `convert_to_json` per-grade rounding.
+
+After all three: `test_parity_graduation_after_many_agains` asserts `tt_s == anki_s` bit-exact (no tolerance).
+
+**Pre-existing test audit.** 4 tests in `test_fsrs_steps.py::TestShortTermAppliesInSteps` asserted `abs(new_dir.stability - _stability_short_term(...)) < 1e-10` against the raw (un-quantized) formula output. Updated to assert against `_quantize_stability(_stability_short_term(...))` with bit-exact equality. No other FSRS test pinned a value shaped by either bug.
+
+**Files.** `backend/app/srs/fsrs.py` (floor + graduation short-term + quantization helpers + 5 call sites), `backend/tests/test_fsrs_steps.py` (4 assertion updates), `backend/tests/test_parity_fsrs_schedule.py` (new test `test_parity_graduation_after_many_agains`), `backend/tests/anki_oracle/oracle.py` (new `answer_card`/`get_card` ops via the backend protobuf path).
+
+**Cross-reference.** Layer 42 (lapse stability ceiling, `077d6a5`) surfaced a similar gap in `_next_stability_lapse` — that was a ceiling on the lapse formula, this is a floor + algorithm choice + quantization on the same-day path. The pattern: both were missing fsrs-rs / Anki branches that only fire at extreme (s, r) combinations missed by the normal review path.
+
+**Pre-Layer checklist note (helpers extended).** This Layer extended `_graduate_to_review` to call `_stability_short_term` (a load-bearing helper from the pre-Layer table in `.claude/rules/anki-queue-parity.md`) and added `_quantize_stability` / `_quantize_difficulty` as new helpers. New schedule write sites must call the quantization helpers; new same-day graduation paths must reuse the short-term call site rather than reimplement.
+
+---
+
 ## Cleanup pass (post-Layer 23)
 
 After 23 layers, swept for dead code and duplication. Behavior unchanged.

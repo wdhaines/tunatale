@@ -569,7 +569,7 @@ class TestShortTermAppliesInSteps:
 
     def test_new_second_grade_applies_short_term(self):
         """After a first grade set stability, second grade applies short-term."""
-        from app.srs.fsrs import _stability_short_term
+        from app.srs.fsrs import _quantize_stability, _stability_short_term
 
         # First grade: NEW + AGAIN
         item = _make_item(state=SRSState.NEW)
@@ -577,16 +577,18 @@ class TestShortTermAppliesInSteps:
         # Second grade: Again on the learning card
         result2 = schedule(result, Rating.AGAIN, direction=Direction.RECOGNITION)
         new_dir = result2.directions[Direction.RECOGNITION]
-        expected = _stability_short_term(
-            result.directions[Direction.RECOGNITION].stability,
-            Rating.AGAIN,
-            DEFAULT_FSRS5_PARAMS,
+        expected = _quantize_stability(
+            _stability_short_term(
+                result.directions[Direction.RECOGNITION].stability,
+                Rating.AGAIN,
+                DEFAULT_FSRS5_PARAMS,
+            )
         )
-        assert abs(new_dir.stability - expected) < 1e-10
+        assert new_dir.stability == expected
 
     def test_learning_again_updates_stability(self):
         """LEARNING + AGAIN with prev.stability=0.5 → short-term updates it."""
-        from app.srs.fsrs import _stability_short_term
+        from app.srs.fsrs import _quantize_stability, _stability_short_term
 
         item = _make_item(state=SRSState.LEARNING, left=2)
         item.directions[Direction.RECOGNITION] = DirectionState(
@@ -600,12 +602,12 @@ class TestShortTermAppliesInSteps:
         )
         result = schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION)
         new_dir = result.directions[Direction.RECOGNITION]
-        expected = _stability_short_term(0.5, Rating.AGAIN, DEFAULT_FSRS5_PARAMS)
-        assert abs(new_dir.stability - expected) < 1e-10
+        expected = _quantize_stability(_stability_short_term(0.5, Rating.AGAIN, DEFAULT_FSRS5_PARAMS))
+        assert new_dir.stability == expected
 
     def test_learning_hard_no_clamp(self):
         """LEARNING + HARD with sinc < 1, rating=2 < 3 → no clamp, stability decreases."""
-        from app.srs.fsrs import _stability_short_term
+        from app.srs.fsrs import _quantize_stability, _stability_short_term
 
         item = _make_item(state=SRSState.LEARNING, left=2)
         item.directions[Direction.RECOGNITION] = DirectionState(
@@ -619,15 +621,15 @@ class TestShortTermAppliesInSteps:
         )
         result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION)
         new_dir = result.directions[Direction.RECOGNITION]
-        expected = _stability_short_term(1.0, Rating.HARD, DEFAULT_FSRS5_PARAMS)
-        assert abs(new_dir.stability - expected) < 1e-10
+        expected = _quantize_stability(_stability_short_term(1.0, Rating.HARD, DEFAULT_FSRS5_PARAMS))
+        assert new_dir.stability == expected
         # HARD with rating=2 < 3, no clamp → stability decreases
         assert new_dir.stability < 1.0
 
     def test_relearning_again_short_term_same_day(self, monkeypatch):
         """REVIEW + AGAIN on same day → short-term applied, not lapse formula."""
         monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([10.0], "default"))
-        from app.srs.fsrs import _stability_short_term
+        from app.srs.fsrs import _quantize_stability, _stability_short_term
 
         now = datetime.now(UTC)
         item = _make_item(state=SRSState.REVIEW)
@@ -642,8 +644,8 @@ class TestShortTermAppliesInSteps:
         )
         result = schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION, now=now)
         new_dir = result.directions[Direction.RECOGNITION]
-        expected = _stability_short_term(2.0, Rating.AGAIN, DEFAULT_FSRS5_PARAMS)
-        assert abs(new_dir.stability - expected) < 1e-10
+        expected = _quantize_stability(_stability_short_term(2.0, Rating.AGAIN, DEFAULT_FSRS5_PARAMS))
+        assert new_dir.stability == expected
 
     def test_relearning_again_lapse_multi_day(self, monkeypatch):
         """REVIEW + AGAIN on multi-day gap → lapse formula, not short-term."""
