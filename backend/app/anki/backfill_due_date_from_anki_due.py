@@ -55,13 +55,13 @@ def repair_due_dates(tt_db_path: Path, anki_col_path: Path, *, dry_run: bool = F
             mismatched: list[tuple[int, str, str, str]] = []
             for r in rows:
                 a = anki.execute(
-                    "SELECT queue, due FROM cards WHERE id = ?",
+                    "SELECT queue, due, type FROM cards WHERE id = ?",
                     (r["anki_card_id"],),
                 ).fetchone()
                 if a is None:
                     continue
-                queue, due_raw = a[0], a[1]
-                expected = compute_due_at(queue, due_raw, col_crt)
+                queue, due_raw, card_type = a[0], a[1], a[2] or 0
+                expected = compute_due_at(queue, due_raw, col_crt, card_type=card_type)
                 if expected.isoformat() != r["due_at"]:
                     mismatched.append((r["collocation_id"], r["direction"], r["due_at"], expected.isoformat()))
 

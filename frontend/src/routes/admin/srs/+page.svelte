@@ -189,6 +189,18 @@
 
 	const totalPages = $derived(Math.max(1, Math.ceil(total / PAGE_SIZE)));
 
+	function formatDue(iso: string | null | undefined): string {
+		if (!iso) return '';
+		const d = new Date(iso);
+		if (isNaN(d.getTime())) return iso;
+		return d.toLocaleDateString(undefined, {
+			year: 'numeric',
+			month: 'short',
+			day: 'numeric',
+			timeZone: 'UTC',
+		});
+	}
+
 	onMount(() => {
 		loadItems();
 		loadClozeSetting();
@@ -243,11 +255,11 @@
 			<span class="col-check">
 				<input type="checkbox" checked={selected.size === items.length && items.length > 0} onchange={toggleSelectAll} />
 			</span>
-			<button class="col-text sort-btn" onclick={() => setSort('text')}>text{sortIndicator('text')}</button>
-			<button class="col-trans sort-btn" onclick={() => setSort('translation')}>translation{sortIndicator('translation')}</button>
-			<button class="col-state sort-btn" onclick={() => setSort('state')}>state{sortIndicator('state')}</button>
-			<button class="col-due sort-btn" onclick={() => setSort('due_at')}>due{sortIndicator('due_at')}</button>
-			<button class="col-reps sort-btn" onclick={() => setSort('reps')}>reps{sortIndicator('reps')}</button>
+			<span class="col-text"><button class="sort-btn" onclick={() => setSort('text')}>text{sortIndicator('text')}</button></span>
+			<span class="col-trans"><button class="sort-btn" onclick={() => setSort('translation')}>translation{sortIndicator('translation')}</button></span>
+			<span class="col-state"><button class="sort-btn" onclick={() => setSort('state')}>state{sortIndicator('state')}</button></span>
+			<span class="col-due"><button class="sort-btn" onclick={() => setSort('due_at')}>due{sortIndicator('due_at')}</button></span>
+			<span class="col-reps"><button class="sort-btn" onclick={() => setSort('reps')}>reps{sortIndicator('reps')}</button></span>
 			<span class="col-actions">actions</span>
 		</div>
 
@@ -263,7 +275,7 @@
 						<input class="col-text" bind:value={editText} />
 						<input class="col-trans" bind:value={editTranslation} />
 						<span class="col-state">{item.state}</span>
-						<span class="col-due">{item.due_at}</span>
+						<span class="col-due">{formatDue(item.due_at)}</span>
 						<span class="col-reps">{item.reps}</span>
 						<span class="col-actions">
 							<button onclick={() => saveEdit(item.id)}>Save</button>
@@ -278,7 +290,7 @@
 						<span class="col-text">{item.text}</span>
 						<span class="col-trans">{item.translation}</span>
 						<span class="col-state state-{item.state}">{item.state}</span>
-						<span class="col-due">{item.due_at}</span>
+						<span class="col-due">{formatDue(item.due_at)}</span>
 						<span class="col-reps">{item.reps}</span>
 						<span class="col-actions">
 							<button onclick={() => startEdit(item)}>Edit</button>
@@ -401,14 +413,22 @@
 		color: var(--color-muted);
 	}
 	.table-wrap {
+		display: grid;
+		grid-template-columns: 2rem 1fr 1fr 7rem 7rem 4rem auto;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius);
 		overflow: hidden;
 		background: #fff;
 	}
+	.table-wrap > p {
+		grid-column: 1 / -1;
+		margin: 0;
+		padding: 0.5rem 0.75rem;
+	}
 	.row {
 		display: grid;
-		grid-template-columns: 2rem 1fr 1fr 7rem 7rem 4rem auto;
+		grid-template-columns: subgrid;
+		grid-column: 1 / -1;
 		align-items: center;
 		gap: 0.5rem;
 		padding: 0.5rem 0.75rem;
@@ -426,19 +446,27 @@
 		background: #fffde7;
 	}
 	.sort-btn {
+		appearance: none;
 		background: none;
 		border: none;
 		padding: 0;
+		margin: 0;
+		font: inherit;
 		font-weight: 600;
 		font-size: 0.85rem;
 		cursor: pointer;
 		text-align: left;
+		color: inherit;
+		display: block;
+		width: 100%;
 	}
+	.row.header .col-actions { justify-self: start; }
 	.col-check { justify-self: center; }
 	.col-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }
 	.col-text, .col-trans { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; }
 	.col-state { font-size: 0.8rem; }
 	.col-due, .col-reps { font-size: 0.8rem; color: var(--color-muted); }
+	.col-due { white-space: nowrap; }
 	.state-suspended { color: var(--color-muted); font-style: italic; }
 	.state-review { color: var(--color-success); }
 	.state-learning, .state-relearning { color: var(--color-warning); }
@@ -476,6 +504,11 @@
 		input[type='search'] {
 			min-width: unset;
 			flex: 1;
+		}
+
+		/* Drop shared grid on mobile so rows render as cards */
+		.table-wrap {
+			display: block;
 		}
 
 		/* Hide column header row — not meaningful in card layout */

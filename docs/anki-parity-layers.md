@@ -795,3 +795,29 @@ This is the col-day computation, matching Anki's `extract_fsrs_retrievability` f
 - 3 hardcoded date assertions updated in `test_anki_sqlite_reader.py` that used the old wrong formula.
 
 **Files.** `backend/app/anki/sqlite_reader.py:265-297` (`_compute_last_review` rewrite), `backend/app/srs/fsrs.py:128-158` (`_elapsed_days_for_fsrs` col-day branch), `backend/app/srs/queue_stats.py` (`refresh_col_crt`/`resolve_col_crt` trio), `backend/app/api/anki.py` (sync wiring), `backend/app/api/srs.py` (col_crt threaded through entry points). Tests: `backend/tests/test_fsrs.py` (3 unit tests), `backend/tests/test_anki_sqlite_reader.py` (1 regression + 3 date fixes), `backend/tests/test_parity_fsrs_schedule.py` (1 oracle test refactored).
+
+## Layer 46 — `compute_due_at` preserves underlying due through bury/suspend
+
+**Trigger.** Morning of 2026-05-20: TT badge `30 + 7 + 205` vs Anki `30 + 7 + 196`. New/learning identical, review off by 9. No grades today on either side; last sync was 5/19 22:25 EDT. Forensics traced 22 TT directions whose `due_at=2026-05-19T04:00:00Z` while their `anki_due=4522` (= 2026-05-23). Same row, internally inconsistent.
+
+**Root cause.** `compute_due_at(queue, due_raw, col_crt)` in `app/anki/sqlite_reader.py` only branched on `queue` and treated everything outside `{1, 2, 3}` as "today at 04:00 UTC", discarding `due_raw`. Anki preserves `cards.due` through bury and suspend — only `cards.queue` flips. When `sync_pull` read these 22 sibling-buried review cards (queue=-2, due=4522 from Monday's last grade), `compute_due_at` returned `today` instead of `2026-05-23`. The merge wrote inconsistent `due_at` / `anki_due` to the same row. The daily unbury sweep (Layer 27/35) then flipped state `buried→review` without touching `due_at`, surfacing 22 stale-due cards in today's review badge.
+
+**Mechanism reconstructed:**
+1. Monday: card graded in Anki → `cards.due = today + ivl`, queue=2.
+2. Tuesday evening: sibling graded in Anki → this card sibling-buried, `queue=-2`, **`due` preserved**, `mod` bumped.
+3. Tuesday 10:25 PM: TT `sync_pull` runs `compute_due_at(-2, 4522, col_crt)` → returns "today at 04:00" (= 5/19), then `parse_fsrs_data` writes `due_at=5/19` while `anki_due=4522` (set separately from `due_raw`).
+4. Wednesday 11:35 AM: `unbury_if_needed` sweeps `state='buried' AND bury_kind='sched'` → `state='review'` (reps>0). `due_at` untouched.
+5. Wednesday morning badge: 22 ghost-due directions inflate today's count.
+
+**Fix.** Add `card_type` parameter to `compute_due_at`. When `queue ∈ {-1, -2, -3}`, dispatch via `card_type` (the card's *underlying* type — 0=new, 1=learn, 2=review, 3=relearn) to the matching positive-queue branch. `card_type=2` → days-since-crt; `card_type=1` → unix timestamp; `card_type=3` → days-since-crt; `card_type=0` → fall back to today (genuinely-new card buried before first grade). `queue=0` semantics unchanged. Backward-compatible default `card_type=0` preserves the existing fallback behavior for callers that haven't been updated yet.
+
+**Verification.**
+- `test_queue_minus_2_buried_review_preserves_due` / `_minus_3_` / `_minus_1_suspended_review_preserves_due` — unit tests for the dispatch table.
+- `test_queue_minus_2_buried_learning_preserves_due` — confirms unix-timestamp dispatch for card_type=1.
+- `test_queue_minus_2_buried_relearning_preserves_due` — confirms days-since-crt dispatch for card_type=3.
+- `test_queue_minus_2_buried_new_falls_back` — confirms new-card path still falls back.
+- `test_buried_review_card_preserves_due_at_through_fetch` — end-to-end via `fetch_cards_for_notes` against a minimal Anki DB.
+
+**Cleanup path for live data.** The existing `backfill_due_date_from_anki_due` migration now sees buried-state rows (was already included in its `state IN (...)` filter) and rewrites them correctly with the new `card_type`-aware `compute_due_at`. One `uv run python -m app.anki.backfill_due_date_from_anki_due` pass will repair the 22 stuck directions in the user's TT db.
+
+**Files.** `backend/app/anki/sqlite_reader.py:40-67` (`compute_due_at` rewrite + signature), `backend/app/anki/sqlite_reader.py:188` (`parse_fsrs_data` passes `card_type`), `backend/app/anki/backfill_due_date_from_anki_due.py:57-64` (migration script reads/passes `cards.type`). Tests: `backend/tests/test_anki_sqlite_reader.py` (6 unit + 1 integration test).

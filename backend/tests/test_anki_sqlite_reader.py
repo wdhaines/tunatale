@@ -64,8 +64,55 @@ class TestComputeDueAt:
         assert result == expected
 
     def test_queue_minus_1_suspended(self):
-        """queue -1: suspended, fall back to today at 04:00 UTC."""
+        """queue -1 with no card_type (defaults to 0/new): today at 04:00 UTC."""
         result = compute_due_at(queue=-1, due_raw=0, col_crt=0)
+        expected = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        assert result == expected
+
+    def test_queue_minus_2_buried_review_preserves_due(self):
+        """Layer 44: sibling-buried review card (queue=-2, card_type=2).
+
+        Anki preserves cards.due (days-since-crt) when a card is buried; only
+        cards.queue flips. Without dispatching on card_type, compute_due_at
+        discards due_raw and returns "today at 04:00", which silently leaks
+        into TT after the daily unbury sweep flips state back to review.
+        """
+        col_crt = 1388836800  # 2014-01-04 UTC
+        result = compute_due_at(queue=-2, due_raw=4522, col_crt=col_crt, card_type=2)
+        expected = datetime(2026, 5, 23, 4, 0, tzinfo=UTC)
+        assert result == expected
+
+    def test_queue_minus_3_buried_review_preserves_due(self):
+        """Sched-buried review card (queue=-3, card_type=2) preserves due."""
+        col_crt = 1388836800
+        result = compute_due_at(queue=-3, due_raw=4522, col_crt=col_crt, card_type=2)
+        expected = datetime(2026, 5, 23, 4, 0, tzinfo=UTC)
+        assert result == expected
+
+    def test_queue_minus_1_suspended_review_preserves_due(self):
+        """Suspended review card (queue=-1, card_type=2) preserves due."""
+        col_crt = 1388836800
+        result = compute_due_at(queue=-1, due_raw=4522, col_crt=col_crt, card_type=2)
+        expected = datetime(2026, 5, 23, 4, 0, tzinfo=UTC)
+        assert result == expected
+
+    def test_queue_minus_2_buried_learning_preserves_due(self):
+        """Buried learning card (queue=-2, card_type=1): due_raw is a unix timestamp."""
+        due_raw = 1777999998
+        result = compute_due_at(queue=-2, due_raw=due_raw, col_crt=0, card_type=1)
+        expected = datetime.fromtimestamp(due_raw, tz=UTC)
+        assert result == expected
+
+    def test_queue_minus_2_buried_relearning_preserves_due(self):
+        """Buried day-relearning card (queue=-2, card_type=3): days-since-crt."""
+        col_crt = 1388836800
+        result = compute_due_at(queue=-2, due_raw=4522, col_crt=col_crt, card_type=3)
+        expected = datetime(2026, 5, 23, 4, 0, tzinfo=UTC)
+        assert result == expected
+
+    def test_queue_minus_2_buried_new_falls_back(self):
+        """Buried new card (queue=-2, card_type=0): due_raw is a position, fall back."""
+        result = compute_due_at(queue=-2, due_raw=999, col_crt=0, card_type=0)
         expected = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
         assert result == expected
 
@@ -948,3 +995,31 @@ class TestLeftAndDueAtFromCards:
             hour=4, minute=0, second=0, microsecond=0
         )
         assert state.due_at == expected
+
+    def test_buried_review_card_preserves_due_at_through_fetch(self, tmp_path):
+        """Layer 44 end-to-end: queue=-2 with card_type=2 (sibling-buried review)
+        must surface the underlying days-since-crt due, not today's date.
+
+        Reproduces the May 2026 incident where 22 cards were sibling-buried in
+        Anki, sync_pull mapped them to state='buried' with due_at = sync-day,
+        then the daily unbury sweep released them as state='review' with the
+        stale "today" due_at. They then inflated TT's review-due badge.
+        """
+        # type=2 means review-card type (the "underlying" state before bury).
+        # queue=-2 (sibling-buried), due=50 days since col_crt=2024-01-01.
+        db_path = self._make_db(
+            tmp_path,
+            [(5, 1005, 12345, 0, -2, 8, 1, '{"s": 50.0, "d": 4.0}', 50, 10, 0, 2)],
+        )
+        conn = sqlite3.connect(db_path)
+        cards = fetch_cards_for_notes(conn, [1005])
+        conn.close()
+        assert len(cards) == 1
+        state = cards[0].fsrs_state
+        assert state.state == SRSState.BURIED
+        expected = datetime.fromtimestamp(1704067200 + 50 * 86400, tz=UTC).replace(
+            hour=4, minute=0, second=0, microsecond=0
+        )
+        assert state.due_at == expected, (
+            f"buried review card lost underlying due: got {state.due_at}, expected {expected}"
+        )

@@ -82,6 +82,21 @@ describe("admin/srs/+page.svelte", () => {
     expect(await findByText("hvala")).toBeTruthy();
   });
 
+  it("formats due_at as a short human-readable date (no raw ISO)", async () => {
+    mockList.mockResolvedValue({
+      items: [
+        makeSRSItemDetail({ id: 1, text: "Bog", due_at: "2026-09-15T04:00:00+00:00" }),
+      ],
+      total: 1,
+    });
+    const { findByText, queryByText } = render(AdminSRSPage);
+    await findByText("Bog");
+    // Raw ISO must NOT appear in the rendered output
+    expect(queryByText(/2026-09-15T04:00:00/)).toBeFalsy();
+    // A short formatted date should appear (e.g. "Sep 15, 2026" in en-US)
+    expect(await findByText(/Sep\s*1[45],?\s*2026/)).toBeTruthy();
+  });
+
   it("typing in search re-queries after debounce", async () => {
     mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: "zdravo" })], total: 1 });
     const { getByPlaceholderText } = render(AdminSRSPage);

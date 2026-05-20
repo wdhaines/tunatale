@@ -37,23 +37,38 @@ class AnkiCard:
     mod: int = 0  # Anki's cards.mod — needed for fnvhash(id, mod) sort tiebreak
 
 
-def compute_due_at(queue: int, due_raw: int, col_crt: int) -> datetime:
+def compute_due_at(queue: int, due_raw: int, col_crt: int, card_type: int = 0) -> datetime:
     """Convert Anki's queue-dependent due field to a UTC datetime.
 
     queue 2/3 (review/day-learn): due_raw is days since col.crt epoch → midnight UTC.
     queue 1 (learning): due_raw is an absolute unix timestamp (seconds).
-    queue 0 (new) or -1 (suspended): due_raw is a queue position → today at 04:00 UTC.
+    queue 0 (new): due_raw is a queue position → today at 04:00 UTC.
+
+    queue -1/-2/-3 (suspended/buried): Anki preserves cards.due through bury and
+    suspend; only the queue flips. We dispatch on ``card_type`` (the card's
+    underlying type — 0=new, 1=learn, 2=review, 3=relearn) so the underlying due
+    survives a sync round-trip. Without this, the daily unbury sweep would flip
+    state back to review with a stale "today" due_at (Layer 44, 2026-05-20).
 
     Database corruption: some queue=2/3 cards have Unix timestamps in due_raw
     instead of days since col.crt. Detect this by checking if the value is too large
     to be days since col.crt (i.e., it's a Unix timestamp).
     """
-    if queue in (2, 3):
+    effective_queue = queue
+    if queue in (-1, -2, -3):
+        if card_type == 2:
+            effective_queue = 2
+        elif card_type == 3:
+            effective_queue = 3
+        elif card_type == 1:
+            effective_queue = 1
+
+    if effective_queue in (2, 3):
         if due_raw > 1000000000:
             return datetime.fromtimestamp(due_raw, tz=UTC)
         due_date = datetime.fromtimestamp(col_crt, tz=UTC).date() + timedelta(days=due_raw)
         return datetime.combine(due_date, time(4, 0), tzinfo=UTC)
-    if queue == 1:
+    if effective_queue == 1:
         return datetime.fromtimestamp(due_raw, tz=UTC)
     return datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
 
@@ -185,7 +200,7 @@ def parse_fsrs_data(
     """Parse FSRS state from cards.data JSON. Falls back to NEW on missing/malformed data."""
 
     direction = Direction.RECOGNITION if ord == 0 else Direction.PRODUCTION
-    due_at = compute_due_at(queue, due_raw, col_crt)
+    due_at = compute_due_at(queue, due_raw, col_crt, card_type=card_type)
 
     # Compute last_review for review/relearning queues
     # BUT: if reps=0, the card is NEW regardless of queue, so last_review must be None
