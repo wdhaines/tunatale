@@ -65,6 +65,9 @@ class FakeReader:
     def get_note_records(self):
         return []
 
+    def get_revlog_for_card(self, card_id: int, after_ms: int = 0) -> list:
+        return []
+
 
 @pytest.mark.asyncio
 async def test_user_add_to_anki_e2e():

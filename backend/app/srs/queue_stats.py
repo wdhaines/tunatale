@@ -517,6 +517,42 @@ def resolve_bury_review(db: SRSDatabase | None = None) -> tuple[bool, str]:
     return (_DEFAULT_BURY_REVIEW, "default")
 
 
+def refresh_col_crt(db: SRSDatabase, conn: sqlite3.Connection) -> None:
+    """Read ``col.crt`` from collection.anki2 and write it to ``anki_state_cache``.
+
+    Used by Layer 45's col-day-aware elapsed calculation so request handlers
+    don't open ``collection.anki2``.
+    """
+    try:
+        row = conn.execute("SELECT crt FROM col LIMIT 1").fetchone()
+        if row:
+            db.set_anki_state_cache("col_crt", str(row[0]))
+    except sqlite3.Error:  # pragma: no cover - defensive
+        pass
+
+
+def resolve_col_crt(db: SRSDatabase | None = None) -> int | None:
+    """Return the cached ``col.crt`` (epoch seconds), or *None* if unavailable.
+
+    Pre-sync (no cache entry) or a corrupt value falls through to *None*;
+    callers must accept the UTC-date fallback.
+    """
+    if db is None:  # pragma: no cover - convenience for ad-hoc scripts
+        try:
+            from app.srs.database import SRSDatabase as _SRSDatabase
+
+            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        except Exception:
+            return None
+    row = db.get_anki_state_cache("col_crt")
+    if row is None:
+        return None
+    try:
+        return int(row[0])
+    except (ValueError, TypeError):  # pragma: no cover - defensive
+        return None
+
+
 _LEARNING_CUTOFF_KEY = "learning_cutoff"
 
 

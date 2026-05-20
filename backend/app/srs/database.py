@@ -10,6 +10,7 @@ Supports ":memory:" for in-memory test databases.
 from __future__ import annotations
 
 import sqlite3
+import time as _time
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
@@ -19,6 +20,7 @@ from app.common.guid import compute_guid
 from app.models.srs_item import (
     Direction,
     DirectionState,
+    RevlogRow,
     SRSItem,
     SRSState,
 )
@@ -531,6 +533,12 @@ class SRSDatabase:
                 return None
             return self._row_to_item(conn, row)
 
+    def get_collocation_id_by_guid(self, guid: str) -> int | None:
+        """Return the collocation row id for a guid, or None."""
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT id FROM collocations WHERE guid = ?", (guid,)).fetchone()
+            return row[0] if row else None
+
     def get_collocation_by_anki_note_id(self, anki_note_id: int) -> SRSItem | None:
         with self._get_conn() as conn:
             row = conn.execute("SELECT * FROM collocations WHERE anki_note_id = ? LIMIT 1", (anki_note_id,)).fetchone()
@@ -936,8 +944,7 @@ class SRSDatabase:
     ) -> None:
         """Set state to LEARNING with today's due_at and a fresh last_review.
 
-        This is NOT an FSRS grade event — no revlog row is written. The caller
-        is responsible for ensuring the collocation exists.
+        The caller is responsible for ensuring the collocation exists.
 
         Note: `left` is left as NULL, so sync_push routes to
         set_due_date (the new/review branch at sync.py:1219), not to
@@ -970,6 +977,23 @@ class SRSDatabase:
                 (row_id,),
             )
             self._commit(conn)
+        # Stage 0: write Manual revlog row
+        anki_id = None
+        if direction is None:
+            for d in Direction:
+                row = self._get_anki_card_id_for_direction(row_id, d)
+                self.append_manual_revlog(row_id, d, anki_card_id=row)
+        else:
+            anki_id = self._get_anki_card_id_for_direction(row_id, direction)
+            self.append_manual_revlog(row_id, direction, anki_card_id=anki_id)
+
+    def _get_anki_card_id_for_direction(self, collocation_id: int, direction: Direction) -> int | None:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT anki_card_id FROM collocation_directions WHERE collocation_id = ? AND direction = ?",
+                (collocation_id, direction.value),
+            ).fetchone()
+            return row["anki_card_id"] if row else None
 
     def set_suspended(
         self,
@@ -1927,3 +1951,69 @@ class SRSDatabase:
                 (row["guid"], row["anki_note_id"], row["dirty_fields"], self._row_to_item(conn, row), row["id"])
                 for row in rows
             ]
+
+    # ── tt_revlog helpers (Stage 0: event-sync migration) ──────────────
+
+    def append_revlog(self, row: RevlogRow) -> None:
+        """Insert a tt_revlog row (idempotent via INSERT OR IGNORE)."""
+        with self._get_conn() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO tt_revlog
+                    (id, collocation_id, direction, button_chosen, interval,
+                     last_interval, factor, taken_millis, review_kind, anki_card_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row.id,
+                    row.collocation_id,
+                    row.direction.value,
+                    row.button_chosen,
+                    row.interval,
+                    row.last_interval,
+                    row.factor,
+                    row.taken_millis,
+                    row.review_kind,
+                    row.anki_card_id,
+                ),
+            )
+            self._commit(conn)
+
+    def latest_revlog_id_for_card(self, anki_card_id: int) -> int | None:
+        """Return MAX(id) from tt_revlog for the given Anki card, or None."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT MAX(id) FROM tt_revlog WHERE anki_card_id = ?",
+                (anki_card_id,),
+            ).fetchone()
+            return row[0] if row and row[0] is not None else None
+
+    def append_manual_revlog(
+        self,
+        collocation_id: int,
+        direction: Direction | None = None,
+        *,
+        anki_card_id: int | None = None,
+    ) -> None:
+        """Write one or two review_kind=4 (Manual) tt_revlog rows.
+
+        Used by promote_to_learning and similar admin operations that mutate
+        state without going through ``schedule()``.
+        """
+        now_ms = int(_time.time() * 1000)
+        dirs = [direction] if direction is not None else list(Direction)
+        for d in dirs:
+            self.append_revlog(
+                RevlogRow(
+                    id=now_ms,
+                    collocation_id=collocation_id,
+                    direction=d,
+                    button_chosen=0,
+                    interval=0,
+                    last_interval=0,
+                    factor=0,
+                    taken_millis=0,
+                    review_kind=4,
+                    anki_card_id=anki_card_id,
+                )
+            )

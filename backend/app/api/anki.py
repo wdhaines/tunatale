@@ -89,6 +89,7 @@ async def trigger_sync(request: Request, dry_run: bool = False):
 
             if not dry_run:
                 from app.srs.queue_stats import (
+                    refresh_col_crt,
                     refresh_daily_new_cap,
                     refresh_daily_review_cap,
                     refresh_desired_retention,
@@ -98,6 +99,7 @@ async def trigger_sync(request: Request, dry_run: bool = False):
                     refresh_review_settings,
                 )
 
+                refresh_col_crt(db, ctx.conn)
                 refresh_daily_new_cap(db, ctx.conn, settings.anki_deck_name)
                 refresh_daily_review_cap(db, ctx.conn, settings.anki_deck_name)
                 refresh_desired_retention(db, ctx.conn, settings.anki_deck_name)

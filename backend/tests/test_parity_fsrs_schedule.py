@@ -1,4 +1,6 @@
-"""FSRS scheduling parity (Phase 2.2.1, layer cluster: 6, 11, 15, 38, 40).
+"""FSRS scheduling parity (Phase 2.2.1, layer cluster: 6, 11, 15, 38, 40, 45).
+
+Layer 45: day-level elapsed must use col-day computation, not UTC date.
 
 Pins TT's FSRS next-state computations against Anki's V3Scheduler ground truth.
 For a review card with a known (stability, difficulty, last_review) state, Anki
@@ -35,6 +37,7 @@ formula switch that earlier test attempts mistook for a TT bug.
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
 
 import pytest
 
@@ -313,3 +316,63 @@ def test_parity_graduation_after_many_agains(synthetic_collection: SyntheticColl
     #      write site to mirror Anki's per-grade rounding in
     #      ``rslib/src/storage/card/data.rs:95-98``.
     assert tt_s == anki_s, f"Graduated stability: TT={tt_s:.6f} vs Anki={anki_s:.6f}"
+
+
+@pytest.mark.oracle
+def test_parity_day_level_elapsed_matches_anki(synthetic_collection: SyntheticCollection) -> None:
+    """Day-level elapsed uses col-day computation, matching Anki's (Layer 45).
+
+    Seeds a review card without ``lrt`` in ``cards.data`` (omit
+    ``last_review_secs``) so Anki falls back to ``today - (due - ivl)``.
+    TT's ``_elapsed_days_for_fsrs`` must produce the exact same integer
+    when ``col_crt`` is provided.
+    """
+    from app.anki.protobuf_wire import compute_anki_day_index
+    from app.srs.fsrs import _elapsed_days_for_fsrs
+
+    col_crt = -572400
+    synthetic_collection.col_crt = col_crt
+    synthetic_collection.enable_fsrs(
+        weights=DEFAULT_FSRS5_PARAMS.weights,
+        retention=DEFAULT_DESIRED_RETENTION,
+    )
+
+    review_dt = datetime(2026, 4, 11, 0, 0, 0, tzinfo=UTC)
+    review_col_day = compute_anki_day_index(col_crt, 4, review_dt)
+
+    # Card without lrt → day-level fallback: today_col_day - (due - ivl)
+    synthetic_collection.add_note(id=1001, guid="g-day-level", fields=["f", "b"])
+    synthetic_collection.add_card(
+        id=10010,
+        note_id=1001,
+        ord=0,
+        type=2,
+        queue=2,
+        due=review_col_day,
+        ivl=0,
+        reps=5,
+        stability=10.0,
+        difficulty=4.0,
+    )
+    synthetic_collection.save()
+
+    result = run_oracle(
+        synthetic_collection.path,
+        [{"op": "get_queue", "deck_id": 1, "fetch_limit": 50}],
+    )
+    raw = result.raw()
+    queue_key = [k for k in raw if k.startswith("get_queue_")][0]
+    cards = raw[queue_key]["cards"]
+    assert len(cards) >= 1
+
+    anki_card = cards[0]
+    anki_elapsed = anki_card["states"]["current"]["elapsed_days"]
+
+    ref_now = datetime.now(tz=UTC)
+    tt_elapsed = _elapsed_days_for_fsrs(review_dt, ref_now, col_crt=col_crt)
+
+    assert anki_elapsed == tt_elapsed, (
+        f"elapsed_days mismatch: Anki={anki_elapsed} vs TT={tt_elapsed}\n"
+        f"  review_col_day={review_col_day}, col_crt={col_crt}\n"
+        f"  ref_now={ref_now}, review_dt={review_dt}"
+    )

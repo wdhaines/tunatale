@@ -250,6 +250,66 @@ class TestElapsedDaysForFsrs:
         now2 = _dt(2026, 5, 18, 15, 0, 1, tzinfo=UTC)
         assert _elapsed_days_for_fsrs(last2, now2) == 7.625
 
+    def test_midnight_datetime_col_day_rollover_crossing(self):
+        """Day-level branch with col_crt crosses a 4am-local rollover boundary.
+
+        When col_crt=-572400, the Anki col-day boundary is at 05:00 UTC.
+        A midnight-UTC last_review falls before the day's boundary.
+        Between May 20 01:00 UTC (before boundary) and May 20 09:00 UTC
+        (after boundary), the col day advances by 1 even though the UTC
+        calendar date stays the same. The col-day-aware computation must
+        reflect this extra day; the old UTC-date code cannot.
+        """
+        from datetime import datetime as _dt
+
+        from app.srs.fsrs import _elapsed_days_for_fsrs
+
+        last = _dt(2026, 4, 11, 0, 0, 0, tzinfo=UTC)
+        col_crt = -572400
+        rollover = 4
+
+        # Before 05:00 UTC boundary — col day 20599 (same as May 19's col day)
+        now_before = _dt(2026, 5, 20, 1, 0, 0, tzinfo=UTC)
+        assert _elapsed_days_for_fsrs(last, now_before, col_crt=col_crt, rollover_hour=rollover) == 39
+        # Old code (no col_crt) also gives 39
+        assert _elapsed_days_for_fsrs(last, now_before) == 39
+
+        # After 05:00 UTC boundary — col day 20600 (May 20's col day)
+        now_after = _dt(2026, 5, 20, 9, 0, 0, tzinfo=UTC)
+        assert _elapsed_days_for_fsrs(last, now_after, col_crt=col_crt, rollover_hour=rollover) == 40
+        # Old code (no col_crt) still gives 39 — the divergence this fix addresses
+        assert _elapsed_days_for_fsrs(last, now_after) == 39
+
+    def test_midnight_datetime_col_day_same_as_utc_when_boundary_not_crossed(self):
+        """When both timestamps are before or after the col-day boundary,
+        the col-day elapsed matches the UTC-date elapsed.
+
+        With boundary at 05:00 UTC: midnight belongs to the previous col day,
+        and any time before 05:00 UTC shares that same col day.
+        """
+        from datetime import datetime as _dt
+
+        from app.srs.fsrs import _elapsed_days_for_fsrs
+
+        # last at midnight, now at 01:00 on same day → both before 05:00 boundary
+        last = _dt(2026, 4, 11, 0, 0, 0, tzinfo=UTC)
+        now = _dt(2026, 4, 11, 1, 0, 0, tzinfo=UTC)
+        assert _elapsed_days_for_fsrs(last, now, col_crt=-572400, rollover_hour=4) == 0
+        assert _elapsed_days_for_fsrs(last, now) == 0
+
+    def test_midnight_datetime_col_day_fallback_to_utc_when_col_crt_none(self):
+        """When col_crt is None, falls back to UTC date subtraction."""
+        from datetime import datetime as _dt
+
+        from app.srs.fsrs import _elapsed_days_for_fsrs
+
+        last = _dt(2026, 4, 11, 0, 0, 0, tzinfo=UTC)
+        now = _dt(2026, 5, 20, 9, 0, 0, tzinfo=UTC)
+        # col_crt=None → old UTC-date behavior
+        assert _elapsed_days_for_fsrs(last, now, col_crt=None) == 39
+        # same as calling without col_crt
+        assert _elapsed_days_for_fsrs(last, now) == 39
+
 
 class TestDifficultyAdjustment:
     """Tests for FSRS difficulty adjustment logic."""
@@ -465,3 +525,152 @@ class TestShortTermStability:
         # rating=3 >= 3, so clamp: sinc = max(0.114, 1.0) = 1.0
         new_s = _stability_short_term(2.0, Rating.GOOD, params)
         assert abs(new_s - 2.0) < 1e-10  # clamped to last_s
+
+
+class TestBuildRevlogRow:
+    """Tests for build_revlog_row and the _compute_* helpers it calls."""
+
+    def test_review_review_kind_1(self):
+        """REVIEW→REVIEW transition returns kind=1."""
+        from app.srs.fsrs import _compute_review_kind
+
+        assert _compute_review_kind(SRSState.REVIEW, SRSState.REVIEW) == 1
+
+    def test_relearning_review_kind_2(self):
+        """→RELEARNING returns kind=2 (line 879)."""
+        from app.srs.fsrs import _compute_review_kind
+
+        assert _compute_review_kind(SRSState.REVIEW, SRSState.RELEARNING) == 2
+
+    def test_learning_to_learning_review_kind_0(self):
+        """LEARNING→LEARNING returns kind=0 (line 883)."""
+        from app.srs.fsrs import _compute_review_kind
+
+        assert _compute_review_kind(SRSState.LEARNING, SRSState.LEARNING) == 0
+        assert _compute_review_kind(SRSState.RELEARNING, SRSState.LEARNING) == 0
+
+    def test_fallback_review_kind_1(self):
+        """Non-standard state transitions fall through to return 1 (line 886)."""
+        from app.srs.fsrs import _compute_review_kind
+
+        assert _compute_review_kind(SRSState.NEW, SRSState.SUSPENDED) == 1
+        assert _compute_review_kind(SRSState.REVIEW, SRSState.BURIED) == 1
+
+    def test_new_to_review_kind_1(self):
+        """NEW→REVIEW returns kind=1."""
+        from app.srs.fsrs import _compute_review_kind
+
+        assert _compute_review_kind(SRSState.NEW, SRSState.REVIEW) == 1
+
+    def test_new_to_learning_kind_0(self):
+        """→LEARNING returns kind=0."""
+        from app.srs.fsrs import _compute_review_kind
+
+        assert _compute_review_kind(SRSState.NEW, SRSState.LEARNING) == 0
+
+    def test_compute_revlog_interval_learning(self):
+        """Learning intervals are negative seconds."""
+        from app.srs.fsrs import _compute_revlog_interval
+
+        now = datetime(2026, 5, 19, tzinfo=UTC)
+        prev_dir = DirectionState(direction=Direction.RECOGNITION, state=SRSState.NEW, due_at=now)
+        new_dir = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.LEARNING, due_at=now + timedelta(minutes=10)
+        )
+        interval = _compute_revlog_interval(SRSState.NEW, new_dir, prev_dir, now)
+        assert interval < 0  # negative for learning
+        assert interval == -600  # 10 minutes * 60 seconds
+
+    def test_compute_revlog_interval_review(self):
+        """Review intervals are positive days (span between last_review and new due)."""
+        from app.srs.fsrs import _compute_revlog_interval
+
+        now = datetime(2026, 5, 19, tzinfo=UTC)
+        prev_dir = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.REVIEW, due_at=now, last_review=now - timedelta(days=10)
+        )
+        new_dir = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.REVIEW, due_at=now + timedelta(days=30)
+        )
+        interval = _compute_revlog_interval(SRSState.REVIEW, new_dir, prev_dir, now)
+        # 30 - (-10) = 40 days between last_review and new due_at
+        assert interval == 40
+
+    def test_compute_revlog_interval_review_no_last_review(self):
+        """Review interval falls back to now when last_review is missing."""
+        from app.srs.fsrs import _compute_revlog_interval
+
+        now = datetime(2026, 5, 19, tzinfo=UTC)
+        prev_dir = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.REVIEW, due_at=now - timedelta(days=5)
+        )
+        new_dir = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.REVIEW, due_at=now + timedelta(days=25)
+        )
+        interval = _compute_revlog_interval(SRSState.REVIEW, new_dir, prev_dir, now)
+        assert interval >= 1
+
+    def test_compute_revlog_last_interval_zero(self):
+        """Returns 0 when no last_review or due_at."""
+        from app.srs.fsrs import _compute_revlog_last_interval
+
+        now = datetime(2026, 5, 19, tzinfo=UTC)
+        prev = DirectionState(direction=Direction.RECOGNITION, state=SRSState.NEW, due_at=now)
+        assert _compute_revlog_last_interval(prev) == 0
+
+    def test_build_revlog_row_default_now(self):
+        """build_revlog_row uses datetime.now when now=None (line 936)."""
+        from app.srs.fsrs import build_revlog_row
+
+        now = datetime(2026, 5, 19, tzinfo=UTC)
+        prev = DirectionState(direction=Direction.RECOGNITION, state=SRSState.NEW, due_at=now, anki_card_id=42)
+        new_dir = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.LEARNING, due_at=now + timedelta(minutes=1)
+        )
+        row = build_revlog_row(1, Direction.RECOGNITION, prev, new_dir, Rating.GOOD, 0)
+        assert row.collocation_id == 1
+        assert row.direction == Direction.RECOGNITION
+        assert row.button_chosen == 3
+        assert row.interval < 0  # learning
+        assert row.last_interval == 0
+        assert row.taken_millis == 0
+        assert row.anki_card_id == 42
+
+    def test_build_revlog_row_pk_is_wall_clock_taken_millis_is_elapsed(self):
+        """PK is wall-clock ms from ``now`` (matches Anki's revlog.id convention);
+        ``time_ms`` argument becomes ``taken_millis`` (Anki's revlog.time)."""
+        from app.srs.fsrs import build_revlog_row
+
+        now = datetime(2026, 5, 19, tzinfo=UTC)
+        prev = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_at=now,
+            last_review=now - timedelta(days=5),
+            anki_card_id=1,
+        )
+        new_dir = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.REVIEW, due_at=now + timedelta(days=14)
+        )
+        row = build_revlog_row(2, Direction.PRODUCTION, prev, new_dir, Rating.AGAIN, 1234, now=now)
+        assert row.id == int(now.timestamp() * 1000)
+        assert row.taken_millis == 1234
+        assert row.collocation_id == 2
+        assert row.direction == Direction.PRODUCTION
+        assert row.button_chosen == 1
+        assert row.interval > 0  # review
+        assert row.last_interval > 0
+        assert row.review_kind == 1  # review→review
+
+    def test_build_revlog_row_pk_uses_now_even_when_time_ms_zero(self):
+        """Even with time_ms=0 (no elapsed timing), PK is still wall-clock."""
+        from app.srs.fsrs import build_revlog_row
+
+        now = datetime(2026, 5, 19, 12, 34, 56, tzinfo=UTC)
+        prev = DirectionState(direction=Direction.RECOGNITION, state=SRSState.NEW, due_at=now, anki_card_id=42)
+        new_dir = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.LEARNING, due_at=now + timedelta(minutes=1)
+        )
+        row = build_revlog_row(1, Direction.RECOGNITION, prev, new_dir, Rating.GOOD, 0, now=now)
+        assert row.id == int(now.timestamp() * 1000)
+        assert row.taken_millis == 0

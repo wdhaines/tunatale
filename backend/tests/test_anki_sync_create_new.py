@@ -127,6 +127,9 @@ class FakeReader:
     def get_note_records(self):
         return []
 
+    def get_revlog_for_card(self, card_id: int, after_ms: int = 0) -> list:
+        return []
+
 
 class FakeCreateWriter:
     """Tracks calls for sync_create_new assertions."""

@@ -37,6 +37,9 @@ class _FakeReader:
     def get_note_records(self) -> list[NoteRecord]:
         return self._records
 
+    def get_revlog_for_card(self, card_id: int, after_ms: int = 0) -> list:
+        return []
+
 
 class _FakeWriter:
     """Captures writer calls for assertions."""

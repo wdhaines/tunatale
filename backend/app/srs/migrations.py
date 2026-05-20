@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 25
+CURRENT_VERSION = 26
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -789,6 +789,41 @@ def migrate_v24_to_v25(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA foreign_keys = ON")
 
 
+def migrate_v25_to_v26(conn: sqlite3.Connection) -> None:
+    """Create tt_revlog table mirroring Anki's revlog schema.
+
+    Stage 0 of the event-sync migration: writes-only table that captures
+    every grade event from TT and Anki. No reads consume it until Stage 2.
+    """
+    if _table_exists(conn, "tt_revlog"):
+        _set_version(conn, 26)
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("""
+            CREATE TABLE tt_revlog (
+                id INTEGER PRIMARY KEY,
+                collocation_id INTEGER NOT NULL,
+                direction TEXT NOT NULL CHECK(direction IN ('recognition','production')),
+                button_chosen INTEGER NOT NULL,
+                interval INTEGER NOT NULL,
+                last_interval INTEGER NOT NULL,
+                factor INTEGER NOT NULL,
+                taken_millis INTEGER NOT NULL,
+                review_kind INTEGER NOT NULL,
+                anki_card_id INTEGER,
+                FOREIGN KEY (collocation_id, direction)
+                    REFERENCES collocation_directions(collocation_id, direction) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tt_revlog_card ON tt_revlog(anki_card_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tt_revlog_coll ON tt_revlog(collocation_id, direction)")
+        _set_version(conn, 26)
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -815,6 +850,7 @@ _MIGRATIONS = {
     22: migrate_v22_to_v23,
     23: migrate_v23_to_v24,
     24: migrate_v24_to_v25,
+    25: migrate_v25_to_v26,
 }
 
 

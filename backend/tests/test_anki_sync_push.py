@@ -529,6 +529,9 @@ class FakeReader:
     def get_note_records(self):
         return []
 
+    def get_revlog_for_card(self, card_id: int, after_ms: int = 0) -> list:
+        return []
+
 
 class TestSyncPush:
     def test_dirty_translation_calls_update_note_fields(self):
@@ -1719,6 +1722,9 @@ class TestOfflineOrdering:
                 )
                 return [make_note_record(anki_guid=guid, cards=[card])]
 
+            def get_revlog_for_card(self, card_id: int, after_ms: int = 0) -> list:
+                return []
+
         writer = FakeWriter()
         sync = AnkiSync(db=db, _reader=OrderedFakeReader(), _writer=writer)
 
@@ -1752,6 +1758,9 @@ class TestOfflineOrdering:
                     due_date=date.today() + timedelta(days=15),
                 )
                 return [make_note_record(anki_guid=guid, cards=[card])]
+
+            def get_revlog_for_card(self, card_id: int, after_ms: int = 0) -> list:
+                return []
 
         writer = FakeWriter()
         sync = AnkiSync(db=db, _reader=OrderedFakeReader(), _writer=writer)
@@ -1825,6 +1834,9 @@ class TestPushLearningCardLeftAndDue:
 
             def get_note_records(self):
                 return self._records
+
+            def get_revlog_for_card(self, card_id: int, after_ms: int = 0) -> list:
+                return []
 
         card = make_card_record(
             anki_card_id=rec_cid,

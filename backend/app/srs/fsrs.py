@@ -9,7 +9,8 @@ import math
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 
-from app.models.srs_item import Direction, DirectionState, Rating, SRSItem, SRSState
+from app.anki.protobuf_wire import compute_anki_day_index
+from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSItem, SRSState
 from app.srs._anki_rng import ChaCha12Rng, random_range_f32, random_range_u32
 
 
@@ -193,7 +194,12 @@ def _forgetting_curve(elapsed_days: float, stability: float, decay: float = -0.5
     return (1 + FACTOR * elapsed_days / stability) ** decay
 
 
-def _elapsed_days_for_fsrs(last_review: datetime | date | None, ref_now: datetime) -> float:
+def _elapsed_days_for_fsrs(
+    last_review: datetime | date | None,
+    ref_now: datetime,
+    col_crt: int | None = None,
+    rollover_hour: int = 4,
+) -> float:
     """Mirror Anki's `extract_fsrs_retrievability` dual branch for elapsed time.
 
     Anki's lapse + recall stability formulas both feed off `delta_t = now - lrt`
@@ -207,6 +213,12 @@ def _elapsed_days_for_fsrs(last_review: datetime | date | None, ref_now: datetim
 
     The same dual-branch logic also lives in `compute_retrievability` for R-asc
     sort.
+
+    Layer 45: when *col_crt* is provided and the day-level branch is taken,
+    compute elapsed as ``today_col_day - review_col_day`` using
+    ``compute_anki_day_index``, which respects Anki's 4am-local rollover
+    boundary. When *col_crt* is ``None`` (pre-sync, no cache), fall back to
+    UTC-date subtraction (the legacy behavior, preserved for backward compat).
     """
     if last_review is None:
         return 0.0
@@ -217,6 +229,10 @@ def _elapsed_days_for_fsrs(last_review: datetime | date | None, ref_now: datetim
             and last_review.second == 0
             and last_review.microsecond == 0
         )
+        if is_day_level and col_crt is not None:
+            today_col_day = compute_anki_day_index(col_crt, rollover_hour, ref_now)
+            review_col_day = compute_anki_day_index(col_crt, rollover_hour, last_review)
+            return max(0, today_col_day - review_col_day)
         if is_day_level:
             return max(0, (ref_now.date() - last_review.date()).days)
         return max(0.0, (ref_now - last_review).total_seconds() / 86400.0)
@@ -230,6 +246,7 @@ def compute_retrievability(
     now: datetime | None = None,
     desired_retention: float = 0.9,
     decay: float = -0.5,
+    col_crt: int | None = None,
 ) -> float:
     """Return retrievability (0-1) for a direction_state.
 
@@ -256,7 +273,7 @@ def compute_retrievability(
         return desired_retention
     if isinstance(last_review, datetime):
         ref_now = now if now is not None else datetime.now(UTC)
-        elapsed = _elapsed_days_for_fsrs(last_review, ref_now)
+        elapsed = _elapsed_days_for_fsrs(last_review, ref_now, col_crt=col_crt)
     else:
         elapsed = max(0, (today - last_review).days)
     return _forgetting_curve(elapsed, stability, decay)
@@ -408,6 +425,7 @@ def schedule(
     params: FSRSParams = DEFAULT_FSRS5_PARAMS,
     time_ms: int = 0,
     now: datetime | None = None,
+    col_crt: int | None = None,
 ) -> SRSItem:
     """Apply a review rating to the given direction of an SRSItem.
 
@@ -455,12 +473,12 @@ def schedule(
         # REVIEW state. `_elapsed_days_for_fsrs` mirrors Anki's dual-branch:
         # fractional days from lrt-precision last_review, integer otherwise.
         last = prev.last_review or last_review_dt
-        elapsed = _elapsed_days_for_fsrs(last, last_review_dt)
+        elapsed = _elapsed_days_for_fsrs(last, last_review_dt, col_crt=col_crt)
         r = _forgetting_curve(elapsed, prev.stability, neg_decay)
 
         if rating == Rating.AGAIN:
             return _schedule_review_again(
-                item, prev, rating, review_date, direction, params, time_ms, now, last_review_dt
+                item, prev, rating, review_date, direction, params, time_ms, now, last_review_dt, col_crt=col_crt
             )
         else:
             new_stability = _next_stability_recall(prev.difficulty, prev.stability, r, rating, w)
@@ -597,6 +615,7 @@ def _schedule_review_again(
     time_ms: int,
     now: datetime,
     last_review_dt: datetime,
+    col_crt: int | None = None,
 ) -> SRSItem:
     """Handle REVIEW + AGAIN: enter RELEARNING with relearning steps."""
     from dataclasses import replace
@@ -606,7 +625,7 @@ def _schedule_review_again(
     # days from `lrt` when present (sub-day precision on `prev.last_review`),
     # integer days otherwise. See `_elapsed_days_for_fsrs`.
     last = prev.last_review or last_review_dt
-    elapsed = _elapsed_days_for_fsrs(last, last_review_dt)
+    elapsed = _elapsed_days_for_fsrs(last, last_review_dt, col_crt=col_crt)
     # fsrs-rs model.rs:154-163: short-term stability overrides the lapse formula
     # when delta_t == 0 (same-day grade). The deck option only governs card-state
     # transitions, not memory_state — so this branch is not flag-gated.
@@ -865,4 +884,84 @@ def _graduate_to_review(
         directions=new_directions,
         guid=item.guid,
         anki_note_id=item.anki_note_id,
+    )
+
+
+def _compute_review_kind(prev_state: SRSState, new_state: SRSState) -> int:
+    """Derive Anki revlog.type from the state transition.
+
+    0=Learn 1=Review 2=Relearn 4=Manual
+    """
+    if new_state == SRSState.REVIEW and prev_state != SRSState.REVIEW:
+        return 1
+    if new_state == SRSState.RELEARNING:
+        return 2
+    if prev_state == SRSState.REVIEW and new_state == SRSState.REVIEW:
+        return 1
+    if new_state in (SRSState.LEARNING, SRSState.NEW):
+        return 0
+    return 1
+
+
+def _compute_revlog_interval(prev_state: SRSState, new_dir: DirectionState, prev: DirectionState, now: datetime) -> int:
+    """Compute interval for tt_revlog: +days for review, -seconds for learning.
+
+    Mirrors Anki's convention where ``revlog.ivl`` stores positive days for
+    review-state transitions and negative seconds for sub-day learning steps.
+    """
+    if new_dir.state in (SRSState.LEARNING, SRSState.RELEARNING):
+        if prev.last_review and new_dir.due_at:
+            delta_s = (new_dir.due_at - prev.last_review).total_seconds()
+        else:
+            delta_s = (new_dir.due_at - now).total_seconds()
+        return -max(1, int(delta_s))
+    else:
+        if prev.last_review and new_dir.due_at:
+            days = (new_dir.due_at - prev.last_review).days
+        else:
+            days = (new_dir.due_at - now).days
+        return max(1, days)
+
+
+def _compute_revlog_last_interval(prev: DirectionState) -> int:
+    """Compute last_interval for tt_revlog from previous state."""
+    if prev.last_review and prev.due_at:
+        days = (prev.due_at - prev.last_review).days
+        if days >= 1:
+            return days
+        delta_s = (prev.due_at - prev.last_review).total_seconds()
+        return -max(1, int(delta_s))
+    return 0
+
+
+def build_revlog_row(
+    collocation_id: int,
+    direction: Direction,
+    prev: DirectionState,
+    new_dir: DirectionState,
+    rating: Rating,
+    time_ms: int,
+    *,
+    now: datetime | None = None,
+) -> RevlogRow:
+    """Construct a RevlogRow from the outcome of a ``schedule()`` call.
+
+    PK matches Anki's ``revlog.id`` convention: wall-clock milliseconds since
+    epoch, taken from ``now``. ``time_ms`` is the elapsed time the user spent
+    on the card (Anki's ``revlog.time``) and goes into ``taken_millis``.
+    The caller persists the result via ``SRSDatabase.append_revlog()``.
+    """
+    if now is None:
+        now = datetime.now(tz=UTC)
+    return RevlogRow(
+        id=int(now.timestamp() * 1000),
+        collocation_id=collocation_id,
+        direction=direction,
+        button_chosen=rating.value,
+        interval=_compute_revlog_interval(prev.state, new_dir, prev, now),
+        last_interval=_compute_revlog_last_interval(prev),
+        factor=0,
+        taken_millis=time_ms,
+        review_kind=_compute_review_kind(prev.state, new_dir.state),
+        anki_card_id=prev.anki_card_id,
     )

@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 25
+        assert CURRENT_VERSION == 26
 
     def test_migrates_v15_to_v16_deletes_phantom_directions(self, tmp_path):
         """v16 deletes direction rows that were auto-filled by the pre-fix
@@ -1660,3 +1660,57 @@ class TestMigrateV12ToV13:
         assert "prior_left" in cols
         assert "prior_stability" in cols
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
+
+    def test_v25_to_v26_creates_tt_revlog_table(self):
+        """migrate_v25_to_v26 creates the tt_revlog table and bumps version to 26."""
+        from app.srs.migrations import migrate_v25_to_v26
+
+        conn = _make_v1_conn()
+        _insert(conn, "banka")
+        migrate(conn)  # rolls up to v25
+        conn.execute("PRAGMA user_version = 25")
+        conn.commit()
+
+        migrate_v25_to_v26(conn)
+
+        ver = conn.execute("PRAGMA user_version").fetchone()[0]
+        assert ver == 26
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(tt_revlog)").fetchall()}
+        assert "id" in cols
+        assert "collocation_id" in cols
+        assert "direction" in cols
+        assert "button_chosen" in cols
+        assert "interval" in cols
+        assert "last_interval" in cols
+        assert "factor" in cols
+        assert "taken_millis" in cols
+        assert "review_kind" in cols
+        assert "anki_card_id" in cols
+
+    def test_v25_to_v26_idempotent(self):
+        """Re-running v25→v26 on a DB that already has tt_revlog is a no-op."""
+        from app.srs.migrations import migrate_v25_to_v26
+
+        conn = _make_v1_conn()
+        _insert(conn, "banka")
+        migrate(conn)
+        conn.execute("PRAGMA user_version = 25")
+        conn.commit()
+        migrate_v25_to_v26(conn)
+        migrate_v25_to_v26(conn)  # second call — guard clause fires
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 26
+
+    def test_v25_to_v26_foreign_key(self):
+        """tt_revlog.collocation_id references collocations.id."""
+        from app.srs.migrations import migrate_v25_to_v26
+
+        conn = _make_v1_conn()
+        _insert(conn, "banka")
+        migrate(conn)
+        conn.execute("PRAGMA user_version = 25")
+        conn.commit()
+        migrate_v25_to_v26(conn)
+
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("INSERT INTO tt_revlog (id, collocation_id, direction) VALUES (1, 999, 'recognition')")

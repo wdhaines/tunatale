@@ -90,6 +90,26 @@ class DirectionState:
     introduced_at: datetime | None = None
 
 
+@dataclass(frozen=True)
+class RevlogRow:
+    """One row in the tt_revlog table, mirroring Anki's revlog schema.
+
+    Written at grade time (TT-side) and during sync_pull (Anki-side).
+    Stage 0: writes only; no reads consume it until Stage 2.
+    """
+
+    id: int
+    collocation_id: int
+    direction: Direction
+    button_chosen: int
+    interval: int
+    last_interval: int
+    factor: int
+    taken_millis: int
+    review_kind: int
+    anki_card_id: int | None = None
+
+
 class SRSItem:
     """An SRS-tracked syntactic unit with per-direction FSRS scheduling.
 

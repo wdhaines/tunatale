@@ -86,6 +86,9 @@ class FakeReader:
     def get_note_records(self):
         return self._records
 
+    def get_revlog_for_card(self, card_id: int, after_ms: int = 0) -> list:
+        return []
+
 
 def _make_db_with_link(text: str, *, note_id: int, rec_cid: int, prod_cid: int) -> tuple[SRSDatabase, str]:
     db = SRSDatabase(":memory:")

@@ -16,6 +16,9 @@ class FakeReaderE2E:
     def get_note_records(self):
         return []
 
+    def get_revlog_for_card(self, card_id: int, after_ms: int = 0) -> list:
+        return []
+
 
 def _make_dual_collection_conn():
     import sqlite3

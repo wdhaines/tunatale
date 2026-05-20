@@ -32,7 +32,7 @@ from app.anki.sqlite_reader import (
     find_deck_id,
 )
 from app.common.guid import compute_guid
-from app.models.srs_item import Direction, DirectionState, Rating, SRSState
+from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 from app.srs.queue_stats import resolve_learning_steps, resolve_relearning_steps
@@ -288,6 +288,16 @@ class OfflineReader:
     def __init__(self, conn: sqlite3.Connection, deck_name: str) -> None:
         self._conn = conn
         self._deck_name = deck_name
+
+    def get_revlog_for_card(self, card_id: int, after_ms: int = 0) -> list[sqlite3.Row]:
+        """Return revlog rows for *card_id* with id > *after_ms*.
+
+        Used by Stage 0 to ingest Anki revlog into tt_revlog during sync_pull.
+        """
+        return self._conn.execute(
+            "SELECT id, ease, ivl, lastIvl, factor, time, type FROM revlog WHERE cid = ? AND id > ? ORDER BY id",
+            (card_id, after_ms),
+        ).fetchall()
 
     def get_note_records(self) -> list[NoteRecord]:
         deck_id = find_deck_id(self._conn, self._deck_name)
@@ -1572,6 +1582,41 @@ class AnkiSync:
             bury_kind=_bury_kind_from_queue(card_rec.queue),
         )
 
+    def _ingest_anki_revlog_for_card(
+        self,
+        anki_card_id: int,
+        collocation_id: int,
+        direction: Direction,
+        last_synced_at: str | None,
+    ) -> None:
+        """Copy Anki revlog rows for *anki_card_id* into tt_revlog (idempotent).
+
+        Called from ``sync_pull`` for every card before the merge logic runs.
+        """
+        threshold_ms = 0
+        if last_synced_at:
+            try:
+                dt = datetime.fromisoformat(last_synced_at)
+                threshold_ms = int(dt.timestamp() * 1000)
+            except (ValueError, OSError):
+                threshold_ms = 0
+        rows = self._reader.get_revlog_for_card(anki_card_id, threshold_ms)
+        for r in rows:
+            self._db.append_revlog(
+                RevlogRow(
+                    id=r["id"],
+                    collocation_id=collocation_id,
+                    direction=direction,
+                    button_chosen=r["ease"],
+                    interval=r["ivl"],
+                    last_interval=r["lastIvl"],
+                    factor=r["factor"],
+                    taken_millis=r["time"],
+                    review_kind=r["type"],
+                    anki_card_id=anki_card_id,
+                )
+            )
+
     def _pull_advance_learning_cutoff(self, max_revlog_ms: int, dry_run: bool) -> None:
         """Advance the learning cutoff to the most recent Anki revlog timestamp ingested.
 
@@ -1680,6 +1725,17 @@ class AnkiSync:
                 local_dir = local_item.directions.get(direction)
                 if local_dir is None:
                     continue
+
+                # Stage 0: ingest Anki revlog for this card into tt_revlog.
+                # `guid` came from local_item we just looked up → row always exists.
+                coll_id = self._db.get_collocation_id_by_guid(guid)
+                assert coll_id is not None
+                self._ingest_anki_revlog_for_card(
+                    card_rec.anki_card_id,
+                    coll_id,
+                    direction,
+                    local_dir.last_synced_at,
+                )
 
                 anki_last_ms = card_rec.last_review_ms or 0
                 if anki_last_ms > max_revlog_ms:

@@ -1164,3 +1164,38 @@ class TestReadReviewsPerDayFromDeckConfigTable:
         conn.commit()
         result = _read_reviews_per_day_from_deck_config_table(conn, "0. Slovene")
         assert result is None
+
+
+class TestRefreshAndResolveColCrt:
+    """Layer 45 helpers: refresh_col_crt writes the cache; resolve_col_crt reads it."""
+
+    def test_refresh_writes_crt_then_resolve_reads_it(self):
+        from app.srs.queue_stats import refresh_col_crt, resolve_col_crt
+
+        db = SRSDatabase(":memory:")
+        # Fake Anki collection with a single col.crt value.
+        anki_conn = sqlite3.connect(":memory:")
+        anki_conn.execute("CREATE TABLE col (id INTEGER, crt INTEGER)")
+        anki_conn.execute("INSERT INTO col VALUES (1, 1388836800)")  # 2014-01-04
+        anki_conn.commit()
+
+        refresh_col_crt(db, anki_conn)
+        assert resolve_col_crt(db) == 1388836800
+
+    def test_resolve_returns_none_when_cache_empty(self):
+        from app.srs.queue_stats import resolve_col_crt
+
+        db = SRSDatabase(":memory:")
+        assert resolve_col_crt(db) is None
+
+    def test_refresh_no_op_when_col_table_empty(self):
+        """If the col table has no rows, refresh writes nothing."""
+        from app.srs.queue_stats import refresh_col_crt, resolve_col_crt
+
+        db = SRSDatabase(":memory:")
+        anki_conn = sqlite3.connect(":memory:")
+        anki_conn.execute("CREATE TABLE col (id INTEGER, crt INTEGER)")
+        anki_conn.commit()  # empty col table
+
+        refresh_col_crt(db, anki_conn)
+        assert resolve_col_crt(db) is None

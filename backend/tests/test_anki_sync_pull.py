@@ -104,6 +104,9 @@ class FakeReader:
     def get_note_records(self) -> list[NoteRecord]:
         return self._records
 
+    def get_revlog_for_card(self, card_id: int, after_ms: int = 0) -> list:
+        return []
+
 
 # ── Cloze helper functions ────────────────────────────────────────────────────
 
@@ -2648,3 +2651,144 @@ class TestResolveIntroducedAt:
         first_ms = 1_700_000_000_000  # 2023-11-14
         result = _resolve_introduced_at(local_dir, SRSState.REVIEW, first_review_ms=first_ms)
         assert result == _dt.fromtimestamp(first_ms / 1000, tz=UTC)
+
+
+class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
+    """Stage 0: every sync_pull harvests Anki revlog rows into tt_revlog.
+
+    Covers the loop body of ``_ingest_anki_revlog_for_card`` and the threshold
+    parsing — the production Anki→TT event-sync path.
+    """
+
+    def _seed_anki_revlog(self, anki_db_path, cid: int, rows: list[tuple]) -> None:
+        """Insert rows into the fake_anki_db's revlog table.
+
+        Each row is (id_ms, ease, ivl, lastIvl, factor, time, type).
+        """
+        conn = sqlite3.connect(str(anki_db_path))
+        for r in rows:
+            conn.execute(
+                "INSERT INTO revlog VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)",
+                (r[0], cid, *r[1:]),
+            )
+        conn.commit()
+        conn.close()
+
+    def _link_banka_to_card(self, db: SRSDatabase, guid: str, card_id: int) -> None:
+        db.set_anki_ids(guid, note_id=1001, card_ids={Direction.RECOGNITION: card_id})
+
+    def test_revlog_rows_appear_in_tt_revlog_after_pull(self, fake_anki_db):
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        cid = 10010  # rec card for note 1001 in fake_anki_db
+        self._link_banka_to_card(db, guid, cid)
+        self._seed_anki_revlog(
+            fake_anki_db,
+            cid,
+            [
+                # (id_ms, ease, ivl, lastIvl, factor, time, type)
+                (1_700_000_000_000, 3, 1, 0, 0, 4500, 0),  # Learn
+                (1_700_000_500_000, 3, 10, 1, 2500, 3200, 1),  # Review
+            ],
+        )
+        conn = sqlite3.connect(str(fake_anki_db))
+        conn.row_factory = sqlite3.Row  # production uses safe_open which sets this
+        try:
+            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+        finally:
+            conn.close()
+
+        with db._get_conn() as tt_conn:
+            rows = tt_conn.execute(
+                "SELECT id, button_chosen, interval, last_interval, factor, taken_millis, review_kind, anki_card_id "
+                "FROM tt_revlog WHERE anki_card_id = ? ORDER BY id",
+                (cid,),
+            ).fetchall()
+        assert len(rows) == 2
+        assert rows[0]["id"] == 1_700_000_000_000
+        assert rows[0]["button_chosen"] == 3
+        assert rows[0]["review_kind"] == 0  # Learn
+        assert rows[1]["id"] == 1_700_000_500_000
+        assert rows[1]["review_kind"] == 1  # Review
+        assert rows[1]["taken_millis"] == 3200
+
+    def test_ingest_is_idempotent_across_repeated_pulls(self, fake_anki_db):
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        cid = 10010
+        self._link_banka_to_card(db, guid, cid)
+        self._seed_anki_revlog(fake_anki_db, cid, [(1_700_000_000_000, 3, 1, 0, 0, 4500, 0)])
+        conn = sqlite3.connect(str(fake_anki_db))
+        conn.row_factory = sqlite3.Row
+        try:
+            sync = AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter())
+            sync.sync_pull()
+            sync.sync_pull()
+        finally:
+            conn.close()
+
+        with db._get_conn() as tt_conn:
+            count = tt_conn.execute("SELECT COUNT(*) FROM tt_revlog WHERE anki_card_id = ?", (cid,)).fetchone()[0]
+        assert count == 1, "INSERT OR IGNORE on PK must dedupe across repeated pulls"
+
+    def test_last_synced_at_filters_older_revlog_rows(self, fake_anki_db):
+        """When the direction has last_synced_at set, only newer revlog rows ingest."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        cid = 10010
+        self._link_banka_to_card(db, guid, cid)
+        # Mark the direction as already synced at a specific moment.
+        cutoff = _dt(2026, 5, 19, 0, 0, 0, tzinfo=UTC)
+        cutoff_ms = int(cutoff.timestamp() * 1000)
+        item = db.get_collocation_by_guid(guid)
+        rec = item.directions[Direction.RECOGNITION]
+        rec.last_synced_at = cutoff.isoformat()
+        db.update_direction(guid, Direction.RECOGNITION, rec)
+
+        self._seed_anki_revlog(
+            fake_anki_db,
+            cid,
+            [
+                (cutoff_ms - 1000, 3, 1, 0, 0, 4500, 0),  # before cutoff — skipped
+                (cutoff_ms + 1000, 3, 10, 1, 2500, 3200, 1),  # after — ingested
+            ],
+        )
+        conn = sqlite3.connect(str(fake_anki_db))
+        conn.row_factory = sqlite3.Row  # production uses safe_open which sets this
+        try:
+            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+        finally:
+            conn.close()
+
+        with db._get_conn() as tt_conn:
+            ids = [
+                r["id"]
+                for r in tt_conn.execute(
+                    "SELECT id FROM tt_revlog WHERE anki_card_id = ? ORDER BY id", (cid,)
+                ).fetchall()
+            ]
+        assert ids == [cutoff_ms + 1000]
+
+    def test_malformed_last_synced_at_falls_back_to_all_rows(self, fake_anki_db):
+        """Defensive: a corrupt last_synced_at string falls back to threshold=0
+        (ingest everything), not a crash."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        cid = 10010
+        self._link_banka_to_card(db, guid, cid)
+        item = db.get_collocation_by_guid(guid)
+        rec = item.directions[Direction.RECOGNITION]
+        rec.last_synced_at = "not-a-datetime"
+        db.update_direction(guid, Direction.RECOGNITION, rec)
+
+        self._seed_anki_revlog(fake_anki_db, cid, [(1_700_000_000_000, 3, 1, 0, 0, 4500, 0)])
+        conn = sqlite3.connect(str(fake_anki_db))
+        conn.row_factory = sqlite3.Row  # production uses safe_open which sets this
+        try:
+            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+        finally:
+            conn.close()
+
+        with db._get_conn() as tt_conn:
+            count = tt_conn.execute("SELECT COUNT(*) FROM tt_revlog WHERE anki_card_id = ?", (cid,)).fetchone()[0]
+        assert count == 1

@@ -2438,3 +2438,76 @@ class TestMigrateV9toV10ColumnExists:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         assert version == 10  # specifically tests v9→v10 idempotence
         conn.close()
+
+
+class TestRevlog:
+    """Tests for revlog row creation and querying."""
+
+    def test_append_revlog_and_query_latest(self, srs_db):
+        """append_revlog stores a row; latest_revlog_id_for_card returns MAX(id)."""
+        from app.models.srs_item import RevlogRow
+
+        srs_db.add_collocation(
+            SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus"),
+            language_code="sl",
+        )
+        row = RevlogRow(
+            id=5000,
+            collocation_id=1,
+            direction=Direction.RECOGNITION,
+            button_chosen=3,
+            interval=1,
+            last_interval=0,
+            factor=0,
+            taken_millis=1500,
+            review_kind=1,
+            anki_card_id=100,
+        )
+        srs_db.append_revlog(row)
+
+        latest = srs_db.latest_revlog_id_for_card(100)
+        assert latest == 5000
+
+    def test_latest_revlog_id_for_card_returns_none(self, srs_db):
+        """When no revlog rows exist, latest_revlog_id_for_card returns None."""
+        assert srs_db.latest_revlog_id_for_card(999) is None
+
+    def test_append_revlog_insert_or_ignore(self, srs_db):
+        """Duplicate id is silently ignored (INSERT OR IGNORE)."""
+        from app.models.srs_item import RevlogRow
+
+        srs_db.add_collocation(
+            SyntacticUnit(text="hiša", translation="house", word_count=1, difficulty=1, source="corpus"),
+            language_code="sl",
+        )
+        row = RevlogRow(
+            id=5001,
+            collocation_id=1,
+            direction=Direction.RECOGNITION,
+            button_chosen=3,
+            interval=1,
+            last_interval=0,
+            factor=0,
+            taken_millis=500,
+            review_kind=1,
+            anki_card_id=200,
+        )
+        srs_db.append_revlog(row)
+        srs_db.append_revlog(row)  # same id, should be ignored
+        assert srs_db.latest_revlog_id_for_card(200) == 5001
+
+    def test_append_manual_revlog_writes_row(self, srs_db):
+        """append_manual_revlog writes a row with review_kind=4."""
+        srs_db.add_collocation(
+            SyntacticUnit(text="avto", translation="car", word_count=1, difficulty=1, source="corpus"),
+            language_code="sl",
+        )
+        srs_db.append_manual_revlog(collocation_id=1, direction=Direction.RECOGNITION, anki_card_id=300)
+
+        latest = srs_db.latest_revlog_id_for_card(300)
+        assert latest is not None
+        row = srs_db._conn.execute("SELECT * FROM tt_revlog WHERE id = ?", (latest,)).fetchone()
+        assert row is not None
+        assert row["review_kind"] == 4
+        assert row["collocation_id"] == 1
+        assert row["direction"] == "recognition"

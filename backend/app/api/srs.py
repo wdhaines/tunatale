@@ -27,7 +27,7 @@ from app.llm.translate import translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.feedback import rating_from_input
-from app.srs.fsrs import Rating, schedule
+from app.srs.fsrs import Rating, build_revlog_row, schedule
 from app.srs.function_words import is_function_word
 from app.srs.lemmatizer import LowercaseLemmatizer
 from app.srs.queue_stats import (
@@ -36,6 +36,7 @@ from app.srs.queue_stats import (
     get_session_main_queue,
     resolve_bury_new,
     resolve_bury_review,
+    resolve_col_crt,
     resolve_daily_new_cap,
     resolve_daily_review_cap,
     resolve_fsrs_params,
@@ -189,9 +190,15 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
     _, item, _ = result
 
     fsrs_params, _ = resolve_fsrs_params(db)
+    col_crt = resolve_col_crt(db)
     now = datetime.datetime.now(datetime.UTC)
-    updated = schedule(item, rating, direction=dir_enum, params=fsrs_params, time_ms=body.time_ms, now=now)
+    prev_dir = item.directions[dir_enum]
+    updated = schedule(
+        item, rating, direction=dir_enum, params=fsrs_params, time_ms=body.time_ms, now=now, col_crt=col_crt
+    )
     db.update_direction_by_id(item_id, dir_enum, updated.directions[dir_enum])
+    row = build_revlog_row(item_id, dir_enum, prev_dir, updated.directions[dir_enum], rating, body.time_ms, now=now)
+    db.append_revlog(row)
     # Anki parity: advance the learning cutoff at grade time. The next /review-queue
     # call uses this snapshot (not live `now`) to decide which queue=1 cards are
     # ready, so a learning card whose timer expired between this grade and the
@@ -248,6 +255,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         raise HTTPException(status_code=404, detail="Lesson not found")
 
     db = request.app.state.srs_db
+    col_crt = resolve_col_crt(db)
 
     # ── Word-level tracking from NATURAL_SPEED section ──────────────────
     from app.models.lesson import SectionType, extract_sentence_translations_from_translated
@@ -349,14 +357,29 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             if _listen_grade_eligible(rec, today_start, today_end):
                 rating = _WORD_RATING_MAP.get(body.word_ratings.get(lemma, "good"), Rating.GOOD)
                 now = datetime.datetime.now(datetime.UTC)
+                prev_dir = existing.directions[Direction.RECOGNITION]
                 updated = schedule(
                     existing,
                     rating,
                     direction=Direction.RECOGNITION,
                     params=resolve_fsrs_params(db)[0],
                     now=now,
+                    col_crt=col_crt,
                 )
                 db.update_collocation(updated)
+                # `existing` came from db.get_collocation(); guid is valid → row always exists.
+                listen_coll_id = db.get_collocation_id_by_guid(existing.guid)
+                assert listen_coll_id is not None
+                row = build_revlog_row(
+                    listen_coll_id,
+                    Direction.RECOGNITION,
+                    prev_dir,
+                    updated.directions[Direction.RECOGNITION],
+                    rating,
+                    0,
+                    now=now,
+                )
+                db.append_revlog(row)
                 graded_count += 1
 
     # ── Key phrase registration + auto-grade ────────────────────────────
@@ -380,14 +403,29 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 continue
             if _listen_grade_eligible(rec, today_start, today_end):
                 now = datetime.datetime.now(datetime.UTC)
+                prev_dir = existing.directions[Direction.RECOGNITION]
                 updated = schedule(
                     existing,
                     Rating.GOOD,
                     direction=Direction.RECOGNITION,
                     params=resolve_fsrs_params(db)[0],
                     now=now,
+                    col_crt=col_crt,
                 )
                 db.update_collocation(updated)
+                # `existing` came from db.get_collocation(); guid is valid → row always exists.
+                kp_coll_id = db.get_collocation_id_by_guid(existing.guid)
+                assert kp_coll_id is not None
+                row = build_revlog_row(
+                    kp_coll_id,
+                    Direction.RECOGNITION,
+                    prev_dir,
+                    updated.directions[Direction.RECOGNITION],
+                    Rating.GOOD,
+                    0,
+                    now=now,
+                )
+                db.append_revlog(row)
                 graded_count += 1
 
     registered = created_count + graded_count
@@ -749,6 +787,7 @@ def _merge_by_retrievability_ascending(
     rec: list[tuple[int, SRSItem, str]],
     prod: list[tuple[int, SRSItem, str]],
     today: datetime.date,
+    col_crt: int | None = None,
 ) -> list[tuple[int, SRSItem, str, Direction]]:
     """Sort the combined due pool by retrievability ascending.
 
@@ -775,7 +814,7 @@ def _merge_by_retrievability_ascending(
     def _key(t: tuple[int, SRSItem, str, Direction]) -> tuple:
         row_id, item, _, direction = t
         dstate = item.directions[direction]
-        r = compute_retrievability(dstate, today, desired_retention=dr, decay=-decay)
+        r = compute_retrievability(dstate, today, desired_retention=dr, decay=-decay, col_crt=col_crt)
         if dstate.anki_card_id is not None and dstate.anki_card_mod is not None:
             return (r, 0, _fnv1a_64_i64(dstate.anki_card_id, dstate.anki_card_mod), 0)
         # Fallback for rows that haven't been synced from Anki yet.
@@ -927,6 +966,7 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     spread, _ = resolve_new_spread(db)
     bury_new, _ = resolve_bury_new(db)
     bury_review, _ = resolve_bury_review(db)
+    col_crt = resolve_col_crt(db)
 
     introduced_today = db.count_new_introduced_today(today)
     new_quota = max(0, cap - introduced_today)
@@ -934,7 +974,7 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
 
     due_rec = db.get_due_items(today, Direction.RECOGNITION)
     due_prod = db.get_due_items(today, Direction.PRODUCTION)
-    due = _merge_by_retrievability_ascending(due_rec, due_prod, today)
+    due = _merge_by_retrievability_ascending(due_rec, due_prod, today, col_crt=col_crt)
     if bury_review:
         due = [t for t in due if t[0] not in buried]
 
