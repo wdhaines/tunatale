@@ -435,9 +435,10 @@ class TestParseFsrsData:
         assert state.state == SRSState.RELEARNING
 
     def test_parse_fsrs_data_sets_last_review_for_review_card(self):
-        """queue=2 (review): last_review = date from (due - ivl) via col_crt."""
+        """queue=2 (review): last_review = date from (due - ivl) via col_crt
+        (Layer 45: preserves col_crt time-of-day, fixing off-by-one)."""
         col_crt = 1388836800  # 2014-01-04 12:00:00 UTC
-        # due_raw=4501, ivl=3 → last_review_day = 4498 → 2014-01-04 + 4498 days = 2026-04-29
+        # review_col_day=4498 → 1st midnight in col_day 4498 = 2026-04-30
         state = parse_fsrs_data(
             card_id=1,
             ord=0,
@@ -449,12 +450,12 @@ class TestParseFsrsData:
             due_raw=4501,
             ivl=3,
         )
-        assert state.last_review == datetime.combine(date(2026, 4, 29), time.min, tzinfo=UTC)
+        assert state.last_review == datetime.combine(date(2026, 4, 30), time.min, tzinfo=UTC)
 
     def test_parse_fsrs_data_sets_last_review_for_relearning_card(self):
         """queue=3 (day-relearning): last_review computed same as queue=2."""
         col_crt = 1388836800
-        # due_raw=500, ivl=10 → last_review_day = 490 → 2014-01-04 + 490 days = 2015-05-09
+        # review_col_day=490 → 1st midnight in col_day 490 = 2015-05-10
         state = parse_fsrs_data(
             card_id=2,
             ord=1,
@@ -466,7 +467,7 @@ class TestParseFsrsData:
             due_raw=500,
             ivl=10,
         )
-        assert state.last_review == datetime.combine(date(2015, 5, 9), time.min, tzinfo=UTC)
+        assert state.last_review == datetime.combine(date(2015, 5, 10), time.min, tzinfo=UTC)
 
     def test_parse_fsrs_data_last_review_none_for_new_card(self):
         """queue=0 (new): last_review is None."""
@@ -512,7 +513,7 @@ class TestParseFsrsData:
             due_raw=4501,
             ivl=3,
         )
-        assert state.last_review == datetime.combine(date(2026, 4, 29), time.min, tzinfo=UTC)
+        assert state.last_review == datetime.combine(date(2026, 4, 30), time.min, tzinfo=UTC)
 
     def test_parse_fsrs_data_queue_2_reps_0_is_review_with_no_last_review(self):
         """Layer 30 mirror: (queue=2, reps=0) is REVIEW, not NEW.
@@ -573,6 +574,53 @@ class TestParseFsrsData:
             lapses=0,
         )
         assert state.state == SRSState.REVIEW
+
+    def test_parse_fsrs_data_last_review_col_day_matches_anki(self):
+        """Layer 45 end-to-end: parse_fsrs_data→_elapsed_days_for_fsrs matches
+        Anki's today_col_day - (due - ivl) for the user's real col_crt.
+
+        Regression: _compute_last_review was stripping col_crt's time-of-day,
+        producing midnight in the *previous* col_day.  This test pins the full
+        pipeline so the off-by-one cannot return.
+        """
+        from app.anki.protobuf_wire import compute_anki_day_index
+        from app.srs.fsrs import _elapsed_days_for_fsrs
+
+        col_crt = 1388836800  # user's real col_crt
+        due_raw = 4518
+        ivl = 38
+        review_col_day = due_raw - ivl  # = 4480
+
+        state = parse_fsrs_data(
+            card_id=100,
+            ord=0,
+            data_str=json.dumps({"s": 10.0, "d": 4.0}),
+            queue=2,
+            reps=5,
+            lapses=0,
+            col_crt=col_crt,
+            due_raw=due_raw,
+            ivl=ivl,
+        )
+
+        # Verify: parse_fsrs_data maps to the correct col_day
+        lr_col_day = compute_anki_day_index(col_crt, 4, state.last_review)
+        assert lr_col_day == review_col_day, (
+            f"parse_fsrs_data last_review col_day={lr_col_day}, expected {review_col_day}; "
+            f"off-by-one means _compute_last_review still strips col_crt time-of-day"
+        )
+
+        # Verify: _elapsed_days_for_fsrs produces correct elapsed against live now
+        ref_now = datetime.now(tz=UTC)
+        tt_elapsed = _elapsed_days_for_fsrs(state.last_review, ref_now, col_crt=col_crt)
+
+        today_col_day = compute_anki_day_index(col_crt, 4, ref_now)
+        expected_elapsed = today_col_day - review_col_day
+
+        assert tt_elapsed == expected_elapsed, (
+            f"_elapsed_days_for_fsrs={tt_elapsed} != {expected_elapsed} "
+            f"(today_col_day - review_col_day); pipeline broken"
+        )
 
 
 class TestExtractL2:

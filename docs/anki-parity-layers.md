@@ -753,3 +753,45 @@ After 23 layers, swept for dead code and duplication. Behavior unchanged.
 - Extracted `_queue_to_state(queue, card_type, reps) → SRSState` helper; replaced 3 duplicate blocks in `sync_pull`.
 - Extracted `AnkiSync._record_conflict(...)` method; replaced 5 sites.
 - Wrapped 9 `_resolve_prior_state` call sites in a local closure inside `sync_pull` so the kwargs are captured once.
+
+---
+
+## Layer 45 — `_compute_last_review` preserves col_crt time-of-day (day-level elapsed fix)
+
+**Trigger.** After Layer 40 landed fractional elapsed days, the user's `/review` page showed a persistent off-by-one: card `on` vs `prijazen` had different elapsed days despite identical `due` and `ivl` values. The bug was not in `_elapsed_days_for_fsrs` (Layer 40's implementation was correct in isolation) but upstream in `_compute_last_review`, which returned the wrong calendar date for cards with day-level fallback (no `lrt`).
+
+**Root cause.** `_compute_last_review` in `sqlite_reader.py` computed the review date as:
+```python
+datetime.fromtimestamp(col_crt).date() + timedelta(days=review_col_day)
+```
+This truncated `col_crt`'s time-of-day component (e.g., 12:00 UTC → 00:00 UTC) before adding days. For `col_crt=1388836800` (12:00 UTC Jan 4 2014), the computed `first_midnight` was Jan 4 00:00 UTC — but the actual first col_day boundary from `col_day_start = col_crt - 4h` is Jan 5 00:00 UTC (the first midnight *after* the col-day epoch). This off-by-one carried through: a card whose `review_col_day` pointed to col_day 4480 got mapped to Apr 11 00:00 UTC instead of Apr 12 00:00 UTC. The resulting `compute_anki_day_index(col_crt, 4, last_review)` was one less than `due - ivl`, breaking the invariant `today_col_day - review_col_day ≡ elapsed_days`.
+
+**Fix.** `_compute_last_review` now computes `first_midnight` from the col-day epoch boundary:
+```python
+col_day_start = col_crt - rollover_hour * 3600
+first_midnight = col_day_start if col_day_start % 86400 == 0
+                 else (col_day_start // 86400 + 1) * 86400
+last_review_ts = first_midnight + review_col_day * 86400
+return datetime.fromtimestamp(last_review_ts, tz=UTC)
+```
+For `col_crt=1388836800`, `col_day_start=1388822400`, `first_midnight=1388880000` (Jan 5 2014 00:00 UTC) — the correct first midnight. Review dates shift by +1 col_day for all col_crt values not on the 04:00 UTC boundary (e.g., Apr 11→Apr 12, May 9→May 10 for the user's col_crt).
+
+**`col_crt` threading.** To serve the fix at grade time (not just sync time), `col_crt` is cached in `anki_state_cache` as key `"col_crt"` (integer string). New trio in `queue_stats.py`: `refresh_col_crt(db, conn)` (at sync), `resolve_col_crt(db)` (returns `None` on cache miss → backward-compatible UTC fallback). `col_crt` threaded through `compute_retrievability`, `schedule`, `_schedule_review_again`, `_merge_by_retrievability_ascending`, `_compute_live_main`, `drill_feedback`, `mark_lesson_listened`, and the `fsrs_step` API endpoint.
+
+**Day-level elapsed branch (col_crt available).** `_elapsed_days_for_fsrs` already had a midnight-UTC detection branch from Layer 40. When `col_crt is not None` AND `is_day_level` (midnight-UTC marker), it now uses:
+```python
+today_col_day = compute_anki_day_index(col_crt, 4, ref_now)
+last_col_day = compute_anki_day_index(col_crt, 4, last_review)
+days_elapsed = max(0, today_col_day - last_col_day)
+```
+This is the col-day computation, matching Anki's `extract_fsrs_retrievability` for day-level cards. The existing `lrt`-based fractional branch is unchanged (precise `lrt` → sub-day precision).
+
+**Verification.**
+- `test_midnight_datetime_col_day_rollover_crossing` (39→40 for col_crt=-572400, 39 unchanged for col_crt aligned on 04:00 UTC).
+- `test_midnight_datetime_col_day_same_as_utc_when_boundary_not_crossed`.
+- `test_midnight_datetime_col_day_fallback_to_utc_when_col_crt_none`.
+- `test_parse_fsrs_data_last_review_col_day_matches_anki` — end-to-end `parse_fsrs_data` → `_elapsed_days_for_fsrs` pipeline against live `now`, verifying `compute_anki_day_index(lr) == due - ivl`.
+- `test_parity_day_level_elapsed_matches_anki` (oracle) — seeds a non-lrt card with raw `due/ivl`, exercises `_compute_last_review` → `_elapsed_days_for_fsrs`, compares elapsed against Anki's oracle.
+- 3 hardcoded date assertions updated in `test_anki_sqlite_reader.py` that used the old wrong formula.
+
+**Files.** `backend/app/anki/sqlite_reader.py:265-297` (`_compute_last_review` rewrite), `backend/app/srs/fsrs.py:128-158` (`_elapsed_days_for_fsrs` col-day branch), `backend/app/srs/queue_stats.py` (`refresh_col_crt`/`resolve_col_crt` trio), `backend/app/api/anki.py` (sync wiring), `backend/app/api/srs.py` (col_crt threaded through entry points). Tests: `backend/tests/test_fsrs.py` (3 unit tests), `backend/tests/test_anki_sqlite_reader.py` (1 regression + 3 date fixes), `backend/tests/test_parity_fsrs_schedule.py` (1 oracle test refactored).

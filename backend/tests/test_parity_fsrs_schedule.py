@@ -322,12 +322,18 @@ def test_parity_graduation_after_many_agains(synthetic_collection: SyntheticColl
 def test_parity_day_level_elapsed_matches_anki(synthetic_collection: SyntheticCollection) -> None:
     """Day-level elapsed uses col-day computation, matching Anki's (Layer 45).
 
-    Seeds a review card without ``lrt`` in ``cards.data`` (omit
-    ``last_review_secs``) so Anki falls back to ``today - (due - ivl)``.
-    TT's ``_elapsed_days_for_fsrs`` must produce the exact same integer
-    when ``col_crt`` is provided.
+    Seeds a review card without ``lrt`` in ``cards.data`` using raw
+    ``due_raw`` / ``ivl`` values (not derived from
+    ``compute_anki_day_index``).  TT exercises the real
+    ``_compute_last_review`` → ``_elapsed_days_for_fsrs`` pipeline,
+    then compares elapsed_days against Anki's ground truth.
+
+    The day-level fallback path (tested via ``_compute_last_review``) is
+    also covered by
+    ``test_anki_sqlite_reader.py::test_parse_fsrs_data_last_review_col_day_matches_anki``.
     """
     from app.anki.protobuf_wire import compute_anki_day_index
+    from app.anki.sqlite_reader import _compute_last_review
     from app.srs.fsrs import _elapsed_days_for_fsrs
 
     col_crt = -572400
@@ -337,10 +343,12 @@ def test_parity_day_level_elapsed_matches_anki(synthetic_collection: SyntheticCo
         retention=DEFAULT_DESIRED_RETENTION,
     )
 
-    review_dt = datetime(2026, 4, 11, 0, 0, 0, tzinfo=UTC)
-    review_col_day = compute_anki_day_index(col_crt, 4, review_dt)
+    # Use arbitrary due_raw / ivl (not derived from compute_anki_day_index)
+    # such that due_raw ≈ today_col_day, so the card appears in the queue
+    due_raw = 20589
+    ivl = 10
+    review_col_day = due_raw - ivl  # = 20579
 
-    # Card without lrt → day-level fallback: today_col_day - (due - ivl)
     synthetic_collection.add_note(id=1001, guid="g-day-level", fields=["f", "b"])
     synthetic_collection.add_card(
         id=10010,
@@ -348,8 +356,8 @@ def test_parity_day_level_elapsed_matches_anki(synthetic_collection: SyntheticCo
         ord=0,
         type=2,
         queue=2,
-        due=review_col_day,
-        ivl=0,
+        due=due_raw,
+        ivl=ivl,
         reps=5,
         stability=10.0,
         difficulty=4.0,
@@ -368,11 +376,16 @@ def test_parity_day_level_elapsed_matches_anki(synthetic_collection: SyntheticCo
     anki_card = cards[0]
     anki_elapsed = anki_card["states"]["current"]["elapsed_days"]
 
+    # TT side: use the same _compute_last_review pipeline as sync
     ref_now = datetime.now(tz=UTC)
-    tt_elapsed = _elapsed_days_for_fsrs(review_dt, ref_now, col_crt=col_crt)
+    last_review = _compute_last_review(2, due_raw, ivl, col_crt)
+    tt_elapsed = _elapsed_days_for_fsrs(last_review, ref_now, col_crt=col_crt)
 
     assert anki_elapsed == tt_elapsed, (
         f"elapsed_days mismatch: Anki={anki_elapsed} vs TT={tt_elapsed}\n"
-        f"  review_col_day={review_col_day}, col_crt={col_crt}\n"
-        f"  ref_now={ref_now}, review_dt={review_dt}"
+        f"  col_crt={col_crt}, due_raw={due_raw}, ivl={ivl}, "
+        f"review_col_day={review_col_day}\n"
+        f"  last_review={last_review} "
+        f"(col_day={compute_anki_day_index(col_crt, 4, last_review)})\n"
+        f"  ref_now={ref_now}"
     )

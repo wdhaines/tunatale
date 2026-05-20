@@ -262,17 +262,36 @@ def parse_fsrs_data(
     )
 
 
-def _compute_last_review(queue: int, due_raw: int, ivl: int, col_crt: int) -> datetime | None:
+def _compute_last_review(
+    queue: int,
+    due_raw: int,
+    ivl: int,
+    col_crt: int,
+    rollover_hour: int = 4,
+) -> datetime | None:
     """Compute last_review datetime (midnight UTC) for queue 2/3 cards.
 
     Anki only persists day-level last review; we promote to midnight UTC so the
     field type matches DirectionState.last_review and round-trips cleanly through
     DB writes that expect datetime.
+
+    The datetime is placed at midnight UTC of the first calendar day that falls
+    within the same Anki col_day as ``due_raw - ivl``.  This preserves
+    ``compute_anki_day_index(col_crt, rollover_hour, result) == due_raw - ivl``
+    — matching the review_col_day Anki stores — while keeping the midnight-UTC
+    marker that signals the day-level branch in ``_elapsed_days_for_fsrs``.
+
+    Layer 45 fix: old code stripped col_crt's time-of-day via ``.date()``,
+    placing midnight in the *previous* col_day when col_crt is not on the
+    col-day boundary, creating a persistent -1 offset against Anki.
     """
-    if queue in (2, 3):
-        d = datetime.fromtimestamp(col_crt, tz=UTC).date() + timedelta(days=due_raw - ivl)
-        return datetime.combine(d, time.min, tzinfo=UTC)
-    return None
+    if queue not in (2, 3):
+        return None
+    review_col_day = due_raw - ivl
+    col_day_start = col_crt - rollover_hour * 3600
+    first_midnight = col_day_start if col_day_start % 86400 == 0 else (col_day_start // 86400 + 1) * 86400
+    last_review_ts = first_midnight + review_col_day * 86400
+    return datetime.fromtimestamp(last_review_ts, tz=UTC)
 
 
 def read_fsrs_state_for_cards(collection_path: str | Path, card_ids: list[int]) -> dict[int, tuple[float, float]]:
