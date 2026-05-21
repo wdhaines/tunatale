@@ -72,6 +72,7 @@ omit = [
     "app/anki/migrate_cloze_to_production.py",
     "app/anki/dedup_tt_revlog.py",
     "app/anki/diagnose_replay_match.py",
+    "app/anki/measure_stage3b_premise.py",
     "app/srs/build_function_word_list.py",
 ]
 
