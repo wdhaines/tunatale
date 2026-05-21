@@ -17,10 +17,13 @@ export default defineConfig({
 		setupFiles: ['@testing-library/svelte/vitest'],
 		coverage: {
 			provider: 'v8',
-			// `text` for human-readable summary on local runs; `json` writes
-			// `coverage/coverage-final.json` which `scripts/coverage-gate.ts`
-			// consumes for the 100% gate (filters Svelte 5 phantom branches).
-			reporter: ['text', 'json'],
+			// `json` writes `coverage/coverage-final.json` which
+			// `scripts/coverage-gate.ts` consumes for the 100% gate (filters
+			// Svelte 5 phantom branches). No `'text'` reporter — its per-file
+			// table reports raw, unfiltered v8 numbers that disagree with the
+			// gate's filtered verdict. For ad-hoc debugging, add it on the CLI:
+			//   bun run test:coverage --coverage.reporter=text
+			reporter: ['json'],
 			include: ['src/lib/**/*.ts', 'src/lib/**/*.svelte', 'src/routes/**/*.svelte'],
 			exclude: [
 				'src/**/*.d.ts',
