@@ -577,6 +577,24 @@ class TestStatesMatch:
             self._make_replayed(),
         ), "None due_at should not match"
 
+    def test_states_match_both_last_review_null(self):
+        """Both stored.last_review and replayed.last_review null → match by absence."""
+        assert _states_match(
+            self._make_stored(last_review=None),
+            self._make_replayed(last_review=None),
+        )
+
+    def test_states_match_last_review_one_null(self):
+        """One null and one set → mismatch (both directions)."""
+        assert not _states_match(
+            self._make_stored(last_review=None),
+            self._make_replayed(),
+        )
+        assert not _states_match(
+            self._make_stored(),
+            self._make_replayed(last_review=None),
+        )
+
 
 class TestReplayScript:
     """Script-level CLI tests."""
@@ -667,6 +685,42 @@ class TestReplayScript:
         assert main(["--dry-run"]) == 0
         captured = capsys.readouterr()
         assert "WARNING:" in captured.out
+
+    def test_warns_when_fsrs_params_unavailable(self, tmp_path, caplog):
+        """Minimal Anki DB has no usable deck_config; resolve_fsrs_params falls back
+        to default and the script must emit a warning."""
+        anki = _create_minimal_anki_db(tmp_path)
+        tt = _build_tt_db(tmp_path)
+        seed_direction(SRSDatabase(str(tt)), text="test", anki_card_id=None)
+
+        caplog.set_level("WARNING", logger="app.anki.replay_fsrs_from_revlog")
+        replay_fsrs_from_revlog(tt, anki, dry_run=True)
+
+        assert any("Using default FSRS params" in record.message for record in caplog.records), (
+            "warning must fire when FSRS params cache is empty"
+        )
+
+    def test_no_warning_when_fsrs_params_cached(self, tmp_path, caplog):
+        """Pre-populated cache → resolve_fsrs_params returns 'cache' source; no warning."""
+        import json
+
+        from app.srs.fsrs import _DEFAULT_WEIGHTS
+
+        anki = _create_minimal_anki_db(tmp_path)
+        tt = _build_tt_db(tmp_path)
+        db = SRSDatabase(str(tt))
+        seed_direction(db, text="test", anki_card_id=None)
+        db.set_anki_state_cache(
+            "fsrs_params",
+            json.dumps({"weights": list(_DEFAULT_WEIGHTS), "desired_retention": 0.9}),
+        )
+
+        caplog.set_level("WARNING", logger="app.anki.replay_fsrs_from_revlog")
+        replay_fsrs_from_revlog(tt, anki, dry_run=True)
+
+        assert not any("Using default FSRS params" in record.message for record in caplog.records), (
+            "warning must NOT fire when cache is populated"
+        )
 
 
 class TestReplayConcurrency:

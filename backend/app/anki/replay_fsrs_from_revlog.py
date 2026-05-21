@@ -61,16 +61,11 @@ def _states_match(stored: dict, replayed_state) -> bool:
         return False
 
     stored_lr = _parse_stored_due(stored["last_review"])
-    if stored_lr is None and replayed_state.last_review is None:  # pragma: no cover (pass is a no-op)
-        pass
-    elif (
-        stored_lr is None
-        or replayed_state.last_review is None
-        or abs((stored_lr - replayed_state.last_review).total_seconds()) >= _TOLERANCE_DT_SEC
-    ):
-        return False
+    replayed_lr = replayed_state.last_review
 
-    return True
+    if (stored_lr is None) != (replayed_lr is None):
+        return False
+    return stored_lr is None or abs((stored_lr - replayed_lr).total_seconds()) < _TOLERANCE_DT_SEC
 
 
 def _has_pre_fsrs_rows(tt_conn: sqlite3.Connection, collocation_id: int, direction: str) -> bool:
@@ -127,8 +122,8 @@ def replay_fsrs_from_revlog(
             resolved_params, params_source = resolve_fsrs_params(srs_db)
             col_crt = resolve_col_crt(srs_db)
 
-            if params_source == "default":  # pragma: no cover (cache always empty in tests)
-                logger.warning("Using default FSRS params (cache not available)")  # pragma: no cover
+            if params_source == "default":
+                logger.warning("Using default FSRS params (cache not available)")
 
             buckets = {
                 "MATCH": 0,
