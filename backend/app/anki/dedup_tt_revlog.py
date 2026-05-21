@@ -5,9 +5,19 @@ Later, sync_pull's ``_ingest_anki_revlog_for_card`` (or the Stage 1 bootstrap)
 copies the **same event** from Anki's revlog into tt_revlog, but with a different
 ID (different millisecond timestamp).  This double-counts the event during replay.
 
-The dedup rule: for each ``(collocation_id, direction)``, adjacent rows within
-5000 ms with the same ``button_chosen`` are duplicates.  Keep the earlier one
-(the TT-grade row), delete the later one (the Anki-import copy).
+The dedup rule: for each ``(collocation_id, direction)``, scan a sliding 5000ms
+window; any row within the window of an earlier row with the same ``button_chosen``
+is a duplicate. Keep the earliest of each cluster; delete the rest.
+
+**Known false-positive shape.** A user who legitimately re-grades the same card
+within 5 seconds (e.g., presses AGAIN twice in rapid succession out of
+frustration) will lose the second grade. This is a quantitatively small risk —
+Anki round-trip copies are typically <500ms after the TT row, while legitimate
+rapid re-grades are rarer than that and produce divergence in stored state
+either way (`schedule()` applied twice in 5s with `elapsed=0` short-term path).
+A future-proof fix is source-tagging rows at ingest time (an `origin` column on
+tt_revlog) so dedup can be source-aware; not worth the schema change for the
+current dedup volume (237 rows on the user's deck).
 
 Usage:
     uv run python -m app.anki.dedup_tt_revlog [--dry-run]
