@@ -90,8 +90,13 @@ def replay_fsrs_from_revlog(
     anki_col_path: Path,
     *,
     dry_run: bool = False,
+    ignore_pre_fsrs_gate: bool = False,
 ) -> dict:
     """Replay every direction's tt_revlog rows through FSRS, classifying each.
+
+    When ``ignore_pre_fsrs_gate`` is True, directions with SM-2-era rows
+    (``factor > 0``) are classified into MATCH/REPAIR instead of SKIP_PRE_FSRS.
+    Use this to test whether the gate is masking real signal.
 
     Returns a summary dict with bucket counts and error list.
     """
@@ -162,7 +167,7 @@ def replay_fsrs_from_revlog(
                         bucket = "MATCH"
                     elif anki_card_id is None and _count_non_synthetic(tt, collocation_id, dir_str) == 0:
                         bucket = "SKIP_SYNTHETIC_ONLY"
-                    elif _has_pre_fsrs_rows(tt, collocation_id, dir_str):
+                    elif not ignore_pre_fsrs_gate and _has_pre_fsrs_rows(tt, collocation_id, dir_str):
                         bucket = "SKIP_PRE_FSRS"
                     elif anki_card_id is not None:
                         bucket = "REPAIR"
@@ -263,12 +268,22 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Classify without writing REPAIR updates.",
     )
+    parser.add_argument(
+        "--ignore-pre-fsrs-gate",
+        action="store_true",
+        help="Disable the SKIP_PRE_FSRS gate so SM-2-era directions classify as MATCH/REPAIR.",
+    )
     args = parser.parse_args(argv)
 
     tt_db_path = Path(settings.database_url.removeprefix("sqlite:///"))
     anki_col_path = Path(settings.anki_collection_path)
 
-    summary = replay_fsrs_from_revlog(tt_db_path, anki_col_path, dry_run=args.dry_run)
+    summary = replay_fsrs_from_revlog(
+        tt_db_path,
+        anki_col_path,
+        dry_run=args.dry_run,
+        ignore_pre_fsrs_gate=args.ignore_pre_fsrs_gate,
+    )
     mode = "DRY-RUN" if args.dry_run else "APPLIED"
     buckets = summary["buckets"]
     total = sum(buckets.values())

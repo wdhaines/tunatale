@@ -47,14 +47,22 @@ def dedup_tt_revlog(tt_db_path: Path, *, dry_run: bool = False) -> dict:
                 (cid, d),
             ).fetchall()
 
-            # Find adjacent pairs within the window with matching button_chosen
+            # Sliding window: for each row, scan forward for any same-ease row
+            # within _WINDOW_MS. Rows can be non-adjacent after sort-by-id when
+            # an unrelated revlog event lands between a TT-grade and its Anki
+            # copy. Keep the earliest of each cluster; mark the rest for deletion.
             to_delete: set[int] = set()
-            for i in range(len(rows) - 1):
+            for i in range(len(rows)):
                 r1 = rows[i]
-                r2 = rows[i + 1]
-                gap = r2["id"] - r1["id"]
-                if 0 < gap < _WINDOW_MS and r1["button_chosen"] == r2["button_chosen"]:
-                    # Keep the earlier (TT-written) row, delete the later (Anki copy)
+                if r1["id"] in to_delete:
+                    continue
+                for j in range(i + 1, len(rows)):
+                    r2 = rows[j]
+                    gap = r2["id"] - r1["id"]
+                    if gap >= _WINDOW_MS:
+                        break  # sorted by id; further rows are out of window
+                    if r2["id"] in to_delete or r1["button_chosen"] != r2["button_chosen"]:
+                        continue
                     to_delete.add(r2["id"])
                     total_pairs += 1
                     if len(deleted_details) < 10:
