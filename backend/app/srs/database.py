@@ -2006,6 +2006,99 @@ class SRSDatabase:
             )
             self._commit(conn)
 
+    def rebuild_from_revlog(
+        self,
+        collocation_id: int,
+        direction: Direction,
+        params=None,
+        col_crt: int | None = None,
+        exclude_review_kinds: frozenset[int] = frozenset({4}),
+        anki_card_id: int | None = None,
+    ) -> DirectionState:
+        """Replay tt_revlog rows through FSRS schedule() to derive DirectionState.
+
+        Reads all non-excluded revlog rows for ``(collocation_id, direction)``
+        ordered by ``id`` ASC and replays them through ``app.srs.fsrs.schedule``
+        starting from a NEW default state.
+
+        Pass *anki_card_id* to ensure the FSRS interval-fuzz seed matches the
+        real Anki card id; omit or pass ``None`` for TT-only directions.
+
+        Returns the replayed ``DirectionState``.  The caller is responsible for
+        writing it back (and merging non-FSRS fields).
+        """
+        from app.srs.fsrs import DEFAULT_FSRS5_PARAMS, Rating, schedule
+
+        if params is None:
+            params = DEFAULT_FSRS5_PARAMS
+
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, button_chosen, taken_millis, review_kind, factor
+                FROM tt_revlog
+                WHERE collocation_id = ? AND direction = ?
+                ORDER BY id ASC
+            """,
+                (collocation_id, direction.value),
+            ).fetchall()
+
+            coll = conn.execute(
+                """
+                SELECT guid, anki_note_id, text, card_type FROM collocations WHERE id = ?
+            """,
+                (collocation_id,),
+            ).fetchone()
+
+        rows = [r for r in rows if r["review_kind"] not in exclude_review_kinds]
+
+        if not rows:
+            return DirectionState(
+                direction=direction,
+                due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+            )
+
+        guid = coll["guid"] if coll else None
+        anki_note_id = coll["anki_note_id"] if coll else None
+        card_type = coll["card_type"] or "vocab" if coll else "vocab"
+
+        other_dir = Direction.PRODUCTION if direction == Direction.RECOGNITION else Direction.RECOGNITION
+        now_4am = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        default_state = DirectionState(direction=direction, due_at=now_4am, anki_card_id=anki_card_id)
+        other_state = DirectionState(direction=other_dir, due_at=now_4am)
+        unit = SyntacticUnit(
+            text=coll["text"] if coll else "replay",
+            translation="",
+            word_count=1,
+            difficulty=1,
+            source="replay",
+            card_type=card_type,
+        )
+        item = SRSItem(
+            syntactic_unit=unit,
+            directions={direction: default_state, other_dir: other_state},
+            guid=guid or "replay",
+            anki_note_id=anki_note_id,
+        )
+
+        for row in rows:
+            if row["button_chosen"] not in (1, 2, 3, 4):
+                continue
+            now_dt = datetime.fromtimestamp(row["id"] / 1000, tz=UTC)
+            review_date = now_dt.date()
+            item = schedule(
+                item,
+                Rating(row["button_chosen"]),
+                review_date=review_date,
+                direction=direction,
+                params=params,
+                time_ms=row["id"],
+                now=now_dt,
+                col_crt=col_crt,
+            )
+
+        return item.directions[direction]
+
     def latest_revlog_id_for_card(self, anki_card_id: int) -> int | None:
         """Return MAX(id) from tt_revlog for the given Anki card, or None."""
         with self._get_conn() as conn:
