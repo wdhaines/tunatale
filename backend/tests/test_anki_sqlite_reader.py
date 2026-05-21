@@ -846,6 +846,27 @@ class TestListMediaRefs:
         field = '<img src="first.jpg" alt="A > B">'
         assert list_media_refs([field]) == ["first.jpg"]
 
+    def test_skips_data_uri_src(self):
+        """Inline ``data:`` URIs are not file references — never pass them downstream.
+
+        Discovered when sync_pull → refresh_media_for_deck crashed with
+        ``OSError [Errno 63] File name too long`` because a note pasted a
+        base64-encoded JPEG inline (``<img src="data:image/jpeg;base64,...">``)
+        and the downstream ``(anki_media_path / filename).exists()`` call tried
+        to stat a ~98KB path. Per RFC 2397, ``data:`` URIs embed the resource
+        directly; there is no corresponding file in ``collection.media/``.
+        """
+        field = '<img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAk=">'
+        assert list_media_refs([field]) == []
+
+    def test_skips_data_uri_keeps_real_refs_in_same_field(self):
+        """A field can mix data: URIs with real refs; only the data: URI is dropped."""
+        field = (
+            '<img src="data:image/png;base64,iVBORw0KGgoAAA=="> '
+            '<img src="real.jpg"> [sound:a.mp3]'
+        )
+        assert set(list_media_refs([field])) == {"real.jpg", "a.mp3"}
+
 
 class TestReadFsrsStateForCards:
     def _write_db(self, tmp_path, rows: list[tuple[int, str | None]]):

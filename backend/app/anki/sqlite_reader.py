@@ -349,11 +349,18 @@ def list_media_refs(fields: list[str]) -> list[str]:
     the src filename would be missed — silently breaking
     `_refresh_media_for_collocation` for any note whose alt text contains
     `>` (common for pasted images from web breadcrumbs).
+
+    ``data:`` URIs are inline (RFC 2397) and never correspond to a file in
+    ``collection.media/``; passing them downstream causes ``OSError [Errno 63]
+    File name too long`` when the refresh tries to stat them.
     """
     refs: list[str] = []
     for field in fields:
         refs.extend(re.findall(r"\[sound:([^\]]+)\]", field))
-        refs.extend(re.findall(r'<img(?:[^"]|"[^"]*")*?\bsrc="([^"]+)"', field))
+        for src in re.findall(r'<img(?:[^"]|"[^"]*")*?\bsrc="([^"]+)"', field):
+            if src.startswith("data:"):
+                continue
+            refs.append(src)
     return refs
 
 
