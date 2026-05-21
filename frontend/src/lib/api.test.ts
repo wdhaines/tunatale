@@ -640,6 +640,57 @@ describe("TunaTaleAPI", () => {
       );
     });
 
+    it("suspendSRSItem includes direction in body when provided", async () => {
+      const item = {
+        id: 7,
+        text: "test",
+        translation: "",
+        state: "suspended" as const,
+        due_at: "2026-04-01",
+        stability: 1,
+        difficulty: 5,
+        reps: 0,
+        lapses: 0,
+        last_review: null,
+        language_code: "sl",
+      };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(item)));
+
+      await api.suspendSRSItem(7, true, "production");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/items/7/suspend`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ suspended: true, direction: "production" }),
+        }),
+      );
+    });
+
+    it("getClozeSetting calls GET /api/srs/settings/cloze", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ enabled: true })));
+
+      const result = await api.getClozeSetting();
+
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/settings/cloze`);
+      expect(result.enabled).toBe(true);
+    });
+
+    it("setClozeSetting calls PUT /api/srs/settings/cloze with enabled flag", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ enabled: false })));
+
+      const result = await api.setClozeSetting(false);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/settings/cloze`,
+        expect.objectContaining({
+          method: "PUT",
+          body: JSON.stringify({ enabled: false }),
+        }),
+      );
+      expect(result.enabled).toBe(false);
+    });
+
     it("setSRSItemState calls POST /api/srs/items/:id/state with state", async () => {
       const item = {
         id: 3,

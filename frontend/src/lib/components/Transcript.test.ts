@@ -1565,4 +1565,183 @@ describe("Transcript", () => {
       expect(container.querySelector(".add-phrase-form")).toBeFalsy();
     });
   });
+
+  describe("defensive guards (closing coverage gaps)", () => {
+    const oneWord: TranscriptData = {
+      lesson_id: "l1",
+      key_phrases: [],
+      dialogue_lines: [
+        {
+          role: "A",
+          words: [
+            {
+              surface: "x",
+              lemma: "x",
+              srs_state: "new",
+              srs_item_id: null,
+              translation: null,
+              collocation_span_id: null,
+              collocation_start: false,
+              collocation_srs_state: null,
+              collocation_lemma: null,
+              collocation_translation: null,
+            },
+          ],
+        },
+      ],
+    };
+
+    const twoLines: TranscriptData = {
+      lesson_id: "l1",
+      key_phrases: [],
+      dialogue_lines: [
+        {
+          role: "A",
+          words: [
+            {
+              surface: "first",
+              lemma: "first",
+              srs_state: "new",
+              srs_item_id: null,
+              translation: null,
+              collocation_span_id: null,
+              collocation_start: false,
+              collocation_srs_state: null,
+              collocation_lemma: null,
+              collocation_translation: null,
+            },
+          ],
+        },
+        {
+          role: "B",
+          words: [
+            {
+              surface: "second",
+              lemma: "second",
+              srs_state: "new",
+              srs_item_id: null,
+              translation: null,
+              collocation_span_id: null,
+              collocation_start: false,
+              collocation_srs_state: null,
+              collocation_lemma: null,
+              collocation_translation: null,
+            },
+          ],
+        },
+      ],
+    };
+
+    it("resolveWordTarget returns null when data-word-index is non-numeric", async () => {
+      // Hits the `isNaN(wordIdx) || isNaN(lineIdx)` early return.
+      // Render normally, then inject a malformed word-index span as a child of
+      // the dialogue-words container so pointerdown bubbles to the line's handler.
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: oneWord }),
+      });
+      const wordsContainer = container.querySelector(".dialogue-words") as HTMLElement;
+      const malformed = document.createElement("span");
+      malformed.setAttribute("data-word-index", "not-a-number");
+      malformed.setAttribute("data-line-index", "also-bad");
+      wordsContainer.appendChild(malformed);
+
+      await fireEvent.pointerDown(malformed);
+      await fireEvent.pointerUp(malformed);
+
+      // No drag started → no phrase-confirm-bar
+      expect(container.querySelector(".phrase-confirm-bar")).toBeFalsy();
+    });
+
+    it("handlePointerMove drops moves to a different line than the drag anchor", async () => {
+      // Hits the `resolved.lineIndex !== dragAnchor.lineIndex` early return.
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: twoLines }),
+      });
+      const word0Line0 = container.querySelector(
+        '[data-line-index="0"][data-word-index="0"]',
+      ) as HTMLElement;
+      const word0Line1 = container.querySelector(
+        '[data-line-index="1"][data-word-index="0"]',
+      ) as HTMLElement;
+
+      await fireEvent.pointerDown(word0Line0);
+      await fireEvent.pointerMove(word0Line1); // ← exercises guard
+      await fireEvent.pointerUp(word0Line1);
+
+      // Cross-line drag does not produce a selection
+      expect(container.querySelector(".phrase-confirm-bar")).toBeFalsy();
+    });
+
+    it("fetchTranslation early-returns when lesson is null (no api.translateTerm call)", async () => {
+      // Hits the `if (!selection || !lesson) return` early return in fetchTranslation.
+      vi.mocked(api.translateTerm).mockClear();
+      const transcriptForSelect: TranscriptData = {
+        lesson_id: "l1",
+        key_phrases: [],
+        dialogue_lines: [
+          {
+            role: "A",
+            words: [
+              {
+                surface: "one",
+                lemma: "one",
+                srs_state: "new",
+                srs_item_id: null,
+                translation: null,
+                collocation_span_id: null,
+                collocation_start: false,
+                collocation_srs_state: null,
+                collocation_lemma: null,
+                collocation_translation: null,
+              },
+              {
+                surface: "two",
+                lemma: "two",
+                srs_state: "new",
+                srs_item_id: null,
+                translation: null,
+                collocation_span_id: null,
+                collocation_start: false,
+                collocation_srs_state: null,
+                collocation_lemma: null,
+                collocation_translation: null,
+              },
+            ],
+          },
+        ],
+      };
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptForSelect, lesson: null }),
+      });
+
+      const w0 = container.querySelector('[data-word-index="0"]') as HTMLElement;
+      const w1 = container.querySelector('[data-word-index="1"]') as HTMLElement;
+      await fireEvent.pointerDown(w0);
+      await fireEvent.pointerMove(w1);
+      await fireEvent.pointerUp(w1);
+
+      const translateBtn = container.querySelector(".phrase-translate-btn") as HTMLElement;
+      expect(translateBtn).toBeTruthy();
+      await fireEvent.click(translateBtn);
+
+      expect(vi.mocked(api.translateTerm)).not.toHaveBeenCalled();
+    });
+
+    it("fetchAddPhraseTranslation early-returns when lesson is null", async () => {
+      // Hits the `if (!addPhraseText.trim() || !lesson) return` early return.
+      vi.mocked(api.translateTerm).mockClear();
+      const { container, getByText } = render(Transcript, {
+        props: defaultProps({ transcript: oneWord, lesson: null }),
+      });
+      await fireEvent.click(getByText(/Add phrase/));
+
+      const textInput = container.querySelector(".add-phrase-text") as HTMLInputElement;
+      await fireEvent.input(textInput, { target: { value: "test phrase" } });
+
+      const translateBtn = container.querySelector(".add-phrase-translate-btn") as HTMLElement;
+      await fireEvent.click(translateBtn);
+
+      expect(vi.mocked(api.translateTerm)).not.toHaveBeenCalled();
+    });
+  });
 });

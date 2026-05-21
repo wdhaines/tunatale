@@ -314,6 +314,24 @@ describe("DrillCard", () => {
       await fireEvent.click(await findByRole("button", { name: "Again" }));
       expect(onRate).toHaveBeenCalledWith("again", expect.any(Number));
     });
+
+    it('calls onRate("hard") when Hard clicked', async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole } = render(DrillCard, { item, direction: "recognition", onRate });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      await fireEvent.click(await findByRole("button", { name: "Hard" }));
+      expect(onRate).toHaveBeenCalledWith("hard", expect.any(Number));
+    });
+
+    it('calls onRate("easy") when Easy clicked', async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole } = render(DrillCard, { item, direction: "recognition", onRate });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      await fireEvent.click(await findByRole("button", { name: "Easy" }));
+      expect(onRate).toHaveBeenCalledWith("easy", expect.any(Number));
+    });
   });
 
   describe("audio play button", () => {
@@ -334,6 +352,76 @@ describe("DrillCard", () => {
         audio.play = playMock;
       }
       await fireEvent.click(getByRole("button", { name: "Play audio" }));
+      expect(playMock).toHaveBeenCalled();
+    });
+
+    it("swallows rejected play() (autoplay-policy block) without surfacing", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({ audio_url: "/api/media/test.mp3" });
+      const { getByRole, container } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+      });
+      const audio = container.querySelector("audio");
+      const playMock = vi.fn().mockRejectedValue(new Error("blocked"));
+      if (audio) audio.play = playMock;
+
+      await fireEvent.click(getByRole("button", { name: "Play audio" }));
+      // Catch handler must absorb the rejection. Yield to let microtasks drain.
+      await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+      expect(playMock).toHaveBeenCalled();
+    });
+  });
+
+  describe("word audio play button", () => {
+    const clozeItem = makeSRSItemDetail({
+      text: "vsak",
+      translation: "every",
+      card_type: "cloze",
+      source_sentence: "Odprto je vsak dan",
+      source_sentence_translation: "It is open every day",
+      audio_url: "/api/media/sentence.mp3",
+      word_audio_url: "/api/media/tts_vsak.mp3",
+    });
+
+    it("calls wordAudioEl.play() when word-audio button clicked", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const { findByRole, container, getByLabelText } = render(DrillCard, {
+        item: clozeItem,
+        direction: "production",
+        onRate,
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+
+      const wordAudio = container.querySelector(
+        'audio[src="/api/media/tts_vsak.mp3"]',
+      ) as HTMLAudioElement | null;
+      expect(wordAudio).toBeTruthy();
+      const playMock = vi.fn().mockResolvedValue(undefined);
+      if (wordAudio) wordAudio.play = playMock;
+
+      await fireEvent.click(getByLabelText("Play word audio"));
+      expect(playMock).toHaveBeenCalled();
+    });
+
+    it("swallows rejected word-audio play() (autoplay-policy block)", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const { findByRole, container, getByLabelText } = render(DrillCard, {
+        item: clozeItem,
+        direction: "production",
+        onRate,
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+
+      const wordAudio = container.querySelector(
+        'audio[src="/api/media/tts_vsak.mp3"]',
+      ) as HTMLAudioElement | null;
+      const playMock = vi.fn().mockRejectedValue(new Error("blocked"));
+      if (wordAudio) wordAudio.play = playMock;
+
+      await fireEvent.click(getByLabelText("Play word audio"));
+      await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
       expect(playMock).toHaveBeenCalled();
     });
   });

@@ -72,7 +72,11 @@
 			let itemId = srs_item_id;
 			let currentState = 'new';
 
-			for (const line of transcript?.dialogue_lines ?? []) {
+			// `handleStateChange` is the `onStateChange` callback on <Transcript>,
+			// which only renders when `transcript` is truthy ({#if transcript} guards
+			// the mount). So transcript is non-null at the point this handler fires;
+			// the non-null assertion avoids a dead-defensive `?? []` branch.
+			for (const line of transcript!.dialogue_lines) {
 				const word = line.words.find((w) => w.lemma === lemma);
 				if (word) {
 					currentState = word.srs_state;

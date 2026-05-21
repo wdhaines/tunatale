@@ -192,6 +192,24 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(getByText(/2 phrases/)).toBeTruthy();
   });
 
+  it("falls back to raw section type when not in SECTION_TITLES dictionary", () => {
+    // Exercises `{SECTION_TITLES[section.type] ?? section.type}` fallback at L167.
+    // "unknown_type" isn't a key in the dictionary, so the raw value renders.
+    const lessonOddType = {
+      ...lesson,
+      sections: [
+        {
+          type: "unknown_type",
+          phrases: [{ text: "x", role: "female-1", language_code: "sl", voice_id: "v1" }],
+        },
+      ],
+    };
+    const { container } = render(Page, {
+      props: { data: { curriculum, lesson: lessonOddType, audio: null, transcript: null } },
+    });
+    expect(container.textContent).toContain("unknown_type");
+  });
+
   it("clicking a word with no SRS card creates the card and sets state to learning", async () => {
     const transcriptWithWord = {
       lesson_id: "l1",

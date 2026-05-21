@@ -12,42 +12,26 @@ export default defineConfig({
 		conditions: ['browser']
 	},
 	test: {
-		include: ['src/**/*.{test,spec}.{js,ts}'],
+		include: ['src/**/*.{test,spec}.{js,ts}', 'tests/**/*.test.ts'],
 		environment: 'jsdom',
 		setupFiles: ['@testing-library/svelte/vitest'],
 		coverage: {
 			provider: 'v8',
-			reporter: ['text'],
+			// `text` for human-readable summary on local runs; `json` writes
+			// `coverage/coverage-final.json` which `scripts/coverage-gate.ts`
+			// consumes for the 100% gate (filters Svelte 5 phantom branches).
+			reporter: ['text', 'json'],
 			include: ['src/lib/**/*.ts', 'src/lib/**/*.svelte', 'src/routes/**/*.svelte'],
 			exclude: [
 				'src/**/*.d.ts',
 				'src/lib/index.ts',
 				'src/lib/stores/DerivedTest.svelte',
 				'src/routes/+layout.svelte',
-				'src/routes/+error.svelte',
-				'src/routes/admin/+layout.svelte',
 				'src/test/**'
-			],
-			thresholds: {
-				perFile: true,
-				// Base thresholds absorb Svelte 5 codegen artifacts: every {#if} without
-				// an explicit {:else} compiles to a render-nothing alternate function;
-				// templates compile to multi-statement reactive update wrappers. v8 counts
-				// these but they're unreachable from user code. lines:100 + branches:75
-				// catches all real code paths while tolerating ~25% codegen artifacts.
-				// (vitest applies global thresholds to ALL files; glob keys can only ADD
-				// stricter checks for subsets, not relax them — so .ts gets a glob.)
-				statements: 96,
-				branches: 74,
-				functions: 0,
-				lines: 96,
-			// .ts files have no codegen — hold them to the strict bar.
-				'src/**/*.ts': {
-					statements: 96,
-					branches: 85,
-					lines: 96
-				}
-			}
+			]
+			// No `thresholds:` block — the gate moved to scripts/coverage-gate.ts.
+			// Vitest's built-in gate can't distinguish Svelte 5 phantom branches
+			// from real user branches; the custom script does.
 		}
 	}
 });

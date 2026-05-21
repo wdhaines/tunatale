@@ -341,6 +341,113 @@ describe("admin/srs/+page.svelte", () => {
     expect(await findByText("plain delete error")).toBeTruthy();
   });
 
+  it("shows error.message when listSRSItems rejects with an Error instance", async () => {
+    // Covers the truthy branch of `e instanceof Error ? e.message : String(e)` in loadItems.
+    mockList.mockRejectedValue(new Error("list failed (Error instance)"));
+
+    const { findByText } = render(AdminSRSPage);
+
+    expect(await findByText("list failed (Error instance)")).toBeTruthy();
+  });
+
+  it("shows error.message when saveEdit rejects with an Error instance", async () => {
+    // Covers the truthy branch of `e instanceof Error ? e.message : String(e)` in saveEdit.
+    const item = makeSRSItemDetail({ id: 21, text: "voda" });
+    mockList.mockResolvedValue({ items: [item], total: 1 });
+    mockUpdate.mockRejectedValue(new Error("save failed (Error instance)"));
+
+    const { findByText } = render(AdminSRSPage);
+    await findByText("voda");
+
+    await fireEvent.click(await findByText("Edit"));
+    await fireEvent.click(await findByText("Save"));
+
+    expect(await findByText("save failed (Error instance)")).toBeTruthy();
+  });
+
+  it("shows error.message when deleteSRSItem rejects with an Error instance", async () => {
+    // Covers the truthy branch of `e instanceof Error ? e.message : String(e)` in deleteItem.
+    const item = makeSRSItemDetail({ id: 22, text: "sol" });
+    mockList.mockResolvedValue({ items: [item], total: 1 });
+    mockDelete.mockRejectedValue(new Error("delete failed (Error instance)"));
+    vi.stubGlobal("confirm", () => true);
+
+    const { findByText } = render(AdminSRSPage);
+    await findByText("sol");
+
+    await fireEvent.click(await findByText("Delete"));
+
+    expect(await findByText("delete failed (Error instance)")).toBeTruthy();
+  });
+
+  it("Delete does nothing when user cancels the confirm dialog", async () => {
+    // Covers `if (!confirm('Delete this item?')) return;` early-return in deleteItem.
+    const item = makeSRSItemDetail({ id: 30, text: "mleko" });
+    mockList.mockResolvedValue({ items: [item], total: 1 });
+    vi.stubGlobal("confirm", () => false);
+
+    const { findByText } = render(AdminSRSPage);
+    await findByText("mleko");
+
+    await fireEvent.click(await findByText("Delete"));
+    await flushMicrotasks();
+
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
+
+  it("Reset does nothing when user cancels the confirm dialog", async () => {
+    // Covers `if (!confirm('Reset this item to new state?')) return;` in resetItem.
+    const item = makeSRSItemDetail({ id: 31, text: "čaj", state: "review" });
+    mockList.mockResolvedValue({ items: [item], total: 1 });
+    vi.stubGlobal("confirm", () => false);
+
+    const { findByText } = render(AdminSRSPage);
+    await findByText("čaj");
+
+    await fireEvent.click(await findByText("Reset"));
+    await flushMicrotasks();
+
+    expect(mockReset).not.toHaveBeenCalled();
+  });
+
+  it("Bulk delete does nothing when user cancels the confirm dialog", async () => {
+    // Covers `if (!confirm(...)) return;` early-return in bulkDelete.
+    const item = makeSRSItemDetail({ id: 32, text: "kruh" });
+    mockList.mockResolvedValue({ items: [item], total: 1 });
+    vi.stubGlobal("confirm", () => false);
+
+    const { findAllByRole, findByText } = render(AdminSRSPage);
+    await findByText("kruh");
+
+    // [0]=cloze flag, [1]=select-all header, [2+]=item rows
+    const checkboxes = (await findAllByRole("checkbox")) as HTMLInputElement[];
+    await fireEvent.click(checkboxes[2]);
+
+    await fireEvent.click(await findByText(/Delete selected/));
+    await flushMicrotasks();
+
+    expect(mockBulkDelete).not.toHaveBeenCalled();
+  });
+
+  it("toggling a row checkbox twice deselects it (covers Set.delete branch)", async () => {
+    // Covers `if (next.has(id)) next.delete(id); else next.add(id);` toggle in toggleSelect.
+    const item = makeSRSItemDetail({ id: 40, text: "sok" });
+    mockList.mockResolvedValue({ items: [item], total: 1 });
+
+    const { findAllByRole, findByText } = render(AdminSRSPage);
+    await findByText("sok");
+
+    // [0]=cloze flag, [1]=select-all header, [2+]=item rows
+    const checkboxes = (await findAllByRole("checkbox")) as HTMLInputElement[];
+    const itemBox = checkboxes[2];
+    // First click: add to selection
+    await fireEvent.click(itemBox);
+    expect(itemBox.checked).toBe(true);
+    // Second click: delete from selection (the uncovered branch)
+    await fireEvent.click(itemBox);
+    expect(itemBox.checked).toBe(false);
+  });
+
   it("shows Unsuspend button for a suspended item and calls suspendSRSItem(id, false)", async () => {
     const item = makeSRSItemDetail({ id: 20, text: "kava", state: "suspended" });
     mockList.mockResolvedValue({ items: [item], total: 1 });
