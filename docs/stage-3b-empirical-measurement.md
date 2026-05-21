@@ -29,6 +29,8 @@ Looking at the actual divergences:
 
 The reps issue suggests an architectural correction: in Stage 3b's design, `reps` and `lapses` should be pass-through-from-Anki fields (alongside `anki_card_id`, `anki_card_mod`, `bury_kind`, `due_at`). Replay derives `stability`, `difficulty`, `state`, `last_review`, `left`. Everything else comes from Anki's `cards.data` via the metadata-refresh branch.
 
+**LOC implication.** The original plan's "what collapses" table (in `ticklish-questing-fountain.md`, line ~64) claimed `_pull_merge_direction` shrinks ~218 LOC. Under the refined design, every collapsed branch still has to copy `reps`, `lapses`, `state`, `due_at` from Anki — those `card_rec.reps` / `card_rec.lapses` assignments don't disappear. The shrinkage comes only from collapsing **control flow** (which branch fires, what gets logged), not from removing the copying. Realistic estimate is now closer to −80 LOC than −218. Update the "what collapses" table before commissioning Big Pickle.
+
 But that's a design refinement; it doesn't move the central question. **We still need to know what match rate looks like under clean isolation.**
 
 ## The clean experiment — grade only in Anki
@@ -52,7 +54,8 @@ This freezes the pre-experiment state for both DBs.
 
 - Do all your spaced-repetition grading in **Anki** (the desktop app, AnkiWeb, AnkiDroid, AnkiMobile — any client).
 - Do **not** open TT's `/review` page or grade through any TT endpoint.
-- Other TT activity (listening, browsing, curriculum generation) is fine — none of it writes to `tt_revlog` for graded cards.
+- Other TT activity (browsing, curriculum generation) is fine — none of it writes to `tt_revlog`.
+- `/listen` activity is also fine, but note: `promote_to_learning` writes a `review_kind=4` Manual row into `tt_revlog` when a word is promoted. These rows are filtered out by `rebuild_from_revlog`'s default `exclude_review_kinds=frozenset({4})` (see `backend/app/srs/database.py:2097`), so they don't contaminate replay — but the extended measurement script must inherit that filter. Confirm it's applied to the "new rows since pre" set before passing them into `schedule()`.
 - Don't run `sync_pull` yet. Let Anki accumulate the day's grades on its own.
 - Don't run "Optimize FSRS parameters" in Anki. Don't change deck-config FSRS weights or `desired_retention`. Don't toggle FSRS on/off. These trigger `recompute_memory_state` and confound the measurement.
 
@@ -91,6 +94,8 @@ The existing script (`backend/app/anki/measure_stage3b_premise.py`) compares two
    - **DIVERGE**: stability mismatch outside practical tolerance.
 4. Skip `reps`, `lapses`, `state`, `due_at` in the comparison — those are pass-through fields under the refined Stage 3b design.
 
+**Why these tolerance numbers, in user-visible terms.** FSRS uses stability roughly linearly when computing the next review interval, so a 5% stability error translates to ~5% interval drift. For a 30-day card, that's ±1.5 days; for a 1-day card, ~1 hour. A 0.1 absolute difficulty error (on the 1–10 scale) is sub-step noise that won't move a card into a different difficulty bucket or affect retrieval ordering meaningfully. The strict tolerance (±0.01) is bit-exact territory — what you'd want if Stage 3b's replay were to literally replace Anki's `cards.data` write-back without divergence handling. The practical tolerance is what you'd want if Stage 3b accepts replayed values as "close enough" and only falls back to Anki on cases that meaningfully differ. The strict-vs-practical gap is the lever for tuning how often the divergence path fires.
+
 The new invocation will look like:
 
 ```bash
@@ -108,8 +113,26 @@ The script's existing decision gate logic still applies. The match rate against 
 | Match rate | Verdict |
 |---|---|
 | ≥95% | Stage 3b's simplification claim holds. Commission Big Pickle on the staged cadence in `ticklish-questing-fountain.md`. |
-| 50-95% | Real simplification possible but "take-Anki on divergence" is the common path, not rare. Re-frame Stage 3b as "merge with Anki precedence on FSRS state" and re-estimate before committing. |
+| 50-95% | Real simplification possible but "take-Anki on divergence" is the common path, not rare. Re-frame Stage 3b before committing (see below). |
 | <50% | Forward-step `schedule()` doesn't reproduce Anki's per-grade computations consistently. Stage 3b's premise fails. Keep `tt_revlog` as event log only; don't refactor the merge tree. |
+
+**What the 50-95% re-frame concretely looks like.** This is the most likely outcome (Stage 2.5 hit 3% strict-match, and `recompute_memory_state` events won't disappear), so the re-frame deserves a sketch, not a TODO:
+
+- `_pull_merge_direction` keeps **3 branches** (not the original plan's "1 branch"):
+  1. **Suspend** (`queue == -1`) — unchanged, ~20 LOC.
+  2. **Bury** (`queue ∈ {-2, -3}`) — unchanged, ~30 LOC.
+  3. **FSRS state with Anki precedence** (~60 LOC, not the 30 LOC the original plan claimed for the ≥95% world):
+     - Ingest new revlog rows since `last_synced_at` (already happens at the top of sync_pull).
+     - Apply via `schedule()` forward-step from stored state → `derived`.
+     - Read Anki's `cards.data` → `anki_state`.
+     - If `derived` matches `anki_state` within strict tolerance → write `derived` (the cheap happy path).
+     - Else → write `anki_state` (take-Anki), emit `recompute_divergence` log event.
+     - In both sub-cases, copy `reps`, `lapses`, `state`, `due_at`, `anki_card_mod`, `bury_kind` from Anki's record (pass-through fields).
+- The divergence-log event is now a **frequent diagnostic stream**, not a rare flag. Plan for it: structured log with one line per direction per sync (card id, stored s, derived s, anki s), rotated daily. Probably ends up as ~50 KB/day; ignore unless investigating a specific divergence.
+- **What still gets deleted under the re-frame**: `_anki_step_ahead` (subsumed by always-take-Anki for `left`), the 6 separate FSRS-state branches (collapsed into one), the timestamp-tie-break sub-branch (`dirty_fsrs && anki_last > local_last` — subsumed because we always defer to Anki when sides disagree). Estimate: −80 to −110 LOC on `_pull_merge_direction`, not −218.
+- **What does NOT get deleted under the re-frame**: `_resolve_prior_state`, `_resolve_introduced_at`, `_derive_revlog_shape` — these all read fields that still need to exist for `count_new_introduced_today` and sync_push. Schema drop of `prior_*` columns is **deferred from Stage 3b to Stage 5** in this regime.
+
+If the actual measurement comes in at 70-90%, this is the shape Big Pickle implements. The original plan's −415 LOC headline is the ≥95% world; the 50-95% world is a more modest but still worthwhile −100 to −150 LOC plus the structural win of "one mental model for FSRS state: Anki is authoritative when revlog and stored state diverge."
 
 Also worth reporting:
 - **Mean and distribution of stability divergence** when paths diverge. If most non-MATCH cases are <5% stability difference, the practical impact is small even if the strict match rate is low.
@@ -141,6 +164,17 @@ Also worth reporting:
 - 26 bogus rows with `id < 1_000_000_000_000` from a pre-Stage-0 PK bug (TT's `time_ms` was used as PK instead of wall-clock ms-since-epoch). They sit near 1970-01-01 in `id` ordering. Filter them out in any measurement with `WHERE id >= 1000000000000`. Cleanup deferred.
 - The two TT snapshots in `/tmp` (`tt_post_dedup.db` from 15:30, `tt_post_sync.db` from 16:26) reflect mixed-grading + multiple syncs. Don't use them for the Stage 3b measurement — use the fresh Anki-only snapshots from tomorrow.
 
+### `introduced_at` under the refined design
+
+The original plan's *"First revlog row IS `introduced_at`; derive on read"* was a ≥95%-world claim that assumed `prior_state` could be dropped. Under the refined (pass-through) design, `prior_state` stays on the row for the foreseeable future — `count_new_introduced_today` still filters by `introduced_at IS NOT NULL` and that column is stamped by `_resolve_introduced_at` from `MIN(revlog.id)` at sync time (Layer 26 — see `app/anki/sync.py:1036`).
+
+Pick **one** of these paths in the implementation chat; don't leave it for the migration:
+
+- **Keep `introduced_at` column, stamp from `_resolve_introduced_at` at sync.** Status quo. No code change. `introduced_at` is a one-shot timestamp written once per direction's intro arc.
+- **Derive `introduced_at` on read from `tt_revlog.MIN(id)` where `review_kind != 4`.** Drop the column. Slightly slower at read time but eliminates the stamping step. Cleaner if Stage 5 also runs and `prior_state` goes with it.
+
+Default to the first (status quo) unless the measurement opens a ≥95%-world path that also justifies dropping `prior_state`. The second only makes sense as part of a unified column-drop migration, not Stage 3b in isolation.
+
 ### Anki-side parsing reference
 
 Anki stores FSRS state as JSON in `cards.data`. The relevant fields:
@@ -155,6 +189,8 @@ Example: `{"s":15.6911,"d":3.225,"dr":0.9,"lrt":1779380173195,"decay":0.5}`.
 When `cards.data` is `'{}'` or lacks `s`/`d`, the card has no FSRS state — Anki uses SM-2 fallback. These directions can be skipped in the measurement (filter `WHERE c.data LIKE '%"s":%'`).
 
 When parsing, use `json.loads(card.data)` and pull the keys. The script `backend/app/anki/diagnose_replay_match.py` is the existing pattern for doing this — read it for the right error handling.
+
+**Open the Anki snapshots read-only, not via `safe_open`.** The snapshots in `/tmp` are static copies made after `PRAGMA wal_checkpoint(TRUNCATE)`; they're not the live `collection.anki2`. Use `sqlite3.connect("file:/tmp/anki_pre_anki_only.db?mode=ro", uri=True)` — same pattern as `diagnose_replay_match.py` and `replay_fsrs_from_revlog.py`. **Do not** call `safe_open(...)` against the snapshots: `safe_open` is for the live file and does lock-probe + SHA256 backup + integrity-check work that's wrong for a static read-only snapshot path.
 
 ### Things to avoid during the experiment
 
