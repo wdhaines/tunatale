@@ -312,7 +312,7 @@ Across Layers 9-15 in particular, every fix to "TT reconstructs Anki's queue fro
 
 ## Pending work (not started)
 
-1. **Review-interval fuzz** (`rslib/scheduler/states/fuzz.rs`). Anki adds day-scale fuzz to graduated review intervals. TT's `_next_interval` rounds without it. Same `_anki_rng.py` port can serve (different formula).
+1. **~~Review-interval fuzz~~** (resolved by Layers 6 + N cascade). TT already adds review-interval fuzz via `_review_interval_fuzz`. The remaining gap — `_next_interval` not applying the `greater_than_last` cascade — was closed by Layer N.
 
 2. **`sync_pull` create-on-encounter.** Currently `sync_pull` silently skips cards in Anki that have no TT row. Only `import_seed` creates rows. Proposed: have `sync_pull` call the `extract_l2 → upsert_by_guid` flow when it encounters a missing TT row.
 
@@ -855,3 +855,36 @@ The push-side does NOT bury on the "Anki-won-by-timestamp" path (`list_recently_
 **Files.** `backend/app/anki/sync.py` (`OfflineWriter.bury_siblings`, `_state_to_anki_queue` + `_STATE_VALUE_TO_ANKI_QUEUE` helpers, `AnkiSync._backfill_bury_siblings_for_today_grades`, `resolve_bury_*` imports, `sync_push` tail call). `backend/app/srs/database.py` (`SRSDatabase.list_anki_cards_graded_today`). Tests: `backend/tests/test_anki_sync_push.py` (10 unit `bury_siblings` tests + 6 backfill integration tests + `_state_to_anki_queue` enum coverage), plus `bury_siblings` stubs added to four pre-existing `FakeWriter` classes in `test_anki_sync_orphan_recovery.py`, `test_anki_sync_force_fsrs.py`, `test_anki_sync_round_trip.py`, `test_anki_sync_concurrent_review.py`.
 
 **Future work.** `bury_interday_learning` deck-config flag isn't yet cached or threaded through; harmless until a user enables it (default False). When wiring it, add `resolve_bury_interday_learning` in `queue_stats.py`, add it to `refresh_deck_config_cache`, and pass `bury_interday_learning=...` from the backfill site.
+
+---
+
+## Layer 48 — Review interval cascade (greater_than_last + constrain_passing_interval)
+
+**Trigger.** Synthetic card walk-through: stability=0.5, desired_retention=0.86, scheduled_days=1, rating=GOOD. Anki's ``passing_fsrs_review_intervals`` applies ``constrain_passing_interval`` which first checks ``greater_than_last(round(raw), scheduled_days)`` then the cascade ``good ≥ hard+1``. Result: Good=2. TT's ``_next_interval`` returned ``max(1, round(0.77)) = 1`` — no cascade, no ``greater_than_last``.
+
+**Fix.** Three parts:
+
+1. **New helpers** in ``backend/app/srs/fsrs.py``:
+   - ``_greater_than_last(interval, scheduled_days) → int`` — returns ``scheduled_days + 1`` when the raw interval exceeds the previous interval, else 0.
+   - ``_constrain_passing_intervals(hard_raw, good_raw, easy_raw, scheduled_days) → (hard, good, easy)`` — applies the Anki cascade: each rating is ``max(raw, floor)`` where ``hard_floor = max(gtl, 1)``, ``good_floor = max(gtl, hard + 1)``, ``easy_floor = max(gtl, good + 1)``. The raw interval is never reduced — the cascade only adds a floor.
+
+2. **Call site A: REVIEW→REVIEW** (`schedule()`, line ~520). Before the per-rating stability assignment, compute all three passing stabilities. After quantization, compute all three raw intervals, cascade, then pick the chosen rating's constrained value. ``scheduled_days`` derived from ``max(0, (prev.due_at - prev.last_review).days)``.
+
+3. **Call site B: Graduation** (`_graduate_to_review`, line ~890). Same pattern with ``scheduled_days=0`` (no prior review interval). Only applies to passing ratings (HARD/GOOD/EASY) — AGAIN graduation (empty relearn steps) skips the cascade.
+
+**Rounding parity.** ``_next_interval`` switched from Python's ``round()`` (banker's) to ``_rust_round_half_away()`` to match Anki's ``f32::round`` (half away from zero). Uses the existing helper from the fuzz module.
+
+**scheduled_days derivation.** ``max(0, (prev.due_at - prev.last_review).days)`` when ``prev.last_review`` is set, handling both ``datetime`` and ``date`` types. For LEARNING→REVIEW graduation, the prior interval is sub-day → 0.
+
+**Verification.**
+- ``test_greater_than_last`` — 4 edge cases (equal, below, above, zero).
+- ``test_constrain_passing_intervals_poljubiti_case`` — ``(raw=1,1,3) with scheduled_days=1 → (1,2,3)``.
+- ``test_constrain_passing_intervals_*`` — below scheduled_days, all above, strict increment invariant.
+- ``test_review_good_interval_exceeds_hard_by_at_least_one`` — end-to-end via ``schedule()``.
+- ``test_scheduled_days_derived_from_due_at_minus_last_review`` — verifies the derivation works.
+- ``test_parity_review_interval_cascade_matches_anki`` (oracle) — seeds a card with ivl=1, verifies TT's cascade-constrained intervals match Anki's ``scheduled_days`` for all three passing ratings.
+- All existing tests continue to pass — the cascade never reduces an interval, so cards with raw intervals already satisfying the invariant are unchanged.
+
+**Files.** ``backend/app/srs/fsrs.py`` (new helpers + 2 call sites + ``_next_interval`` rounding). ``backend/tests/test_fsrs.py`` (5 new unit tests). ``backend/tests/test_parity_fsrs_schedule.py`` (1 new oracle test + docstring update). ``docs/anki-parity-layers.md`` (this entry + updated pending-work item).
+
+**Cross-reference.** ``Layer 6`` (learning-step fuzz) and ``Layer 6b`` (revlog shape decode) both deal with Anki's interval rules — this is the review-side equivalent. The cascade only adds floors, never caps, so it cannot shorten intervals — any pre-existing negative divergence (TT > Anki, like the ``milijarda`` case) must have a different root cause.

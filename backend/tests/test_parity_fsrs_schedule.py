@@ -13,11 +13,8 @@ What this test covers:
 - ``_next_stability_lapse`` for Again (lapse stability)
 - ``_next_difficulty`` for all ratings
 - ``_stability_short_term`` for same-day re-grades (elapsed=0 path)
-
-What this test does NOT cover (deferred):
-- ``scheduled_days`` matching: Anki adds review-interval fuzz; TT's
-  ``_next_interval`` doesn't. Tracked under "Pending work" in
-  ``docs/anki-parity-layers.md``.
+- ``scheduled_days`` matching: cascade-constrained intervals match Anki's
+  ``ReviewState.scheduled_days`` (Layer N, review interval cascade).
 
 Findings surfaced by Phase 2.2.1, fixed in Layer 42:
 - **Lapse stability ceiling missing**. fsrs-rs applies
@@ -388,4 +385,91 @@ def test_parity_day_level_elapsed_matches_anki(synthetic_collection: SyntheticCo
         f"  last_review={last_review} "
         f"(col_day={compute_anki_day_index(col_crt, 4, last_review)})\n"
         f"  ref_now={ref_now}"
+    )
+
+
+@pytest.mark.oracle
+def test_parity_review_interval_cascade_matches_anki(synthetic_collection: SyntheticCollection) -> None:
+    """TT's fuzzed cascade intervals match Anki's scheduled_days for passing ratings.
+    
+    Seeds a review card with scheduled_days=1 (ivl=1) and low stability
+    so the cascade bumps raw intervals upward. Applies ``_review_interval_fuzz``
+    to TT's cascade output with the same (card_id, reps) seed before comparing
+    against Anki's post-fuzz ``scheduled_days``.
+    """
+    from app.srs.fsrs import (
+        _constrain_passing_intervals,
+        _next_interval,
+        _quantize_stability,
+        _review_interval_fuzz,
+    )
+
+    synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
+
+    now_secs = int(time.time())
+    last_review_secs = now_secs - 30 * 86400
+    card_id = 10050
+    note_id = 1005
+
+    synthetic_collection.add_note(id=note_id, guid="g-cascade", fields=["front", "back"])
+    synthetic_collection.add_card(
+        id=card_id,
+        note_id=note_id,
+        ord=0,
+        type=2,
+        queue=2,
+        due=0,
+        ivl=1,
+        reps=5,
+        stability=0.5,
+        difficulty=5.0,
+        last_review_secs=last_review_secs,
+    )
+    synthetic_collection.save()
+
+    result = run_oracle(
+        synthetic_collection.path,
+        [{"op": "get_queue", "deck_id": 1, "fetch_limit": 50}],
+    )
+
+    raw = result.raw()["get_queue_0"]
+    anki_card = raw["cards"][0]
+    states = anki_card["states"]
+
+    params = FSRSParams(weights=FSRS_WEIGHTS, desired_retention=DEFAULT_DESIRED_RETENTION)
+    w = params.weights
+    neg_decay = -params.decay
+    elapsed_days = 30
+    s = 0.5
+    d = 5.0
+    r = _forgetting_curve(elapsed_days, s, decay=-0.5)
+
+    # Compute TT cascade intervals from the same seed
+    s_hard = _next_stability_recall(d, s, r, Rating.HARD, w)
+    s_good = _next_stability_recall(d, s, r, Rating.GOOD, w)
+    s_easy = _next_stability_recall(d, s, r, Rating.EASY, w)
+    raw_hard = _next_interval(_quantize_stability(max(0.001, s_hard)), params.desired_retention, neg_decay)
+    raw_good = _next_interval(_quantize_stability(max(0.001, s_good)), params.desired_retention, neg_decay)
+    raw_easy = _next_interval(_quantize_stability(max(0.001, s_easy)), params.desired_retention, neg_decay)
+    h, g, e = _constrain_passing_intervals(raw_hard, raw_good, raw_easy, scheduled_days=1)
+
+    # Apply fuzz with the same (card_id, reps) seed Anki uses at grade time
+    reps = 5  # pre-grade reps
+    fuzzed_h = _review_interval_fuzz(h, card_id, reps)
+    fuzzed_g = _review_interval_fuzz(g, card_id, reps)
+    fuzzed_e = _review_interval_fuzz(e, card_id, reps)
+
+    failures: list[str] = []
+    for rating_name, fuzzed_ivl in [("hard", fuzzed_h), ("good", fuzzed_g), ("easy", fuzzed_e)]:
+        anki_scheduled = states[rating_name]["scheduled_days"]
+        if fuzzed_ivl != anki_scheduled:
+            failures.append(
+                f"{rating_name}: TT fuzzed interval={fuzzed_ivl}, "
+                f"Anki scheduled_days={anki_scheduled} "
+                f"(cascade: hard={h}, good={g}, easy={e})"
+            )
+
+    assert not failures, (
+        "Cascade+fuzz parity divergence (TT vs Anki scheduled_days):\n  "
+        + "\n  ".join(failures)
     )

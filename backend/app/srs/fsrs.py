@@ -282,7 +282,37 @@ def compute_retrievability(
 def _next_interval(stability: float, desired_retention: float, decay: float = -0.5) -> int:
     """Days until next review at the given desired_retention."""
     interval = stability / FACTOR * (desired_retention ** (1 / decay) - 1)
-    return max(1, min(round(interval), 36500))
+    return max(1, min(_rust_round_half_away(interval), 36500))
+
+
+def _greater_than_last(interval: int, scheduled_days: int) -> int:
+    """Anki's greater_than_last: returns scheduled_days + 1 if interval > scheduled_days else 0.
+    
+    Mirrors rslib/src/scheduler/states/review.rs ``greater_than_last``.
+    """
+    if interval > scheduled_days:
+        return scheduled_days + 1
+    return 0
+
+
+def _constrain_passing_intervals(
+    hard_raw: int,
+    good_raw: int,
+    easy_raw: int,
+    scheduled_days: int,
+) -> tuple[int, int, int]:
+    """Anki parity cascade: each rating must beat the next-easier one by ≥1 day.
+    
+    For each rating: ``constrained = max(raw, floor)`` where ``floor`` is derived
+    from ``greater_than_last`` and the next-easier constrained value.
+    
+    Mirrors rslib/src/scheduler/states/review.rs ``constrain_passing_interval``.
+    Returns (hard, good, easy) constrained.
+    """
+    hard = max(hard_raw, max(_greater_than_last(hard_raw, scheduled_days), 1))
+    good = max(good_raw, max(_greater_than_last(good_raw, scheduled_days), hard + 1))
+    easy = max(easy_raw, max(_greater_than_last(easy_raw, scheduled_days), good + 1))
+    return (hard, good, easy)
 
 
 def _quantize_stability(s: float) -> float:
@@ -481,7 +511,12 @@ def schedule(
                 item, prev, rating, review_date, direction, params, time_ms, now, last_review_dt, col_crt=col_crt
             )
         else:
-            new_stability = _next_stability_recall(prev.difficulty, prev.stability, r, rating, w)
+            # Compute stabilities for all three passing ratings (cascade needs all)
+            s_hard = _next_stability_recall(prev.difficulty, prev.stability, r, Rating.HARD, w)
+            s_good = _next_stability_recall(prev.difficulty, prev.stability, r, Rating.GOOD, w)
+            s_easy = _next_stability_recall(prev.difficulty, prev.stability, r, Rating.EASY, w)
+            rating_to_s = {Rating.HARD: s_hard, Rating.GOOD: s_good, Rating.EASY: s_easy}
+            new_stability = rating_to_s[rating]
             new_difficulty = _next_difficulty(prev.difficulty, rating, w)
             new_reps = prev.reps + 1
             new_lapses = prev.lapses
@@ -491,7 +526,19 @@ def schedule(
     # mirrors Anki's per-grade quantization in cards.data.
     new_stability = _quantize_stability(max(0.001, new_stability))
     new_difficulty = _quantize_difficulty(max(1.0, min(10.0, new_difficulty)))
-    raw_interval = _next_interval(new_stability, params.desired_retention, neg_decay)
+    # Anki parity cascade: each rating's interval must beat scheduled_days and
+    # the next-easier rating (rslib/.../states/review.rs:constrain_passing_interval).
+    if prev.last_review:
+        lr = prev.last_review if isinstance(prev.last_review, datetime) else datetime.combine(prev.last_review, time(0, 0), tzinfo=UTC)
+        scheduled_days = max(0, (prev.due_at - lr).days)
+    else:
+        scheduled_days = 0
+    raw_hard = _next_interval(_quantize_stability(max(0.001, s_hard)), params.desired_retention, neg_decay)
+    raw_good = _next_interval(_quantize_stability(max(0.001, s_good)), params.desired_retention, neg_decay)
+    raw_easy = _next_interval(_quantize_stability(max(0.001, s_easy)), params.desired_retention, neg_decay)
+    constrained = _constrain_passing_intervals(raw_hard, raw_good, raw_easy, scheduled_days)
+    constrained_map = {Rating.HARD: constrained[0], Rating.GOOD: constrained[1], Rating.EASY: constrained[2]}
+    raw_interval = constrained_map[rating]
     interval = _review_interval_fuzz(raw_interval, prev.anki_card_id, prev.reps, params.maximum_review_interval)
     new_due_at = datetime.combine(review_date + timedelta(days=interval), time(0, 0), tzinfo=UTC)
 
@@ -852,7 +899,22 @@ def _graduate_to_review(
     # mirrors Anki's per-grade quantization in cards.data.
     new_stability = _quantize_stability(max(0.001, new_stability))
     new_difficulty = _quantize_difficulty(max(1.0, min(10.0, new_difficulty)))
-    raw_interval = _next_interval(new_stability, params.desired_retention, neg_decay)
+    if rating in {Rating.HARD, Rating.GOOD, Rating.EASY}:
+        # Anki parity cascade (graduation: scheduled_days=0, no prior review interval)
+        s_hard = _init_stability(Rating.HARD, w) if prev.state == SRSState.NEW else _stability_short_term(prev.stability, Rating.HARD, params)
+        s_good = _init_stability(Rating.GOOD, w) if prev.state == SRSState.NEW else _stability_short_term(prev.stability, Rating.GOOD, params)
+        s_easy = _init_stability(Rating.EASY, w) if prev.state == SRSState.NEW else _stability_short_term(prev.stability, Rating.EASY, params)
+        q_hard = _quantize_stability(max(0.001, s_hard))
+        q_good = _quantize_stability(max(0.001, s_good))
+        q_easy = _quantize_stability(max(0.001, s_easy))
+        raw_hard = _next_interval(q_hard, params.desired_retention, neg_decay)
+        raw_good = _next_interval(q_good, params.desired_retention, neg_decay)
+        raw_easy = _next_interval(q_easy, params.desired_retention, neg_decay)
+        constrained = _constrain_passing_intervals(raw_hard, raw_good, raw_easy, 0)
+        constrained_map = {Rating.HARD: constrained[0], Rating.GOOD: constrained[1], Rating.EASY: constrained[2]}
+        raw_interval = constrained_map[rating]
+    else:
+        raw_interval = _next_interval(new_stability, params.desired_retention, neg_decay)
     interval = _review_interval_fuzz(raw_interval, prev.anki_card_id, prev.reps, params.maximum_review_interval)
     new_due_at = datetime.combine(date.today() + timedelta(days=interval), time(0, 0), tzinfo=UTC)
 

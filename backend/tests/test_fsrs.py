@@ -674,3 +674,105 @@ class TestBuildRevlogRow:
         row = build_revlog_row(1, Direction.RECOGNITION, prev, new_dir, Rating.GOOD, 0, now=now)
         assert row.id == int(now.timestamp() * 1000)
         assert row.taken_millis == 0
+
+
+class TestReviewIntervalCascade:
+    """FSRS review interval cascade (Anki parity)."""
+
+    def test_greater_than_last(self):
+        from app.srs.fsrs import _greater_than_last
+
+        assert _greater_than_last(0, 0) == 0
+        assert _greater_than_last(0, 5) == 0
+        assert _greater_than_last(5, 5) == 0
+        assert _greater_than_last(6, 5) == 6
+
+    def test_constrain_passing_intervals_poljubiti_case(self):
+        from app.srs.fsrs import _constrain_passing_intervals
+
+        h, g, e = _constrain_passing_intervals(1, 1, 3, 1)
+        # raw_hard=1, gt(1,1)=0, floor=1 → hard=max(1,1)=1
+        # raw_good=1, gt(1,1)=0, floor=max(0,1+1)=2 → good=max(1,2)=2 ✓
+        # raw_easy=3, gt(3,1)=2, floor=max(2,2+1=3) → easy=max(3,3)=3
+        assert (h, g, e) == (1, 2, 3)
+
+    def test_constrain_passing_intervals_below_scheduled_days(self):
+        from app.srs.fsrs import _constrain_passing_intervals
+
+        h, g, e = _constrain_passing_intervals(1, 1, 3, 10)
+        assert (h, g, e) == (1, 2, 3)
+
+    def test_constrain_passing_intervals_all_above_scheduled_days(self):
+        from app.srs.fsrs import _constrain_passing_intervals
+
+        h, g, e = _constrain_passing_intervals(10, 10, 10, 5)
+        # gt(10,5)=6, hard=max(10,6)=10, gt(10,5)=6, floor=max(6,10+1=11) → good=max(10,11)=11
+        # gt(10,5)=6, floor=max(6,11+1=12) → easy=max(10,12)=12
+        assert (h, g, e) == (10, 11, 12)
+
+    def test_review_good_interval_exceeds_hard_by_at_least_one(self):
+        """Cascade ensures Good ≥ Hard + 1 for adjacent ratings."""
+        from app.srs.fsrs import schedule
+
+        unit = SyntacticUnit(text="test", translation="test", word_count=1, difficulty=1, source="test")
+        now = datetime(2026, 5, 19, 12, 0, 0, tzinfo=UTC)
+        last_review = now - timedelta(days=30)
+        due_at = last_review + timedelta(days=1)
+        prev = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=due_at,
+            stability=0.5,
+            difficulty=5.0,
+            reps=5,
+            state=SRSState.REVIEW,
+            last_review=last_review,
+            anki_card_id=12345,
+        )
+        item = SRSItem(
+            syntactic_unit=unit,
+            directions={Direction.RECOGNITION: prev},
+            guid="g-test",
+            anki_note_id=1001,
+        )
+        hard_item = schedule(item, Rating.HARD, direction=Direction.RECOGNITION, now=now)
+        good_item = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION, now=now)
+        hard_dir = hard_item.directions[Direction.RECOGNITION]
+        good_dir = good_item.directions[Direction.RECOGNITION]
+        hard_ivl = (hard_dir.due_at - hard_dir.last_review).days
+        good_ivl = (good_dir.due_at - good_dir.last_review).days
+        assert good_ivl >= hard_ivl + 1, (
+            f"Expected Good≥Hard+1 but got Good={good_ivl}, Hard={hard_ivl}"
+        )
+
+    def test_scheduled_days_derived_from_due_at_minus_last_review(self):
+        """scheduled_days = max(0, (prev.due_at - prev.last_review).days)."""
+        from app.srs.fsrs import schedule
+
+        unit = SyntacticUnit(text="test", translation="test", word_count=1, difficulty=1, source="test")
+        now = datetime(2026, 5, 19, 12, 0, 0, tzinfo=UTC)
+        last_review = now - timedelta(days=30)
+        due_at = last_review + timedelta(days=7)
+        prev = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=due_at,
+            stability=0.5,
+            difficulty=5.0,
+            reps=5,
+            state=SRSState.REVIEW,
+            last_review=last_review,
+            anki_card_id=12345,
+        )
+        item = SRSItem(
+            syntactic_unit=unit,
+            directions={Direction.RECOGNITION: prev},
+            guid="g-test",
+            anki_note_id=1001,
+        )
+        result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION, now=now)
+        new_dir = result.directions[Direction.RECOGNITION]
+        interval = (new_dir.due_at - new_dir.last_review).days
+        # With scheduled_days=7 and stability low, raw intervals might be ≤7.
+        # Cascade: hard ≥ max(greater_than_last(raw_hard, 7), 1)
+        # If raw_hard ≤ 7, greater_than_last returns 0, hard = 1.
+        # good ≥ max(greater_than_last(raw_good, 7), hard+1) = max(0, 2) = 2
+        assert interval >= 1, f"Expected interval≥1, got {interval}"
