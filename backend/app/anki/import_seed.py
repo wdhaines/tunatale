@@ -11,6 +11,7 @@ The Anki safety backup runs before the TunaTale transaction opens.
 from __future__ import annotations
 
 import argparse
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from app.anki.sqlite_reader import (
     AnkiCard,
     extract_disambig_from_fields,
     extract_gloss_from_fields,
+    extract_inline_images,
     extract_l2,
     extract_l2_from_fields,
     extract_translation,
@@ -37,7 +39,7 @@ from app.srs.database import SRSDatabase
 
 def _refresh_media_for_collocation(
     anki_media_path: Path,
-    note_fields: str,
+    note_fields: list[str],
     coll_id: int,
     media_dir: Path,
     db: SRSDatabase,
@@ -47,6 +49,17 @@ def _refresh_media_for_collocation(
 
     Handles SHA256 comparison for unchanged detection, copy for updates, and
     stale-file cleanup (collapse) per kind. Accumulates counters into `results`.
+
+    Inline ``data:`` URI images are materialized into ``media_dir`` under a
+    content-addressed ``inline_<sha[:16]>.<ext>`` filename — Anki stores the
+    bytes inside the note itself, so there is no source file in
+    ``collection.media/`` to copy. Identity for dedupe is the synthetic
+    filename, which doubles as ``anki_filename`` for the cleanup pass.
+
+    Cleanup iterates the union of kinds touched in this pass AND kinds
+    already recorded on the collocation, so a kind that disappears from the
+    note (e.g. its image field is removed entirely) collapses its stale rows
+    instead of persisting forever — see the kratek incident (2026-05-21).
     """
     if not anki_media_path.exists():
         return
@@ -83,8 +96,38 @@ def _refresh_media_for_collocation(
         results["new_media"] += 1
         current_by_kind.setdefault(copy_result.kind, set()).add(filename)
 
-    for kind, keep_filenames in current_by_kind.items():
-        removed = db.delete_stale_media_for_kind(coll_id, kind, keep_filenames)
+    inline_images = extract_inline_images(note_fields)
+    if inline_images:
+        media_dir.mkdir(parents=True, exist_ok=True)
+    for inline in inline_images:
+        sha = hashlib.sha256(inline.data).hexdigest()
+        fname = f"inline_{sha[:16]}.{inline.ext}"
+        existing_row = db.find_media_by_sha256(coll_id, "image", sha)
+        if existing_row is not None:
+            results["unchanged_media"] = results.get("unchanged_media", 0) + 1
+            current_by_kind.setdefault("image", set()).add(existing_row["anki_filename"])
+            continue
+        dest_path = media_dir / fname
+        dest_path.write_bytes(inline.data)
+        db.add_media(
+            coll_id,
+            kind="image",
+            filename=fname,
+            path=str(dest_path),
+            anki_filename=fname,
+            sha256=sha,
+            size_bytes=len(inline.data),
+        )
+        results["new_media"] += 1
+        current_by_kind.setdefault("image", set()).add(fname)
+
+    existing_kinds = db.list_media_kinds_for_collocation(coll_id)
+    for kind in set(current_by_kind) | existing_kinds:
+        keep = current_by_kind.get(kind, set())
+        if keep:
+            removed = db.delete_stale_media_for_kind(coll_id, kind, keep)
+        else:
+            removed = db.delete_all_media_for_kind(coll_id, kind)
         if removed:
             results["collapsed_media"] = results.get("collapsed_media", 0) + removed
 

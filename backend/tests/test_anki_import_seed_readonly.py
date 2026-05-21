@@ -337,6 +337,238 @@ class TestMediaImport:
         # Verify the file was actually overwritten
         assert (media_dir / "sl_banka.mp3").read_bytes() == b"updated audio content changed"
 
+    def test_inline_data_uri_image_materialized_to_media_dir(self, tmp_path):
+        """When an Anki note's Image field is a base64 data: URI (the user pasted
+        a rich-text fragment or screenshot inline instead of saving it as a file),
+        the bytes are decoded into ``media_dir/inline_<sha[:16]>.<ext>`` and
+        recorded as a media row keyed by sha256.
+
+        Reproduces the kratek incident (2026-05-21): 3 of 707 deck notes carried
+        inline base64 images; ``list_media_refs`` correctly skipped them (avoiding
+        the OSError-too-long crash), but TT had no way to honor them in the UI
+        without materializing the bytes.
+        """
+        import base64
+        import sqlite3 as sq3
+
+        from tests.conftest import build_minimal_anki_db
+
+        anki_dir = tmp_path / "anki"
+        anki_dir.mkdir(exist_ok=True)
+        db_path = build_minimal_anki_db(anki_dir)
+        # Tiny valid JPEG header bytes for a recognizable payload.
+        payload = b"\xff\xd8\xff\xe0kratek-fake-jpeg-bytes"
+        b64 = base64.b64encode(payload).decode("ascii")
+        conn = sq3.connect(str(db_path))
+        conn.execute(
+            "UPDATE notes SET flds = ? WHERE id = 1001",
+            (f'banka\x1fbank\x1f\x1f<img src="data:image/jpeg;base64,{b64}">\x1f\x1f\x1f',),
+        )
+        conn.commit()
+        conn.close()
+
+        anki_media_path = tmp_path / "anki" / "media"
+        anki_media_path.mkdir()
+        media_dir = tmp_path / "tunatale_media"
+
+        result = _run(db_path, tmp_path, anki_media_path=anki_media_path, media_dir=media_dir)
+        assert result["new_media"] == 1
+
+        import hashlib
+
+        sha = hashlib.sha256(payload).hexdigest()
+        expected_name = f"inline_{sha[:16]}.jpg"
+        assert (media_dir / expected_name).read_bytes() == payload
+
+        tt = sq3.connect(str(tmp_path / "tunatale.db"))
+        rows = tt.execute("SELECT filename, anki_filename, sha256, bytes FROM media WHERE kind='image'").fetchall()
+        tt.close()
+        assert rows == [(expected_name, expected_name, sha, len(payload))]
+
+    def test_inline_data_uri_image_is_idempotent_on_rerun(self, tmp_path):
+        """Re-running refresh on the same inline image hits the sha256 dedupe path:
+        ``unchanged_media`` increments and no new row is added.
+        """
+        import base64
+        import sqlite3 as sq3
+
+        from tests.conftest import build_minimal_anki_db
+
+        anki_dir = tmp_path / "anki"
+        anki_dir.mkdir(exist_ok=True)
+        db_path = build_minimal_anki_db(anki_dir)
+        payload = b"idempotent-payload-bytes"
+        b64 = base64.b64encode(payload).decode("ascii")
+        conn = sq3.connect(str(db_path))
+        conn.execute(
+            "UPDATE notes SET flds = ? WHERE id = 1001",
+            (f'banka\x1fbank\x1f\x1f<img src="data:image/png;base64,{b64}">\x1f\x1f\x1f',),
+        )
+        conn.commit()
+        conn.close()
+
+        anki_media_path = tmp_path / "anki" / "media"
+        anki_media_path.mkdir()
+        media_dir = tmp_path / "tunatale_media"
+
+        _run(db_path, tmp_path, anki_media_path=anki_media_path, media_dir=media_dir)
+        result2 = _run(db_path, tmp_path, anki_media_path=anki_media_path, media_dir=media_dir)
+
+        assert result2["new_media"] == 0
+        assert result2["unchanged_media"] >= 1
+
+        tt = sq3.connect(str(tmp_path / "tunatale.db"))
+        n_image_rows = tt.execute("SELECT COUNT(*) FROM media WHERE kind='image'").fetchone()[0]
+        tt.close()
+        assert n_image_rows == 1
+
+    def test_inline_data_uri_replacement_collapses_old_inline(self, tmp_path):
+        """If the user re-pastes a *different* inline image, the new sha256
+        bytes get a new row and the old inline row collapses (per-kind cleanup).
+        """
+        import base64
+        import sqlite3 as sq3
+
+        from tests.conftest import build_minimal_anki_db
+
+        anki_dir = tmp_path / "anki"
+        anki_dir.mkdir(exist_ok=True)
+        db_path = build_minimal_anki_db(anki_dir)
+
+        def _set_inline(payload: bytes) -> None:
+            b64 = base64.b64encode(payload).decode("ascii")
+            conn = sq3.connect(str(db_path))
+            conn.execute(
+                "UPDATE notes SET flds = ? WHERE id = 1001",
+                (f'banka\x1fbank\x1f\x1f<img src="data:image/jpeg;base64,{b64}">\x1f\x1f\x1f',),
+            )
+            conn.commit()
+            conn.close()
+
+        anki_media_path = tmp_path / "anki" / "media"
+        anki_media_path.mkdir()
+        media_dir = tmp_path / "tunatale_media"
+
+        _set_inline(b"first-paste")
+        _run(db_path, tmp_path, anki_media_path=anki_media_path, media_dir=media_dir)
+        _set_inline(b"second-paste-different")
+        result2 = _run(db_path, tmp_path, anki_media_path=anki_media_path, media_dir=media_dir)
+
+        assert result2["new_media"] == 1
+        assert result2["collapsed_media"] == 1
+
+        tt = sq3.connect(str(tmp_path / "tunatale.db"))
+        rows = tt.execute("SELECT filename FROM media WHERE kind='image'").fetchall()
+        tt.close()
+        assert len(rows) == 1
+        assert rows[0][0].startswith("inline_")
+
+    def test_image_field_removed_collapses_prior_file_row(self, tmp_path):
+        """The exact kratek failure mode in microcosm: TT has a prior image row
+        from when the Anki note had ``<img src="paste-old.jpg">``; the user has
+        since replaced that with ``<img src="data:...">``. With Part 1's
+        widened cleanup loop, the stale paste-old.jpg row collapses on next
+        refresh even though no file ref is currently present.
+
+        Without the fix, the cleanup loop only iterated kinds *touched in this
+        pass* — the disappearance of file-based images of kind=image would never
+        trigger a delete. TT kept serving the April image for kratek + 2 others.
+        """
+        import base64
+        import sqlite3 as sq3
+
+        from tests.conftest import build_minimal_anki_db
+
+        anki_dir = tmp_path / "anki"
+        anki_dir.mkdir(exist_ok=True)
+        db_path = build_minimal_anki_db(anki_dir)
+        # Step 1: Anki note initially has a file-based image.
+        conn = sq3.connect(str(db_path))
+        conn.execute(
+            "UPDATE notes SET flds = ? WHERE id = 1001",
+            ('banka\x1fbank\x1f\x1f<img src="paste-old.jpg">\x1f\x1f\x1f',),
+        )
+        conn.commit()
+        conn.close()
+
+        anki_media_path = tmp_path / "anki" / "media"
+        anki_media_path.mkdir()
+        (anki_media_path / "paste-old.jpg").write_bytes(b"old image bytes")
+        media_dir = tmp_path / "tunatale_media"
+        _run(db_path, tmp_path, anki_media_path=anki_media_path, media_dir=media_dir)
+
+        tt_path = tmp_path / "tunatale.db"
+        tt = sq3.connect(str(tt_path))
+        before = tt.execute("SELECT filename FROM media WHERE kind='image'").fetchall()
+        tt.close()
+        assert before == [("paste-old.jpg",)]
+
+        # Step 2: user replaces the file image with a data: URI in Anki.
+        b64 = base64.b64encode(b"new-inline-payload").decode("ascii")
+        conn = sq3.connect(str(db_path))
+        conn.execute(
+            "UPDATE notes SET flds = ? WHERE id = 1001",
+            (f'banka\x1fbank\x1f\x1f<img src="data:image/jpeg;base64,{b64}">\x1f\x1f\x1f',),
+        )
+        conn.commit()
+        conn.close()
+        # Note: paste-old.jpg may still exist in collection.media/ (Anki doesn't
+        # eagerly delete unreferenced media); the refresh must collapse anyway.
+
+        result = _run(db_path, tmp_path, anki_media_path=anki_media_path, media_dir=media_dir)
+
+        # Old file row is gone; new inline row is in place.
+        assert result["collapsed_media"] == 1
+        tt = sq3.connect(str(tt_path))
+        after = tt.execute("SELECT filename FROM media WHERE kind='image' ORDER BY id").fetchall()
+        tt.close()
+        assert len(after) == 1
+        assert after[0][0].startswith("inline_")
+        assert after[0][0] != "paste-old.jpg"
+
+    def test_image_field_emptied_collapses_prior_file_row(self, tmp_path):
+        """Pure Part 1 case: image field is removed entirely (no file ref, no
+        inline data URI). The prior image row must still collapse — otherwise
+        TT keeps serving an image the user has deleted from Anki.
+        """
+        import sqlite3 as sq3
+
+        from tests.conftest import build_minimal_anki_db
+
+        anki_dir = tmp_path / "anki"
+        anki_dir.mkdir(exist_ok=True)
+        db_path = build_minimal_anki_db(anki_dir)
+        conn = sq3.connect(str(db_path))
+        conn.execute(
+            "UPDATE notes SET flds = ? WHERE id = 1001",
+            ('banka\x1fbank\x1f\x1f<img src="paste-old.jpg">\x1f\x1f\x1f',),
+        )
+        conn.commit()
+        conn.close()
+
+        anki_media_path = tmp_path / "anki" / "media"
+        anki_media_path.mkdir()
+        (anki_media_path / "paste-old.jpg").write_bytes(b"old image bytes")
+        media_dir = tmp_path / "tunatale_media"
+        _run(db_path, tmp_path, anki_media_path=anki_media_path, media_dir=media_dir)
+
+        # Strip the image entirely from the Anki note.
+        conn = sq3.connect(str(db_path))
+        conn.execute(
+            "UPDATE notes SET flds = ? WHERE id = 1001",
+            ("banka\x1fbank\x1f\x1f\x1f\x1f\x1f",),
+        )
+        conn.commit()
+        conn.close()
+
+        result = _run(db_path, tmp_path, anki_media_path=anki_media_path, media_dir=media_dir)
+        assert result["collapsed_media"] == 1
+
+        tt = sq3.connect(str(tmp_path / "tunatale.db"))
+        n = tt.execute("SELECT COUNT(*) FROM media WHERE kind='image'").fetchone()[0]
+        tt.close()
+        assert n == 0
+
     def test_stale_image_rows_collapsed_to_anki_current(self, tmp_path):
         """When Anki has reverted to an older filename, stale newer-id rows on the
         same collocation should be deleted so get_image_filename returns Anki's current.

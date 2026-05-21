@@ -1441,6 +1441,11 @@ class SRSDatabase:
         """Delete media rows on this collocation/kind whose anki_filename isn't in
         ``keep_anki_filenames``. Used by import_seed to collapse the row set down
         to what Anki currently references. Returns the number of rows deleted.
+
+        Empty keep set is treated as a no-op — defense against accidentally
+        nuking all rows when the caller's per-pass tracking failed to record
+        anything. Use ``delete_all_media_for_kind`` for the intentional
+        "kind vanished from the note" case.
         """
         if not keep_anki_filenames:
             return 0
@@ -1452,6 +1457,53 @@ class SRSDatabase:
             )
             self._commit(conn)
             return cur.rowcount
+
+    def delete_all_media_for_kind(self, collocation_id: int, kind: str) -> int:
+        """Delete every media row of ``kind`` on this collocation. Returns
+        the number of rows deleted.
+
+        Distinct from ``delete_stale_media_for_kind(..., set())`` (which is a
+        defensive no-op): this method is the explicit collapse path used when
+        a note no longer references any media of a given kind. The canonical
+        case is a note whose image field switched from ``<img src="paste-…">``
+        to ``<img src="data:…">`` (per RFC 2397 the latter has no file in
+        ``collection.media/``); the prior file row must collapse so the UI
+        stops serving the old picture.
+        """
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM media WHERE collocation_id = ? AND kind = ?",
+                (collocation_id, kind),
+            )
+            self._commit(conn)
+            return cur.rowcount
+
+    def list_media_kinds_for_collocation(self, collocation_id: int) -> set[str]:
+        """Return the set of distinct media kinds currently recorded on this
+        collocation. Used by the refresh-media path to decide which kinds need
+        a cleanup pass — including kinds that have vanished from the Anki note
+        (otherwise their stale rows would persist forever).
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT kind FROM media WHERE collocation_id = ?",
+                (collocation_id,),
+            ).fetchall()
+        return {r[0] for r in rows}
+
+    def find_media_by_sha256(self, collocation_id: int, kind: str, sha256: str) -> dict[str, Any] | None:
+        """Return the media row matching ``(collocation_id, kind, sha256)``, or None.
+
+        Used by the refresh-media path to recognize inline (``data:`` URI)
+        images on re-import: those have no Anki filename to dedupe against, so
+        we identify them content-wise instead.
+        """
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM media WHERE collocation_id = ? AND kind = ? AND sha256 = ?",
+                (collocation_id, kind, sha256),
+            ).fetchone()
+        return dict(row) if row is not None else None
 
     def update_media_file(self, row_id: int, sha256: str, size_bytes: int) -> None:
         """Update sha256 and size_bytes for an existing media row (used by refresh-media)."""

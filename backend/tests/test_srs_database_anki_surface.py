@@ -348,6 +348,123 @@ class TestAddMedia:
         # Untouched
         assert srs_db.get_image_filename(coll_id) == "img_a.jpg"
 
+    def test_delete_all_media_for_kind_removes_only_that_kind(self, srs_db):
+        """``delete_all_media_for_kind`` is the explicit collapse path for the
+        kratek case — a note whose image field is now an inline data: URI has
+        no file refs left, and the prior image rows must be removed without
+        disturbing audio.
+        """
+        coll_id = srs_db.upsert_by_guid(_unit("kratek", "short"), "sl", _dirs())
+        srs_db.add_media(
+            coll_id,
+            kind="image",
+            filename="paste-old.jpg",
+            path="/tmp/a.jpg",
+            anki_filename="paste-old.jpg",
+            sha256="img1",
+            size_bytes=10,
+        )
+        srs_db.add_media(
+            coll_id,
+            kind="audio_forvo",
+            filename="sl_kratek.mp3",
+            path="/tmp/a.mp3",
+            anki_filename="sl_kratek.mp3",
+            sha256="aud1",
+            size_bytes=20,
+        )
+        removed = srs_db.delete_all_media_for_kind(coll_id, "image")
+        assert removed == 1
+        assert srs_db.get_image_filename(coll_id) is None
+        # Audio of a different kind is untouched.
+        assert srs_db.get_audio_filename(coll_id) == "sl_kratek.mp3"
+
+    def test_delete_all_media_for_kind_returns_zero_when_nothing_to_delete(self, srs_db):
+        coll_id = srs_db.upsert_by_guid(_unit("stol", "chair"), "sl", _dirs())
+        assert srs_db.delete_all_media_for_kind(coll_id, "image") == 0
+
+    def test_list_media_kinds_returns_distinct_kinds(self, srs_db):
+        coll_id = srs_db.upsert_by_guid(_unit("stol", "chair"), "sl", _dirs())
+        srs_db.add_media(
+            coll_id,
+            kind="image",
+            filename="a.jpg",
+            path="/tmp/a.jpg",
+            anki_filename="a.jpg",
+            sha256="i",
+            size_bytes=1,
+        )
+        srs_db.add_media(
+            coll_id,
+            kind="audio_forvo",
+            filename="a.mp3",
+            path="/tmp/a.mp3",
+            anki_filename="a.mp3",
+            sha256="f",
+            size_bytes=2,
+        )
+        srs_db.add_media(
+            coll_id,
+            kind="audio_forvo",
+            filename="b.mp3",
+            path="/tmp/b.mp3",
+            anki_filename="b.mp3",
+            sha256="f2",
+            size_bytes=3,
+        )
+        assert srs_db.list_media_kinds_for_collocation(coll_id) == {"image", "audio_forvo"}
+
+    def test_list_media_kinds_empty_for_unknown_collocation(self, srs_db):
+        assert srs_db.list_media_kinds_for_collocation(999999) == set()
+
+    def test_find_media_by_sha256_matches_inline_image(self, srs_db):
+        """Inline (data: URI) images have no Anki filename, so they're identified
+        by content sha256 across runs.
+        """
+        coll_id = srs_db.upsert_by_guid(_unit("kratek", "short"), "sl", _dirs())
+        srs_db.add_media(
+            coll_id,
+            kind="image",
+            filename="inline_abc.jpg",
+            path="/tmp/inline.jpg",
+            anki_filename="inline_abc.jpg",
+            sha256="content-hash",
+            size_bytes=42,
+        )
+        row = srs_db.find_media_by_sha256(coll_id, "image", "content-hash")
+        assert row is not None
+        assert row["filename"] == "inline_abc.jpg"
+
+    def test_find_media_by_sha256_returns_none_when_no_match(self, srs_db):
+        coll_id = srs_db.upsert_by_guid(_unit("stol", "chair"), "sl", _dirs())
+        assert srs_db.find_media_by_sha256(coll_id, "image", "nope") is None
+
+    def test_find_media_by_sha256_is_scoped_by_coll_and_kind(self, srs_db):
+        """Same sha shouldn't bleed across collocations or across kinds."""
+        cid_a = srs_db.upsert_by_guid(_unit("stol", "chair"), "sl", _dirs())
+        cid_b = srs_db.upsert_by_guid(_unit("miza", "table"), "sl", _dirs())
+        srs_db.add_media(
+            cid_a,
+            kind="image",
+            filename="x.jpg",
+            path="/tmp/x.jpg",
+            anki_filename="x.jpg",
+            sha256="shared",
+            size_bytes=1,
+        )
+        srs_db.add_media(
+            cid_b,
+            kind="image",
+            filename="x.jpg",
+            path="/tmp/x.jpg",
+            anki_filename="x.jpg",
+            sha256="shared",
+            size_bytes=1,
+        )
+        assert srs_db.find_media_by_sha256(cid_a, "image", "shared")["filename"] == "x.jpg"
+        # Different kind: still no hit.
+        assert srs_db.find_media_by_sha256(cid_a, "audio_forvo", "shared") is None
+
     def test_find_media_is_scoped_to_collocation(self, srs_db):
         """Two collocations referencing the same anki_filename → return the right one."""
         cid_a = srs_db.upsert_by_guid(_unit("stol", "chair"), "sl", _dirs())

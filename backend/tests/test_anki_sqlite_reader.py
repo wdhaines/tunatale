@@ -865,6 +865,84 @@ class TestListMediaRefs:
         assert set(list_media_refs([field])) == {"real.jpg", "a.mp3"}
 
 
+class TestExtractInlineImages:
+    """``extract_inline_images`` decodes base64 image data: URIs.
+
+    The kratek incident (2026-05-21) needed the inverse of ``list_media_refs``'s
+    data-URI skip — three notes in the user's deck stored their picture as an
+    inline base64 payload instead of a saved file, and refresh-media had no way
+    to materialize them otherwise.
+    """
+
+    def test_decodes_base64_jpeg_with_jpg_extension(self):
+        from app.anki.sqlite_reader import extract_inline_images
+
+        # Smallest possible valid base64 ("AAAA" → 3 bytes), arbitrary content.
+        field = '<img src="data:image/jpeg;base64,AAAA">'
+        out = extract_inline_images([field])
+        assert len(out) == 1
+        assert out[0].ext == "jpg"
+        assert out[0].data == b"\x00\x00\x00"
+
+    def test_normalizes_svg_xml_to_svg(self):
+        from app.anki.sqlite_reader import extract_inline_images
+
+        field = '<img src="data:image/svg+xml;base64,PHN2Zy8+">'
+        out = extract_inline_images([field])
+        assert len(out) == 1
+        assert out[0].ext == "svg"
+        assert out[0].data == b"<svg/>"
+
+    def test_passes_through_unknown_subtype(self):
+        """E.g., ``webp`` keeps its own extension; only jpeg/svg+xml need rewriting."""
+        from app.anki.sqlite_reader import extract_inline_images
+
+        field = '<img src="data:image/webp;base64,AAAA">'
+        out = extract_inline_images([field])
+        assert out[0].ext == "webp"
+
+    def test_skips_url_encoded_data_uri(self):
+        """Non-base64 data URIs are not supported — skip rather than misdecode."""
+        from app.anki.sqlite_reader import extract_inline_images
+
+        field = '<img src="data:image/svg+xml,%3Csvg%2F%3E">'
+        assert extract_inline_images([field]) == []
+
+    def test_skips_non_image_data_uri(self):
+        from app.anki.sqlite_reader import extract_inline_images
+
+        field = '<img src="data:text/plain;base64,aGk=">'
+        assert extract_inline_images([field]) == []
+
+    def test_skips_file_based_src(self):
+        from app.anki.sqlite_reader import extract_inline_images
+
+        assert extract_inline_images(['<img src="banka.jpg">']) == []
+
+    def test_skips_invalid_base64(self):
+        """Invalid base64 (e.g. illegal chars) is dropped, not crashed on."""
+        from app.anki.sqlite_reader import extract_inline_images
+
+        field = '<img src="data:image/jpeg;base64,not!valid!base64!@#$">'
+        assert extract_inline_images([field]) == []
+
+    def test_extracts_multiple_inline_images(self):
+        from app.anki.sqlite_reader import extract_inline_images
+
+        fields = [
+            '<img src="data:image/png;base64,iVBORw0KGgo=">',
+            '<img src="data:image/jpeg;base64,/9j/4AA=">',
+        ]
+        out = extract_inline_images(fields)
+        assert {img.ext for img in out} == {"png", "jpg"}
+        assert len(out) == 2
+
+    def test_returns_empty_when_no_data_uris(self):
+        from app.anki.sqlite_reader import extract_inline_images
+
+        assert extract_inline_images(["no media here", "[sound:a.mp3]"]) == []
+
+
 class TestReadFsrsStateForCards:
     def _write_db(self, tmp_path, rows: list[tuple[int, str | None]]):
         path = tmp_path / "collection.anki2"

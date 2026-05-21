@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import re
 import sqlite3
@@ -339,6 +341,27 @@ def read_fsrs_state_for_cards(collection_path: str | Path, card_ids: list[int]) 
     return result
 
 
+_IMG_SRC_RE = re.compile(r'<img(?:[^"]|"[^"]*")*?\bsrc="([^"]+)"')
+_DATA_IMG_BASE64_RE = re.compile(r"^data:image/([a-zA-Z0-9+\-.]+);base64,(.+)$", re.DOTALL)
+
+
+@dataclass(frozen=True)
+class InlineImage:
+    """A base64-decoded inline image from a ``data:`` URI."""
+
+    ext: str
+    data: bytes
+
+
+def _normalize_image_ext(mime_subtype: str) -> str:
+    s = mime_subtype.lower()
+    if s == "jpeg":
+        return "jpg"
+    if s == "svg+xml":
+        return "svg"
+    return s
+
+
 def list_media_refs(fields: list[str]) -> list[str]:
     """Extract media filenames referenced in field HTML.
 
@@ -352,16 +375,45 @@ def list_media_refs(fields: list[str]) -> list[str]:
 
     ``data:`` URIs are inline (RFC 2397) and never correspond to a file in
     ``collection.media/``; passing them downstream causes ``OSError [Errno 63]
-    File name too long`` when the refresh tries to stat them.
+    File name too long`` when the refresh tries to stat them. Use
+    ``extract_inline_images`` to materialize those instead.
     """
     refs: list[str] = []
     for field in fields:
         refs.extend(re.findall(r"\[sound:([^\]]+)\]", field))
-        for src in re.findall(r'<img(?:[^"]|"[^"]*")*?\bsrc="([^"]+)"', field):
+        for src in _IMG_SRC_RE.findall(field):
             if src.startswith("data:"):
                 continue
             refs.append(src)
     return refs
+
+
+def extract_inline_images(fields: list[str]) -> list[InlineImage]:
+    """Return base64-decoded inline images from ``data:image/...;base64,...`` URIs.
+
+    Counterpart to ``list_media_refs``: that helper deliberately drops data:
+    URIs (they don't correspond to files in ``collection.media/``); this one
+    returns the decoded bytes so the refresh-media path can materialize them
+    into a TT-side file. Only base64-encoded image data URIs are recognized —
+    URL-encoded data URIs and non-image MIME types are skipped.
+
+    Discovered while resolving the kratek-image incident (2026-05-21): three
+    notes had pasted rich-text fragments whose ``<img>`` tags carried base64
+    inline images instead of saved file references, and TT couldn't honor
+    them at all without decoding the URI directly.
+    """
+    images: list[InlineImage] = []
+    for field in fields:
+        for src in _IMG_SRC_RE.findall(field):
+            m = _DATA_IMG_BASE64_RE.match(src)
+            if m is None:
+                continue
+            try:
+                data = base64.b64decode(m.group(2), validate=True)
+            except (binascii.Error, ValueError):
+                continue
+            images.append(InlineImage(ext=_normalize_image_ext(m.group(1)), data=data))
+    return images
 
 
 def extract_translation(field_html: str) -> str:
