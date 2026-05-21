@@ -2511,3 +2511,34 @@ class TestRevlog:
         assert row["review_kind"] == 4
         assert row["collocation_id"] == 1
         assert row["direction"] == "recognition"
+
+    def test_has_revision_near_detects_duplicate(self, srs_db):
+        """has_revision_near returns True for a row within 5000ms with same ease."""
+        from app.models.srs_item import RevlogRow
+
+        srs_db.add_collocation(
+            SyntacticUnit(text="voda", translation="water", word_count=1, difficulty=1, source="corpus"),
+            language_code="sl",
+        )
+        existing = RevlogRow(
+            id=50000,
+            collocation_id=1,
+            direction=Direction.RECOGNITION,
+            button_chosen=3,
+            interval=10,
+            last_interval=5,
+            factor=0,
+            taken_millis=1000,
+            review_kind=1,
+            anki_card_id=400,
+        )
+        srs_db.append_revlog(existing)
+
+        # Within 5000ms, same ease → duplicate
+        assert srs_db.has_revision_near(1, "recognition", 50200, 3)
+        # Different ease → not a duplicate
+        assert not srs_db.has_revision_near(1, "recognition", 50200, 4)
+        # Far timestamp → not a duplicate
+        assert not srs_db.has_revision_near(1, "recognition", 100000, 3)
+        # Different direction → not a duplicate
+        assert not srs_db.has_revision_near(1, "production", 50200, 3)

@@ -2769,6 +2769,99 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
             ]
         assert ids == [cutoff_ms + 1000]
 
+    def test_skips_anki_row_that_duplicates_tt_grade(self, fake_anki_db):
+        """A TT-written grade row already in tt_revlog suppresses the Anki copy.
+
+        When the user grades a card in TT (Stage 0 writes the revlog row with
+        ``id = now_ms``), and the same grade later round-trips through Anki, the
+        Anki revlog row has a different ``id`` (different millisecond timestamp).
+        The dedup heuristic: same direction, within 5s, same ease — skip import.
+        """
+        from app.models.srs_item import RevlogRow
+
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        cid = 10010
+        self._link_banka_to_card(db, guid, cid)
+        # TT writes its own row first (simulating a TT-side grade).
+        coll_id = db.get_collocation_id_by_guid(guid)
+        tt_grade_ms = 1_700_000_000_000
+        db.append_revlog(
+            RevlogRow(
+                id=tt_grade_ms,
+                collocation_id=coll_id,
+                direction=Direction.RECOGNITION,
+                button_chosen=3,
+                interval=10,
+                last_interval=1,
+                factor=0,
+                taken_millis=4500,
+                review_kind=1,
+                anki_card_id=cid,
+            )
+        )
+        # Anki's revlog has the same event at a different millisecond (+2000ms).
+        self._seed_anki_revlog(
+            fake_anki_db,
+            cid,
+            [(tt_grade_ms + 2000, 3, 10, 1, 0, 4500, 1)],
+        )
+        conn = sqlite3.connect(str(fake_anki_db))
+        conn.row_factory = sqlite3.Row
+        try:
+            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+        finally:
+            conn.close()
+
+        with db._get_conn() as tt_conn:
+            rows = tt_conn.execute(
+                "SELECT id FROM tt_revlog WHERE anki_card_id = ? ORDER BY id",
+                (cid,),
+            ).fetchall()
+        assert [r["id"] for r in rows] == [tt_grade_ms], "Anki copy within 5s of TT row with same ease must be skipped"
+
+    def test_ingest_keeps_anki_row_when_ease_differs(self, fake_anki_db):
+        """Within 5s but *different* ease → not the same event; keep both."""
+        from app.models.srs_item import RevlogRow
+
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        cid = 10010
+        self._link_banka_to_card(db, guid, cid)
+        coll_id = db.get_collocation_id_by_guid(guid)
+        tt_grade_ms = 1_700_000_000_000
+        db.append_revlog(
+            RevlogRow(
+                id=tt_grade_ms,
+                collocation_id=coll_id,
+                direction=Direction.RECOGNITION,
+                button_chosen=1,  # AGAIN
+                interval=0,
+                last_interval=0,
+                factor=0,
+                taken_millis=4500,
+                review_kind=0,
+                anki_card_id=cid,
+            )
+        )
+        # Different ease — legitimate separate grade, must be kept.
+        self._seed_anki_revlog(fake_anki_db, cid, [(tt_grade_ms + 2000, 3, 10, 1, 0, 4500, 1)])
+        conn = sqlite3.connect(str(fake_anki_db))
+        conn.row_factory = sqlite3.Row
+        try:
+            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+        finally:
+            conn.close()
+
+        with db._get_conn() as tt_conn:
+            ids = [
+                r["id"]
+                for r in tt_conn.execute(
+                    "SELECT id FROM tt_revlog WHERE anki_card_id = ? ORDER BY id", (cid,)
+                ).fetchall()
+            ]
+        assert ids == [tt_grade_ms, tt_grade_ms + 2000]
+
     def test_malformed_last_synced_at_falls_back_to_all_rows(self, fake_anki_db):
         """Defensive: a corrupt last_synced_at string falls back to threshold=0
         (ingest everything), not a crash."""

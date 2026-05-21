@@ -1981,6 +1981,36 @@ class SRSDatabase:
 
     # ── tt_revlog helpers (Stage 0: event-sync migration) ──────────────
 
+    def has_revision_near(
+        self,
+        collocation_id: int,
+        direction: str,
+        timestamp_ms: int,
+        button_chosen: int,
+        window_ms: int = 5000,
+        exclude_id: int | None = None,
+    ) -> bool:
+        """Return True if a tt_revlog row exists within *window_ms* of *timestamp_ms* with the same *button_chosen*.
+
+        Used at Anki-import time to avoid double-recording the same grade event
+        when TT wrote its own row (Stage 0) before the Anki-side copy arrives.
+
+        ``exclude_id`` skips the candidate's own id (the Anki row may already be
+        in tt_revlog at its exact id from a prior sync, and ``INSERT OR IGNORE``
+        handles PK dupes — that's not a "near match" worth suppressing).
+        """
+        sql = (
+            "SELECT 1 FROM tt_revlog WHERE collocation_id = ? AND direction = ? "
+            "AND button_chosen = ? AND abs(id - ?) < ?"
+        )
+        params: list[object] = [collocation_id, direction, button_chosen, timestamp_ms, window_ms]
+        if exclude_id is not None:
+            sql += " AND id != ?"
+            params.append(exclude_id)
+        sql += " LIMIT 1"
+        with self._get_conn() as conn:
+            return conn.execute(sql, params).fetchone() is not None
+
     def append_revlog(self, row: RevlogRow) -> None:
         """Insert a tt_revlog row (idempotent via INSERT OR IGNORE)."""
         with self._get_conn() as conn:

@@ -1711,6 +1711,17 @@ class AnkiSync:
                 threshold_ms = 0
         rows = self._reader.get_revlog_for_card(anki_card_id, threshold_ms)
         for r in rows:
+            # Skip if a TT-written row (same direction, ±5s, same ease) already
+            # records this grade event. PK-equal matches go through INSERT OR
+            # IGNORE; exclude the candidate's own id from the near-match check.
+            if self._db.has_revision_near(
+                collocation_id,
+                direction.value,
+                r["id"],
+                r["ease"],
+                exclude_id=r["id"],
+            ):
+                continue
             self._db.append_revlog(
                 RevlogRow(
                     id=r["id"],
