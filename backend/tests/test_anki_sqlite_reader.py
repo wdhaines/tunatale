@@ -861,10 +861,7 @@ class TestListMediaRefs:
 
     def test_skips_data_uri_keeps_real_refs_in_same_field(self):
         """A field can mix data: URIs with real refs; only the data: URI is dropped."""
-        field = (
-            '<img src="data:image/png;base64,iVBORw0KGgoAAA=="> '
-            '<img src="real.jpg"> [sound:a.mp3]'
-        )
+        field = '<img src="data:image/png;base64,iVBORw0KGgoAAA=="> <img src="real.jpg"> [sound:a.mp3]'
         assert set(list_media_refs([field])) == {"real.jpg", "a.mp3"}
 
 
