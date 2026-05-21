@@ -287,7 +287,7 @@ def _next_interval(stability: float, desired_retention: float, decay: float = -0
 
 def _greater_than_last(interval: int, scheduled_days: int) -> int:
     """Anki's greater_than_last: returns scheduled_days + 1 if interval > scheduled_days else 0.
-    
+
     Mirrors rslib/src/scheduler/states/review.rs ``greater_than_last``.
     """
     if interval > scheduled_days:
@@ -302,10 +302,10 @@ def _constrain_passing_intervals(
     scheduled_days: int,
 ) -> tuple[int, int, int]:
     """Anki parity cascade: each rating must beat the next-easier one by ≥1 day.
-    
+
     For each rating: ``constrained = max(raw, floor)`` where ``floor`` is derived
     from ``greater_than_last`` and the next-easier constrained value.
-    
+
     Mirrors rslib/src/scheduler/states/review.rs ``constrain_passing_interval``.
     Returns (hard, good, easy) constrained.
     """
@@ -529,7 +529,11 @@ def schedule(
     # Anki parity cascade: each rating's interval must beat scheduled_days and
     # the next-easier rating (rslib/.../states/review.rs:constrain_passing_interval).
     if prev.last_review:
-        lr = prev.last_review if isinstance(prev.last_review, datetime) else datetime.combine(prev.last_review, time(0, 0), tzinfo=UTC)
+        lr = (
+            prev.last_review
+            if isinstance(prev.last_review, datetime)
+            else datetime.combine(prev.last_review, time(0, 0), tzinfo=UTC)
+        )
         scheduled_days = max(0, (prev.due_at - lr).days)
     else:
         scheduled_days = 0
@@ -901,9 +905,21 @@ def _graduate_to_review(
     new_difficulty = _quantize_difficulty(max(1.0, min(10.0, new_difficulty)))
     if rating in {Rating.HARD, Rating.GOOD, Rating.EASY}:
         # Anki parity cascade (graduation: scheduled_days=0, no prior review interval)
-        s_hard = _init_stability(Rating.HARD, w) if prev.state == SRSState.NEW else _stability_short_term(prev.stability, Rating.HARD, params)
-        s_good = _init_stability(Rating.GOOD, w) if prev.state == SRSState.NEW else _stability_short_term(prev.stability, Rating.GOOD, params)
-        s_easy = _init_stability(Rating.EASY, w) if prev.state == SRSState.NEW else _stability_short_term(prev.stability, Rating.EASY, params)
+        s_hard = (
+            _init_stability(Rating.HARD, w)
+            if prev.state == SRSState.NEW
+            else _stability_short_term(prev.stability, Rating.HARD, params)
+        )
+        s_good = (
+            _init_stability(Rating.GOOD, w)
+            if prev.state == SRSState.NEW
+            else _stability_short_term(prev.stability, Rating.GOOD, params)
+        )
+        s_easy = (
+            _init_stability(Rating.EASY, w)
+            if prev.state == SRSState.NEW
+            else _stability_short_term(prev.stability, Rating.EASY, params)
+        )
         q_hard = _quantize_stability(max(0.001, s_hard))
         q_good = _quantize_stability(max(0.001, s_good))
         q_easy = _quantize_stability(max(0.001, s_easy))

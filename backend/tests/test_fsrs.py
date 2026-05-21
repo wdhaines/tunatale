@@ -740,9 +740,7 @@ class TestReviewIntervalCascade:
         good_dir = good_item.directions[Direction.RECOGNITION]
         hard_ivl = (hard_dir.due_at - hard_dir.last_review).days
         good_ivl = (good_dir.due_at - good_dir.last_review).days
-        assert good_ivl >= hard_ivl + 1, (
-            f"Expected Good≥Hard+1 but got Good={good_ivl}, Hard={hard_ivl}"
-        )
+        assert good_ivl >= hard_ivl + 1, f"Expected Good≥Hard+1 but got Good={good_ivl}, Hard={hard_ivl}"
 
     def test_scheduled_days_derived_from_due_at_minus_last_review(self):
         """scheduled_days = max(0, (prev.due_at - prev.last_review).days)."""
