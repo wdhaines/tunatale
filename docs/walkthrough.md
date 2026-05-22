@@ -9,7 +9,7 @@ This walkthrough covers the production TunaTale codebase — the unified applica
 
 **What changed from the prototypes:** The production rebuild unified the audio pipeline (micro-demo-0.0) and the content engine (micro-demo-0.1) under a single FastAPI application. Hardcoded language logic was replaced with pluggable preprocessors and voice maps. The mock LLM (MD5-hashed) became a cassette system with multiple modes. FSRS-5 replaced the custom SRS scheduler. The entire codebase follows hexagonal architecture with Protocol-based ports. Since the initial production build: ContentStore added SQLite persistence for curricula/lessons/audio, per-word SRS tracking added lemmatizer/tokenizer/transcript modules, section_builder extracted from StoryGenerator (now a thin orchestrator), Slovene syllabification added for Pimsleur backward buildup, pydub replaced raw-PCM concatenation, SRS admin UI added (6 admin endpoints + SvelteKit admin page).
 
-**What changed since the last walkthrough revision:** The biggest addition is bidirectional Anki sync (Stage 3 — see PART 12 below). SRS items now track two directions independently (RECOGNITION L2→L1 and PRODUCTION L1→L2) with per-direction FSRS state, mirroring Anki's note/card model. A new `app/anki/` package handles direct SQLite access to `collection.anki2` with a backup-and-lock safety envelope (`safe_open`), GUID/homonym/USN migrations, and an offline-first sync engine (push → drain pending revlog → pull) that no longer depends on AnkiConnect being running. A media pipeline (`app/anki/media/`) fetches Forvo audio with EdgeTTS fallback, Pixabay images with token-overlap scoring, and ffmpeg LUFS normalization — deduplicated across cards via `used_image_urls`. Queue stats now read FSRS-5 parameters and the daily-new-cap directly from Anki's deck_config protobuf, cached in `anki_state_cache`. Frontend gained a unified review queue, Anki-running status gating, a single Sync button, and an `/admin/srs` page; e2e tests run via Playwright. Test count grew from 409 to 1460 across 73 files.
+**Stage-3 Anki integration (PART 12 onward):** SRS items track two directions independently (RECOGNITION L2→L1 and PRODUCTION L1→L2), mirroring Anki's note/card model. The `app/anki/` package handles direct SQLite access to `collection.anki2` with a backup-and-lock safety envelope (`safe_open`), an offline-first sync engine (push → drain pending revlog → pull) that doesn't depend on AnkiConnect, and a media pipeline (Forvo + EdgeTTS fallback + Pixabay + ffmpeg LUFS normalization). Queue stats read FSRS-5 parameters from Anki's deck_config protobuf, cached in `anki_state_cache`. Frontend has a unified review queue, Anki-running status gating, a single Sync button, and an `/admin/srs` page. PARTs 18–21 cover the parity testing harness, the `tt_revlog` event log, the cloze pipeline, and the frontend toolchain that all support this.
 
 ## Architecture at a Glance
 
@@ -6133,11 +6133,13 @@ A cleanup pass between Phases D and F reduced sync.py noise and deleted three de
 **`_queue_to_state` helper** (commit `8b11935`). Three duplicate `if queue == ...` ladders in `sync_pull` collapsed to one module-level function. Layer 30 then made this single helper the place to fix the `reps=0` bug — keeping the dedup work paid off immediately.
 
 **`_record_conflict` helper** (commit `0309a85`). Five duplicate blocks of the form:
+
 ```python
 report.conflicts.append(SyncConflict(...))
 if not dry_run:
     self._db.record_sync_conflict(...)
 ```
+
 collapsed to `self._record_conflict(report, guid=..., direction=..., field=..., local=..., remote=..., resolution=..., dry_run=dry_run)` (`backend/app/anki/sync.py:874`).
 
 **`_resolve_prior_state` closure** (commit `38d2804`). The call-site signature was passing `first_review_ms`, `today_start_ms`, and the local direction state through repeated kwargs. The refactor introduces a per-iteration `_prior` closure that captures `card_rec.first_review_ms` and `today_start_ms` once, leaving the call site as `_prior(local_dir, new_state)`. Same idea applied to `_intro_at = _resolve_introduced_at`. Visual noise dropped, behavior identical.
@@ -6158,3 +6160,109 @@ collapsed to `self._record_conflict(report, guid=..., direction=..., field=..., 
 
 When debugging a queue divergence, dead code is a trap: the divergence playbook in `.claude/rules/anki-queue-parity.md` walks specific helpers, and if a stale one is still in the tree, it can look like the active implementation. The Cleanup pass made the file harder to misread. Future cleanups should follow the same shape: prove the path is dead with `git grep` + test removal, delete in one commit, leave the rule file untouched.
 
+---
+
+## PART 18: Parity Testing Harness
+
+TT mirrors Anki's scheduling algorithms, and the divergence history (`docs/anki-parity-layers.md`, 48 layers) reflects how many subtle branches that touches. The parity harness lets TT pin its parallel functions against Anki's actual scheduler at test time, before divergences reach a user-visible badge.
+
+### 18.1 Subprocess Boundary
+
+`backend/tests/anki_oracle/` holds the three-file harness: `synthetic_collection.py` builds a minimal modern-schema `collection.anki2` on disk (with the `config` table modern Anki actually reads, not just legacy `col.conf` JSON); `oracle.py` is the subprocess that opens the collection, enables V3, and runs JSON-in/JSON-out ops; `harness_fixtures.py` exposes the pytest fixtures + `run_oracle()` helper.
+
+**Backend production code must never `import anki`** (queue-parity rule 1 — TT cannot have a runtime dependency on Anki being installed). The harness spawns a separate process via `uv run --with anki python oracle.py`. Backend tests don't import anki either; they call `run_oracle(collection_path, operations)`. CI runs without `--run-oracle` so it doesn't need anki installable in the image; `./test.sh` passes the flag locally.
+
+### 18.2 What's Pinned
+
+Five parity-test files under `backend/tests/test_parity_*.py` each cover a cluster:
+
+| File | Cluster |
+|------|---------|
+| `test_parity_fsrs_schedule.py` | FSRS stability + difficulty math, both recall and lapse paths |
+| `test_parity_learning_steps.py` | `_schedule_with_steps` transitions, `_pack_left`/`_parse_left` round-trip |
+| `test_parity_queue_order.py` | R-asc sort + FNV tiebreaker + NULL-R placement |
+| `test_parity_bury.py` | `queue=-1/-2/-3` exclusion invariant |
+| `test_parity_daily_caps.py` | `new_per_day` / `reviews_per_day` queue-count caps |
+
+Findings are surfaced as `@pytest.mark.xfail(strict=True)` first, then fixed in a separate commit so the diagnostic stays reviewable on its own. Full rule (synthetic-collection gotchas, both-gates-per-commit workflow) at `.claude/rules/anki-oracle-harness.md`.
+
+The two highest-cost gotchas, both pinned by tests inside the harness module: (1) `cards.data` needs all of `s`/`d`/`dr`/`lrt` for the FSRS path — missing `lrt` silently routes through `stability_short_term`; missing `dr` ties every card at the SM2 fallback's near-zero value; (2) `learn_steps` / `relearn_steps` are `repeated float` (packed LEN-delimited f32), not VARINT — Anki silently falls back to defaults if you encode them wrong.
+
+---
+
+## PART 19: Event Log — `tt_revlog`
+
+`sync_pull` (PART 12.4) merges TT and Anki state field-by-field. The merge is a snapshot diff and can't represent *events* — if both apps graded the same card today at different millisecond timestamps, field-merge picks the later one's values and loses the earlier grade entirely. The `tt_revlog` table mirrors Anki's `revlog` schema so every grade can be persisted as an event row, with sync eventually moving to `INSERT OR IGNORE` event-merge instead of field-diff.
+
+### 19.1 Schema And Write Paths
+
+`tt_revlog` (migration v26) has PK `(id, collocation_id, direction)` with `id` as ms-since-epoch wall-clock, plus `button_chosen`, `interval`, `last_interval`, `factor`, `taken_millis`, `review_kind`, `anki_card_id`. The PK shape makes future event-merge with Anki deltas a straight `INSERT OR IGNORE` once the ids align.
+
+Three write paths:
+
+- **TT-side grades** (drill + listen word + listen key-phrase in `api/srs.py`): `fsrs.build_revlog_row → db.append_revlog` after `schedule()` returns.
+- **Anki-side grades** (`sync_pull._ingest_anki_revlog_for_card`): filters `OfflineReader.get_revlog_for_card` by `last_synced_at`, INSERT OR IGNORE.
+- **Manual state mutations** (`promote_to_learning` from the listen-first UI): emit `review_kind=4` rows.
+
+A content-based dedup helper, `SRSDatabase.has_revision_near(...)`, lets `_ingest_anki_revlog_for_card` skip an Anki row when a TT-written row within ±5s with the same `button_chosen` already exists. This catches Anki copies of TT-grades that landed at slightly-different ms timestamps.
+
+### 19.2 Replay Diagnostic
+
+`SRSDatabase.rebuild_from_revlog(collocation_id, direction, anki_card_id=None, exclude_review_kinds=frozenset({4}))` replays the rows through `schedule()` starting from NEW, returns a `DirectionState`. The `anki_card_id` parameter is required — FSRS interval fuzz seeds off `(card.id + reps)`, so omitting it drifts replayed stabilities by O(fuzz days).
+
+The companion script `app/anki/replay_fsrs_from_revlog.py` walks every direction and classifies each as MATCH (replay agrees with stored state), REPAIR (raw UPDATE preserves the 8 non-FSRS columns), or one of three SKIP buckets (synthetic-only, pre-FSRS SM-2 era, unknown). `--dry-run` snapshots both sides; concurrency guard via `BEGIN IMMEDIATE`.
+
+### 19.3 Current Status
+
+Writes are live. Reads aren't yet — `sync_pull` still uses field-merge, and the replay script is diagnostic-only. The endgame (collapse field-merge into invariant-check, drop `prior_state` / `introduced_at`) waits on an empirical measurement comparing replay output to Anki's `cards.data` directly. Procedure and decision gate (≥95% / 50–95% / <50%) at `docs/stage-3b-empirical-measurement.md`; measurement script at `backend/app/anki/measure_stage3b_premise.py`.
+
+---
+
+## PART 20: Cloze Pipeline
+
+Cloze cards (introduced in PART 15.5) target Anki's built-in Cloze notetype with `card_type='cloze'` set on the `SyntacticUnit`. Only the PRODUCTION direction exists — the user supplies the missing word given the surrounding sentence. The pipeline produces the cloze text, sentence and word audio, an L1 sentence translation, and syncs all of it bidirectionally with Anki.
+
+### 20.1 Cloze Text And Function-Word Detection
+
+`make_cloze_text(sentence, target_word)` in `app/cloze/` wraps the target with Anki's `{{c1::word}}` syntax. The frontend rendering uses Unicode-aware lookarounds to mask the word — ASCII-only `\b` doesn't match around š/č/ž. `is_function_word(word, language)` keys off a per-language list (Slovene lives at `app/cloze/function_words/sl.py`); the `/listen` endpoint creates a cloze row only for function-word matches when the cloze feature flag is enabled, no-op otherwise.
+
+### 20.2 TTS Audio (Sentence + Word)
+
+`app/audio/cloze_tts.py::synthesize_cloze_audios()` produces two MP3s per cloze card via EdgeTTS:
+
+- **Sentence audio** — the full source sentence, content-addressed by SHA256 of the text so cards sharing a sentence reuse the file.
+- **Word audio** — the clozed word in isolation, fetched on demand when the user taps the reveal button.
+
+Migration v22 expanded `media.kind` to allow `'audio_tts_sentence'`; `SRSDatabase.get_sentence_audio_filename(collocation_id)` exposes the sentence row for the API. `/listen` generates audio eagerly for new clozes and backfills on re-listen. The CLI `app/audio/backfill_cloze_tts.py` covers existing rows.
+
+### 20.3 Sentence Translation
+
+`SyntacticUnit.source_sentence_translation` carries the L1 gloss. Story generation populates it through the LLM call (the metadata block includes per-sentence English); `/listen` writes it to the new `collocations.sentence_translation` column (migration v20→v21); `OfflineWriter.create_cloze_note` syncs it to Anki via `<span class='st'>{translation}</span>` inside Back Extra; `extract_sentence_translation_from_fields` (`sqlite_reader`) pulls it back during `sync_pull`. The frontend `DrillCard` shows it on production reviews so the user has L1 context for the masked sentence.
+
+### 20.4 Anki Round-Trip
+
+`OfflineWriter.create_cloze_note` writes against Anki's built-in Cloze notetype. To make sentence audio show up in the Anki card too, it appends `[sound:filename.mp3]` to the end of Back Extra when sentence audio exists — Anki's media sync then carries the MP3 alongside the note. The `extract_*_from_fields` extractors ignore the trailing `[sound:...]` so the next `sync_pull` doesn't see a phantom field change. Migration v23 primed existing cloze rows for `sync_push` to backfill the tag.
+
+---
+
+## PART 21: Frontend Toolchain
+
+PART 13 covers the SvelteKit + Vite app at a structural level. The toolchain around it:
+
+- **Package manager: Bun 1.3.14** (`~/.bun/bin/bun`). `package-lock.json` → `bun.lock`. `start-dev.sh` and `test.sh` invoke `bun run`. Bun-cold installs in ~3s vs ~25s for npm-cold — material because every CI frontend job and every `./test.sh` starts with an install step.
+- **CI** runs the frontend job in parallel with the backend job (`.github/workflows/ci.yml`): `bun install → bun run fmt:check → bun run lint → bun run check → bun run test:coverage`. Playwright stays local-only.
+- **Lint**: two layers. **Oxlint** (Rust, near-instant) for `.ts`/`.js`; **ESLint + `eslint-plugin-svelte`** for `.svelte` templates (uses `svelte-eslint-parser` with `typescript-eslint` for `<script lang="ts">`). `eslint-plugin-oxlint` disables rules ESLint and Oxlint both have. `svelte/no-at-html-tags` is globally disabled (Anki card HTML is controlled content); so is `svelte/no-navigation-without-resolve` (view-transitions API, not used).
+- **Format: Oxfmt** for `.ts`/`.js`. Installed to the *root* `package.json` because its Svelte extension wants `svelte/compiler` at the same resolution level — Bun hoists Oxfmt to the repo root while Svelte stays in `frontend/node_modules`. `.oxfmtrc.json` excludes `.svelte` files for now.
+- **Bundler: Vite 8.0.13** (`vite-plugin-svelte` warns "experimental" for Vite 8 / rolldown but all tests pass).
+- **Test runner: Vitest 4** with v8 coverage and a custom Svelte-5 phantom-branch filter (see below).
+- **E2E: Playwright** with 11 specs covering curriculum navigation, day picker, lesson page header, the `/admin/srs` flow, the review loop including Again-rating queue placement, and SRS-seeding helpers shared via `tests/helpers.ts`.
+
+### 21.1 Svelte 5 Phantom-Filter Coverage Gate
+
+The Svelte 5 compiler injects template fragments that v8 reports as uncovered "branches" no test can reach (`'} created, {'`, ternary literals like `null`, `?? ''` defensives). Without filtering, threshold-based coverage gates would have to sit around 75% to absorb the noise.
+
+`frontend/scripts/coverage-gate.ts` replaces Vitest's `thresholds:` block. It reads `coverage/coverage-final.json` and classifies each uncovered sub-location via `isPhantom(branchType, text, synthetic)`: cond-expr (`?:`) is phantom if text is a JS literal; binary-expr (`||`/`&&`/`??`) is phantom if it brackets a template-interp boundary or is a bare literal; empty source ranges are phantom; unknown branch types stay real (conservative). Drops are logged to `coverage/dropped-branches.json`; the gate then asserts 100% per-file on every metric.
+
+`frontend/tests/coverage-gate.test.ts` pins every classification against empirical TunaTale cases — adding or changing a rule means updating both the heuristic and the test.
+
+Maintenance note (`.claude/rules/testing.md`): after any `svelte` / `@vitest/coverage-v8` bump, eyeball the gate's "dropped N phantom branch(es)" line (baseline 46 on 21 files). A >20% delta means either a new phantom shape the filter misses or real bugs misclassified as phantom — fix the heuristic, don't lower the threshold.
