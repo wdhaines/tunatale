@@ -170,8 +170,8 @@ Walk this tree on a divergence report. Each leaf → mechanism that handles it; 
   3. `_bury_kind_from_queue` wasn't called for this write path. Audit all 5 DirectionState sites in `sync_pull`.
   4. **Rollover + true user-bury.** `_bury_kind_from_queue` can't distinguish user-bury from sibling-bury (both = -2). After rollover Anki releases; only way to keep TT-buried is `POST /api/srs/bury` (writes `'user'` directly). Check `BURY_TRACE` for `buried_to_released_writes`.
 
-**TT shows 140-ish stuck `state='buried' bury_kind='user'` rows (2026-05-16 incident):**
-- See `docs/bury-kind-investigation-2026-05-16.md`. Short: Layer 35 pessimistic backfill + 2 latent bugs (now fixed) locked the cohort. Next sync releases via state-mismatch.
+**TT shows a stuck cohort of `state='buried' bury_kind='user'` rows (post-Layer-35 lock):**
+- Cause: Layer 35's pessimistic `'user'` backfill on existing buried rows, compounded if Layer 35-era latent bugs are still present (`_DIR_COLUMNS` missing `bury_kind`, or `_direction_differs` not checking `bury_kind` — both fixed 2026-05-16). The cohort releases via state-mismatch on the next sync once those two bugs are in.
 - Diagnostic: `SELECT bury_kind, state, COUNT(*) FROM collocation_directions GROUP BY bury_kind, state`. Non-trivial `'user'` count AND no `'sched'` rows anywhere = locked cohort. Check `BURY_TRACE` `buried_to_released_writes` after next sync.
 
 **Queue head wrong (new card placement):**
