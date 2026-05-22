@@ -80,6 +80,11 @@ CI runs backend and frontend in parallel. The Anki oracle harness (`--run-oracle
 
 - **[docs/prd.md](docs/prd.md)** — original product-requirements doc with the full pitch: market gap, user journeys, three-phase pedagogical cycle, competitive positioning, the tuna.
 - **[docs/walkthrough.md](docs/walkthrough.md)** — full system tour (~6300 lines, executable via [Showboat](https://github.com/jbenet/showboat) so every code block is re-runnable). Start here to understand any specific subsystem.
+- **Design influences** — what TT inherits from each, and where it diverges, with code references:
+  - **[docs/pimsleur.md](docs/pimsleur.md)** — the four-section lesson format, anticipation pause, syllable-level backward buildup.
+  - **[docs/fluent-forever.md](docs/fluent-forever.md)** — the Slovene Vocabulary notetype, picture+audio production cards, cloze for function words.
+  - **[docs/lingq.md](docs/lingq.md)** — the colored-transcript UI, word-status cycle, click-to-untrack, implicit-grade-on-listen.
+  - **[docs/refold.md](docs/refold.md)** — 1T sentence clozes, recognition-before-production direction split.
 - **[docs/anki-parity-layers.md](docs/anki-parity-layers.md)** — 48 layers of TT ↔ Anki scheduler parity work, each one a divergence found in production, the mechanism, and the fix. Load-bearing reference for the sync code.
 - **[docs/stage-3b-empirical-measurement.md](docs/stage-3b-empirical-measurement.md)** — procedure for the measurement that gates the next big architectural move (replacing field-merge sync with event-replay).
 - **`.claude/rules/`** — project rules cross-model: USN sync protocol, queue-parity playbook + pre-Layer checklist, oracle harness workflow, testing strategy, TDD discipline.
