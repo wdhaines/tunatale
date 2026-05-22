@@ -1,23 +1,23 @@
 import { test, expect } from '@playwright/test';
+import { backendAvailable, resetSRSItems, seedSRSItems } from './helpers';
 
-// Depends on playwright.config.ts `rm -f tunatale-test.db` in webServer startup.
-// If reuseExistingServer is ever flipped to true, this test will 409 on the
-// second run because the seeded items already exist.
+// This spec asserts on exact queue counts ("6 + 0 + 0" → 3 reviews → "Done").
+// Other specs in this suite (admin-srs, review-again-rating) seed into the
+// same test DB earlier in the run, so we wipe SRS items here before seeding
+// to restore the clean precondition this spec needs.
+
+test.beforeEach(async ({ request }) => {
+	if (await backendAvailable(request)) await resetSRSItems(request);
+});
 
 test('review flow: seed items, drill through queue, complete', async ({ page, request }) => {
-	const health = await request.get('http://localhost:8001/api/health');
-	test.skip(!health.ok(), 'Backend not available');
+	test.skip(!(await backendAvailable(request)), 'Backend not available');
 
-	const items = [
-		{ text: 'zdravo', language_code: 'sl', word_count: 1, translation: 'hello' },
-		{ text: 'hvala', language_code: 'sl', word_count: 1, translation: 'thank you' },
-		{ text: 'prosim', language_code: 'sl', word_count: 1, translation: 'please' },
-	];
-
-	for (const item of items) {
-		const res = await request.post('http://localhost:8001/api/srs/items', { data: item });
-		expect(res.ok()).toBe(true);
-	}
+	await seedSRSItems(request, [
+		{ text: 'zdravo', translation: 'hello' },
+		{ text: 'hvala', translation: 'thank you' },
+		{ text: 'prosim', translation: 'please' },
+	]);
 
 	// Wait for home page and queue stats to load
 	// Queue stats show Anki-style widget: "6 + 0 + 0" (new + learning + review)
