@@ -1,27 +1,33 @@
-"""Measure Stage 3b's premise empirically using a pre/post sync snapshot pair.
+"""Measure Stage 3b's premise empirically using a pre/post sync snapshot quad.
 
 Stage 3b's claim: `schedule(pre_stored_state, new_revlog_rows_since_last_sync)`
-matches Anki's `cards.data` after the sync — i.e., TT's stored state evolves
-predictably under forward-step FSRS.
+matches Anki's `cards.data` after the sync — i.e., forward-step FSRS over
+TT's stored state reproduces what Anki computes per-grade.
 
-This script reads two TT database snapshots straddling a real production sync,
-identifies directions where new tt_revlog rows arrived in that interval, and
-asks: did the pre-sync stored state + forward-step over the new rows produce
-the post-sync stored state?
+This script reads four database snapshots straddling an Anki-only grading
+interval (TT pre, TT post, Anki pre, Anki post). It identifies directions
+where new tt_revlog rows arrived in that interval, replays them via
+`schedule()` from the pre TT state, and compares the derived FSRS memory
+state (`stability`, `difficulty`) against Anki's actual post `cards.data`.
 
-Defaults to the snapshot pair sitting in /tmp from the conversation that
-produced this script. Pass --pre / --post to use a different pair.
+Per `docs/stage-3b-empirical-measurement.md`, `reps`/`lapses`/`state`/`due_at`
+are pass-through-from-Anki fields under the refined Stage 3b design and are
+NOT used in the MATCH/DIVERGE classification (`due_at` is tracked as a side
+stat for forward-step fuzz reliability).
 
 Usage:
     uv run python -m app.anki.measure_stage3b_premise \\
-        [--pre /tmp/tt_post_dedup.db] \\
-        [--post /tmp/tt_post_sync.db]
+        --pre /tmp/tt_pre_anki_only.db \\
+        --post /tmp/tt_post_anki_only.db \\
+        --anki-pre /tmp/anki_pre_anki_only.db \\
+        --anki-post /tmp/anki_post_anki_only.db
 """
 
 from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,8 +44,8 @@ def _parse_dt(s: str | None) -> datetime | None:
         return None
 
 
-def measure(pre_db: Path, post_db: Path, anki_col_path: Path) -> dict:
-    from app.anki.safety import safe_open
+def measure(pre_db: Path, post_db: Path, anki_pre_db: Path, anki_post_db: Path) -> dict:
+    from app.anki.safety import _register_anki_collations
     from app.models.srs_item import Direction, DirectionState, Rating, SRSItem, SRSState
     from app.models.syntactic_unit import SyntacticUnit
     from app.srs.database import SRSDatabase
@@ -52,17 +58,19 @@ def measure(pre_db: Path, post_db: Path, anki_col_path: Path) -> dict:
         resolve_fsrs_params,
     )
 
-    # Warm caches from current Anki collection (params + col_crt are stable
-    # across the sync interval for this measurement).
-    with safe_open(anki_col_path, mode="ro") as ctx:
-        anki = ctx.conn
-        srs = SRSDatabase(str(post_db))
-        refresh_col_crt(srs, anki)
-        refresh_fsrs_params(srs, anki, settings.anki_deck_name)
-        with contextlib.suppress(sqlite3.Error):
-            refresh_learning_steps(srs, anki, settings.anki_deck_name)
-        params, _ = resolve_fsrs_params(srs)
-        col_crt = resolve_col_crt(srs)
+    # Warm caches from the Anki post snapshot (params + col_crt are stable
+    # across the sync interval). Use plain sqlite3 with collations registered,
+    # NOT safe_open — these are static snapshot files, not the live collection.
+    anki_post = sqlite3.connect(f"file:{anki_post_db}?mode=ro", uri=True)
+    _register_anki_collations(anki_post)
+    anki_post.row_factory = sqlite3.Row
+    srs = SRSDatabase(str(post_db))
+    refresh_col_crt(srs, anki_post)
+    refresh_fsrs_params(srs, anki_post, settings.anki_deck_name)
+    with contextlib.suppress(sqlite3.Error):
+        refresh_learning_steps(srs, anki_post, settings.anki_deck_name)
+    params, _ = resolve_fsrs_params(srs)
+    col_crt = resolve_col_crt(srs)
 
     pre = sqlite3.connect(str(pre_db))
     pre.row_factory = sqlite3.Row
@@ -99,11 +107,18 @@ def measure(pre_db: Path, post_db: Path, anki_col_path: Path) -> dict:
         results = {
             "total": 0,
             "match": 0,
-            "diverge_state_field": 0,
+            "practical_match": 0,
             "diverge_stability": 0,
-            "diverge_due_at": 0,
+            "skipped_sm2": 0,
+            "skipped_no_anki_card": 0,
+            "stability_deltas_pct": [],
+            "difficulty_deltas_abs": [],
+            "due_at_match_within_1h": 0,
+            "due_at_match_within_1d": 0,
+            "n_new_rows_histogram": {},
             "examples_match": [],
             "examples_diverge": [],
+            "examples_practical_diverge": [],
         }
 
         for t in targets:
@@ -186,47 +201,60 @@ def measure(pre_db: Path, post_db: Path, anki_col_path: Path) -> dict:
                 )
             derived = item.directions[d_obj]
 
-            # Two views: STRICT (bit-exact every field) and PRACTICAL (memory
-            # state within tolerance; reps/lapses treated as Anki-passthrough,
-            # not replay-derived, since Anki has accounting we don't reproduce).
+            # Compare derived (forward-step from pre TT state) against Anki's
+            # actual post cards.data. Per the refined Stage 3b design, only
+            # stability and difficulty are replay-derived; reps/lapses/state/
+            # due_at are pass-through-from-Anki and excluded from MATCH
+            # classification (due_at tracked as side stat for fuzz reliability).
+            anki_card = anki_post.execute("SELECT data FROM cards WHERE id = ?", (akid,)).fetchone()
+            if anki_card is None:
+                results["skipped_no_anki_card"] += 1
+                continue
+            try:
+                anki_data = json.loads(anki_card["data"]) if anki_card["data"] else {}
+            except json.JSONDecodeError:
+                anki_data = {}
+            if "s" not in anki_data or "d" not in anki_data:
+                results["skipped_sm2"] += 1
+                continue
+            anki_s = float(anki_data["s"])
+            anki_d = float(anki_data["d"])
+
             results["total"] += 1
+            bucket = results["n_new_rows_histogram"]
+            bucket[len(valid_new)] = bucket.get(len(valid_new), 0) + 1
+
+            stab_delta = abs(anki_s - derived.stability)
+            stab_pct = stab_delta / max(abs(anki_s), 0.01)
+            diff_delta = abs(anki_d - derived.difficulty)
+
+            results["stability_deltas_pct"].append(stab_pct)
+            results["difficulty_deltas_abs"].append(diff_delta)
+
+            # Side stat: due_at match rate (forward-step fuzz reliability).
+            post_due = _parse_dt(post_row["due_at"])
+            if post_due:
+                due_delta_sec = abs((post_due - derived.due_at).total_seconds())
+                if due_delta_sec < 3600:
+                    results["due_at_match_within_1h"] += 1
+                if due_delta_sec < 86400:
+                    results["due_at_match_within_1d"] += 1
+
             strict_diffs = []
             practical_diffs = []
 
-            stab_delta = abs(post_row["stability"] - derived.stability)
-            stab_pct = stab_delta / max(abs(post_row["stability"]), 0.01)
             if stab_delta >= 0.01:
-                strict_diffs.append(f"stab {post_row['stability']:.3f}→{derived.stability:.3f}")
+                strict_diffs.append(f"stab anki={anki_s:.4f} derived={derived.stability:.4f}")
                 results["diverge_stability"] += 1
             if stab_pct > 0.05:  # 5% relative tolerance
                 practical_diffs.append(
-                    f"stab {post_row['stability']:.3f}→{derived.stability:.3f} ({stab_pct * 100:.1f}%)"
+                    f"stab anki={anki_s:.4f} derived={derived.stability:.4f} ({stab_pct * 100:.1f}%)"
                 )
 
-            diff_delta = abs(post_row["fsrs_difficulty"] - derived.difficulty)
             if diff_delta >= 0.01:
-                strict_diffs.append(f"diff {post_row['fsrs_difficulty']:.3f}→{derived.difficulty:.3f}")
+                strict_diffs.append(f"diff anki={anki_d:.4f} derived={derived.difficulty:.4f}")
             if diff_delta >= 0.1:  # 0.1 absolute on 1-10 scale
-                practical_diffs.append(f"diff {post_row['fsrs_difficulty']:.3f}→{derived.difficulty:.3f}")
-
-            if post_row["reps"] != derived.reps:
-                strict_diffs.append(f"reps {post_row['reps']}→{derived.reps}")
-                results["diverge_state_field"] += 1
-            if post_row["lapses"] != derived.lapses:
-                strict_diffs.append(f"lapses {post_row['lapses']}→{derived.lapses}")
-                results["diverge_state_field"] += 1
-            if post_row["state"] != derived.state.value:
-                strict_diffs.append(f"state {post_row['state']}→{derived.state.value}")
-                practical_diffs.append(f"state {post_row['state']}→{derived.state.value}")
-                results["diverge_state_field"] += 1
-
-            post_due = _parse_dt(post_row["due_at"])
-            due_delta_sec = abs((post_due - derived.due_at).total_seconds()) if post_due else 0
-            if post_due and due_delta_sec >= 86400:
-                strict_diffs.append(f"due_at {post_due.date()}→{derived.due_at.date()}")
-                results["diverge_due_at"] += 1
-            if post_due and due_delta_sec >= 86400 * 3:  # 3-day tolerance
-                practical_diffs.append(f"due_at Δ{int(due_delta_sec / 86400)}d")
+                practical_diffs.append(f"diff anki={anki_d:.4f} derived={derived.difficulty:.4f}")
 
             if not strict_diffs:
                 results["match"] += 1
@@ -236,6 +264,8 @@ def measure(pre_db: Path, post_db: Path, anki_col_path: Path) -> dict:
                             "cid": cid,
                             "dir": d_str,
                             "n_new_rows": len(valid_new),
+                            "stab": derived.stability,
+                            "diff": derived.difficulty,
                         }
                     )
             elif len(results["examples_diverge"]) < 8:
@@ -249,67 +279,118 @@ def measure(pre_db: Path, post_db: Path, anki_col_path: Path) -> dict:
                 )
 
             if not practical_diffs:
-                results.setdefault("practical_match", 0)
                 results["practical_match"] += 1
-            else:
-                results.setdefault("practical_diverge_examples", [])
-                if len(results["practical_diverge_examples"]) < 5:
-                    results["practical_diverge_examples"].append(
-                        {
-                            "cid": cid,
-                            "dir": d_str,
-                            "diffs": practical_diffs,
-                        }
-                    )
+            elif len(results["examples_practical_diverge"]) < 5:
+                results["examples_practical_diverge"].append(
+                    {
+                        "cid": cid,
+                        "dir": d_str,
+                        "n_new_rows": len(valid_new),
+                        "diffs": practical_diffs,
+                    }
+                )
 
         return results
     finally:
         pre.close()
         post.close()
+        anki_post.close()
+
+
+def _pct(num: float, denom: int) -> float:
+    return 100.0 * num / max(denom, 1)
+
+
+def _summarize_deltas(label: str, deltas: list[float]) -> str:
+    if not deltas:
+        return f"  {label}: (no data)"
+    s = sorted(deltas)
+    n = len(s)
+    return (
+        f"  {label}: n={n}  min={s[0]:.4f}  p50={s[n // 2]:.4f}  "
+        f"p90={s[min(n - 1, int(n * 0.9))]:.4f}  max={s[-1]:.4f}  "
+        f"mean={sum(s) / n:.4f}"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Measure Stage 3b premise empirically.")
-    parser.add_argument("--pre", default="/tmp/tt_post_dedup.db", help="Pre-sync TT DB snapshot")
-    parser.add_argument("--post", default="/tmp/tt_post_sync.db", help="Post-sync TT DB snapshot")
+    parser.add_argument("--pre", default="/tmp/tt_pre_anki_only.db", help="Pre TT DB snapshot")
+    parser.add_argument("--post", default="/tmp/tt_post_anki_only.db", help="Post TT DB snapshot")
+    parser.add_argument(
+        "--anki-pre",
+        default="/tmp/anki_pre_anki_only.db",
+        help="Pre Anki DB snapshot (currently unused — reserved for symmetry)",
+    )
+    parser.add_argument(
+        "--anki-post", default="/tmp/anki_post_anki_only.db", help="Post Anki DB snapshot (cards.data source)"
+    )
     args = parser.parse_args(argv)
 
-    anki_col_path = Path(settings.anki_collection_path)
-    r = measure(Path(args.pre), Path(args.post), anki_col_path)
+    r = measure(Path(args.pre), Path(args.post), Path(args.anki_pre), Path(args.anki_post))
 
     total = r["total"]
     match = r["match"]
-    pct = 100.0 * match / max(total, 1)
+    practical = r["practical_match"]
+    strict_pct = _pct(match, total)
+    practical_pct = _pct(practical, total)
 
     print("=" * 70)
-    print(f"Pre:  {args.pre}")
-    print(f"Post: {args.post}")
+    print(f"TT  pre:  {args.pre}")
+    print(f"TT  post: {args.post}")
+    print(f"Anki post: {args.anki_post}  (cards.data source)")
     print("=" * 70)
-    print(f"  {match}/{total} ({pct:.1f}%) directions match post-sync state")
-    print(f"    state-field diverges (reps/lapses/state): {r['diverge_state_field']}")
-    print(f"    stability diverges (>0.01):               {r['diverge_stability']}")
-    print(f"    due_at diverges (>1 day):                 {r['diverge_due_at']}")
+    print(f"  Directions considered:     {total}")
+    print(f"  Skipped (no Anki card):    {r['skipped_no_anki_card']}")
+    print(f"  Skipped (SM-2 fallback):   {r['skipped_sm2']}")
+    print()
+    print(f"  STRICT MATCH  (±0.01 abs):    {match}/{total} ({strict_pct:.1f}%)")
+    print(f"  PRACTICAL MATCH (±5% s, ±0.1 d): {practical}/{total} ({practical_pct:.1f}%)")
+    print(f"    stability diverges (>0.01):  {r['diverge_stability']}")
+    print()
+    print("  Side stats (not part of MATCH classification — pass-through fields):")
+    print(
+        f"    due_at match within 1h:    {r['due_at_match_within_1h']}/{total} ({_pct(r['due_at_match_within_1h'], total):.1f}%)"
+    )
+    print(
+        f"    due_at match within 1d:    {r['due_at_match_within_1d']}/{total} ({_pct(r['due_at_match_within_1d'], total):.1f}%)"
+    )
+    print()
+    print(_summarize_deltas("stability rel-delta (%)", [d * 100 for d in r["stability_deltas_pct"]]))
+    print(_summarize_deltas("difficulty abs-delta", r["difficulty_deltas_abs"]))
+    print()
+    if r["n_new_rows_histogram"]:
+        hist = sorted(r["n_new_rows_histogram"].items())
+        print("  N new rows per direction:")
+        for n, c in hist:
+            print(f"    {n} row(s): {c} directions")
     print()
     if r["examples_match"]:
-        print("  MATCH examples:")
+        print("  STRICT MATCH examples:")
         for ex in r["examples_match"]:
-            print(f"    cid={ex['cid']:>4} dir={ex['dir']:<11} n_new={ex['n_new_rows']}")
+            print(
+                f"    cid={ex['cid']:>4} dir={ex['dir']:<11} n_new={ex['n_new_rows']} stab={ex['stab']:.4f} diff={ex['diff']:.4f}"
+            )
     if r["examples_diverge"]:
-        print("  DIVERGE examples:")
+        print("  STRICT DIVERGE examples:")
         for ex in r["examples_diverge"]:
+            print(f"    cid={ex['cid']:>4} dir={ex['dir']:<11} n_new={ex['n_new_rows']}: {', '.join(ex['diffs'])}")
+    if r["examples_practical_diverge"]:
+        print("  PRACTICAL DIVERGE examples:")
+        for ex in r["examples_practical_diverge"]:
             print(f"    cid={ex['cid']:>4} dir={ex['dir']:<11} n_new={ex['n_new_rows']}: {', '.join(ex['diffs'])}")
     print()
     print("=" * 70)
-    print("Stage 3b decision gate:")
+    print("Stage 3b decision gate (using PRACTICAL match rate):")
     print("=" * 70)
-    if pct >= 95:
+    if practical_pct >= 95:
         print("  ≥95% — Stage 3b simplification claim HOLDS. Proceed to staged cadence.")
-    elif pct >= 50:
-        print(f"  {pct:.0f}% — between thresholds. Real simplification possible but")
+    elif practical_pct >= 50:
+        print(f"  {practical_pct:.0f}% — between thresholds. Real simplification possible but")
         print("  'take-Anki on divergence' is more than a rare diagnostic.")
-        print("  Re-frame as 'merge with Anki precedence on FSRS state'.")
+        print("  Re-frame as 'merge with Anki precedence on FSRS state' (see doc § 50-95% re-frame).")
     else:
-        print(f"  {pct:.0f}% — below 50%. Incremental replay doesn't reproduce Anki's")
+        print(f"  {practical_pct:.0f}% — below 50%. Incremental replay doesn't reproduce Anki's")
         print("  adjustments often enough. Abandon Stage 3b; keep tt_revlog as event log only.")
     return 0
 

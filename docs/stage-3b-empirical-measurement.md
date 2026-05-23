@@ -4,6 +4,27 @@
 
 **Goal**: settle whether Stage 3b of the event-sync migration (`~/.claude/plans/ticklish-questing-fountain.md`) is worth committing 2-3 weeks of refactor work to.
 
+## Result (2026-05-22) — DONE
+
+The experiment ran. The headline: **87.6% practical match (78/89 directions)**. That lands in the 50-95% band, and per the decision-gate table below, the verdict is **refined 3-branch Stage 3b is viable; commission Big Pickle**.
+
+| Metric | Result |
+|---|---|
+| Strict match (±0.01) | 17/89 (19.1%) |
+| Practical match (±5% s, ±0.1 d) | **78/89 (87.6%)** |
+| Difficulty bit-exact | 89/89 (100%) |
+| Stability drift (median / p90 / max) | 0.97% / 5.34% / 7.73% |
+| `due_at` within 1h / 1d | 0/89 / 68/89 |
+| `cards.reps` match | 89/89 |
+
+**Three findings from the drill-down**:
+
+1. Difficulty is solved (89/89 bit-exact across REVIEW→REVIEW). The `_next_difficulty` formula was fixed in the 6 days between the original memory (2026-05-16) and the measurement. The `project_fsrs_next_difficulty_diverges` memory is now stale for REVIEW→REVIEW; LEARNING→REVIEW and REVIEW→RELEARNING transitions were not exercised by today's grades and remain untested.
+2. The stability tail is not Layer 42 — lapse-bucket enrichment in the 11 PRACTICAL_DIVERGE cases is 0.97x (no signal). The drift is a uniform ~5-7% systematic offset across `_next_stability_recall`, not a transition-specific bug. Filed as Layer 50 candidate.
+3. `due_at` drift is not fuzz — every delta is an exact multiple of 4 hours = Anki's `rollover_hour`. TT doesn't anchor day-scale intervals to Anki's day-boundary offset. Filed as Layer 49 candidate.
+
+See `~/.claude/plans/ticklish-questing-fountain.md` "Stage 3b measurement result" for the full decision write-up and follow-up Layer queue. The rest of this doc is the procedure that produced the result; useful as a template if Stage 3b's measurement ever needs re-running (e.g., after Layer 49 or 50 land — those would shift the practical match upward and could open the ≥95% world).
+
 ## What Stage 3b is
 
 The TT↔Anki sync layer's `_pull_merge_direction` in `backend/app/anki/sync.py` is a 9-branch merge tree (~318 LOC) that reconciles TT's stored FSRS state with what Anki sent over. The event-sync migration's Stage 3b proposes to collapse 6 of those 9 branches into one: "ingest new revlog rows from Anki since `last_synced_at`; apply them forward via `schedule(stored_state, row)`; compare result with Anki's `cards.data`; if matched, write the replayed value; if mismatched, take Anki's value and record a divergence event."
