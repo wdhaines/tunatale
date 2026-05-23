@@ -316,6 +316,118 @@ def test_parity_graduation_after_many_agains(synthetic_collection: SyntheticColl
 
 
 @pytest.mark.oracle
+def test_parity_relearning_graduation_interval_LAYER_52(
+    synthetic_collection: SyntheticCollection,
+) -> None:
+    """Layer 52: graduation from RELEARNING uses simple per-rating fuzz with
+    ``minimum=1``, NOT the passing-review cascade (``good_min = hard_fuzzed + 1``).
+
+    Mirrors Anki's ``rslib/.../states/relearning.rs:104-130`` (HARD) and
+    :155-184 (GOOD): each rating calls
+    ``with_review_fuzz(interval.round().max(1.0), 1, max)`` independently —
+    no cascade dependency on the previous rating's fuzzed result.
+    (EASY is special: floors against good's float-fuzz; covered in a separate
+    test below.)
+
+    Pre-Layer-52 TT routed graduation through ``_passing_intervals_with_fuzz``
+    with ``scheduled_days=0``, which still constrained ``good_min = hard + 1``.
+    For stability values where ``hard_fuzzed + 1`` exceeded Anki's effective
+    floor of 1, TT's GOOD interval landed +1 day higher than Anki's. The
+    multi-grade drill (2026-05-23) showed this systematic +1 bias on 28/40
+    REVIEW→AGAIN→GOOD-graduation cases.
+    """
+    from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
+    from app.models.syntactic_unit import SyntacticUnit
+    from app.srs.fsrs import schedule
+
+    synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
+    synthetic_collection.set_learning_steps(learn_steps=[1.0, 10.0], relearn_steps=[10.0])
+
+    # Use a REVIEW card with stability that triggers the cascade-vs-non-cascade
+    # divergence. s=8.093 produced one of the off cases in the empirical drill
+    # (cid 1775264032528). After AGAIN it lapses to short-term stability; after
+    # GOOD it short-term-boosts back; raw_good lands at ~6.0, where TT's cascade
+    # (good_min = hard_fuzzed + 1) shifts the fuzz lower bound and produces a
+    # +1 day interval relative to Anki's simple-fuzz.
+    s = 8.093
+    d = 8.553
+    now_secs = int(time.time())
+    last_review_secs = now_secs - 30 * 86400  # 30 days back to ensure REVIEW lapse
+
+    card_id = 10070
+    note_id = 1007
+    synthetic_collection.add_note(id=note_id, guid="g-grad-52", fields=["front", "back"])
+    synthetic_collection.add_card(
+        id=card_id,
+        note_id=note_id,
+        ord=0,
+        type=2,
+        queue=2,
+        due=0,
+        ivl=30,
+        reps=8,
+        lapses=1,
+        stability=s,
+        difficulty=d,
+        last_review_secs=last_review_secs,
+    )
+    synthetic_collection.save()
+
+    # Oracle: REVIEW + AGAIN (→ relearning), then GOOD (→ graduate to review).
+    result = run_oracle(
+        synthetic_collection.path,
+        [
+            {"op": "answer_card", "card_id": card_id, "rating": 1},
+            {"op": "answer_card", "card_id": card_id, "rating": 3},
+            {"op": "get_card", "card_id": card_id},
+        ],
+    )
+    raw = result.raw()
+    anki_card = raw[[k for k in raw if k.startswith("get_card_")][0]]
+    anki_ivl = anki_card["ivl"]
+
+    # TT side: chain schedule() with matching ratings + same last_review timing.
+    from datetime import datetime as _dt
+    from datetime import timedelta
+
+    last_review_dt = _dt.fromtimestamp(last_review_secs, tz=UTC)
+    direction = DirectionState(
+        direction=Direction.RECOGNITION,
+        due_at=last_review_dt + timedelta(days=30),
+        stability=s,
+        difficulty=d,
+        reps=8,
+        lapses=1,
+        state=SRSState.REVIEW,
+        last_review=last_review_dt,
+        anki_card_id=card_id,
+        anki_due=last_review_secs // 86400,  # any plausible col_day; not used for graduation
+    )
+    unit = SyntacticUnit(text="t", translation="t", word_count=1, difficulty=1, source="t")
+    item = SRSItem(
+        syntactic_unit=unit, directions={Direction.RECOGNITION: direction}, guid="g-grad-52", anki_note_id=note_id
+    )
+
+    # AGAIN: REVIEW → RELEARNING.
+    grade1_dt = _dt.fromtimestamp(now_secs, tz=UTC)
+    item = schedule(item, Rating.AGAIN, review_date=grade1_dt.date(), now=grade1_dt)
+    # GOOD: RELEARNING → REVIEW (graduate).
+    grade2_dt = grade1_dt + timedelta(seconds=60)
+    item = schedule(item, Rating.GOOD, review_date=grade2_dt.date(), now=grade2_dt)
+
+    # Use date-arithmetic — sub-day-precise last_review would truncate
+    # ``(due_at - last_review).days`` and hide the off-by-1 bug.
+    new_dir = item.directions[Direction.RECOGNITION]
+    tt_interval = (new_dir.due_at.date() - new_dir.last_review.date()).days
+
+    assert tt_interval == anki_ivl, (
+        f"Layer 52: relearning graduation interval must match Anki. "
+        f"TT={tt_interval} Anki={anki_ivl}. Pre-fix: TT applied passing-review "
+        f"cascade (good_min = hard_fuzzed + 1) at graduation, producing +1 day."
+    )
+
+
+@pytest.mark.oracle
 def test_parity_day_level_elapsed_matches_anki(synthetic_collection: SyntheticCollection) -> None:
     """Day-level elapsed uses col-day computation, matching Anki's (Layer 45).
 

@@ -218,6 +218,10 @@ def _op_get_card(col: Any, op: dict) -> dict:
         "card_id": card_id,
         "queue": card.queue,
         "type": card.type,
+        "ivl": card.ivl,
+        "due": card.due,
+        "reps": card.reps,
+        "lapses": card.lapses,
         "stability": round(ms.stability, 6) if ms else None,
         "difficulty": round(ms.difficulty, 6) if ms else None,
     }

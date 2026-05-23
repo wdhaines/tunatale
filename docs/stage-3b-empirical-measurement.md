@@ -4,27 +4,30 @@
 
 **Goal**: settle whether Stage 3b of the event-sync migration (`~/.claude/plans/ticklish-questing-fountain.md`) is worth committing 2-3 weeks of refactor work to.
 
-## Result (2026-05-23, post Layers 49 + 50 + 51) — DONE
+## Result (2026-05-23, post Layers 49 + 50 + 51 + 52) — DONE
 
-The experiment ran twice. The 2026-05-22 measurement caught three distinct bugs (Layers 49 + 50 + 51); the 2026-05-23 re-measurement on the same snapshots confirmed all three fixes. Final headline: **100% strict match (89/89) on stability AND difficulty** — the ≥95% world that the original Stage 3b plan targeted.
+The experiment ran twice. The 2026-05-22 measurement caught four distinct bugs (Layers 49 + 50 + 51 + 52); the 2026-05-23 re-measurement on the same snapshots confirmed all four fixes. Final headline: **100% strict match (89/89) on stability AND difficulty** — the ≥95% world that the original Stage 3b plan targeted.
 
-| Metric | 2026-05-22 (pre-fixes) | Post-L49 | Post-L50 | Post-L51 (2026-05-23) |
-|---|---|---|---|---|
-| Strict stability match (±0.01) | — | 17/89 (19.1%) | **89/89 (100%)** | **89/89 (100%)** |
-| Practical match (±5% s, ±0.1 d) | 78/89 (87.6%) | 78/89 | **89/89 (100%)** | **89/89 (100%)** |
-| Difficulty bit-exact | 89/89 | 89/89 | 89/89 | 89/89 |
-| Stability median / max | 0.97% / 7.73% | 0.97% / 7.73% | 0.00% / 4.0% | 0.00% / 4.0% |
-| Single-grade REVIEW→REVIEW `due_at` exact | — | — | 31/65 (47.7%) | **39/65 (60.0%)** |
-| All-direction `due_at` within 1h | 0/89 | 42/89 (47%) | 42/89 (47%) | **46/89 (51.7%)** |
+| Metric | 2026-05-22 (pre-fixes) | Post-L49 | Post-L50 | Post-L51 | Post-L52 (2026-05-23) |
+|---|---|---|---|---|---|
+| Strict stability match (±0.01) | — | 17/89 (19.1%) | **89/89 (100%)** | **89/89 (100%)** | **89/89 (100%)** |
+| Practical match (±5% s, ±0.1 d) | 78/89 (87.6%) | 78/89 | **89/89 (100%)** | **89/89 (100%)** | **89/89 (100%)** |
+| Difficulty bit-exact | 89/89 | 89/89 | 89/89 | 89/89 | 89/89 |
+| Single-grade `due_at` exact | — | — | 31/65 (47.7%) | **39/65 (60.0%)** | 39/65 (60.0%) |
+| Multi-grade `due_at` bit-exact | — | — | — | 11/40 (27.5%) | **34/40 (85.0%)** |
+| All-direction `due_at` within 1h | 0/89 | 42/89 (47%) | 42/89 (47%) | 46/89 (51.7%) | **58/89 (65.2%)** |
 
 **Decision**: ≥95% band → the original 1-branch Stage 3b simplification claim HOLDS. Commission Big Pickle on the staged cadence in `~/.claude/plans/ticklish-questing-fountain.md`. The ~−218 LOC `_pull_merge_direction` collapse is the target (vs the refined 3-branch ~−100 LOC fallback the 87.6% world would have required).
 
-**Drill-down history** (kept for reference; all three bugs now fixed):
+**Drill-down history** (kept for reference; all four bugs now fixed):
 
 1. **Difficulty was already solved** (89/89 bit-exact, REVIEW→REVIEW) by an earlier in-flight fix. The `project_fsrs_next_difficulty_diverges` memory was stale for REVIEW→REVIEW; LEARNING→REVIEW and REVIEW→RELEARNING transitions weren't exercised by the day's grades and remain untested.
 2. **Stability drift was Layer 50** — not a `_next_stability_recall` formula bug as initially suspected, but the input to it: TT was passing fractional days_elapsed at grade time when Anki uses integer `next_day_at.elapsed_days_since(lrt)` (u64 div by 86400). After the fix, 100% bit-exact. See Layer 50 in `docs/anki-parity-layers.md`.
 3. **`due_at` 4-hour quantization was Layer 49** — TT's `schedule()` produced midnight-UTC due_at while `compute_due_at` used 04:00-UTC rollover-anchored due_at. After the fix, 4h quantization is gone.
-4. **`due_at` off-by-1-day was Layer 51** — two coupled bugs: (a) Anki's `with_review_fuzz(interval, minimum, maximum)` clamps fuzz lower bound to the cascade-derived minimum, but TT was passing `minimum=1` regardless, letting low ChaCha factors drop intervals below the cascade floor; (b) `scheduled_days` was computed via `(due_at - last_review).days` truncation instead of `cards.ivl`-equivalent col_day arithmetic. After the fix, single-grade bit-exact rose 31/65 → 39/65. Remaining 26 single-grade cases are Anki's `recompute_memory_state` events between sync moments (Anki re-derives `cards.data.s` but keeps grade-time `cards.ivl`) — structurally unreproducible from forward-step. This IS the "due_at pass-through from Anki" case Stage 3b's design handles by reading `cards.due` at sync time.
+4. **Single-grade `due_at` off-by-1-day was Layer 51** — two coupled bugs: (a) Anki's `with_review_fuzz(interval, minimum, maximum)` clamps fuzz lower bound to the cascade-derived minimum, but TT was passing `minimum=1` regardless, letting low ChaCha factors drop intervals below the cascade floor; (b) `scheduled_days` was computed via `(due_at - last_review).days` truncation instead of `cards.ivl`-equivalent col_day arithmetic. After the fix, single-grade bit-exact rose 31/65 → 39/65.
+5. **Multi-grade `due_at` off-by-1-day was Layer 52** — surfaced via post-L51 multi-grade drill (40 directions, 28 at +1d). Anki's LEARNING/RELEARNING graduation (`learning.rs`/`relearning.rs`) uses simple per-rating fuzz with `minimum=1` — NOT the passing-review cascade Layer 51 wired in. After the fix (new `_graduation_intervals_with_fuzz` helper), multi-grade bit-exact rose 11/40 → 34/40 (85%).
+
+The remaining ~30 within-1h misses across all 89 directions are Anki's `recompute_memory_state` events between grade and sync moments — Anki re-derives `cards.data.s` but keeps grade-time `cards.ivl`. Forward-step replay reproduces the post-recompute `s` bit-exact but the grade-time `s` (which determined the stored ivl) is unrecoverable. This IS the "due_at pass-through from Anki" case Stage 3b's design handles by reading `cards.due` at sync time.
 
 The rest of this doc is the procedure used. Useful as a template if Stage 3b's measurement ever needs re-running.
 

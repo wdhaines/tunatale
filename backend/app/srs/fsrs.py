@@ -438,6 +438,59 @@ def _next_interval_raw(stability: float, desired_retention: float, decay: float 
     return stability / FACTOR * (desired_retention ** (1 / decay) - 1)
 
 
+def _graduation_intervals_with_fuzz(
+    raw_hard: float,
+    raw_good: float,
+    raw_easy: float,
+    anki_card_id: int | None,
+    reps: int,
+    max_interval: int = 36500,
+) -> tuple[int, int, int]:
+    """Mirror Anki's graduation fuzz pipeline (Layer 52).
+
+    Anki's LEARNING/RELEARNING graduation (rslib/.../states/learning.rs:86-178
+    and relearning.rs:104-184) does NOT apply the passing-review cascade. Each
+    rating's fuzz call uses ``minimum=1`` directly:
+
+        hard = with_review_fuzz(round(raw_hard).max(1.0), 1, max)
+        good = with_review_fuzz(round(raw_good).max(1.0), 1, max)
+        # EASY is the only rating that floors against good:
+        good_for_easy = with_review_fuzz(raw_good, 1, max)  # float interval
+        easy = with_review_fuzz(round(raw_easy).max(1.0), good_for_easy + 1, max)
+
+    Note the EASY-only asymmetry: it computes a SEPARATE good_for_easy using
+    the FLOAT raw_good (NOT rounded), then uses good_for_easy + 1 as the floor
+    for EASY. The chosen-rating GOOD output still uses the rounded raw_good.
+
+    All four fuzz calls reuse the same ``ChaCha12Rng(card.id + reps)`` factor.
+
+    Pre-Layer-52 TT routed graduation through ``_passing_intervals_with_fuzz``
+    (with ``scheduled_days=0``), applying the passing-review cascade
+    (``good_min = max(gtl, hard_fuzzed + 1)``). For graduation scenarios where
+    hard_fuzzed + 1 > 1 AND the fuzz factor would otherwise place good below
+    that floor, TT shifted good up by +1 day. Surfaced via the multi-grade
+    drill (2026-05-23): 28/40 REVIEW→AGAIN→GOOD-graduation cases showed
+    systematic +1 day relative to Anki's stored ``cards.ivl``.
+    """
+    seed = ((anki_card_id or 0) + reps) & 0xFFFFFFFFFFFFFFFF
+    factor = random_range_f32(ChaCha12Rng(seed))
+
+    def _fuzz(interval_in: float, minimum: int) -> int:
+        lower, upper = _constrained_fuzz_bounds(interval_in, minimum, max_interval)
+        return lower + int(factor * (1 + upper - lower))
+
+    # HARD: round(raw_hard).max(1.0), min=1
+    hard = _fuzz(max(1.0, float(_rust_round_half_away(raw_hard))), 1)
+    # GOOD (chosen-rating): round(raw_good).max(1.0), min=1
+    good = _fuzz(max(1.0, float(_rust_round_half_away(raw_good))), 1)
+    # EASY: floor against good_for_easy = fuzz(raw_good_float, min=1).
+    # NOTE: this good_for_easy uses the FLOAT raw_good (not rounded); differs
+    # from the chosen-rating GOOD output above. Both reuse the same factor.
+    good_for_easy = _fuzz(raw_good, 1)
+    easy = _fuzz(max(1.0, float(_rust_round_half_away(raw_easy))), good_for_easy + 1)
+    return (hard, good, easy)
+
+
 def _scheduled_days_for_grade(prev: DirectionState, col_crt: int | None) -> int:
     """Layer 51 (companion to interleaved fuzz). Mirror Anki's ``ReviewState
     .scheduled_days = card.interval`` (rslib/.../answering/current.rs:107):
@@ -1182,15 +1235,17 @@ def _graduate_to_review(
         q_hard = _quantize_stability(max(0.001, s_hard))
         q_good = _quantize_stability(max(0.001, s_good))
         q_easy = _quantize_stability(max(0.001, s_easy))
-        # Layer 51: interleaved cascade + fuzz with scheduled_days=0 for graduation.
+        # Layer 52: graduation uses simple per-rating fuzz (min=1 for HARD/GOOD;
+        # EASY floors against good_for_easy = fuzz(raw_good_float, 1)). NOT
+        # the passing-review cascade. Anki path: rslib/.../states/learning.rs
+        # + relearning.rs answer_hard/good/easy. See `_graduation_intervals_with_fuzz`.
         raw_hard_f = _next_interval_raw(q_hard, params.desired_retention, neg_decay)
         raw_good_f = _next_interval_raw(q_good, params.desired_retention, neg_decay)
         raw_easy_f = _next_interval_raw(q_easy, params.desired_retention, neg_decay)
-        fuzzed = _passing_intervals_with_fuzz(
+        fuzzed = _graduation_intervals_with_fuzz(
             raw_hard_f,
             raw_good_f,
             raw_easy_f,
-            0,
             prev.anki_card_id,
             prev.reps,
             params.maximum_review_interval,

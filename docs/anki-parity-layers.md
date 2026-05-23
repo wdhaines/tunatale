@@ -1081,3 +1081,72 @@ The same `fuzz_factor` is applied to `with_review_fuzz` for each rating — they
 **Pre-Layer checklist note.** Per Step 2/3, this layer touched three load-bearing helpers from the table (`_constrain_passing_intervals`, `_review_interval_fuzz`, `_next_interval`). The clean refactor is adding a new fused function (`_passing_intervals_with_fuzz`) at the answering-pipeline layer rather than modifying the existing three. Each retains its single-purpose tests; the new function mirrors Anki's interleaved structure that the three helpers couldn't express together because they were designed as separable stages.
 
 **Cross-reference.** Layer 49 (due_at rollover anchor) introduced the 04:00 UTC due_at convention that made `(due_at - lrt).days` truncate by 1 (the scheduled_days half of Layer 51). Layer 50 (integer days_elapsed at grade time) was the first half of "Anki interleaves col_day arithmetic everywhere"; Layer 51 is the second half (col_day arithmetic for scheduled_days too). The "Anki source vs binary" rule fired here as well — get_scheduling_states predicts a different `s` than what `cards.data` stores, due to `recompute_memory_state` running between the user's grade and the snapshot. The interval stored at grade time reflects the grade-time `s`; replaying forward from pre-grade `s` produces a different (correct) post `s` but can't reproduce the interval. Documented as the irreducible Stage 3b residual.
+
+## Layer 52 — Graduation uses simple per-rating fuzz, NOT the passing-review cascade
+
+**Surfaced**: Multi-grade replay drill (2026-05-23, post Layer 51). The single-grade due_at fix raised single-grade bit-exact match from 31/65 to 39/65, but multi-grade (24-40 directions, mostly REVIEW→AGAIN→GOOD-graduation) showed a strong systematic +1 day bias: 28/40 cards at +1d, 11/40 at 0d. Stability and difficulty both bit-exact, so the divergence was isolated to the interval pipeline at graduation.
+
+**Diagnosis**. Anki's LEARNING/RELEARNING graduation paths (`rslib/.../states/learning.rs:86-178` and `relearning.rs:104-184`) do NOT apply the passing-review cascade. Each rating's fuzz call is independent:
+
+```rust
+// answer_hard / answer_good in relearning.rs (same shape in learning.rs)
+let (minimum, maximum) = ctx.min_and_max_review_intervals(1);  // minimum = 1, NOT cascade
+let interval = states.hard.interval;  // or states.good.interval
+let review = ReviewState {
+    scheduled_days: ctx.with_review_fuzz(interval.round().max(1.0), minimum, maximum),
+    ...
+```
+
+```rust
+// answer_easy is the only rating that floors against good's fuzzed value:
+let (mut minimum, maximum) = ctx.min_and_max_review_intervals(1);
+let good = ctx.with_review_fuzz(states.good.interval, minimum, maximum);  // FLOAT raw_good
+minimum = good + 1;
+ctx.with_review_fuzz(states.easy.interval.round().max(1.0), minimum, maximum)
+```
+
+Three notable asymmetries vs the passing-review cascade:
+1. **HARD/GOOD use `minimum=1` directly**, no `gtl` or `prev_fuzzed + 1`. The cascade chain (good ≥ hard+1, easy ≥ good+1) does NOT bind at graduation.
+2. **The "good" intermediate for EASY** uses the FLOAT `states.good.interval` (not rounded). The chosen-rating GOOD output uses `round(states.good.interval)`. Same fuzz factor, different inputs → potentially different fuzz_bounds and different result.
+3. **All four `with_review_fuzz` calls reuse the same `ctx.fuzz_factor`** (set once in `card_state_updater`).
+
+Pre-Layer-52, TT routed graduation through `_passing_intervals_with_fuzz(..., scheduled_days=0, ...)` — Layer 51's interleaved cascade with `scheduled_days=0`. With `scheduled_days=0`, `gtl(round(raw_i), 0) = 1` for all positive raws, so `good_min = max(1, hard_fuzzed + 1) = hard_fuzzed + 1`. For graduation scenarios where the fuzz factor would otherwise place good below `hard_fuzzed + 1`, TT shifted good up by +1 day. That's the systematic +1 bias observed in the multi-grade drill.
+
+**Fix.**
+
+1. **New `_graduation_intervals_with_fuzz`** (`backend/app/srs/fsrs.py`) — mirrors Anki's per-rating graduation fuzz logic:
+   ```python
+   hard = fuzz(max(1.0, float(round(raw_hard))), minimum=1)
+   good = fuzz(max(1.0, float(round(raw_good))), minimum=1)
+   # EASY: separate good_for_easy via float raw_good, then floor on easy
+   good_for_easy = fuzz(raw_good, minimum=1)  # FLOAT, not rounded
+   easy = fuzz(max(1.0, float(round(raw_easy))), minimum=good_for_easy + 1)
+   ```
+   Same ChaCha factor seeded by `cid + reps`, reused for all four calls.
+
+2. **Single call-site swap** in `_graduate_to_review` (fsrs.py): `_passing_intervals_with_fuzz(..., scheduled_days=0, ...)` → `_graduation_intervals_with_fuzz(...)`.
+
+3. **`_passing_intervals_with_fuzz` retained** for the REVIEW→REVIEW path (line 678-694 in `schedule()`). That's still the right helper for `scheduled_days > 0` cases where the cascade actually binds.
+
+**Verification.**
+
+- New `test_parity_relearning_graduation_interval_LAYER_52` (`backend/tests/test_parity_fsrs_schedule.py`). Uses the oracle harness with a REVIEW card → AGAIN → GOOD sequence. Asserts TT's graduated `cards.ivl`-equivalent matches Anki's stored value. Pre-fix: TT=4, Anki=3 (+1 day cascade artifact). Post-fix: bit-exact.
+- Extended `_op_get_card` in `backend/tests/anki_oracle/oracle.py` to return `ivl`/`due`/`reps`/`lapses` (was stability/difficulty only) so the new test can assert on interval.
+- Multi-grade re-drill on the same Stage 3b snapshots:
+
+  | Metric | Pre-L52 (post-L51) | Post-L52 |
+  |---|---|---|
+  | Multi-grade stability strict-match | 39/40 | 39/40 (unchanged — Layer 52 only touches intervals) |
+  | Multi-grade due_at bit-exact | 11/40 (27.5%) | **34/40 (85.0%)** |
+  | All-direction due_at within 1h | 46/89 (51.7%) | **58/89 (65.2%)** |
+
+- Full `./test.sh` green (2510 backend tests, 100% coverage, frontend gate, 11 E2E specs).
+- Oracle harness all 7 tests green.
+
+**Remaining residual** (6/40 multi-grade still at +1d, plus most of the 31/89 within-1h misses): same `recompute_memory_state` mechanism as Layer 51's residual. Anki stored the grade-time `s` in `cards.ivl` but rebuilt `cards.data.s` later via Optimize FSRS / deck-config change. Forward-step replay reproduces the post-rebuild `s` exactly but can't recover the grade-time `s` that determined the stored interval. This is the "due_at is pass-through from Anki" case that Stage 3b's design handles by reading `cards.due` at sync time — not reproducible from forward-step, not a TT bug.
+
+**Files.** `backend/app/srs/fsrs.py` (`_graduation_intervals_with_fuzz` helper + 1 call-site swap; `_passing_intervals_with_fuzz` kept for REVIEW→REVIEW). `backend/tests/test_parity_fsrs_schedule.py` (LAYER_52 oracle parity test). `backend/tests/anki_oracle/oracle.py` (`_op_get_card` returns `ivl`/`due`/`reps`/`lapses`). `docs/anki-parity-layers.md` (this entry).
+
+**Pre-Layer checklist note.** Per Step 2/3, Layer 52 touched the load-bearing fuzz pipeline added in Layer 51. The clean refactor: add a NEW graduation-specific helper (`_graduation_intervals_with_fuzz`) rather than parameterize `_passing_intervals_with_fuzz` — Anki's source genuinely has two distinct fuzz pipelines (`states/review.rs` vs `states/learning.rs` + `relearning.rs`) and trying to unify them in TT would obscure the EASY-only asymmetry (good_for_easy uses FLOAT raw_good). Each helper now mirrors one of Anki's two paths exactly.
+
+**Cross-reference.** Layer 51 conflated the REVIEW→REVIEW passing-cascade with the LEARNING/RELEARNING graduation flow. They share the `with_review_fuzz` primitive but apply it under different invariants. Cleanly separating them post-Layer-52 makes both pipelines easier to maintain — and the asymmetry between them (cascade vs simple) is documented as Anki's choice, not a TT quirk.
