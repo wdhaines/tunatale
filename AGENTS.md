@@ -1,6 +1,6 @@
 # AGENTS.md — TunaTale
 
-AI-powered language learning system (Slovene) that generates personalized audio curricula from Anki decks.
+AI-generated audio language curricula — Pimsleur-style listening with content adapted to the learner's vocabulary. Slovene is the only fully wired language today; the architecture is language-plugin based. Integrates bidirectionally with the user's Anki deck rather than replacing it. See `README.md` for the product pitch and `docs/walkthrough.md` for the system tour.
 
 ## Developer Commands
 

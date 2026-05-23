@@ -88,6 +88,8 @@ CI runs backend and frontend in parallel. The Anki oracle harness (`--run-oracle
   - **[docs/bdt.md](docs/bdt.md)** — Luca Lampariello's Bi-Directional Translation method; reception side overlaps with TT today, production side (L1→L2 written reconstruction) is a candidate Phase G.
 - **[docs/anki-parity-layers.md](docs/anki-parity-layers.md)** — 48 layers of TT ↔ Anki scheduler parity work, each one a divergence found in production, the mechanism, and the fix. Load-bearing reference for the sync code.
 - **[docs/stage-3b-empirical-measurement.md](docs/stage-3b-empirical-measurement.md)** — procedure for the measurement that gates the next big architectural move (replacing field-merge sync with event-replay).
+- **[docs/adding-a-language.md](docs/adding-a-language.md)** — five touch-points + three optional ones to wire a new L2. Norwegian is next; Tagalog has scaffolding from the original prototype.
+- **[docs/anki-recovery.md](docs/anki-recovery.md)** — disaster-recovery procedure if TT ever corrupts `collection.anki2`. Read before you need it.
 - **`.claude/rules/`** — project rules cross-model: USN sync protocol, queue-parity playbook + pre-Layer checklist, oracle harness workflow, testing strategy, TDD discipline.
 
 ## Repo layout
