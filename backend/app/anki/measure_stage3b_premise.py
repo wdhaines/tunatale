@@ -173,6 +173,7 @@ def measure(pre_db: Path, post_db: Path, anki_pre_db: Path, anki_post_db: Path) 
                 last_review=pre_last_review,
                 last_review_time_ms=pre_row["last_review_time_ms"] or 0,
                 anki_card_id=akid,
+                anki_due=pre_row["anki_due"],
                 last_rating=pre_row["last_rating"],
                 left=pre_row["left"],
             )

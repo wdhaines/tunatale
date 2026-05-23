@@ -370,11 +370,105 @@ def _constrain_passing_intervals(
 
     Mirrors rslib/src/scheduler/states/review.rs ``constrain_passing_interval``.
     Returns (hard, good, easy) constrained.
+
+    Layer 51 note: this helper applies the cascade as a *pure-integer* floor on
+    pre-fuzz raw intervals. Anki's actual flow interleaves cascade and fuzz —
+    each rating's fuzz call receives the cascade-derived ``minimum`` argument,
+    which clamps the fuzzed result's lower bound. Use
+    ``_passing_intervals_with_fuzz`` for the grade-time pipeline (REVIEW + EASY
+    graduation); this helper remains for callers that need the pre-fuzz cascade
+    output in isolation.
     """
     hard = max(hard_raw, max(_greater_than_last(hard_raw, scheduled_days), 1))
     good = max(good_raw, max(_greater_than_last(good_raw, scheduled_days), hard + 1))
     easy = max(easy_raw, max(_greater_than_last(easy_raw, scheduled_days), good + 1))
     return (hard, good, easy)
+
+
+def _passing_intervals_with_fuzz(
+    raw_hard: float,
+    raw_good: float,
+    raw_easy: float,
+    scheduled_days: int,
+    anki_card_id: int | None,
+    reps: int,
+    max_interval: int = 36500,
+) -> tuple[int, int, int]:
+    """Mirror Anki's interleaved cascade + fuzz pipeline (Layer 51).
+
+    Anki's ``passing_fsrs_review_intervals`` (rslib/.../states/review.rs:178-211)
+    computes for each rating in (hard, good, easy) order:
+        ``minimum = max(greater_than_last(round(raw_i), scheduled_days), prev_fuzzed + 1)``
+        ``result_i = with_review_fuzz(raw_i_float, minimum, max_interval)``
+
+    The same ``fuzz_factor`` (sampled once via ``ChaCha12Rng(card.id + reps)``)
+    is reused across all three ratings — ``ctx.fuzz_factor`` is set once per
+    ``card_state_updater`` (rslib/.../answering/mod.rs:92, 517) and then
+    threaded into each ``with_review_fuzz`` call.
+
+    Pre-Layer-51, TT applied ``_constrain_passing_intervals`` as a pure-integer
+    cascade first, then ``_review_interval_fuzz`` with ``minimum=1`` on the
+    chosen rating's cascade output. The cascade floor was thus NOT carried into
+    the fuzz lower bound — for low ChaCha factors, fuzz could drop the
+    interval back below the cascade floor. Produced systematic off-by-1-day
+    drift in 34/65 single-grade REVIEW→REVIEW cases (Stage 3b 2026-05-22
+    measurement, post Layer 50). Anki bit-exact across all 65 with this fix.
+    """
+    seed = ((anki_card_id or 0) + reps) & 0xFFFFFFFFFFFFFFFF
+    factor = random_range_f32(ChaCha12Rng(seed))
+
+    def _fuzz(interval_raw: float, minimum: int) -> int:
+        lower, upper = _constrained_fuzz_bounds(interval_raw, minimum, max_interval)
+        return lower + int(factor * (1 + upper - lower))
+
+    hard_min = max(_greater_than_last(_rust_round_half_away(raw_hard), scheduled_days), 1)
+    hard = _fuzz(raw_hard, hard_min)
+    good_min = max(_greater_than_last(_rust_round_half_away(raw_good), scheduled_days), hard + 1)
+    good = _fuzz(raw_good, good_min)
+    easy_min = max(_greater_than_last(_rust_round_half_away(raw_easy), scheduled_days), good + 1)
+    easy = _fuzz(raw_easy, easy_min)
+    return (hard, good, easy)
+
+
+def _next_interval_raw(stability: float, desired_retention: float, decay: float = -0.5) -> float:
+    """Raw FSRS interval (Layer 51). Layer 48's ``_next_interval`` rounds to
+    integer for the cascade path; Anki passes the *float* interval into
+    ``with_review_fuzz`` so the fuzz_delta computation uses unrounded input.
+    """
+    return stability / FACTOR * (desired_retention ** (1 / decay) - 1)
+
+
+def _scheduled_days_for_grade(prev: DirectionState, col_crt: int | None) -> int:
+    """Layer 51 (companion to interleaved fuzz). Mirror Anki's ``ReviewState
+    .scheduled_days = card.interval`` (rslib/.../answering/current.rs:107):
+    the previous-grade chosen interval, used as the floor input for the
+    cascade.
+
+    TT doesn't store ``ivl`` separately. The reconstruction is
+    ``anki_due - col_day(last_review)`` — both endpoints in Anki's col_day
+    arithmetic. With ``anki_due`` available (synced) and ``last_review`` as
+    a real lrt timestamp, this exactly matches ``card.ivl`` at sync time.
+
+    Pre-Layer-51 used ``(prev.due_at - prev.last_review).days``. That formula
+    truncates ~32 hours to 1 day for sub-day-precise lrt + Layer 49's 04:00
+    UTC due_at anchor — off by 1 for every sub-day-precise card. Fine before
+    Layer 51 (cascade floor wasn't carried into fuzz), bad after.
+
+    Fallback when ``anki_due`` is unset (TT-only state pre-sync): keep the
+    legacy timestamp-diff. Inaccurate for sub-day lrt but the only signal we
+    have without an Anki round-trip.
+    """
+    if prev.last_review is None:
+        return 0
+    lr = (
+        prev.last_review
+        if isinstance(prev.last_review, datetime)
+        else datetime.combine(prev.last_review, time(0, 0), tzinfo=UTC)
+    )
+    if col_crt is not None and prev.anki_due is not None:
+        review_col_day = compute_anki_day_index(col_crt, 4, lr)
+        return max(0, prev.anki_due - review_col_day)
+    return max(0, (prev.due_at - lr).days)
 
 
 def _quantize_stability(s: float) -> float:
@@ -605,22 +699,27 @@ def schedule(
     new_difficulty = _quantize_difficulty(max(1.0, min(10.0, new_difficulty)))
     # Anki parity cascade: each rating's interval must beat scheduled_days and
     # the next-easier rating (rslib/.../states/review.rs:constrain_passing_interval).
-    if prev.last_review:
-        lr = (
-            prev.last_review
-            if isinstance(prev.last_review, datetime)
-            else datetime.combine(prev.last_review, time(0, 0), tzinfo=UTC)
-        )
-        scheduled_days = max(0, (prev.due_at - lr).days)
-    else:
-        scheduled_days = 0
-    raw_hard = _next_interval(_quantize_stability(max(0.001, s_hard)), params.desired_retention, neg_decay)
-    raw_good = _next_interval(_quantize_stability(max(0.001, s_good)), params.desired_retention, neg_decay)
-    raw_easy = _next_interval(_quantize_stability(max(0.001, s_easy)), params.desired_retention, neg_decay)
-    constrained = _constrain_passing_intervals(raw_hard, raw_good, raw_easy, scheduled_days)
-    constrained_map = {Rating.HARD: constrained[0], Rating.GOOD: constrained[1], Rating.EASY: constrained[2]}
-    raw_interval = constrained_map[rating]
-    interval = _review_interval_fuzz(raw_interval, prev.anki_card_id, prev.reps, params.maximum_review_interval)
+    # Layer 51 (scheduled_days fix): mirror Anki's `card.interval` via
+    # `anki_due - col_day(last_review)` instead of `(due_at - last_review).days`.
+    scheduled_days = _scheduled_days_for_grade(prev, col_crt)
+    # Layer 51: Anki interleaves cascade + fuzz — minimum from greater_than_last
+    # is passed into with_review_fuzz, which clamps the fuzz lower bound. TT's
+    # pre-Layer-51 two-step (cascade first, then fuzz with minimum=1) let fuzz
+    # drop intervals below the cascade floor. Pass pre-fuzz floats (Anki's
+    # `states.X.interval` is float; rounding happens inside fuzz_bounds).
+    raw_hard_f = _next_interval_raw(_quantize_stability(max(0.001, s_hard)), params.desired_retention, neg_decay)
+    raw_good_f = _next_interval_raw(_quantize_stability(max(0.001, s_good)), params.desired_retention, neg_decay)
+    raw_easy_f = _next_interval_raw(_quantize_stability(max(0.001, s_easy)), params.desired_retention, neg_decay)
+    fuzzed = _passing_intervals_with_fuzz(
+        raw_hard_f,
+        raw_good_f,
+        raw_easy_f,
+        scheduled_days,
+        prev.anki_card_id,
+        prev.reps,
+        params.maximum_review_interval,
+    )
+    interval = {Rating.HARD: fuzzed[0], Rating.GOOD: fuzzed[1], Rating.EASY: fuzzed[2]}[rating]
     new_due_at = _review_due_at_from_interval(review_date, interval, col_crt, now)
 
     new_dir = replace(
@@ -1083,15 +1182,23 @@ def _graduate_to_review(
         q_hard = _quantize_stability(max(0.001, s_hard))
         q_good = _quantize_stability(max(0.001, s_good))
         q_easy = _quantize_stability(max(0.001, s_easy))
-        raw_hard = _next_interval(q_hard, params.desired_retention, neg_decay)
-        raw_good = _next_interval(q_good, params.desired_retention, neg_decay)
-        raw_easy = _next_interval(q_easy, params.desired_retention, neg_decay)
-        constrained = _constrain_passing_intervals(raw_hard, raw_good, raw_easy, 0)
-        constrained_map = {Rating.HARD: constrained[0], Rating.GOOD: constrained[1], Rating.EASY: constrained[2]}
-        raw_interval = constrained_map[rating]
+        # Layer 51: interleaved cascade + fuzz with scheduled_days=0 for graduation.
+        raw_hard_f = _next_interval_raw(q_hard, params.desired_retention, neg_decay)
+        raw_good_f = _next_interval_raw(q_good, params.desired_retention, neg_decay)
+        raw_easy_f = _next_interval_raw(q_easy, params.desired_retention, neg_decay)
+        fuzzed = _passing_intervals_with_fuzz(
+            raw_hard_f,
+            raw_good_f,
+            raw_easy_f,
+            0,
+            prev.anki_card_id,
+            prev.reps,
+            params.maximum_review_interval,
+        )
+        interval = {Rating.HARD: fuzzed[0], Rating.GOOD: fuzzed[1], Rating.EASY: fuzzed[2]}[rating]
     else:
         raw_interval = _next_interval(new_stability, params.desired_retention, neg_decay)
-    interval = _review_interval_fuzz(raw_interval, prev.anki_card_id, prev.reps, params.maximum_review_interval)
+        interval = _review_interval_fuzz(raw_interval, prev.anki_card_id, prev.reps, params.maximum_review_interval)
     new_due_at = _review_due_at_from_interval(review_date, interval, col_crt, now)
 
     new_dir = replace(

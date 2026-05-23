@@ -464,6 +464,83 @@ class TestGradeElapsedDaysLAYER_50:
         assert _grade_elapsed_days(last, now) == 7
 
 
+class TestScheduledDaysForGradeLAYER_51:
+    """Layer 51 (companion fix): scheduled_days must mirror Anki's
+    ``card.interval``. The previous timestamp-diff formula truncated to N-1
+    for sub-day-precise lrt + Layer 49's 04:00 UTC due_at anchor.
+    """
+
+    def test_none_last_review_returns_zero(self):
+        from app.srs.fsrs import _scheduled_days_for_grade
+
+        prev = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime(2026, 5, 22, 4, 0, tzinfo=UTC),
+            stability=5.0,
+            difficulty=5.0,
+            state=SRSState.REVIEW,
+            last_review=None,
+            anki_card_id=12345,
+            anki_due=4521,
+        )
+        assert _scheduled_days_for_grade(prev, col_crt=1388836800) == 0
+
+    def test_uses_anki_due_minus_col_day_when_both_available(self):
+        """Production path: anki_due (synced from Anki) and col_crt are both set.
+        Result equals Anki's ``card.interval`` exactly, regardless of lrt sub-day
+        time-of-day.
+        """
+        from app.srs.fsrs import _scheduled_days_for_grade
+
+        prev = DirectionState(
+            direction=Direction.RECOGNITION,
+            # due_at irrelevant when anki_due is set
+            due_at=datetime(2026, 5, 22, 4, 0, tzinfo=UTC),
+            stability=14.194,
+            difficulty=9.755,
+            state=SRSState.REVIEW,
+            # lrt 21+ days back; col_day(2026-05-01 02:23:14 UTC) with col_crt=1388836800
+            # and rollover=4 lands at col_day 4499. anki_due=4521 → diff=22.
+            last_review=datetime(2026, 5, 1, 2, 23, 14, tzinfo=UTC),
+            anki_card_id=1775264031860,
+            anki_due=4521,
+        )
+        assert _scheduled_days_for_grade(prev, col_crt=1388836800) == 22
+
+    def test_falls_back_to_timestamp_diff_when_anki_due_unset(self):
+        """TT-only state pre-sync. Inaccurate for sub-day lrt but unchanged."""
+        from app.srs.fsrs import _scheduled_days_for_grade
+
+        prev = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime(2026, 5, 22, 4, 0, tzinfo=UTC),
+            stability=5.0,
+            difficulty=5.0,
+            state=SRSState.REVIEW,
+            last_review=datetime(2026, 5, 19, 12, 0, tzinfo=UTC),
+            anki_card_id=12345,
+            anki_due=None,
+        )
+        # (2026-05-22 04:00) - (2026-05-19 12:00) = 2 days 16 hours → .days = 2
+        assert _scheduled_days_for_grade(prev, col_crt=1388836800) == 2
+
+    def test_falls_back_when_col_crt_none(self):
+        """Pre-sync TT state without col_crt cache."""
+        from app.srs.fsrs import _scheduled_days_for_grade
+
+        prev = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime(2026, 5, 22, 4, 0, tzinfo=UTC),
+            stability=5.0,
+            difficulty=5.0,
+            state=SRSState.REVIEW,
+            last_review=datetime(2026, 5, 19, 12, 0, tzinfo=UTC),
+            anki_card_id=12345,
+            anki_due=4521,
+        )
+        assert _scheduled_days_for_grade(prev, col_crt=None) == 2
+
+
 class TestDifficultyAdjustment:
     """Tests for FSRS difficulty adjustment logic."""
 
@@ -927,6 +1004,98 @@ class TestReviewIntervalCascade:
         # If raw_hard ≤ 7, greater_than_last returns 0, hard = 1.
         # good ≥ max(greater_than_last(raw_good, 7), hard+1) = max(0, 2) = 2
         assert interval >= 1, f"Expected interval≥1, got {interval}"
+
+    def test_fuzz_minimum_carries_cascade_floor_LAYER_51(self):
+        """Anki's fuzz `with_review_fuzz(interval, minimum, maximum)` clamps the
+        fuzz lower bound to ``minimum``. The minimum comes from the cascade:
+        ``max(greater_than_last(round(raw)), prev_fuzzed + 1)``.
+
+        Pre-fix, TT cascaded raw integers, then fuzzed the cascade output with
+        ``minimum=1`` — letting fuzz drop the interval back below the cascade
+        floor. For low fuzz factors, this produced off-by-1-day intervals.
+
+        Reproduces the 2026-05-22 measurement scenario for cid 1775264032672
+        (pre s=1.0948, d=9.792, reps=39, GOOD rating, anki_pre.cards.ivl=2).
+        Anki's stored post-grade ivl was 3; TT computed 2 (factor=0.0119 from
+        the shared ChaCha12 RNG seeded at cid+reps=1775264032711, fuzz_bounds
+        [2, 4], so result=floor(2 + 0.0119*3)=2 with minimum=1, but should be
+        clamped to 3 because cascade floor = max(greater_than_last(round(3.95),
+        2), hard_fuzzed+1) = max(3, 3) = 3).
+        """
+        from app.srs.fsrs import schedule
+
+        col_crt = 1388836800
+        # Per the Stage 3b drill-down (2026-05-22 measurement, cid 1775264032672):
+        # pre s=1.0948, d=9.792, reps=39, cards.ivl=2 (so scheduled_days=2).
+        unit = SyntacticUnit(text="t", translation="t", word_count=1, difficulty=1, source="t")
+        grade_dt = datetime(2026, 5, 22, 17, 0, tzinfo=UTC)
+        # last_review just past the col-day boundary so col_day diff to grade_dt = 1.
+        # (Layer 50 makes _grade_elapsed_days return integer col-day diff.)
+        last_review = datetime(2026, 5, 20, 19, 19, 20, tzinfo=UTC)
+        # pre.due_at corresponds to anki_due=4521 (cards.ivl=2 from a previous grade).
+        due_at = datetime(2026, 5, 22, 4, 0, tzinfo=UTC)
+        prev = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=due_at,
+            stability=1.0948,
+            difficulty=9.792,
+            reps=39,
+            state=SRSState.REVIEW,
+            last_review=last_review,
+            anki_card_id=1775264032672,
+        )
+        item = SRSItem(
+            syntactic_unit=unit,
+            directions={Direction.RECOGNITION: prev},
+            guid="g-t",
+            anki_note_id=10001,
+        )
+        # Use the same FSRS-5 params from the Slovene deck-config (real user data).
+        slovene_params = FSRSParams(
+            weights=(
+                0.40255,
+                1.18385,
+                3.173,
+                15.69105,
+                7.1949,
+                0.5345,
+                1.4604,
+                0.0046,
+                1.54575,
+                0.1192,
+                1.01925,
+                1.9395,
+                0.11,
+                0.29605,
+                2.2698,
+                0.2315,
+                2.9898,
+                0.51655,
+                0.6621,
+            ),
+            desired_retention=0.86,
+        )
+        result = schedule(
+            item,
+            Rating.GOOD,
+            review_date=grade_dt.date(),
+            now=grade_dt,
+            params=slovene_params,
+            col_crt=col_crt,
+        )
+        new_dir = result.directions[Direction.RECOGNITION]
+        # Anki's stored anki_post.cards.ivl=3 for this card. The expected due_at
+        # is what `_review_due_at_from_interval` produces for interval=3, anchored
+        # at the same grade_dt (so the col_day baseline matches).
+        from app.srs.fsrs import _review_due_at_from_interval
+
+        expected_due_at = _review_due_at_from_interval(grade_dt.date(), 3, col_crt, grade_dt)
+        assert new_dir.due_at == expected_due_at, (
+            f"Layer 51: TT must clamp fuzz lower bound to cascade floor. "
+            f"Anki's stored anki_post.cards.ivl=3; TT due_at={new_dir.due_at}, "
+            f"expected={expected_due_at}. Pre-fix bug: fuzz with minimum=1 lets "
+            f"factor=0.012 drop the interval to 2, below the cascade floor of 3."
+        )
 
 
 class TestReviewDueAtRolloverConvention:

@@ -1013,3 +1013,71 @@ Cross-checked against the Python `fsrs<6` package (which implements the same fsr
 **Pre-Layer checklist note.** Per Step 2/3, the right shape was extending the existing helper family rather than reimplementing elapsed-days at a new call site. `_grade_elapsed_days` mirrors `_elapsed_days_for_fsrs`'s structure for the col-day case, drops the dual fractional/integer split. `compute_anki_day_index` (the protobuf_wire helper) is the load-bearing primitive both helpers share — same one Layers 11/15/40/49 lean on.
 
 **Cross-reference.** Layer 42 (lapse stability ceiling) was the first stability port fix; Layer 50 is the first stability *input* fix. Layer 49 (due_at rollover anchor) found a similar duplication problem (two TT code paths producing inconsistent day-level due_at); Layer 50's shape mirrors that — different semantics across two helper call sites need distinct helpers. The Stage 3b coupling note pre-fix expected Layer 50 to also resolve the off-by-1-day due_at residual (Layer 49's remainder); empirically the residual is unchanged at 42/89 within 1h. That suggests a second, smaller mechanism — likely in `_next_interval` / `_review_interval_fuzz` / `_constrain_passing_intervals` — that's a separate layer candidate, NOT a Layer 50 regression.
+
+## Layer 51 — Cascade floor + scheduled_days not threaded into fuzz minimum
+
+**Surfaced**: Layer 50 follow-up drill (2026-05-23). After Layer 50 brought stability to 100% bit-exact, due_at was still off in 47/89 directions. The shape was clean — 31/65 single-grade REVIEW→REVIEW cases bit-exact, 29 off by exactly ±1 day. Even split (10 −1d, 17 +1d) ruled out a directional rounding bias; the cause was the fuzz step crossing a bin boundary differently than Anki.
+
+**Two coupled bugs.**
+
+1. **Fuzz minimum not carried from cascade.** Anki's `constrain_passing_interval` (`rslib/.../states/review.rs:302-313`) takes a `minimum` argument and threads it into `with_review_fuzz(interval, minimum, maximum)`, which clamps the fuzzed lower bound to it. TT's `_review_interval_fuzz` was called with `minimum=1` regardless of the cascade-derived floor; for low ChaCha factors, fuzz could drop the result below the cascade floor. Empirical: cid 1775264032672 (pre s=1.0948, GOOD), TT raw_chosen=3, cascade floor=3, factor=0.0119, fuzz_bounds=[2,4] with min=1 → result=floor(2+0.0119*3)=2. Anki's result=3 (factor*range starts at min=3). Anki bit-exact when cascade floor is honored.
+
+2. **`scheduled_days` derivation truncated.** Anki sources `scheduled_days = card.interval` directly from `cards.ivl` (`rslib/.../answering/current.rs:107`). TT was computing `max(0, (prev.due_at - prev.last_review).days)`. Post Layer 49, `due_at` is at 04:00 UTC on a col_day-anchored date while `last_review` (= lrt) has sub-day precision — the timestamp diff is ~32 hours for a 2-day interval, and `.days` truncates to 1. Pre-Layer-51 this didn't matter (cascade floor didn't bind the fuzz output); post-Layer-51 the gtl-derived minimum DOES bind, and a wrong `scheduled_days` shifts the cascade floor by 1.
+
+   Coupled because: bug #1 made the cascade floor irrelevant, so bug #2 was invisible. Fixing bug #1 alone closes ~31% of the residual; fixing both closes ~62%.
+
+**Anki's interleaved cascade+fuzz** (`rslib/.../states/review.rs:178-211`, with `ctx.fuzz_factor` set ONCE in `card_state_updater` and reused across all three ratings):
+
+```rust
+let greater_than_last = |interval: u32|
+    if interval > self.scheduled_days { self.scheduled_days + 1 } else { 0 };
+let hard = constrain_passing_interval(ctx, states.hard.interval,
+    greater_than_last(states.hard.interval.round() as u32).max(1), true);
+let good = constrain_passing_interval(ctx, states.good.interval,
+    greater_than_last(states.good.interval.round() as u32).max(hard + 1), true);
+let easy = constrain_passing_interval(ctx, states.easy.interval,
+    greater_than_last(states.easy.interval.round() as u32).max(good + 1), true);
+```
+
+The same `fuzz_factor` is applied to `with_review_fuzz` for each rating — they don't draw independent random values.
+
+**Fix.**
+
+1. **New `_passing_intervals_with_fuzz`** (fsrs.py): mirrors Anki's interleaved pipeline. Samples `fuzz_factor` once via `ChaCha12Rng(cid + reps).random_range_f32()`, then for each rating in order:
+   - `min_i = max(greater_than_last(round(raw_i), scheduled_days), prev_fuzzed + 1)`
+   - `result_i = floor(lower + factor * (1 + upper - lower))` where `(lower, upper) = constrained_fuzz_bounds(raw_i_float, min_i, max_interval)`
+
+2. **New `_next_interval_raw`** (fsrs.py): returns the unrounded float interval. Anki passes float to `with_review_fuzz` so `fuzz_delta` computation uses unrounded input. Layer 48's `_next_interval` (int-returning) stays for callers that need the rounded value.
+
+3. **New `_scheduled_days_for_grade(prev, col_crt)`** (fsrs.py): derives the cascade's `scheduled_days` input. Production path: `prev.anki_due - compute_anki_day_index(col_crt, 4, prev.last_review)` — both endpoints in Anki's col_day arithmetic, matches `card.interval` bit-exact. Fallback (TT-only state without `anki_due`): legacy timestamp-diff.
+
+4. **Two call-site swaps** in fsrs.py:
+   - `schedule()` REVIEW state (lines ~683-695): cascade + fuzz replaced with one `_passing_intervals_with_fuzz` call.
+   - `_graduate_to_review` (lines ~1180-1196): same swap with `scheduled_days=0`.
+
+   `_constrain_passing_intervals` and `_review_interval_fuzz` retained for the pre-Layer-51 unit tests (they pin the pre-fuzz cascade integer output and the standalone fuzz function — both still correct in isolation, just no longer used by `schedule()`).
+
+**Verification.**
+
+- New tests: `test_fuzz_minimum_carries_cascade_floor_LAYER_51` (in `TestReviewIntervalCascade`) reproduces cid 1775264032672 — pre s=1.0948, GOOD rating, asserts post-grade due_at matches `_review_due_at_from_interval(..., 3, ...)` (ivl=3). Plus 4 unit tests for `_scheduled_days_for_grade` (None last_review, anki_due+col_crt available, fallback when anki_due unset, fallback when col_crt None).
+
+- Stage 3b re-measurement on the same snapshots:
+
+  | Metric | Post-L50 | Post-L51 |
+  |---|---|---|
+  | Strict stability match (±0.01) | 89/89 | 89/89 |
+  | Single-grade REVIEW→REVIEW due_at exact | 31/65 (47.7%) | **39/65 (60.0%)** |
+  | All-direction due_at within 1h (measurement script) | 42/89 (47.2%) | **46/89 (51.7%)** |
+
+  Bit-exact single-grade went from 31/65 → 39/65 (+8 cards). The script's all-direction within-1h went 42→46 (+4 cards); the gap is multi-grade replays where accumulated fuzz drift across 2-5 sequential grades widens the divergence.
+
+- The remaining 26/65 single-grade off cases (15 +1d, 10 −1d, 1 +2d) trace to Anki running `recompute_memory_state` between grade and snapshot — the stored `cards.data.s` reflects post-recompute values while `cards.ivl` reflects the grade-time value (pre-recompute). TT replay reproduces the post-recompute `s` bit-exact (89/89 stability), but the interval was computed at grade time with a different `s` we can't reconstruct. This is Stage 3b's "due_at is pass-through from Anki" case — not a TT bug, and the production flow (sync_pull writes `due_at` from Anki's `cards.due`) ignores `schedule()`'s due_at for synced cards.
+
+- Full `./test.sh` green (2509 backend tests, 100% coverage, frontend 100% gate, 11 E2E specs).
+- Oracle harness (`pytest tests/test_parity_fsrs_schedule.py --run-oracle`) all 6 green.
+
+**Files.** `backend/app/srs/fsrs.py` (3 new helpers + 2 call-site swaps; the old `_constrain_passing_intervals` and `_review_interval_fuzz` retained for pre-Layer-51 unit tests). `backend/tests/test_fsrs.py` (1 LAYER_51 parity test in `TestReviewIntervalCascade`, new `TestScheduledDaysForGradeLAYER_51` class with 4 tests). `backend/app/anki/measure_stage3b_premise.py` (1-line fix: pass `anki_due` through to the replay `DirectionState`). `docs/anki-parity-layers.md` (this entry).
+
+**Pre-Layer checklist note.** Per Step 2/3, this layer touched three load-bearing helpers from the table (`_constrain_passing_intervals`, `_review_interval_fuzz`, `_next_interval`). The clean refactor is adding a new fused function (`_passing_intervals_with_fuzz`) at the answering-pipeline layer rather than modifying the existing three. Each retains its single-purpose tests; the new function mirrors Anki's interleaved structure that the three helpers couldn't express together because they were designed as separable stages.
+
+**Cross-reference.** Layer 49 (due_at rollover anchor) introduced the 04:00 UTC due_at convention that made `(due_at - lrt).days` truncate by 1 (the scheduled_days half of Layer 51). Layer 50 (integer days_elapsed at grade time) was the first half of "Anki interleaves col_day arithmetic everywhere"; Layer 51 is the second half (col_day arithmetic for scheduled_days too). The "Anki source vs binary" rule fired here as well — get_scheduling_states predicts a different `s` than what `cards.data` stores, due to `recompute_memory_state` running between the user's grade and the snapshot. The interval stored at grade time reflects the grade-time `s`; replaying forward from pre-grade `s` produces a different (correct) post `s` but can't reproduce the interval. Documented as the irreducible Stage 3b residual.
