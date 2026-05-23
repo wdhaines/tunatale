@@ -9,7 +9,7 @@ import math
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 
-from app.anki.protobuf_wire import compute_anki_day_index
+from app.anki.protobuf_wire import compute_anki_day_index, review_due_at_for_col_day
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSItem, SRSState
 from app.srs._anki_rng import ChaCha12Rng, random_range_f32, random_range_u32
 
@@ -40,6 +40,30 @@ def _due_at_after_step(now: datetime, prev: DirectionState, delay_min: float) ->
     step_seconds = int(round(delay_min * 60))
     fuzzed = _learning_step_fuzz_seconds(prev.anki_card_id, prev.reps, step_seconds)
     return now + timedelta(seconds=fuzzed)
+
+
+def _review_due_at_from_interval(
+    review_date: date,
+    interval: int,
+    col_crt: int | None,
+    now: datetime,
+    rollover_hour: int = 4,
+) -> datetime:
+    """Compute day-level (REVIEW state) due_at, matching sync_pull's convention.
+
+    Layer 49: pre-fix this site used ``datetime.combine(review_date + interval,
+    time(0,0), UTC)``, while sync_pull writeback uses 04:00 UTC anchored on
+    Anki's col_day arithmetic via ``compute_due_at``. The two paths disagreed by
+    4 hours of time-of-day plus any day offset from grades crossing the col_day
+    boundary. Both now route through ``review_due_at_for_col_day``.
+
+    When ``col_crt`` is None (no Anki sync yet — TT-only state), falls back to
+    legacy UTC-midnight on ``review_date + interval``.
+    """
+    if col_crt is None:
+        return datetime.combine(review_date + timedelta(days=interval), time(0, 0), tzinfo=UTC)
+    today_col_day = compute_anki_day_index(col_crt, rollover_hour, now)
+    return review_due_at_for_col_day(col_crt, today_col_day + interval, rollover_hour)
 
 
 _FUZZ_RANGES: tuple[tuple[float, float, float], ...] = (
@@ -492,11 +516,24 @@ def schedule(
 
     # Handle learning step semantics for LEARNING and RELEARNING states
     if prev.state in (SRSState.LEARNING, SRSState.RELEARNING):
-        return _schedule_with_steps(item, prev, rating, review_date, direction, params, time_ms, now, last_review_dt)
+        return _schedule_with_steps(
+            item, prev, rating, review_date, direction, params, time_ms, now, last_review_dt, col_crt=col_crt
+        )
 
     # Handle NEW state with learning steps (Anki parity)
     if prev.state == SRSState.NEW:
-        return _schedule_new(item, prev, rating, direction, time_ms, now, last_review_dt, params)
+        return _schedule_new(
+            item,
+            prev,
+            rating,
+            direction,
+            time_ms,
+            now,
+            last_review_dt,
+            params,
+            review_date=review_date,
+            col_crt=col_crt,
+        )
 
     # REVIEW state logic
     else:
@@ -544,7 +581,7 @@ def schedule(
     constrained_map = {Rating.HARD: constrained[0], Rating.GOOD: constrained[1], Rating.EASY: constrained[2]}
     raw_interval = constrained_map[rating]
     interval = _review_interval_fuzz(raw_interval, prev.anki_card_id, prev.reps, params.maximum_review_interval)
-    new_due_at = datetime.combine(review_date + timedelta(days=interval), time(0, 0), tzinfo=UTC)
+    new_due_at = _review_due_at_from_interval(review_date, interval, col_crt, now)
 
     new_dir = replace(
         prev,
@@ -581,6 +618,8 @@ def _schedule_new(
     now: datetime,
     last_review_dt: datetime,
     params: FSRSParams = DEFAULT_FSRS5_PARAMS,
+    review_date: date | None = None,
+    col_crt: int | None = None,
 ) -> SRSItem:
     """NEW + any rating: walk learn_steps like Anki.
 
@@ -589,17 +628,50 @@ def _schedule_new(
     from dataclasses import replace
 
     if rating == Rating.EASY:
-        return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
+        return _graduate_to_review(
+            item,
+            prev,
+            rating,
+            direction,
+            time_ms,
+            now,
+            last_review_dt,
+            params,
+            review_date=review_date,
+            col_crt=col_crt,
+        )
 
     steps, _ = _get_steps_for_state(SRSState.LEARNING)
     if not steps:
-        return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
+        return _graduate_to_review(
+            item,
+            prev,
+            rating,
+            direction,
+            time_ms,
+            now,
+            last_review_dt,
+            params,
+            review_date=review_date,
+            col_crt=col_crt,
+        )
 
     total_steps = len(steps)
     if rating == Rating.GOOD:
         # Advance to step 1; graduate if only one step total
         if total_steps == 1:
-            return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
+            return _graduate_to_review(
+                item,
+                prev,
+                rating,
+                direction,
+                time_ms,
+                now,
+                last_review_dt,
+                params,
+                review_date=review_date,
+                col_crt=col_crt,
+            )
         step_index = 1
     else:  # AGAIN or HARD: stay at step 0
         step_index = 0
@@ -694,7 +766,18 @@ def _schedule_review_again(
 
     if not steps:
         # Empty steps = graduate immediately (same as Anki)
-        return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
+        return _graduate_to_review(
+            item,
+            prev,
+            rating,
+            direction,
+            time_ms,
+            now,
+            last_review_dt,
+            params,
+            review_date=review_date,
+            col_crt=col_crt,
+        )
 
     # Start at step 0 of relearning: total_remaining = full count
     total_steps = len(steps)
@@ -738,6 +821,7 @@ def _schedule_with_steps(
     time_ms: int,
     now: datetime,
     last_review_dt: datetime,
+    col_crt: int | None = None,
 ) -> SRSItem:
     """Handle LEARNING/RELEARNING with step semantics."""
     from dataclasses import replace
@@ -746,7 +830,18 @@ def _schedule_with_steps(
 
     if not steps:
         # Empty steps list = graduate immediately
-        return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
+        return _graduate_to_review(
+            item,
+            prev,
+            rating,
+            direction,
+            time_ms,
+            now,
+            last_review_dt,
+            params,
+            review_date=review_date,
+            col_crt=col_crt,
+        )
 
     total_steps = len(steps)
     total_remaining = _parse_left(prev.left)
@@ -834,7 +929,18 @@ def _schedule_with_steps(
             # Anki's 0.5-day short-term rule only applies when relearn_steps is empty
             # or fsrs_short_term_with_steps_enabled is true (relearning.rs:119-130);
             # for non-empty relearn_steps (the common case), we graduate directly.
-            return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
+            return _graduate_to_review(
+                item,
+                prev,
+                rating,
+                direction,
+                time_ms,
+                now,
+                last_review_dt,
+                params,
+                review_date=review_date,
+                col_crt=col_crt,
+            )
 
         # Decrement total_remaining; advance to next step.
         next_step_index = current_step_index + 1
@@ -860,7 +966,18 @@ def _schedule_with_steps(
 
     else:  # Rating.EASY
         # Graduate immediately
-        return _graduate_to_review(item, prev, rating, direction, time_ms, now, last_review_dt, params)
+        return _graduate_to_review(
+            item,
+            prev,
+            rating,
+            direction,
+            time_ms,
+            now,
+            last_review_dt,
+            params,
+            review_date=review_date,
+            col_crt=col_crt,
+        )
 
     new_directions = dict(item.directions)
     new_directions[direction] = new_dir
@@ -881,6 +998,8 @@ def _graduate_to_review(
     now: datetime,
     last_review_dt: datetime,
     params: FSRSParams = DEFAULT_FSRS5_PARAMS,
+    review_date: date | None = None,
+    col_crt: int | None = None,
 ) -> SRSItem:
     """Graduate from LEARNING/RELEARNING to REVIEW with FSRS init."""
     from dataclasses import replace
@@ -932,7 +1051,7 @@ def _graduate_to_review(
     else:
         raw_interval = _next_interval(new_stability, params.desired_retention, neg_decay)
     interval = _review_interval_fuzz(raw_interval, prev.anki_card_id, prev.reps, params.maximum_review_interval)
-    new_due_at = datetime.combine(date.today() + timedelta(days=interval), time(0, 0), tzinfo=UTC)
+    new_due_at = _review_due_at_from_interval(review_date, interval, col_crt, now)
 
     new_dir = replace(
         prev,

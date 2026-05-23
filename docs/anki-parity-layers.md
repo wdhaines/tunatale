@@ -888,3 +888,51 @@ The push-side does NOT bury on the "Anki-won-by-timestamp" path (`list_recently_
 **Files.** ``backend/app/srs/fsrs.py`` (new helpers + 2 call sites + ``_next_interval`` rounding). ``backend/tests/test_fsrs.py`` (5 new unit tests). ``backend/tests/test_parity_fsrs_schedule.py`` (1 new oracle test + docstring update). ``docs/anki-parity-layers.md`` (this entry + updated pending-work item).
 
 **Cross-reference.** ``Layer 6`` (learning-step fuzz) and ``Layer 6b`` (revlog shape decode) both deal with Anki's interval rules — this is the review-side equivalent. The cascade only adds floors, never caps, so it cannot shorten intervals — any pre-existing negative divergence (TT > Anki, like the ``milijarda`` case) must have a different root cause.
+
+## Layer 49 — `schedule()` due_at convention (rollover_hour + col_day arithmetic)
+
+**Surfaced**: Stage 3b empirical measurement drill-down (2026-05-22). On Anki-only grading, TT's stored due_at (written by sync_pull via ``compute_due_at``) and TT's derived due_at (computed by ``schedule()``) disagreed by multiples of 14,400 seconds = 4 hours for every direction (89/89). Mean delta ~20h, max 68h. ``reps`` was aligned 89/89, ruling out fuzz-seed drift.
+
+**Diagnosis**. Two code paths produced day-level review-state due_at with different conventions:
+
+- ``compute_due_at`` (``app/anki/sqlite_reader.py:72``, sync_pull writeback): ``datetime.combine(col_crt_utc_date + due_raw days, time(4, 0), tzinfo=UTC)`` — 04:00 UTC on the calendar date matching Anki's col_day arithmetic.
+- ``schedule()`` (``app/srs/fsrs.py``, two sites at lines 547 and 935): ``datetime.combine(review_date + interval days, time(0, 0), tzinfo=UTC)`` — midnight UTC on ``now.date()`` + interval, ignoring rollover_hour entirely and using UTC calendar date instead of Anki's col_day.
+
+The 4-hour deltas came from time-of-day disagreement (00:00 UTC vs 04:00 UTC). The 20h/44h/68h deltas came from a second issue: grades fired between 00:00 and 04:00 UTC belong to "yesterday's col_day" by Anki's reckoning but to "today UTC" by ``schedule()``'s reckoning — landing the derived due_date one day too far.
+
+This was self-consistency drift within TT, not TT-vs-Anki — both endpoints disagreed against each other. Per the Pre-Layer checklist Step 2/3, the right fix factors the convention into a single helper used by both paths rather than fixing one site.
+
+**Fix.**
+
+1. **New helper** in ``backend/app/anki/protobuf_wire.py`` (lives next to ``compute_anki_day_index`` since it's the inverse direction):
+
+   ```python
+   def review_due_at_for_col_day(col_crt: int, col_day: int, rollover_hour: int = 4) -> datetime:
+       """Convert an Anki review-state col_day index to a UTC datetime."""
+       due_date = datetime.fromtimestamp(col_crt, tz=UTC).date() + timedelta(days=col_day)
+       return datetime.combine(due_date, time(rollover_hour, 0), tzinfo=UTC)
+   ```
+
+2. **Refactor** ``compute_due_at`` (sqlite_reader.py) to call ``review_due_at_for_col_day`` for the queue 2/3 case — single source of truth.
+
+3. **New wrapper** ``_review_due_at_from_interval`` in ``app/srs/fsrs.py`` that handles the legacy fallback (``col_crt is None``) by preserving the pre-fix UTC-midnight behavior. Routes through ``compute_anki_day_index → review_due_at_for_col_day`` otherwise.
+
+4. **Patch both call sites** in fsrs.py (REVIEW path at line 547, graduation path at line 935 inside ``_graduate_to_review``) to use the wrapper.
+
+5. **Plumb ``col_crt`` and ``review_date``** through ``_schedule_with_steps``, ``_schedule_new``, ``_graduate_to_review`` (7 call sites to ``_graduate_to_review``, 1 to ``_schedule_new``).
+
+**Verification.**
+
+- 4 new unit tests in ``TestReviewDueAtRolloverConvention`` (``tests/test_fsrs.py``):
+  - ``test_review_due_at_lands_at_rollover_hour_utc`` — REVIEW+GOOD lands at 04:00 UTC.
+  - ``test_review_due_at_uses_col_day_not_utc_date_pre_rollover`` — grade at 03:00 UTC uses Anki's "yesterday" col_day, matching ``review_due_at_for_col_day``.
+  - ``test_review_due_at_falls_back_when_col_crt_none`` — col_crt=None preserves legacy midnight UTC.
+  - ``test_graduation_due_at_lands_at_rollover_hour_utc`` — LEARNING→REVIEW graduation also lands at 04:00 UTC.
+
+- **Stage 3b measurement re-run on the same snapshots**: due_at_match_within_1h went from **0/89 (0%)** to **42/89 (47%)** with the remaining 47/89 off by **exactly 1 day** (86400s). The remaining off-by-1-day delta is downstream of the ~5-7% stability port drift (Layer 50 candidate) — when stability drifts, the fuzzed interval can tip to an adjacent day. The 4-hour quantization is gone; the layer is complete on its own scope.
+
+- Full ``./test.sh`` green (2481 backend tests, frontend 100% coverage gate, 11 E2E specs).
+
+**Files.** ``backend/app/anki/protobuf_wire.py`` (+helper). ``backend/app/anki/sqlite_reader.py`` (refactor ``compute_due_at`` to use the helper, drop unused ``timedelta`` import). ``backend/app/srs/fsrs.py`` (new ``_review_due_at_from_interval`` wrapper, ``col_crt`` and ``review_date`` plumbed through three private schedulers and their 8 call sites, two day-level due_at construction sites updated). ``backend/tests/test_fsrs.py`` (4 new tests). ``docs/anki-parity-layers.md`` (this entry).
+
+**Cross-reference.** Layer 11/15/40 (``_elapsed_days_for_fsrs`` dual-branch + col_day arithmetic for elapsed time) — same shape as this fix, applied to the elapsed-days side. ``compute_anki_day_index`` (``protobuf_wire.py:196``) — companion helper this layer's helper inverts. The remaining off-by-1-day deltas in the measurement are tracked as Layer 50 (stability port drift, scattered ~5-7% in ``_next_stability_recall``).

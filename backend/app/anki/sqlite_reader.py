@@ -8,9 +8,10 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 
+from app.anki.protobuf_wire import review_due_at_for_col_day
 from app.models.srs_item import Direction, DirectionState, SRSState
 
 
@@ -68,8 +69,7 @@ def compute_due_at(queue: int, due_raw: int, col_crt: int, card_type: int = 0) -
     if effective_queue in (2, 3):
         if due_raw > 1000000000:
             return datetime.fromtimestamp(due_raw, tz=UTC)
-        due_date = datetime.fromtimestamp(col_crt, tz=UTC).date() + timedelta(days=due_raw)
-        return datetime.combine(due_date, time(4, 0), tzinfo=UTC)
+        return review_due_at_for_col_day(col_crt, due_raw)
     if effective_queue == 1:
         return datetime.fromtimestamp(due_raw, tz=UTC)
     return datetime.combine(date.today(), time(4, 0), tzinfo=UTC)

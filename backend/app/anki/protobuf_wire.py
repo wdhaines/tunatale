@@ -9,7 +9,7 @@ and FIXED64 (1).
 from __future__ import annotations
 
 import time as _time
-from datetime import datetime
+from datetime import UTC, datetime, time, timedelta
 
 # ── Encode ─────────────────────────────────────────────────────────────────────
 
@@ -200,3 +200,19 @@ def compute_anki_day_index(col_crt: int, rollover_hour: int = 4, now: datetime |
     """
     now_ts = int(now.timestamp()) if now else int(_time.time())
     return (now_ts - col_crt + rollover_hour * 3600) // 86400
+
+
+def review_due_at_for_col_day(col_crt: int, col_day: int, rollover_hour: int = 4) -> datetime:
+    """Convert an Anki review-state col_day index to a UTC datetime (Layer 49).
+
+    For queue 2/3 cards, ``cards.due`` is the col_day index when the card next
+    surfaces. The actual UTC time of that surfacing is ``rollover_hour`` UTC on
+    the calendar date matching ``col_crt``'s UTC date + ``col_day`` days.
+
+    Single source of truth for the convention. Both ``compute_due_at`` (sync_pull
+    writeback) and ``schedule()`` (TT-side grading) must use it — otherwise the
+    derived and stored due_at disagree by ``rollover_hour`` hours plus any day
+    offset from grading near the col_day boundary.
+    """
+    due_date = datetime.fromtimestamp(col_crt, tz=UTC).date() + timedelta(days=col_day)
+    return datetime.combine(due_date, time(rollover_hour, 0), tzinfo=UTC)
