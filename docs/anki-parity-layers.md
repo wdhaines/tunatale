@@ -936,3 +936,80 @@ This was self-consistency drift within TT, not TT-vs-Anki — both endpoints dis
 **Files.** ``backend/app/anki/protobuf_wire.py`` (+helper). ``backend/app/anki/sqlite_reader.py`` (refactor ``compute_due_at`` to use the helper, drop unused ``timedelta`` import). ``backend/app/srs/fsrs.py`` (new ``_review_due_at_from_interval`` wrapper, ``col_crt`` and ``review_date`` plumbed through three private schedulers and their 8 call sites, two day-level due_at construction sites updated). ``backend/tests/test_fsrs.py`` (4 new tests). ``docs/anki-parity-layers.md`` (this entry).
 
 **Cross-reference.** Layer 11/15/40 (``_elapsed_days_for_fsrs`` dual-branch + col_day arithmetic for elapsed time) — same shape as this fix, applied to the elapsed-days side. ``compute_anki_day_index`` (``protobuf_wire.py:196``) — companion helper this layer's helper inverts. The remaining off-by-1-day deltas in the measurement are tracked as Layer 50 (stability port drift, scattered ~5-7% in ``_next_stability_recall``).
+
+## Layer 50 — Grade-time `days_elapsed` must be INTEGER col-day diff
+
+**Surfaced**: Stage 3b empirical measurement (2026-05-22). After Layer 49 cleaned up the 4-hour due_at quantization, 11/89 directions still diverged >5% on stability (practical match 87.6%). Drift was uniform ~5-7%, scattered across REVIEW→REVIEW Good and Easy single grades, no lapse-bucket enrichment (ruling out Layer 42), no transition-specific clustering. Pre-Layer-checklist initial guess pointed at `_next_stability_recall`'s `w[]` constants; empirical verification ruled that out.
+
+**Diagnosis**. The recall stability formula itself was bit-exact with fsrs-rs 5.2.0's `stability_after_success` (`/tmp/fsrs-rs-5.2.0/src/model.rs:68-89`); same goes for `_next_difficulty`. The divergence was upstream: TT's `schedule()` (`backend/app/srs/fsrs.py:543`) and `_schedule_review_again` (line 751) were computing `r` via `_elapsed_days_for_fsrs`, which returns **fractional days** for sub-day-precise `last_review` (lrt was present in `cards.data`). Anki's answering path uses **integer days** unconditionally:
+
+```rust
+// rslib/src/scheduler/answering/mod.rs:480-487
+let days_elapsed = if let Some(last_review_time) = card.last_review_time {
+    timing.next_day_at.elapsed_days_since(last_review_time) as u32
+} else { ... };
+```
+
+```rust
+// rslib/src/timestamp.rs:31
+pub fn elapsed_days_since(self, other: TimestampSecs) -> u64 {
+    (self.0 - other.0).max(0) as u64 / 86_400
+}
+```
+
+The dual fractional/integer branch lives in `extract_fsrs_retrievability` (queue-sort R, `rslib/.../storage/sqlite.rs`) — NOT in the answering flow that drives `stability_after_success`/`stability_after_failure`. TT was conflating the two.
+
+Two prior tests in `TestReviewScheduling` (`test_review_again_uses_fractional_elapsed_when_last_review_has_sub_day_precision`, `..._good_...`) had explicitly pinned the buggy fractional behavior. They were authored under the wrong hypothesis ("Anki uses fractional at grade time too") — debugged after a single-card `kupiti` drift that was actually rooted in wrong deck-config params, not the elapsed branch.
+
+**Empirical verification**. With correct deck-config FSRS params (`Slovene1774631349`, not `Default`):
+- TT with fractional elapsed: mean drift 2.61%, max 9.26%, 36/65 single-grade cards diverge >1%.
+- TT with **integer** col-day elapsed: mean drift **0.000%**, max 0.00%, **65/65 bit-exact match Anki**.
+
+Cross-checked against the Python `fsrs<6` package (which implements the same fsrs-rs formula): TT's `_next_stability_recall` reproduces it bit-exact, confirming the formula port is correct and the bug is in the elapsed-days input.
+
+**Fix.**
+
+1. **New helper** `_grade_elapsed_days` in `backend/app/srs/fsrs.py` (next to `_elapsed_days_for_fsrs`):
+   ```python
+   def _grade_elapsed_days(last_review, ref_now, col_crt=None, rollover_hour=4) -> int:
+       # Mirrors Anki's next_day_at.elapsed_days_since(lrt).
+       # INTEGER col-day diff regardless of lrt precision.
+       if last_review is None: return 0
+       if isinstance(last_review, datetime):
+           if col_crt is not None:
+               today = compute_anki_day_index(col_crt, rollover_hour, ref_now)
+               review = compute_anki_day_index(col_crt, rollover_hour, last_review)
+               return max(0, today - review)
+           return max(0, (ref_now.date() - last_review.date()).days)
+       return max(0, (ref_now.date() - last_review).days)
+   ```
+2. **Two call-site swaps** in `fsrs.py`:
+   - `schedule()` line 543 (REVIEW + passing): `_elapsed_days_for_fsrs(...)` → `_grade_elapsed_days(...)`.
+   - `_schedule_review_again` line 751 (REVIEW + AGAIN): same swap.
+3. **Keep** `_elapsed_days_for_fsrs` (and its dual branch) for `compute_retrievability` (queue-sort R) — that path matches Anki's `extract_fsrs_retrievability`, which IS fractional when lrt is present.
+4. **Inverted** the two `..._uses_fractional_elapsed_when_last_review_has_sub_day_precision` tests (now `..._uses_integer_col_day_elapsed_LAYER_50`). They previously pinned the bug; now they assert the fix.
+
+**Verification.**
+
+- 3 new tests in `TestReviewScheduling` + 4 new tests in `TestGradeElapsedDaysLAYER_50` (`backend/tests/test_fsrs.py`). Bit-exact pin via `test_review_good_matches_anki_integer_elapsed_bit_exact_LAYER_50` reproduces the 2026-05-22 measurement scenario.
+- Stage 3b re-measurement on the same snapshots:
+
+  | Metric | Pre-L50 | Post-L50 |
+  |---|---|---|
+  | Strict match (±0.01) | 17/89 (19.1%) | **89/89 (100%)** |
+  | Practical match (±5%) | 78/89 (87.6%) | **89/89 (100%)** |
+  | Stability median drift | 0.97% | 0.00% |
+  | Stability mean drift | 2.61% | 0.045% |
+  | Stability max drift | 7.73% | 4.00% (1 multi-grade outlier) |
+  | Difficulty bit-exact | 89/89 | 89/89 |
+
+- **Stage 3b decision gate flips**: ≥95% practical match → simplification claim HOLDS. The original 1-branch design (now ≥95% world, not the 87.6% 3-branch reframe) becomes viable.
+
+- Full `./test.sh` green (2502 backend tests, 100% coverage, frontend 100% gate, 11 E2E specs).
+- Oracle harness (`pytest tests/test_parity_fsrs_schedule.py --run-oracle`) all 6 tests green.
+
+**Files.** `backend/app/srs/fsrs.py` (`_grade_elapsed_days` helper, two call-site swaps with comment cross-references). `backend/tests/test_fsrs.py` (3 LAYER_50 tests in `TestReviewScheduling`, new `TestGradeElapsedDaysLAYER_50` class with 4 tests, 1 `_elapsed_days_for_fsrs` date-branch coverage test, two prior fractional-pinning tests inverted to assert integer behavior). `docs/anki-parity-layers.md` (this entry).
+
+**Pre-Layer checklist note.** Per Step 2/3, the right shape was extending the existing helper family rather than reimplementing elapsed-days at a new call site. `_grade_elapsed_days` mirrors `_elapsed_days_for_fsrs`'s structure for the col-day case, drops the dual fractional/integer split. `compute_anki_day_index` (the protobuf_wire helper) is the load-bearing primitive both helpers share — same one Layers 11/15/40/49 lean on.
+
+**Cross-reference.** Layer 42 (lapse stability ceiling) was the first stability port fix; Layer 50 is the first stability *input* fix. Layer 49 (due_at rollover anchor) found a similar duplication problem (two TT code paths producing inconsistent day-level due_at); Layer 50's shape mirrors that — different semantics across two helper call sites need distinct helpers. The Stage 3b coupling note pre-fix expected Layer 50 to also resolve the off-by-1-day due_at residual (Layer 49's remainder); empirically the residual is unchanged at 42/89 within 1h. That suggests a second, smaller mechanism — likely in `_next_interval` / `_review_interval_fuzz` / `_constrain_passing_intervals` — that's a separate layer candidate, NOT a Layer 50 regression.

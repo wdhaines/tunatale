@@ -4,26 +4,27 @@
 
 **Goal**: settle whether Stage 3b of the event-sync migration (`~/.claude/plans/ticklish-questing-fountain.md`) is worth committing 2-3 weeks of refactor work to.
 
-## Result (2026-05-22) — DONE
+## Result (2026-05-23, post Layers 49 + 50) — DONE
 
-The experiment ran. The headline: **87.6% practical match (78/89 directions)**. That lands in the 50-95% band, and per the decision-gate table below, the verdict is **refined 3-branch Stage 3b is viable; commission Big Pickle**.
+The experiment ran twice. The 2026-05-22 measurement caught two distinct bugs (Layers 49 + 50); the 2026-05-23 re-measurement on the same snapshots confirmed both fixes. Final headline: **100% practical match AND 100% strict match (89/89)** — the ≥95% world that the original Stage 3b plan targeted.
 
-| Metric | Result |
-|---|---|
-| Strict match (±0.01) | 17/89 (19.1%) |
-| Practical match (±5% s, ±0.1 d) | **78/89 (87.6%)** |
-| Difficulty bit-exact | 89/89 (100%) |
-| Stability drift (median / p90 / max) | 0.97% / 5.34% / 7.73% |
-| `due_at` within 1h / 1d | 0/89 / 68/89 |
-| `cards.reps` match | 89/89 |
+| Metric | 2026-05-22 (pre-fixes) | Post-L49 | Post-L50 (2026-05-23) |
+|---|---|---|---|
+| Strict match (±0.01) | — | 17/89 (19.1%) | **89/89 (100%)** |
+| Practical match (±5% s, ±0.1 d) | 78/89 (87.6%) | 78/89 (87.6%) | **89/89 (100%)** |
+| Difficulty bit-exact | 89/89 | 89/89 | 89/89 |
+| Stability median / max | 0.97% / 7.73% | 0.97% / 7.73% | **0.00% / 4.0%** (1 multi-grade outlier) |
+| `due_at` within 1h | 0/89 (0%) | 42/89 (47%) | 42/89 (47%) |
 
-**Three findings from the drill-down**:
+**Decision**: ≥95% band → the original 1-branch Stage 3b simplification claim HOLDS. Commission Big Pickle on the staged cadence in `~/.claude/plans/ticklish-questing-fountain.md`. The ~−218 LOC `_pull_merge_direction` collapse is back on the table (vs the refined 3-branch ~−100 LOC fallback the 87.6% world would have required).
 
-1. Difficulty is solved (89/89 bit-exact across REVIEW→REVIEW). The `_next_difficulty` formula was fixed in the 6 days between the original memory (2026-05-16) and the measurement. The `project_fsrs_next_difficulty_diverges` memory is now stale for REVIEW→REVIEW; LEARNING→REVIEW and REVIEW→RELEARNING transitions were not exercised by today's grades and remain untested.
-2. The stability tail is not Layer 42 — lapse-bucket enrichment in the 11 PRACTICAL_DIVERGE cases is 0.97x (no signal). The drift is a uniform ~5-7% systematic offset across `_next_stability_recall`, not a transition-specific bug. Filed as Layer 50 candidate.
-3. `due_at` drift is not fuzz — every delta is an exact multiple of 4 hours = Anki's `rollover_hour`. TT doesn't anchor day-scale intervals to Anki's day-boundary offset. Filed as Layer 49 candidate.
+**Drill-down history** (kept for reference; both bugs now fixed):
 
-See `~/.claude/plans/ticklish-questing-fountain.md` "Stage 3b measurement result" for the full decision write-up and follow-up Layer queue. The rest of this doc is the procedure that produced the result; useful as a template if Stage 3b's measurement ever needs re-running (e.g., after Layer 49 or 50 land — those would shift the practical match upward and could open the ≥95% world).
+1. **Difficulty was already solved** (89/89 bit-exact, REVIEW→REVIEW) by an earlier in-flight fix. The `project_fsrs_next_difficulty_diverges` memory was stale for REVIEW→REVIEW; LEARNING→REVIEW and REVIEW→RELEARNING transitions weren't exercised by the day's grades and remain untested.
+2. **Stability drift was Layer 50** — not a `_next_stability_recall` formula bug as initially suspected, but the input to it: TT was passing fractional days_elapsed at grade time when Anki uses integer `next_day_at.elapsed_days_since(lrt)` (u64 div by 86400). After the fix, 100% bit-exact. See Layer 50 in `docs/anki-parity-layers.md`.
+3. **`due_at` 4-hour quantization was Layer 49** — TT's `schedule()` produced midnight-UTC due_at while `compute_due_at` used 04:00-UTC rollover-anchored due_at. After the fix, the 4h quantization is gone but a separate off-by-1-day residual remains in 47/89 cases (downstream of `_next_interval` / `_review_interval_fuzz` / `_constrain_passing_intervals` — a future smaller layer, NOT part of Stage 3b's gating).
+
+The rest of this doc is the procedure used. Useful as a template if Stage 3b's measurement ever needs re-running.
 
 ## What Stage 3b is
 

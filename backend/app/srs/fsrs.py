@@ -264,6 +264,44 @@ def _elapsed_days_for_fsrs(
     return max(0, (ref_now.date() - last_review).days)
 
 
+def _grade_elapsed_days(
+    last_review: datetime | date | None,
+    ref_now: datetime,
+    col_crt: int | None = None,
+    rollover_hour: int = 4,
+) -> int:
+    """Layer 50: grade-time ``days_elapsed`` is INTEGER col-day diff.
+
+    Mirrors Anki's answering path: ``next_day_at.elapsed_days_since(lrt)``
+    (``rslib/.../scheduler/answering/mod.rs:480-487``), which is u64
+    integer division by 86400 (``rslib/.../timestamp.rs:31``). Anki uses
+    INTEGER regardless of whether ``cards.data.lrt`` carries sub-day
+    precision — the dual fractional/integer branch lives only in
+    ``extract_fsrs_retrievability`` (queue-sort R), NOT in the answering
+    flow that drives stability_after_success / stability_after_failure.
+
+    Layer 50 finding (2026-05-22 Stage 3b empirical measurement): TT was
+    routing grade-time R through ``_elapsed_days_for_fsrs``, which returns
+    fractional days for sub-day-precise ``last_review``. This produced
+    systematic ~5-7% stability drift on every REVIEW grade. Switching to
+    integer col-day diff gave bit-exact match across all 65 single
+    REVIEW→REVIEW passing grades in the snapshots.
+
+    Keep ``_elapsed_days_for_fsrs`` for queue-sort R (Layer 11/15 dual
+    branch) — that path matches Anki's ``extract_fsrs_retrievability``,
+    which IS fractional when lrt is present.
+    """
+    if last_review is None:
+        return 0
+    if isinstance(last_review, datetime):
+        if col_crt is not None:
+            today_col_day = compute_anki_day_index(col_crt, rollover_hour, ref_now)
+            review_col_day = compute_anki_day_index(col_crt, rollover_hour, last_review)
+            return max(0, today_col_day - review_col_day)
+        return max(0, (ref_now.date() - last_review.date()).days)
+    return max(0, (ref_now.date() - last_review).days)
+
+
 def compute_retrievability(
     direction_state: DirectionState,
     today: date,
@@ -537,10 +575,12 @@ def schedule(
 
     # REVIEW state logic
     else:
-        # REVIEW state. `_elapsed_days_for_fsrs` mirrors Anki's dual-branch:
-        # fractional days from lrt-precision last_review, integer otherwise.
+        # REVIEW state. Layer 50: grade-time R uses INTEGER col-day diff
+        # (Anki's `next_day_at.elapsed_days_since(lrt)` is u64 integer div
+        # by 86400). The lrt-fractional branch lives only in queue-sort R,
+        # not in the answering path. See `_grade_elapsed_days`.
         last = prev.last_review or last_review_dt
-        elapsed = _elapsed_days_for_fsrs(last, last_review_dt, col_crt=col_crt)
+        elapsed = _grade_elapsed_days(last, last_review_dt, col_crt=col_crt)
         r = _forgetting_curve(elapsed, prev.stability, neg_decay)
 
         if rating == Rating.AGAIN:
@@ -744,11 +784,12 @@ def _schedule_review_again(
     from dataclasses import replace
 
     w = params.weights
-    # Real retrievability needs elapsed in the same units Anki uses — fractional
-    # days from `lrt` when present (sub-day precision on `prev.last_review`),
-    # integer days otherwise. See `_elapsed_days_for_fsrs`.
+    # Layer 50: grade-time elapsed is INTEGER col-day diff (Anki's answering
+    # path uses `next_day_at.elapsed_days_since(lrt)`, u64 integer div by
+    # 86400). The fractional-from-lrt branch lives in queue-sort R only,
+    # not here. See `_grade_elapsed_days`.
     last = prev.last_review or last_review_dt
-    elapsed = _elapsed_days_for_fsrs(last, last_review_dt, col_crt=col_crt)
+    elapsed = _grade_elapsed_days(last, last_review_dt, col_crt=col_crt)
     # fsrs-rs model.rs:154-163: short-term stability overrides the lapse formula
     # when delta_t == 0 (same-day grade). The deck option only governs card-state
     # transitions, not memory_state — so this branch is not flag-gated.

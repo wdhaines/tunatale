@@ -2,6 +2,8 @@
 
 from datetime import UTC, date, datetime, time, timedelta
 
+import pytest
+
 from app.models.srs_item import Direction, DirectionState, Rating, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.fsrs import (
@@ -126,22 +128,31 @@ class TestReviewScheduling:
         # Should not raise TypeError
         assert result.last_review.date() == past_date
 
-    def test_review_again_uses_fractional_elapsed_when_last_review_has_sub_day_precision(self):
-        """REVIEW + AGAIN: the lapse formula's `r` must mirror Anki's
-        `extract_fsrs_retrievability` dual branch — fractional days from `lrt`
-        when sub-day precision is present, integer calendar days only when
-        the day-level midnight fallback was used.
+    def test_review_again_uses_integer_col_day_elapsed_LAYER_50(self):
+        """REVIEW + AGAIN: grade-time R must use INTEGER col-day diff, NOT
+        fractional days.
 
-        Pre-fix, `_schedule_review_again` unconditionally used integer
-        calendar days (`last_review_dt.date() - last_date.days`). For a card
-        last reviewed at 02:43 yesterday-of-a-week-ago, that's 7 calendar
-        days vs Anki's ~7.55 fractional days — flowing through
-        `exp(w14 * (1-r))` into a 2-4% stability gap (real-world
-        observation: kupiti 1.0897 vs 1.1337 = 4.0% gap).
+        Layer 50 finding (supersedes the prior 'fractional' hypothesis):
+        Anki's grade-time path computes ``days_elapsed = next_day_at
+        .elapsed_days_since(lrt)`` — u64 integer division by 86400
+        (``rslib/.../timestamp.rs:31``). It is integer regardless of whether
+        ``lrt`` has sub-day precision. The dual-branch fractional/integer
+        behavior lives only in queue-sort ``extract_fsrs_retrievability``,
+        NOT in the answering path.
+
+        Two cards graded at the same moment, with ``last_review`` on the
+        SAME calendar day but at different sub-day times, must produce
+        IDENTICAL new stabilities (because they share the same integer
+        col-day index). The previous test asserted the opposite, pinning
+        an empirical bug discovered in the 2026-05-22 Stage 3b measurement:
+        TT computed fractional elapsed at grade time (5.5 days) while Anki
+        computed integer (5 days), producing 5-7% systematic drift on every
+        sub-day-precise REVIEW grade.
         """
         from dataclasses import replace
         from datetime import datetime as _dt
 
+        col_crt = 1388836800  # user's real col_crt; doesn't change result
         grade_dt = _dt(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
 
         def _grade_again_with_last_review_at(last_review_dt):
@@ -150,44 +161,47 @@ class TestReviewScheduling:
             item.directions[Direction.RECOGNITION] = replace(
                 ds, last_review=last_review_dt, stability=5.0, difficulty=7.0
             )
-            return schedule(item, Rating.AGAIN, review_date=grade_dt.date(), now=grade_dt)
+            return schedule(
+                item,
+                Rating.AGAIN,
+                review_date=grade_dt.date(),
+                now=grade_dt,
+                col_crt=col_crt,
+            )
 
-        # Two cards graded at the same moment, with last_review on the SAME calendar
-        # day but at different sub-day times. Integer-days gives elapsed=7 for both;
-        # fractional-days gives 7.5 and 7.0 respectively → different new stabilities.
-        early_morning = _dt(2026, 5, 11, 0, 0, 1, tzinfo=UTC)  # ~7.5 days before grade
-        midday = _dt(2026, 5, 11, 12, 0, 0, tzinfo=UTC)  # exactly 7.0 days before grade
+        # Two cards graded at the same moment, with last_review at different
+        # sub-day times WITHIN THE SAME col-day window. col_crt=1388836800
+        # (12:00 UTC) puts col-day boundaries at 16:00 UTC. Both times below
+        # fall in the [16:00 UTC 5/11, 16:00 UTC 5/12) col-day window, so
+        # Anki's integer col-day diff is identical → identical new_s.
+        early = _dt(2026, 5, 11, 17, 0, 1, tzinfo=UTC)  # just past col-day boundary
+        late = _dt(2026, 5, 11, 22, 0, 0, tzinfo=UTC)  # later same col-day
 
-        r_early = _grade_again_with_last_review_at(early_morning)
-        r_mid = _grade_again_with_last_review_at(midday)
+        r_early = _grade_again_with_last_review_at(early)
+        r_late = _grade_again_with_last_review_at(late)
 
         s_early = r_early.directions[Direction.RECOGNITION].stability
-        s_mid = r_mid.directions[Direction.RECOGNITION].stability
+        s_late = r_late.directions[Direction.RECOGNITION].stability
 
-        # Sanity: both are sub-day precision (non-midnight microseconds for early,
-        # non-midnight for midday), so the fix's fractional branch fires for both.
-        # Their fractional elapseds differ (7.5 vs 7.0) → r differs → new_s differs.
-        # With the pre-fix integer-days bug, both rounded to 7 and produced identical s.
-        assert s_early != s_mid, (
-            f"Lapse formula must use fractional elapsed when last_review has sub-day precision. "
-            f"7.5-day-elapsed produced s={s_early}; 7.0-day-elapsed produced s={s_mid}; "
-            f"identical values mean the bug (integer days for both) is still present."
-        )
-        # Direction check: more time elapsed = lower r = larger 1-r = larger exp factor =
-        # higher new_s in lapse formula. So early (7.5 days) should produce s >= mid (7.0).
-        assert s_early > s_mid, (
-            f"More elapsed time should yield slightly higher new_s in the lapse formula "
-            f"(via the exp(w14*(1-r)) term). Got early={s_early}, mid={s_mid}."
+        assert s_early == s_late, (
+            f"Layer 50: lapse formula must use INTEGER col-day elapsed at grade time. "
+            f"Same col-day grades produced different s={s_early} vs {s_late}; "
+            f"means TT still uses fractional days_elapsed at grade time."
         )
 
-    def test_review_good_uses_fractional_elapsed_when_last_review_has_sub_day_precision(self):
-        """Same as above but for REVIEW + GOOD (the recall path at line 353).
-        Both code sites — `_schedule_review_again` and the REVIEW+other-ratings
-        branch — need the same fix.
+    def test_review_good_uses_integer_col_day_elapsed_LAYER_50(self):
+        """REVIEW + GOOD: same Layer 50 invariant for the recall path.
+
+        Both grade-time call sites — ``schedule()`` (REVIEW+passing) and
+        ``_schedule_review_again`` (REVIEW+AGAIN) — must use integer col-day
+        elapsed. Empirical verification: bit-exact match against Anki across
+        all 65 REVIEW→REVIEW single passing grades in the 2026-05-22
+        measurement snapshots.
         """
         from dataclasses import replace
         from datetime import datetime as _dt
 
+        col_crt = 1388836800
         grade_dt = _dt(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
 
         def _grade_good_with_last_review_at(last_review_dt):
@@ -196,20 +210,95 @@ class TestReviewScheduling:
             item.directions[Direction.RECOGNITION] = replace(
                 ds, last_review=last_review_dt, stability=5.0, difficulty=7.0
             )
-            return schedule(item, Rating.GOOD, review_date=grade_dt.date(), now=grade_dt)
+            return schedule(
+                item,
+                Rating.GOOD,
+                review_date=grade_dt.date(),
+                now=grade_dt,
+                col_crt=col_crt,
+            )
 
-        early_morning = _dt(2026, 5, 11, 0, 0, 1, tzinfo=UTC)
-        midday = _dt(2026, 5, 11, 12, 0, 0, tzinfo=UTC)
+        # Same col-day-window times as the AGAIN test above.
+        early = _dt(2026, 5, 11, 17, 0, 1, tzinfo=UTC)
+        late = _dt(2026, 5, 11, 22, 0, 0, tzinfo=UTC)
 
-        r_early = _grade_good_with_last_review_at(early_morning)
-        r_mid = _grade_good_with_last_review_at(midday)
+        r_early = _grade_good_with_last_review_at(early)
+        r_late = _grade_good_with_last_review_at(late)
 
         s_early = r_early.directions[Direction.RECOGNITION].stability
-        s_mid = r_mid.directions[Direction.RECOGNITION].stability
+        s_late = r_late.directions[Direction.RECOGNITION].stability
 
-        assert s_early != s_mid, (
-            f"Recall formula must use fractional elapsed when last_review has sub-day precision. "
-            f"Got identical s={s_early} for both 7.5-day and 7.0-day elapsed cards — integer-days bug."
+        assert s_early == s_late, (
+            f"Layer 50: recall formula must use INTEGER col-day elapsed at grade time. "
+            f"Same col-day grades produced different s={s_early} vs {s_late}."
+        )
+
+    def test_review_good_matches_anki_integer_elapsed_bit_exact_LAYER_50(self):
+        """Layer 50 bit-exact pin: TT's ``schedule()`` REVIEW+GOOD must match
+        ``_next_stability_recall`` evaluated with integer col-day elapsed.
+
+        Reproducer for the 2026-05-22 empirical finding: with sub-day-precise
+        ``last_review`` 5+ days back, TT was using fractional days (e.g.,
+        5.5 → wrong R → wrong new_s). Anki uses integer col-day diff (5 → R
+        matches → new_s bit-exact). All 65 REVIEW→REVIEW single passing
+        grades in the measurement snapshots converge to 0% drift under
+        integer elapsed.
+        """
+        from dataclasses import replace
+        from datetime import datetime as _dt
+
+        from app.anki.protobuf_wire import compute_anki_day_index
+        from app.srs.fsrs import (
+            _forgetting_curve,
+            _next_stability_recall,
+            _quantize_stability,
+        )
+
+        col_crt = 1388836800
+        grade_dt = _dt(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
+        # Sub-day precision lrt 5 days + 3 hours before grade. TT was reading
+        # 5.125 fractional days; Anki reads integer col-day diff = 5.
+        last_review_dt = _dt(2026, 5, 13, 9, 0, 0, tzinfo=UTC)
+
+        s_pre, d_pre = 5.0, 7.0
+        item = _review_item()
+        item.directions[Direction.RECOGNITION] = replace(
+            item.directions[Direction.RECOGNITION],
+            last_review=last_review_dt,
+            stability=s_pre,
+            difficulty=d_pre,
+        )
+
+        # Mirror schedule()'s internal last_review_dt derivation so the
+        # expected value tracks the function under test regardless of when
+        # the test runs.
+        if grade_dt.date() == date.today():
+            ref_now_for_elapsed = grade_dt
+        else:
+            ref_now_for_elapsed = datetime.combine(grade_dt.date(), time(0, 0), tzinfo=UTC)
+        today_idx = compute_anki_day_index(col_crt, 4, ref_now_for_elapsed)
+        review_idx = compute_anki_day_index(col_crt, 4, last_review_dt)
+        expected_elapsed = max(0, today_idx - review_idx)
+
+        params = DEFAULT_FSRS5_PARAMS
+        w = params.weights
+        expected_r = _forgetting_curve(expected_elapsed, s_pre, decay=-params.decay)
+        expected_s = _quantize_stability(max(0.001, _next_stability_recall(d_pre, s_pre, expected_r, Rating.GOOD, w)))
+
+        result = schedule(
+            item,
+            Rating.GOOD,
+            review_date=grade_dt.date(),
+            now=grade_dt,
+            col_crt=col_crt,
+        )
+        actual_s = result.directions[Direction.RECOGNITION].stability
+
+        # Bit-exact within rounding tolerance (4dp quantization).
+        assert actual_s == expected_s, (
+            f"Layer 50: schedule() must use integer col-day elapsed at grade time. "
+            f"Expected s={expected_s} (integer elapsed={expected_elapsed}); "
+            f"got s={actual_s} (likely fractional elapsed)."
         )
 
 
@@ -309,6 +398,70 @@ class TestElapsedDaysForFsrs:
         assert _elapsed_days_for_fsrs(last, now, col_crt=None) == 39
         # same as calling without col_crt
         assert _elapsed_days_for_fsrs(last, now) == 39
+
+    def test_date_last_review_uses_integer_date_diff(self):
+        """When last_review is a `date` (no time-of-day), elapsed is integer
+        days between the two dates. Backs Layer 50's date-branch coverage."""
+        from datetime import datetime as _dt
+
+        from app.srs.fsrs import _elapsed_days_for_fsrs
+
+        last = date(2026, 4, 11)  # date, not datetime
+        now = _dt(2026, 5, 20, 9, 0, 0, tzinfo=UTC)
+        assert _elapsed_days_for_fsrs(last, now) == 39
+
+
+class TestGradeElapsedDaysLAYER_50:
+    """Layer 50: grade-time `_grade_elapsed_days` returns INTEGER col-day diff.
+
+    Mirrors Anki's answering-path elapsed_days computation
+    (`next_day_at.elapsed_days_since(lrt)`, u64 div by 86400). Distinct from
+    `_elapsed_days_for_fsrs` (queue-sort R) which has a fractional branch
+    when lrt is present.
+    """
+
+    def test_none_last_review_returns_zero(self):
+        from datetime import datetime as _dt
+
+        from app.srs.fsrs import _grade_elapsed_days
+
+        assert _grade_elapsed_days(None, _dt(2026, 5, 18, 12, 0, tzinfo=UTC)) == 0
+
+    def test_sub_day_precision_lrt_returns_integer(self):
+        """Key contrast with `_elapsed_days_for_fsrs`: sub-day-precise lrt
+        does NOT trigger a fractional branch. Returns integer col-day diff."""
+        from datetime import datetime as _dt
+
+        from app.srs.fsrs import _elapsed_days_for_fsrs, _grade_elapsed_days
+
+        col_crt = 1388836800
+        last = _dt(2026, 5, 11, 17, 0, 0, tzinfo=UTC)
+        now = _dt(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
+        # _elapsed_days_for_fsrs returns fractional ~6.79 (queue-sort branch
+        # uses raw seconds-diff / 86400 when last_review has sub-day precision)
+        assert _elapsed_days_for_fsrs(last, now, col_crt=col_crt) == pytest.approx(6.79, abs=0.01)
+        # _grade_elapsed_days returns integer col-day diff (7), regardless of
+        # lrt sub-day precision. Anki's `next_day_at.elapsed_days_since(lrt)`
+        # has the same behavior.
+        assert _grade_elapsed_days(last, now, col_crt=col_crt) == 7
+
+    def test_datetime_without_col_crt_uses_utc_date_diff(self):
+        from datetime import datetime as _dt
+
+        from app.srs.fsrs import _grade_elapsed_days
+
+        last = _dt(2026, 5, 11, 17, 0, 0, tzinfo=UTC)
+        now = _dt(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
+        assert _grade_elapsed_days(last, now, col_crt=None) == 7
+
+    def test_date_last_review_uses_integer_date_diff(self):
+        from datetime import datetime as _dt
+
+        from app.srs.fsrs import _grade_elapsed_days
+
+        last = date(2026, 5, 11)  # date, not datetime
+        now = _dt(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
+        assert _grade_elapsed_days(last, now) == 7
 
 
 class TestDifficultyAdjustment:
