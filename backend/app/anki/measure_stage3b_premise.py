@@ -69,6 +69,7 @@ def _detect_load_balancer(anki_conn: sqlite3.Connection) -> bool:
 
 
 def measure(pre_db: Path, post_db: Path, anki_pre_db: Path, anki_post_db: Path) -> dict:
+    from app.anki.protobuf_wire import review_due_at_for_col_day
     from app.anki.safety import _register_anki_collations
     from app.models.srs_item import Direction, DirectionState, Rating, SRSItem, SRSState
     from app.models.syntactic_unit import SyntacticUnit
@@ -308,7 +309,11 @@ def measure(pre_db: Path, post_db: Path, anki_pre_db: Path, anki_post_db: Path) 
             if balancer is not None and today is not None:
                 dv = g["item"].directions[g["d_obj"]]
                 if dv.state == SRSState.REVIEW and col_crt is not None:
-                    tt_off = compute_anki_day_index(col_crt, 4, dv.due_at) - today
+                    # Stay in the datetime domain. `compute_anki_day_index(due_at)` would
+                    # round-trip to interval-1: the two col-day helpers are intentionally
+                    # non-inverse (Layer 54). The placement offset is the calendar-date diff
+                    # between this card's due and col-day `today`.
+                    tt_off = (dv.due_at.date() - review_due_at_for_col_day(col_crt, today).date()).days
                     balancer.add_card(g["akid"], g["nid"], _anki_offset(g["akid"], eid, tt_off))
 
         # --- Pass 3: compare each direction's post-replay state. ---

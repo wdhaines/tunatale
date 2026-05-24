@@ -935,7 +935,7 @@ This was self-consistency drift within TT, not TT-vs-Anki — both endpoints dis
 
 **Files.** ``backend/app/anki/protobuf_wire.py`` (+helper). ``backend/app/anki/sqlite_reader.py`` (refactor ``compute_due_at`` to use the helper, drop unused ``timedelta`` import). ``backend/app/srs/fsrs.py`` (new ``_review_due_at_from_interval`` wrapper, ``col_crt`` and ``review_date`` plumbed through three private schedulers and their 8 call sites, two day-level due_at construction sites updated). ``backend/tests/test_fsrs.py`` (4 new tests). ``docs/anki-parity-layers.md`` (this entry).
 
-**Cross-reference.** Layer 11/15/40 (``_elapsed_days_for_fsrs`` dual-branch + col_day arithmetic for elapsed time) — same shape as this fix, applied to the elapsed-days side. ``compute_anki_day_index`` (``protobuf_wire.py:196``) — companion helper this layer's helper inverts. The remaining off-by-1-day deltas in the measurement are tracked as Layer 50 (stability port drift, scattered ~5-7% in ``_next_stability_recall``).
+**Cross-reference.** Layer 11/15/40 (``_elapsed_days_for_fsrs`` dual-branch + col_day arithmetic for elapsed time) — same shape as this fix, applied to the elapsed-days side. ``compute_anki_day_index`` (``protobuf_wire.py:196``) — companion helper in the *opposite* direction. **Correction (Layer 54):** the two are NOT round-trip inverses — ``review_due_at_for_col_day(N)`` fed back through ``compute_anki_day_index`` yields ``N − 1``. That is intentional and inert (see Layer 54); do not "fix" it. The remaining off-by-1-day deltas in the measurement are tracked as Layer 50 (stability port drift, scattered ~5-7% in ``_next_stability_recall``).
 
 ## Layer 50 — Grade-time `days_elapsed` must be INTEGER col-day diff
 
@@ -1186,3 +1186,41 @@ Pre-Layer-52, TT routed graduation through `_passing_intervals_with_fuzz(..., sc
 **Pre-Layer checklist note.** Step 1 named the divergence (a queue/interval *position*, not a stability/difficulty number). Step 2 found the relevant helper is `_passing_intervals_with_fuzz` / `_constrained_fuzz_bounds` — and the drill confirmed those compute the correct fuzz *range*; the missing piece lives entirely outside TT's model (global due histogram). That is the signal to **stop** rather than extend a helper: the right output already exists, the divergence is a not-mirrored Anki subsystem whose mirroring complexity is unbounded.
 
 **Cross-reference.** Mirrors the Layer 43 pattern — a residual previously chalked up to one mechanism (there, Layer 38's "NULL-R at dr"; here, `recompute_memory_state`) turned out to be a coincidence of input regime once the binary was driven with controlled inputs. The "trust the binary, not the source" rule (queue-parity rule 13) and the harness rule's "vary the inputs Anki touches" both fired: the breakthrough was forcing `days_elapsed` via a synthetic `last_review_time` and pinning the fuzz seed via the real `anki_card_id`, which removed the wall-clock confound that had made every prior oracle re-answer look like a stability mismatch.
+
+## Layer 54 — The col-day helpers are NOT inverses (and that's fine): a ground-truthed non-bug
+
+**Surfaced**: load-balancer replay drilling (2026-05-24, post Layer 53). `review_due_at_for_col_day(col_crt, N)` (`app/anki/protobuf_wire.py:205`) and `compute_anki_day_index(col_crt, 4, now)` (same module) are not round-trip inverses: `N → datetime → N − 1` for every N (verified N=4521/4524/4525/4600 against `col_crt=1388836800`). Layer 49's own cross-reference had called them inverses (corrected above). The lead was `_review_due_at_from_interval` (`app/srs/fsrs.py:65`, the live review-grade path), which *crosses* them — `today = compute_anki_day_index(now)` then `review_due_at_for_col_day(today + interval)` — raising the question: does a TT-native review grade store a `due_at` a full day off from what Anki surfaces for the same `cards.due`?
+
+**Ground truth (the decisive step — taken before any fix).** Opened the real collection with `uv run --with anki` (Anki closed) and read Anki's own scheduler:
+
+```
+col.crt          = 1388836800   (2014-01-04 12:00 UTC; created at UTC-5, machine now EDT)
+col.sched.today  = 4523          (days_elapsed at 2026-05-24 18:53 UTC)
+next_day_at      = 1779696000    (2026-05-25 08:00 UTC = 4am EDT)
+rollover=4  creationOffset=300(UTC-5)  localOffset=240(UTC-4, EDT)
+```
+
+So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4523)` — i.e. 08:00 UTC during EDT. Anki's `days_elapsed` is **calendar-date-based in the local timezone** (`rslib/.../scheduler/timing.rs:69-81`: `end_date.num_days_from_ce() − start_date.num_days_from_ce()`, minus 1 pre-rollover), NOT raw timestamp arithmetic.
+
+**Verdict: NOT a production bug — a latent inconsistency that cancels in every real path.**
+
+1. `compute_anki_day_index(now) == 4523 ==` Anki's `today` **exactly**. The helper is correct (its day boundary, `col_crt − 4h = 08:00 UTC`, coincides with the true 4am-EDT rollover for this user).
+2. `review_due_at_for_col_day(N)` returns the **correct calendar date**; only the time-of-day is `04:00 UTC` (Layer 49's anchor) versus the true local rollover `08:00 UTC` — 4h early, **same date**.
+3. `DirectionState.due_date == due_at.date()` (`app/models/srs_item.py:185`), the live "due-today" field, is therefore the **correct calendar date**, advancing by exactly `interval` days.
+4. The TT-native grade path (`_review_due_at_from_interval`) and the sync writeback path (`compute_due_at`) **both** call `review_due_at_for_col_day`, so they produce byte-identical `due_at` — verified for intervals 1/3/21/77. `_direction_differs` never sees a spurious diff; there is no native-vs-synced discrepancy. The only observable effect is a 4-hour window (midnight–4am EDT, pre-rollover) where TT shows a card due slightly before Anki — uniform across all TT cards, well within "drift between syncs is bounded and acceptable."
+5. **No production path feeds a `due_at` back into `compute_anki_day_index`.** The only inversion lives in diagnostic replay code — `measure_stage3b_premise.py:311` (`compute_anki_day_index(col_crt, 4, dv.due_at) − today`), which yields `interval − 1` and is exactly what raised this false alarm. It is a side-stat (the load-balancer histogram offset; `due_at` is excluded from MATCH classification per Layer 53), so it does not affect the proven bit-exact stability/difficulty result. **Flagged, not fixed here** — it lives inside the pending load-balancer work; correct it within that change set by staying in the datetime domain (`(dv.due_at.date() − review_due_at_for_col_day(col_crt, today).date()).days`) if the histogram offset matters.
+
+**Two consistent domains, deliberately not inverses.**
+
+| Domain | Helpers | Property |
+|---|---|---|
+| **Index** (col-day integer) | `compute_anki_day_index` + `_compute_last_review` (Layer 45) + `_interval_from_state` (Layer 51) | round-trips internally; bit-exact with Anki `today` |
+| **Datetime** (`due_at`) | `review_due_at_for_col_day` + `compute_due_at` + `_review_due_at_from_interval` | 04:00-UTC anchored; correct date; self-consistent across all writers |
+
+**Why no fix.** Making `review_due_at_for_col_day` land on the true local rollover (so the round-trip is clean) requires threading the local UTC offset through `compute_due_at`, `_review_due_at_from_interval`, and `schedule()`, and would shift **every** stored `due_at` by that offset — a one-time mass sync write-back (`_direction_differs` fires on all review cards) for **zero** correctness gain, since the calendar date is already right. This is precisely the over-eager-Layer-fix the Pre-Layer checklist warns against: Step 1 named the divergence (a `due_at` time-of-day, not a date), Step 2 found both helpers already correct in their own domain, ground truth confirmed production cancels — **stop**.
+
+**Layers 49/50 re-checked.** Layer 49 (04:00-UTC due_at anchor) holds; its "inverts" cross-reference was imprecise and is corrected above. Layer 50 (integer col-day elapsed via `compute_anki_day_index` *differences*) holds — it lives entirely in the Index domain and never crosses. Layer 45 (`_compute_last_review` built to satisfy `compute_anki_day_index(result) == review_col_day`) and Layer 51 (`_interval_from_state` via `compute_anki_day_index(last_review)`) are both Index-domain and consistent.
+
+**Files.** `backend/tests/test_colday_helper_consistency.py` (new — pins ground truth: `compute_anki_day_index == 4523`, date correctness, native==sync self-consistency, and the intentional off-by-one round-trip as a guard). `docs/anki-parity-layers.md` (this entry + Layer 49 correction). No production code changed.
+
+**Cross-reference.** Same investigation shape as Layer 43/53: a residual chalked up to a bug turned out to be a coincidence of convention once the binary was driven with controlled inputs (queue-parity rule 13, "trust the binary"). The decisive move was reading Anki's own `col.sched.today` / `next_day_at` rather than reasoning about the helpers in isolation.
