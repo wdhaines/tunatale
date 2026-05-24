@@ -315,6 +315,8 @@ Current model — TT reconstructs from TT state — has held through ~22 fixes. 
 
 **Path 2** = at sync time, execute Anki's `review_order_sql` and persist the card-id sequence as TT's "today's anchor queue." Between syncs, TT serves from snapshot filtered by "graded since sync." Dissolves the entire "mirror Anki's algorithm with all branches" class. ~2-3 hour refactor. Most freeze / intersperser / R-asc reconstruction code goes away. Only when the leak count won't stop.
 
+**Already-decided non-mirror: the FSRS load balancer (Layer 53).** If `config['loadBalancerEnabled']` is set, Anki relocates every graded card's interval to a less-loaded day *within* the fuzz range, using the whole collection's due-date histogram (`states/fuzz.rs:36-42` tries `load_balancer_ctx.find_interval` before pure fuzz; wired into both the live answer path `answering/mod.rs:237-258` and the reschedule path `fsrs/memory_state.rs:218`). TT does **not** mirror this and should not — it needs a global due histogram, and `sync_pull` already reads the load-balanced `cards.due` directly so synced cards stay correct. **Signature**: stability bit-exact but `due_at` off by ±1–2 days, and the stored interval lands *inside* TT's computed fuzz `[lower, upper]` but isn't TT's fuzz pick. Don't chase this as an FSRS bug — verify the stored interval is within the fuzz range (it is), confirm `loadBalancerEnabled`, and stop. Only a TT-native grade (never re-graded in Anki) shows the un-balanced pick, and that's cosmetic.
+
 ## Source references
 
 `anki-source-expert` subagent reads `/tmp/anki-source/`. Key files:

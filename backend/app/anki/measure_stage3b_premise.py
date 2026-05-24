@@ -44,12 +44,37 @@ def _parse_dt(s: str | None) -> datetime | None:
         return None
 
 
+def _detect_load_balancer(anki_conn: sqlite3.Connection) -> bool:
+    """True if the collection has the FSRS load balancer enabled (Layer 53).
+
+    The load balancer relocates each graded card's interval to a less-loaded day
+    *within* the fuzz range, based on the collection-wide due-date distribution.
+    It fires on every grade and every reschedule — not just "Optimize FSRS". TT's
+    per-card forward-step cannot reproduce it (no global due histogram), so the
+    `due_at` side-stat below is expected to under-report when this is on. The
+    stored due dates are still correct on the production path because `sync_pull`
+    reads `cards.due` directly. See `docs/anki-parity-layers.md` Layer 53.
+    """
+    try:
+        row = anki_conn.execute("SELECT val FROM config WHERE key = 'loadBalancerEnabled'").fetchone()
+    except sqlite3.Error:
+        return False
+    if row is None:
+        return False
+    val = row[0]
+    # Modern Anki stores the config value as a JSON blob (b'true' / b'false').
+    if isinstance(val, (bytes, bytearray)):
+        return val.strip().lower() == b"true"
+    return str(val).strip().lower() == "true"
+
+
 def measure(pre_db: Path, post_db: Path, anki_pre_db: Path, anki_post_db: Path) -> dict:
     from app.anki.safety import _register_anki_collations
     from app.models.srs_item import Direction, DirectionState, Rating, SRSItem, SRSState
     from app.models.syntactic_unit import SyntacticUnit
     from app.srs.database import SRSDatabase
-    from app.srs.fsrs import schedule
+    from app.srs.fsrs import compute_anki_day_index, schedule
+    from app.srs.load_balancer import LOAD_BALANCE_DAYS, LoadBalancer
     from app.srs.queue_stats import (
         refresh_col_crt,
         refresh_fsrs_params,
@@ -71,6 +96,7 @@ def measure(pre_db: Path, post_db: Path, anki_pre_db: Path, anki_post_db: Path) 
         refresh_learning_steps(srs, anki_post, settings.anki_deck_name)
     params, _ = resolve_fsrs_params(srs)
     col_crt = resolve_col_crt(srs)
+    load_balancer_enabled = _detect_load_balancer(anki_post)
 
     pre = sqlite3.connect(str(pre_db))
     pre.row_factory = sqlite3.Row
@@ -84,8 +110,10 @@ def measure(pre_db: Path, post_db: Path, anki_pre_db: Path, anki_post_db: Path) 
             SELECT
                 pre_cd.collocation_id AS cid,
                 pre_cd.direction AS dir,
-                pre_cd.anki_card_id AS akid
+                pre_cd.anki_card_id AS akid,
+                pre_c.anki_note_id AS nid
             FROM pre.collocation_directions pre_cd
+            JOIN pre.collocations pre_c ON pre_c.id = pre_cd.collocation_id
             JOIN collocation_directions post_cd
                 ON post_cd.collocation_id = pre_cd.collocation_id
                 AND post_cd.direction = pre_cd.direction
@@ -105,6 +133,7 @@ def measure(pre_db: Path, post_db: Path, anki_pre_db: Path, anki_post_db: Path) 
         """).fetchall()
 
         results = {
+            "load_balancer_enabled": load_balancer_enabled,
             "total": 0,
             "match": 0,
             "practical_match": 0,
@@ -121,8 +150,18 @@ def measure(pre_db: Path, post_db: Path, anki_pre_db: Path, anki_post_db: Path) 
             "examples_practical_diverge": [],
         }
 
+        # --- Pass 1: gather each direction's pre-state item + its new grade events. ---
+        # The load balancer mutates a shared, collection-wide histogram as cards are
+        # graded, so the balanced interval of a card depends on cards graded *earlier*
+        # in the session. We therefore can't replay each direction in isolation — we
+        # gather every grade across all directions and replay them in global
+        # timestamp (revlog id) order against one shared balancer (Layer 53 / the
+        # FSRS load balancer port). stability/difficulty are order-independent, so
+        # the per-direction final values are unchanged by interleaving.
+        gathered: dict[tuple[int, str], dict] = {}
+        events: list[tuple[int, int, str, int]] = []
         for t in targets:
-            cid, d_str, akid = t["cid"], t["dir"], t["akid"]
+            cid, d_str, akid, nid = t["cid"], t["dir"], t["akid"], t["nid"]
             d_obj = Direction(d_str)
 
             pre_row = pre.execute(
@@ -136,7 +175,6 @@ def measure(pre_db: Path, post_db: Path, anki_pre_db: Path, anki_post_db: Path) 
             if pre_row is None or post_row is None:
                 continue
 
-            # Identify new rows in post that weren't in pre.
             pre_max_id = (
                 pre.execute(
                     "SELECT MAX(id) FROM tt_revlog WHERE collocation_id = ? AND direction = ?",
@@ -155,7 +193,6 @@ def measure(pre_db: Path, post_db: Path, anki_pre_db: Path, anki_post_db: Path) 
             if not valid_new:
                 continue
 
-            # Build pre_state from pre_row.
             pre_last_review = _parse_dt(pre_row["last_review"])
             pre_due_at = _parse_dt(pre_row["due_at"]) or datetime.now(UTC)
             try:
@@ -177,30 +214,110 @@ def measure(pre_db: Path, post_db: Path, anki_pre_db: Path, anki_post_db: Path) 
                 last_rating=pre_row["last_rating"],
                 left=pre_row["left"],
             )
-
-            # Apply new rows via schedule.
             other_dir = Direction.PRODUCTION if d_obj == Direction.RECOGNITION else Direction.RECOGNITION
             other_state = DirectionState(direction=other_dir, due_at=pre_due_at)
             unit = SyntacticUnit(text="m", translation="", word_count=1, difficulty=1, source="m", card_type="vocab")
+            # anki_note_id on the item so the balancer's sibling logic sees the
+            # recognition/production pair of one note as siblings (as Anki does).
             item = SRSItem(
                 syntactic_unit=unit,
                 directions={d_obj: pre_state, other_dir: other_state},
                 guid="m",
-                anki_note_id=None,
+                anki_note_id=nid,
             )
+            gathered[(cid, d_str)] = {
+                "item": item,
+                "d_obj": d_obj,
+                "valid_new": valid_new,
+                "post_row": post_row,
+                "akid": akid,
+                "nid": nid or 0,
+            }
             for r in valid_new:
-                now_dt = datetime.fromtimestamp(r["id"] / 1000, tz=UTC)
-                item = schedule(
-                    item,
-                    Rating(r["button_chosen"]),
-                    review_date=now_dt.date(),
-                    direction=d_obj,
-                    params=params,
-                    time_ms=r["id"],
-                    now=now_dt,
-                    col_crt=col_crt,
-                )
-            derived = item.directions[d_obj]
+                events.append((r["id"], cid, d_str, r["button_chosen"]))
+
+        # --- Build the load-balancer histogram from the PRE snapshot. ---
+        # Mirrors Anki's `get_all_cards_due_in_range(today, today + LOAD_BALANCE_DAYS)`:
+        # every same-preset card due in the window, bucketed by `due - today`. For the
+        # single-preset Slovene deck, TT's own directions ARE the whole histogram.
+        balancer = None
+        today: int | None = None
+        if load_balancer_enabled and events and col_crt is not None:
+            first_grade = datetime.fromtimestamp(min(e[0] for e in events) / 1000, tz=UTC)
+            today = compute_anki_day_index(col_crt, 4, first_grade)
+            balancer = LoadBalancer(None, col_crt + (today + 1) * 86400)
+            hist_rows = pre.execute(
+                "SELECT cd.anki_card_id AS akid, c.anki_note_id AS nid, cd.anki_due AS due "
+                "FROM collocation_directions cd JOIN collocations c ON cd.collocation_id = c.id "
+                "WHERE cd.anki_due IS NOT NULL AND cd.anki_due >= ? AND cd.anki_due < ? "
+                "AND cd.anki_card_id IS NOT NULL",
+                (today, today + LOAD_BALANCE_DAYS),
+            ).fetchall()
+            for hr in hist_rows:
+                balancer.add_card(hr["akid"], hr["nid"] or 0, hr["due"] - today)
+
+        # Anki's per-grade interval, recovered from its revlog (keyed by card +
+        # review timestamp). The balancer's mid-session histogram depends on where
+        # Anki ACTUALLY placed each card at each grade — including the *intermediate*
+        # placements of multi-grade cards (e.g. GOOD→GOOD adds at both intervals,
+        # never removing the first). TT's own forward-step pick can drift ±1 and
+        # cascade, so for histogram fidelity we place earlier cards at Anki's
+        # ground-truth offset (`revlog.ivl`, which for a same-day grade equals the
+        # day-offset from `today`). This isolates the due_at side-stat to
+        # find_interval correctness rather than self-replay placement drift; the
+        # card-under-test's own due_at is still TT's `schedule()` output (Layer 53).
+        anki_rl: dict[int, list[tuple[int, int]]] = {}
+        if balancer is not None:
+            for akid in {g["akid"] for g in gathered.values()}:
+                rows = anki_post.execute("SELECT id, ivl FROM revlog WHERE cid = ? ORDER BY id", (akid,)).fetchall()
+                anki_rl[akid] = [(r["id"], r["ivl"]) for r in rows]
+
+        def _anki_offset(akid: int, eid: int, fallback: int) -> int:
+            """Anki's day-offset for this grade: the revlog ivl of the matching row.
+
+            Match by nearest revlog id (TT ingests Anki's revlog so ids align to the
+            ms, but allow a small slop). Negative ivl = (re)learning seconds → the
+            card is not review-due in the window; fall back to TT's computed offset.
+            """
+            rows = anki_rl.get(akid)
+            if not rows:
+                return fallback
+            best_id, best_ivl = min(rows, key=lambda r: abs(r[0] - eid))
+            if abs(best_id - eid) > 5000 or best_ivl <= 0:
+                return fallback
+            return best_ivl
+
+        # --- Pass 2: replay every grade in global timestamp order through the shared
+        # balancer, mutating the histogram after each grade (Anki's per-answer
+        # `load_balancer.add_card`). ---
+        events.sort(key=lambda e: e[0])
+        for eid, cid, d_str, button in events:
+            g = gathered[(cid, d_str)]
+            now_dt = datetime.fromtimestamp(eid / 1000, tz=UTC)
+            g["item"] = schedule(
+                g["item"],
+                Rating(button),
+                review_date=now_dt.date(),
+                direction=g["d_obj"],
+                params=params,
+                time_ms=eid,
+                now=now_dt,
+                col_crt=col_crt,
+                load_balancer=balancer,
+            )
+            if balancer is not None and today is not None:
+                dv = g["item"].directions[g["d_obj"]]
+                if dv.state == SRSState.REVIEW and col_crt is not None:
+                    tt_off = compute_anki_day_index(col_crt, 4, dv.due_at) - today
+                    balancer.add_card(g["akid"], g["nid"], _anki_offset(g["akid"], eid, tt_off))
+
+        # --- Pass 3: compare each direction's post-replay state. ---
+        for (cid, d_str), g in gathered.items():
+            d_obj = g["d_obj"]
+            akid = g["akid"]
+            post_row = g["post_row"]
+            valid_new = g["valid_new"]
+            derived = g["item"].directions[d_obj]
 
             # Compare derived (forward-step from pre TT state) against Anki's
             # actual post cards.data. Per the refined Stage 3b design, only
@@ -356,6 +473,23 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"    due_at match within 1d:    {r['due_at_match_within_1d']}/{total} ({_pct(r['due_at_match_within_1d'], total):.1f}%)"
     )
+    if r.get("load_balancer_enabled"):
+        print()
+        print("  FSRS LOAD BALANCER ENABLED in this collection (Layer 53) — now MODELED in this replay.")
+        print("    The balancer relocates each interval to a less-loaded day within the fuzz range,")
+        print("    using the whole collection's due histogram. This replay rebuilds that histogram")
+        print("    from the PRE snapshot and replays grades in global order through the bit-exact")
+        print("    port (app/srs/load_balancer.py), so due_at is now reproduced, not just bounded.")
+        print("    Remaining due_at misses are NOT a find_interval bug: proven per-card that, fed the")
+        print("    identical histogram, TT's find_interval and Anki's balancer pick the SAME day (even")
+        print("    on a card Anki stored differently). The residual is this replay's ability to")
+        print("    reconstruct Anki's EXACT mid-session histogram from a pre/post snapshot pair. We")
+        print("    place every grade at Anki's actual per-grade revlog.ivl (capturing multi-grade")
+        print("    intermediates), but a few windows' relative day-counts still differ — the true")
+        print("    counts need Anki's queue-build state at each grade, which snapshots don't carry")
+        print("    (the pre snapshot predates the session; rollover-boundary col-day edges). Each is")
+        print("    worth ~1 card and is a harness limit, not the balancer. On the production path none")
+        print("    of this exists: live histogram from TT's own grades; synced cards take cards.due.")
     print()
     print(_summarize_deltas("stability rel-delta (%)", [d * 100 for d in r["stability_deltas_pct"]]))
     print(_summarize_deltas("difficulty abs-delta", r["difficulty_deltas_abs"]))

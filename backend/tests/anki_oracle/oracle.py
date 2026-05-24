@@ -209,6 +209,32 @@ def _op_answer_card(col: Any, op: dict) -> dict:
     }
 
 
+def _op_scheduling_states(col: Any, op: dict) -> dict:
+    """Build the study queue (populating the load balancer if enabled), then return
+    the hard/good/easy review intervals Anki would schedule for a card.
+
+    The queue build is what constructs ``card_queues.load_balancer`` from
+    ``get_all_cards_due_in_range``; without it the balancer is absent and
+    ``get_scheduling_states`` returns pure-fuzz intervals. Used by the Layer 53
+    load-balancer parity test.
+    """
+    deck_id = op.get("deck_id", 1)
+    col.decks.select(deck_id)
+    col.sched.get_queued_cards(fetch_limit=op.get("fetch_limit", 1))
+    states = col._backend.get_scheduling_states(op["card_id"])
+
+    def _ivl(state: Any) -> int | None:
+        normal = state.normal
+        return normal.review.scheduled_days if normal.HasField("review") else None
+
+    return {
+        "hard": _ivl(states.hard),
+        "good": _ivl(states.good),
+        "easy": _ivl(states.easy),
+        "today": col.sched.today,
+    }
+
+
 def _op_get_card(col: Any, op: dict) -> dict:
     """Read a card's current state without modifying it."""
     card_id = op["card_id"]
@@ -232,6 +258,7 @@ _OPERATIONS: dict[str, Any] = {
     "set_config": _op_set_config,
     "answer_card": _op_answer_card,
     "get_card": _op_get_card,
+    "scheduling_states": _op_scheduling_states,
 }
 
 

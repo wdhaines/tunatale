@@ -25,9 +25,15 @@ import pytest
 from app.srs._anki_rng import (
     ChaCha12Rng,
     _chacha12_block,
+    _f32_from_bits,
+    _f32_nextdown,
+    _f32_to_bits,
     _pcg32,
     _seed_from_u64,
+    f32,
     random_range_u32,
+    uniform_f32_sample,
+    weighted_index_sample,
 )
 
 
@@ -204,3 +210,56 @@ class TestGroundTruthRegression:
         # Also verify the learning-step fuzz for a 60-second step (range [0, 15)).
         rng2 = ChaCha12Rng(seed)
         assert random_range_u32(rng2, 0, 15) == expected_fuzz_60s, f"seed={seed}, fuzz for [0, 15)"
+
+
+class TestF32Helpers:
+    """f32 round-trip helpers used by the Uniform<f32> / WeightedIndex port."""
+
+    def test_f32_rounds_to_single_precision(self):
+        # 0.1 is not representable in f32; struct round-trip gives the f32 value.
+        assert f32(0.1) == 0.10000000149011612
+
+    def test_bits_round_trip(self):
+        for v in (1.0, 2.5, 64.0, 0.25):
+            assert _f32_from_bits(_f32_to_bits(v)) == v
+
+    def test_to_bits_known(self):
+        assert _f32_to_bits(1.0) == 1065353216  # 0x3F800000
+
+    def test_nextdown_is_one_ulp_below(self):
+        # The f32 just below 1.0 is 1 - 2**-24.
+        assert _f32_nextdown(1.0) == 0.9999999403953552
+
+
+class TestUniformF32Sample:
+    """Mirror of rand 0.9.4 ``Uniform<f32>::sample`` — golden values pinned by
+    the Anki oracle sweep (see test_load_balancer / test_parity_load_balancer)."""
+
+    def test_unit_range_seed_zero(self):
+        assert uniform_f32_sample(ChaCha12Rng(0), 0.0, 1.0) == 0.8014591932296753
+
+    def test_scaled_range(self):
+        assert uniform_f32_sample(ChaCha12Rng(12345), 0.0, 10.0) == 5.326814651489258
+
+    def test_always_within_range(self):
+        for seed in range(50):
+            v = uniform_f32_sample(ChaCha12Rng(seed), 0.0, 7.0)
+            assert 0.0 <= v < 7.0
+
+
+class TestWeightedIndexSample:
+    """Mirror of rand 0.9.4 ``WeightedIndex::sample`` (cumulative f32 + partition_point)."""
+
+    def test_equal_weights(self):
+        assert weighted_index_sample([1.0, 1.0, 1.0, 1.0], ChaCha12Rng(999)) == 2
+
+    def test_skewed_weights_pick_heavy(self):
+        # The dominant weight (index 2) is almost always chosen; this seed hits the
+        # `break` branch (a cumulative entry exceeds the draw).
+        assert weighted_index_sample([0.001, 0.001, 1.0, 0.001], ChaCha12Rng(42)) == 2
+
+    def test_lands_in_last_bucket_no_break(self):
+        # seed 0 draws ~1.6029 over [0, total=2.0); both equal weights' single
+        # cumulative entry (1.0) is <= the draw, so the loop completes without
+        # `break` and returns the last index.
+        assert weighted_index_sample([1.0, 1.0], ChaCha12Rng(0)) == 1

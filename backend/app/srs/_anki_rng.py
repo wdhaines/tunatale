@@ -21,6 +21,8 @@ seed→output pairs.
 
 from __future__ import annotations
 
+import struct
+
 _U32_MASK = 0xFFFFFFFF
 _U64_MASK = 0xFFFFFFFFFFFFFFFF
 
@@ -171,6 +173,103 @@ def random_range_f32(rng: ChaCha12Rng) -> float:
 
     This is the same approach used by ``rand 0.9``'s ``StandardUniform``
     for ``f32`` (see ``rand_distr/src/float_impls.rs``).
+
+    NOTE: this is **not** the construction ``Uniform<f32>`` uses for an
+    arbitrary range — see ``uniform_f32_sample`` below, which uses the 23-bit
+    ``[1, 2) → [0, 1)`` bit-manipulation path. Don't conflate the two.
     """
     u = rng.next_u32()
     return float(u >> 8) / float(1 << 24)
+
+
+# --- f32 helpers (no numpy dependency; struct gives IEEE-754 round-to-nearest-even) ---
+
+# f32 EPSILON = 2**-23 (gap between 1.0 and the next representable f32).
+_F32_EPSILON = 2.0**-23
+
+
+def f32(x: float) -> float:
+    """Round a Python float (f64) to the nearest f32, returned as a Python float.
+
+    For a single +, -, or * computed in f64 and rounded once to f32 this matches
+    Rust's f32 arithmetic exactly (f64 has >2x the mantissa, so no double-rounding).
+    """
+    return struct.unpack("<f", struct.pack("<f", x))[0]
+
+
+def _f32_from_bits(bits: int) -> float:
+    return struct.unpack("<f", struct.pack("<I", bits & _U32_MASK))[0]
+
+
+def _f32_to_bits(x: float) -> int:
+    return struct.unpack("<I", struct.pack("<f", x))[0]
+
+
+def _f32_nextdown(x: float) -> float:
+    """Next representable f32 below ``x`` (toward zero, for ``x > 0``).
+
+    Mirrors ``decrease_masked`` in rand's ``UniformFloat::new_bounded`` for the
+    positive-scale case: decrement the bit pattern by one ULP.
+    """
+    return _f32_from_bits(_f32_to_bits(x) - 1)
+
+
+def _uniform_f32_new_bounded(low: float, high: float, scale: float) -> float:
+    """Port of ``UniformFloat::<f32>::new_bounded`` (rand 0.9.4 uniform_float.rs).
+
+    Reduces ``scale`` until ``scale * max_rand + low <= high`` so rounding can
+    never yield a value > ``high``. For ``low == 0`` (the WeightedIndex case)
+    the loop never fires, but we mirror it faithfully for arbitrary ranges.
+    """
+    max_rand = f32(1.0 - _F32_EPSILON)
+    while f32(f32(scale * max_rand) + low) > high:  # pragma: no cover - never fires for low==0
+        scale = _f32_nextdown(scale)
+    return scale
+
+
+def uniform_f32_sample(rng: ChaCha12Rng, low: float, high: float) -> float:
+    """Mirror ``Uniform::<f32>::new(low, high).sample(rng)`` (rand 0.9.4).
+
+    Construction (uniform_float.rs ``sample``):
+      - ``value1_2 = (next_u32 >> 9).into_float_with_exponent(0)`` → f32 in [1, 2)
+        (23 random mantissa bits, biased exponent 127).
+      - ``value0_1 = value1_2 - 1.0`` → [0, 1).
+      - result = ``value0_1 * scale + low`` (f32, multiply before add).
+
+    ``scale`` is precomputed by ``new_bounded(low, high, high - low)``.
+    """
+    low = f32(low)
+    high = f32(high)
+    scale = _uniform_f32_new_bounded(low, high, f32(high - low))
+    u = rng.next_u32()
+    value1_2 = _f32_from_bits((u >> 9) | (127 << 23))
+    value0_1 = f32(value1_2 - 1.0)
+    return f32(f32(value0_1 * scale) + low)
+
+
+def weighted_index_sample(weights: list[float], rng: ChaCha12Rng) -> int:
+    """Mirror ``WeightedIndex::new(weights).sample(rng)`` (rand 0.9.4).
+
+    ``WeightedIndex::new`` accumulates ``cumulative_weights`` = the running total
+    *before* adding each weight after the first (n-1 entries), with f32 addition
+    left-to-right. ``sample`` draws ``chosen`` from ``Uniform::new(0, total)`` and
+    returns ``cumulative_weights.partition_point(|w| w <= chosen)`` — i.e. the
+    count of leading cumulative entries that are ``<= chosen``.
+
+    Requires non-empty ``weights`` with positive total (all load-balancer weights
+    carry a >0 floor, so this holds).
+    """
+    it = iter(weights)
+    total = f32(next(it))
+    cumulative: list[float] = []
+    for w in it:
+        cumulative.append(total)
+        total = f32(total + f32(w))
+    chosen = uniform_f32_sample(rng, 0.0, total)
+    idx = 0
+    for cw in cumulative:
+        if cw <= chosen:
+            idx += 1
+        else:
+            break
+    return idx

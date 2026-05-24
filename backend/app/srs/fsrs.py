@@ -393,6 +393,9 @@ def _passing_intervals_with_fuzz(
     anki_card_id: int | None,
     reps: int,
     max_interval: int = 36500,
+    *,
+    load_balancer: object | None = None,
+    note_id: int | None = None,
 ) -> tuple[int, int, int]:
     """Mirror Anki's interleaved cascade + fuzz pipeline (Layer 51).
 
@@ -418,6 +421,12 @@ def _passing_intervals_with_fuzz(
     factor = random_range_f32(ChaCha12Rng(seed))
 
     def _fuzz(interval_raw: float, minimum: int) -> int:
+        # Anki's `with_review_fuzz` (fuzz.rs:36-42) tries the load balancer first
+        # and only falls back to pure fuzz when it's absent / out of range.
+        if load_balancer is not None:
+            balanced = load_balancer.find_interval(interval_raw, minimum, max_interval, seed, note_id)
+            if balanced is not None:
+                return balanced
         lower, upper = _constrained_fuzz_bounds(interval_raw, minimum, max_interval)
         return lower + int(factor * (1 + upper - lower))
 
@@ -445,6 +454,9 @@ def _graduation_intervals_with_fuzz(
     anki_card_id: int | None,
     reps: int,
     max_interval: int = 36500,
+    *,
+    load_balancer: object | None = None,
+    note_id: int | None = None,
 ) -> tuple[int, int, int]:
     """Mirror Anki's graduation fuzz pipeline (Layer 52).
 
@@ -476,6 +488,10 @@ def _graduation_intervals_with_fuzz(
     factor = random_range_f32(ChaCha12Rng(seed))
 
     def _fuzz(interval_in: float, minimum: int) -> int:
+        if load_balancer is not None:
+            balanced = load_balancer.find_interval(interval_in, minimum, max_interval, seed, note_id)
+            if balanced is not None:
+                return balanced
         lower, upper = _constrained_fuzz_bounds(interval_in, minimum, max_interval)
         return lower + int(factor * (1 + upper - lower))
 
@@ -665,6 +681,7 @@ def schedule(
     time_ms: int = 0,
     now: datetime | None = None,
     col_crt: int | None = None,
+    load_balancer: object | None = None,
 ) -> SRSItem:
     """Apply a review rating to the given direction of an SRSItem.
 
@@ -702,7 +719,17 @@ def schedule(
     # Handle learning step semantics for LEARNING and RELEARNING states
     if prev.state in (SRSState.LEARNING, SRSState.RELEARNING):
         return _schedule_with_steps(
-            item, prev, rating, review_date, direction, params, time_ms, now, last_review_dt, col_crt=col_crt
+            item,
+            prev,
+            rating,
+            review_date,
+            direction,
+            params,
+            time_ms,
+            now,
+            last_review_dt,
+            col_crt=col_crt,
+            load_balancer=load_balancer,
         )
 
     # Handle NEW state with learning steps (Anki parity)
@@ -718,6 +745,7 @@ def schedule(
             params,
             review_date=review_date,
             col_crt=col_crt,
+            load_balancer=load_balancer,
         )
 
     # REVIEW state logic
@@ -732,7 +760,17 @@ def schedule(
 
         if rating == Rating.AGAIN:
             return _schedule_review_again(
-                item, prev, rating, review_date, direction, params, time_ms, now, last_review_dt, col_crt=col_crt
+                item,
+                prev,
+                rating,
+                review_date,
+                direction,
+                params,
+                time_ms,
+                now,
+                last_review_dt,
+                col_crt=col_crt,
+                load_balancer=load_balancer,
             )
         else:
             # Compute stabilities for all three passing ratings (cascade needs all)
@@ -771,6 +809,8 @@ def schedule(
         prev.anki_card_id,
         prev.reps,
         params.maximum_review_interval,
+        load_balancer=load_balancer,
+        note_id=item.anki_note_id,
     )
     interval = {Rating.HARD: fuzzed[0], Rating.GOOD: fuzzed[1], Rating.EASY: fuzzed[2]}[rating]
     new_due_at = _review_due_at_from_interval(review_date, interval, col_crt, now)
@@ -812,6 +852,7 @@ def _schedule_new(
     params: FSRSParams = DEFAULT_FSRS5_PARAMS,
     review_date: date | None = None,
     col_crt: int | None = None,
+    load_balancer: object | None = None,
 ) -> SRSItem:
     """NEW + any rating: walk learn_steps like Anki.
 
@@ -831,6 +872,7 @@ def _schedule_new(
             params,
             review_date=review_date,
             col_crt=col_crt,
+            load_balancer=load_balancer,
         )
 
     steps, _ = _get_steps_for_state(SRSState.LEARNING)
@@ -846,6 +888,7 @@ def _schedule_new(
             params,
             review_date=review_date,
             col_crt=col_crt,
+            load_balancer=load_balancer,
         )
 
     total_steps = len(steps)
@@ -863,6 +906,7 @@ def _schedule_new(
                 params,
                 review_date=review_date,
                 col_crt=col_crt,
+                load_balancer=load_balancer,
             )
         step_index = 1
     else:  # AGAIN or HARD: stay at step 0
@@ -931,6 +975,7 @@ def _schedule_review_again(
     now: datetime,
     last_review_dt: datetime,
     col_crt: int | None = None,
+    load_balancer: object | None = None,
 ) -> SRSItem:
     """Handle REVIEW + AGAIN: enter RELEARNING with relearning steps."""
     from dataclasses import replace
@@ -970,6 +1015,7 @@ def _schedule_review_again(
             params,
             review_date=review_date,
             col_crt=col_crt,
+            load_balancer=load_balancer,
         )
 
     # Start at step 0 of relearning: total_remaining = full count
@@ -1015,6 +1061,7 @@ def _schedule_with_steps(
     now: datetime,
     last_review_dt: datetime,
     col_crt: int | None = None,
+    load_balancer: object | None = None,
 ) -> SRSItem:
     """Handle LEARNING/RELEARNING with step semantics."""
     from dataclasses import replace
@@ -1034,6 +1081,7 @@ def _schedule_with_steps(
             params,
             review_date=review_date,
             col_crt=col_crt,
+            load_balancer=load_balancer,
         )
 
     total_steps = len(steps)
@@ -1133,6 +1181,7 @@ def _schedule_with_steps(
                 params,
                 review_date=review_date,
                 col_crt=col_crt,
+                load_balancer=load_balancer,
             )
 
         # Decrement total_remaining; advance to next step.
@@ -1170,6 +1219,7 @@ def _schedule_with_steps(
             params,
             review_date=review_date,
             col_crt=col_crt,
+            load_balancer=load_balancer,
         )
 
     new_directions = dict(item.directions)
@@ -1193,6 +1243,7 @@ def _graduate_to_review(
     params: FSRSParams = DEFAULT_FSRS5_PARAMS,
     review_date: date | None = None,
     col_crt: int | None = None,
+    load_balancer: object | None = None,
 ) -> SRSItem:
     """Graduate from LEARNING/RELEARNING to REVIEW with FSRS init."""
     from dataclasses import replace
@@ -1249,6 +1300,8 @@ def _graduate_to_review(
             prev.anki_card_id,
             prev.reps,
             params.maximum_review_interval,
+            load_balancer=load_balancer,
+            note_id=item.anki_note_id,
         )
         interval = {Rating.HARD: fuzzed[0], Rating.GOOD: fuzzed[1], Rating.EASY: fuzzed[2]}[rating]
     else:
