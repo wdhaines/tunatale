@@ -175,7 +175,13 @@ class LoadBalancer:
     ``add_card`` after each grade to mirror Anki's per-answer histogram mutation.
     """
 
-    def __init__(self, easy_days_percentages: list[float] | None, next_day_at: int) -> None:
+    def __init__(
+        self,
+        easy_days_percentages: list[float] | None,
+        next_day_at: int,
+        *,
+        bury_reviews: bool = True,
+    ) -> None:
         self.days: list[_LoadBalancerDay] = [_LoadBalancerDay() for _ in range(LOAD_BALANCE_DAYS)]
         # Empty percentages → all Normal (parse_easy_days_percentages, load_balancer.rs:284-298).
         if easy_days_percentages:
@@ -183,6 +189,10 @@ class LoadBalancer:
         else:
             self.easy_days = [_EASY_NORMAL] * 7
         self.next_day_at = next_day_at
+        # Anki only feeds the note_id into the sibling modifier when the deck's
+        # bury_reviews is on (answering/mod.rs:247, `.then_some(note_id)`). When
+        # off, find_interval drops note_id so siblings never nudge the pick.
+        self.bury_reviews = bury_reviews
 
     def add_card(self, cid: int, nid: int, interval: int) -> None:
         if 0 <= interval < LOAD_BALANCE_DAYS:
@@ -208,10 +218,14 @@ class LoadBalancer:
         before_days, after_days = _constrained_fuzz_bounds(interval, minimum, maximum)
         interval_days = self.days[before_days : after_days + 1]
 
+        # Mirror Anki's `.then_some(note_id)`: siblings only matter when the deck
+        # buries reviews. With bury_reviews off, note_id is dropped entirely.
+        effective_note_id = note_id if self.bury_reviews else None
+
         review_counts = [len(day.cards) for day in interval_days]
         weekdays = [_interval_to_weekday(i + before_days, self.next_day_at) for i in range(len(interval_days))]
         easy_days_modifier = _calculate_easy_days_modifiers(self.easy_days, weekdays, review_counts)
-        sibling_modifier = _calculate_sibling_modifiers(self.days, before_days, after_days, note_id)
+        sibling_modifier = _calculate_sibling_modifiers(self.days, before_days, after_days, effective_note_id)
 
         intervals = [
             _LoadBalancerInterval(

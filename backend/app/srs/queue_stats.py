@@ -10,6 +10,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from app.anki.protobuf_wire import (
+    compute_anki_day_index,
     decode_varint,
     find_fixed32_field,
     find_len_field,
@@ -29,6 +30,7 @@ _CACHE_MAX_AGE_DAYS = 30
 # Field numbers in DeckConfig.Config protobuf (Anki ≥24.04)
 _LEARN_STEPS_FIELD = 1  # VARINT uint32 → packed float (learn steps in minutes)
 _RELEARN_STEPS_FIELD = 2  # VARINT uint32 → packed float (relearn steps in minutes)
+_EASY_DAYS_FIELD = 4  # LEN-delimited packed f32; 7 per-weekday load percentages (FSRS load balancer)
 _FSRS5_WEIGHTS_FIELD = 5  # LEN-delimited packed f32; 19 floats for FSRS-5
 _FSRS6_WEIGHTS_FIELD = 6  # LEN-delimited packed f32; 21 floats for FSRS-6
 _NEW_PER_DAY_FIELD = 9  # VARINT uint32
@@ -52,6 +54,7 @@ _DEFAULT_BURY_NEW = True
 _DEFAULT_BURY_REVIEW = True
 _DEFAULT_LEARN_STEPS: list[float] = [1.0, 10.0]
 _DEFAULT_RELEARN_STEPS: list[float] = [10.0]
+_DEFAULT_LOAD_BALANCER_ENABLED = False
 
 
 def _read_conf_id_for_deck(conn: sqlite3.Connection, deck_name: str) -> int | None:
@@ -799,6 +802,179 @@ def resolve_relearning_steps(db: SRSDatabase | None = None) -> tuple[list[float]
                 pass
 
     return (_DEFAULT_RELEARN_STEPS, "default")
+
+
+def _read_easy_days_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> list[float] | None:
+    """Return the 7 easy_days_percentages from Anki's deck_config protobuf, or None.
+
+    Field 4, ``repeated float`` (packed f32) — same encoding as learn/relearn steps.
+    """
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    except sqlite3.Error:  # pragma: no cover - defensive
+        return None  # pragma: no cover
+
+    if "deck_config" not in tables or "decks" not in tables:
+        return None
+
+    conf_id = _read_conf_id_for_deck(conn, deck_name)
+    if conf_id is None:
+        return None
+
+    config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
+    if config_row is None or not config_row[0]:  # pragma: no cover - defensive
+        return None  # pragma: no cover
+
+    config_blob = config_row[0]
+    config_blob = bytes(config_blob) if isinstance(config_blob, memoryview) else config_blob
+    return _pb_find_packed_float_field(config_blob, _EASY_DAYS_FIELD)
+
+
+def refresh_easy_days(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
+    """Read easy_days_percentages from collection.anki2 and cache it (JSON list)."""
+    days = _read_easy_days_from_deck_config_table(conn, deck_name)
+    if days is not None:
+        db.set_anki_state_cache("easy_days_percentages", json.dumps(days))
+
+
+def resolve_easy_days(db: SRSDatabase | None = None) -> list[float] | None:
+    """Return the cached easy_days_percentages list, or None (→ all-Normal).
+
+    None means the deck has no EasyDay overrides; LoadBalancer(None, ...) then
+    treats every weekday as Normal (load_balancer.rs:284-298).
+    """
+    if db is None:
+        try:
+            from app.srs.database import SRSDatabase as _SRSDatabase
+
+            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        except Exception:
+            return None
+
+    row = db.get_anki_state_cache("easy_days_percentages")
+    if row is None:
+        return None
+    try:
+        return json.loads(row[0])
+    except (ValueError, TypeError):  # pragma: no cover - defensive
+        return None  # pragma: no cover
+
+
+def _read_load_balancer_enabled_from_config_table(conn: sqlite3.Connection) -> bool | None:
+    """Read loadBalancerEnabled from Anki's config table.
+
+    Global collection preference, stored as JSON bool bytes (b'true' / b'false').
+    Returns None if the key or table is absent (Anki's default is false).
+    """
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    except sqlite3.Error:  # pragma: no cover - defensive
+        return None  # pragma: no cover
+
+    if "config" not in tables:
+        return None
+
+    row = conn.execute("SELECT val FROM config WHERE key = 'loadBalancerEnabled'").fetchone()
+    if not row:
+        return None
+    return row[0] == b"true"
+
+
+def refresh_load_balancer_enabled(db: SRSDatabase, conn: sqlite3.Connection) -> None:
+    """Read loadBalancerEnabled from Anki's config table and cache it."""
+    val = _read_load_balancer_enabled_from_config_table(conn)
+    if val is not None:
+        db.set_anki_state_cache("load_balancer_enabled", "true" if val else "false")
+
+
+def resolve_load_balancer_enabled(db: SRSDatabase | None = None) -> bool:
+    """Return the cached loadBalancerEnabled flag. Defaults to False (Anki's default)."""
+    if db is None:
+        try:
+            from app.srs.database import SRSDatabase as _SRSDatabase
+
+            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        except Exception:
+            return _DEFAULT_LOAD_BALANCER_ENABLED
+
+    row = db.get_anki_state_cache("load_balancer_enabled")
+    if row is not None:
+        return row[0] == "true"
+    return _DEFAULT_LOAD_BALANCER_ENABLED
+
+
+def warn_if_multi_deck_preset(conn: sqlite3.Connection, deck_name: str) -> None:
+    """Log a WARNING if more than one deck shares *deck_name*'s preset (Layer 55).
+
+    The load-balancer histogram is bit-exact ONLY because the Slovene deck is the
+    sole deck on its preset — so TT's own ``collocation_directions`` IS the whole
+    same-preset due histogram. If a second deck joins the preset, Anki's histogram
+    gains cards TT can't see and the live-balanced pick silently drifts. This is a
+    cheap sync-time tripwire, not a correctness gate.
+    """
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    except sqlite3.Error:  # pragma: no cover - defensive
+        return  # pragma: no cover
+    if "decks" not in tables:
+        return
+
+    target_conf = _read_conf_id_for_deck(conn, deck_name)
+    if target_conf is None:
+        return
+    names = [r[0] for r in conn.execute("SELECT name FROM decks").fetchall()]
+    sharing = [n for n in names if _read_conf_id_for_deck(conn, n) == target_conf]
+    if len(sharing) > 1:
+        _log.warning(
+            "Load-balancer single-preset invariant broken: %d decks share %r's preset (%s). "
+            "The live-grade due histogram will diverge from Anki until they're split.",
+            len(sharing),
+            deck_name,
+            ", ".join(sorted(sharing)),
+        )
+
+
+def build_live_load_balancer(
+    db: SRSDatabase,
+    *,
+    now: datetime | None = None,
+    col_crt: int | None = None,
+) -> object | None:
+    """Construct the per-request FSRS load balancer from TT state (Layer 55).
+
+    Returns ``None`` (→ pure-fuzz, unchanged behaviour) when the deck's
+    ``loadBalancerEnabled`` is off or ``col.crt`` hasn't been synced yet.
+
+    Faithful to Anki's model (build once at queue-build, ``add_card`` each answer,
+    never remove): the histogram is the sync-frozen ``anki_due`` snapshot — which IS
+    Anki's queue-build input, since TT grades never touch ``anki_due`` — plus this
+    session's TT-native grades replayed via ``add_card`` (rule: a TT grade moves
+    ``due_at`` but not ``anki_due``, so the new position must be added explicitly).
+    The caller threads the returned object into ``schedule()`` and ``add_card``s each
+    card it grades, so later grades in a multi-card request see earlier ones.
+    """
+    if not resolve_load_balancer_enabled(db):
+        return None
+    if now is None:  # pragma: no cover - convenience; callers pass an explicit now
+        now = datetime.now(UTC)  # pragma: no cover
+    if col_crt is None:
+        col_crt = resolve_col_crt(db)
+    if col_crt is None:
+        return None
+
+    from app.srs.load_balancer import LOAD_BALANCE_DAYS, LoadBalancer
+
+    today = compute_anki_day_index(col_crt, 4, now)
+    next_day_at = col_crt + (today + 1) * 86400
+    bury_reviews, _ = resolve_bury_review(db)
+    easy_days = resolve_easy_days(db)
+
+    lb = LoadBalancer(easy_days, next_day_at, bury_reviews=bury_reviews)
+    for akid, nid, due in db.get_load_balancer_histogram(today, LOAD_BALANCE_DAYS):
+        lb.add_card(akid or 0, nid or 0, due - today)
+    for akid, nid, interval in db.get_load_balancer_session_replay():
+        lb.add_card(akid or 0, nid or 0, interval)
+    return lb
 
 
 def _read_fsrs_short_term_from_config_table(conn: sqlite3.Connection) -> bool | None:

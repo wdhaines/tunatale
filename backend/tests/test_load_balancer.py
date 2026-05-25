@@ -198,6 +198,44 @@ class TestFindInterval:
         assert lb.find_interval(64.0, 33, 36500, 1775264031881, None) == 60
 
 
+class TestBuryReviewsGating:
+    """Anki only feeds note_id to the balancer when bury_reviews is enabled
+    (answering/mod.rs:247, `.then_some(note_id)`). With bury_reviews off the
+    sibling modifier must be inert — find_interval(note_id=N) == find_interval(None).
+    """
+
+    _SEED = 1775264031881
+    _SIBLING_NOTE = 999
+
+    def _loaded(self, *, bury_reviews: bool) -> LoadBalancer:
+        # Same valley-at-60 histogram as test_picks_valley_day, plus a lone
+        # sibling of note 999 sitting on the valley day.
+        lb = LoadBalancer(None, 1779534000, bury_reviews=bury_reviews)
+        for off in range(55, 70):
+            if off != 60:
+                for k in range(50):
+                    lb.add_card(900000 + off * 100 + k, 800000 + off * 100 + k, off)
+        lb.add_card(123456, self._SIBLING_NOTE, 60)
+        return lb
+
+    def test_default_bury_reviews_is_true(self):
+        assert LoadBalancer(None, 1779534000).bury_reviews is True
+
+    def test_bury_off_ignores_note_id(self):
+        lb = self._loaded(bury_reviews=False)
+        with_note = lb.find_interval(64.0, 33, 36500, self._SEED, self._SIBLING_NOTE)
+        without_note = lb.find_interval(64.0, 33, 36500, self._SEED, None)
+        assert with_note == without_note
+
+    def test_bury_on_uses_note_id(self):
+        # Guards against the gating test above being vacuous: when bury is on the
+        # sibling on day 60 steers the pick off the valley.
+        lb = self._loaded(bury_reviews=True)
+        with_note = lb.find_interval(64.0, 33, 36500, self._SEED, self._SIBLING_NOTE)
+        without_note = lb.find_interval(64.0, 33, 36500, self._SEED, None)
+        assert with_note != without_note
+
+
 class TestFuzzPipelineHooks:
     """The balancer is threaded into both fuzz pipelines in fsrs.py."""
 

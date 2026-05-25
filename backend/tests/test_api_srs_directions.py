@@ -339,6 +339,70 @@ class TestDrillEndpoint:
         assert r.status_code == 404
 
 
+class _SpyBalancer:
+    """Stand-in load balancer: records add_card, never relocates (find_interval=None)."""
+
+    def __init__(self):
+        self.added: list[tuple[int, int, int]] = []
+
+    def find_interval(self, *args, **kwargs):
+        return None
+
+    def add_card(self, card_id, note_id, interval):
+        self.added.append((card_id, note_id, interval))
+
+
+class TestDrillLoadBalancerWiring:
+    """Layer 55: drill_feedback builds the session balancer, threads it into
+    schedule(), and add_card's the graded card afterward."""
+
+    async def test_enabled_passes_balancer_and_adds_card(self, monkeypatch):
+        import app.api.srs as srs_mod
+
+        spy = _SpyBalancer()
+        captured: dict[str, object] = {}
+        monkeypatch.setattr(srs_mod, "build_live_load_balancer", lambda db, **k: spy)
+        orig = srs_mod.schedule
+
+        def spy_schedule(*a, **k):
+            captured["lb"] = k.get("load_balancer")
+            return orig(*a, **k)
+
+        monkeypatch.setattr(srs_mod, "schedule", spy_schedule)
+
+        db = _db()
+        db.add_collocation(_unit("voda"), language_code="sl")
+        rows, _ = db.list_collocations(search="voda", limit=1)
+        item_id = rows[0][0]
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post(f"/api/srs/items/{item_id}/direction/recognition/feedback", json={"rating": "good"})
+        assert r.status_code == 200
+        assert captured["lb"] is spy
+        assert len(spy.added) == 1  # the graded card was fed back into the histogram
+
+    async def test_disabled_passes_none(self, monkeypatch):
+        import app.api.srs as srs_mod
+
+        captured: dict[str, object] = {"lb": "sentinel"}
+        monkeypatch.setattr(srs_mod, "build_live_load_balancer", lambda db, **k: None)
+        orig = srs_mod.schedule
+
+        def spy_schedule(*a, **k):
+            captured["lb"] = k.get("load_balancer")
+            return orig(*a, **k)
+
+        monkeypatch.setattr(srs_mod, "schedule", spy_schedule)
+
+        db = _db()
+        db.add_collocation(_unit("voda"), language_code="sl")
+        rows, _ = db.list_collocations(search="voda", limit=1)
+        item_id = rows[0][0]
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post(f"/api/srs/items/{item_id}/direction/recognition/feedback", json={"rating": "good"})
+        assert r.status_code == 200
+        assert captured["lb"] is None
+
+
 class TestInvalidDirectionParams:
     async def test_due_invalid_direction_422(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:

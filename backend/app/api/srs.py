@@ -32,6 +32,7 @@ from app.srs.function_words import is_function_word
 from app.srs.lemmatizer import LowercaseLemmatizer
 from app.srs.queue_stats import (
     advance_learning_cutoff,
+    build_live_load_balancer,
     clear_session_main_queue,
     get_session_main_queue,
     resolve_bury_new,
@@ -48,6 +49,17 @@ from app.srs.tokenizer import tokenize
 from app.srs.transcript import extract_transcript
 
 _logger = logging.getLogger(__name__)
+
+
+def _balancer_add(balancer: object | None, *, card_id: int | None, note_id: int | None, interval: int) -> None:
+    """Feed a just-graded card back into the live load-balancer histogram (Layer 55).
+
+    Mirrors Anki's per-answer ``load_balancer.add_card`` so later grades in the
+    same request see this one. No-op when the balancer is absent (LB off / pre-sync).
+    """
+    if balancer is not None:
+        balancer.add_card(card_id or 0, note_id or 0, interval)
+
 
 router = APIRouter(prefix="/api/srs", tags=["srs"])
 _MEDIA_DIR = Path(__file__).parent.parent.parent / "media"
@@ -192,13 +204,22 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
     fsrs_params, _ = resolve_fsrs_params(db)
     col_crt = resolve_col_crt(db)
     now = datetime.datetime.now(datetime.UTC)
+    balancer = build_live_load_balancer(db, now=now, col_crt=col_crt)
     prev_dir = item.directions[dir_enum]
     updated = schedule(
-        item, rating, direction=dir_enum, params=fsrs_params, time_ms=body.time_ms, now=now, col_crt=col_crt
+        item,
+        rating,
+        direction=dir_enum,
+        params=fsrs_params,
+        time_ms=body.time_ms,
+        now=now,
+        col_crt=col_crt,
+        load_balancer=balancer,
     )
     db.update_direction_by_id(item_id, dir_enum, updated.directions[dir_enum])
     row = build_revlog_row(item_id, dir_enum, prev_dir, updated.directions[dir_enum], rating, body.time_ms, now=now)
     db.append_revlog(row)
+    _balancer_add(balancer, card_id=prev_dir.anki_card_id, note_id=item.anki_note_id, interval=row.interval)
     # Anki parity: advance the learning cutoff at grade time. The next /review-queue
     # call uses this snapshot (not live `now`) to decide which queue=1 cards are
     # ready, so a learning card whose timer expired between this grade and the
@@ -256,6 +277,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
     db = request.app.state.srs_db
     col_crt = resolve_col_crt(db)
+    # One session balancer for the whole request; each grade below feeds itself
+    # back via _balancer_add so later grades in this lesson see earlier ones.
+    balancer = build_live_load_balancer(db, now=datetime.datetime.now(datetime.UTC), col_crt=col_crt)
 
     # ── Word-level tracking from NATURAL_SPEED section ──────────────────
     from app.models.lesson import SectionType, extract_sentence_translations_from_translated
@@ -365,6 +389,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                     params=resolve_fsrs_params(db)[0],
                     now=now,
                     col_crt=col_crt,
+                    load_balancer=balancer,
                 )
                 db.update_collocation(updated)
                 # `existing` came from db.get_collocation(); guid is valid → row always exists.
@@ -380,6 +405,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                     now=now,
                 )
                 db.append_revlog(row)
+                _balancer_add(
+                    balancer, card_id=prev_dir.anki_card_id, note_id=existing.anki_note_id, interval=row.interval
+                )
                 graded_count += 1
 
     # ── Key phrase registration + auto-grade ────────────────────────────
@@ -411,6 +439,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                     params=resolve_fsrs_params(db)[0],
                     now=now,
                     col_crt=col_crt,
+                    load_balancer=balancer,
                 )
                 db.update_collocation(updated)
                 # `existing` came from db.get_collocation(); guid is valid → row always exists.
@@ -426,6 +455,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                     now=now,
                 )
                 db.append_revlog(row)
+                _balancer_add(
+                    balancer, card_id=prev_dir.anki_card_id, note_id=existing.anki_note_id, interval=row.interval
+                )
                 graded_count += 1
 
     registered = created_count + graded_count

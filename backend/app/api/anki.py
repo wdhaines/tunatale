@@ -93,10 +93,13 @@ async def trigger_sync(request: Request, dry_run: bool = False):
                     refresh_daily_new_cap,
                     refresh_daily_review_cap,
                     refresh_desired_retention,
+                    refresh_easy_days,
                     refresh_fsrs_params,
                     refresh_fsrs_short_term_flag,
                     refresh_learning_steps,
+                    refresh_load_balancer_enabled,
                     refresh_review_settings,
+                    warn_if_multi_deck_preset,
                 )
 
                 refresh_col_crt(db, ctx.conn)
@@ -107,6 +110,9 @@ async def trigger_sync(request: Request, dry_run: bool = False):
                 refresh_fsrs_short_term_flag(db, ctx.conn)
                 refresh_review_settings(db, ctx.conn, settings.anki_deck_name)
                 refresh_learning_steps(db, ctx.conn, settings.anki_deck_name)
+                refresh_load_balancer_enabled(db, ctx.conn)
+                refresh_easy_days(db, ctx.conn, settings.anki_deck_name)
+                warn_if_multi_deck_preset(ctx.conn, settings.anki_deck_name)
 
     except AnkiRunningError as exc:
         raise HTTPException(

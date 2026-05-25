@@ -19,11 +19,13 @@ in the non-oracle `test_load_balancer.py`.
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from app.models.srs_item import Rating
+from app.srs.database import SRSDatabase
 from app.srs.fsrs import (
     DEFAULT_FSRS5_PARAMS,
     FSRSParams,
@@ -34,6 +36,7 @@ from app.srs.fsrs import (
     _quantize_stability,
 )
 from app.srs.load_balancer import LoadBalancer
+from app.srs.queue_stats import build_live_load_balancer
 from tests.anki_oracle.harness_fixtures import run_oracle
 from tests.anki_oracle.synthetic_collection import COL_CRT, DEFAULT_DESIRED_RETENTION, SyntheticCollection
 
@@ -176,6 +179,77 @@ def test_load_balancer_matches_anki(synthetic_collection: SyntheticCollection, t
 
     # And it must have actually engaged (moved the pick off the pure-fuzz value),
     # otherwise the test would pass trivially without exercising the balancer.
+    assert (anki_on["good"], anki_on["easy"]) != (anki_off["good"], anki_off["easy"]), (
+        "load balancer did not change the interval — scenario not exercising it"
+    )
+
+
+def _mirror_histogram_into_tt(placement_today: int) -> SRSDatabase:
+    """Build an in-memory TT DB whose collocation_directions mirror the synthetic
+    Anki histogram (same anki_due col-day values, one note per pile card).
+
+    This is the production input to build_live_load_balancer: its histogram query
+    reads these rows, so a balancer built from it must match one built from the
+    Anki collection directly.
+    """
+    db = SRSDatabase(":memory:")
+    db.set_anki_state_cache("load_balancer_enabled", "true")
+    db.set_anki_state_cache("col_crt", str(COL_CRT))
+    coll_rows: list[tuple] = [(1, "seed", _TEST_NID)]
+    dir_rows: list[tuple] = [(1, "recognition", "2026-01-01T00:00:00+00:00", _TEST_AKID, placement_today)]
+    cid = 5_000_000
+    for offset in range(1, 99):
+        if offset in _VALLEYS:
+            continue
+        for _ in range(_LOAD_PER_DAY):
+            coll_rows.append((cid, f"c{cid}", cid))
+            dir_rows.append((cid, "recognition", "2026-01-01T00:00:00+00:00", cid, placement_today + offset))
+            cid += 1
+    with db._get_conn() as conn:
+        conn.executemany("INSERT INTO collocations (id, text, anki_note_id) VALUES (?, ?, ?)", coll_rows)
+        conn.executemany(
+            "INSERT INTO collocation_directions "
+            "(collocation_id, direction, due_at, anki_card_id, anki_due, state) "
+            "VALUES (?, ?, ?, ?, ?, 'review')",
+            dir_rows,
+        )
+        conn.commit()
+    return db
+
+
+@pytest.mark.oracle
+def test_live_builder_matches_anki(synthetic_collection: SyntheticCollection, tmp_path: Path) -> None:
+    """build_live_load_balancer, fed from TT state mirroring the Anki collection,
+    reproduces Anki's relocated interval bit-exact (Layer 55 — live grade path)."""
+    on_path = synthetic_collection.path
+    placement_today = _build(on_path, load_balancer_enabled=True)
+    off_path = tmp_path / "lb_off.anki2"
+    _build(off_path, load_balancer_enabled=False)
+
+    anki_on = run_oracle(on_path, [{"op": "scheduling_states", "deck_id": 1, "card_id": _TEST_AKID}]).raw()[
+        "scheduling_states_0"
+    ]
+    anki_off = run_oracle(off_path, [{"op": "scheduling_states", "deck_id": 1, "card_id": _TEST_AKID}]).raw()[
+        "scheduling_states_0"
+    ]
+    anki_today = anki_on["today"]
+
+    db = _mirror_histogram_into_tt(placement_today)
+    # Pick a `now` mid-way through Anki's `today` so build_live_load_balancer's
+    # computed day index == anki_today, aligning TT's histogram frame to Anki's
+    # (mirrors _make_balancer's placement_today→anki_today shift without rounding).
+    now = datetime.fromtimestamp(COL_CRT + anki_today * 86400 + 8 * 3600, tz=UTC)
+    balancer = build_live_load_balancer(db, now=now, col_crt=COL_CRT)
+    assert balancer is not None
+
+    tt_off = _tt_intervals(None)
+    tt_on = _tt_intervals(balancer)
+
+    if (tt_off[1], tt_off[2]) != (anki_off["good"], anki_off["easy"]):
+        pytest.skip(f"pure-fuzz baseline misaligned (rollover boundary): TT_off={tt_off} Anki_off={anki_off}")
+
+    assert tt_on[1] == anki_on["good"], f"GOOD: TT={tt_on[1]} Anki={anki_on['good']}"
+    assert tt_on[2] == anki_on["easy"], f"EASY: TT={tt_on[2]} Anki={anki_on['easy']}"
     assert (anki_on["good"], anki_on["easy"]) != (anki_off["good"], anki_off["easy"]), (
         "load balancer did not change the interval — scenario not exercising it"
     )
