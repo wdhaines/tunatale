@@ -307,6 +307,133 @@ class TestRebuildFuzzSeed:
         )
 
 
+def _assert_state_eq(a: DirectionState, b: DirectionState, msg: str = "") -> None:
+    """Compare the FSRS-derived fields of two DirectionStates."""
+    assert a.state == b.state, f"{msg} state {a.state} != {b.state}"
+    assert a.reps == b.reps, f"{msg} reps {a.reps} != {b.reps}"
+    assert a.lapses == b.lapses, f"{msg} lapses {a.lapses} != {b.lapses}"
+    assert a.stability == b.stability, f"{msg} stability {a.stability} != {b.stability}"
+    assert a.difficulty == b.difficulty, f"{msg} difficulty {a.difficulty} != {b.difficulty}"
+    assert a.due_at == b.due_at, f"{msg} due_at {a.due_at} != {b.due_at}"
+
+
+class TestRebuildIncremental:
+    """Stage 3b step 2: starting_state + since_id incremental replay.
+
+    The collapse's soundness invariant is *composition*: replaying a prefix from
+    NEW to reach state S_k, then replaying the suffix with ``starting_state=S_k``
+    and ``since_id=<k-th row id>``, must equal a single replay from NEW over all
+    rows. These tests pin that, plus the boundary cases (since_id=None ==
+    legacy; zero new rows == identity).
+    """
+
+    _ROWS = [
+        (1700000000001, 3, 0, 0, 0, 0, 0),  # NEW + GOOD -> learning
+        (1700000600001, 3, 0, 0, 0, 0, 0),  # GOOD -> graduate
+        (1700087000001, 3, 0, 0, 0, 0, 1),  # REVIEW + GOOD (+1d)
+        (1700173400001, 1, 0, 0, 0, 0, 1),  # REVIEW + AGAIN -> relearning
+        (1700173460001, 3, 0, 0, 0, 0, 2),  # GOOD -> graduate again
+    ]
+    _CARD_ID = 10001
+
+    def _seed_rows(self, tmp_path, rows, *, name="tunatale.db", text="test") -> tuple:
+        tt = _build_tt_db(tmp_path, name=name)
+        row_id = seed_direction(SRSDatabase(str(tt)), text=text, anki_card_id=self._CARD_ID)
+        _add_revlog_to_tt(tt, row_id, "recognition", rows, anki_card_id=self._CARD_ID)
+        return tt, row_id
+
+    def test_since_id_none_walks_from_new(self, tmp_path):
+        """(a) Omitting starting_state + since_id reproduces the legacy from-NEW walk."""
+        tt, row_id = self._seed_rows(tmp_path, self._ROWS)
+        with SRSDatabase(str(tt)) as db:
+            default = db.rebuild_from_revlog(row_id, Direction.RECOGNITION, anki_card_id=self._CARD_ID)
+            explicit_none = db.rebuild_from_revlog(
+                row_id, Direction.RECOGNITION, anki_card_id=self._CARD_ID, starting_state=None, since_id=None
+            )
+        _assert_state_eq(default, explicit_none, "since_id=None")
+
+    def test_zero_new_rows_returns_starting_state(self, tmp_path):
+        """(c) starting_state with since_id past every row returns it unchanged."""
+        tt, row_id = self._seed_rows(tmp_path, self._ROWS)
+        with SRSDatabase(str(tt)) as db:
+            full = db.rebuild_from_revlog(row_id, Direction.RECOGNITION, anki_card_id=self._CARD_ID)
+            max_id = max(r[0] for r in self._ROWS)
+            incremental = db.rebuild_from_revlog(
+                row_id,
+                Direction.RECOGNITION,
+                anki_card_id=self._CARD_ID,
+                starting_state=full,
+                since_id=max_id,
+            )
+        _assert_state_eq(full, incremental, "zero-new-rows identity")
+
+    def test_starting_state_plus_one_row_matches_full(self, tmp_path):
+        """(d) prefix-replay(N-1) then +1 row == full replay from NEW."""
+        prefix_rows = self._ROWS[:-1]
+        last_row = self._ROWS[-1]
+        tt_prefix, prefix_id = self._seed_rows(tmp_path, prefix_rows, name="prefix.db", text="prefix")
+        tt_full, full_id = self._seed_rows(tmp_path, self._ROWS, name="full.db", text="full")
+
+        with SRSDatabase(str(tt_prefix)) as db:
+            s_prefix = db.rebuild_from_revlog(prefix_id, Direction.RECOGNITION, anki_card_id=self._CARD_ID)
+        with SRSDatabase(str(tt_full)) as db:
+            full = db.rebuild_from_revlog(full_id, Direction.RECOGNITION, anki_card_id=self._CARD_ID)
+            incremental = db.rebuild_from_revlog(
+                full_id,
+                Direction.RECOGNITION,
+                anki_card_id=self._CARD_ID,
+                starting_state=s_prefix,
+                since_id=prefix_rows[-1][0],
+            )
+        # Sanity: exactly one row (the last) is newer than the split point.
+        assert last_row[0] > prefix_rows[-1][0]
+        _assert_state_eq(full, incremental, "starting_state + 1 row")
+
+    def test_starting_state_plus_n_rows_matches_full(self, tmp_path):
+        """(e) prefix-replay(2) then +3 rows == full replay from NEW."""
+        split = 2
+        prefix_rows = self._ROWS[:split]
+        tt_prefix, prefix_id = self._seed_rows(tmp_path, prefix_rows, name="prefix.db", text="prefix")
+        tt_full, full_id = self._seed_rows(tmp_path, self._ROWS, name="full.db", text="full")
+
+        with SRSDatabase(str(tt_prefix)) as db:
+            s_prefix = db.rebuild_from_revlog(prefix_id, Direction.RECOGNITION, anki_card_id=self._CARD_ID)
+        with SRSDatabase(str(tt_full)) as db:
+            full = db.rebuild_from_revlog(full_id, Direction.RECOGNITION, anki_card_id=self._CARD_ID)
+            incremental = db.rebuild_from_revlog(
+                full_id,
+                Direction.RECOGNITION,
+                anki_card_id=self._CARD_ID,
+                starting_state=s_prefix,
+                since_id=prefix_rows[-1][0],
+            )
+        _assert_state_eq(full, incremental, "starting_state + N rows")
+
+    def test_since_id_filters_rows_below_threshold(self, tmp_path):
+        """(b) since_id excludes rows at or below the threshold from the walk.
+
+        With starting_state already past the prefix, a since_id set ABOVE some of
+        the suffix rows must skip them — proving the filter is ``id > since_id``,
+        not a no-op.
+        """
+        tt, row_id = self._seed_rows(tmp_path, self._ROWS)
+        with SRSDatabase(str(tt)) as db:
+            full = db.rebuild_from_revlog(row_id, Direction.RECOGNITION, anki_card_id=self._CARD_ID)
+            # Replay from `full` with since_id = max_id skips everything (identity);
+            # with since_id below the last row, it would re-walk the last row and
+            # diverge. Pin that the threshold is exclusive and effective.
+            second_last = sorted(r[0] for r in self._ROWS)[-2]
+            walks_last = db.rebuild_from_revlog(
+                row_id,
+                Direction.RECOGNITION,
+                anki_card_id=self._CARD_ID,
+                starting_state=full,
+                since_id=second_last,
+            )
+        # full already includes the last row; re-walking it from `full` changes state.
+        assert walks_last.reps == full.reps + 1, "since_id=second_last must re-walk exactly the last row"
+
+
 class TestRebuildAnkiLinked:
     """Anki-linked directions: MATCH and REPAIR paths."""
 

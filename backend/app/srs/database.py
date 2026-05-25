@@ -125,6 +125,11 @@ _NON_REVIEWABLE_STATES = ("new", "suspended", "known", "buried")
 # States that count as "in the learning bucket" (Anki queue=1 / queue=3).
 # Shared by get_learning_items (review queue) and count_learning (badge).
 _LEARNING_STATES = ("learning", "relearning")
+# Stage 3b sync_pull merge modes (anki_state_cache['event_sync_pull']):
+#   legacy  — the pre-Stage-3b 9-branch _pull_merge_direction (default)
+#   compare — run legacy + replay, write legacy authoritative + replay to shadow cols
+#   new     — collapsed FSRS branch: take Anki verbatim, forward-step as validator
+_EVENT_SYNC_PULL_MODES = frozenset({"legacy", "compare", "new"})
 
 
 class SRSDatabase:
@@ -416,6 +421,28 @@ class SRSDatabase:
                     row["id"],
                     direction.value,
                 ),
+            )
+            self._commit(conn)
+
+    def set_direction_shadow_replay(
+        self,
+        collocation_id: int,
+        direction: Direction,
+        stability: float,
+        difficulty: float,
+    ) -> None:
+        """Write the replay-derived FSRS state to the Stage-3b shadow columns.
+
+        Compare-mode (``event_sync_pull='compare'``) only. Leaves the
+        authoritative ``stability``/``fsrs_difficulty`` untouched; the soak
+        SQL-diffs ``*_replayed`` against them to confirm replay reproduces Anki.
+        """
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions "
+                "SET stability_replayed = ?, fsrs_difficulty_replayed = ? "
+                "WHERE collocation_id = ? AND direction = ?",
+                (stability, difficulty, collocation_id, direction.value),
             )
             self._commit(conn)
 
@@ -1940,6 +1967,24 @@ class SRSDatabase:
     def set_enable_cloze_cards(self, enabled: bool) -> None:
         self.set_anki_state_cache("enable_cloze_cards", "true" if enabled else "false")
 
+    def get_event_sync_pull_mode(self) -> str:
+        """Return the sync_pull merge mode (Stage 3b): ``legacy`` / ``compare`` / ``new``.
+
+        Defaults to ``legacy`` (the pre-Stage-3b 9-branch merge tree) when unset.
+        A corrupt/unrecognised stored value also falls back to ``legacy`` so a
+        bad row can never silently take sync_pull down an unimplemented path.
+        """
+        row = self.get_anki_state_cache("event_sync_pull")
+        if row is None or row[0] not in _EVENT_SYNC_PULL_MODES:
+            return "legacy"
+        return row[0]
+
+    def set_event_sync_pull_mode(self, mode: str) -> None:
+        """Persist the sync_pull merge mode; rejects anything but the 3 known modes."""
+        if mode not in _EVENT_SYNC_PULL_MODES:
+            raise ValueError(f"event_sync_pull mode must be one of {sorted(_EVENT_SYNC_PULL_MODES)}, got {mode!r}")
+        self.set_anki_state_cache("event_sync_pull", mode)
+
     def set_dirty_fields(self, guid: str, fields_str: str) -> None:
         """Set dirty_fields for the collocation identified by guid."""
         with self._get_conn() as conn:
@@ -2096,15 +2141,26 @@ class SRSDatabase:
         col_crt: int | None = None,
         exclude_review_kinds: frozenset[int] = frozenset({4}),
         anki_card_id: int | None = None,
+        starting_state: DirectionState | None = None,
+        since_id: int | None = None,
     ) -> DirectionState:
         """Replay tt_revlog rows through FSRS schedule() to derive DirectionState.
 
-        Reads all non-excluded revlog rows for ``(collocation_id, direction)``
-        ordered by ``id`` ASC and replays them through ``app.srs.fsrs.schedule``
-        starting from a NEW default state.
+        Reads non-excluded revlog rows for ``(collocation_id, direction)`` ordered
+        by ``id`` ASC and replays them through ``app.srs.fsrs.schedule``.
 
         Pass *anki_card_id* to ensure the FSRS interval-fuzz seed matches the
         real Anki card id; omit or pass ``None`` for TT-only directions.
+
+        **Incremental replay (Stage 3b).** By default the walk starts from a fresh
+        NEW state over every row. Pass *starting_state* to begin from a stored
+        ``DirectionState`` instead, and *since_id* to walk only rows with
+        ``id > since_id``. Together these turn the helper into a forward-step from
+        the last-synced state over just the new revlog rows — the composition
+        invariant ``replay(prefix) ∘ replay(suffix) == replay(all)`` holds because
+        ``schedule`` is a pure function of ``(prev_state, rating, timing)``. When
+        *starting_state* is given and no rows remain after the filter, it is
+        returned unchanged (the "no new grades since last sync" case).
 
         Returns the replayed ``DirectionState``.  The caller is responsible for
         writing it back (and merging non-FSRS fields).
@@ -2114,17 +2170,19 @@ class SRSDatabase:
         if params is None:
             params = DEFAULT_FSRS5_PARAMS
 
-        with self._get_conn() as conn:
-            rows = conn.execute(
-                """
-                SELECT id, button_chosen, taken_millis, review_kind, factor
-                FROM tt_revlog
-                WHERE collocation_id = ? AND direction = ?
-                ORDER BY id ASC
-            """,
-                (collocation_id, direction.value),
-            ).fetchall()
+        sql = """
+            SELECT id, button_chosen, taken_millis, review_kind, factor
+            FROM tt_revlog
+            WHERE collocation_id = ? AND direction = ?
+        """
+        sql_params: list = [collocation_id, direction.value]
+        if since_id is not None:
+            sql += " AND id > ?"
+            sql_params.append(since_id)
+        sql += " ORDER BY id ASC"
 
+        with self._get_conn() as conn:
+            rows = conn.execute(sql, sql_params).fetchall()
             coll = conn.execute(
                 """
                 SELECT guid, anki_note_id, text, card_type FROM collocations WHERE id = ?
@@ -2135,6 +2193,8 @@ class SRSDatabase:
         rows = [r for r in rows if r["review_kind"] not in exclude_review_kinds]
 
         if not rows:
+            if starting_state is not None:
+                return starting_state
             return DirectionState(
                 direction=direction,
                 due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
@@ -2146,7 +2206,12 @@ class SRSDatabase:
 
         other_dir = Direction.PRODUCTION if direction == Direction.RECOGNITION else Direction.RECOGNITION
         now_4am = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
-        default_state = DirectionState(direction=direction, due_at=now_4am, anki_card_id=anki_card_id)
+        # Incremental: forward-step from the stored state. Otherwise: from NEW.
+        start_state = (
+            starting_state
+            if starting_state is not None
+            else DirectionState(direction=direction, due_at=now_4am, anki_card_id=anki_card_id)
+        )
         other_state = DirectionState(direction=other_dir, due_at=now_4am)
         unit = SyntacticUnit(
             text=coll["text"] if coll else "replay",
@@ -2158,7 +2223,7 @@ class SRSDatabase:
         )
         item = SRSItem(
             syntactic_unit=unit,
-            directions={direction: default_state, other_dir: other_state},
+            directions={direction: start_state, other_dir: other_state},
             guid=guid or "replay",
             anki_note_id=anki_note_id,
         )

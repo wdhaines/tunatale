@@ -364,6 +364,28 @@ class TestCRUD:
         srs_db.set_enable_cloze_cards(False)
         assert srs_db.get_enable_cloze_cards() is False
 
+    def test_event_sync_pull_mode_defaults_legacy(self, srs_db):
+        """Fresh DB with no cache row returns the legacy sync_pull mode (Stage 3b step 1)."""
+        assert srs_db.get_event_sync_pull_mode() == "legacy"
+
+    def test_set_then_get_event_sync_pull_mode(self, srs_db):
+        """Round-trip set/get across all three Stage 3b modes."""
+        for mode in ("compare", "new", "legacy"):
+            srs_db.set_event_sync_pull_mode(mode)
+            assert srs_db.get_event_sync_pull_mode() == mode
+
+    def test_set_event_sync_pull_mode_rejects_unknown(self, srs_db):
+        """An unrecognised mode is rejected so a typo can't silently disable sync_pull."""
+        import pytest
+
+        with pytest.raises(ValueError, match="event_sync_pull"):
+            srs_db.set_event_sync_pull_mode("bogus")
+
+    def test_get_event_sync_pull_mode_tolerates_corrupt_value(self, srs_db):
+        """A corrupt stored value falls back to legacy rather than crashing sync_pull."""
+        srs_db.set_anki_state_cache("event_sync_pull", "garbage")
+        assert srs_db.get_event_sync_pull_mode() == "legacy"
+
 
 class TestDueQueries:
     """Tests for due/new collocation queries."""

@@ -1737,6 +1737,41 @@ class AnkiSync:
                 )
             )
 
+    def _write_compare_shadow(
+        self,
+        collocation_id: int,
+        direction: Direction,
+        local_dir: DirectionState,
+        since_id: int | None,
+        params,
+        col_crt: int | None,
+    ) -> None:
+        """Stage 3b compare-mode: replay forward from the stored state and record
+        the result in the shadow columns for post-hoc SQL-diffing.
+
+        Incremental forward-step: starts from ``local_dir`` (the stored,
+        Anki-aligned-at-last-sync state) and walks only tt_revlog rows newer than
+        ``since_id`` — this sync's freshly-ingested Anki grades. With zero new
+        rows it returns ``local_dir`` unchanged (the common "no Anki grades since
+        last sync" case). Never touches the authoritative columns; legacy stays
+        the production write.
+        """
+        replayed = self._db.rebuild_from_revlog(
+            collocation_id,
+            direction,
+            params=params,
+            col_crt=col_crt,
+            anki_card_id=local_dir.anki_card_id,
+            starting_state=local_dir,
+            since_id=since_id,
+        )
+        self._db.set_direction_shadow_replay(
+            collocation_id,
+            direction,
+            replayed.stability,
+            replayed.difficulty,
+        )
+
     def _pull_advance_learning_cutoff(self, max_revlog_ms: int, dry_run: bool) -> None:
         """Advance the learning cutoff to the most recent Anki revlog timestamp ingested.
 
@@ -1770,6 +1805,19 @@ class AnkiSync:
         report = PullReport()
         max_revlog_ms = 0
         bury_stats = self._init_bury_stats()
+
+        # Stage 3b: in compare mode, run replay alongside the legacy merge and
+        # write the replay-derived FSRS state to shadow columns (legacy stays
+        # authoritative). Resolve params/col_crt once — cheap, and only needed
+        # for the replay forward-step.
+        event_mode = self._db.get_event_sync_pull_mode()
+        compare_params = None
+        compare_col_crt = None
+        if event_mode == "compare":
+            from app.srs.queue_stats import resolve_fsrs_params
+
+            compare_params = resolve_fsrs_params(self._db)[0]
+            compare_col_crt = self._anki_col_crt
 
         self._pull_unbury_sweep(dry_run)
 
@@ -1850,6 +1898,14 @@ class AnkiSync:
                 # `guid` came from local_item we just looked up → row always exists.
                 coll_id = self._db.get_collocation_id_by_guid(guid)
                 assert coll_id is not None
+                # Stage 3b compare-mode: the incremental-replay boundary is the
+                # newest tt_revlog id BEFORE this sync's ingest. Everything ≤ it
+                # is already folded into the stored `local_dir` (TT-native grades
+                # applied live, prior Anki grades applied at the last sync); the
+                # rows ingested below (this sync's new Anki grades) are > it.
+                pre_ingest_revlog_id = (
+                    self._db.latest_revlog_id_for_card(card_rec.anki_card_id) if event_mode == "compare" else None
+                )
                 self._ingest_anki_revlog_for_card(
                     card_rec.anki_card_id,
                     coll_id,
@@ -1925,6 +1981,16 @@ class AnkiSync:
                     if not dry_run:
                         self._db.update_direction(guid, direction, new_dir_state)
                     report.directions_updated += 1
+
+                if event_mode == "compare" and not dry_run:
+                    self._write_compare_shadow(
+                        coll_id,
+                        direction,
+                        local_dir,
+                        pre_ingest_revlog_id,
+                        compare_params,
+                        compare_col_crt,
+                    )
 
         self._pull_advance_learning_cutoff(max_revlog_ms, dry_run)
         self._pull_rebuild_session_main_queue(dry_run)
