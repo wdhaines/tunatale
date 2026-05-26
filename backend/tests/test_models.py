@@ -9,12 +9,6 @@ from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.language import Language
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 from app.models.srs_item import Rating, SRSItem, SRSState
-from app.models.strategy import (
-    DEFAULT_STRATEGY_CONFIGS,
-    ContentStrategy,
-    DifficultyLevel,
-    PedagogicalScoringConfig,
-)
 from app.models.syntactic_unit import SyntacticUnit
 from tests._helpers import assert_json_roundtrip
 
@@ -62,27 +56,6 @@ def _make_lesson() -> Lesson:
 def _make_srs_item() -> SRSItem:
     unit = SyntacticUnit(text="dober dan", translation="good day", word_count=2, difficulty=1, source="corpus")
     return SRSItem(syntactic_unit=unit, due_date=date.today())
-
-
-class TestPedagogicalScoringConfig:
-    """Tests for PedagogicalScoringConfig weight defaults and constraints."""
-
-    def test_weights_sum_to_one(self):
-        config = PedagogicalScoringConfig()
-        total = (
-            config.srs_readiness_weight
-            + config.language_quality_weight
-            + config.pedagogical_value_weight
-            + config.diversity_weight
-        )
-        assert abs(total - 1.0) < 0.01
-
-    def test_default_weights(self):
-        config = PedagogicalScoringConfig()
-        assert config.srs_readiness_weight == 0.4
-        assert config.language_quality_weight == 0.3
-        assert config.pedagogical_value_weight == 0.2
-        assert config.diversity_weight == 0.1
 
 
 class TestSyntacticUnit:
@@ -155,24 +128,6 @@ class TestLanguage:
         lang = Language.english()
         for key in ("narrator", "female-1", "male-1"):
             assert key in lang.tts_voice_map, f"missing key '{key}' in {lang.code} voice map"
-
-
-class TestContentStrategy:
-    """Tests for ContentStrategy configs and DifficultyLevel ordering."""
-
-    def test_wider_strategy_max_new_collocations(self):
-        config = DEFAULT_STRATEGY_CONFIGS[ContentStrategy.WIDER]
-        assert config.max_new_collocations == 8
-
-    def test_deeper_strategy_max_new_collocations(self):
-        config = DEFAULT_STRATEGY_CONFIGS[ContentStrategy.DEEPER]
-        assert config.max_new_collocations == 3
-
-    def test_difficulty_level_progression(self):
-        levels = list(DifficultyLevel)
-        assert levels[0] == DifficultyLevel.BASIC
-        assert levels[1] == DifficultyLevel.INTERMEDIATE
-        assert levels[2] == DifficultyLevel.ADVANCED
 
 
 class TestCurriculum:
@@ -331,13 +286,3 @@ class TestSRSItem:
         assert SRSState.LEARNING.value == "learning"
         assert SRSState.REVIEW.value == "review"
         assert SRSState.RELEARNING.value == "relearning"
-
-
-class TestPedagogicalScoringConfigWeights:
-    def test_weights_sum_to_one_for_default_config(self):
-        cfg = PedagogicalScoringConfig()
-        assert cfg.weights_sum_to_one() is True
-
-    def test_weights_sum_to_one_returns_false_when_weights_are_off(self):
-        cfg = PedagogicalScoringConfig(srs_readiness_weight=0.1)
-        assert cfg.weights_sum_to_one() is False

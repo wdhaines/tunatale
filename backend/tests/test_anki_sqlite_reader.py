@@ -15,7 +15,6 @@ from app.anki.sqlite_reader import (
     find_deck_id,
     list_media_refs,
     parse_fsrs_data,
-    read_fsrs_state_for_cards,
 )
 from app.models.srs_item import Direction, SRSState
 
@@ -941,44 +940,6 @@ class TestExtractInlineImages:
         from app.anki.sqlite_reader import extract_inline_images
 
         assert extract_inline_images(["no media here", "[sound:a.mp3]"]) == []
-
-
-class TestReadFsrsStateForCards:
-    def _write_db(self, tmp_path, rows: list[tuple[int, str | None]]):
-        path = tmp_path / "collection.anki2"
-        with sqlite3.connect(str(path)) as conn:
-            conn.execute("CREATE TABLE cards (id INTEGER PRIMARY KEY, data TEXT)")
-            conn.executemany("INSERT INTO cards (id, data) VALUES (?, ?)", rows)
-        return str(path)
-
-    def test_empty_card_ids_returns_empty(self, tmp_path):
-        path = self._write_db(tmp_path, [(1, '{"s": 1.0, "d": 5.0}')])
-        assert read_fsrs_state_for_cards(path, []) == {}
-
-    def test_null_data_column_skipped(self, tmp_path):
-        path = self._write_db(tmp_path, [(1, None), (2, '{"s": 0.5, "d": 7.0}')])
-        result = read_fsrs_state_for_cards(path, [1, 2])
-        assert 1 not in result
-        assert result[2] == (0.5, 7.0)
-
-    def test_nonexistent_path_raises(self, tmp_path):
-        with pytest.raises(FileNotFoundError):
-            read_fsrs_state_for_cards(tmp_path / "missing.anki2", [1])
-
-    def test_invalid_json_skipped(self, tmp_path):
-        """Invalid JSON in data column is skipped."""
-        path = self._write_db(
-            tmp_path,
-            [
-                (1, '{"s": 1.0, "d": 5.0}'),
-                (2, "not valid json"),
-                (3, '{"s": "bad", "d": 7.0}'),
-            ],
-        )
-        result = read_fsrs_state_for_cards(path, [1, 2, 3])
-        assert 1 in result
-        assert 2 not in result
-        assert 3 not in result
 
 
 class TestLeftAndDueAtFromCards:

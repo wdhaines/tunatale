@@ -22,10 +22,6 @@ class NaturalPauseCalculator:
         """Return the pause (ms) inserted between lesson sections."""
         return _SECTION_BOUNDARY_PAUSE_MS
 
-    def get_boundary_pause(self, boundary_type: str) -> int:
-        """Return a fixed pause (ms) for the given boundary type."""
-        return _BOUNDARY_PAUSES[boundary_type]
-
     def get_phrase_pause(
         self,
         audio_duration_s: float,

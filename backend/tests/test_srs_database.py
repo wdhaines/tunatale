@@ -1134,21 +1134,6 @@ class TestCountReviewsCompletedToday:
         assert srs_db.count_reviews_completed_today(today) == 2
 
 
-class TestViolations:
-    """Tests for recording and querying SRS violations."""
-
-    def test_record_violation(self, srs_db):
-        srs_db.record_violation(
-            collocation_text="dober dan", day_number=1, violation_type="unused", details="not used in story"
-        )
-        violations = srs_db.get_violations(collocation_text="dober dan")
-        assert len(violations) == 1
-        assert violations[0]["violation_type"] == "unused"
-
-    def test_get_violations_empty(self, srs_db):
-        assert srs_db.get_violations("nonexistent") == []
-
-
 class TestFileBased:
     """Tests for file-backed SRS database persistence."""
 
@@ -1299,14 +1284,12 @@ class TestAdminMutations:
         with pytest.raises(ValueError, match="already exists"):
             srs_db.update_collocation_fields(id_b, text="a", translation="dup")
 
-    def test_delete_collocation_removes_row_and_violations(self, srs_db):
+    def test_delete_collocation_removes_row(self, srs_db):
         srs_db.add_collocation(_unit("nasvidenje", "goodbye"), language_code="sl")
-        srs_db.record_violation("nasvidenje", 1, "unused")
         rows, _ = srs_db.list_collocations()
         row_id = rows[0][0]
         srs_db.delete_collocation(row_id)
         assert srs_db.get_collocation("nasvidenje") is None
-        assert srs_db.get_violations("nasvidenje") == []
 
     def test_bulk_delete_returns_count_and_removes_rows(self, srs_db):
         srs_db.add_collocation(_unit("a", "aa"), language_code="sl")
@@ -1678,16 +1661,12 @@ class TestFileDatabaseWriteOperations:
         item.reps = 1
         db.update_collocation(item)
 
-        # record_violation (179->exit False branch)
-        db.record_violation("zdravo", 1, "unused")
-
         # update_collocation_fields (237->exit False branch)
         rows, _ = db.list_collocations()
         row_id = rows[0][0]
         db.update_collocation_fields(row_id, text="zdravo!", translation="hello!")
 
         # delete_collocation (249->exit False branch)
-        db.record_violation("zdravo!", 2, "unused")
         db.delete_collocation(row_id)
 
         # delete_collocations (264->266 False branch)
@@ -1777,7 +1756,7 @@ class TestLastRatingPersistence:
 
 
 class TestQueueStatHelpers:
-    """Tests for count_new_available and count_due_today_total."""
+    """Tests for count_new_available."""
 
     def _seed(self, db: SRSDatabase, text: str, rec_state: SRSState, prod_state: SRSState, due_offset_days: int = 0):
         """Add one collocation and set both directions' states and due_date."""
@@ -1800,28 +1779,26 @@ class TestQueueStatHelpers:
             db.update_direction(item.guid, direction, ds)
 
     @pytest.mark.parametrize(
-        "collocations,due_offset,expected_new,expected_due",
+        "collocations,expected_new",
         [
-            ([("hvala", SRSState.NEW, SRSState.NEW)], 0, 2, 0),
-            ([("hvala", SRSState.SUSPENDED, SRSState.NEW)], 0, 1, 0),
-            ([("hvala", SRSState.NEW, SRSState.SUSPENDED)], 0, 1, 0),
-            ([("hvala", SRSState.NEW, SRSState.NEW), ("banka", SRSState.NEW, SRSState.REVIEW)], 0, 3, 1),
-            ([], 0, 0, 0),
-            ([("hvala", SRSState.REVIEW, SRSState.REVIEW)], 0, 0, 2),
-            ([("hvala", SRSState.REVIEW, SRSState.REVIEW)], 1, 0, 0),
-            ([("hvala", SRSState.SUSPENDED, SRSState.SUSPENDED)], 0, 0, 0),
-            ([("hvala", SRSState.KNOWN, SRSState.KNOWN)], 0, 0, 0),
-            ([("hvala", SRSState.BURIED, SRSState.BURIED)], 0, 0, 0),
-            ([("hvala", SRSState.REVIEW, SRSState.NEW)], 0, 1, 1),
-            ([("hvala", SRSState.REVIEW, SRSState.REVIEW), ("banka", SRSState.REVIEW, SRSState.SUSPENDED)], 0, 0, 3),
+            ([("hvala", SRSState.NEW, SRSState.NEW)], 2),
+            ([("hvala", SRSState.SUSPENDED, SRSState.NEW)], 1),
+            ([("hvala", SRSState.NEW, SRSState.SUSPENDED)], 1),
+            ([("hvala", SRSState.NEW, SRSState.NEW), ("banka", SRSState.NEW, SRSState.REVIEW)], 3),
+            ([], 0),
+            ([("hvala", SRSState.REVIEW, SRSState.REVIEW)], 0),
+            ([("hvala", SRSState.SUSPENDED, SRSState.SUSPENDED)], 0),
+            ([("hvala", SRSState.KNOWN, SRSState.KNOWN)], 0),
+            ([("hvala", SRSState.BURIED, SRSState.BURIED)], 0),
+            ([("hvala", SRSState.REVIEW, SRSState.NEW)], 1),
+            ([("hvala", SRSState.REVIEW, SRSState.REVIEW), ("banka", SRSState.REVIEW, SRSState.SUSPENDED)], 0),
         ],
     )
-    def test_queue_stats(self, collocations, due_offset, expected_new, expected_due):
+    def test_queue_stats(self, collocations, expected_new):
         db = SRSDatabase(":memory:")
         for text, rec_state, prod_state in collocations:
-            self._seed(db, text, rec_state, prod_state, due_offset_days=due_offset)
+            self._seed(db, text, rec_state, prod_state)
         assert db.count_new_available() == expected_new
-        assert db.count_due_today_total(date.today()) == expected_due
 
     @pytest.mark.parametrize(
         "collocations,due_offset,expected_learning",
@@ -2404,33 +2381,6 @@ class TestListRecentlyGradedCleanDueAt:
         assert len(result) == 1
         assert result[0][2].due_at == due_at
         assert result[0][2].left == 1002
-
-
-class TestTouchLastSyncedAtNonExistentGuid:
-    """Tests for touch_last_synced_at with non-existent GUID (line 1163)."""
-
-    def test_returns_early_for_missing_guid(self, srs_db):
-        """When GUID doesn't exist, touch_last_synced_at returns early (line 1163)."""
-        # Should not raise even though GUID doesn't exist
-        srs_db.touch_last_synced_at("nonexistent-guid-123", Direction.RECOGNITION)
-        # If we get here, it returned early (no crash on missing GUID)
-
-    def test_actually_calls_the_function(self, srs_db):
-        """Verify the function is actually called and returns early."""
-        # First add a collocation so we have a valid GUID
-        from app.models.syntactic_unit import SyntacticUnit
-
-        unit = SyntacticUnit(text="test", translation="test", word_count=1, difficulty=1, source="corpus")
-        srs_db.add_collocation(unit, language_code="sl")
-        item = srs_db.get_collocation("test")
-        assert item is not None
-
-        # Call with non-existent GUID - should return early (line 1163-1164)
-        srs_db.touch_last_synced_at("totally-fake-guid", Direction.RECOGNITION)
-
-        # Call with valid GUID - should NOT return early (lines 1165-1173)
-        srs_db.touch_last_synced_at(item.guid, Direction.RECOGNITION)
-        # If we get here without error, the function works
 
 
 class TestMigrateV9toV10ColumnExists:

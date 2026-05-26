@@ -440,16 +440,6 @@ class SRSDatabase:
         direction = Direction.RECOGNITION if Direction.RECOGNITION in item.directions else Direction.PRODUCTION
         self.update_direction(guid, direction, item.directions[direction])
 
-    def record_violation(
-        self, collocation_text: str, day_number: int, violation_type: str, details: str | None = None
-    ) -> None:
-        with self._get_conn() as conn:
-            conn.execute(
-                "INSERT INTO violations (collocation_text, day_number, violation_type, details) VALUES (?, ?, ?, ?)",
-                (collocation_text, day_number, violation_type, details),
-            )
-            self._commit(conn)
-
     # ── Read operations ────────────────────────────────────────────────
 
     def _load_directions(self, conn: sqlite3.Connection, collocation_id: int) -> dict[Direction, DirectionState]:
@@ -1114,14 +1104,6 @@ class SRSDatabase:
             result = [(r["id"], self._row_to_item(conn, r), r["language_code"]) for r in rows]
         return result, total
 
-    def get_violations(self, collocation_text: str) -> list[dict]:
-        with self._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM violations WHERE collocation_text = ?",
-                (collocation_text,),
-            ).fetchall()
-        return [dict(r) for r in rows]
-
     def count_collocations(self) -> int:
         with self._get_conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
@@ -1638,22 +1620,6 @@ class SRSDatabase:
                 result.append((row["guid"], d, ds))
         return result
 
-    def touch_last_synced_at(self, guid: str, direction: Direction) -> None:
-        """Update last_synced_at to now for one direction without clearing dirty_fsrs."""
-        with self._get_conn() as conn:
-            row = conn.execute("SELECT id FROM collocations WHERE guid = ?", (guid,)).fetchone()
-            if row is None:
-                return
-            conn.execute(
-                """
-                UPDATE collocation_directions SET
-                    last_synced_at = ?
-                WHERE collocation_id = ? AND direction = ?
-                """,
-                (datetime.now(UTC).isoformat(), row["id"], direction.value),
-            )
-            self._commit(conn)
-
     def mark_direction_clean(self, guid: str, direction: Direction) -> None:
         """Clear dirty_fsrs and set last_synced_at to now for one direction."""
         with self._get_conn() as conn:
@@ -1715,20 +1681,6 @@ class SRSDatabase:
         """Count all collocation_directions rows in the NEW state (both directions)."""
         with self._get_conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM collocation_directions WHERE state = 'new'").fetchone()[0]
-
-    def count_due_today_total(self, today: date) -> int:
-        """Count all collocation_directions rows due on or before today, excluding non-reviewable states."""
-        placeholders = ",".join("?" * len(_NON_REVIEWABLE_STATES))
-        end_of_day = datetime.combine(today, time.max).isoformat()
-        with self._get_conn() as conn:
-            return conn.execute(
-                f"""
-                SELECT COUNT(*) FROM collocation_directions
-                WHERE due_at <= ?
-                  AND state NOT IN ({placeholders})
-                """,
-                (end_of_day, *_NON_REVIEWABLE_STATES),
-            ).fetchone()[0]
 
     def count_learning(self) -> int:
         """Count every learning/relearning direction (Anki red badge).

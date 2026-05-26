@@ -332,34 +332,6 @@ def _greater_than_last(interval: int, scheduled_days: int) -> int:
     return 0
 
 
-def _constrain_passing_intervals(
-    hard_raw: int,
-    good_raw: int,
-    easy_raw: int,
-    scheduled_days: int,
-) -> tuple[int, int, int]:
-    """Anki parity cascade: each rating must beat the next-easier one by ≥1 day.
-
-    For each rating: ``constrained = max(raw, floor)`` where ``floor`` is derived
-    from ``greater_than_last`` and the next-easier constrained value.
-
-    Mirrors rslib/src/scheduler/states/review.rs ``constrain_passing_interval``.
-    Returns (hard, good, easy) constrained.
-
-    Layer 51 note: this helper applies the cascade as a *pure-integer* floor on
-    pre-fuzz raw intervals. Anki's actual flow interleaves cascade and fuzz —
-    each rating's fuzz call receives the cascade-derived ``minimum`` argument,
-    which clamps the fuzzed result's lower bound. Use
-    ``_passing_intervals_with_fuzz`` for the grade-time pipeline (REVIEW + EASY
-    graduation); this helper remains for callers that need the pre-fuzz cascade
-    output in isolation.
-    """
-    hard = max(hard_raw, max(_greater_than_last(hard_raw, scheduled_days), 1))
-    good = max(good_raw, max(_greater_than_last(good_raw, scheduled_days), hard + 1))
-    easy = max(easy_raw, max(_greater_than_last(easy_raw, scheduled_days), good + 1))
-    return (hard, good, easy)
-
-
 def _passing_intervals_with_fuzz(
     raw_hard: float,
     raw_good: float,

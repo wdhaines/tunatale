@@ -71,15 +71,6 @@ class LLMClient:
         self._groq_call_delay: float = 0.0
         self._last_429_at: float = 0.0
 
-    def pacing_info(self) -> dict:
-        """Return current pacing state for diagnostics."""
-        now = time.monotonic()
-        return {
-            "call_delay_s": self._groq_call_delay,
-            "next_call_in_s": max(0.0, self._next_call_at - now),
-            "last_429_ago_s": (now - self._last_429_at) if self._last_429_at > 0 else None,
-        }
-
     def _fire_callback(
         self,
         *,

@@ -311,36 +311,6 @@ def _compute_last_review(
     return datetime.fromtimestamp(last_review_ts, tz=UTC)
 
 
-def read_fsrs_state_for_cards(collection_path: str | Path, card_ids: list[int]) -> dict[int, tuple[float, float]]:
-    """Read FSRS (stability, difficulty) from cards.data JSON for the given card IDs.
-
-    Opens the collection.anki2 file with `mode=ro&immutable=1` so it works while Anki is running.
-    Returns a dict {card_id: (stability, difficulty)} containing only cards whose `data`
-    parses as JSON with both `s` and `d` keys; cards with malformed data are silently omitted
-    so callers can fall back to whatever default state they already had.
-    """
-    path = Path(collection_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Anki collection not found: {path}")
-    if not card_ids:
-        return {}
-
-    uri = f"file:{path}?mode=ro&immutable=1"
-    placeholders = ",".join("?" * len(card_ids))
-    result: dict[int, tuple[float, float]] = {}
-    with sqlite3.connect(uri, uri=True) as conn:
-        rows = conn.execute(f"SELECT id, data FROM cards WHERE id IN ({placeholders})", card_ids).fetchall()
-    for cid, data_str in rows:
-        if not data_str:
-            continue
-        try:
-            data = json.loads(data_str)
-            result[cid] = (float(data["s"]), float(data["d"]))
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-            continue
-    return result
-
-
 _IMG_SRC_RE = re.compile(r'<img(?:[^"]|"[^"]*")*?\bsrc="([^"]+)"')
 _DATA_IMG_BASE64_RE = re.compile(r"^data:image/([a-zA-Z0-9+\-.]+);base64,(.+)$", re.DOTALL)
 

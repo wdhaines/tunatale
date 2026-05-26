@@ -35,40 +35,6 @@ def _make_decks_db_with_review_new_reset() -> sqlite3.Connection:
     return _make_decks_db(blob)
 
 
-class TestCountRevlogBefore:
-    def test_counts_revlog_before_timestamp(self):
-        conn = _make_decks_db()
-        conn.execute("CREATE TABLE revlog (id INTEGER, cid INTEGER)")
-        conn.execute("INSERT INTO revlog VALUES (1000, 10), (2000, 10), (3000, 20)")
-        conn.commit()
-        writer = OfflineWriter(conn)
-        assert writer.count_revlog_before(10, 2500) == 2
-
-    def test_zero_when_no_revlog(self):
-        conn = _make_decks_db()
-        conn.execute("CREATE TABLE revlog (id INTEGER, cid INTEGER)")
-        conn.commit()
-        writer = OfflineWriter(conn)
-        assert writer.count_revlog_before(10, 2500) == 0
-
-
-class TestGetDeckIdForCard:
-    def test_returns_did(self):
-        conn = _make_decks_db()
-        conn.execute("CREATE TABLE cards (id INTEGER, did INTEGER)")
-        conn.execute("INSERT INTO cards VALUES (100, 5)")
-        conn.commit()
-        writer = OfflineWriter(conn)
-        assert writer.get_deck_id_for_card(100) == 5
-
-    def test_returns_none_for_missing_card(self):
-        conn = _make_decks_db()
-        conn.execute("CREATE TABLE cards (id INTEGER, did INTEGER)")
-        conn.commit()
-        writer = OfflineWriter(conn)
-        assert writer.get_deck_id_for_card(999) is None
-
-
 class TestBumpDeckNewToday:
     def test_inserts_field_when_absent(self):
         conn = _make_decks_db()

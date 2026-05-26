@@ -174,30 +174,6 @@ def _build_cefr_block(cefr_level: str) -> str:
     return _CEFR_BLOCK.format(cefr_level=cefr_level)
 
 
-STORY_PROMPT_TEMPLATE = """\
-**Language Learning Content Generation Request**
-
-**Language:** {language_name} ({language_code})
-**Learning Objective:** {learning_objective}
-**Theme/Focus:** {focus}
-**Story Guidance:** {story_guidance}
-
-{cefr_block}
-
-**New Collocations to Teach:**
-{new_collocations}
-
-**Review Collocations to Include:**
-{review_collocations}
-
-**CONTENT GENERATION INSTRUCTIONS**
-- Use 80%+ dialogue between characters
-- Include ALL provided collocations naturally in the dialogue
-- Generate 4-6 scenes, each with 5-12 lines of dialogue
-- Use appropriate voice assignments (female-1, female-2, male-1, male-2)
-- Keep language authentic and natural for the CEFR level specified above
-"""
-
 STORY_PROMPT_WIDER_TEMPLATE = """\
 **Scenario Expansion Language Learning Content Generation Request**
 

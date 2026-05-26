@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from app.audio.ports import AudioProcessor, TTSService
+from app.audio.ports import TTSService
 
 
 class MockTTSService:
@@ -15,43 +15,9 @@ class MockTTSService:
         return [{"id": "sl-SI-PetraNeural", "language": "sl-SI"}]
 
 
-class MockAudioProcessor:
-    """Mock implementation satisfying the AudioProcessor ABC."""
-
-    def concatenate(self, audio_bytes_list: list[bytes], silence_ms: int = 300) -> bytes:
-        return b"".join(audio_bytes_list)
-
-    def normalize(self, audio_bytes: bytes) -> bytes:
-        return audio_bytes
-
-    def add_silence(self, duration_ms: int) -> bytes:
-        return b"\x00" * (duration_ms * 16)
-
-    def trim_silence(self, audio_bytes: bytes, threshold_db: float = -40.0) -> bytes:
-        return audio_bytes
-
-
 def test_mock_tts_satisfies_protocol():
     mock = MockTTSService()
     assert isinstance(mock, TTSService)
-
-
-def test_mock_audio_processor_satisfies_protocol():
-    mock = MockAudioProcessor()
-    assert isinstance(mock, AudioProcessor)
-
-
-def test_audio_processor_concatenate_returns_bytes():
-    proc = MockAudioProcessor()
-    result = proc.concatenate([b"a", b"b", b"c"])
-    assert isinstance(result, bytes)
-
-
-def test_audio_processor_add_silence_returns_bytes():
-    proc = MockAudioProcessor()
-    result = proc.add_silence(500)
-    assert isinstance(result, bytes)
-    assert len(result) > 0
 
 
 async def test_tts_list_voices_returns_list():

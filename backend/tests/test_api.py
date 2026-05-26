@@ -2000,7 +2000,7 @@ class TestAudioEndpoints:
         assert response.status_code == 202
         data = response.json()
         assert "audio_id" in data
-        assert store.get_audio_file(data["audio_id"]) is not None
+        assert store.get_audio_file_row(data["audio_id"]) is not None
 
     async def test_render_returns_sections_in_response(self, tmp_path):
         """POST /api/audio/render response includes a sections array."""
