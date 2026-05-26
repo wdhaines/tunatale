@@ -1225,7 +1225,6 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 
 **Cross-reference.** Same investigation shape as Layer 43/53: a residual chalked up to a bug turned out to be a coincidence of convention once the binary was driven with controlled inputs (queue-parity rule 13, "trust the binary"). The decisive move was reading Anki's own `col.sched.today` / `next_day_at` rather than reasoning about the helpers in isolation.
 
-
 ## Layer 55 — Wire the FSRS load balancer into TT's live grade path
 
 **What changed.** TT-native grades now load-balance like Anki when `loadBalancerEnabled` is set. This consumes the bit-exact port from Layer 53 (`app/srs/load_balancer.py`, proven oracle + per-card real-deck). Layer 53 only read Anki's load-balanced `cards.due` at sync (`sync_pull` pass-through); a card *graded in TT* still got the pure-fuzz interval. Layer 55 builds a live balancer from TT state and threads it into the three `schedule()` call sites.
@@ -1244,3 +1243,17 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 **Files.** `app/srs/load_balancer.py` (`bury_reviews` flag), `app/srs/queue_stats.py` (resolvers + `build_live_load_balancer` + `warn_if_multi_deck_preset`), `app/srs/database.py` (`get_load_balancer_histogram`, `get_load_balancer_session_replay`), `app/api/srs.py` (`_balancer_add` + 3 wiring points), `app/api/anki.py` (sync-time refresh + warn). Tests: `tests/test_load_balancer.py::TestBuryReviewsGating`, `tests/test_queue_stats_load_balancer.py` (resolvers + builder + warn), `tests/test_api_srs_directions.py::TestDrillLoadBalancerWiring`, `tests/test_parity_load_balancer.py::test_live_builder_matches_anki` (oracle: TT live builder reproduces Anki's relocated interval bit-exact).
 
 **Non-mirror reminder (unchanged).** Synced cards are still read straight from Anki's load-balanced `cards.due` at `sync_pull`. The cosmetic ±1–2 day `due_at` residual from `.claude/rules/anki-queue-parity.md` ("already-decided non-mirror") applies only to a *TT-native grade never re-graded in Anki* — which Layer 55 now also balances, so even that residual shrinks for the single-preset deck.
+
+## Layer 56 — Review badge mirrors sibling-bury for interday-learning siblings, not just "graded today"
+
+**The bug.** TT's review badge read 214 while Anki's deck overview read 208 on the same synced data. No data divergence — both apps agreed exactly: 243 review-due cards (`queue=2, due<=today`) across 214 distinct notes, identical `anki_card_id` sets. The gap was a counting-convention incompleteness in `count_review_due_collocations` (the badge query, `database.py`).
+
+**Mechanism.** Anki's `bury_reviews=true` buries a note's *review* card whenever a sibling is in the learning queue (`queue=1/3`) — **including interday learning steps graded on a prior day**. Rule 3's TT mirror only excluded collocations with a direction `last_review`'d *today*. The 6 over-counted notes (*gor, levo, sever, jug, ponedeljek, smer*) each had a review-due direction plus a sibling stuck in learning from an earlier day (graded 05-24, observed 05-26) — past the "today" window, so TT kept counting them. `214 − 6 = 208`.
+
+**Fix.** Extend the badge's exclusion subquery with `OR state IN ('learning', 'relearning')`, so a collocation drops out of the review pool when any direction sits in a learning queue regardless of last-grade date. The "graded today" filter stays (it still handles the same-day review→review sibling case). New-sibling bury is deliberately **not** mirrored — the measured 214→208 gap was learning-only, and `count_review_due_collocations` keeps counting collocations with a NEW sibling (matches the data: no NEW-sibling over-count was observed).
+
+**Dead-code removal.** `count_review_due` (per-direction `COUNT(*)`, distinct from the note-level `count_review_due_collocations`) had no production caller — only its own test. Deleted both. It was a footgun: a per-direction counter named one underscore-segment away from the real badge helper, exactly the shape that reintroduces the double-count-per-note bug if wired to the badge.
+
+**Files.** `app/srs/database.py` (`count_review_due_collocations` subquery + docstring; removed `count_review_due`). Tests: `tests/test_srs_database.py::TestQueueStatHelpers::test_count_review_due_collocations_excludes_learning_sibling` (7 cases pinning learning/relearning-sibling exclusion, NEW-sibling retention, mixed pool); removed `test_count_review_due`. Verified on the live deck: badge 214 → 208, exact Anki match.
+
+**Surfaced by.** The Stage 3b compare-soak kickoff (2026-05-26) — user noticed the 214/208 badge delta while running the first compare-mode sync. Unrelated to the soak's shadow-column finding (a `schedule()` graduation-arc divergence); this is a pure queue-parity badge fix.

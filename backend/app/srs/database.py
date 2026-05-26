@@ -1745,28 +1745,27 @@ class SRSDatabase:
                 _LEARNING_STATES,
             ).fetchone()[0]
 
-    def count_review_due(self, today: date) -> int:
-        """Count review directions due today (Anki green bucket)."""
-        end_of_day = datetime.combine(today, time.max).isoformat()
-        with self._get_conn() as conn:
-            return conn.execute(
-                """
-                SELECT COUNT(*) FROM collocation_directions
-                WHERE due_at <= ? AND state = 'review'
-                """,
-                (end_of_day,),
-            ).fetchone()[0]
-
     def count_review_due_collocations(self, today: date) -> int:
         """Count distinct collocations with at least one review-state direction
-        due today and not yet graded today (in any direction).
+        due today, excluding those Anki would bury out of today's review pool.
 
-        Anki's `bury_reviews=true` removes a note from today's review pool as
-        soon as any sibling is graded — the un-graded sibling goes to queue=-2
-        until tomorrow. Mirror that: exclude collocations whose `last_review`
-        for any direction falls within today's local day. This way the badge
-        decrements by 1 when *any* direction of a dual-template note is graded
-        (not 2), matching Anki's deck-overview count exactly when both apps
+        Anki's `bury_reviews=true` removes a note from today's review pool when
+        any sibling is active. Two triggers mirror that:
+
+        1. **Graded today** — once any direction is graded, the un-graded
+           sibling goes to queue=-2 until tomorrow. Exclude collocations whose
+           `last_review` for any direction falls within today's local day, so
+           the badge decrements by 1 (not 2) when one direction of a dual
+           note is graded.
+        2. **Sibling in the learning queue** — Anki also buries the review
+           card whenever its sibling sits in learning/relearning (queue=1/3),
+           *including interday learning steps graded on a prior day*. The
+           "graded today" filter alone misses those, over-counting the badge
+           (the observed 214→208 gap was exactly the notes with a learning
+           sibling). Exclude collocations with any direction in
+           learning/relearning regardless of when it was last graded.
+
+        Together these match Anki's deck-overview review count when both apps
         share the same data.
         """
         local_tz = datetime.now().astimezone().tzinfo
@@ -1782,6 +1781,7 @@ class SRSDatabase:
                     SELECT collocation_id FROM collocation_directions
                     WHERE (length(last_review) > 10 AND last_review >= ? AND last_review < ?)
                        OR (length(last_review) = 10 AND last_review = ?)
+                       OR state IN ('learning', 'relearning')
                   )
                 """,
                 (end_of_day_utc, start_utc.isoformat(), end_utc.isoformat(), today.isoformat()),

@@ -1869,22 +1869,39 @@ class TestQueueStatHelpers:
         assert db.count_learning() == 2
 
     @pytest.mark.parametrize(
-        "collocations,due_offset,expected_review",
+        "collocations,due_offset,expected",
         [
-            ([("hvala", SRSState.REVIEW, SRSState.REVIEW)], 0, 2),
-            ([("hvala", SRSState.REVIEW, SRSState.LEARNING)], 0, 1),
-            ([("hvala", SRSState.REVIEW, SRSState.REVIEW), ("banka", SRSState.NEW, SRSState.NEW)], 0, 2),
-            ([("hvala", SRSState.REVIEW, SRSState.REVIEW)], 1, 0),  # future due date
-            ([("hvala", SRSState.LEARNING, SRSState.LEARNING)], 0, 0),
-            ([("hvala", SRSState.RELEARNING, SRSState.RELEARNING)], 0, 0),
+            # Both directions review + due → one distinct collocation.
+            ([("hvala", SRSState.REVIEW, SRSState.REVIEW)], 0, 1),
+            # Review + learning sibling → excluded. Anki's bury_reviews buries the
+            # review card whenever its sibling sits in the learning queue, even when
+            # the learning card was graded on a *prior* day (interday learning step).
+            # The old "graded today" filter missed this; the badge over-counted.
+            ([("hvala", SRSState.REVIEW, SRSState.LEARNING)], 0, 0),
+            # Relearning is a learning queue too → excluded.
+            ([("hvala", SRSState.REVIEW, SRSState.RELEARNING)], 0, 0),
+            # New sibling does NOT exclude — Anki's new-sibling bury is a separate
+            # mechanism we don't mirror here (the measured 214→208 gap was learning).
+            ([("hvala", SRSState.REVIEW, SRSState.NEW)], 0, 1),
+            # Future due date → not yet due.
+            ([("hvala", SRSState.REVIEW, SRSState.REVIEW)], 1, 0),
+            # Mixed: clean review collocation counts; the one with a learning sibling drops.
+            (
+                [("hvala", SRSState.REVIEW, SRSState.REVIEW), ("banka", SRSState.REVIEW, SRSState.LEARNING)],
+                0,
+                1,
+            ),
             ([], 0, 0),
         ],
     )
-    def test_count_review_due(self, collocations, due_offset, expected_review):
+    def test_count_review_due_collocations_excludes_learning_sibling(self, collocations, due_offset, expected):
+        """The review badge mirrors Anki's sibling-bury: a collocation with a
+        sibling direction in learning/relearning is removed from today's review
+        pool, not just collocations graded today (rule 3 tightening)."""
         db = SRSDatabase(":memory:")
         for text, rec_state, prod_state in collocations:
             self._seed(db, text, rec_state, prod_state, due_offset_days=due_offset)
-        assert db.count_review_due(date.today()) == expected_review
+        assert db.count_review_due_collocations(date.today()) == expected
 
 
 class TestGetAudioFilename:
