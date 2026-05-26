@@ -671,44 +671,6 @@ def test_resolve_daily_review_cap_cache_too_old():
     assert source in ("config", "default")
 
 
-# ── resolve_desired_retention ───────────────────────────────────────────────────
-
-
-def test_resolve_desired_retention_db_creation_fails(monkeypatch):
-    """Default fallback (0.9) when no db is supplied and SRSDatabase creation raises."""
-    from app.srs.queue_stats import resolve_desired_retention
-
-    monkeypatch.setattr(
-        "app.srs.database.SRSDatabase.__init__", lambda self, x: (_ for _ in ()).throw(Exception("test"))
-    )
-    dr, source = resolve_desired_retention(None)
-    assert source == "default"
-    assert dr == 0.9
-
-
-def test_resolve_desired_retention_cache_too_old():
-    """Cache exists but is older than _CACHE_MAX_AGE_DAYS → fall back to default."""
-    from app.srs.queue_stats import resolve_desired_retention
-
-    db = SRSDatabase(":memory:")
-    old_ts = (datetime.now(UTC) - timedelta(days=31)).strftime("%Y-%m-%d %H:%M:%S")
-    db.set_anki_state_cache_raw("desired_retention", "0.86", old_ts)
-    dr, source = resolve_desired_retention(db)
-    assert source == "default"
-    assert dr == 0.9
-
-
-def test_resolve_desired_retention_corrupt_cache_timestamp():
-    """Cache timestamp can't be parsed → fall back to default without raising."""
-    from app.srs.queue_stats import resolve_desired_retention
-
-    db = SRSDatabase(":memory:")
-    db.set_anki_state_cache_raw("desired_retention", "0.86", "not-a-valid-timestamp")
-    dr, source = resolve_desired_retention(db)
-    assert source == "default"
-    assert dr == 0.9
-
-
 def test_refresh_desired_retention_skips_when_config_row_missing(tmp_path):
     """deck points to a conf_id that doesn't exist in deck_config → cache untouched."""
     import sqlite3
@@ -860,7 +822,7 @@ class TestReadFSRSParamsFromDeckConfig:
 
     def test_refresh_fsrs_short_term_flag_writes_cache(self, tmp_path):
         """refresh_fsrs_short_term_flag writes the flag to anki_state_cache."""
-        from app.srs.queue_stats import refresh_fsrs_short_term_flag, resolve_fsrs_short_term_flag
+        from app.srs.queue_stats import refresh_fsrs_short_term_flag
 
         db_path = tmp_path / "test.anki2"
         conn = sqlite3.connect(str(db_path))
@@ -870,24 +832,10 @@ class TestReadFSRSParamsFromDeckConfig:
 
         db = SRSDatabase(":memory:")
         refresh_fsrs_short_term_flag(db, conn)
-        assert resolve_fsrs_short_term_flag(db) is True
+        row = db.get_anki_state_cache("fsrs_short_term_with_steps_enabled")
+        assert row is not None
+        assert row[0] == "true"
         conn.close()
-
-    def test_resolve_fsrs_short_term_flag_defaults_false(self):
-        """resolve_fsrs_short_term_flag returns False when cache is empty."""
-        from app.srs.queue_stats import resolve_fsrs_short_term_flag
-
-        db = SRSDatabase(":memory:")
-        assert resolve_fsrs_short_term_flag(db) is False
-
-    def test_resolve_fsrs_short_term_flag_db_creation_fails(self, monkeypatch):
-        """Default fallback (False) when no db is supplied and SRSDatabase creation raises."""
-        from app.srs.queue_stats import resolve_fsrs_short_term_flag
-
-        monkeypatch.setattr(
-            "app.srs.database.SRSDatabase.__init__", lambda self, x: (_ for _ in ()).throw(Exception("test"))
-        )
-        assert resolve_fsrs_short_term_flag(None) is False
 
 
 class TestResolveFSRSParams:

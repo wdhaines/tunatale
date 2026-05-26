@@ -326,7 +326,7 @@ class TestPbParsing:
 
     def test_no_conf_id_in_normal_kind_submessage(self):
         """kind blob has LEN at field 1 but no VARINT at field 1 inside → returns None."""
-        from app.srs.queue_stats import _read_new_per_day_from_deck_config_table
+        from app.srs.queue_stats import _NEW_PER_DAY_FIELD, _WIRE_TYPE_VARINT, _read_config_value_from_deck_config_table
 
         # Inner submessage has field 2 (VARINT=99) but not field 1
         inner = pb_varint_field(2, 99)
@@ -351,7 +351,9 @@ class TestPbParsing:
         conn.execute("INSERT INTO decks VALUES (1, '0. Slovene', 0, -1, NULL, ?)", (kind_blob,))
         conn.commit()
 
-        result = _read_new_per_day_from_deck_config_table(conn, "0. Slovene")
+        result = _read_config_value_from_deck_config_table(
+            conn, "0. Slovene", proto_field=_NEW_PER_DAY_FIELD, wire_type=_WIRE_TYPE_VARINT
+        )
         assert result is None
 
 
@@ -446,7 +448,7 @@ class TestRefreshFSRSParams:
 
 
 class TestDesiredRetentionCache:
-    """Tests for refresh_desired_retention / resolve_desired_retention."""
+    """Tests for refresh_desired_retention."""
 
     def test_refresh_caches_value_from_modern_deck_config(self):
         """refresh_desired_retention reads field 37 from deck_config and caches it."""
@@ -476,26 +478,6 @@ class TestDesiredRetentionCache:
         conn = make_modern_anki_conn_with_fsrs()
         refresh_desired_retention(db, conn, "No Such Deck")  # must not raise
         assert db.get_anki_state_cache("desired_retention") is None
-
-    def test_resolve_returns_cached_value(self):
-        from app.srs.queue_stats import refresh_desired_retention, resolve_desired_retention
-
-        db = SRSDatabase(":memory:")
-        conn = make_modern_anki_conn_with_fsrs(weights=KNOWN_WEIGHTS, retention=0.86)
-        refresh_desired_retention(db, conn, "0. Slovene")
-
-        dr, source = resolve_desired_retention(db)
-        assert source == "cache"
-        assert abs(dr - 0.86) < 0.0001
-
-    def test_resolve_default_when_cache_empty(self):
-        """Empty cache → returns Anki's app-level default 0.9 with source='default'."""
-        from app.srs.queue_stats import resolve_desired_retention
-
-        db = SRSDatabase(":memory:")
-        dr, source = resolve_desired_retention(db)
-        assert source == "default"
-        assert dr == 0.9
 
 
 class TestResolveFSRSParams:
@@ -1115,7 +1097,11 @@ class TestReadReviewsPerDayFromAnkiFallback:
 class TestReadReviewsPerDayFromDeckConfigTable:
     def test_returns_none_when_conf_id_missing(self):
         """conf_id is None when deck is not found in decks table."""
-        from app.srs.queue_stats import _read_reviews_per_day_from_deck_config_table
+        from app.srs.queue_stats import (
+            _REVIEWS_PER_DAY_FIELD,
+            _WIRE_TYPE_VARINT,
+            _read_config_value_from_deck_config_table,
+        )
 
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
@@ -1136,12 +1122,18 @@ class TestReadReviewsPerDayFromDeckConfigTable:
         # No deck named "0. Slovene" → conf_id is None
         conn.execute("INSERT INTO decks VALUES (1, 'Other Deck', 0, -1, NULL, ?)", (make_deck_kind_blob(1),))
         conn.commit()
-        result = _read_reviews_per_day_from_deck_config_table(conn, "0. Slovene")
+        result = _read_config_value_from_deck_config_table(
+            conn, "0. Slovene", proto_field=_REVIEWS_PER_DAY_FIELD, wire_type=_WIRE_TYPE_VARINT
+        )
         assert result is None
 
     def test_returns_none_when_deck_missing_from_deck_config_table(self):
         """conf_id found but no matching row in deck_config table."""
-        from app.srs.queue_stats import _read_reviews_per_day_from_deck_config_table
+        from app.srs.queue_stats import (
+            _REVIEWS_PER_DAY_FIELD,
+            _WIRE_TYPE_VARINT,
+            _read_config_value_from_deck_config_table,
+        )
 
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
@@ -1162,7 +1154,9 @@ class TestReadReviewsPerDayFromDeckConfigTable:
         )
         conn.execute("INSERT INTO decks VALUES (1, '0. Slovene', 0, -1, NULL, ?)", (make_deck_kind_blob(999),))
         conn.commit()
-        result = _read_reviews_per_day_from_deck_config_table(conn, "0. Slovene")
+        result = _read_config_value_from_deck_config_table(
+            conn, "0. Slovene", proto_field=_REVIEWS_PER_DAY_FIELD, wire_type=_WIRE_TYPE_VARINT
+        )
         assert result is None
 
 

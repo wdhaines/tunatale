@@ -46,7 +46,6 @@ _WIRE_TYPE_VARINT = 0
 _WIRE_TYPE_FIXED32 = 5
 
 # Default values (Anki's built-in defaults, used when no cache or config override is available)
-_DEFAULT_DESIRED_RETENTION = 0.9
 _DEFAULT_NEW_PER_DAY = 20
 _DEFAULT_REVIEWS_PER_DAY = 200
 _DEFAULT_NEW_SPREAD = 0
@@ -240,13 +239,6 @@ def _read_fsrs_params_from_deck_config_table(conn: sqlite3.Connection, deck_name
     return None
 
 
-def _read_new_per_day_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> int | None:
-    """Read new-per-day (field 9 VARINT) from deck_config.config."""
-    return _read_config_value_from_deck_config_table(
-        conn, deck_name, proto_field=_NEW_PER_DAY_FIELD, wire_type=_WIRE_TYPE_VARINT
-    )
-
-
 def _read_new_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int | None:
     """Return new-cards-per-day from Anki's deck config, or None if unavailable.
 
@@ -263,13 +255,6 @@ def refresh_daily_new_cap(db: SRSDatabase, conn: sqlite3.Connection, deck_name: 
     cap = _read_new_per_day_from_anki(conn, deck_name)
     if cap is not None:
         db.set_anki_state_cache("daily_new_cap", str(cap))
-
-
-def _read_reviews_per_day_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> int | None:
-    """Read reviews-per-day (field 10 VARINT) from deck_config.config."""
-    return _read_config_value_from_deck_config_table(
-        conn, deck_name, proto_field=_REVIEWS_PER_DAY_FIELD, wire_type=_WIRE_TYPE_VARINT
-    )
 
 
 def _read_reviews_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int | None:
@@ -304,35 +289,6 @@ def refresh_desired_retention(db: SRSDatabase, conn: sqlite3.Connection, deck_na
     dr = _read_desired_retention_from_deck_config_table(conn, deck_name)
     if dr is not None:
         db.set_anki_state_cache("desired_retention", repr(dr))
-
-
-def resolve_desired_retention(db: SRSDatabase | None = None) -> tuple[float, str]:
-    """Return (desired_retention, source) where source is 'cache' or 'default'.
-
-    Priority:
-    1. anki_state_cache (written during sync) — 'cache'
-    2. Anki's app-level default 0.9 — 'default'
-    """
-    if db is None:
-        try:
-            from app.srs.database import SRSDatabase
-
-            db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-        except Exception:
-            db = None
-
-    if db is not None:
-        row = db.get_anki_state_cache("desired_retention")
-        if row is not None:
-            value_str, updated_at = row
-            try:
-                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
-                    return (float(value_str), "cache")
-            except (ValueError, TypeError, OverflowError):
-                pass
-
-    return (_DEFAULT_DESIRED_RETENTION, "default")
 
 
 def resolve_daily_review_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
@@ -1002,25 +958,3 @@ def refresh_fsrs_short_term_flag(db: SRSDatabase, conn: sqlite3.Connection) -> N
     val = _read_fsrs_short_term_from_config_table(conn)
     if val is not None:
         db.set_anki_state_cache("fsrs_short_term_with_steps_enabled", "true" if val else "false")
-
-
-def resolve_fsrs_short_term_flag(db: SRSDatabase | None = None) -> bool:
-    """Return the cached fsrsShortTermWithStepsEnabled flag.
-
-    Defaults to False (Anki's default) when cache is empty.
-    """
-    if db is None:
-        try:
-            from app.srs.database import SRSDatabase as _SRSDatabase
-
-            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-        except Exception:
-            db = None
-
-    if db is not None:
-        row = db.get_anki_state_cache("fsrs_short_term_with_steps_enabled")
-        if row is not None:
-            value_str, _ = row
-            return value_str == "true"
-
-    return False

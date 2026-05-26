@@ -156,30 +156,6 @@ _DEFAULT_WEIGHTS: tuple[float, ...] = (
     0.4350,  # w18: (unused in v5)
 )
 
-_DEFAULT_FSRS6_WEIGHTS: tuple[float, ...] = (
-    0.212,  # w0: initial stability for Again
-    1.2931,  # w1: initial stability for Hard
-    2.3065,  # w2: initial stability for Good
-    8.2956,  # w3: initial stability for Easy
-    6.4133,  # w4: initial difficulty
-    0.8334,  # w5: initial difficulty decay
-    3.0194,  # w6: difficulty mean-reversion weight
-    0.001,  # w7: difficulty update weight
-    1.8722,  # w8: stability increase factor
-    0.1666,  # w9: stability increase decay
-    0.796,  # w10: stability increase R-factor
-    1.4835,  # w11: lapse stability factor
-    0.0614,  # w12: lapse stability difficulty decay
-    0.2629,  # w13: lapse stability S-factor
-    1.6483,  # w14: lapse stability R-factor
-    0.6014,  # w15: hard penalty
-    1.8729,  # w16: easy bonus
-    0.5425,  # w17: short-term exponent base
-    0.0912,  # w18: short-term rating offset
-    0.0658,  # w19: short-term stability exponent (FSRS-6)
-    0.1542,  # w20: decay (FSRS-6 default)
-)
-
 FACTOR = 19 / 81  # = 0.234...
 
 
@@ -210,7 +186,6 @@ class FSRSParams:
 
 
 DEFAULT_FSRS5_PARAMS = FSRSParams(weights=_DEFAULT_WEIGHTS)
-DEFAULT_FSRS6_PARAMS = FSRSParams(weights=_DEFAULT_FSRS6_WEIGHTS)
 
 
 def _forgetting_curve(elapsed_days: float, stability: float, decay: float = -0.5) -> float:
