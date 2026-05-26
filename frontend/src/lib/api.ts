@@ -4,15 +4,6 @@
 
 export const BASE_URL = typeof window !== "undefined" ? "" : "http://localhost:8000";
 
-export interface CurriculumDay {
-  day: number;
-  title: string;
-  focus: string;
-  learning_objective: string;
-  story_guidance: string;
-  collocations: string[];
-}
-
 export interface CurriculumSummary {
   id: string;
   topic: string;
@@ -20,7 +11,7 @@ export interface CurriculumSummary {
   days: number;
 }
 
-export interface SectionSummary {
+interface SectionSummary {
   type: string;
   phrase_count: number;
 }
@@ -34,19 +25,19 @@ export interface LessonSummary {
 export type ContentStrategy = "WIDER" | "DEEPER";
 export type Direction = "recognition" | "production";
 
-export interface PhraseDetail {
+interface PhraseDetail {
   text: string;
   role: string;
   language_code: string;
   voice_id: string;
 }
 
-export interface SectionDetail {
+interface SectionDetail {
   type: string;
   phrases: PhraseDetail[];
 }
 
-export interface KeyPhrase {
+interface KeyPhrase {
   phrase: string;
   translation: string;
 }
@@ -105,7 +96,7 @@ export interface ListenResponse {
   registered: number;
 }
 
-export interface SectionAudio {
+interface SectionAudio {
   audio_id: string;
   section_index: number;
   section_type: string;
@@ -118,7 +109,7 @@ export interface LessonAudio {
   sections: SectionAudio[];
 }
 
-export interface DirectionState {
+interface DirectionState {
   state: string;
   due_at: string;
   stability: number;

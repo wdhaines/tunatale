@@ -1,6 +1,6 @@
 import type { APIRequestContext } from '@playwright/test';
 
-export const BACKEND = 'http://localhost:8001';
+const BACKEND = 'http://localhost:8001';
 
 export async function backendAvailable(request: APIRequestContext): Promise<boolean> {
 	return (await request.get(`${BACKEND}/api/health`)).ok();
