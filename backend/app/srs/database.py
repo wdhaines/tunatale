@@ -2060,6 +2060,21 @@ class SRSDatabase:
         with self._get_conn() as conn:
             return conn.execute(sql, params).fetchone() is not None
 
+    def get_tt_revlog_ids(self, collocation_id: int, direction: Direction) -> set[int]:
+        """Return the set of tt_revlog ids already held for (collocation_id, direction).
+
+        Lets sync_pull's gap-proof ingest reconcile against the card's full Anki
+        revlog while skipping a per-row query/write for grades it already holds.
+        """
+        with self._get_conn() as conn:
+            return {
+                r[0]
+                for r in conn.execute(
+                    "SELECT id FROM tt_revlog WHERE collocation_id = ? AND direction = ?",
+                    (collocation_id, direction.value),
+                )
+            }
+
     def append_revlog(self, row: RevlogRow) -> None:
         """Insert a tt_revlog row (idempotent via INSERT OR IGNORE)."""
         with self._get_conn() as conn:
