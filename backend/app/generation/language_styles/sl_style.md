@@ -16,10 +16,32 @@ cross-contamination aggressively.
 - NEVER use Spanish/accented characters: á, é, í, ó, ú
 - Only valid Slovene special letters: č (ch), š (sh), ž (zh)
 
+**Case System Coverage — each lesson should naturally surface target nouns in ≥2–3 distinct cases:**
+
+**Nominative** — subject, predicate after `biti`:
+CORRECT: "To je dobra kava." — WRONG: "To je dobro kavo." (kavo is accusative)
+
+**Genitive** — negation, quantities, `od/do/iz/brez/blizu`:
+CORRECT: "Nimam časa." — WRONG: "Nimam čas." (čas is nominative)
+CORRECT: "Kozarec vode, prosim." — WRONG: "Kozarec voda, prosim." (voda is nominative)
+
+**Dative** — indirect object, `k/proti`, "to me" feeling:
+CORRECT: "Dam ti knjigo." — WRONG: "Dam ti knjiga." (knjiga is nominative)
+
+**Accusative** — direct object, motion-toward `v/na`:
+CORRECT: "Grem v Ljubljano." — WRONG: "Grem v Ljubljana." (Ljubljana is nominative)
+CORRECT: "Kavo, prosim." (accusative governed by prosim) — WRONG: "Kavno, prosim." (kavno is adjectival/neuter)
+CORRECT: "Pivo, prosim." — WRONG: "Pivno, prosim."
+
+**Locative** — location after `v/na/pri/o/po`:
+CORRECT: "V Ljubljani je lepo." — WRONG: "V Ljubljana je lepo." (Ljubljana is nominative)
+
+**Instrumental** — means/accompaniment with `z/s`:
+CORRECT: "S prijateljem grem v kino." — WRONG: "S prijatelj grem v kino." (prijatelj is nominative)
+
+Use target nouns in ≥2–3 distinct cases across each dialogue where natural — don't force unnatural case-stacking. The dual also participates: "z rokama" (dual instrumental), "brez rokavic" (plural genitive).
+
 **Grammar — Critical patterns:**
-- "prosim" governs accusative case:
-  CORRECT: "kavo, prosim" — WRONG: "kavno, prosim" (kavno is adjectival/neuter, not accusative)
-  CORRECT: "pivo, prosim" — WRONG: "pivno, prosim"
 - Dual number for exactly two people (Slovene is one of few languages with grammatical dual):
   CORRECT: "midva greva" (we two go) — WRONG: "mi gremo" (for just two people)
   CORRECT: "onadva gresta" (they two go) — WRONG: "ona grejo" (for just two)

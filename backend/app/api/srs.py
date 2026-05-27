@@ -23,12 +23,13 @@ from app.api.models import (
     UpdateItemRequest,
 )
 from app.audio.cloze_tts import synthesize_cloze_audios
+from app.common.guid import compute_guid
 from app.llm.translate import translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, build_revlog_row, schedule
-from app.srs.function_words import is_function_word
+from app.srs.function_words import is_function_word, make_case_cloze_text
 from app.srs.lemmatizer import LowercaseLemmatizer
 from app.srs.queue_stats import (
     advance_learning_cutoff,
@@ -310,6 +311,30 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 if lemma not in lemma_to_sentence:
                     lemma_to_sentence[lemma] = phrase.text
 
+    # ── surface_to_analysis from generator output ────────────────────────
+    # The LLM (which sees full sentence context) emits a per-lesson
+    # declension_focus list. We build surface_to_analysis from that instead
+    # of from _lemmatizer.analyze (which is a token-level analyzer that
+    # forfeits contextual disambiguation). The ClasslaLemmatizer and the
+    # analyze() Protocol method exist for future Anki-deck tagging but are
+    # not wired here — LowercaseLemmatizer (which always returns ("", ""))
+    # is the CI-safe default.
+    surface_to_analysis: dict[str, tuple[str, str, str]] = {}
+    surface_to_sentence: dict[str, str] = {}
+    for d in lesson.generation_metadata.get("declension_focus", []):
+        case = d.get("case", "")
+        if not case or case == "Nom":
+            continue
+        surface = d.get("surface", "")
+        if not surface:
+            continue
+        if natural_speed is not None:
+            for phrase in natural_speed.phrases:
+                if re.search(rf"\b{re.escape(surface)}\b", phrase.text, re.IGNORECASE):
+                    surface_to_analysis[surface] = (d["lemma"], case, d.get("number", ""))
+                    surface_to_sentence[surface] = phrase.text
+                    break
+
     cloze_enabled = lesson.language_code == "sl" and db.get_enable_cloze_cards()
 
     # ── Today window (mirrors count_new_introduced_today convention) ────
@@ -409,6 +434,41 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                     balancer, card_id=prev_dir.anki_card_id, note_id=existing.anki_note_id, interval=row.interval
                 )
                 graded_count += 1
+
+    # ── Case-cloze creation (inflected content words in oblique cases) ──
+    case_clozes_enabled = bool(cloze_enabled and lesson.language_code == "sl" and db.get_enable_case_clozes())
+    if case_clozes_enabled and surface_to_analysis:
+        case_cloze_count = 0
+        max_case_clozes = 5
+        for surface, (lemma, case, number) in surface_to_analysis.items():
+            if case_cloze_count >= max_case_clozes:
+                break
+            if is_function_word(lemma, lesson.language_code):
+                continue
+            sent = surface_to_sentence.get(surface, "")
+            cloze_sent = make_case_cloze_text(surface, lemma, case, number, sent)
+            unit = SyntacticUnit(
+                text=surface,
+                translation=token_glosses.get(lemma, ""),
+                word_count=1,
+                difficulty=1,
+                source="llm",
+                lemma=lemma,
+                disambig_key=f"case:{case.lower()}",
+                card_type="cloze",
+                source_sentence=cloze_sent,
+                source_sentence_translation=sentence_translations.get(sent, ""),
+            )
+            was_created = db.add_collocation(unit, language_code=lesson.language_code)
+            if was_created:
+                try:
+                    guid = compute_guid(surface, lesson.language_code, f"case:{case.lower()}")
+                    coll_id = db.get_collocation_id_by_guid(guid)
+                    await synthesize_cloze_audios(db, coll_id, sent, surface)
+                except Exception:
+                    _logger.warning("Failed to synthesize case-cloze audio for %r", surface)
+                case_cloze_count += 1
+                created_count += 1
 
     # ── Key phrase registration + auto-grade ────────────────────────────
     for kp in lesson.key_phrases:
@@ -633,6 +693,19 @@ async def get_cloze_setting(request: Request):
 async def set_cloze_setting(body: ClozeSettingRequest, request: Request):
     db = request.app.state.srs_db
     db.set_enable_cloze_cards(body.enabled)
+    return {"enabled": body.enabled}
+
+
+@router.get("/settings/case-clozes")
+async def get_case_cloze_setting(request: Request):
+    db = request.app.state.srs_db
+    return {"enabled": db.get_enable_case_clozes()}
+
+
+@router.put("/settings/case-clozes")
+async def set_case_cloze_setting(body: ClozeSettingRequest, request: Request):
+    db = request.app.state.srs_db
+    db.set_enable_case_clozes(body.enabled)
     return {"enabled": body.enabled}
 
 

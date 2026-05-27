@@ -238,19 +238,21 @@ class SRSDatabase:
 
     # ── Write operations ───────────────────────────────────────────────
 
-    def add_collocation(self, unit: SyntacticUnit, language_code: str = "sl") -> None:
+    def add_collocation(self, unit: SyntacticUnit, language_code: str = "sl") -> bool:
         """Insert a new collocation; if it already exists, backfill an empty translation.
 
         New rows get both recognition and production direction rows (defaults).
         Single-word units without an explicit lemma get lemma = casefolded text
         so that get_collocation_by_lemma_with_id lookups succeed. Empty strings
         count as missing — pre-Phase-F sync paths sometimes wrote empties.
+
+        Returns True if a new row was inserted, False if it already existed.
         """
         if not unit.lemma and unit.word_count == 1:
             unit.lemma = unit.text.casefold()
         disambig = unit.disambig_key
         guid = compute_guid(unit.text, language_code, disambig)
-        date.today().isoformat()
+        is_new = False
         with self._get_conn() as conn:
             # Identity is the case-normalized guid; legacy rows may carry a
             # stale guid that no longer matches the current compute_guid output,
@@ -270,6 +272,7 @@ class SRSDatabase:
                     (unit.text, language_code, disambig),
                 ).fetchone()
             if existing is None:
+                is_new = True
                 conn.execute(
                     """
                     INSERT INTO collocations
@@ -329,6 +332,7 @@ class SRSDatabase:
                     (coll_id, direction.value, today_due_at),
                 )
             self._commit(conn)
+        return is_new
 
     def get_untranslated_collocations(self) -> list[tuple[str, str]]:
         """Return (text, language_code) for all rows with an empty translation."""
@@ -1891,6 +1895,16 @@ class SRSDatabase:
 
     def set_enable_cloze_cards(self, enabled: bool) -> None:
         self.set_anki_state_cache("enable_cloze_cards", "true" if enabled else "false")
+
+    def get_enable_case_clozes(self) -> bool:
+        """Return the current case-clozes flag (DB-backed, default False)."""
+        row = self.get_anki_state_cache("enable_case_clozes")
+        if row is None:
+            return False
+        return row[0].lower() == "true"
+
+    def set_enable_case_clozes(self, enabled: bool) -> None:
+        self.set_anki_state_cache("enable_case_clozes", "true" if enabled else "false")
 
     def set_dirty_fields(self, guid: str, fields_str: str) -> None:
         """Set dirty_fields for the collocation identified by guid."""

@@ -294,6 +294,76 @@ describe("DrillCard", () => {
       expect(container.textContent).toContain("nisem videl.");
       expect(container.textContent).not.toContain("še");
     });
+
+    it("renders hint from {{c1::surface::hint}} in blank", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({
+        text: "Ljubljano",
+        translation: "Ljubljana",
+        card_type: "cloze",
+        source_sentence: "Grem v {{c1::Ljubljano::ljubljana, acc sg}} s prijateljem.",
+        source_sentence_translation: "I'm going to Ljubljana with a friend.",
+      });
+      const { container } = render(DrillCard, { item, direction: "production", onRate });
+      expect(container.textContent).toContain("[ljubljana, acc sg]");
+      expect(container.textContent).toContain("Grem v");
+      expect(container.textContent).toContain("s prijateljem.");
+      expect(container.textContent).not.toContain("Ljubljano");
+    });
+
+    it("renders surface from {{c1::surface::hint}} in answer", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({
+        text: "Ljubljano",
+        translation: "Ljubljana",
+        card_type: "cloze",
+        source_sentence: "Grem v {{c1::Ljubljano::ljubljana, acc sg}} s prijateljem.",
+        source_sentence_translation: "I'm going to Ljubljana with a friend.",
+      });
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "production",
+        onRate,
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      expect(container.innerHTML).toContain('<mark class="cloze-answer">Ljubljano</mark>');
+      expect(container.textContent).toContain("Ljubljano");
+    });
+
+    it("renders plain {{c1::surface}} as [...] in blank", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({
+        text: "ki",
+        translation: "that/which",
+        card_type: "cloze",
+        source_sentence: "Knjiga, {{c1::ki}} je tam.",
+        source_sentence_translation: "The book that is there.",
+      });
+      const { container } = render(DrillCard, { item, direction: "production", onRate });
+      expect(container.textContent).toContain("[...]");
+      expect(container.textContent).toContain("Knjiga,");
+      expect(container.textContent).toContain("je tam.");
+      expect(container.textContent).not.toContain("ki");
+    });
+
+    it("renders plain {{c1::surface}} answer with highlighted word", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({
+        text: "ki",
+        translation: "that/which",
+        card_type: "cloze",
+        source_sentence: "Knjiga, {{c1::ki}} je tam.",
+        source_sentence_translation: "The book that is there.",
+      });
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "production",
+        onRate,
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      expect(container.innerHTML).toContain('<mark class="cloze-answer">ki</mark>');
+      expect(container.textContent).toContain("ki");
+    });
   });
 
   describe("rating callbacks", () => {

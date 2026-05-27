@@ -364,6 +364,17 @@ class TestCRUD:
         srs_db.set_enable_cloze_cards(False)
         assert srs_db.get_enable_cloze_cards() is False
 
+    def test_get_enable_case_clozes_defaults_false(self, srs_db):
+        """Fresh DB with no cache row returns False."""
+        assert srs_db.get_enable_case_clozes() is False
+
+    def test_set_then_get_enable_case_clozes(self, srs_db):
+        """Round-trip set/get for the case-cloze flag."""
+        srs_db.set_enable_case_clozes(True)
+        assert srs_db.get_enable_case_clozes() is True
+        srs_db.set_enable_case_clozes(False)
+        assert srs_db.get_enable_case_clozes() is False
+
 
 class TestDueQueries:
     """Tests for due/new collocation queries."""
