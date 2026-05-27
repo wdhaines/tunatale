@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from app.anki.sync import AnkiSync
+from app.anki.sync import AnkiSync, PullReport
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.srs.database import SRSDatabase
 from app.srs.queue_stats import resolve_fsrs_params
@@ -183,3 +183,204 @@ def test_compare_mode_dry_run_writes_nothing():
     _run_pull(db, [make_note_record(anki_guid=guid, cards=[card])], [_good_revlog_row()], dry_run=True)
 
     assert _shadow(db, coll_id) == (None, None)
+
+
+def _run_pull_report(db, records, revlog_rows, *, dry_run: bool = False) -> PullReport:
+    """Run a sync_pull and return the PullReport."""
+    return AnkiSync(db=db, _reader=RevlogReader(records, revlog_rows), _writer=FakeWriter()).sync_pull(dry_run=dry_run)
+
+
+def _compute_replay(db, coll_id, stored):
+    """Compute the forward-step replay result for a single GOOD grade from stored state."""
+    from app.srs.queue_stats import resolve_fsrs_params
+
+    params = resolve_fsrs_params(db)[0]
+    return db.rebuild_from_revlog(
+        coll_id,
+        Direction.RECOGNITION,
+        params=params,
+        col_crt=None,
+        anki_card_id=_CARD_ID,
+        starting_state=stored,
+        since_id=None,
+    )
+
+
+def test_new_mode_writes_replay_derived_fsrs():
+    """new mode, replay within tolerance of Anki -> writes replay-derived stability/difficulty.
+
+    Discriminating: card_rec is *within* 0.01 tolerance but *not equal* to the
+    replay, so the assertion can only pass if the code reads from the replay.
+    """
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    stored = _seed_review_direction(db, guid)
+    coll_id = db.get_collocation_id_by_guid(guid)
+    db.set_event_sync_pull_mode("new")
+
+    revlog = [_good_revlog_row()]
+    records = [make_note_record(anki_guid=guid, cards=[])]
+
+    # Pre-ingest the revlog row so we can compute the expected replay result.
+    sync = AnkiSync(db=db, _reader=RevlogReader(records, revlog), _writer=FakeWriter())
+    sync._ingest_anki_revlog_for_card(_CARD_ID, coll_id, Direction.RECOGNITION)
+    expected = _compute_replay(db, coll_id, stored)
+
+    # Remove the pre-ingested row so the real pull can re-ingest it.
+    db._conn.execute("DELETE FROM tt_revlog WHERE collocation_id = ?", (coll_id,))
+    db._conn.commit()
+
+    # card_rec within 0.01 tolerance but NOT equal to the replay output.
+    card = make_card_record(
+        anki_card_id=_CARD_ID,
+        ord=0,
+        reps=4,
+        stability=expected.stability + 0.005,
+        difficulty=expected.difficulty + 0.005,
+    )
+    records2 = [make_note_record(anki_guid=guid, cards=[card])]
+    report = _run_pull_report(db, records2, revlog)
+
+    after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+    assert len(report.recompute_divergences) == 0
+    assert abs(after.stability - expected.stability) < 1e-9
+    assert after.stability != card.stability
+    assert abs(after.difficulty - expected.difficulty) < 1e-9
+    assert after.reps == 4
+    assert after.state == SRSState.REVIEW
+
+
+def test_new_mode_divergence_takes_anki():
+    """new mode, replay diverges -> takes Anki's value + records recompute_divergence."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    stored = _seed_review_direction(db, guid)
+    coll_id = db.get_collocation_id_by_guid(guid)
+    db.set_event_sync_pull_mode("new")
+
+    revlog = [_good_revlog_row()]
+    card = make_card_record(anki_card_id=_CARD_ID, ord=0, reps=4, stability=7.25, difficulty=4.6)
+    records = [make_note_record(anki_guid=guid, cards=[card])]
+
+    # Pre-ingest so we can compute expected replay.
+    sync = AnkiSync(db=db, _reader=RevlogReader(records, revlog), _writer=FakeWriter())
+    sync._ingest_anki_revlog_for_card(_CARD_ID, coll_id, Direction.RECOGNITION)
+    expected = _compute_replay(db, coll_id, stored)
+
+    # Remove pre-ingested revlog so the real pull can re-ingest it.
+    db._conn.execute("DELETE FROM tt_revlog WHERE collocation_id = ?", (coll_id,))
+    db._conn.commit()
+
+    # Set Anki's stability/difficulty far outside 0.01 tolerance.
+    card2 = make_card_record(
+        anki_card_id=_CARD_ID,
+        ord=0,
+        reps=4,
+        stability=expected.stability * 2,
+        difficulty=expected.difficulty + 5.0,
+    )
+    records2 = [make_note_record(anki_guid=guid, cards=[card2])]
+    report = _run_pull_report(db, records2, revlog)
+
+    after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+    assert after.stability == expected.stability * 2
+    assert after.difficulty == expected.difficulty + 5.0
+    assert len(report.recompute_divergences) == 1
+    d = report.recompute_divergences[0]
+    assert d.collocation_id == coll_id
+    assert d.direction == Direction.RECOGNITION.value
+    assert d.anki_stability == expected.stability * 2
+    assert d.anki_difficulty == expected.difficulty + 5.0
+    assert d.replay_stability == expected.stability
+    assert d.replay_difficulty == expected.difficulty
+    assert len(report.conflicts) == 0
+
+
+def test_new_mode_suspend_branch():
+    """new mode, suspend branch unchanged from legacy."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    _seed_review_direction(db, guid)
+    db.set_event_sync_pull_mode("new")
+
+    card = make_card_record(anki_card_id=_CARD_ID, ord=0, reps=4, stability=7.25, difficulty=4.6, queue=-1)
+    _run_pull(db, [make_note_record(anki_guid=guid, cards=[card])], [_good_revlog_row()])
+
+    after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+    assert after.state == SRSState.SUSPENDED
+
+
+def test_new_mode_bury_branch():
+    """new mode, bury branch unchanged from legacy."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    _seed_review_direction(db, guid)
+    db.set_event_sync_pull_mode("new")
+
+    card = make_card_record(anki_card_id=_CARD_ID, ord=0, reps=4, stability=7.25, difficulty=4.6, queue=-2)
+    _run_pull(db, [make_note_record(anki_guid=guid, cards=[card])], [_good_revlog_row()])
+
+    after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+    assert after.state == SRSState.BURIED
+    assert after.bury_kind is not None
+
+
+def test_new_mode_zero_new_rows_noop():
+    """new mode, zero new revlog rows -> no-op on FSRS state."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    stored = _seed_review_direction(db, guid)
+    db.set_event_sync_pull_mode("new")
+
+    card = make_card_record(anki_card_id=_CARD_ID, ord=0, reps=3, stability=5.0, difficulty=4.5)
+    report = _run_pull_report(db, [make_note_record(anki_guid=guid, cards=[card])], revlog_rows=[])
+
+    after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+    assert after.stability == stored.stability
+    assert after.difficulty == stored.difficulty
+    assert len(report.recompute_divergences) == 0
+
+
+def test_legacy_default_regression():
+    """legacy default unchanged (regression guard)."""
+    revlog = [_good_revlog_row()]
+    card_kwargs = dict(anki_card_id=_CARD_ID, ord=0, reps=4, stability=7.25, difficulty=4.6)
+
+    db_a = _make_tt_db()
+    guid_a = _add_banka(db_a)
+    _seed_review_direction(db_a, guid_a)
+    _run_pull(db_a, [make_note_record(anki_guid=guid_a, cards=[make_card_record(**card_kwargs)])], revlog)
+    d1 = db_a.get_collocation_by_guid(guid_a).directions[Direction.RECOGNITION]
+
+    db_b = _make_tt_db()
+    guid_b = _add_banka(db_b)
+    _seed_review_direction(db_b, guid_b)
+    _run_pull(db_b, [make_note_record(anki_guid=guid_b, cards=[make_card_record(**card_kwargs)])], revlog)
+    d2 = db_b.get_collocation_by_guid(guid_b).directions[Direction.RECOGNITION]
+
+    assert d1.stability == d2.stability
+    assert d1.difficulty == d2.difficulty
+    assert d1.state == d2.state
+    assert d1.due_at == d2.due_at
+    assert d1.reps == d2.reps
+    assert d1.last_review == d2.last_review
+
+
+def test_new_mode_dry_run_writes_nothing():
+    """new mode, dry_run writes nothing to authoritative columns."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    stored = _seed_review_direction(db, guid)
+    db.set_event_sync_pull_mode("new")
+
+    card = make_card_record(anki_card_id=_CARD_ID, ord=0, reps=4, stability=7.25, difficulty=4.6)
+    _run_pull(
+        db,
+        [make_note_record(anki_guid=guid, cards=[card])],
+        [_good_revlog_row()],
+        dry_run=True,
+    )
+
+    after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+    assert after.stability == stored.stability
+    assert after.difficulty == stored.difficulty
