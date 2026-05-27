@@ -317,6 +317,20 @@ Current model — TT reconstructs from TT state — has held through ~22 fixes. 
 
 **Already-decided non-mirror: the FSRS load balancer (Layer 53).** If `config['loadBalancerEnabled']` is set, Anki relocates every graded card's interval to a less-loaded day *within* the fuzz range, using the whole collection's due-date histogram (`states/fuzz.rs:36-42` tries `load_balancer_ctx.find_interval` before pure fuzz; wired into both the live answer path `answering/mod.rs:237-258` and the reschedule path `fsrs/memory_state.rs:218`). TT does **not** mirror this and should not — it needs a global due histogram, and `sync_pull` already reads the load-balanced `cards.due` directly so synced cards stay correct. **Signature**: stability bit-exact but `due_at` off by ±1–2 days, and the stored interval lands *inside* TT's computed fuzz `[lower, upper]` but isn't TT's fuzz pick. Don't chase this as an FSRS bug — verify the stored interval is within the fuzz range (it is), confirm `loadBalancerEnabled`, and stop. Only a TT-native grade (never re-graded in Anki) shows the un-balanced pick, and that's cosmetic.
 
+**Already-decided non-issue: the 05-21 restore difficulty divergences in the Stage 3b compare shadow (2026-05-28).** A Check Database / forced AnkiWeb download (restore) on 2026-05-21 re-stamped ~2333 revlog rows (ids collapsed into sequential runs within single seconds, one `usn` per cluster). Many are duplicate re-gradings Anki **never applied to `card.data`** — proving Anki's `card.data` is not a pure replay of its revlog. The event-sourcing shadow replay over-applies them, producing **104 difficulty-only divergences** in the compare-mode shadow columns (`fsrs_difficulty_replayed` vs `fsrs_difficulty`). This is **shadow-only (zero production impact)** — legacy/authoritative takes Anki's `cards.data` verbatim. Do NOT count these as a soak regression and do NOT "fix" TT's FSRS/replay to match them (that would mean reverse-engineering Anki's restore). The structural fix is the anchor-to-`card.data` design for compare→new (see `docs/stage-3b-empirical-measurement.md` "Design note (2026-05-28)" and Path 2 above).
+
+**Soak health check going forward (post-2026-05-28).** When verifying a sync's compare-shadow health:
+- **`stability_replayed` divergence is the real signal** — it should be **0**. Any stability divergence is a genuine issue worth investigating (this is what Layer 58 fixed).
+- **`fsrs_difficulty_replayed` divergence has a benign floor of ~104** from the 05-21 restore. The known-benign cohort is exactly *difficulty-diverges AND stability-matches*. Only investigate difficulty if (a) a card diverges on **stability** too, (b) the difficulty count climbs well beyond ~104, or (c) a **recently-graded** card (graded after the last clean sync, not an old 05-21 cohort card) newly diverges.
+
+Classifier (TT-side only, no Anki needed):
+```bash
+sqlite3 backend/tunatale.db "
+SELECT 'stability_diverge' k, COUNT(*) FROM collocation_directions WHERE stability_replayed IS NOT NULL AND ABS(stability_replayed-stability)>1e-4
+UNION ALL SELECT 'difficulty_only_diverge (benign 05-21 cohort, ~104)', COUNT(*) FROM collocation_directions WHERE fsrs_difficulty_replayed IS NOT NULL AND ABS(fsrs_difficulty_replayed-fsrs_difficulty)>1e-4 AND ABS(COALESCE(stability_replayed,stability)-stability)<=1e-4;"
+```
+`stability_diverge=0` and `difficulty_only_diverge≈104` ⇒ healthy. Full trail: memory `project_stage3b_soak_finding_difficulty_replay`.
+
 ## Source references
 
 `anki-source-expert` subagent reads `/tmp/anki-source/`. Key files:
