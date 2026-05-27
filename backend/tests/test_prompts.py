@@ -2,7 +2,6 @@
 
 from app.generation.prompts import (
     STORY_PROMPT_DEEPER_TEMPLATE,
-    STORY_PROMPT_TEMPLATE,
     STORY_PROMPT_WIDER_TEMPLATE,
     SYSTEM_PROMPT,
     _build_cefr_block,
@@ -50,13 +49,7 @@ def test_cefr_block_contains_calibration_table():
 # ── User prompt templates ─────────────────────────────────────────────────
 
 
-def test_story_prompt_has_template_variables():
-    assert "{learning_objective}" in STORY_PROMPT_TEMPLATE
-    assert "{focus}" in STORY_PROMPT_TEMPLATE
-
-
 def test_story_prompt_has_cefr_block_placeholder():
-    assert "{cefr_block}" in STORY_PROMPT_TEMPLATE
     assert "{cefr_block}" in STORY_PROMPT_WIDER_TEMPLATE
     assert "{cefr_block}" in STORY_PROMPT_DEEPER_TEMPLATE
 

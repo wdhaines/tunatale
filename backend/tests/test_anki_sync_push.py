@@ -678,18 +678,6 @@ class TestOfflineWriter:
         n = writer.bury_siblings(graded_card_id=999999, graded_queue=2, bury_reviews=True)
         assert n == 0
 
-    def test_state_to_anki_queue_mappings(self):
-        """Cover all branches of _state_to_anki_queue: NEW→0, LEARNING/RELEARNING→1,
-        REVIEW→2, SUSPENDED/BURIED→None (bury skipped)."""
-        from app.anki.sync import _state_to_anki_queue
-
-        assert _state_to_anki_queue(SRSState.NEW) == 0
-        assert _state_to_anki_queue(SRSState.LEARNING) == 1
-        assert _state_to_anki_queue(SRSState.RELEARNING) == 1
-        assert _state_to_anki_queue(SRSState.REVIEW) == 2
-        assert _state_to_anki_queue(SRSState.SUSPENDED) is None
-        assert _state_to_anki_queue(SRSState.BURIED) is None
-
     def test_set_learning_state_preserves_suspension(self):
         """Suspended cards (queue=-1) must NOT be unsuspended by set_learning_state."""
         conn = _make_anki_full_db()
@@ -2349,7 +2337,7 @@ class TestSyncPushBuriesSiblings:
         assert bury_calls[0][2] == 1, "RELEARNING graded_queue must be 1"
 
     def test_backfill_skips_suspended_state(self):
-        """SUSPENDED state → _state_to_anki_queue returns None → no bury fired."""
+        """SUSPENDED state → no Anki queue mapping → no bury fired."""
         db = _make_tt_db()
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         db.set_anki_state_cache("bury_review", "True")

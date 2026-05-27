@@ -16,7 +16,6 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
-from app.anki.anki_connect import AnkiConnectClient
 from app.anki.protobuf_wire import (
     compute_anki_day_index,
     find_varint_field,
@@ -84,10 +83,6 @@ class ForceFsrsNotAcknowledgedError(Exception):
     """--force-fsrs requires a one-time acknowledgement file."""
 
 
-class SetSpecificValueMissingError(Exception):
-    """AnkiConnect does not expose setSpecificValueOfCard."""
-
-
 def ensure_force_fsrs_ack(ack_path: Path, interactive: bool = True) -> None:
     """Verify the user has acknowledged the force-fsrs risk.
 
@@ -112,16 +107,6 @@ def ensure_force_fsrs_ack(ack_path: Path, interactive: bool = True) -> None:
         raise ForceFsrsNotAcknowledgedError("User declined force-fsrs acknowledgement.")
     ack_path.parent.mkdir(parents=True, exist_ok=True)
     ack_path.write_text(f"acknowledged at {_time.strftime('%Y-%m-%dT%H:%M:%S')}\n")
-
-
-def preflight_set_specific_value_of_card(client: AnkiConnectClient) -> None:
-    """Raise SetSpecificValueMissingError if AnkiConnect lacks setSpecificValueOfCard."""
-    actions = client.api_reflect()
-    if "setSpecificValueOfCard" not in actions:
-        raise SetSpecificValueMissingError(
-            "AnkiConnect does not expose setSpecificValueOfCard. "
-            "Add 'setSpecificValueOfCard' to the allowedActions list in your AnkiConnect config."
-        )
 
 
 @dataclass
@@ -849,19 +834,6 @@ class OfflineWriter:
     _DECKS_COMMON_REVIEW_TODAY = 5
     _DECKS_COMMON_SECONDS_TODAY = 7
 
-    def count_revlog_before(self, cid: int, ts_ms: int) -> int:
-        """Count revlog entries for *cid* whose ID < *ts_ms*."""
-        row = self._conn.execute(
-            "SELECT COUNT(*) FROM revlog WHERE cid = ? AND id < ?",
-            (cid, ts_ms),
-        ).fetchone()
-        return row[0] if row else 0
-
-    def get_deck_id_for_card(self, cid: int) -> int | None:
-        """Return the ``did`` (deck id) for *cid*, or None if not found."""
-        row = self._conn.execute("SELECT did FROM cards WHERE id = ?", (cid,)).fetchone()
-        return row[0] if row else None
-
     def bump_deck_new_today(self, deck_id: int, today_day_index: int) -> None:
         """Increment the "new studied today" counter for *deck_id*.
 
@@ -1076,23 +1048,8 @@ def _anki_step_ahead(anki_left: int | None, local_left: int | None) -> bool:
 
 # Layer 35: bury_kind split (sched/user/None).
 # Layer 39 (2026-05-17): queue=-2 now maps to 'sched', not 'user'.
-def _state_to_anki_queue(state: SRSState) -> int | None:
-    """Map a TT SRSState to the Anki cards.queue value sync_push writes.
-
-    Returns ``None`` for SUSPENDED/BURIED so bury_siblings is skipped — those
-    aren't grade events.
-    """
-    if state == SRSState.NEW:
-        return 0
-    if state in (SRSState.LEARNING, SRSState.RELEARNING):
-        return 1
-    if state == SRSState.REVIEW:
-        return 2
-    return None
-
-
-# String-keyed mirror of `_state_to_anki_queue` used by the sync_push backfill,
-# which iterates raw DB rows. Avoids re-parsing into the SRSState enum.
+# String-keyed map (TT state value → Anki cards.queue) used by the sync_push
+# backfill, which iterates raw DB rows. Avoids re-parsing into the SRSState enum.
 _STATE_VALUE_TO_ANKI_QUEUE: dict[str, int] = {
     SRSState.NEW.value: 0,
     SRSState.LEARNING.value: 1,

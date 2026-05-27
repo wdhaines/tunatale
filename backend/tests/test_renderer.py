@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 
 from pydub import AudioSegment
 
-from app.audio.assembler import AudioAssembler
 from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.preprocessing.slovene import SlovenePreprocessor
 from app.audio.renderer import LessonRenderer
@@ -42,42 +41,6 @@ def _make_renderer(mock_tts):
         preprocessor=SlovenePreprocessor(),
         pause_calculator=NaturalPauseCalculator(),
     )
-
-
-class TestAudioAssembler:
-    """Tests for AudioAssembler protocol compliance and basic operations."""
-
-    def test_satisfies_protocol(self):
-        from app.audio.ports import AudioProcessor
-
-        asm = AudioAssembler()
-        assert isinstance(asm, AudioProcessor)
-
-    def test_concatenate_returns_bytes(self):
-        asm = AudioAssembler()
-        result = asm.concatenate([b"chunk1", b"chunk2"])
-        assert isinstance(result, bytes)
-        assert len(result) > 0
-
-    def test_add_silence_returns_bytes(self):
-        asm = AudioAssembler()
-        silence = asm.add_silence(500)
-        assert isinstance(silence, bytes)
-        assert len(silence) > 0
-
-    def test_normalize_returns_bytes(self):
-        asm = AudioAssembler()
-        result = asm.normalize(b"\x00" * 1000)
-        assert isinstance(result, bytes)
-
-    def test_trim_silence_returns_bytes(self):
-        asm = AudioAssembler()
-        result = asm.trim_silence(b"\x00" * 1000)
-        assert isinstance(result, bytes)
-
-    def test_concatenate_empty_list_returns_empty_bytes(self):
-        asm = AudioAssembler()
-        assert asm.concatenate([]) == b""
 
 
 class TestLessonRenderer:

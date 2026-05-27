@@ -1,6 +1,6 @@
 import type { DialogueLine, LessonDetail, WordToken } from "./api";
 
-export interface UnifiedLine {
+interface UnifiedLine {
   role: string;
   words: WordToken[];
   naturalText: string;

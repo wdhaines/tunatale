@@ -5,18 +5,14 @@ from __future__ import annotations
 import json
 from datetime import UTC, date, datetime, time, timedelta
 
-import httpx
 import pytest
 
-from app.anki.anki_connect import AnkiConnectClient
 from app.anki.sync import (
     KNOWN_ANKI_SCHEMA_VER,
     AnkiSync,
     ForceFsrsNotAcknowledgedError,
     OfflineWriter,
-    SetSpecificValueMissingError,
     ensure_force_fsrs_ack,
-    preflight_set_specific_value_of_card,
 )
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -183,36 +179,6 @@ class TestEnsureForceFsrsAck:
         with pytest.raises(ForceFsrsNotAcknowledgedError):
             ensure_force_fsrs_ack(ack_path, interactive=True)
         assert not ack_path.exists()
-
-
-# ── TestPreflightSetSpecificValue ───────────────────────────────────────────────
-
-
-class TestPreflightSetSpecificValue:
-    def _make_client(self, actions: list[str]) -> AnkiConnectClient:
-        def handle_request(request):
-            body = json.loads(request.content)
-            if body["action"] == "apiReflect":
-                return httpx.Response(200, json={"result": {"actions": actions}, "error": None})
-            return httpx.Response(200, json={"result": None, "error": None})
-
-        transport = httpx.MockTransport(handle_request)
-        return AnkiConnectClient(http_client=httpx.Client(transport=transport))
-
-    def test_raises_when_action_missing(self):
-        client = self._make_client(["version", "findNotes"])
-        with pytest.raises(SetSpecificValueMissingError):
-            preflight_set_specific_value_of_card(client)
-
-    def test_passes_when_action_present(self):
-        client = self._make_client(["version", "findNotes", "setSpecificValueOfCard"])
-        # Should not raise
-        preflight_set_specific_value_of_card(client)
-
-    def test_error_message_mentions_action(self):
-        client = self._make_client([])
-        with pytest.raises(SetSpecificValueMissingError, match="setSpecificValueOfCard"):
-            preflight_set_specific_value_of_card(client)
 
 
 class TestOfflineWriterSetSpecificValue:

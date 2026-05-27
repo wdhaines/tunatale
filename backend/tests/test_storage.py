@@ -147,11 +147,11 @@ class TestAudioFileStorage:
 
     def test_save_and_get_audio_file(self, store):
         store.save_audio_file("a1", "l1", "/output/audio/a1.wav")
-        result = store.get_audio_file("a1")
-        assert result == "/output/audio/a1.wav"
+        result = store.get_audio_file_row("a1")
+        assert result["file_path"] == "/output/audio/a1.wav"
 
     def test_get_audio_file_returns_none_when_missing(self, store):
-        assert store.get_audio_file("nonexistent") is None
+        assert store.get_audio_file_row("nonexistent") is None
 
 
 class TestSectionAudioStorage:
@@ -163,8 +163,8 @@ class TestSectionAudioStorage:
         store.save_audio_file("sec0", "l1", "/output/sec0.wav", section_index=0, section_type="key_phrases")
         store.save_audio_file("sec1", "l1", "/output/sec1.wav", section_index=1, section_type="natural_speed")
 
-        assert store.get_audio_file("full1") == "/output/full1.wav"
-        assert store.get_audio_file("sec0") == "/output/sec0.wav"
+        assert store.get_audio_file_row("full1")["file_path"] == "/output/full1.wav"
+        assert store.get_audio_file_row("sec0")["file_path"] == "/output/sec0.wav"
 
     def test_list_audio_files_for_lesson_ordering(self, store):
         """list_audio_files_for_lesson returns full row first, then sections in order."""

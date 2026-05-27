@@ -2344,11 +2344,11 @@ class TestDirtyFsrsBuriedSyncRegression:
         assert updated.directions[Direction.RECOGNITION].state == SRSState.SUSPENDED
 
     def test_count_review_due_not_inflated_by_buried_direction(self):
-        """Regression: count_review_due should not count buried directions.
+        """Regression: the review badge should not count buried directions.
 
         When a direction is buried in Anki (queue=-2) but TT has it as REVIEW
         with dirty_fsrs, the fix ensures the buried state is mirrored, so
-        count_review_due won't overcount.
+        count_review_due_collocations won't overcount.
         """
         db = _make_tt_db()
         guid = _add_banka(db)

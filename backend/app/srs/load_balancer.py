@@ -198,10 +198,6 @@ class LoadBalancer:
         if 0 <= interval < LOAD_BALANCE_DAYS:
             self.days[interval].add(cid, nid)
 
-    def remove_card(self, cid: int) -> None:
-        for day in self.days:
-            day.remove(cid)
-
     def find_interval(
         self, interval: float, minimum: int, maximum: int, fuzz_seed: int, note_id: int | None
     ) -> int | None:

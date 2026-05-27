@@ -150,12 +150,10 @@ class TestLoadBalancerHistogram:
         lb.add_card(2, 100, -1)  # negative → ignored
         assert all(len(d.cards) == 0 for d in lb.days)
 
-    def test_add_and_remove_card(self):
+    def test_add_card(self):
         lb = LoadBalancer(None, 1779534000)
         lb.add_card(1, 100, 5)
         assert len(lb.days[5].cards) == 1
-        lb.remove_card(1)
-        assert len(lb.days[5].cards) == 0
 
     def test_easy_days_percentages_parsed(self):
         lb = LoadBalancer([1.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0], 1779534000)

@@ -230,13 +230,6 @@ class ContentStore:
             if self._in_memory:
                 conn.commit()
 
-    def get_audio_file(self, audio_id: str) -> str | None:
-        with self._get_conn() as conn:
-            row = conn.execute("SELECT file_path FROM audio_files WHERE id = ?", (audio_id,)).fetchone()
-        if row is None:
-            return None
-        return row["file_path"]
-
     def get_audio_file_row(self, audio_id: str) -> dict | None:
         """Return all fields for an audio_files row, or None if not found."""
         with self._get_conn() as conn:

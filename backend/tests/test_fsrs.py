@@ -917,29 +917,6 @@ class TestReviewIntervalCascade:
         assert _greater_than_last(5, 5) == 0
         assert _greater_than_last(6, 5) == 6
 
-    def test_constrain_passing_intervals_poljubiti_case(self):
-        from app.srs.fsrs import _constrain_passing_intervals
-
-        h, g, e = _constrain_passing_intervals(1, 1, 3, 1)
-        # raw_hard=1, gt(1,1)=0, floor=1 → hard=max(1,1)=1
-        # raw_good=1, gt(1,1)=0, floor=max(0,1+1)=2 → good=max(1,2)=2 ✓
-        # raw_easy=3, gt(3,1)=2, floor=max(2,2+1=3) → easy=max(3,3)=3
-        assert (h, g, e) == (1, 2, 3)
-
-    def test_constrain_passing_intervals_below_scheduled_days(self):
-        from app.srs.fsrs import _constrain_passing_intervals
-
-        h, g, e = _constrain_passing_intervals(1, 1, 3, 10)
-        assert (h, g, e) == (1, 2, 3)
-
-    def test_constrain_passing_intervals_all_above_scheduled_days(self):
-        from app.srs.fsrs import _constrain_passing_intervals
-
-        h, g, e = _constrain_passing_intervals(10, 10, 10, 5)
-        # gt(10,5)=6, hard=max(10,6)=10, gt(10,5)=6, floor=max(6,10+1=11) → good=max(10,11)=11
-        # gt(10,5)=6, floor=max(6,11+1=12) → easy=max(10,12)=12
-        assert (h, g, e) == (10, 11, 12)
-
     def test_review_good_interval_exceeds_hard_by_at_least_one(self):
         """Cascade ensures Good ≥ Hard + 1 for adjacent ratings."""
         from app.srs.fsrs import schedule

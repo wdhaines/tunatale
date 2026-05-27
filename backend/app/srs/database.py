@@ -467,16 +467,6 @@ class SRSDatabase:
         direction = Direction.RECOGNITION if Direction.RECOGNITION in item.directions else Direction.PRODUCTION
         self.update_direction(guid, direction, item.directions[direction])
 
-    def record_violation(
-        self, collocation_text: str, day_number: int, violation_type: str, details: str | None = None
-    ) -> None:
-        with self._get_conn() as conn:
-            conn.execute(
-                "INSERT INTO violations (collocation_text, day_number, violation_type, details) VALUES (?, ?, ?, ?)",
-                (collocation_text, day_number, violation_type, details),
-            )
-            self._commit(conn)
-
     # ── Read operations ────────────────────────────────────────────────
 
     def _load_directions(self, conn: sqlite3.Connection, collocation_id: int) -> dict[Direction, DirectionState]:
@@ -1141,14 +1131,6 @@ class SRSDatabase:
             result = [(r["id"], self._row_to_item(conn, r), r["language_code"]) for r in rows]
         return result, total
 
-    def get_violations(self, collocation_text: str) -> list[dict]:
-        with self._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM violations WHERE collocation_text = ?",
-                (collocation_text,),
-            ).fetchall()
-        return [dict(r) for r in rows]
-
     def count_collocations(self) -> int:
         with self._get_conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
@@ -1665,22 +1647,6 @@ class SRSDatabase:
                 result.append((row["guid"], d, ds))
         return result
 
-    def touch_last_synced_at(self, guid: str, direction: Direction) -> None:
-        """Update last_synced_at to now for one direction without clearing dirty_fsrs."""
-        with self._get_conn() as conn:
-            row = conn.execute("SELECT id FROM collocations WHERE guid = ?", (guid,)).fetchone()
-            if row is None:
-                return
-            conn.execute(
-                """
-                UPDATE collocation_directions SET
-                    last_synced_at = ?
-                WHERE collocation_id = ? AND direction = ?
-                """,
-                (datetime.now(UTC).isoformat(), row["id"], direction.value),
-            )
-            self._commit(conn)
-
     def mark_direction_clean(self, guid: str, direction: Direction) -> None:
         """Clear dirty_fsrs and set last_synced_at to now for one direction."""
         with self._get_conn() as conn:
@@ -1743,20 +1709,6 @@ class SRSDatabase:
         with self._get_conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM collocation_directions WHERE state = 'new'").fetchone()[0]
 
-    def count_due_today_total(self, today: date) -> int:
-        """Count all collocation_directions rows due on or before today, excluding non-reviewable states."""
-        placeholders = ",".join("?" * len(_NON_REVIEWABLE_STATES))
-        end_of_day = datetime.combine(today, time.max).isoformat()
-        with self._get_conn() as conn:
-            return conn.execute(
-                f"""
-                SELECT COUNT(*) FROM collocation_directions
-                WHERE due_at <= ?
-                  AND state NOT IN ({placeholders})
-                """,
-                (end_of_day, *_NON_REVIEWABLE_STATES),
-            ).fetchone()[0]
-
     def count_learning(self) -> int:
         """Count every learning/relearning direction (Anki red badge).
 
@@ -1772,28 +1724,27 @@ class SRSDatabase:
                 _LEARNING_STATES,
             ).fetchone()[0]
 
-    def count_review_due(self, today: date) -> int:
-        """Count review directions due today (Anki green bucket)."""
-        end_of_day = datetime.combine(today, time.max).isoformat()
-        with self._get_conn() as conn:
-            return conn.execute(
-                """
-                SELECT COUNT(*) FROM collocation_directions
-                WHERE due_at <= ? AND state = 'review'
-                """,
-                (end_of_day,),
-            ).fetchone()[0]
-
     def count_review_due_collocations(self, today: date) -> int:
         """Count distinct collocations with at least one review-state direction
-        due today and not yet graded today (in any direction).
+        due today, excluding those Anki would bury out of today's review pool.
 
-        Anki's `bury_reviews=true` removes a note from today's review pool as
-        soon as any sibling is graded — the un-graded sibling goes to queue=-2
-        until tomorrow. Mirror that: exclude collocations whose `last_review`
-        for any direction falls within today's local day. This way the badge
-        decrements by 1 when *any* direction of a dual-template note is graded
-        (not 2), matching Anki's deck-overview count exactly when both apps
+        Anki's `bury_reviews=true` removes a note from today's review pool when
+        any sibling is active. Two triggers mirror that:
+
+        1. **Graded today** — once any direction is graded, the un-graded
+           sibling goes to queue=-2 until tomorrow. Exclude collocations whose
+           `last_review` for any direction falls within today's local day, so
+           the badge decrements by 1 (not 2) when one direction of a dual
+           note is graded.
+        2. **Sibling in the learning queue** — Anki also buries the review
+           card whenever its sibling sits in learning/relearning (queue=1/3),
+           *including interday learning steps graded on a prior day*. The
+           "graded today" filter alone misses those, over-counting the badge
+           (the observed 214→208 gap was exactly the notes with a learning
+           sibling). Exclude collocations with any direction in
+           learning/relearning regardless of when it was last graded.
+
+        Together these match Anki's deck-overview review count when both apps
         share the same data.
         """
         local_tz = datetime.now().astimezone().tzinfo
@@ -1809,6 +1760,7 @@ class SRSDatabase:
                     SELECT collocation_id FROM collocation_directions
                     WHERE (length(last_review) > 10 AND last_review >= ? AND last_review < ?)
                        OR (length(last_review) = 10 AND last_review = ?)
+                       OR state IN ('learning', 'relearning')
                   )
                 """,
                 (end_of_day_utc, start_utc.isoformat(), end_utc.isoformat(), today.isoformat()),

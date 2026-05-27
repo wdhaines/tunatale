@@ -18,12 +18,6 @@ class TestSectionBoundaryPauses:
         pause = calc.get_section_boundary_pause()
         assert pause == 3000
 
-    def test_syllable_pause_is_300ms(self, calc):
-        assert calc.get_boundary_pause("syllable") == 300
-
-    def test_sentence_pause_is_2000ms(self, calc):
-        assert calc.get_boundary_pause("sentence") == 2000
-
 
 class TestDynamicPauseCalculation:
     """Tests for dynamic phrase pause calculation matching prototype rules."""

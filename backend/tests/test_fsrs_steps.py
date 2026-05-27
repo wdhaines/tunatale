@@ -29,7 +29,6 @@ class TestLearningStepSemantics:
     def _defaults(self, monkeypatch):
         monkeypatch.setattr("app.srs.queue_stats.resolve_learning_steps", lambda db=None: ([1.0, 10.0], "default"))
         monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([10.0], "default"))
-        monkeypatch.setattr("app.srs.queue_stats.resolve_fsrs_short_term_flag", lambda db=None: True)
 
     # ── Anki cards.left encoding parity ──────────────────────────
     # Anki encodes cards.left as `today_left * 1000 + total_remaining`. The low
@@ -330,7 +329,6 @@ class TestLearningStepFuzz:
     def _defaults(self, monkeypatch):
         monkeypatch.setattr("app.srs.queue_stats.resolve_learning_steps", lambda db=None: ([1.0, 10.0], "default"))
         monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([10.0], "default"))
-        monkeypatch.setattr("app.srs.queue_stats.resolve_fsrs_short_term_flag", lambda db=None: True)
 
     def test_again_60s_step_due_at_falls_in_anki_fuzz_range(self):
         """For a 60s step, Anki schedules due in [60, 75) — TT must too."""

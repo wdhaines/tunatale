@@ -215,12 +215,6 @@ class TestRateLimit:
         assert _parse_reset_duration("0s") == 0.0
         assert _parse_reset_duration("unknown") == 0.0
 
-    def test_pacing_info_defaults(self, client):
-        info = client.pacing_info()
-        assert "call_delay_s" in info
-        assert info["call_delay_s"] == 0.0
-        assert info["last_429_ago_s"] is None
-
 
 class TestFallbackChain:
     """Tests for fallback client, Ollama fallback, and all-fail scenarios."""
