@@ -1653,21 +1653,25 @@ class AnkiSync:
         anki_card_id: int,
         collocation_id: int,
         direction: Direction,
-        last_synced_at: str | None,
     ) -> None:
         """Copy Anki revlog rows for *anki_card_id* into tt_revlog (idempotent).
 
         Called from ``sync_pull`` for every card before the merge logic runs.
+
+        Gap-proof: reconciles the card's *full* Anki revlog against the ids
+        already in tt_revlog rather than trusting a wall-clock ``last_synced_at``
+        watermark. A grade made during a multi-day sync gap can land *interior*
+        to the ids TT already holds; an ``id > last_synced_at`` filter would skip
+        it permanently and silently understate the event-sourced FSRS replay
+        (Stage 3b soak finding, 2026-05-27 — gor/zahod missing a 05-25 Good).
+        The held-id set keeps it cheap: no per-row query or write for grades we
+        already have, so only genuinely-new rows touch the DB.
         """
-        threshold_ms = 0
-        if last_synced_at:
-            try:
-                dt = datetime.fromisoformat(last_synced_at)
-                threshold_ms = int(dt.timestamp() * 1000)
-            except (ValueError, OSError):
-                threshold_ms = 0
-        rows = self._reader.get_revlog_for_card(anki_card_id, threshold_ms)
+        held_ids = self._db.get_tt_revlog_ids(collocation_id, direction)
+        rows = self._reader.get_revlog_for_card(anki_card_id)
         for r in rows:
+            if r["id"] in held_ids:
+                continue
             # Skip if a TT-written row (same direction, ±5s, same ease) already
             # records this grade event. PK-equal matches go through INSERT OR
             # IGNORE; exclude the candidate's own id from the near-match check.
@@ -1811,7 +1815,6 @@ class AnkiSync:
                     card_rec.anki_card_id,
                     coll_id,
                     direction,
-                    local_dir.last_synced_at,
                 )
 
                 anki_last_ms = card_rec.last_review_ms or 0

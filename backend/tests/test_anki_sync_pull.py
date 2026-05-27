@@ -2731,13 +2731,21 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
             count = tt_conn.execute("SELECT COUNT(*) FROM tt_revlog WHERE anki_card_id = ?", (cid,)).fetchone()[0]
         assert count == 1, "INSERT OR IGNORE on PK must dedupe across repeated pulls"
 
-    def test_last_synced_at_filters_older_revlog_rows(self, fake_anki_db):
-        """When the direction has last_synced_at set, only newer revlog rows ingest."""
+    def test_ingest_ignores_last_synced_at_and_backfills_older_rows(self, fake_anki_db):
+        """Ingest reconciles against Anki's full revlog, NOT a last_synced_at watermark.
+
+        Regression (Stage 3b soak, 2026-05-27): the old ``id > last_synced_at``
+        filter dropped any grade older than the watermark. A grade made during a
+        multi-day sync gap could land *interior* to the ids already held and be
+        skipped permanently, silently understating the event-sourced FSRS replay.
+        Both rows must ingest regardless of how far last_synced_at has advanced.
+        """
         db = _make_tt_db()
         guid = _add_banka(db)
         cid = 10010
         self._link_banka_to_card(db, guid, cid)
-        # Mark the direction as already synced at a specific moment.
+        # Watermark advanced well past BOTH grades — under the old filter this
+        # would have skipped them both.
         cutoff = _dt(2026, 5, 19, 0, 0, 0, tzinfo=UTC)
         cutoff_ms = int(cutoff.timestamp() * 1000)
         item = db.get_collocation_by_guid(guid)
@@ -2749,8 +2757,8 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
             fake_anki_db,
             cid,
             [
-                (cutoff_ms - 1000, 3, 1, 0, 0, 4500, 0),  # before cutoff — skipped
-                (cutoff_ms + 1000, 3, 10, 1, 2500, 3200, 1),  # after — ingested
+                (cutoff_ms - 120_000, 3, 1, 0, 0, 4500, 0),  # 2 min before cutoff — still ingests
+                (cutoff_ms - 60_000, 3, 10, 1, 2500, 3200, 1),  # 1 min before cutoff — still ingests
             ],
         )
         conn = sqlite3.connect(str(fake_anki_db))
@@ -2767,7 +2775,74 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
                     "SELECT id FROM tt_revlog WHERE anki_card_id = ? ORDER BY id", (cid,)
                 ).fetchall()
             ]
-        assert ids == [cutoff_ms + 1000]
+        assert ids == [cutoff_ms - 120_000, cutoff_ms - 60_000]
+
+    def test_interior_revlog_gap_is_backfilled(self, fake_anki_db):
+        """A grade older than the newest already-ingested row is still backfilled.
+
+        Real incident (gor/zahod, 2026-05-27): a Good was graded in a ~41h sync
+        gap, *between* two grades TT already held. The old wall-clock watermark
+        skipped it permanently because its id sat below last_synced_at, while the
+        newer grade ingested fine — leaving an interior hole that made the
+        event-sourced replay understate stability. Ingest must reconcile the
+        card's full Anki revlog against the ids it holds and fill the hole.
+        """
+        from app.models.srs_item import RevlogRow
+
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        cid = 10010
+        self._link_banka_to_card(db, guid, cid)
+        coll_id = db.get_collocation_id_by_guid(guid)
+
+        first_ms, interior_ms, last_ms = 1_700_000_000_000, 1_700_000_100_000, 1_700_000_200_000
+        # TT already holds the FIRST and LAST grades from a prior sync.
+        for gid, ease, kind in ((first_ms, 1, 0), (last_ms, 3, 1)):
+            db.append_revlog(
+                RevlogRow(
+                    id=gid,
+                    collocation_id=coll_id,
+                    direction=Direction.RECOGNITION,
+                    button_chosen=ease,
+                    interval=0,
+                    last_interval=0,
+                    factor=0,
+                    taken_millis=4500,
+                    review_kind=kind,
+                    anki_card_id=cid,
+                )
+            )
+        # Watermark advanced to the newest held grade — the bug's precondition.
+        item = db.get_collocation_by_guid(guid)
+        rec = item.directions[Direction.RECOGNITION]
+        rec.last_synced_at = _dt.fromtimestamp(last_ms / 1000, tz=UTC).isoformat()
+        db.update_direction(guid, Direction.RECOGNITION, rec)
+
+        # Anki has all three, including the interior grade TT never ingested.
+        self._seed_anki_revlog(
+            fake_anki_db,
+            cid,
+            [
+                (first_ms, 1, 1, 0, 0, 4500, 0),
+                (interior_ms, 3, 1, 1, 0, 4500, 0),  # interior — dropped by the old filter
+                (last_ms, 3, 10, 1, 2500, 3200, 1),
+            ],
+        )
+        conn = sqlite3.connect(str(fake_anki_db))
+        conn.row_factory = sqlite3.Row
+        try:
+            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+        finally:
+            conn.close()
+
+        with db._get_conn() as tt_conn:
+            ids = [
+                r["id"]
+                for r in tt_conn.execute(
+                    "SELECT id FROM tt_revlog WHERE anki_card_id = ? ORDER BY id", (cid,)
+                ).fetchall()
+            ]
+        assert ids == [first_ms, interior_ms, last_ms], "interior sync-gap grade must be backfilled"
 
     def test_skips_anki_row_that_duplicates_tt_grade(self, fake_anki_db):
         """A TT-written grade row already in tt_revlog suppresses the Anki copy.

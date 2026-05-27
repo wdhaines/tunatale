@@ -2463,6 +2463,47 @@ class TestRevlog:
         srs_db.append_revlog(row)  # same id, should be ignored
         assert srs_db.latest_revlog_id_for_card(200) == 5001
 
+    def test_get_tt_revlog_ids_returns_held_ids_for_direction(self, srs_db):
+        """get_tt_revlog_ids returns the set of ids held for (collocation_id, direction)."""
+        from app.models.srs_item import RevlogRow
+
+        srs_db.add_collocation(
+            SyntacticUnit(text="reka", translation="river", word_count=1, difficulty=1, source="corpus"),
+            language_code="sl",
+        )
+
+        def _row(rid: int, direction: Direction) -> RevlogRow:
+            return RevlogRow(
+                id=rid,
+                collocation_id=1,
+                direction=direction,
+                button_chosen=3,
+                interval=1,
+                last_interval=0,
+                factor=0,
+                taken_millis=500,
+                review_kind=1,
+                anki_card_id=None,
+            )
+
+        srs_db.append_revlog(_row(6001, Direction.RECOGNITION))
+        srs_db.append_revlog(_row(6002, Direction.RECOGNITION))
+        srs_db.append_revlog(_row(6003, Direction.PRODUCTION))
+
+        assert srs_db.get_tt_revlog_ids(1, Direction.RECOGNITION) == {6001, 6002}
+        assert srs_db.get_tt_revlog_ids(1, Direction.PRODUCTION) == {6003}
+        assert srs_db.get_tt_revlog_ids(1, Direction.RECOGNITION) and isinstance(
+            srs_db.get_tt_revlog_ids(1, Direction.RECOGNITION), set
+        )
+
+    def test_get_tt_revlog_ids_empty_when_none(self, srs_db):
+        """get_tt_revlog_ids returns an empty set when no rows exist."""
+        srs_db.add_collocation(
+            SyntacticUnit(text="gora", translation="mountain", word_count=1, difficulty=1, source="corpus"),
+            language_code="sl",
+        )
+        assert srs_db.get_tt_revlog_ids(1, Direction.RECOGNITION) == set()
+
     def test_append_manual_revlog_writes_row(self, srs_db):
         """append_manual_revlog writes a row with review_kind=4."""
         srs_db.add_collocation(
