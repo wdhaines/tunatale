@@ -164,10 +164,10 @@ def test_parity_new_to_review_easy_skip(synthetic_collection: SyntheticCollectio
 def test_parity_learning_to_review_graduation_clean(synthetic_collection: SyntheticCollection) -> None:
     """NEW → GOOD (step 1) → GOOD (graduate) on a 2-step ladder, no AGAINs.
 
-    The empirical day's graduations were AGAIN-heavy (covered by
-    ``test_parity_graduation_after_many_agains``). This pins the clean
-    graduation path: two same-day GOOD grades routing through
-    ``_stability_short_term``.
+    This pins the clean *same-day* graduation path: two GOOD grades routing
+    through ``_stability_short_term`` (delta_t == 0). The *interday* graduation
+    path (delta_t > 0, which routes through the recall formula, not short-term)
+    is pinned by ``test_parity_interday_learning_graduation``.
     """
     synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
     synthetic_collection.set_learning_steps(learn_steps=[1.0, 10.0], relearn_steps=[10.0])
@@ -197,6 +197,208 @@ def test_parity_learning_to_review_graduation_clean(synthetic_collection: Synthe
     )
     assert _d_eq(new_dir.difficulty, anki["difficulty"]), (
         f"LEARNING→REVIEW graduation difficulty: TT={new_dir.difficulty} vs Anki={anki['difficulty']}"
+    )
+
+
+def _learning_item(
+    guid: str,
+    note_id: int,
+    anki_card_id: int,
+    stability: float,
+    difficulty: float,
+    last_review_dt: datetime,
+    reps: int,
+    left: int,
+) -> SRSItem:
+    """A LEARNING-state SRSItem matching a seeded Anki learning card."""
+    unit = SyntacticUnit(text="t", translation="t", word_count=1, difficulty=1, source="t")
+    direction = DirectionState(
+        direction=Direction.RECOGNITION,
+        due_at=last_review_dt,
+        stability=stability,
+        difficulty=difficulty,
+        reps=reps,
+        lapses=0,
+        state=SRSState.LEARNING,
+        last_review=last_review_dt,
+        left=left,
+        anki_card_id=anki_card_id,
+    )
+    return SRSItem(
+        syntactic_unit=unit,
+        directions={Direction.RECOGNITION: direction},
+        guid=guid,
+        anki_note_id=note_id,
+    )
+
+
+@pytest.mark.oracle
+def test_parity_interday_learning_graduation(synthetic_collection: SyntheticCollection) -> None:
+    """LEARNING → REVIEW graduation where the grade lands on a LATER day.
+
+    Regression for the Stage 3b compare-soak finding (poletje/production): a card
+    that went NEW → AGAIN → AGAIN → GOOD same-day, then graduated via EASY the
+    *next* day. fsrs-rs only applies the ``stability_short_term`` override when
+    ``delta_t == 0`` (``model.rs:163``); for ``delta_t > 0`` it routes through
+    ``stability_after_success`` with the actual retrievability. TT's
+    ``_graduate_to_review`` unconditionally used short-term for non-NEW
+    graduations (assuming same-day sub-day steps), landing ~9x low on stability
+    (live: TT s=0.67 vs Anki s=4.41).
+
+    Seeds a learning-stage card (s=0.5, d=7.7) whose last review was several days
+    back, then grades EASY — isolating the interday graduation step.
+    """
+    synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
+    synthetic_collection.set_learning_steps(learn_steps=[1.0, 10.0], relearn_steps=[10.0])
+
+    s, d = 0.5, 7.7
+    reps = 3
+    now_secs = int(time.time())
+    last_review_secs = now_secs - _ELAPSED_DAYS * 86400
+
+    card_id, note_id = 10050, 1005
+    synthetic_collection.add_note(id=note_id, guid="g-interday-grad", fields=["front", "back"])
+    synthetic_collection.add_card(
+        id=card_id,
+        note_id=note_id,
+        ord=0,
+        type=1,
+        queue=1,
+        due=0,
+        reps=reps,
+        lapses=0,
+        left=1001,
+        stability=s,
+        difficulty=d,
+        last_review_secs=last_review_secs,
+    )
+
+    anki = _anki_final_state(
+        synthetic_collection,
+        card_id,
+        [
+            {"op": "answer_card", "card_id": card_id, "rating": 4},
+            {"op": "get_card", "card_id": card_id},
+        ],
+    )
+
+    last_review_dt = datetime.fromtimestamp(last_review_secs, tz=UTC)
+    grade_dt = datetime.fromtimestamp(now_secs, tz=UTC)
+    item = _learning_item("g-interday-grad", note_id, card_id, s, d, last_review_dt, reps, left=1001)
+    item = schedule(item, Rating.EASY, review_date=grade_dt.date(), now=grade_dt)
+    new_dir = item.directions[Direction.RECOGNITION]
+
+    assert new_dir.state == SRSState.REVIEW, "EASY on a learning card must graduate to REVIEW"
+    assert _s_eq(new_dir.stability, anki["stability"]), (
+        f"interday LEARNING→REVIEW stability: TT={new_dir.stability} vs Anki={anki['stability']}"
+    )
+    assert _d_eq(new_dir.difficulty, anki["difficulty"]), (
+        f"interday LEARNING→REVIEW difficulty: TT={new_dir.difficulty} vs Anki={anki['difficulty']}"
+    )
+
+
+@pytest.mark.oracle
+def test_parity_interday_learning_again(synthetic_collection: SyntheticCollection) -> None:
+    """LEARNING + AGAIN on a LATER day stays LEARNING; pins the interday lapse path.
+
+    Companion to ``test_parity_interday_learning_graduation``: an overdue learning
+    card graded AGAIN (delta_t > 0) must route its memory state through
+    ``stability_after_failure`` (fsrs-rs ``model.rs``), not the same-day
+    ``stability_short_term`` override. Covers the AGAIN branch of Layer 56's
+    ``_next_stability_for_grade``.
+    """
+    synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
+    synthetic_collection.set_learning_steps(learn_steps=[1.0, 10.0], relearn_steps=[10.0])
+
+    s, d = 0.5, 7.7
+    reps = 3
+    now_secs = int(time.time())
+    last_review_secs = now_secs - _ELAPSED_DAYS * 86400
+
+    card_id, note_id = 10070, 1007
+    synthetic_collection.add_note(id=note_id, guid="g-interday-again", fields=["front", "back"])
+    synthetic_collection.add_card(
+        id=card_id,
+        note_id=note_id,
+        ord=0,
+        type=1,
+        queue=1,
+        due=0,
+        reps=reps,
+        lapses=0,
+        left=1001,
+        stability=s,
+        difficulty=d,
+        last_review_secs=last_review_secs,
+    )
+
+    anki = _anki_final_state(
+        synthetic_collection,
+        card_id,
+        [
+            {"op": "answer_card", "card_id": card_id, "rating": 1},
+            {"op": "get_card", "card_id": card_id},
+        ],
+    )
+
+    last_review_dt = datetime.fromtimestamp(last_review_secs, tz=UTC)
+    grade_dt = datetime.fromtimestamp(now_secs, tz=UTC)
+    item = _learning_item("g-interday-again", note_id, card_id, s, d, last_review_dt, reps, left=1001)
+    item = schedule(item, Rating.AGAIN, review_date=grade_dt.date(), now=grade_dt)
+    new_dir = item.directions[Direction.RECOGNITION]
+
+    assert new_dir.state == SRSState.LEARNING, "AGAIN on a learning card stays in learning"
+    assert _s_eq(new_dir.stability, anki["stability"]), (
+        f"interday LEARNING AGAIN stability: TT={new_dir.stability} vs Anki={anki['stability']}"
+    )
+    assert _d_eq(new_dir.difficulty, anki["difficulty"]), (
+        f"interday LEARNING AGAIN difficulty: TT={new_dir.difficulty} vs Anki={anki['difficulty']}"
+    )
+
+
+@pytest.mark.oracle
+def test_parity_graduation_after_many_agains(synthetic_collection: SyntheticCollection) -> None:
+    """NEW → AGAIN → AGAIN → GOOD → EASY, all same-day (the poletje button arc).
+
+    Pins the AGAIN-heavy *same-day* learning chain through to graduation: every
+    grade has delta_t == 0, so each routes through ``_stability_short_term`` and
+    the difficulty walks two AGAINs (up) → GOOD (reversion) → EASY (down). This
+    is the same-day complement to ``test_parity_interday_learning_graduation``;
+    together they cover poletje's full arc (the live card had its EASY on a later
+    day — that interday step is the other test).
+    """
+    synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
+    synthetic_collection.set_learning_steps(learn_steps=[1.0, 10.0], relearn_steps=[10.0])
+
+    card_id, note_id = 10060, 1006
+    synthetic_collection.add_note(id=note_id, guid="g-many-agains", fields=["front", "back"])
+    synthetic_collection.add_card(id=card_id, note_id=note_id, ord=0, type=0, queue=0, reps=0, left=0)
+
+    anki = _anki_final_state(
+        synthetic_collection,
+        card_id,
+        [
+            {"op": "answer_card", "card_id": card_id, "rating": 1},
+            {"op": "answer_card", "card_id": card_id, "rating": 1},
+            {"op": "answer_card", "card_id": card_id, "rating": 3},
+            {"op": "answer_card", "card_id": card_id, "rating": 4},
+            {"op": "get_card", "card_id": card_id},
+        ],
+    )
+
+    item = _new_item("g-many-agains", note_id, card_id)
+    item = schedule(item, Rating.AGAIN)
+    item = schedule(item, Rating.AGAIN)
+    item = schedule(item, Rating.GOOD)
+    item = schedule(item, Rating.EASY)
+    new_dir = item.directions[Direction.RECOGNITION]
+
+    assert new_dir.state == SRSState.REVIEW, "EASY after the learning chain must graduate"
+    assert _s_eq(new_dir.stability, anki["stability"]), (
+        f"many-AGAINs graduation stability: TT={new_dir.stability} vs Anki={anki['stability']}"
+    )
+    assert _d_eq(new_dir.difficulty, anki["difficulty"]), (
+        f"many-AGAINs graduation difficulty: TT={new_dir.difficulty} vs Anki={anki['difficulty']}"
     )
 
 
