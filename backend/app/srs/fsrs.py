@@ -554,6 +554,41 @@ def _stability_short_term(last_s: float, rating: Rating, params: FSRSParams) -> 
     return last_s * sinc
 
 
+def _next_stability_for_grade(
+    prev: DirectionState,
+    rating: Rating,
+    last_review_dt: datetime,
+    params: FSRSParams,
+    col_crt: int | None,
+) -> float:
+    """FSRS memory-state stability update for a card with prior FSRS state.
+
+    Mirrors fsrs-rs ``step`` (``model.rs:159-166``): the ``stability_short_term``
+    override applies ONLY when ``delta_t == 0`` (a same-day grade); for
+    ``delta_t > 0`` the memory state routes through ``stability_after_success``
+    (passing) or ``stability_after_failure`` (AGAIN) with the actual
+    retrievability. The update is purely a function of ``(delta_t, rating)`` and
+    is identical whether the card stays in a learning step or graduates — so
+    both ``_schedule_with_steps`` and ``_graduate_to_review`` call this.
+
+    Layer 57 fix: graduation/step paths previously hard-coded
+    ``_stability_short_term`` (assuming sub-day learning steps are always
+    same-day), which landed ~9x low when a learning card graduated on a LATER
+    day (the poletje compare-soak finding: interday EASY graduation).
+    ``delta_t`` is the integer col-day diff (Layer 50's ``_grade_elapsed_days``),
+    matching Anki's answering-path ``next_day_at.elapsed_days_since(lrt)``.
+    """
+    w = params.weights
+    last = prev.last_review or last_review_dt
+    elapsed = _grade_elapsed_days(last, last_review_dt, col_crt=col_crt)
+    if elapsed == 0:
+        return _stability_short_term(prev.stability, rating, params)
+    r = _forgetting_curve(elapsed, prev.stability, -params.decay)
+    if rating == Rating.AGAIN:
+        return _next_stability_lapse(prev.difficulty, prev.stability, r, w)
+    return _next_stability_recall(prev.difficulty, prev.stability, r, rating, w)
+
+
 def _parse_left(left: int | None) -> int:
     """Decode Anki's `cards.left` to total_remaining steps.
 
@@ -1041,12 +1076,14 @@ def _schedule_with_steps(
     # idx = total_steps - total_remaining. idx=0 means first step.
     current_step_index = total_steps - total_remaining
 
-    # Short-term stability update (Anki: learning.rs:40 sets memory_state
-    # unconditionally from fsrs_next_states). The fsrsShortTermWithStepsEnabled
-    # deck option only governs card-state transitions, not memory_state itself.
+    # Memory-state update (Anki: learning.rs:40 sets memory_state unconditionally
+    # from fsrs_next_states). The fsrsShortTermWithStepsEnabled deck option only
+    # governs card-state transitions, not memory_state itself. Layer 57: route
+    # through `_next_stability_for_grade` so an interday learning grade (delta_t>0)
+    # uses the recall/lapse formula instead of the same-day short-term override.
     w = params.weights
     if prev.stability is not None:
-        new_stability = _quantize_stability(_stability_short_term(prev.stability, rating, params))
+        new_stability = _quantize_stability(_next_stability_for_grade(prev, rating, last_review_dt, params, col_crt))
         new_difficulty = _quantize_difficulty(_next_difficulty(prev.difficulty, rating, w))
     else:
         new_stability = prev.stability
@@ -1202,11 +1239,12 @@ def _graduate_to_review(
         new_stability = _init_stability(rating, w)
         new_difficulty = _init_difficulty(rating, w)
     else:
-        # Same-day LEARNING/RELEARNING graduation. fsrs-rs `step()` overrides
-        # success/failure with `stability_short_term` whenever `delta_t == 0`
-        # (model.rs:163), regardless of rating. All graduations reached here
-        # are same-day grades on sub-day learning steps.
-        new_stability = _stability_short_term(prev.stability, rating, params)
+        # LEARNING/RELEARNING graduation. fsrs-rs `step()` overrides
+        # success/failure with `stability_short_term` only when `delta_t == 0`
+        # (model.rs:163); for an interday graduation (delta_t > 0) it routes
+        # through stability_after_success/failure. Layer 57: `_next_stability_for_grade`
+        # makes that branch (was unconditionally short-term → ~9x low interday).
+        new_stability = _next_stability_for_grade(prev, rating, last_review_dt, params, col_crt)
         new_difficulty = _next_difficulty(prev.difficulty, rating, w)
 
     # fsrs-rs S_MIN = 0.001 (fsrs-rs/src/simulation.rs:41); 4dp/3dp rounding
@@ -1218,17 +1256,17 @@ def _graduate_to_review(
         s_hard = (
             _init_stability(Rating.HARD, w)
             if prev.state == SRSState.NEW
-            else _stability_short_term(prev.stability, Rating.HARD, params)
+            else _next_stability_for_grade(prev, Rating.HARD, last_review_dt, params, col_crt)
         )
         s_good = (
             _init_stability(Rating.GOOD, w)
             if prev.state == SRSState.NEW
-            else _stability_short_term(prev.stability, Rating.GOOD, params)
+            else _next_stability_for_grade(prev, Rating.GOOD, last_review_dt, params, col_crt)
         )
         s_easy = (
             _init_stability(Rating.EASY, w)
             if prev.state == SRSState.NEW
-            else _stability_short_term(prev.stability, Rating.EASY, params)
+            else _next_stability_for_grade(prev, Rating.EASY, last_review_dt, params, col_crt)
         )
         q_hard = _quantize_stability(max(0.001, s_hard))
         q_good = _quantize_stability(max(0.001, s_good))
