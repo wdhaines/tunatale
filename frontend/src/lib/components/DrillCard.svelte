@@ -39,21 +39,34 @@
 		return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 	}
 
-	// Both `clozePromptHtml` and `clozeAnswerHtml` are only invoked from the
-	// template under `{#if item.card_type === 'cloze' && item.source_sentence}`,
-	// so the defensive guards on those same conditions were dead code. Removing
-	// them lets coverage hit 100% on this function. `!` asserts non-null to
-	// satisfy TypeScript without producing a runtime branch.
 	function clozePromptHtml(): string {
+		const sent = item.source_sentence!;
+		const hinted = sent.match(/\{\{c1::(.+?)::(.+?)\}\}/);
+		if (hinted) {
+			return sent.replace(hinted[0], `[${hinted[2]}]`);
+		}
+		const plain = sent.match(/\{\{c1::(.+?)\}\}/);
+		if (plain) {
+			return sent.replace(plain[0], '[...]');
+		}
 		const escaped = escapeRegex(item.text);
 		const re = new RegExp(`(?<!\\p{L})${escaped}(?!\\p{L})`, 'giu');
-		return item.source_sentence!.replace(re, '[...]');
+		return sent.replace(re, '[...]');
 	}
 
 	function clozeAnswerHtml(): string {
+		const sent = item.source_sentence!;
+		const hinted = sent.match(/\{\{c1::(.+?)::(.+?)\}\}/);
+		if (hinted) {
+			return sent.replace(hinted[0], `<mark class="cloze-answer">${hinted[1]}</mark>`);
+		}
+		const plain = sent.match(/\{\{c1::(.+?)\}\}/);
+		if (plain) {
+			return sent.replace(plain[0], `<mark class="cloze-answer">${plain[1]}</mark>`);
+		}
 		const escaped = escapeRegex(item.text);
 		const re = new RegExp(`(?<!\\p{L})${escaped}(?!\\p{L})`, 'giu');
-		return item.source_sentence!.replace(re, '<mark class="cloze-answer">$&</mark>');
+		return sent.replace(re, '<mark class="cloze-answer">$&</mark>');
 	}
 </script>
 

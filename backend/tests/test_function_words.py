@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from app.srs.function_words import SLOVENE_FUNCTION_WORDS, is_function_word, make_cloze_text
+from app.srs.function_words import (
+    SLOVENE_FUNCTION_WORDS,
+    _hint_text,
+    is_function_word,
+    make_case_cloze_text,
+    make_cloze_text,
+)
 
 
 class TestIsFunctionWord:
@@ -73,6 +79,91 @@ class TestMakeClozeText:
     def test_multi_occurrence_mixed_case(self):
         result = make_cloze_text("to", "To je to.")
         assert result == "{{c1::To}} je {{c1::to}}."
+
+
+class TestHintText:
+    def test_with_case_and_number(self):
+        assert _hint_text("miza", "Gen", "Sing") == "miza, gen sg"
+
+    def test_case_only(self):
+        assert _hint_text("voda", "Acc", "") == "voda, acc"
+
+    def test_number_only(self):
+        assert _hint_text("prijatelj", "", "Plur") == "prijatelj, pl"
+
+    def test_empty_morphology(self):
+        assert _hint_text("mesto", "", "") == "mesto"
+
+    def test_dual_number(self):
+        assert _hint_text("roka", "Ins", "Dual") == "roka, ins du"
+
+    def test_plural_accusative(self):
+        assert _hint_text("rokavica", "Acc", "Plur") == "rokavica, acc pl"
+
+
+class TestMakeCaseClozeText:
+    def test_basic_case_cloze(self):
+        result = make_case_cloze_text(
+            "mize",
+            "miza",
+            "Gen",
+            "Sing",
+            "Nimam mize.",
+        )
+        assert result == "Nimam {{c1::mize::miza, gen sg}}."
+
+    def test_empty_sentence(self):
+        assert make_case_cloze_text("mize", "miza", "Gen", "Sing", "") == ""
+
+    def test_idempotent_already_clozed(self):
+        result = make_case_cloze_text(
+            "mize",
+            "miza",
+            "Gen",
+            "Sing",
+            "Nimam {{c1::mize}}.",
+        )
+        assert result == "Nimam {{c1::mize}}."
+
+    def test_empty_surface(self):
+        result = make_case_cloze_text(
+            "",
+            "miza",
+            "Gen",
+            "Sing",
+            "Nimam mize.",
+        )
+        assert result == "Nimam mize."
+
+    def test_multi_occurrence(self):
+        result = make_case_cloze_text(
+            "prijateljem",
+            "prijatelj",
+            "Ins",
+            "Sing",
+            "S prijateljem grem s prijateljem.",
+        )
+        assert result == "S {{c1::prijateljem::prijatelj, ins sg}} grem s {{c1::prijateljem::prijatelj, ins sg}}."
+
+    def test_hint_with_dual(self):
+        result = make_case_cloze_text(
+            "rokama",
+            "roka",
+            "Ins",
+            "Dual",
+            "Z rokama delam.",
+        )
+        assert result == "Z {{c1::rokama::roka, ins du}} delam."
+
+    def test_case_insensitive_case_preserving(self):
+        result = make_case_cloze_text(
+            "Ljubljano",
+            "Ljubljana",
+            "Acc",
+            "Sing",
+            "Grem v Ljubljano.",
+        )
+        assert result == "Grem v {{c1::Ljubljano::Ljubljana, acc sg}}."
 
 
 class TestSLOVENE_FUNCTION_WORDS:

@@ -1,4 +1,4 @@
-"""Slovene function words used by Phase F's cloze-card spike.
+"""Slovene function words used by Phase F's cloze-card spike, plus case-cloze hint generation.
 
 This set was generated from the user's 7-day curriculum by
 build_function_word_list.py and manually curated to remove obvious
@@ -71,5 +71,54 @@ def make_cloze_text(surface: str, source_sentence: str) -> str:
 
     def _replacer(m: re.Match) -> str:
         return f"{{{{c1::{m.group(0)}}}}}"
+
+    return pattern.sub(_replacer, source_sentence)
+
+
+# ── Case-cloze hint helpers ──────────────────────────────────────────────
+
+_NUMBER_ABBR: dict[str, str] = {
+    "Sing": "sg",
+    "Dual": "du",
+    "Plur": "pl",
+}
+
+
+def _hint_text(lemma: str, case: str, number: str) -> str:
+    """Build the hint segment for a case-cloze: ``miza, gen sg``."""
+    abbr_case = case.lower() if case else ""
+    abbr_num = _NUMBER_ABBR.get(number, number.lower()) if number else ""
+    parts = [p for p in (abbr_case, abbr_num) if p]
+    if not parts:
+        return lemma
+    return f"{lemma}, {' '.join(parts)}"
+
+
+def make_case_cloze_text(
+    surface: str,
+    lemma: str,
+    case: str,
+    number: str,
+    source_sentence: str,
+) -> str:
+    """Wrap ``surface`` with a hinted cloze: ``{{c1::mize::miza, gen sg}}``.
+
+    The hint (``::hint``) tells the learner which lemma + inflection
+    to produce.  Anki renders the blank as ``[miza, gen sg]``.
+
+    Idempotent: already-clozed text passes through unchanged.
+    Returns empty string when ``source_sentence`` is empty.
+    """
+    if not source_sentence:
+        return ""
+    if not surface:
+        return source_sentence
+    if _CLOZE_RE.search(source_sentence):
+        return source_sentence
+    hint = _hint_text(lemma, case, number)
+    pattern = re.compile(rf"\b{re.escape(surface)}\b", re.IGNORECASE)
+
+    def _replacer(m: re.Match) -> str:
+        return f"{{{{c1::{m.group(0)}::{hint}}}}}"
 
     return pattern.sub(_replacer, source_sentence)

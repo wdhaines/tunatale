@@ -118,6 +118,9 @@ Respond with ONLY a JSON object matching this schema (no markdown fences, no pre
   ],
   "dialogue_glosses": [
     {{"lemma": "lowercased_word", "translation": "English translation"}}
+  ],
+  "declension_focus": [
+    {{"lemma": "lemma", "surface": "inflected_form", "case": "Gen", "number": "Sing", "gloss": "English translation"}}
   ]
 }}
 
@@ -127,6 +130,14 @@ proper names, interjections, and all other words. If a word appears in any dialo
 in any scene, it must have a gloss entry. No exceptions. Give each word's lowercase base
 form (lemma) and a concise English translation. This enables word-level hover translations
 in the learning UI.
+
+The "declension_focus" array lists inflected forms of content words that appear in oblique
+grammatical cases (all cases except nominative) within dialogue lines. Each entry must:
+- Contain a lemma, surface form, case (Gen/Dat/Acc/Loc/Ins), number (Sing/Dual/Plur), and gloss
+- The surface must appear verbatim (same spelling) in a NATURAL_SPEED dialogue line
+- Only oblique cases — skip nominative (Nom) entries
+- Only content words (nouns, adjectives) — skip function words
+- This enables systematic case-practice drill cards for Slovene
 
 **SCENE HEADER FORMAT**
 - All scene labels must be in English, describing location/time/situation
