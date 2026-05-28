@@ -5,13 +5,26 @@ Reference: https://github.com/open-spaced-repetition/fsrs5
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+
+import numpy as np
 
 from app.anki.protobuf_wire import compute_anki_day_index, review_due_at_for_col_day
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSItem, SRSState
 from app.srs._anki_rng import ChaCha12Rng, random_range_f32, random_range_u32
+
+# fsrs-rs (rslib/.../fsrs/model.rs) computes stability + difficulty in f32 end-to-end
+# via Burn tensors. TT mirrors that precision by casting all arithmetic operands and
+# intermediates to numpy.float32, returning Python f64 only at storage boundaries.
+# Without this, replays drift by single ULPs at 4-decimal storage precision
+# (~0.0001 at s≈100-200), surfacing as false-positive compare-shadow divergences.
+_F32 = np.float32
+
+
+def _w32(w: tuple[float, ...]) -> tuple:
+    """Cast a weights tuple to numpy.float32, matching how fsrs-rs holds parameters."""
+    return tuple(_F32(x) for x in w)
 
 
 def _learning_step_fuzz_seconds(anki_card_id: int | None, reps: int, step_seconds: int) -> int:
@@ -189,8 +202,19 @@ DEFAULT_FSRS5_PARAMS = FSRSParams(weights=_DEFAULT_WEIGHTS)
 
 
 def _forgetting_curve(elapsed_days: float, stability: float, decay: float = -0.5) -> float:
-    """Retrievability at elapsed_days given stability and decay."""
-    return (1 + FACTOR * elapsed_days / stability) ** decay
+    """Retrievability at elapsed_days given stability and decay (f32, fsrs-rs op order).
+
+    Mirrors fsrs-rs ``Model::power_forgetting_curve`` (model.rs) bit-exact:
+        factor = exp(ln(0.9) / decay) - 1
+        retrievability = (t / s * factor + 1)^decay
+    The 19/81 constant TT used was a precomputed approximation of the same factor
+    that diverges at f32 ULP precision (≈1e-7), enough to flip 4dp rounding.
+    """
+    e = _F32(elapsed_days)
+    s = _F32(stability)
+    d = _F32(decay)
+    factor = np.exp(np.log(_F32(0.9)) / d) - 1
+    return float(np.power(e / s * factor + 1, d))
 
 
 def _elapsed_days_for_fsrs(
@@ -317,8 +341,12 @@ def compute_retrievability(
 
 
 def _next_interval(stability: float, desired_retention: float, decay: float = -0.5) -> int:
-    """Days until next review at the given desired_retention."""
-    interval = stability / FACTOR * (desired_retention ** (1 / decay) - 1)
+    """Days until next review at the given desired_retention (f32, fsrs-rs op order)."""
+    s = _F32(stability)
+    dr = _F32(desired_retention)
+    d = _F32(decay)
+    factor = np.exp(np.log(_F32(0.9)) / d) - 1
+    interval = float(s / factor * (np.power(dr, 1 / d) - 1))
     return max(1, min(_rust_round_half_away(interval), 36500))
 
 
@@ -387,11 +415,15 @@ def _passing_intervals_with_fuzz(
 
 
 def _next_interval_raw(stability: float, desired_retention: float, decay: float = -0.5) -> float:
-    """Raw FSRS interval (Layer 51). Layer 48's ``_next_interval`` rounds to
-    integer for the cascade path; Anki passes the *float* interval into
+    """Raw FSRS interval (Layer 51, f32, fsrs-rs op order). Layer 48's ``_next_interval``
+    rounds to integer for the cascade path; Anki passes the *float* interval into
     ``with_review_fuzz`` so the fuzz_delta computation uses unrounded input.
     """
-    return stability / FACTOR * (desired_retention ** (1 / decay) - 1)
+    s = _F32(stability)
+    dr = _F32(desired_retention)
+    d = _F32(decay)
+    factor = np.exp(np.log(_F32(0.9)) / d) - 1
+    return float(s / factor * (np.power(dr, 1 / d) - 1))
 
 
 def _graduation_intervals_with_fuzz(
@@ -487,17 +519,35 @@ def _scheduled_days_for_grade(prev: DirectionState, col_crt: int | None) -> int:
     return max(0, (prev.due_at - lr).days)
 
 
+def _round_to_places_f32(value: float, decimal_places: int) -> float:
+    """Mirror Rust's ``round_to_places`` rounding direction bit-exact
+    (rslib/src/storage/card/data.rs:80-83):
+        value = (value * 10^dp).round() / 10^dp  — in f32, with half-away-from-zero.
+
+    NOT equivalent to Python's ``round(x, n)``: (a) f32 multiplication by 10^dp can
+    introduce ULPs that tip the rounding direction; (b) Rust's ``f32::round`` is
+    half-away-from-zero, Python/numpy is banker's. Both differences flip exact-tie
+    boundary cases (.5 in the scaled domain) by 1 ULP at 4dp storage precision.
+
+    Returns the clean Python-float 4dp representation (matches what serde_json
+    serializes Anki's f32 ``cards.data.s`` as, and what the oracle's ``round(s, n)``
+    surfaces). Skips storing the f32-widened bits like 0.002400000113993883.
+    """
+    factor_f32 = _F32(10) ** _F32(decimal_places)
+    scaled = _F32(value) * factor_f32
+    # Rust's f32::round = half-away-from-zero. Implement via floor(x + 0.5) / ceil(x - 0.5).
+    rounded = np.floor(scaled + _F32(0.5)) if scaled >= 0 else np.ceil(scaled - _F32(0.5))
+    # Collapse f32-widened result (e.g. 28.70050048828125) to clean f64 4dp (28.7005)
+    # to match Anki's JSON-roundtripped value on the read side.
+    return round(float(rounded / factor_f32), decimal_places)
+
+
 def _quantize_stability(s: float) -> float:
-    # Mirror Anki's per-grade rounding (rslib/src/storage/card/data.rs:95).
-    # Anki stores `cards.data.s` rounded to 4 dp and reads it back on the next
-    # grade; without matching this, TT propagates full f64 precision and drifts
-    # ~1% over a 10-grade learning sequence.
-    return round(s, 4)
+    return _round_to_places_f32(s, 4)
 
 
 def _quantize_difficulty(d: float) -> float:
-    # Mirror Anki's per-grade rounding (rslib/src/storage/card/data.rs:98).
-    return round(d, 3)
+    return _round_to_places_f32(d, 3)
 
 
 def _init_stability(rating: Rating, w: tuple[float, ...]) -> float:
@@ -505,38 +555,64 @@ def _init_stability(rating: Rating, w: tuple[float, ...]) -> float:
 
 
 def _init_difficulty(rating: Rating, w: tuple[float, ...]) -> float:
-    d = w[4] - math.exp(w[5] * (rating.value - 1)) + 1
-    return max(1.0, min(10.0, d))
+    w32 = _w32(w)
+    d = w32[4] - np.exp(w32[5] * (rating.value - 1)) + 1
+    return float(max(_F32(1.0), min(_F32(10.0), d)))
 
 
 def _next_difficulty(d: float, rating: Rating, w: tuple[float, ...]) -> float:
-    delta_d = -w[6] * (rating.value - 3)
-    next_d = d + (10 - d) / 9 * delta_d
-    easy_init = _init_difficulty(Rating.EASY, w)
-    next_d = w[7] * (easy_init - next_d) + next_d
-    return max(1.0, min(10.0, next_d))
+    # Mirrors fsrs-rs (model.rs) bit-exact: next_difficulty → mean_reversion → clamp.
+    # Op order pinned to fsrs-rs's `linear_damping = (-old_d + 10.0) * (delta_d / 9.0)`:
+    # the delta_d / 9 step happens BEFORE multiplying by (10 - d), not after. The
+    # alternative `(10 - d) / 9 * delta_d` shifts the f32 result by 1 ULP for
+    # certain (d, rating) pairs (e.g. d=5.0 HARD/EASY).
+    # init_difficulty(EASY) is called unclamped from mean_reversion — only the
+    # final post-mean-reversion result is clamped.
+    w32 = _w32(w)
+    d32 = _F32(d)
+    delta_d = -w32[6] * (rating.value - 3)
+    next_d = d32 + (-d32 + 10) * (delta_d / 9)
+    easy_init = w32[4] - np.exp(w32[5] * (Rating.EASY.value - 1)) + 1
+    next_d = w32[7] * (easy_init - next_d) + next_d
+    return float(max(_F32(1.0), min(_F32(10.0), next_d)))
 
 
 def _next_stability_recall(d: float, s: float, r: float, rating: Rating, w: tuple[float, ...]) -> float:
-    hard_penalty = w[15] if rating == Rating.HARD else 1.0
-    easy_bonus = w[16] if rating == Rating.EASY else 1.0
-    return s * (
-        math.exp(w[8]) * (11 - d) * s ** (-w[9]) * (math.exp((1 - r) * w[10]) - 1) * hard_penalty * easy_bonus + 1
+    # Mirrors fsrs-rs `stability_after_success` bit-exact (model.rs):
+    #   last_s * (exp(w[8]) * (-d + 11) * s^(-w[9]) * (exp((-r + 1) * w[10]) - 1) * hp * eb + 1)
+    w32 = _w32(w)
+    d32, s32, r32 = _F32(d), _F32(s), _F32(r)
+    hard_penalty = w32[15] if rating == Rating.HARD else _F32(1.0)
+    easy_bonus = w32[16] if rating == Rating.EASY else _F32(1.0)
+    return float(
+        s32
+        * (
+            np.exp(w32[8])
+            * (-d32 + 11)
+            * np.power(s32, -w32[9])
+            * (np.exp((-r32 + 1) * w32[10]) - 1)
+            * hard_penalty
+            * easy_bonus
+            + 1
+        )
     )
 
 
 def _next_stability_lapse(d: float, s: float, r: float, w: tuple[float, ...]) -> float:
-    # fsrs-rs `stability_after_failure` (model.rs:91-105) caps the post-lapse
-    # stability at `last_s / exp(w[17] * w[18])`. Without this ceiling the raw
-    # formula overshoots for low-s cards; surfaced as Layer 42 via the
-    # `test_parity_fsrs_schedule` oracle harness.
-    new_s = w[11] * d ** (-w[12]) * ((s + 1) ** w[13] - 1) * math.exp((1 - r) * w[14])
-    new_s_min = s / math.exp(w[17] * w[18])
-    return min(new_s, new_s_min)
+    # Mirrors fsrs-rs `stability_after_failure` bit-exact (model.rs:91-105):
+    #   new_s = w[11] * d^(-w[12]) * ((s+1)^w[13] - 1) * exp((-r + 1) * w[14])
+    #   new_s_min = s / exp(w[17] * w[18])
+    #   return min(new_s, new_s_min)  -- the ceiling caps overshoot for low-s
+    # cards (surfaced as Layer 42 via the test_parity_fsrs_schedule harness).
+    w32 = _w32(w)
+    d32, s32, r32 = _F32(d), _F32(s), _F32(r)
+    new_s = w32[11] * np.power(d32, -w32[12]) * (np.power(s32 + 1, w32[13]) - 1) * np.exp((-r32 + 1) * w32[14])
+    new_s_min = s32 / np.exp(w32[17] * w32[18])
+    return float(min(new_s, new_s_min))
 
 
 def _stability_short_term(last_s: float, rating: Rating, params: FSRSParams) -> float:
-    """FSRS short-term stability update for same-day grades.
+    """FSRS short-term stability update for same-day grades (f32 throughout).
 
     Mirrors ``model.rs:107-115`` in fsrs-rs:
       ``sinc = exp(w[17] * (rating - 3 + w[18])) * last_s^(-w[19])``
@@ -546,12 +622,13 @@ def _stability_short_term(last_s: float, rating: Rating, params: FSRSParams) -> 
     For FSRS-5 the ``last_s^(-w[19])`` term vanishes (``w[19]`` effectively 0).
     For FSRS-6 ``w[19]`` is a learned parameter.
     """
-    w = params.weights
-    w19 = w[19] if params.version == 6 else 0.0
-    sinc = math.exp(w[17] * (rating.value - 3 + w[18])) * (last_s ** (-w19))
+    w32 = _w32(params.weights)
+    last_s32 = _F32(last_s)
+    w19 = w32[19] if params.version == 6 else _F32(0.0)
+    sinc = np.exp(w32[17] * (rating.value - 3 + w32[18])) * np.power(last_s32, -w19)
     if rating.value >= 3:
-        sinc = max(sinc, 1.0)
-    return last_s * sinc
+        sinc = max(sinc, _F32(1.0))
+    return float(last_s32 * sinc)
 
 
 def _next_stability_for_grade(

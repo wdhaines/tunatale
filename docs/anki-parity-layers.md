@@ -1285,3 +1285,31 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 **Files.** `app/anki/sync.py` (`_ingest_anki_revlog_for_card` reconcile + caller), `app/srs/database.py` (`get_tt_revlog_ids`). Tests: `tests/test_anki_sync_pull.py::TestSyncPullIngestsAnkiRevlogIntoTtRevlog::{test_ingest_ignores_last_synced_at_and_backfills_older_rows, test_interior_revlog_gap_is_backfilled}` (the latter pins the exact incident shape), `tests/test_srs_database.py::TestRevlog::{test_get_tt_revlog_ids_returns_held_ids_for_direction, test_get_tt_revlog_ids_empty_when_none}`.
 
 **Surfaced by.** Stage 3b compare-soak daily check (2026-05-27): shadow-vs-authoritative diff, root-caused via per-day Anki-vs-tt_revlog grade audit + backfilled `rebuild_from_revlog` reproduction.
+
+## Layer 59 — FSRS arithmetic in f32 with fsrs-rs op order (eliminates 4dp quantization false positives)
+
+**The bug.** Stage 3b compare-soak (2026-05-28): 3/1349 shadow-column stability divergences (`baker`, `enaindvajset`, `ventilator`), all with delta = exactly **±0.0001** — single ULPs at 4-decimal storage precision. Production matched Anki's `cards.data.s` bit-exact on every row; only the *replayed* value diverged. Suspected mechanism (then unverified): f64 Python (TT's FSRS) vs f32 Rust (fsrs-rs); ground-truthed by an isolated `fsrs_rs_python.FSRS.next_states` call returning 88.4278182983 where TT's f64 path returned 88.4277496338 for the same `(s, d, elapsed, rating)`.
+
+**Mechanism — three distinct sources of 4dp drift.** Each turned out to matter, found in this order:
+
+1. **f64 vs f32 precision.** fsrs-rs uses `Tensor<B, 1>` over Burn's f32 backend end-to-end (model.rs); TT's `_next_stability_recall`, `_next_stability_lapse`, `_stability_short_term`, `_next_difficulty`, `_forgetting_curve`, `_next_interval`, `_next_interval_raw` were pure-Python `math.exp` / `**` operating on Python f64. A numpy sweep at baker's stability scale showed 20/35 inputs produced a 4dp disagreement between f64 and f32 — exactly the false-positive rate observed.
+
+2. **FACTOR constant — precomputed vs `exp(ln(0.9) / decay) - 1`.** TT's `FACTOR = 19/81 ≈ 0.234567901` was a precomputed approximation of fsrs-rs's `factor = decay.powi_scalar(-1).mul_scalar(0.9f32.ln()).exp() - 1.0` (≈ 0.234567890). Differ by ~1.1e-8 — beneath f64 noise but exactly 1 ULP at f32. The forgetting-curve op order also differs: TT did `(1 + FACTOR * elapsed / s)^decay`, fsrs-rs does `(t / s * factor + 1.0).powf(decay)`. Multiplication-vs-division order matters at f32 ULP.
+
+3. **`linear_damping` op order in `next_difficulty`.** fsrs-rs: `old_d.neg().add_scalar(10.0) * delta_d.div_scalar(9.0)` — divides `delta_d / 9` BEFORE multiplying. TT: `(10 - d) / 9 * delta_d` — divides `(10 - d) / 9` first. Mathematically equivalent, but the f32 ULP lands differently for d=5.0 HARD/EASY (the most common difficulty bracket). Surfaced when `test_parity_fsrs_f32` was added; without that test the divergence would only show as 4dp-rounded difficulty drift on a small fraction of high-grade cards.
+
+4. **Storage rounding direction.** Anki's `round_to_places(value, 4)` (rslib/src/storage/card/data.rs:80-83) does `(value * 10_000.0).round() / 10_000.0` in f32 with `f32::round` = half-away-from-zero. TT's `_quantize_stability` used Python's `round(s, 4)` (banker's rounding on f64). On exact-half ties (`x * 10000.0 == .5 exactly`), banker's rounds to even, half-away rounds away from zero — opposite directions, 1 ULP at 4dp. The interday LEARNING→REVIEW graduation case hit this: f32 raw = 28.7004489899; Anki's path produced 28.7005, Python's `round(28.7004489899, 4) = 28.7004`.
+
+**Fix.** Numpy migration (`numpy>=2.0.0` added to backend deps):
+- `_F32 = np.float32` and `_w32(w)` cast weights to f32 per call;
+- `_forgetting_curve` rewritten with fsrs-rs's exact factor + op order: `factor = exp(log(_F32(0.9)) / decay) - 1`, formula `(e / s * factor + 1)^decay`;
+- `_next_stability_recall` / `_next_stability_lapse` match fsrs-rs's `-d + 11` and `-r + 1` op order (no behavior change in f64, 1 ULP in f32);
+- `_next_difficulty` uses `(-d32 + 10) * (delta_d / 9)` for linear damping and unclamps `init_difficulty(EASY)` inside mean-reversion (only clamping the final post-MR result);
+- `_next_interval` / `_next_interval_raw` use the same `factor` formula;
+- `_quantize_stability` / `_quantize_difficulty` route through a new `_round_to_places_f32` helper that applies Rust's half-away-from-zero rounding on the f32 scaled value, then collapses to a clean f64 4dp representation (so the stored Python float reads as a tidy `28.7005`, matching Anki's JSON serialization, while preserving Anki's rounding direction).
+
+**Validation.** New parity test `tests/test_parity_fsrs_f32.py` pins TT bit-exact against `fsrs_rs_python.FSRS.next_states` across 6 (s, d, elapsed) inputs × 4 ratings (recall + lapse + difficulty + forgetting-curve cascade — 19 assertions). `./test.sh` green (2587 backend + 21 frontend gate + 11 E2E); the parity oracle harness (`--run-oracle`) is green (43 passed); both previously-passing tests (`test_parity_interday_learning_graduation`, `test_parity_review_hard_high_stability`) now match Anki by the *correct* path (was: by f64-numerical-coincidence at boundary cases). Empirical soak validation pending the next sync — by construction, with bit-exact f32 + correct rounding, the `stability_replayed` divergence count should drop to literal 0 once shadow columns refresh.
+
+**Files.** `app/srs/fsrs.py` (the seven arithmetic helpers + `_round_to_places_f32`), `pyproject.toml` (numpy + fsrs-rs-python). Tests: `tests/test_parity_fsrs_f32.py` (new).
+
+**Surfaced by.** 2026-05-28 morning sync — three 4dp-precision shadow divergences with prod==`card.data` bit-exact on all three. The pre-Layer-59 discriminator (`project_stage3b_soak_finding_floor_stability`) classified these as "benign quantization ULP" and recommended classifier refinement; this layer is the structural fix instead.
