@@ -139,6 +139,18 @@ grammatical cases (all cases except nominative) within dialogue lines. Each entr
 - Only content words (nouns, adjectives) — skip function words
 - This enables systematic case-practice drill cards for Slovene
 
+**Determining the case — derive it from the governing word, NEVER from the English gloss.**
+Slovene preposition government is fixed and does not match English intuition. Look at the word
+that governs the form (preposition or syntactic role), not what it means in English:
+- `od / do / iz / brez / blizu / z(=out of) / brez` → **Gen**  (e.g. "do gradu" = *to* the castle, but governed by `do` → Genitive, NOT Dative)
+- `v / na / o / pri / po` describing a STATIC location → **Loc**  (e.g. "na hribu" = on the hill → Locative; "v Ljubljani" → Locative)
+- `v / na / čez / skozi` describing MOTION toward → **Acc**  (e.g. "grem v Ljubljano" → Accusative)
+- `k / proti` → **Dat**  (true dative; an indirect object with no preposition is also Dat)
+- `z / s` (=with) → **Ins**
+Many endings are syncretic — Gen, Dat, and Loc singular often share a form (e.g. `strani`,
+`gradu`, `hribu`). Resolve the ambiguity by the governing preposition/role above, and double-check
+each entry's case against it before emitting. A wrong case label teaches the learner the wrong rule.
+
 **SCENE HEADER FORMAT**
 - All scene labels must be in English, describing location/time/situation
 - Example: "At the Riverside Café", "Morning at the Train Station"
