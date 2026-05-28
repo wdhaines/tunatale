@@ -698,15 +698,14 @@ class TestSyncCreateNewRouting:
         assert Direction.RECOGNITION not in item.directions
 
     async def test_sync_create_new_case_cloze_preserves_hint_in_anki_note(self):
-        """Case-cloze hint ({{c1::surface::hint}}) passes through to the Anki note's Text field."""
+        """Morphology-cloze hint ({{c1::surface::hint}}) passes through to the Anki note's Text field."""
         db = _make_db()
-        from app.srs.function_words import make_case_cloze_text
+        from app.srs.function_words import make_morphology_cloze_text
 
-        case_cloze_sentence = make_case_cloze_text(
+        morph_cloze_sentence = make_morphology_cloze_text(
             "Ljubljano",
             "ljubljana",
-            "Acc",
-            "Sing",
+            "noun:acc:sg",
             "Grem v Ljubljano s prijateljem.",
         )
         unit = SyntacticUnit(
@@ -716,9 +715,9 @@ class TestSyncCreateNewRouting:
             difficulty=1,
             source="llm",
             lemma="ljubljana",
-            disambig_key="case:acc",
+            disambig_key="morph:noun-acc-sg",
             card_type="cloze",
-            source_sentence=case_cloze_sentence,
+            source_sentence=morph_cloze_sentence,
             source_sentence_translation="I'm going to Ljubljana with a friend.",
         )
         db.add_collocation(unit)

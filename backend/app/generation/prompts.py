@@ -119,8 +119,8 @@ Respond with ONLY a JSON object matching this schema (no markdown fences, no pre
   "dialogue_glosses": [
     {{"lemma": "lowercased_word", "translation": "English translation"}}
   ],
-  "declension_focus": [
-    {{"lemma": "lemma", "surface": "inflected_form", "case": "Gen", "number": "Sing", "gloss": "English translation"}}
+  "morphology_focus": [
+    {{"lemma": "lemma", "surface": "inflected_form", "feature": "verb:1sg", "gloss": "English translation"}}
   ]
 }}
 
@@ -131,31 +131,27 @@ in any scene, it must have a gloss entry. No exceptions. Give each word's lowerc
 form (lemma) and a concise English translation. This enables word-level hover translations
 in the learning UI.
 
-Build the "declension_focus" array LAST, by scanning the NATURAL_SPEED lines you just wrote and
-tagging inflected content words ALREADY PRESENT in them. Do NOT invent forms or list any word that
-is not already written in a NATURAL_SPEED line — an entry whose surface is not found there is
-discarded and wastes the slot, so every entry must be copyable straight out of your dialogue. Aim
-for 4-6 entries. Each entry must:
-- Contain a lemma, surface form, case (Gen/Dat/Acc/Loc/Ins), number (Sing/Dual/Plur), and gloss
-- Copy the surface CHARACTER-FOR-CHARACTER from a NATURAL_SPEED line — same spelling, same
-  diacritics (č/š/ž), and a SINGLE word (no multi-word phrases)
-- Set the lemma to the dictionary/citation form, which must DIFFER from the surface; skip any word
-  whose oblique form is spelled identically to its lemma (the hint would reveal the answer)
-- Only oblique cases — skip nominative (Nom); only content words (nouns, adjectives) — skip
-  function words
-- This enables systematic case-practice drill cards for Slovene
+Build the "morphology_focus" array LAST by scanning the NATURAL_SPEED lines you wrote and tagging
+inflected words ALREADY PRESENT in them. Aim for 4-6 entries, **prioritizing verb conjugations**.
 
-**Determining the case — derive it from the governing word, NEVER from the English gloss.**
-Slovene preposition government is fixed and does not match English intuition. Look at the word
-that governs the form (preposition or syntactic role), not what it means in English:
-- `od / do / iz / brez / blizu / z(=out of) / brez` → **Gen**  (e.g. "do gradu" = *to* the castle, but governed by `do` → Genitive, NOT Dative)
-- `v / na / o / pri / po` describing a STATIC location → **Loc**  (e.g. "na hribu" = on the hill → Locative; "v Ljubljani" → Locative)
-- `v / na / čez / skozi` describing MOTION toward → **Acc**  (e.g. "grem v Ljubljano" → Accusative)
-- `k / proti` → **Dat**  (true dative; an indirect object with no preposition is also Dat)
-- `z / s` (=with) → **Ins**
-Many endings are syncretic — Gen, Dat, and Loc singular often share a form (e.g. `strani`,
-`gradu`, `hribu`). Resolve the ambiguity by the governing preposition/role above, and double-check
-each entry's case against it before emitting. A wrong case label teaches the learner the wrong rule.
+- Surface must be copied CHARACTER-FOR-CHARACTER from a NATURAL_SPEED line (same diacritics č/š/ž),
+  a SINGLE word, not invented.
+- Lemma is the dictionary form (verb infinitive, noun nom sg, adj masc nom sg) and MUST differ from
+  the surface — skip any word whose inflected form equals its lemma (the hint would reveal it).
+
+**Feature strings — use exactly these shapes:**
+- `verb:<p><n>` where p ∈ {{1,2,3}} and n ∈ {{sg,du,pl}}. E.g. `verb:1sg`, `verb:3pl`, `verb:1du`.
+  Tag every interesting form of biti/imeti/target verbs that varies the person.
+- `noun:<case>:<gender>:<number>` for nominative (gender m/f/n required so the learner sees the
+  pattern): `noun:nom:m:sg`, `noun:nom:f:pl`, `noun:nom:n:du`, etc.
+- `noun:<case>:<number>` for accusative or locative (no gender needed): `noun:acc:sg`, `noun:loc:pl`.
+- `adj:nom:<gender>:<number>`: `adj:nom:f:sg`, etc.
+
+**Allowed cases for A1: nom, acc, loc only.** Do NOT emit `noun:gen:*`, `noun:dat:*`, `noun:ins:*`,
+or `adj:` with any case other than `nom` — those are A2+ topics that don't belong in A1 drills.
+
+**Cases derive from the governing word, NOT English gloss:** `v/na/pri/o/po` + static location →
+`loc` (v Ljubljani); `v/na/čez/skozi` + motion → `acc` (grem v Ljubljano); direct object → `acc`.
 
 **SCENE HEADER FORMAT**
 - All scene labels must be in English, describing location/time/situation

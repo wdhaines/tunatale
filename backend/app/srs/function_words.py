@@ -1,4 +1,4 @@
-"""Slovene function words used by Phase F's cloze-card spike, plus case-cloze hint generation.
+"""Slovene function words used by Phase F's cloze-card spike, plus morphology-cloze hint generation.
 
 This set was generated from the user's 7-day curriculum by
 build_function_word_list.py and manually curated to remove obvious
@@ -75,36 +75,36 @@ def make_cloze_text(surface: str, source_sentence: str) -> str:
     return pattern.sub(_replacer, source_sentence)
 
 
-# ── Case-cloze hint helpers ──────────────────────────────────────────────
-
-_NUMBER_ABBR: dict[str, str] = {
-    "Sing": "sg",
-    "Dual": "du",
-    "Plur": "pl",
-}
+# ── Morphology-cloze hint helpers ────────────────────────────────────────
 
 
-def _hint_text(lemma: str, case: str, number: str) -> str:
-    """Build the hint segment for a case-cloze: ``miza, gen sg``."""
-    abbr_case = case.lower() if case else ""
-    abbr_num = _NUMBER_ABBR.get(number, number.lower()) if number else ""
-    parts = [p for p in (abbr_case, abbr_num) if p]
-    if not parts:
-        return lemma
-    return f"{lemma}, {' '.join(parts)}"
+def _format_morphology_feature(feature: str) -> str:
+    """Turn a feature key into a concise hint label.
+
+    Examples:
+      ``verb:1sg``      -> ``1sg``
+      ``noun:loc:sg``   -> ``loc sg``
+      ``noun:nom:f:pl`` -> ``nom f pl``
+      ``adj:nom:m:sg``  -> ``nom m sg``
+
+    The POS prefix is dropped — the hint is shown alongside the lemma, which
+    already implies the part of speech. Returns ``""`` for empty/malformed.
+    """
+    if not feature or ":" not in feature:
+        return ""
+    return " ".join(p for p in feature.split(":")[1:] if p)
 
 
-def make_case_cloze_text(
+def make_morphology_cloze_text(
     surface: str,
     lemma: str,
-    case: str,
-    number: str,
+    feature: str,
     source_sentence: str,
 ) -> str:
-    """Wrap ``surface`` with a hinted cloze: ``{{c1::mize::miza, gen sg}}``.
+    """Wrap ``surface`` with a hinted cloze: ``{{c1::sem::biti, 1sg}}``.
 
-    The hint (``::hint``) tells the learner which lemma + inflection
-    to produce.  Anki renders the blank as ``[miza, gen sg]``.
+    The hint (``::hint``) tells the learner which lemma + morphology to
+    produce. Anki renders the blank as ``[biti, 1sg]``.
 
     Idempotent: already-clozed text passes through unchanged.
     Returns empty string when ``source_sentence`` is empty.
@@ -115,7 +115,8 @@ def make_case_cloze_text(
         return source_sentence
     if _CLOZE_RE.search(source_sentence):
         return source_sentence
-    hint = _hint_text(lemma, case, number)
+    label = _format_morphology_feature(feature)
+    hint = f"{lemma}, {label}" if label else lemma
     pattern = re.compile(rf"\b{re.escape(surface)}\b", re.IGNORECASE)
 
     def _replacer(m: re.Match) -> str:

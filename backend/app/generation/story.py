@@ -194,6 +194,6 @@ class StoryGenerator:
             generation_metadata={
                 "token_glosses": token_glosses,
                 "sentence_translations": sentence_translations,
-                "declension_focus": data.get("declension_focus", []),
+                "morphology_focus": data.get("morphology_focus", []),
             },
         )

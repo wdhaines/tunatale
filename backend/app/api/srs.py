@@ -29,7 +29,7 @@ from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, build_revlog_row, schedule
-from app.srs.function_words import is_function_word, make_case_cloze_text
+from app.srs.function_words import is_function_word, make_morphology_cloze_text
 from app.srs.lemmatizer import LowercaseLemmatizer
 from app.srs.queue_stats import (
     advance_learning_cutoff,
@@ -73,6 +73,21 @@ _WORD_RATING_MAP: dict[str, Rating] = {
     "good": Rating.GOOD,
     "easy": Rating.EASY,
 }
+
+# A1-appropriate morphology features for morphology_focus -> cloze cards.
+# Verb conjugations (all persons/numbers) + noun nom/acc/loc + adj nom.
+# Excludes Gen/Dat/Ins (A2+ territory) and adj non-nom cases.
+_A1_MORPHOLOGY_PREFIXES: tuple[str, ...] = (
+    "verb:",
+    "noun:nom:",
+    "noun:acc:",
+    "noun:loc:",
+    "adj:nom:",
+)
+
+
+def _is_a1_morphology_feature(feature: str) -> bool:
+    return any(feature.startswith(p) for p in _A1_MORPHOLOGY_PREFIXES)
 
 
 def _direction_to_dict(ds: DirectionState) -> dict:
@@ -313,25 +328,23 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
     # ── surface_to_analysis from generator output ────────────────────────
     # The LLM (which sees full sentence context) emits a per-lesson
-    # declension_focus list. We build surface_to_analysis from that instead
-    # of from _lemmatizer.analyze (which is a token-level analyzer that
-    # forfeits contextual disambiguation). The ClasslaLemmatizer and the
-    # analyze() Protocol method exist for future Anki-deck tagging but are
-    # not wired here — LowercaseLemmatizer (which always returns ("", ""))
-    # is the CI-safe default.
-    surface_to_analysis: dict[str, tuple[str, str, str]] = {}
+    # morphology_focus list with feature tags like "verb:1sg", "noun:loc:sg",
+    # "adj:nom:f:sg". We accept entries whose surface appears verbatim in a
+    # NATURAL_SPEED line AND whose feature is in the A1 whitelist.
+    surface_to_analysis: dict[str, tuple[str, str]] = {}
     surface_to_sentence: dict[str, str] = {}
-    for d in lesson.generation_metadata.get("declension_focus", []):
-        case = d.get("case", "")
-        if not case or case == "Nom":
+    for d in lesson.generation_metadata.get("morphology_focus", []):
+        feature = d.get("feature", "").strip().lower()
+        if not feature or not _is_a1_morphology_feature(feature):
             continue
         surface = d.get("surface", "")
-        if not surface:
+        lemma = d.get("lemma", "")
+        if not surface or not lemma:
             continue
         if natural_speed is not None:
             for phrase in natural_speed.phrases:
                 if re.search(rf"\b{re.escape(surface)}\b", phrase.text, re.IGNORECASE):
-                    surface_to_analysis[surface] = (d["lemma"], case, d.get("number", ""))
+                    surface_to_analysis[surface] = (lemma, feature)
                     surface_to_sentence[surface] = phrase.text
                     break
 
@@ -435,23 +448,25 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 )
                 graded_count += 1
 
-    # ── Case-cloze creation (inflected content words in oblique cases) ──
-    case_clozes_enabled = bool(cloze_enabled and lesson.language_code == "sl" and db.get_enable_case_clozes())
-    if case_clozes_enabled and surface_to_analysis:
-        case_cloze_count = 0
-        max_case_clozes = 5
-        for surface, (lemma, case, number) in surface_to_analysis.items():
-            if case_cloze_count >= max_case_clozes:
+    # ── Morphology-cloze creation (verb conjugations + A1 noun/adj forms) ──
+    # The enable_case_clozes toggle gates this pipeline (name kept for the DB
+    # column + settings endpoint; the feature now covers verb conjugations and
+    # noun/adj morphology more broadly, not just oblique cases).
+    morph_clozes_enabled = bool(cloze_enabled and lesson.language_code == "sl" and db.get_enable_case_clozes())
+    if morph_clozes_enabled and surface_to_analysis:
+        morph_cloze_count = 0
+        max_morph_clozes = 5
+        for surface, (lemma, feature) in surface_to_analysis.items():
+            if morph_cloze_count >= max_morph_clozes:
                 break
-            if is_function_word(lemma, lesson.language_code):
-                continue
             if lemma.casefold() == surface.casefold():
-                # Degenerate hint: the lemma equals the inflected surface, so the
-                # {{c1::surface::lemma, case}} hint would reveal the blanked answer.
-                # (Happens when the generator reports the inflected form as the lemma.)
+                # Degenerate hint: lemma == inflected surface, so the
+                # {{c1::surface::lemma, feature}} hint would reveal the answer.
+                # (Happens for nominative singular of many noun/adj paradigms.)
                 continue
+            disambig = f"morph:{feature.replace(':', '-')}"
             sent = surface_to_sentence.get(surface, "")
-            cloze_sent = make_case_cloze_text(surface, lemma, case, number, sent)
+            cloze_sent = make_morphology_cloze_text(surface, lemma, feature, sent)
             unit = SyntacticUnit(
                 text=surface,
                 translation=token_glosses.get(lemma, ""),
@@ -459,7 +474,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 difficulty=1,
                 source="llm",
                 lemma=lemma,
-                disambig_key=f"case:{case.lower()}",
+                disambig_key=disambig,
                 card_type="cloze",
                 source_sentence=cloze_sent,
                 source_sentence_translation=sentence_translations.get(sent, ""),
@@ -467,12 +482,12 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             was_created = db.add_collocation(unit, language_code=lesson.language_code)
             if was_created:
                 try:
-                    guid = compute_guid(surface, lesson.language_code, f"case:{case.lower()}")
+                    guid = compute_guid(surface, lesson.language_code, disambig)
                     coll_id = db.get_collocation_id_by_guid(guid)
                     await synthesize_cloze_audios(db, coll_id, sent, surface)
                 except Exception:
-                    _logger.warning("Failed to synthesize case-cloze audio for %r", surface)
-                case_cloze_count += 1
+                    _logger.warning("Failed to synthesize morphology-cloze audio for %r", surface)
+                morph_cloze_count += 1
                 created_count += 1
 
     # ── Key phrase registration + auto-grade ────────────────────────────
