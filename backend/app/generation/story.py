@@ -46,6 +46,11 @@ def _extract_all_lemmas(data: dict, language: Language) -> set[str]:
     return lemmas
 
 
+# Reasoning models (e.g. qwen3) emit <think>…</think> before the answer; strip it
+# so it can't swallow the JSON object during brace-extraction.
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
 def _strip_fences(raw: str) -> str:
     """Strip markdown code fences from an LLM response."""
     if raw.startswith("```"):
@@ -129,16 +134,26 @@ class StoryGenerator:
 
     @staticmethod
     def _parse_json(raw: str) -> dict:
-        raw = _strip_fences(raw)
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError as e:
-            logger.error(
-                "LLM returned unparseable response (len=%d): %r",
-                len(raw),
-                raw[:500],
-            )
-            raise StoryGenerationError(f"LLM returned invalid JSON: {e}") from e
+        # Model-agnostic: drop <think> reasoning, code fences, and any prose the model
+        # wraps around the JSON (gpt-oss prepends "**Lesson Title:** …"; others append
+        # commentary). Try the cleaned string, then the first balanced {…} span.
+        cleaned = _strip_fences(_THINK_RE.sub("", raw).strip())
+        candidates = [cleaned]
+        start, end = cleaned.find("{"), cleaned.rfind("}")
+        if start != -1 and end > start:
+            candidates.append(cleaned[start : end + 1])
+        last_error: json.JSONDecodeError | None = None
+        for candidate in candidates:
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError as e:
+                last_error = e
+        logger.error(
+            "LLM returned unparseable response (len=%d): %r",
+            len(cleaned),
+            cleaned[:500],
+        )
+        raise StoryGenerationError(f"LLM returned invalid JSON: {last_error}") from last_error
 
     def _parse_response(self, data: dict, language: Language) -> Lesson:
         key_phrases = data.get("key_phrases", [])
