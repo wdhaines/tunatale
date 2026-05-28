@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from app.srs.function_words import (
     SLOVENE_FUNCTION_WORDS,
-    _hint_text,
+    _format_morphology_feature,
     is_function_word,
-    make_case_cloze_text,
     make_cloze_text,
+    make_morphology_cloze_text,
 )
 
 
@@ -81,89 +81,105 @@ class TestMakeClozeText:
         assert result == "{{c1::To}} je {{c1::to}}."
 
 
-class TestHintText:
-    def test_with_case_and_number(self):
-        assert _hint_text("miza", "Gen", "Sing") == "miza, gen sg"
+class TestFormatMorphologyFeature:
+    def test_verb_person_number(self):
+        assert _format_morphology_feature("verb:1sg") == "1sg"
 
-    def test_case_only(self):
-        assert _hint_text("voda", "Acc", "") == "voda, acc"
+    def test_noun_loc_singular(self):
+        assert _format_morphology_feature("noun:loc:sg") == "loc sg"
 
-    def test_number_only(self):
-        assert _hint_text("prijatelj", "", "Plur") == "prijatelj, pl"
+    def test_noun_nom_feminine_plural(self):
+        assert _format_morphology_feature("noun:nom:f:pl") == "nom f pl"
 
-    def test_empty_morphology(self):
-        assert _hint_text("mesto", "", "") == "mesto"
+    def test_adj_nom_masc_singular(self):
+        assert _format_morphology_feature("adj:nom:m:sg") == "nom m sg"
 
-    def test_dual_number(self):
-        assert _hint_text("roka", "Ins", "Dual") == "roka, ins du"
+    def test_empty_feature(self):
+        assert _format_morphology_feature("") == ""
 
-    def test_plural_accusative(self):
-        assert _hint_text("rokavica", "Acc", "Plur") == "rokavica, acc pl"
+    def test_pos_only_no_colon(self):
+        assert _format_morphology_feature("verb") == ""
+
+    def test_trailing_colon(self):
+        # "noun:loc:" splits to ["noun", "loc", ""] -> filter empties -> "loc"
+        assert _format_morphology_feature("noun:loc:") == "loc"
 
 
-class TestMakeCaseClozeText:
-    def test_basic_case_cloze(self):
-        result = make_case_cloze_text(
-            "mize",
-            "miza",
-            "Gen",
-            "Sing",
-            "Nimam mize.",
+class TestMakeMorphologyClozeText:
+    def test_basic_verb_conjugation(self):
+        result = make_morphology_cloze_text(
+            "sem",
+            "biti",
+            "verb:1sg",
+            "Jaz sem doma.",
         )
-        assert result == "Nimam {{c1::mize::miza, gen sg}}."
+        assert result == "Jaz {{c1::sem::biti, 1sg}} doma."
+
+    def test_noun_locative(self):
+        result = make_morphology_cloze_text(
+            "Ljubljani",
+            "Ljubljana",
+            "noun:loc:sg",
+            "Sem v Ljubljani.",
+        )
+        assert result == "Sem v {{c1::Ljubljani::Ljubljana, loc sg}}."
+
+    def test_adjective_agreement(self):
+        result = make_morphology_cloze_text(
+            "lepa",
+            "lep",
+            "adj:nom:f:sg",
+            "Hiša je lepa.",
+        )
+        assert result == "Hiša je {{c1::lepa::lep, nom f sg}}."
 
     def test_empty_sentence(self):
-        assert make_case_cloze_text("mize", "miza", "Gen", "Sing", "") == ""
+        assert make_morphology_cloze_text("sem", "biti", "verb:1sg", "") == ""
 
     def test_idempotent_already_clozed(self):
-        result = make_case_cloze_text(
-            "mize",
-            "miza",
-            "Gen",
-            "Sing",
-            "Nimam {{c1::mize}}.",
+        result = make_morphology_cloze_text(
+            "sem",
+            "biti",
+            "verb:1sg",
+            "Jaz {{c1::sem}} doma.",
         )
-        assert result == "Nimam {{c1::mize}}."
+        assert result == "Jaz {{c1::sem}} doma."
 
     def test_empty_surface(self):
-        result = make_case_cloze_text(
+        result = make_morphology_cloze_text(
             "",
-            "miza",
-            "Gen",
-            "Sing",
-            "Nimam mize.",
+            "biti",
+            "verb:1sg",
+            "Jaz sem doma.",
         )
-        assert result == "Nimam mize."
+        assert result == "Jaz sem doma."
 
     def test_multi_occurrence(self):
-        result = make_case_cloze_text(
-            "prijateljem",
-            "prijatelj",
-            "Ins",
-            "Sing",
-            "S prijateljem grem s prijateljem.",
+        result = make_morphology_cloze_text(
+            "je",
+            "biti",
+            "verb:3sg",
+            "On je tu, ona je tam.",
         )
-        assert result == "S {{c1::prijateljem::prijatelj, ins sg}} grem s {{c1::prijateljem::prijatelj, ins sg}}."
-
-    def test_hint_with_dual(self):
-        result = make_case_cloze_text(
-            "rokama",
-            "roka",
-            "Ins",
-            "Dual",
-            "Z rokama delam.",
-        )
-        assert result == "Z {{c1::rokama::roka, ins du}} delam."
+        assert result == "On {{c1::je::biti, 3sg}} tu, ona {{c1::je::biti, 3sg}} tam."
 
     def test_case_insensitive_case_preserving(self):
-        result = make_case_cloze_text(
+        result = make_morphology_cloze_text(
             "Ljubljano",
             "Ljubljana",
-            "Acc",
-            "Sing",
+            "noun:acc:sg",
             "Grem v Ljubljano.",
         )
         assert result == "Grem v {{c1::Ljubljano::Ljubljana, acc sg}}."
+
+    def test_empty_feature_falls_back_to_lemma_only(self):
+        result = make_morphology_cloze_text(
+            "sem",
+            "biti",
+            "",
+            "Jaz sem doma.",
+        )
+        assert result == "Jaz {{c1::sem::biti}} doma."
 
 
 class TestSLOVENE_FUNCTION_WORDS:

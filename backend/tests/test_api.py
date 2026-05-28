@@ -1064,19 +1064,19 @@ class TestListenClozeIntegration:
 
     async def _setup_case_cloze_lesson(
         self,
-        phrase_text: str = "Grem v Ljubljano s prijateljem.",
+        phrase_text: str = "Grem v Ljubljano. Sem v hotelu.",
         case_clozes_enabled: bool = True,
-        extra_declension: list[dict] | None = None,
+        extra_morphology: list[dict] | None = None,
     ):
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
 
-        declension_focus = [
-            {"lemma": "ljubljana", "surface": "Ljubljano", "case": "Acc", "number": "Sing", "gloss": "Ljubljana"},
-            {"lemma": "prijatelj", "surface": "prijateljem", "case": "Ins", "number": "Sing", "gloss": "friend"},
+        morphology_focus = [
+            {"lemma": "ljubljana", "surface": "Ljubljano", "feature": "noun:acc:sg", "gloss": "Ljubljana"},
+            {"lemma": "hotel", "surface": "hotelu", "feature": "noun:loc:sg", "gloss": "hotel"},
         ]
-        if extra_declension:
-            declension_focus.extend(extra_declension)
+        if extra_morphology:
+            morphology_focus.extend(extra_morphology)
 
         lesson = Lesson(
             title="Day 1",
@@ -1100,13 +1100,13 @@ class TestListenClozeIntegration:
                     "grem": "I go",
                     "v": "in/to",
                     "ljubljana": "Ljubljana",
-                    "s": "with",
-                    "prijatelj": "friend",
+                    "sem": "I am",
+                    "hotel": "hotel",
                 },
                 "sentence_translations": {
-                    phrase_text: "I'm going to Ljubljana with a friend.",
+                    phrase_text: "I'm going to Ljubljana. I'm at the hotel.",
                 },
-                "declension_focus": declension_focus,
+                "morphology_focus": morphology_focus,
             },
         )
         db = SRSDatabase(":memory:")
@@ -1120,7 +1120,7 @@ class TestListenClozeIntegration:
         return db
 
     async def test_listen_creates_case_cloze_when_enabled(self):
-        """Oblique-case surface forms get case-cloze rows with disambig_key set."""
+        """Inflected surface forms get morphology-cloze rows with disambig_key set."""
         db = await self._setup_case_cloze_lesson(case_clozes_enabled=True)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-1"})
@@ -1131,21 +1131,21 @@ class TestListenClozeIntegration:
         assert item is not None
         assert item.syntactic_unit.card_type == "vocab"
 
-        # Case-cloze row for the inflected surface "Ljubljano" (Acc, Sing)
+        # Morphology-cloze row for the inflected surface "Ljubljano" (Acc, Sing)
         with db._get_conn() as conn:
             row = conn.execute(
                 "SELECT text, lemma, disambig_key, card_type, source_sentence "
                 "FROM collocations WHERE text = ? AND disambig_key = ?",
-                ("Ljubljano", "case:acc"),
+                ("Ljubljano", "morph:noun-acc-sg"),
             ).fetchone()
-        assert row is not None, "Case-cloze row should exist"
+        assert row is not None, "Morphology-cloze row should exist"
         assert row["lemma"] == "ljubljana"
         assert row["card_type"] == "cloze"
-        assert row["disambig_key"] == "case:acc"
-        assert row["source_sentence"] == "Grem v {{c1::Ljubljano::ljubljana, acc sg}} s prijateljem."
+        assert row["disambig_key"] == "morph:noun-acc-sg"
+        assert row["source_sentence"] == "Grem v {{c1::Ljubljano::ljubljana, acc sg}}. Sem v hotelu."
 
     async def test_listen_respects_case_cloze_toggle(self):
-        """Case-cloze creation is skipped when enable_case_clozes is False."""
+        """Morphology-cloze creation is skipped when enable_case_clozes is False."""
         db = await self._setup_case_cloze_lesson(case_clozes_enabled=False)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-1"})
@@ -1154,12 +1154,12 @@ class TestListenClozeIntegration:
         with db._get_conn() as conn:
             row = conn.execute(
                 "SELECT text, disambig_key FROM collocations WHERE text = ? AND disambig_key = ?",
-                ("Ljubljano", "case:acc"),
+                ("Ljubljano", "morph:noun-acc-sg"),
             ).fetchone()
-        assert row is None, "Case-cloze row should NOT exist when toggle is off"
+        assert row is None, "Morphology-cloze row should NOT exist when toggle is off"
 
     async def test_listen_case_cloze_is_idempotent(self):
-        """Second /listen with same lesson does not duplicate case-cloze rows."""
+        """Second /listen with same lesson does not duplicate morphology-cloze rows."""
         db = await self._setup_case_cloze_lesson(case_clozes_enabled=True)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r1 = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-1"})
@@ -1170,17 +1170,17 @@ class TestListenClozeIntegration:
         with db._get_conn() as conn:
             rows = conn.execute(
                 "SELECT COUNT(*) AS cnt FROM collocations WHERE text = ? AND disambig_key = ?",
-                ("Ljubljano", "case:acc"),
+                ("Ljubljano", "morph:noun-acc-sg"),
             ).fetchall()
         assert rows[0]["cnt"] == 1
 
     async def test_listen_case_cloze_skips_degenerate_lemma_equals_surface(self):
-        """No case-cloze when the generator reports lemma == surface (hint would reveal the answer)."""
+        """No morphology-cloze when generator reports lemma == surface (hint would reveal answer)."""
         db = await self._setup_case_cloze_lesson(
             phrase_text="Imam plačilno kartico.",
             case_clozes_enabled=True,
-            extra_declension=[
-                {"lemma": "kartico", "surface": "kartico", "case": "Acc", "number": "Sing", "gloss": "card"},
+            extra_morphology=[
+                {"lemma": "kartico", "surface": "kartico", "feature": "noun:acc:sg", "gloss": "card"},
             ],
         )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1190,28 +1190,27 @@ class TestListenClozeIntegration:
         with db._get_conn() as conn:
             row = conn.execute(
                 "SELECT text FROM collocations WHERE text = ? AND disambig_key = ?",
-                ("kartico", "case:acc"),
+                ("kartico", "morph:noun-acc-sg"),
             ).fetchone()
-        assert row is None, "Degenerate lemma==surface entry must not create a case-cloze"
+        assert row is None, "Degenerate lemma==surface entry must not create a morphology-cloze"
 
     async def test_listen_case_cloze_respects_cap(self):
-        """At most max_case_clozes (5) case-cloze rows are created per /listen."""
+        """At most max_morph_clozes (5) morphology-cloze rows are created per /listen."""
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
 
         phrase = "Grem v Ljubljano, Avstrijo, trgovino, kavarno, postajo in restavracijo."
-        # Six non-degenerate oblique forms (lemma != surface) → cap should clip to 5.
-        declension = [
-            {"lemma": "ljubljana", "surface": "Ljubljano", "case": "Acc", "number": "Sing", "gloss": "Ljubljana"},
-            {"lemma": "avstrija", "surface": "Avstrijo", "case": "Acc", "number": "Sing", "gloss": "Austria"},
-            {"lemma": "trgovina", "surface": "trgovino", "case": "Acc", "number": "Sing", "gloss": "store"},
-            {"lemma": "kavarna", "surface": "kavarno", "case": "Acc", "number": "Sing", "gloss": "cafe"},
-            {"lemma": "postaja", "surface": "postajo", "case": "Acc", "number": "Sing", "gloss": "station"},
+        # Six non-degenerate accusatives (lemma != surface) → cap should clip to 5.
+        morphology = [
+            {"lemma": "ljubljana", "surface": "Ljubljano", "feature": "noun:acc:sg", "gloss": "Ljubljana"},
+            {"lemma": "avstrija", "surface": "Avstrijo", "feature": "noun:acc:sg", "gloss": "Austria"},
+            {"lemma": "trgovina", "surface": "trgovino", "feature": "noun:acc:sg", "gloss": "store"},
+            {"lemma": "kavarna", "surface": "kavarno", "feature": "noun:acc:sg", "gloss": "cafe"},
+            {"lemma": "postaja", "surface": "postajo", "feature": "noun:acc:sg", "gloss": "station"},
             {
                 "lemma": "restavracija",
                 "surface": "restavracijo",
-                "case": "Acc",
-                "number": "Sing",
+                "feature": "noun:acc:sg",
                 "gloss": "restaurant",
             },
         ]
@@ -1230,7 +1229,7 @@ class TestListenClozeIntegration:
             generation_metadata={
                 "token_glosses": {},
                 "sentence_translations": {},
-                "declension_focus": declension,
+                "morphology_focus": morphology,
             },
         )
         db = SRSDatabase(":memory:")
@@ -1247,19 +1246,24 @@ class TestListenClozeIntegration:
 
         with db._get_conn() as conn:
             rows = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'case:%'",
+                "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'morph:%'",
             ).fetchall()
-        assert rows[0]["cnt"] == 5, f"Expected 5 case-cloze rows, got {rows[0]['cnt']}"
+        assert rows[0]["cnt"] == 5, f"Expected 5 morphology-cloze rows, got {rows[0]['cnt']}"
 
-    async def test_listen_case_cloze_skips_function_words(self):
-        """Oblique-case pronouns whose lemma is a function word are skipped."""
+    async def test_listen_case_cloze_includes_verb_conjugation_of_function_word_lemma(self):
+        """Verb conjugations are drilled even when surface or lemma is in the function-word set.
+
+        `je`/`sem`/`si` are in the curated function-word list (they're high-frequency forms of
+        `biti`), but conjugation drills are exactly what we want — so the function-word filter
+        is intentionally not applied to morphology clozes.
+        """
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
 
-        phrase = "Sebe vidim v ogledalu."
-        declension = [
-            {"lemma": "se", "surface": "sebe", "case": "Acc", "number": "Sing", "gloss": "myself"},
-            {"lemma": "ogledalo", "surface": "ogledalu", "case": "Loc", "number": "Sing", "gloss": "mirror"},
+        phrase = "On je tu. Jaz sem doma."
+        morphology = [
+            {"lemma": "biti", "surface": "je", "feature": "verb:3sg", "gloss": "is"},
+            {"lemma": "biti", "surface": "sem", "feature": "verb:1sg", "gloss": "am"},
         ]
         lesson = Lesson(
             title="Day 1",
@@ -1274,45 +1278,40 @@ class TestListenClozeIntegration:
             ],
             key_phrases=[],
             generation_metadata={
-                "token_glosses": {"se": "myself", "vidim": "I see", "v": "in", "ogledalo": "mirror"},
-                "sentence_translations": {"Sebe vidim v ogledalu.": "I see myself in the mirror."},
-                "declension_focus": declension,
+                "token_glosses": {"biti": "to be"},
+                "sentence_translations": {phrase: "He is here. I am at home."},
+                "morphology_focus": morphology,
             },
         )
         db = SRSDatabase(":memory:")
         db.set_enable_cloze_cards(True)
         db.set_enable_case_clozes(True)
         store = ContentStore(":memory:")
-        store.save_lesson("case-cloze-func", "curriculum-1", 1, lesson)
+        store.save_lesson("case-cloze-verb", "curriculum-1", 1, lesson)
         app.state.srs_db = db
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-func"})
+            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-verb"})
         assert response.status_code == 200
 
         with db._get_conn() as conn:
-            sebe_row = conn.execute(
-                "SELECT text FROM collocations WHERE text = ? AND disambig_key = 'case:acc'",
-                ("sebe",),
-            ).fetchone()
-        assert sebe_row is None, "Pronoun 'sebe' should not create a case-cloze row"
-
-        with db._get_conn() as conn:
-            ogledalo_row = conn.execute(
-                "SELECT text FROM collocations WHERE text = ? AND disambig_key = 'case:loc'",
-                ("ogledalu",),
-            ).fetchone()
-        assert ogledalo_row is not None, "Content word 'ogledalu' should create a case-cloze row"
+            rows = conn.execute(
+                "SELECT text, disambig_key FROM collocations "
+                "WHERE card_type = 'cloze' AND disambig_key LIKE 'morph:verb-%' ORDER BY text",
+            ).fetchall()
+        assert len(rows) == 2, f"Expected 2 verb morphology-clozes, got {len(rows)}: {[dict(r) for r in rows]}"
+        assert {r["text"] for r in rows} == {"je", "sem"}
+        assert {r["disambig_key"] for r in rows} == {"morph:verb-3sg", "morph:verb-1sg"}
 
     async def test_listen_case_cloze_skips_surface_not_found(self):
-        """declension_focus entry whose surface isn't in any NATURAL_SPEED line is skipped."""
+        """morphology_focus entry whose surface isn't in any NATURAL_SPEED line is skipped."""
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
 
         phrase = "Grem v Ljubljano s prijateljem."
-        declension = [
-            {"lemma": "miza", "surface": "mize", "case": "Gen", "number": "Sing", "gloss": "table"},
+        morphology = [
+            {"lemma": "miza", "surface": "mize", "feature": "noun:acc:sg", "gloss": "table"},
         ]
         lesson = Lesson(
             title="Day 1",
@@ -1329,7 +1328,7 @@ class TestListenClozeIntegration:
             generation_metadata={
                 "token_glosses": {},
                 "sentence_translations": {},
-                "declension_focus": declension,
+                "morphology_focus": morphology,
             },
         )
         db = SRSDatabase(":memory:")
@@ -1346,19 +1345,20 @@ class TestListenClozeIntegration:
 
         with db._get_conn() as conn:
             rows = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'case:%'",
+                "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'morph:%'",
             ).fetchall()
-        assert rows[0]["cnt"] == 0, "No case-cloze should be created when surface is missing"
+        assert rows[0]["cnt"] == 0, "No morphology-cloze should be created when surface is missing"
 
-    async def test_listen_case_cloze_skips_nominative(self):
-        """declension_focus entry with Nom case is skipped."""
+    async def test_listen_case_cloze_skips_non_a1_features(self):
+        """Features outside the A1 whitelist (gen/dat/ins, adj non-nom) are skipped."""
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
 
-        phrase = "Miza je lepa."
-        declension = [
-            {"lemma": "miza", "surface": "miza", "case": "Nom", "number": "Sing", "gloss": "table"},
-            {"lemma": "lep", "surface": "lepa", "case": "Nom", "number": "Sing", "gloss": "beautiful"},
+        phrase = "Nimam časa za prijatelje s knjigami."
+        morphology = [
+            {"lemma": "čas", "surface": "časa", "feature": "noun:gen:sg", "gloss": "time"},
+            {"lemma": "knjiga", "surface": "knjigami", "feature": "noun:ins:pl", "gloss": "books"},
+            {"lemma": "prijatelj", "surface": "prijatelje", "feature": "noun:acc:pl", "gloss": "friends"},
         ]
         lesson = Lesson(
             title="Day 1",
@@ -1375,37 +1375,40 @@ class TestListenClozeIntegration:
             generation_metadata={
                 "token_glosses": {},
                 "sentence_translations": {},
-                "declension_focus": declension,
+                "morphology_focus": morphology,
             },
         )
         db = SRSDatabase(":memory:")
         db.set_enable_cloze_cards(True)
         db.set_enable_case_clozes(True)
         store = ContentStore(":memory:")
-        store.save_lesson("case-cloze-nom", "curriculum-1", 1, lesson)
+        store.save_lesson("case-cloze-nona1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-nom"})
+            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-nona1"})
         assert response.status_code == 200
 
         with db._get_conn() as conn:
             rows = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'case:%'",
+                "SELECT text, disambig_key FROM collocations "
+                "WHERE card_type = 'cloze' AND disambig_key LIKE 'morph:%' ORDER BY text",
             ).fetchall()
-        assert rows[0]["cnt"] == 0, "Nominative entries should not create case-cloze rows"
+        # Only the noun:acc:pl entry should pass the A1 whitelist.
+        assert [dict(r) for r in rows] == [{"text": "prijatelje", "disambig_key": "morph:noun-acc-pl"}]
 
     async def test_listen_case_cloze_skips_empty_surface(self):
-        """declension_focus entry with empty surface is skipped."""
+        """morphology_focus entry with empty surface/lemma is skipped."""
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
 
-        phrase = "Grem v Ljubljano s prijateljem."
-        declension = [
-            {"lemma": "ljubljana", "surface": "Ljubljano", "case": "Acc", "number": "Sing", "gloss": "Ljubljana"},
-            {"lemma": "prijatelj", "surface": "prijateljem", "case": "Ins", "number": "Sing", "gloss": "friend"},
-            {"lemma": "miza", "surface": "", "case": "Gen", "number": "Sing", "gloss": "table"},
+        phrase = "Grem v Ljubljano. Sem v hotelu."
+        morphology = [
+            {"lemma": "ljubljana", "surface": "Ljubljano", "feature": "noun:acc:sg", "gloss": "Ljubljana"},
+            {"lemma": "hotel", "surface": "hotelu", "feature": "noun:loc:sg", "gloss": "hotel"},
+            {"lemma": "miza", "surface": "", "feature": "noun:acc:sg", "gloss": "table"},
+            {"lemma": "", "surface": "kavo", "feature": "noun:acc:sg", "gloss": "coffee"},
         ]
         lesson = Lesson(
             title="Day 1",
@@ -1422,7 +1425,7 @@ class TestListenClozeIntegration:
             generation_metadata={
                 "token_glosses": {},
                 "sentence_translations": {},
-                "declension_focus": declension,
+                "morphology_focus": morphology,
             },
         )
         db = SRSDatabase(":memory:")
@@ -1439,12 +1442,12 @@ class TestListenClozeIntegration:
 
         with db._get_conn() as conn:
             rows = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'case:%'",
+                "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'morph:%'",
             ).fetchall()
-        assert rows[0]["cnt"] == 2, "Only valid surfaces should create case-cloze rows"
+        assert rows[0]["cnt"] == 2, "Only the two complete entries should create morphology-cloze rows"
 
     async def test_listen_case_cloze_noop_without_natural_speed(self):
-        """No NATURAL_SPEED section → surface_to_analysis stays empty → no case-clozes."""
+        """No NATURAL_SPEED section → surface_to_analysis stays empty → no morphology-clozes."""
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
 
@@ -1463,8 +1466,8 @@ class TestListenClozeIntegration:
             generation_metadata={
                 "token_glosses": {},
                 "sentence_translations": {},
-                "declension_focus": [
-                    {"lemma": "miza", "surface": "mize", "case": "Gen", "number": "Sing", "gloss": "table"},
+                "morphology_focus": [
+                    {"lemma": "miza", "surface": "mize", "feature": "noun:acc:sg", "gloss": "table"},
                 ],
             },
         )
@@ -1482,9 +1485,9 @@ class TestListenClozeIntegration:
 
         with db._get_conn() as conn:
             rows = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'case:%'",
+                "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'morph:%'",
             ).fetchall()
-        assert rows[0]["cnt"] == 0, "No case-cloze should be created without NATURAL_SPEED"
+        assert rows[0]["cnt"] == 0, "No morphology-cloze should be created without NATURAL_SPEED"
 
     async def test_listen_never_grades_production(self):
         """Pre-existing vocab with production state=LEARNING → /listen does not touch production."""
@@ -3164,12 +3167,11 @@ class TestClozeTTSIntegration:
                 "sentence_translations": {
                     "Kje je banka v Ljubljani?": "Where is the bank in Ljubljana?",
                 },
-                "declension_focus": [
+                "morphology_focus": [
                     {
                         "lemma": "ljubljana",
                         "surface": "Ljubljani",
-                        "case": "Loc",
-                        "number": "Sing",
+                        "feature": "noun:loc:sg",
                         "gloss": "Ljubljana",
                     },
                 ],
@@ -3192,13 +3194,13 @@ class TestClozeTTSIntegration:
         # Function-word cloze card should still exist
         coll = db.get_collocation_by_lemma("kje")
         assert coll is not None
-        # Case-cloze row should also exist despite TTS failure
+        # Morphology-cloze row should also exist despite TTS failure
         with db._get_conn() as conn:
             row = conn.execute(
                 "SELECT text, disambig_key FROM collocations WHERE text = ? AND disambig_key = ?",
-                ("Ljubljani", "case:loc"),
+                ("Ljubljani", "morph:noun-loc-sg"),
             ).fetchone()
-        assert row is not None, "Case-cloze row should exist despite TTS failure"
+        assert row is not None, "Morphology-cloze row should exist despite TTS failure"
 
     async def test_listen_tolerates_synthesizer_error_existing_cloze(self, monkeypatch):
         """Existing cloze card audio backfill failure doesn't crash the endpoint."""
