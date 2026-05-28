@@ -131,12 +131,18 @@ in any scene, it must have a gloss entry. No exceptions. Give each word's lowerc
 form (lemma) and a concise English translation. This enables word-level hover translations
 in the learning UI.
 
-The "declension_focus" array lists inflected forms of content words that appear in oblique
-grammatical cases (all cases except nominative) within dialogue lines. Each entry must:
+Build the "declension_focus" array LAST, by scanning the NATURAL_SPEED lines you just wrote and
+tagging inflected content words ALREADY PRESENT in them. Do NOT invent forms or list any word that
+is not already written in a NATURAL_SPEED line — an entry whose surface is not found there is
+discarded and wastes the slot, so every entry must be copyable straight out of your dialogue. Aim
+for 4-6 entries. Each entry must:
 - Contain a lemma, surface form, case (Gen/Dat/Acc/Loc/Ins), number (Sing/Dual/Plur), and gloss
-- The surface must appear verbatim (same spelling) in a NATURAL_SPEED dialogue line
-- Only oblique cases — skip nominative (Nom) entries
-- Only content words (nouns, adjectives) — skip function words
+- Copy the surface CHARACTER-FOR-CHARACTER from a NATURAL_SPEED line — same spelling, same
+  diacritics (č/š/ž), and a SINGLE word (no multi-word phrases)
+- Set the lemma to the dictionary/citation form, which must DIFFER from the surface; skip any word
+  whose oblique form is spelled identically to its lemma (the hint would reveal the answer)
+- Only oblique cases — skip nominative (Nom); only content words (nouns, adjectives) — skip
+  function words
 - This enables systematic case-practice drill cards for Slovene
 
 **Determining the case — derive it from the governing word, NEVER from the English gloss.**
