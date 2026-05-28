@@ -25,8 +25,11 @@ CORRECT: "To je dobra kava." — WRONG: "To je dobro kavo." (kavo is accusative)
 CORRECT: "Nimam časa." — WRONG: "Nimam čas." (čas is nominative)
 CORRECT: "Kozarec vode, prosim." — WRONG: "Kozarec voda, prosim." (voda is nominative)
 
-**Dative** — indirect object, `k/proti`, "to me" feeling:
+**Dative** — indirect object (no preposition), or `k/proti` only:
 CORRECT: "Dam ti knjigo." — WRONG: "Dam ti knjiga." (knjiga is nominative)
+NOTE: English "to" does NOT imply dative. `do` ("to/up to") governs the GENITIVE
+("do gradu" = to the castle → genitive), and motion "to a place" with `v/na` is ACCUSATIVE
+("v Ljubljano"). Pick case by the Slovene governing word, never by the English translation.
 
 **Accusative** — direct object, motion-toward `v/na`:
 CORRECT: "Grem v Ljubljano." — WRONG: "Grem v Ljubljana." (Ljubljana is nominative)
