@@ -1174,19 +1174,46 @@ class TestListenClozeIntegration:
             ).fetchall()
         assert rows[0]["cnt"] == 1
 
+    async def test_listen_case_cloze_skips_degenerate_lemma_equals_surface(self):
+        """No case-cloze when the generator reports lemma == surface (hint would reveal the answer)."""
+        db = await self._setup_case_cloze_lesson(
+            phrase_text="Imam plačilno kartico.",
+            case_clozes_enabled=True,
+            extra_declension=[
+                {"lemma": "kartico", "surface": "kartico", "case": "Acc", "number": "Sing", "gloss": "card"},
+            ],
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-1"})
+        assert response.status_code == 200
+
+        with db._get_conn() as conn:
+            row = conn.execute(
+                "SELECT text FROM collocations WHERE text = ? AND disambig_key = ?",
+                ("kartico", "case:acc"),
+            ).fetchone()
+        assert row is None, "Degenerate lemma==surface entry must not create a case-cloze"
+
     async def test_listen_case_cloze_respects_cap(self):
         """At most max_case_clozes (5) case-cloze rows are created per /listen."""
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
 
-        phrase = "Kupim jedro, jabolko, hruško, sadje, mleko in kruh."
+        phrase = "Grem v Ljubljano, Avstrijo, trgovino, kavarno, postajo in restavracijo."
+        # Six non-degenerate oblique forms (lemma != surface) → cap should clip to 5.
         declension = [
-            {"lemma": "jedro", "surface": "jedro", "case": "Acc", "number": "Sing", "gloss": "core"},
-            {"lemma": "jabolko", "surface": "jabolko", "case": "Gen", "number": "Sing", "gloss": "apple"},
-            {"lemma": "hruška", "surface": "hruško", "case": "Acc", "number": "Sing", "gloss": "pear"},
-            {"lemma": "sadje", "surface": "sadje", "case": "Gen", "number": "Sing", "gloss": "fruit"},
-            {"lemma": "mleko", "surface": "mleko", "case": "Acc", "number": "Sing", "gloss": "milk"},
-            {"lemma": "kruh", "surface": "kruh", "case": "Gen", "number": "Sing", "gloss": "bread"},
+            {"lemma": "ljubljana", "surface": "Ljubljano", "case": "Acc", "number": "Sing", "gloss": "Ljubljana"},
+            {"lemma": "avstrija", "surface": "Avstrijo", "case": "Acc", "number": "Sing", "gloss": "Austria"},
+            {"lemma": "trgovina", "surface": "trgovino", "case": "Acc", "number": "Sing", "gloss": "store"},
+            {"lemma": "kavarna", "surface": "kavarno", "case": "Acc", "number": "Sing", "gloss": "cafe"},
+            {"lemma": "postaja", "surface": "postajo", "case": "Acc", "number": "Sing", "gloss": "station"},
+            {
+                "lemma": "restavracija",
+                "surface": "restavracijo",
+                "case": "Acc",
+                "number": "Sing",
+                "gloss": "restaurant",
+            },
         ]
         lesson = Lesson(
             title="Day 1",
