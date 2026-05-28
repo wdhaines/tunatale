@@ -445,6 +445,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 break
             if is_function_word(lemma, lesson.language_code):
                 continue
+            if lemma.casefold() == surface.casefold():
+                # Degenerate hint: the lemma equals the inflected surface, so the
+                # {{c1::surface::lemma, case}} hint would reveal the blanked answer.
+                # (Happens when the generator reports the inflected form as the lemma.)
+                continue
             sent = surface_to_sentence.get(surface, "")
             cloze_sent = make_case_cloze_text(surface, lemma, case, number, sent)
             unit = SyntacticUnit(
