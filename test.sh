@@ -1,37 +1,76 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Runs the full lint + test gate. The backend group (ruff + pytest) and the
+# frontend group (fmt + lint + svelte-check + vitest + e2e) are independent —
+# e2e boots its own backend on port 8001 with a dedicated tunatale-test.db, so
+# nothing is shared with backend pytest — and run concurrently. This mirrors
+# CI's two-job split. Output is buffered per group and printed when both finish
+# (live progress would interleave). Note: pytest -n auto already saturates the
+# CPU, so the two groups contend; the win is the overlap, not free parallelism.
+#
+# No `set -e` at the top level: we must collect BOTH exit codes before failing,
+# so each group runs in its own `set -e` subshell and we aggregate afterwards.
+set -uo pipefail
 
-cd backend
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "=== Ruff lint ==="
-uv run ruff check app tests
+backend_log="$(mktemp)"
+frontend_log="$(mktemp)"
+trap 'rm -f "$backend_log" "$frontend_log"' EXIT
 
-echo "=== Ruff format check ==="
-uv run ruff format --check app tests
+echo "Running backend + frontend suites in parallel..."
 
-echo "=== Tests ==="
-# -n auto parallelizes across CPU cores; pytest-cov combines per-worker
-# coverage so the 100% gate still applies to the full run.
-uv run pytest --run-oracle -n auto
+(
+  set -e
+  cd "$ROOT/backend"
 
-cd ../frontend
+  echo "=== Ruff lint ==="
+  uv run ruff check app tests
 
-echo "=== Frontend format check ==="
-bun run fmt:check
+  echo "=== Ruff format check ==="
+  uv run ruff format --check app tests
 
-echo "=== Frontend lint ==="
-bun run lint
+  echo "=== Tests ==="
+  # -n auto parallelizes across CPU cores; pytest-cov combines per-worker
+  # coverage so the 100% gate still applies to the full run.
+  uv run pytest --run-oracle -n auto
 
-echo "=== Svelte type check ==="
-bun run check
+  # Clean up coverage data file left by pytest --cov
+  uv run coverage erase
+) >"$backend_log" 2>&1 &
+backend_pid=$!
 
-echo "=== Frontend tests (with coverage) ==="
-bun run test:coverage
+(
+  set -e
+  cd "$ROOT/frontend"
 
-echo "=== E2E smoke tests ==="
-bun run test:e2e
+  echo "=== Frontend format check ==="
+  bun run fmt:check
 
-# Clean up coverage data file left by pytest --cov
-cd ../backend && uv run coverage erase
+  echo "=== Frontend lint ==="
+  bun run lint
+
+  echo "=== Svelte type check ==="
+  bun run check
+
+  echo "=== Frontend tests (with coverage) ==="
+  bun run test:coverage
+
+  echo "=== E2E smoke tests ==="
+  bun run test:e2e
+) >"$frontend_log" 2>&1 &
+frontend_pid=$!
+
+wait "$backend_pid"; backend_rc=$?
+wait "$frontend_pid"; frontend_rc=$?
+
+echo "===================== BACKEND (exit $backend_rc) ====================="
+cat "$backend_log"
+echo "==================== FRONTEND (exit $frontend_rc) ===================="
+cat "$frontend_log"
+
+if [ "$backend_rc" -ne 0 ] || [ "$frontend_rc" -ne 0 ]; then
+  echo "=== FAILED (backend=$backend_rc frontend=$frontend_rc) ==="
+  exit 1
+fi
 
 echo "=== All checks passed ==="
