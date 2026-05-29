@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from app.srs.lemmatizer import Lemmatizer, LowercaseLemmatizer
+from app.srs.lemmatizer import (
+    Lemmatizer,
+    LowercaseLemmatizer,
+    _parse_morphology,
+)
 
 
 class TestLowercaseLemmatizer:
@@ -29,3 +33,50 @@ class TestLowercaseLemmatizer:
 
     def test_satisfies_lemmatizer_protocol(self):
         assert isinstance(self.lemmatizer, Lemmatizer)
+
+    # ── analyze() tests ─────────────────────────────────────────────────
+
+    def test_analyze_returns_lowercase_with_empty_morphology(self):
+        lemma, case, number = self.lemmatizer.analyze("Miza", "sl")
+        assert lemma == "miza"
+        assert case == ""
+        assert number == ""
+
+    def test_analyze_empty_string(self):
+        lemma, case, number = self.lemmatizer.analyze("", "en")
+        assert lemma == ""
+        assert case == ""
+        assert number == ""
+
+    def test_analyze_language_code_ignored(self):
+        """LowercaseLemmatizer is language-agnostic — same result for any code."""
+        sl_result = self.lemmatizer.analyze("Mize", "sl")
+        en_result = self.lemmatizer.analyze("Mize", "en")
+        assert sl_result == en_result
+
+
+class TestParseMorphology:
+    def test_full_features(self):
+        case, number = _parse_morphology("Case=Gen|Gender=Fem|Number=Sing")
+        assert case == "Gen"
+        assert number == "Sing"
+
+    def test_no_case(self):
+        case, number = _parse_morphology("Gender=Masc|Number=Plur")
+        assert case == ""
+        assert number == "Plur"
+
+    def test_no_number(self):
+        case, number = _parse_morphology("Case=Nom|Gender=Masc")
+        assert case == "Nom"
+        assert number == ""
+
+    def test_empty_string(self):
+        case, number = _parse_morphology("")
+        assert case == ""
+        assert number == ""
+
+    def test_dual_number(self):
+        case, number = _parse_morphology("Case=Ins|Gender=Masc|Number=Dual")
+        assert case == "Ins"
+        assert number == "Dual"

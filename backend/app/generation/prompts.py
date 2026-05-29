@@ -118,6 +118,9 @@ Respond with ONLY a JSON object matching this schema (no markdown fences, no pre
   ],
   "dialogue_glosses": [
     {{"lemma": "lowercased_word", "translation": "English translation"}}
+  ],
+  "morphology_focus": [
+    {{"lemma": "lemma", "surface": "inflected_form", "feature": "verb:1sg", "gloss": "English translation"}}
   ]
 }}
 
@@ -127,6 +130,42 @@ proper names, interjections, and all other words. If a word appears in any dialo
 in any scene, it must have a gloss entry. No exceptions. Give each word's lowercase base
 form (lemma) and a concise English translation. This enables word-level hover translations
 in the learning UI.
+
+Build the "morphology_focus" array LAST by scanning the NATURAL_SPEED lines you wrote and tagging
+inflected words ALREADY PRESENT in them. Aim for 4-6 entries, **prioritizing verb conjugations**.
+
+Each entry becomes a fill-in-the-blank drill card: the learner sees the lemma + feature as a hint
+and must PRODUCE the inflected surface. **So the surface MUST differ from its dictionary form** —
+otherwise the hint gives away the answer and the entry is discarded (wasted slot). This rules out
+two things you might otherwise tag:
+- **Nominative-singular nouns** (`dan`, `grad`, `hotel`) — the dictionary form IS the nom sg, so
+  there's nothing to produce. Do NOT tag `noun:nom:*` unless the surface genuinely differs from the
+  lemma (e.g. plurals like `dnevi`, or feminine `hiša`→ still nom so skip). When in doubt, skip nom.
+- **Infinitives appearing as-is.**
+
+Therefore favor, in order: (1) **verb conjugations** (sem/si/je/imam/imaš/stane…), (2) **accusative
+and locative nouns** whose ending changes the word (`kavo`, `sobo`, `Ljubljani`, `hotelu`),
+(3) adjective agreement where the form changes (`lepa`, `lepo`).
+
+- Surface must be copied CHARACTER-FOR-CHARACTER from a NATURAL_SPEED line (same diacritics č/š/ž),
+  a SINGLE word, not invented.
+- Lemma is the dictionary form (verb infinitive, noun nom sg, adj masc nom sg) and MUST differ from
+  the surface — if they are equal, drop the entry.
+
+**Feature strings — use exactly these shapes:**
+- `verb:<p><n>` where p ∈ {{1,2,3}} and n ∈ {{sg,du,pl}}. E.g. `verb:1sg`, `verb:3pl`, `verb:1du`.
+  Tag every interesting form of biti/imeti/target verbs that varies the person.
+- `noun:<case>:<number>` for accusative or locative: `noun:acc:sg`, `noun:loc:pl`. (These are the
+  productive noun forms — prefer them over nominative.)
+- `noun:nom:<gender>:<number>` ONLY when the nom surface differs from the lemma (e.g. a plural
+  `noun:nom:m:pl` `dnevi`). Skip nom singulars whose form equals the dictionary form.
+- `adj:nom:<gender>:<number>`: `adj:nom:f:sg`, etc., when the form changes (`lepa`, `lepo`).
+
+**Allowed cases for A1: nom, acc, loc only.** Do NOT emit `noun:gen:*`, `noun:dat:*`, `noun:ins:*`,
+or `adj:` with any case other than `nom` — those are A2+ topics that don't belong in A1 drills.
+
+**Cases derive from the governing word, NOT English gloss:** `v/na/pri/o/po` + static location →
+`loc` (v Ljubljani); `v/na/čez/skozi` + motion → `acc` (grem v Ljubljano); direct object → `acc`.
 
 **SCENE HEADER FORMAT**
 - All scene labels must be in English, describing location/time/situation

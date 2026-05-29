@@ -697,6 +697,60 @@ class TestSyncCreateNewRouting:
         assert Direction.PRODUCTION in item.directions
         assert Direction.RECOGNITION not in item.directions
 
+    async def test_sync_create_new_case_cloze_preserves_hint_in_anki_note(self):
+        """Morphology-cloze hint ({{c1::surface::hint}}) passes through to the Anki note's Text field."""
+        db = _make_db()
+        from app.srs.function_words import make_morphology_cloze_text
+
+        morph_cloze_sentence = make_morphology_cloze_text(
+            "Ljubljano",
+            "ljubljana",
+            "noun:acc:sg",
+            "Grem v Ljubljano s prijateljem.",
+        )
+        unit = SyntacticUnit(
+            text="Ljubljano",
+            translation="Ljubljana",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="ljubljana",
+            disambig_key="morph:noun-acc-sg",
+            card_type="cloze",
+            source_sentence=morph_cloze_sentence,
+            source_sentence_translation="I'm going to Ljubljana with a friend.",
+        )
+        db.add_collocation(unit)
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        notes = anki_conn.execute("SELECT n.id, n.mid, n.flds, n.tags, n.guid FROM notes n").fetchall()
+        assert len(notes) == 1
+        note = notes[0]
+        assert note["mid"] == 1000002  # Cloze notetype
+        flds = note["flds"].split("\x1f")
+        assert flds[0] == "Grem v {{c1::Ljubljano::ljubljana, acc sg}} s prijateljem."
+
+        # Back Extra contains translation and sentence translation
+        assert "Ljubljana" in flds[1]
+        assert "I'm going to Ljubljana with a friend." in flds[1]
+
+        # Verify GUID stability — re-sync with cleared anki_note_id should link, not duplicate
+        guid = db.get_collocation("Ljubljano").guid
+        with db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET anki_note_id = NULL WHERE guid = ?", (guid,))
+            db._commit(conn)
+
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        assert report.created == 0
+        assert report.linked == 1
+
 
 # ── TestListItemsWithoutAnkiNote ──────────────────────────────────────────────
 

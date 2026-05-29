@@ -1,74 +1,52 @@
 **Slovene Authenticity Rules — Read Carefully**
 
-You are generating **Slovene** (slovenščina), a South Slavic language with ~2 million speakers.
-It is DISTINCT from Croatian, Serbian, and Bosnian. LLMs commonly confuse these — guard against
-cross-contamination aggressively.
+You are generating **Slovene** (slovenščina), a South Slavic language with ~2 million speakers,
+DISTINCT from Croatian/Serbian/Bosnian. Guard against cross-contamination.
 
-**Critical: Words that DO NOT EXIST in Slovene — NEVER use them:**
-- NEVER "izvinite" — ALWAYS "oprostite"  (izvinite is Serbian/Croatian/Russian)
-- NEVER "što" — ALWAYS "kaj"  (što is Croatian; Slovene uses kaj for "what/which/that")
-- NEVER "nemoj" — ALWAYS "ne" or "ne delaj"  (nemoj is Serbo-Croatian)
-- NEVER "hvala vam puno" — ALWAYS "hvala lepa" or "najlepša hvala"
+**Words that DO NOT EXIST in Slovene — NEVER use them:**
+- NEVER "izvinite" — ALWAYS "oprostite" (izvinite is Serbian/Croatian)
+- NEVER "što" — ALWAYS "kaj"
+- NEVER "nemoj" — ALWAYS "ne" or "ne delaj"
+- NEVER "hvala vam puno" — ALWAYS "hvala lepa" / "najlepša hvala"
 - NEVER "doviđenja" — ALWAYS "nasvidenje" or "adijo"
 
-**Orthography — Slovene has ONLY these special characters: č, š, ž**
-- NEVER write "ć" or "đ" — those letters DO NOT EXIST in Slovene
-- NEVER use Spanish/accented characters: á, é, í, ó, ú
-- Only valid Slovene special letters: č (ch), š (sh), ž (zh)
+**Orthography — Slovene has ONLY č, š, ž as special letters.** NEVER write "ć" or "đ" (Croatian).
+NEVER use accented vowels (á, é, í, ó, ú).
 
-**Grammar — Critical patterns:**
-- "prosim" governs accusative case:
-  CORRECT: "kavo, prosim" — WRONG: "kavno, prosim" (kavno is adjectival/neuter, not accusative)
-  CORRECT: "pivo, prosim" — WRONG: "pivno, prosim"
-- Dual number for exactly two people (Slovene is one of few languages with grammatical dual):
-  CORRECT: "midva greva" (we two go) — WRONG: "mi gremo" (for just two people)
-  CORRECT: "onadva gresta" (they two go) — WRONG: "ona grejo" (for just two)
-  Common dual forms: midva/medve, vidva/vedve, onadva/onidve; gresta, sta, imata, sva
+**A1 Morphology Priorities — make dialogues RICH in these patterns:**
+
+1. **Verb conjugation across persons** is the heart of A1 — vary `biti` (sem/si/je/sva/sta/smo/ste/so),
+   `imeti` (imam/imaš/ima/imamo/imate/imajo), and target verbs across multiple persons each lesson.
+   CORRECT: "Jaz sem doma. Ti si tudi doma? — Ja, sem. On je v Ljubljani." (3 persons of biti)
+   WRONG: every line is 3sg — that drills one form, not the paradigm.
+2. **Gender + number in nominative** — show m/f/n side-by-side where natural.
+   CORRECT: "Dober dan! Lepo jutro." (m sg + n sg)  "Hotel je lep. Hiša je lepa. Mesto je lepo."
+3. **Locative `v/na + place`** — the one A1-essential oblique case.
+   CORRECT: "V Ljubljani je lepo." "Sem v hotelu." — WRONG: "V Ljubljana", "v hotel"
+4. **Accusative for direct objects** — A1.
+   CORRECT: "Pijem kavo." "Imam sobo." "Grem v Ljubljano." (motion → acc)
+   WRONG: "Kavno, prosim." (kavno is adjectival/neuter — use "kavo")
+5. **Dual number** — Slovene's signature feature, fully A1.
+   CORRECT: "Midva greva." — WRONG: "Mi gremo." for exactly two
+   Forms: midva/medve, vidva/vedve, onadva/onidve; sva, sta, greva, gresta, imata.
+
+**AVOID forcing A2+ cases into A1 dialogues:** Genitive with `od/do/iz/brez`, Dative with `k/proti`,
+Instrumental with `z/s`. Use them only if the topic GENUINELY requires it (e.g. "od ene do dveh" for
+opening hours); don't manufacture occasions.
 
 **Register — T-V distinction (tikanje / vikanje):**
-- Strangers, service staff, cafés, shops, public settings: use vikanje (vi/vas/vam)
-  Example: "Kaj boste vi?" "Prosim vas..." "Hvala vam."
-- Friends, family, close peers: use tikanje (ti/te/ti)
-  Example: "Kaj boš ti?" "Te prosim..." "Hvala ti."
-- Default to vikanje for ALL service scenarios at A2 level
-- Never mix tikanje and vikanje for the same character in the same scene
+- Service settings (café, shop, reception, taxi, asking strangers) → vikanje (vi/vas/vam): "Kaj boste
+  vi?" "Hvala vam." Vikanje verbs use 2pl form: ste, imate, greste, govorite.
+- Friends/family → tikanje (ti/te/ti): "Kaj boš ti?" "Hvala ti."
+- Default to vikanje when in doubt. Never mix the two for one character in one scene.
 
-**When vikanje is REQUIRED (use vi/vas/vam, not ti/te/ti):**
-- Any service interaction: café, shop, hotel reception, information office, taxi
-- Asking a stranger for directions
-- Any scene where characters have not been introduced as friends/family
-- Default: if in doubt, use vikanje
+**Natural Slovene discourse markers (use where natural):**
+- "saj" (you know / after all), "pa" (and / but / well, "Kaj pa vi?"), "ja" (yes, casual),
+  "no" ("Gremo, no?"), "evo" ("Evo, vaša kava."), "mhm" (acknowledge)
 
-Vikanje verb forms for common verbs (A2):
-- iti: Greste (not Greš)      "Greste po glavni cesti."
-- biti: Ste (not si)           "Ste že bili v Ljubljani?"
-- imeti: Imate (not imaš)     "Imate rezervacijo?"
-- govoriti: Govorite (not govoriš)
-
-**Natural Slovene discourse markers (use these where natural):**
-- "saj" — "you know / after all / because" (e.g., "Saj vem, da je drago.")
-- "pa" — versatile connector/contrast: "and / but / well" (e.g., "Kaj pa vi?")
-- "ja" — "yes" as casual filler (e.g., "Ja, seveda.", "Ja, prosim.")
-- "no" — casual tag/affirmation (e.g., "Gremo, no?", "No, potem.")
-- "evo" — "here you go / there it is" (e.g., "Evo, vaša kava.")
-- "mhm" — agreement/acknowledgement
-
-**Quality benchmarks:**
-CORRECT: "Oprostite, bi lahko dobil kavo, prosim?" (vikanje service register, correct case)
-CORRECT: "Kaj pa vi? Bi kaj še?" (natural "kaj" + discourse marker "pa")
-CORRECT: "Ja, seveda — gremo skupaj, no?" (natural fillers)
-CORRECT: "Evo, vaša kava. Prosim." (natural service handoff)
-CORRECT: "Koliko stane, prosim?" (standard payment phrase)
-WRONG: "Izvinite, prosim." (Serbian word — use "Oprostite")
-WRONG: "Kavno brez mleka." (adjectival form — use "kavo brez mleka")
-WRONG: "Mi gremo." when referring to exactly two people (use "Midva greva")
-WRONG: "Što je to?" (Croatian — use "Kaj je to?")
-
-**BEFORE OUTPUTTING — scan every Slovene word for:**
-1. "izvinite" → replace with "oprostite"
-2. "što" → replace with "kaj"
-3. "nemoj" → replace with "ne" or "ne delaj"
-4. "doviđenja" → replace with "nasvidenje"
-5. "ć" or "đ" anywhere → these letters do not exist in Slovene
-6. Any service-scene pronoun "ti/te/tvoj" → replace with "vi/vas/vaš"
-7. Any "zanje/zanj" (for them/him) when addressing the listener → replace with "za vas"
+**Quality examples:**
+CORRECT: "Oprostite, bi lahko dobil kavo, prosim?" (vikanje, correct accusative)
+CORRECT: "Kaj pa vi? Bi kaj še?" (natural "kaj" + "pa")
+CORRECT: "Evo, vaša kava. Prosim."
+WRONG: "Izvinite" (Serbian), "Kavno" (adjectival, want kavo), "Mi gremo" for two people,
+       "Što je to" (Croatian).

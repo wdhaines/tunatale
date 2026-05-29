@@ -28,6 +28,7 @@ function l2(text: string, role = "female-1") {
 function baseLesson(overrides: Partial<LessonDetail> = {}): LessonDetail {
   return {
     id: "l1",
+    day: 1,
     title: "t",
     language_code: "sl",
     key_phrases: [],

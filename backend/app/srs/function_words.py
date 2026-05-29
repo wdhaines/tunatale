@@ -1,4 +1,4 @@
-"""Slovene function words used by Phase F's cloze-card spike.
+"""Slovene function words used by Phase F's cloze-card spike, plus morphology-cloze hint generation.
 
 This set was generated from the user's 7-day curriculum by
 build_function_word_list.py and manually curated to remove obvious
@@ -71,5 +71,55 @@ def make_cloze_text(surface: str, source_sentence: str) -> str:
 
     def _replacer(m: re.Match) -> str:
         return f"{{{{c1::{m.group(0)}}}}}"
+
+    return pattern.sub(_replacer, source_sentence)
+
+
+# ── Morphology-cloze hint helpers ────────────────────────────────────────
+
+
+def _format_morphology_feature(feature: str) -> str:
+    """Turn a feature key into a concise hint label.
+
+    Examples:
+      ``verb:1sg``      -> ``1sg``
+      ``noun:loc:sg``   -> ``loc sg``
+      ``noun:nom:f:pl`` -> ``nom f pl``
+      ``adj:nom:m:sg``  -> ``nom m sg``
+
+    The POS prefix is dropped — the hint is shown alongside the lemma, which
+    already implies the part of speech. Returns ``""`` for empty/malformed.
+    """
+    if not feature or ":" not in feature:
+        return ""
+    return " ".join(p for p in feature.split(":")[1:] if p)
+
+
+def make_morphology_cloze_text(
+    surface: str,
+    lemma: str,
+    feature: str,
+    source_sentence: str,
+) -> str:
+    """Wrap ``surface`` with a hinted cloze: ``{{c1::sem::biti, 1sg}}``.
+
+    The hint (``::hint``) tells the learner which lemma + morphology to
+    produce. Anki renders the blank as ``[biti, 1sg]``.
+
+    Idempotent: already-clozed text passes through unchanged.
+    Returns empty string when ``source_sentence`` is empty.
+    """
+    if not source_sentence:
+        return ""
+    if not surface:
+        return source_sentence
+    if _CLOZE_RE.search(source_sentence):
+        return source_sentence
+    label = _format_morphology_feature(feature)
+    hint = f"{lemma}, {label}" if label else lemma
+    pattern = re.compile(rf"\b{re.escape(surface)}\b", re.IGNORECASE)
+
+    def _replacer(m: re.Match) -> str:
+        return f"{{{{c1::{m.group(0)}::{hint}}}}}"
 
     return pattern.sub(_replacer, source_sentence)

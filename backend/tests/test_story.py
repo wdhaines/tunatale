@@ -258,6 +258,24 @@ class TestStoryGeneration:
         data = StoryGenerator._parse_json(fenced)
         assert data["title"] == "Ordering Coffee"
 
+    async def test_parse_json_handles_prose_preamble(self, language):
+        """gpt-oss-style: prose text before a ```json fence should still parse."""
+        raw = f"**Lesson Title:** Here's the lesson.\n\n```json\n{_mock_story_response()}\n```"
+        data = StoryGenerator._parse_json(raw)
+        assert data["title"] == "Ordering Coffee"
+
+    async def test_parse_json_strips_think_block(self, language):
+        """qwen3-style: <think> reasoning (which may itself contain braces) before the JSON."""
+        raw = f"<think>I will emit JSON with a {{title}} key.</think>\n{_mock_story_response()}"
+        data = StoryGenerator._parse_json(raw)
+        assert data["title"] == "Ordering Coffee"
+
+    async def test_parse_json_tolerates_trailing_prose(self, language):
+        """Trailing commentary after the JSON object is tolerated."""
+        raw = f"{_mock_story_response()}\n\nHope this helps!"
+        data = StoryGenerator._parse_json(raw)
+        assert data["title"] == "Ordering Coffee"
+
     async def test_parse_response_validates_key_phrases_and_scenes(self, language):
         from app.generation.story import StoryGenerationError
 
