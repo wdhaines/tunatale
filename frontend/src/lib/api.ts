@@ -44,6 +44,7 @@ interface KeyPhrase {
 
 export interface LessonDetail {
   id: string;
+  day: number;
   title: string;
   language_code: string;
   sections: SectionDetail[];

@@ -43,7 +43,14 @@ describe("/c/[curriculumId] page", () => {
   });
 
   it("navigates to lesson URL when cached lesson exists", async () => {
-    const lesson = { id: "l1", title: "Day 1", language_code: "sl", sections: [], key_phrases: [] };
+    const lesson = {
+      id: "l1",
+      day: 1,
+      title: "Day 1",
+      language_code: "sl",
+      sections: [],
+      key_phrases: [],
+    };
     mockGetLessonByDay.mockResolvedValue(lesson);
 
     const { getByText } = render(Page, { props: { data: { curriculum } } });
@@ -58,7 +65,14 @@ describe("/c/[curriculumId] page", () => {
   it("generates a new lesson when getLessonByDay returns 404", async () => {
     mockGetLessonByDay.mockRejectedValue(new Error("Not Found"));
     mockGenerateStory.mockResolvedValue({ id: "l2", title: "Day 2", sections: [] });
-    const lesson = { id: "l2", title: "Day 2", language_code: "sl", sections: [], key_phrases: [] };
+    const lesson = {
+      id: "l2",
+      day: 2,
+      title: "Day 2",
+      language_code: "sl",
+      sections: [],
+      key_phrases: [],
+    };
     mockGetLesson.mockResolvedValue(lesson);
 
     const { getByText } = render(Page, { props: { data: { curriculum } } });
