@@ -120,6 +120,37 @@ class TestSafeOpen:
         captured = capsys.readouterr()
         assert "WARNING" in captured.err or "sha256" in captured.err.lower() or "changed" in captured.err.lower()
 
+    def test_backup_paths_unique_within_same_second(self, fake_anki_db, tmp_path):
+        """Two safe_open calls in the same wall-clock second must not collide.
+
+        Backups are keyed only by a second-granularity timestamp historically.
+        Under parallel callers (pytest-xdist workers, or two rapid syncs) that
+        produced identical filenames, so one call validated and could overwrite
+        the other's backup. The filename must carry a per-call unique component.
+        """
+        from datetime import datetime
+
+        from app.anki import safety as safety_mod
+
+        fixed = datetime(2026, 5, 28, 22, 4, 34)
+
+        class _FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed
+
+        backup_dir = tmp_path / "bak"
+        with patch.object(safety_mod, "datetime", _FrozenDatetime):
+            with safe_open(fake_anki_db, backup_dir=backup_dir) as ctx1:
+                path1 = ctx1.backup_path
+            with safe_open(fake_anki_db, backup_dir=backup_dir) as ctx2:
+                path2 = ctx2.backup_path
+
+        assert path1 != path2, "same-second safe_open calls collided on backup filename"
+        assert path1.exists() and path2.exists()
+        assert path1.name.startswith("collection.anki2.bak_")
+        assert path2.name.startswith("collection.anki2.bak_")
+
     def test_bad_backup_deleted_on_note_count_mismatch(self, tmp_path):
         """_validate_backup deletes backup and raises on note count mismatch."""
         import sqlite3 as sq3

@@ -17,7 +17,9 @@ Gates (in order):
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import secrets
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager, suppress
@@ -192,9 +194,14 @@ def safe_open(
         _src.close()
 
     # Gate 3: backup via Connection.backup()
+    # The timestamp is only second-granularity, so two callers in the same
+    # second (parallel test workers, or two rapid syncs) would otherwise share
+    # a filename and clobber/cross-validate each other's backup. A per-call
+    # token (pid + random) keeps each backup distinct.
     backup_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_path = backup_dir / f"collection.anki2.bak_{timestamp}"
+    unique = f"{os.getpid()}_{secrets.token_hex(4)}"
+    backup_path = backup_dir / f"collection.anki2.bak_{timestamp}_{unique}"
 
     src_conn = sqlite3.connect(str(collection_path))
     dst_conn = sqlite3.connect(str(backup_path))

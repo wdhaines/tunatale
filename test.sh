@@ -10,7 +10,9 @@ echo "=== Ruff format check ==="
 uv run ruff format --check app tests
 
 echo "=== Tests ==="
-uv run pytest --run-oracle
+# -n auto parallelizes across CPU cores; pytest-cov combines per-worker
+# coverage so the 100% gate still applies to the full run.
+uv run pytest --run-oracle -n auto
 
 cd ../frontend
 
