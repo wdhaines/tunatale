@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
 	import type { LessonAudio, TranscriptData } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
@@ -34,6 +35,7 @@
 	let listenLoading = $state(false);
 	let listenResult: { registered: number } | null = $state(null);
 	let audioLoading = $state(false);
+	let regenLoading = $state(false);
 	let error = $state('');
 
 	let isListened = $derived(listenedStore.has(data.lesson.id));
@@ -48,6 +50,25 @@
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
 			audioLoading = false;
+		}
+	}
+
+	async function handleRegenerate() {
+		const confirmed = window.confirm(
+			`Regenerate Day ${data.lesson.day}? This creates a new version of the dialogue using the ` +
+				`current generation prompt. Your existing cards are kept; new vocabulary and ` +
+				`morphology drills are added on the next listen + sync.`
+		);
+		if (!confirmed) return;
+		regenLoading = true;
+		error = '';
+		try {
+			const summary = await api.generateStory(data.curriculum.id, data.lesson.day);
+			await goto(`/c/${data.curriculum.id}/l/${summary.id}`);
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			regenLoading = false;
 		}
 	}
 
@@ -205,6 +226,17 @@
 			{/if}
 		</section>
 	{/if}
+
+	<section class="regenerate-section">
+		<p class="muted">
+			Regenerating rewrites this day's dialogue with the current prompt (better declension &amp;
+			conjugation coverage). Existing cards stay; new vocabulary and morphology drills are added when
+			you next listen and sync.
+		</p>
+		<button class="regen-btn" onclick={handleRegenerate} disabled={regenLoading}>
+			{regenLoading ? 'Regenerating…' : `Regenerate Day ${data.lesson.day}`}
+		</button>
+	</section>
 </main>
 
 <style>
@@ -261,5 +293,16 @@
 	.muted {
 		color: var(--color-muted);
 		font-size: 0.9rem;
+	}
+	.regenerate-section {
+		margin-top: 2rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		padding: 1rem;
+	}
+	.regen-btn {
+		background: transparent;
+		color: var(--color-danger);
+		border: 1px solid var(--color-danger);
 	}
 </style>

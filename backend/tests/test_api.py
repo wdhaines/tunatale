@@ -274,6 +274,21 @@ class TestStoryEndpoints:
         assert phrase["language_code"] == "sl"
         assert phrase["voice_id"] == "sl-SI-PetraNeural"
 
+    async def test_get_lesson_includes_day(self):
+        """GET /api/story/{id} exposes the curriculum day so the UI can regenerate it."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        mock_lesson = Lesson(title="Day 4", language_code="sl", sections=[])
+        store.save_lesson("lesson-day4", "curriculum-1", 4, mock_lesson)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/story/lesson-day4")
+
+        assert response.status_code == 200
+        assert response.json()["day"] == 4
+
     async def test_get_lesson_includes_key_phrases(self):
         from app.storage.store import ContentStore
 

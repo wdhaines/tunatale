@@ -1,8 +1,11 @@
 /**
  * Tests for /c/[curriculumId]/l/[lessonId] — lesson view.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
+
+const mockGoto = vi.fn();
+vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
 
 vi.mock("$lib/api", () => ({
   api: {
@@ -13,6 +16,7 @@ vi.mock("$lib/api", () => ({
     setSRSItemState: vi.fn(),
     untrackSRSItem: vi.fn(),
     syncWithAnki: vi.fn(),
+    generateStory: vi.fn(),
     audioUrl: vi.fn((id: string) => `/api/audio/${id}`),
   },
 }));
@@ -35,10 +39,12 @@ const mockCreateSRSItem = vi.mocked(api.createSRSItem);
 const mockSetSRSItemState = vi.mocked(api.setSRSItemState);
 const mockUntrackSRSItem = vi.mocked(api.untrackSRSItem);
 const mockSyncWithAnki = vi.mocked(api.syncWithAnki);
+const mockGenerateStory = vi.mocked(api.generateStory);
 
 const curriculum = { id: "cid-1", topic: "Coffee", language_code: "sl", days: 3 };
 const lesson = {
   id: "l1",
+  day: 1,
   title: "Day 1: Coffee",
   language_code: "sl",
   sections: [
@@ -969,6 +975,77 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       );
 
       expect(await findByText("plain phrase error")).toBeTruthy();
+    });
+  });
+
+  describe("regenerate button", () => {
+    let confirmSpy: ReturnType<typeof vi.spyOn>;
+
+    afterEach(() => {
+      confirmSpy?.mockRestore();
+    });
+
+    it("renders a Regenerate button", () => {
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      expect(getByText("Regenerate Day 1")).toBeTruthy();
+    });
+
+    it("regenerates and navigates to the new lesson when confirmed", async () => {
+      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      mockGenerateStory.mockResolvedValue({
+        id: "l1-new",
+        title: "Day 1: Coffee v2",
+        sections: [],
+      });
+
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      await fireEvent.click(getByText("Regenerate Day 1"));
+
+      await waitFor(() => {
+        expect(mockGenerateStory).toHaveBeenCalledWith("cid-1", 1);
+        expect(mockGoto).toHaveBeenCalledWith("/c/cid-1/l/l1-new");
+      });
+    });
+
+    it("does nothing when the confirmation is cancelled", async () => {
+      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      await fireEvent.click(getByText("Regenerate Day 1"));
+
+      expect(mockGenerateStory).not.toHaveBeenCalled();
+      expect(mockGoto).not.toHaveBeenCalled();
+    });
+
+    it("shows an error when regeneration fails", async () => {
+      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      mockGenerateStory.mockRejectedValue(new Error("generation failed"));
+
+      const { getByText, findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      await fireEvent.click(getByText("Regenerate Day 1"));
+
+      expect(await findByText("generation failed")).toBeTruthy();
+      expect(mockGoto).not.toHaveBeenCalled();
+    });
+
+    it("shows a stringified error when regeneration throws a non-Error", async () => {
+      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      mockGenerateStory.mockRejectedValue("plain regen error");
+
+      const { getByText, findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      await fireEvent.click(getByText("Regenerate Day 1"));
+
+      expect(await findByText("plain regen error")).toBeTruthy();
     });
   });
 });

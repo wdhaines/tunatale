@@ -937,6 +937,7 @@ describe("Transcript", () => {
     it("scene grouping: renders scene header from lesson natural_speed narrator+en phrases", () => {
       const lesson: LessonDetail = {
         id: "l1",
+        day: 1,
         title: "test",
         language_code: "sl",
         key_phrases: [],
@@ -995,6 +996,7 @@ describe("Transcript", () => {
     it("scene grouping: multiple scenes each produce a scene header", () => {
       const lesson: LessonDetail = {
         id: "l1",
+        day: 1,
         title: "test",
         language_code: "sl",
         key_phrases: [],
@@ -1065,6 +1067,7 @@ describe("Transcript", () => {
     it("scene grouping: does not show the section title (Natural Speed) as a scene header", () => {
       const lesson: LessonDetail = {
         id: "l1",
+        day: 1,
         title: "test",
         language_code: "sl",
         key_phrases: [],
@@ -1113,6 +1116,7 @@ describe("Transcript", () => {
     it("progressive disclosure: slow text hidden by default, shown when Slow toggle is enabled", async () => {
       const lesson: LessonDetail = {
         id: "l1",
+        day: 1,
         title: "test",
         language_code: "sl",
         key_phrases: [],
@@ -1165,6 +1169,7 @@ describe("Transcript", () => {
     it("progressive disclosure: translation text hidden by default, shown when Translation toggle is enabled", async () => {
       const lesson: LessonDetail = {
         id: "l1",
+        day: 1,
         title: "test",
         language_code: "sl",
         key_phrases: [],

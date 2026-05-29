@@ -8,6 +8,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request
 
 from app.api.models import GenerateStoryRequest
+from app.models.lesson import Lesson
 from app.models.strategy import ContentStrategy
 
 router = APIRouter(prefix="/api/story", tags=["generation"])
@@ -52,11 +53,13 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
 @router.get("/{lesson_id}", status_code=200)
 async def get_lesson(lesson_id: str, request: Request):
     store = request.app.state.content_store
-    lesson = store.get_lesson(lesson_id)
-    if lesson is None:
+    row = store.get_lesson_row(lesson_id)
+    if row is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
+    lesson = Lesson.from_json(row["data_json"])
     return {
         "id": lesson_id,
+        "day": row["day"],
         "title": lesson.title,
         "language_code": lesson.language_code,
         "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in lesson.key_phrases],
