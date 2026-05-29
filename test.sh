@@ -13,6 +13,15 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Each group's stdout is a capture file, so the tools would normally strip
+# color (no TTY). Force color from every toolchain (FORCE_COLOR for ruff/bun/
+# vitest/playwright/eslint, PY_COLORS for pytest) so the escape codes land in
+# the logs and render when we cat them back to the terminal. Guard on a TTY so
+# `./test.sh > file` or a pipe stays free of escape sequences.
+if [ -t 1 ]; then
+  export FORCE_COLOR=1 PY_COLORS=1
+fi
+
 backend_log="$(mktemp)"
 frontend_log="$(mktemp)"
 trap 'rm -f "$backend_log" "$frontend_log"' EXIT
