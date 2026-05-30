@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from functools import cache
 
 import numpy as np
 
@@ -25,6 +26,18 @@ _F32 = np.float32
 def _w32(w: tuple[float, ...]) -> tuple:
     """Cast a weights tuple to numpy.float32, matching how fsrs-rs holds parameters."""
     return tuple(_F32(x) for x in w)
+
+
+@cache
+def _fsrs_factor_f32(decay: float) -> np.float32:
+    """fsrs-rs power-forgetting-curve factor ``exp(ln(0.9) / decay) - 1`` in f32.
+
+    Cached per distinct ``decay`` — in practice a 1-2 entry table (−0.5 for
+    FSRS-5, the learned ``w[20]`` for FSRS-6) — so the two numpy transcendental
+    calls don't repeat on every per-card retrievability/interval evaluation on
+    the queue-sort path. Bit-identical to the inline ``exp(ln(0.9)/_F32(decay))``.
+    """
+    return np.exp(np.log(_F32(0.9)) / _F32(decay)) - 1
 
 
 def _learning_step_fuzz_seconds(anki_card_id: int | None, reps: int, step_seconds: int) -> int:
@@ -213,7 +226,7 @@ def _forgetting_curve(elapsed_days: float, stability: float, decay: float = -0.5
     e = _F32(elapsed_days)
     s = _F32(stability)
     d = _F32(decay)
-    factor = np.exp(np.log(_F32(0.9)) / d) - 1
+    factor = _fsrs_factor_f32(decay)
     return float(np.power(e / s * factor + 1, d))
 
 
@@ -345,7 +358,7 @@ def _next_interval(stability: float, desired_retention: float, decay: float = -0
     s = _F32(stability)
     dr = _F32(desired_retention)
     d = _F32(decay)
-    factor = np.exp(np.log(_F32(0.9)) / d) - 1
+    factor = _fsrs_factor_f32(decay)
     interval = float(s / factor * (np.power(dr, 1 / d) - 1))
     return max(1, min(_rust_round_half_away(interval), 36500))
 
@@ -422,7 +435,7 @@ def _next_interval_raw(stability: float, desired_retention: float, decay: float 
     s = _F32(stability)
     dr = _F32(desired_retention)
     d = _F32(decay)
-    factor = np.exp(np.log(_F32(0.9)) / d) - 1
+    factor = _fsrs_factor_f32(decay)
     return float(s / factor * (np.power(dr, 1 / d) - 1))
 
 

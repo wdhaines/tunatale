@@ -364,6 +364,46 @@ describe("DrillCard", () => {
       expect(container.innerHTML).toContain('<mark class="cloze-answer">ki</mark>');
       expect(container.textContent).toContain("ki");
     });
+
+    it("blanks every occurrence of a repeated hinted cloze in the prompt", async () => {
+      // make_morphology_cloze_text wraps *every* occurrence of the surface, so a
+      // surface that repeats in one sentence yields two {{c1::...}} spans. The
+      // prompt must blank both — not leave the second as raw markup.
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({
+        text: "sem",
+        translation: "to be (1sg)",
+        card_type: "cloze",
+        source_sentence: "Jaz {{c1::sem::biti, 1sg}} tu in {{c1::sem::biti, 1sg}} tam.",
+        source_sentence_translation: "I am here and am there.",
+      });
+      const { container } = render(DrillCard, { item, direction: "production", onRate });
+      expect(container.textContent).not.toContain("{{c1::");
+      expect(container.textContent).not.toContain("sem");
+      const blanks = (container.textContent?.match(/\[biti, 1sg\]/g) || []).length;
+      expect(blanks).toBe(2);
+    });
+
+    it("highlights every occurrence of a repeated hinted cloze in the answer", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({
+        text: "sem",
+        translation: "to be (1sg)",
+        card_type: "cloze",
+        source_sentence: "Jaz {{c1::sem::biti, 1sg}} tu in {{c1::sem::biti, 1sg}} tam.",
+        source_sentence_translation: "I am here and am there.",
+      });
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "production",
+        onRate,
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      expect(container.innerHTML).not.toContain("{{c1::");
+      const marks = (container.innerHTML.match(/<mark class="cloze-answer">sem<\/mark>/g) || [])
+        .length;
+      expect(marks).toBe(2);
+    });
   });
 
   describe("rating callbacks", () => {

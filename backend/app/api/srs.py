@@ -331,14 +331,22 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # morphology_focus list with feature tags like "verb:1sg", "noun:loc:sg",
     # "adj:nom:f:sg". We accept entries whose surface appears verbatim in a
     # NATURAL_SPEED line AND whose feature is in the A1 whitelist.
+    # Tolerate malformed shapes: looser (non-JSON-mode) models can emit a
+    # non-list container, non-dict entries, or null/non-string fields. This loop
+    # runs on every /listen regardless of the case-clozes toggle, so a junk entry
+    # must be skipped, not raise.
     surface_to_analysis: dict[str, tuple[str, str]] = {}
     surface_to_sentence: dict[str, str] = {}
-    for d in lesson.generation_metadata.get("morphology_focus", []):
-        feature = d.get("feature", "").strip().lower()
+    raw_morphology_focus = lesson.generation_metadata.get("morphology_focus", [])
+    morphology_focus = raw_morphology_focus if isinstance(raw_morphology_focus, list) else []
+    for d in morphology_focus:
+        if not isinstance(d, dict):
+            continue
+        feature = str(d.get("feature") or "").strip().lower()
         if not feature or not _is_a1_morphology_feature(feature):
             continue
-        surface = d.get("surface", "")
-        lemma = d.get("lemma", "")
+        surface = str(d.get("surface") or "")
+        lemma = str(d.get("lemma") or "")
         if not surface or not lemma:
             continue
         if natural_speed is not None:
@@ -452,7 +460,8 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # The enable_case_clozes toggle gates this pipeline (name kept for the DB
     # column + settings endpoint; the feature now covers verb conjugations and
     # noun/adj morphology more broadly, not just oblique cases).
-    morph_clozes_enabled = bool(cloze_enabled and lesson.language_code == "sl" and db.get_enable_case_clozes())
+    # cloze_enabled already implies language_code == "sl" (set above).
+    morph_clozes_enabled = bool(cloze_enabled and db.get_enable_case_clozes())
     if morph_clozes_enabled and surface_to_analysis:
         morph_cloze_count = 0
         max_morph_clozes = 5
