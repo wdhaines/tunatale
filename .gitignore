@@ -39,6 +39,7 @@ frontend/build/
 # Only per-user / scratch files stay local.
 .claude/settings.local.json
 .claude/plans/
+.claude/scheduled_tasks.lock
 
 # Editor / OS
 .DS_Store
