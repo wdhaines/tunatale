@@ -144,6 +144,43 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(getByText("Transcript loading…")).toBeTruthy();
   });
 
+  it("shows the transcript text before audio is rendered", () => {
+    // The transcript is extracted from the lesson and needs no audio — the dialogue
+    // and key phrases should be readable as soon as the day is generated.
+    const { getByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio: null, transcript } },
+    });
+    expect(getByText("a coffee please")).toBeTruthy();
+    expect(getByText("Render Audio")).toBeTruthy();
+  });
+
+  it("re-syncs audio and transcript when navigating to a different lesson", async () => {
+    // SvelteKit reuses this component on same-route param changes (the Regenerate
+    // button's goto). The mutable local audio/transcript copies must follow `data`
+    // instead of staying frozen on the previous lesson.
+    const { rerender, getByText, queryByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+    expect(getByText("a coffee please")).toBeTruthy();
+
+    const newLesson = { ...lesson, id: "l1-new", title: "Day 1: Coffee v2" };
+    const newTranscript = {
+      lesson_id: "l1-new",
+      key_phrases: [{ phrase: "nova fraza", translation: "a brand new phrase" }],
+      dialogue_lines: [],
+    };
+    await rerender({
+      data: { curriculum, lesson: newLesson, audio: null, transcript: newTranscript },
+    });
+
+    await waitFor(() => {
+      expect(getByText("Day 1: Coffee v2")).toBeTruthy();
+      expect(getByText("a brand new phrase")).toBeTruthy();
+      expect(queryByText("a coffee please")).toBeFalsy();
+      expect(getByText("Render Audio")).toBeTruthy();
+    });
+  });
+
   it("shows error when renderAudio fails with non-Error", async () => {
     mockRenderAudio.mockRejectedValue("plain string error");
 

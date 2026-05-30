@@ -40,6 +40,17 @@
 
 	let isListened = $derived(listenedStore.has(data.lesson.id));
 
+	// SvelteKit reuses this component when navigating between lessons on the same route
+	// (e.g. the Regenerate button's goto to the freshly-minted version), updating `data`
+	// in place. Re-snapshot the mutable local copies so the audio player and transcript
+	// follow the new lesson instead of staying frozen on the previous one. `data.audio`
+	// and `data.transcript` only change when the load function reruns (i.e. on navigation),
+	// so this never clobbers in-page edits made by the render/listen handlers.
+	$effect(() => {
+		audio = data.audio;
+		transcript = data.transcript;
+	});
+
 	async function handleRenderAudio() {
 		audioLoading = true;
 		error = '';
@@ -206,26 +217,26 @@
 
 	{#if audio}
 		<AudioPlayer {audio} />
-
-		<section class="transcript-section">
-			{#if transcript}
-				<Transcript
-					{transcript}
-					lesson={data.lesson}
-					{isListened}
-					{listenLoading}
-					{listenResult}
-					{error}
-					onStateChange={handleStateChange}
-					onCollocationStateChange={handleCollocationStateChange}
-					onMarkListened={handleMarkListened}
-					onCreatePhrase={handleCreatePhrase}
-				/>
-			{:else}
-				<p class="muted">Transcript loading…</p>
-			{/if}
-		</section>
 	{/if}
+
+	<section class="transcript-section">
+		{#if transcript}
+			<Transcript
+				{transcript}
+				lesson={data.lesson}
+				{isListened}
+				{listenLoading}
+				{listenResult}
+				{error}
+				onStateChange={handleStateChange}
+				onCollocationStateChange={handleCollocationStateChange}
+				onMarkListened={handleMarkListened}
+				onCreatePhrase={handleCreatePhrase}
+			/>
+		{:else}
+			<p class="muted">Transcript loading…</p>
+		{/if}
+	</section>
 
 	<section class="regenerate-section">
 		<p class="muted">
