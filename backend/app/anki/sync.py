@@ -397,7 +397,13 @@ class OfflineWriter:
         self._media_db_path = media_db_path
 
     def _bump_col(self, ts: int) -> None:
-        self._conn.execute("UPDATE col SET mod = ?, usn = -1", (ts,))
+        # Bump col.mod (so Anki sees the collection changed) but DO NOT touch col.usn.
+        # col.usn is the sync ANCHOR — the server's last USN — not a per-row dirty flag.
+        # Clobbering it to -1 made AnkiWeb demand a full sync whenever another device
+        # (e.g. the phone) advanced the server's USN (Layer 61; reproduced 2026-05-29).
+        # The content rows we touch (cards/notes/revlog/decks) carry their own usn=-1,
+        # which is what actually pushes on the next incremental sync.
+        self._conn.execute("UPDATE col SET mod = ?", (ts,))
 
     def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
         from app.anki.notetype import SLOVENE_VOCAB_FIELD_NAMES

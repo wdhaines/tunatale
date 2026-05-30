@@ -338,12 +338,20 @@ class TestOfflineWriter:
         assert row["factor"] == 2500
         assert row["type"] == 2
 
-    def test_write_revlog_bumps_col_mod_and_usn(self):
+    def test_write_revlog_bumps_col_mod_preserves_usn(self):
+        """col.usn is the sync anchor (server's last value), not a dirty flag.
+
+        Layer 61: clobbering col.usn to -1 made AnkiWeb demand a full sync whenever
+        another device (e.g. the phone) advanced the server's USN. _bump_col now
+        only bumps mod; the revlog row itself carries usn=-1 to push.
+        """
         conn = _make_anki_full_db()
+        conn.execute("UPDATE col SET usn = 7")
+        conn.commit()
         writer = OfflineWriter(conn)
         writer.write_revlog(cid=12345, ease=3, ivl=7, last_ivl=7, factor=2500, time_ms=1000, type_=2)
         col = conn.execute("SELECT mod, usn FROM col").fetchone()
-        assert col["usn"] == -1
+        assert col["usn"] == 7
         assert col["mod"] > 0
 
     def test_write_revlog_increments_reps(self):
@@ -384,6 +392,8 @@ class TestOfflineWriter:
     def test_update_note_fields_replaces_named_field_and_bumps_usn(self):
         conn = _make_anki_full_db()
         _seed_note_and_cards(conn)
+        conn.execute("UPDATE col SET usn = 7")
+        conn.commit()
         writer = OfflineWriter(conn)
         writer.update_note_fields(9001, {"English": "bank (financial)"})
 
@@ -394,7 +404,7 @@ class TestOfflineWriter:
         assert row["usn"] == -1
         assert row["mod"] > 100  # bumped past seed value
         col = conn.execute("SELECT usn FROM col").fetchone()
-        assert col["usn"] == -1
+        assert col["usn"] == 7  # anchor preserved (Layer 61); the note row pushes via its own usn=-1
 
     def test_update_note_fields_with_notetypes_table_no_match(self):
         """notetypes table exists but note's mid has no matching row → falls through to Slovene_VOCAB_FIELD_NAMES."""
@@ -533,6 +543,8 @@ class TestOfflineWriter:
         """
         conn = _make_anki_full_db()
         _seed_note_and_cards(conn, queue=2, card_type=2)
+        conn.execute("UPDATE col SET usn = 7")
+        conn.commit()
         writer = OfflineWriter(conn)
         n = writer.bury_siblings(graded_card_id=90011, graded_queue=2, bury_reviews=True)
 
@@ -544,9 +556,9 @@ class TestOfflineWriter:
         # graded card itself untouched
         graded = conn.execute("SELECT queue, mod FROM cards WHERE id=90011").fetchone()
         assert graded["queue"] == 2
-        # col bumped
+        # col.mod bumped, col.usn anchor preserved (Layer 61); the buried card pushes via usn=-1
         col = conn.execute("SELECT mod, usn FROM col").fetchone()
-        assert col["usn"] == -1
+        assert col["usn"] == 7
 
     def test_bury_siblings_no_op_when_all_flags_false(self):
         """bury_new=bury_reviews=bury_interday_learning=False → no writes."""
