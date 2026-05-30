@@ -38,6 +38,8 @@ def _make_decks_db_with_review_new_reset() -> sqlite3.Connection:
 class TestBumpDeckNewToday:
     def test_inserts_field_when_absent(self):
         conn = _make_decks_db()
+        conn.execute("UPDATE col SET usn = 7")
+        conn.commit()
         writer = OfflineWriter(conn)
         writer.bump_deck_new_today(_DECK_ID, 4513)
 
@@ -49,8 +51,9 @@ class TestBumpDeckNewToday:
         assert row["usn"] == -1
         assert row["mtime_secs"] > 0
 
+        # col.usn anchor preserved (Layer 61); the deck row pushes via its own usn=-1
         col = conn.execute("SELECT usn FROM col").fetchone()
-        assert col["usn"] == -1
+        assert col["usn"] == 7
 
     def test_increments_existing_field(self):
         blob = b""

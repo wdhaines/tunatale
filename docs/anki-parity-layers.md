@@ -1329,3 +1329,17 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 **Files.** `app/srs/database.py` (`has_revision_near` + `ignore_ids`), `app/anki/sync.py` (`_ingest_anki_revlog_for_card` passes `anki_ids`).
 
 **Surfaced by.** 2026-05-29 forced-full-sync recovery (`project_forced_full_sync_revlog_risk`): a Download-recovered phone session whose two dropped grades, traced through `tt_revlog`, exposed the same-ease rapid-grade collapse. Replay-only impact; matters when the stage3b compare-soak recomputes from `tt_revlog`.
+
+## Layer 61 — `_bump_col` preserves `col.usn` (stop forcing AnkiWeb full syncs)
+
+**The bug.** Multi-device users hit a spurious "your collection requires a full sync / Check Database" from AnkiWeb after a TunaTale sync, even with no schema change. Confirmed by controlled repro (2026-05-29): TT sync left the desktop at `col.usn = -1`; the phone (AnkiDroid) then advanced the server's USN; the desktop's next File→Sync demanded a full sync. `sync_trace.sh` timeline pinned it — `scm` frozen through the TT sync *and* through opening Anki, then bumped *during* the AnkiWeb sync (Anki's `set_schema_modified`, not TT). The forced sync risks data loss if the user picks Upload (it would erase the other device's grades).
+
+**Mechanism.** `OfflineWriter._bump_col` ran `UPDATE col SET mod = ?, usn = -1` after every batch write (per the old `anki-sync.md` rule). But `col.usn` is the sync **anchor** — the server's last USN — not a per-row dirty flag. In the modern schema the `col` row's content columns (`conf`/`models`/`decks`/…) are empty (those live in their own tables with their own USNs), so the `col` row carries nothing to push; only its `mod` matters for change detection. Setting `col.usn = -1` is invisible single-device (the server only ever advances via that one desktop), but when another device moves the server's USN ahead, the desktop arriving with `col.usn = -1` can't be reconciled incrementally at the meta handshake → AnkiWeb returns FULL_SYNC.
+
+**Fix.** `_bump_col` now does `UPDATE col SET mod = ?` only — preserving `col.usn`. Content rows (cards/notes/revlog/decks) still carry their own `usn = -1` and push normally; `col.mod` still tells Anki the collection changed. Mirrors what Anki itself does on a local edit. The one-shot migration scripts that still write `col.usn = -1` are out of scope — they bump `col.scm` and intentionally force a one-way sync regardless.
+
+**Validation.** Backend suite green (2554 passed, 100% coverage); five col-usn assertions flipped from `== -1` to "preserved" (set a known anchor, assert unchanged): `tests/test_anki_sync_push.py::TestOfflineWriter::{test_write_revlog_bumps_col_mod_preserves_usn, test_update_note_fields_replaces_named_field_and_bumps_usn, <bury_siblings>}`, `tests/test_anki_offline_writer_create_note.py::…::test_bumps_col_mod_preserves_usn`, `tests/test_anki_sync_offline_writer.py::TestBumpDeckNewToday::test_inserts_field_when_absent`. Live validation: re-run the `~/.tunatale/sync_trace.sh` repro — `tonight-after-tt` should now show a *positive* `col.usn` instead of `-1`, and the multi-device File→Sync should go incremental instead of forcing.
+
+**Files.** `app/anki/sync.py` (`OfflineWriter._bump_col`), `.claude/rules/anki-sync.md` (rule corrected).
+
+**Surfaced by.** 2026-05-29 user report ("why does it force a full sync after TunaTale?") → forensic timeline (`project_forced_full_sync_revlog_risk`) → controlled reproduction with `sync_trace.sh`.

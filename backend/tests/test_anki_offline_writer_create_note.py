@@ -157,7 +157,7 @@ class TestOfflineWriterCreateNote:
         cards = conn.execute("SELECT did FROM cards WHERE nid = ?", (note_id,)).fetchall()
         assert all(c["did"] == _DECK_ID for c in cards)
 
-    def test_bumps_col_mod_and_usn(self):
+    def test_bumps_col_mod_preserves_usn(self):
         conn = _make_collection_conn()
         conn.execute("UPDATE col SET mod = 100, usn = 5")
         conn.commit()
@@ -167,7 +167,10 @@ class TestOfflineWriterCreateNote:
 
         row = conn.execute("SELECT mod, usn FROM col").fetchone()
         assert row["mod"] > 100
-        assert row["usn"] == -1
+        # col.usn is the sync ANCHOR (server's last value), not a dirty flag — preserve it.
+        # Clobbering it to -1 forced an AnkiWeb full sync whenever another device advanced
+        # the server (Layer 61). Content rows carry their own usn=-1 to push.
+        assert row["usn"] == 5
 
     def test_does_not_change_col_scm(self):
         conn = _make_collection_conn()

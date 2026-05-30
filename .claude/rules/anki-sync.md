@@ -25,7 +25,7 @@ Data-only migrations (e.g., `backfill_guids` — rewrites `notes.guid`, sets `no
 
 When writing to Anki tables, always:
 - **`notes`/`cards` mutation**: set `usn = -1` and `mod = now_ts` on every touched row. Without `usn=-1`, Anki's integrity check re-detects the change on next open and bumps `col.scm` itself, forcing a full sync.
-- **`col` mutation**: `UPDATE col SET mod = ?, usn = -1` after any batch write.
+- **`col` mutation**: `UPDATE col SET mod = ?` after any batch write. **Do NOT set `col.usn = -1`** (Layer 61). `col.usn` is the sync *anchor* — the server's last USN — not a per-row dirty flag. The content rows you touch (`cards`/`notes`/`revlog`/`decks`) each carry their own `usn = -1`, which is what actually pushes; bumping `col.mod` tells Anki the collection changed. Clobbering `col.usn` to `-1` is invisible single-device, but the moment another device (e.g. the phone) advances the server's USN, AnkiWeb can't reconcile the desktop's `usn=-1` incrementally and **demands a full sync** (reproduced 2026-05-29 — see `_bump_col` in `app/anki/sync.py`). The one-shot migration scripts that still write `col.usn=-1` are out of scope: they bump `col.scm` and intentionally force a one-way sync anyway.
 - **Schema change (fields, notetypes)**: bump `notetypes.mtime_secs`, set `notetypes.usn = -1`, and `UPDATE col SET scm = ?` (all three, not just one).
 
 ## Deletes — the `graves` table
