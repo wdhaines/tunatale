@@ -2937,6 +2937,47 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
             ]
         assert ids == [tt_grade_ms, tt_grade_ms + 2000]
 
+    def test_ingest_keeps_distinct_anki_grades_within_5s_same_ease(self, fake_anki_db):
+        """Two distinct *Anki* grades <5s apart with the same ease both ingest.
+
+        Layer 60 regression (live, 2026-05-29 phone session — samoglasnik /
+        pridevnik): a rapid learning sequence puts two genuine Anki grades a few
+        seconds apart with the same button. The near-match guard wrongly treated
+        the first (already ingested this pass) as a TT-written mirror of the
+        second and dropped it, understating the event-sourced replay. The guard
+        must only suppress against TT-*written* rows, never against an
+        already-ingested Anki row — both Anki rows are real and Anki replays both.
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        cid = 10010
+        self._link_banka_to_card(db, guid, cid)
+        # No TT-written row. Two Anki grades, same ease (Good), 3s apart.
+        base = 1_700_000_000_000
+        self._seed_anki_revlog(
+            fake_anki_db,
+            cid,
+            [
+                (base, 3, 1, 0, 0, 4500, 0),  # 22:38:50-style Good
+                (base + 3000, 3, 10, 1, 2500, 3200, 0),  # 22:38:53-style Good, 3s later
+            ],
+        )
+        conn = sqlite3.connect(str(fake_anki_db))
+        conn.row_factory = sqlite3.Row
+        try:
+            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+        finally:
+            conn.close()
+
+        with db._get_conn() as tt_conn:
+            ids = [
+                r["id"]
+                for r in tt_conn.execute(
+                    "SELECT id FROM tt_revlog WHERE anki_card_id = ? ORDER BY id", (cid,)
+                ).fetchall()
+            ]
+        assert ids == [base, base + 3000], "both distinct Anki grades must ingest, not be deduped against each other"
+
     def test_malformed_last_synced_at_falls_back_to_all_rows(self, fake_anki_db):
         """Defensive: a corrupt last_synced_at string falls back to threshold=0
         (ingest everything), not a crash."""

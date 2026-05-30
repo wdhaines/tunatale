@@ -1716,18 +1716,23 @@ class AnkiSync:
         """
         held_ids = self._db.get_tt_revlog_ids(collocation_id, direction)
         rows = self._reader.get_revlog_for_card(anki_card_id)
+        anki_ids = {r["id"] for r in rows}
         for r in rows:
             if r["id"] in held_ids:
                 continue
-            # Skip if a TT-written row (same direction, ±5s, same ease) already
-            # records this grade event. PK-equal matches go through INSERT OR
-            # IGNORE; exclude the candidate's own id from the near-match check.
+            # Skip if a TT-*written* row (same direction, ±5s, same ease) already
+            # records this grade event — TT wrote it at grade time and the Anki
+            # copy round-tripped with a bumped id. PK-equal matches go through
+            # INSERT OR IGNORE; exclude the candidate's own id. ``ignore_ids`` =
+            # this card's Anki revlog ids, so an already-ingested Anki row never
+            # suppresses a distinct rapid grade a few seconds later (Layer 60).
             if self._db.has_revision_near(
                 collocation_id,
                 direction.value,
                 r["id"],
                 r["ease"],
                 exclude_id=r["id"],
+                ignore_ids=anki_ids,
             ):
                 continue
             self._db.append_revlog(

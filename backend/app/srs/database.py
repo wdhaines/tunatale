@@ -2052,6 +2052,7 @@ class SRSDatabase:
         button_chosen: int,
         window_ms: int = 5000,
         exclude_id: int | None = None,
+        ignore_ids: set[int] | None = None,
     ) -> bool:
         """Return True if a tt_revlog row exists within *window_ms* of *timestamp_ms* with the same *button_chosen*.
 
@@ -2061,6 +2062,13 @@ class SRSDatabase:
         ``exclude_id`` skips the candidate's own id (the Anki row may already be
         in tt_revlog at its exact id from a prior sync, and ``INSERT OR IGNORE``
         handles PK dupes — that's not a "near match" worth suppressing).
+
+        ``ignore_ids`` removes those tt_revlog rows from the near-match entirely.
+        The ingest passes the card's *Anki revlog ids* here so an already-ingested
+        Anki row never suppresses a *distinct* Anki grade a few seconds later
+        (Layer 60). The guard then only fires against genuine TT-*written* rows —
+        whose ids are never in the card's Anki revlog, because ``write_revlog``
+        may bump the pushed id off the TT grade time.
         """
         sql = (
             "SELECT 1 FROM tt_revlog WHERE collocation_id = ? AND direction = ? "
@@ -2070,6 +2078,9 @@ class SRSDatabase:
         if exclude_id is not None:
             sql += " AND id != ?"
             params.append(exclude_id)
+        if ignore_ids:
+            sql += f" AND id NOT IN ({','.join('?' * len(ignore_ids))})"
+            params.extend(ignore_ids)
         sql += " LIMIT 1"
         with self._get_conn() as conn:
             return conn.execute(sql, params).fetchone() is not None

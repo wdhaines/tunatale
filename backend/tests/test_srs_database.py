@@ -2583,3 +2583,43 @@ class TestRevlog:
         assert not srs_db.has_revision_near(1, "recognition", 100000, 3)
         # Different direction → not a duplicate
         assert not srs_db.has_revision_near(1, "production", 50200, 3)
+
+    def test_has_revision_near_ignore_ids_excludes_anki_origin_rows(self, srs_db):
+        """``ignore_ids`` removes already-ingested Anki rows from the near-match.
+
+        Layer 60: the near-match guard exists to suppress a TT-written grade's
+        Anki copy (different id, same event). But an already-ingested *Anki* row
+        is a distinct grade, not a mirror — it must not suppress a second Anki
+        grade a few seconds later (rapid learning steps). The ingest passes the
+        card's Anki revlog ids as ``ignore_ids`` so Anki-origin near rows can't
+        suppress.
+        """
+        from app.models.srs_item import RevlogRow
+
+        srs_db.add_collocation(
+            SyntacticUnit(text="voda", translation="water", word_count=1, difficulty=1, source="corpus"),
+            language_code="sl",
+        )
+        srs_db.append_revlog(
+            RevlogRow(
+                id=50000,
+                collocation_id=1,
+                direction=Direction.RECOGNITION,
+                button_chosen=3,
+                interval=10,
+                last_interval=5,
+                factor=0,
+                taken_millis=1000,
+                review_kind=1,
+                anki_card_id=400,
+            )
+        )
+
+        # Baseline: the row at 50000 is a near match for a grade at 50200.
+        assert srs_db.has_revision_near(1, "recognition", 50200, 3)
+        # The near row is Anki-origin (its id is in ignore_ids) → not a suppressor.
+        assert not srs_db.has_revision_near(1, "recognition", 50200, 3, ignore_ids={50000})
+        # An ignore set that does not cover the near row leaves it a match.
+        assert srs_db.has_revision_near(1, "recognition", 50200, 3, ignore_ids={99999})
+        # Empty ignore set behaves like the default.
+        assert srs_db.has_revision_near(1, "recognition", 50200, 3, ignore_ids=set())
