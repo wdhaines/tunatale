@@ -61,7 +61,13 @@ line-ending = "lf"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-filterwarnings = ["ignore::ResourceWarning"]
+filterwarnings = [
+    # Surface ResourceWarnings (unclosed DB connections, files, etc.) so leaks are caught,
+    # but ignore the "unclosed event loop" emitted during GC by pytest-asyncio's per-test
+    # loop teardown (pytest_asyncio/plugin.py) — plugin-internal, not a project leak.
+    "default::ResourceWarning",
+    "ignore:unclosed event loop:ResourceWarning",
+]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "--cov=app --cov-report=term-missing"

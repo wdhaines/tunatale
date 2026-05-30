@@ -279,9 +279,11 @@ class TestLessonRendererSectionOutput:
         section_paths = [tmp_path / f"s{i}.wav" for i in range(len(lesson.sections))]
         await rdr.render(lesson, full_path, section_paths=section_paths)
 
-        full_duration = len(AudioSegment.from_file(str(full_path)))
+        with wave.open(str(full_path), "rb") as wf:
+            full_duration = wf.getnframes() / wf.getframerate()
         for sp in section_paths:
-            sec_duration = len(AudioSegment.from_file(str(sp)))
+            with wave.open(str(sp), "rb") as wf:
+                sec_duration = wf.getnframes() / wf.getframerate()
             assert full_duration > sec_duration, "Full WAV should be longer than individual section"
 
     async def test_render_without_section_paths_still_works(self, tmp_path):
