@@ -147,8 +147,8 @@ Compare to TT at the **value Anki persists** (4dp stability / 3dp difficulty —
 by ~1 ULP across libm, far below storage resolution. See the rationale block in
 `tests/test_parity_fsrs_f32.py`.
 
-**Two axes that the per-helper tests miss and are worth sweeping explicitly** (each
-caught a real bug this pass):
+**Three axes that the per-helper tests miss and are worth sweeping explicitly** (each
+caught — or would catch — a real bug):
 
 1. **`days_elapsed == 0` across all four ratings, driven through the public `schedule()`
    path** (not just the helpers) — `tests/test_parity_same_day_review.py`. The helpers
@@ -156,6 +156,18 @@ caught a real bug this pass):
 2. **Stability at the `[S_MIN, S_MAX]` boundaries** — `tests/test_parity_stability_clamp.py`.
    The math helpers don't clamp (fsrs-rs clamps in `step`, not in the formulas), so the
    boundary only shows up when you drive a card to the floor (Finding F-2).
+3. **Multi-grade sequences through `schedule()`** — `tests/test_parity_replay_sequences.py`.
+   **This is the gate that closes the soak's structural blind spot** (see §0). The soak only
+   ever validates `replay(Anki-anchor) ∘ recent-grades`; it never re-derives a from-scratch
+   sequence through `schedule()`. This gate walks realistic trajectories (same-day bursts,
+   interday, lapse→relearn, floor-regime) using fsrs-rs `next_states` as ground truth and
+   checks TT's transition at every step. The FSRS memory update is a pure function of
+   `(prev_memory, delta_t, rating)` — independent of the card-state machine — so each step
+   is evaluated against the *ground-truth* previous state (no compounding). Verified to have
+   teeth: reintroducing the Layer-62 bug fails exactly the 5 sequences with a `gap=0` step,
+   while the 2 pure-interday sequences stay green. A from-scratch replay over the *live* deck
+   can't substitute — every same-day card there also carries pre-FSRS/restore rows, so it
+   mixes the bug with historical noise (0 FSRS-clean same-day cards on 2026-05-30).
 
 For full state-machine parity (queue order, learning steps, fuzz, transitions) use the
 Anki **oracle harness** instead (`tests/test_parity_*.py` + `--run-oracle`); see
@@ -257,7 +269,8 @@ Re-audit queue/sync only if a divergence report points there or the Anki version
 ```bash
 cd backend
 uv run pytest tests/test_parity_fsrs_f32.py tests/test_parity_same_day_review.py \
-              tests/test_parity_stability_clamp.py -q --no-cov           # the math differential
+              tests/test_parity_stability_clamp.py \
+              tests/test_parity_replay_sequences.py -q --no-cov           # the math + sequence differential
 uv run pytest tests/test_parity_*.py --run-oracle --no-cov -q            # the state-machine oracle
 ./test.sh                                                                # full gate (100% cov + frontend + e2e)
 ```
