@@ -356,7 +356,8 @@ Phase 1's elapsed-days collapse (commit `3ec0aa5`) and Phase 2.2.1's Layer 42 fi
 |---|---|---|
 | `_elapsed_days_for_fsrs` | `app/srs/fsrs.py` | Dual-branch fractional-vs-integer-day elapsed since `last_review`. Used by both R formula and FSRS scheduling. |
 | `compute_retrievability` | `app/srs/fsrs.py` | R formula (forgetting curve + null-state → desired_retention). |
-| `_next_stability_recall` / `_next_stability_lapse` / `_stability_short_term` | `app/srs/fsrs.py` | FSRS stability update for recall / lapse / same-day. Lapse path has fsrs-rs's ceiling (Layer 42). |
+| `_next_stability_recall` / `_next_stability_lapse` / `_stability_short_term` | `app/srs/fsrs.py` | FSRS stability update for recall / lapse / same-day. Lapse path has fsrs-rs's ceiling (Layer 42). **Never call these from a grade path directly** — go through `_next_stability_for_grade`, which selects the right one by `delta_t` (Layer 62). |
+| `_next_stability_for_grade` / `_clamp_stability` | `app/srs/fsrs.py` | TT's fsrs-rs `step()`-equivalent: selects short-term (Δt=0) vs recall/lapse (Δt>0) AND clamps to `[S_MIN, S_MAX]` (Layers 57, 62, 63). Used by the REVIEW-passing, learning-step, and graduation paths. |
 | `_next_difficulty` | `app/srs/fsrs.py` | FSRS difficulty update with linear damping + reversion. |
 | `_schedule_with_steps` | `app/srs/fsrs.py` | LEARNING/RELEARNING step transitions + Layer 41 single-step Hard delay. |
 | `_pack_left` / `_parse_left` | `app/srs/fsrs.py` | Anki's `cards.left = today_left*1000 + total_remaining` encoding. |
@@ -389,4 +390,5 @@ If you skip Step 2/3, you'll end up with two independent code paths reverse-engi
 
 - `.claude/rules/anki-sync.md` — USN, safety envelope, schema-change workflow.
 - `.claude/rules/anki-oracle-harness.md` — Phase-2 parity harness: when to add harness vs unit tests, subprocess boundary, synthetic-collection gotchas.
+- `docs/anki-mirror-audit.md` — **inspection-driven** audit workflow: pin the source you mirror to the user's exact anki/fsrs-rs versions, the helper↔source map, the `fsrs_rs_python` differential-test recipe, and the live/dormant/inert triage rubric. Run it proactively (found Layers 62–63); the soak's incremental anchoring can't see a `schedule()`-only bug.
 - `docs/anki-parity-layers.md` — full layer history.

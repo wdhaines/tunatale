@@ -822,14 +822,6 @@ def schedule(
 
     # REVIEW state logic
     else:
-        # REVIEW state. Layer 50: grade-time R uses INTEGER col-day diff
-        # (Anki's `next_day_at.elapsed_days_since(lrt)` is u64 integer div
-        # by 86400). The lrt-fractional branch lives only in queue-sort R,
-        # not in the answering path. See `_grade_elapsed_days`.
-        last = prev.last_review or last_review_dt
-        elapsed = _grade_elapsed_days(last, last_review_dt, col_crt=col_crt)
-        r = _forgetting_curve(elapsed, prev.stability, neg_decay)
-
         if rating == Rating.AGAIN:
             return _schedule_review_again(
                 item,
@@ -845,10 +837,22 @@ def schedule(
                 load_balancer=load_balancer,
             )
         else:
-            # Compute stabilities for all three passing ratings (cascade needs all)
-            s_hard = _next_stability_recall(prev.difficulty, prev.stability, r, Rating.HARD, w)
-            s_good = _next_stability_recall(prev.difficulty, prev.stability, r, Rating.GOOD, w)
-            s_easy = _next_stability_recall(prev.difficulty, prev.stability, r, Rating.EASY, w)
+            # REVIEW + HARD/GOOD/EASY. Layer 62: route the cascade stabilities
+            # through `_next_stability_for_grade` (TT's fsrs-rs `step()`-equivalent)
+            # rather than calling `_next_stability_recall` directly. fsrs-rs's `step`
+            # overrides success/failure with `stability_short_term` whenever
+            # `delta_t == 0` — for EVERY rating, not just Again (model.rs:163:
+            # `mask_where(delta_t.equal_elem(0), stability_short_term)`). A same-day
+            # re-review of a REVIEW card (delta_t==0) must therefore use the
+            # short-term stability, not the recall (interday) formula. The
+            # REVIEW+AGAIN branch already did this via `_schedule_review_again`; this
+            # path forgot. For delta_t>0 `_next_stability_for_grade` reduces to the
+            # prior `_next_stability_recall(prev.difficulty, prev.stability, r, ...)`
+            # with the same integer-col-day `r` (Layer 50), so synced/interday
+            # grades are unchanged.
+            s_hard = _next_stability_for_grade(prev, Rating.HARD, last_review_dt, params, col_crt)
+            s_good = _next_stability_for_grade(prev, Rating.GOOD, last_review_dt, params, col_crt)
+            s_easy = _next_stability_for_grade(prev, Rating.EASY, last_review_dt, params, col_crt)
             rating_to_s = {Rating.HARD: s_hard, Rating.GOOD: s_good, Rating.EASY: s_easy}
             new_stability = rating_to_s[rating]
             new_difficulty = _next_difficulty(prev.difficulty, rating, w)
