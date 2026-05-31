@@ -1538,6 +1538,41 @@ class TestSuspended:
 class TestPromoteToLearning:
     """Tests for promote_to_learning helper."""
 
+    def test_promote_cloze_production_only_no_fk_error(self, srs_db):
+        """A cloze collocation has only a production direction.
+
+        promote_to_learning must not write a Manual revlog for the missing
+        recognition direction: tt_revlog's (collocation_id, direction) FK would
+        raise sqlite3.IntegrityError and 500 the promote-to-learning request.
+        """
+        unit = SyntacticUnit(
+            text="hvala lepa",
+            translation="thank you",
+            word_count=2,
+            difficulty=1,
+            source="corpus",
+            card_type="cloze",
+        )
+        srs_db.add_collocation(unit, language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+
+        # Regression: previously raised IntegrityError (FK constraint failed).
+        srs_db.promote_to_learning(row_id)
+
+        item = srs_db.get_collocation("hvala lepa")
+        assert item.directions[Direction.PRODUCTION].state == SRSState.LEARNING
+
+        # Exactly one Manual (review_kind=4) revlog row, production direction only.
+        with srs_db._get_conn() as conn:
+            revlogs = conn.execute(
+                "SELECT direction, review_kind FROM tt_revlog WHERE collocation_id = ?",
+                (row_id,),
+            ).fetchall()
+        assert len(revlogs) == 1
+        assert revlogs[0][0] == "production"
+        assert revlogs[0][1] == 4
+
     def test_promote_both_directions(self, srs_db):
         from datetime import date
 

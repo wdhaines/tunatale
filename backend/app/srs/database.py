@@ -998,15 +998,32 @@ class SRSDatabase:
                 (row_id,),
             )
             self._commit(conn)
-        # Stage 0: write Manual revlog row
+        # Stage 0: write Manual revlog row. Only iterate directions that actually
+        # exist: a production-only (cloze) collocation has no recognition row, and
+        # tt_revlog's (collocation_id, direction) FK rejects a revlog for a
+        # nonexistent direction (would 500 the promote-to-learning request).
         anki_id = None
         if direction is None:
-            for d in Direction:
+            for d in self._existing_directions(row_id):
                 row = self._get_anki_card_id_for_direction(row_id, d)
                 self.append_manual_revlog(row_id, d, anki_card_id=row)
         else:
             anki_id = self._get_anki_card_id_for_direction(row_id, direction)
             self.append_manual_revlog(row_id, direction, anki_card_id=anki_id)
+
+    def _existing_directions(self, collocation_id: int) -> list[Direction]:
+        """Return the directions with a collocation_directions row, in canonical
+        (recognition, production) order. Cloze collocations have production only.
+        """
+        with self._get_conn() as conn:
+            present = {
+                r["direction"]
+                for r in conn.execute(
+                    "SELECT direction FROM collocation_directions WHERE collocation_id = ?",
+                    (collocation_id,),
+                )
+            }
+        return [d for d in Direction if d.value in present]
 
     def _get_anki_card_id_for_direction(self, collocation_id: int, direction: Direction) -> int | None:
         with self._get_conn() as conn:
