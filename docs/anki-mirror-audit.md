@@ -227,6 +227,29 @@ TT has no auto-leech path. The user's `leech_threshold=99` (max lapses=12), so u
 If the threshold is lowered, leeched cards would be suspended in Anki but keep appearing in
 TT until sync.
 
+### Queue + sync surfaces — **audited 2026-05-30 @ 25.09.4, all verified clean (no change)**
+The second audit pass swept the queue-ordering and sync-merge surfaces in predicted-ROI
+order. Unlike the FSRS arithmetic (a dense port with few prior divergence reports), these
+are the most-hammered code (Layers 25–39, 56–61) and held up:
+- **R-asc `ORDER BY`** — Anki's `review_order_sql` (`card/mod.rs:850-901`) for FSRS is just
+  `extract_fsrs_relative_retrievability(...) asc, fnvhash(id, mod)`. TT's key
+  `(r, 0, _fnv1a_64_i64(id, mod), 0)` matches; `_fnv1a_64_i64` is a bit-exact FNV-1a port
+  (`sqlite.rs:143-151`) — correct byte order, arg order, and signed-i64 cast for SQLite sort.
+- **R value** — `extract_fsrs_relative_retrievability` (`sqlite.rs:370-451`) sorts by
+  *relative* R `-(R^(-1/decay)-1)/(dr^(-1/decay)-1)`, a **monotonic** transform of raw R for
+  fixed dr/decay, so TT's raw-R sort yields identical order. The `seconds_elapsed`/`days_elapsed`
+  branches match `_elapsed_days_for_fsrs`. No-memory cards fall through to the SM2 formula
+  `-(days_elapsed+0.001)/ivl` — the Layer 38/43 territory, already understood.
+- **`_direction_differs`** (`sync.py:956`) — every sync-relevant field Anki can mutate is
+  compared; the not-compared fields (`introduced_at`, `prior_left/stability`,
+  `last_review_time_ms`) are either stamped on a co-occurring state change (which *is*
+  compared) or are TT-internal grade artifacts Anki never sets. Complete.
+- **Intersperser ratio** (`intersperser.rs:26`) `(one_len+1)/(two_len+1)` and **serve order**
+  (`queue/mod.rs:158-160`) `intraday_now → main → intraday_ahead` both match TT.
+
+Takeaway: the high-ROI inspection yield is the FSRS arithmetic, not the queue/sync layers.
+Re-audit queue/sync only if a divergence report points there or the Anki version moves.
+
 ---
 
 ## 7. One-command re-run
