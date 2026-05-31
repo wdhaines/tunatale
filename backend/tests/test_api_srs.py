@@ -33,6 +33,40 @@ def _add_review_due_collocation(db, text: str, today: date):
         db.update_direction(item.guid, direction, ds)
 
 
+def _add_new_with_graduated_sibling(db, text: str, today: date):
+    """Add a dual note: recognition still NEW, production graduated to REVIEW due today.
+
+    This is the shape Anki buries out of the new pool (the production sibling is
+    gathered into today's review queue, so the new recognition card is buried).
+    """
+    from app.models.syntactic_unit import SyntacticUnit
+
+    unit = SyntacticUnit(text=text, translation=text, word_count=1, difficulty=1, source="test")
+    db.add_collocation(unit, language_code="sl")
+    item = db.get_collocation(text)
+    db.update_direction(
+        item.guid,
+        Direction.RECOGNITION,
+        DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
+            state=SRSState.NEW,
+        ),
+    )
+    db.update_direction(
+        item.guid,
+        Direction.PRODUCTION,
+        DirectionState(
+            direction=Direction.PRODUCTION,
+            due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
+            stability=5.0,
+            difficulty=4.0,
+            reps=5,
+            state=SRSState.REVIEW,
+        ),
+    )
+
+
 def _stamp_reviews_completed_today(db, today: date, count: int):
     """Stamp last_rating and last_review on count collocations to simulate reviews done today."""
     import random
@@ -124,6 +158,44 @@ class TestQueueStats:
             f"review badge must mirror Anki's COUNT(DISTINCT nid) with bury_reviews; got {data['review']}"
         )
         assert data["new"] == 0
+
+    async def test_queue_stats_new_badge_buries_new_with_review_due_sibling(self, api_app_state):
+        """New badge mirrors Anki's new-sibling bury (bury_new default True).
+
+        Two dual notes whose production sibling graduated to REVIEW (due today):
+        Anki buries each new recognition card because its sibling is gathered
+        into today's review queue. The badge must read 0, not the raw 2. This
+        reproduces the live 2-vs-0 divergence; the served queue already buried
+        these (`_compute_live_main`), so this aligns the badge with the queue.
+        """
+        db = api_app_state
+        today = date.today()
+        _add_new_with_graduated_sibling(db, "soglasnik", today)
+        _add_new_with_graduated_sibling(db, "taliti", today)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/queue-stats")
+
+        assert resp.status_code == 200
+        assert resp.json()["new"] == 0, (
+            f"new badge must bury new cards whose review sibling is due today; got {resp.json()['new']}"
+        )
+
+    async def test_queue_stats_new_badge_falls_back_to_raw_when_bury_new_off(self, api_app_state):
+        """With bury_new disabled, the badge falls back to the raw NEW-direction
+        count (no new-sibling bury) — no regression for non-default decks."""
+        db = api_app_state
+        db.set_anki_state_cache("bury_new", "False")
+        today = date.today()
+        _add_new_with_graduated_sibling(db, "soglasnik", today)
+        _add_new_with_graduated_sibling(db, "taliti", today)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/queue-stats")
+
+        assert resp.status_code == 200
+        # Two lone NEW recognition directions, raw count, cap=20, none introduced.
+        assert resp.json()["new"] == 2, f"bury_new=False must use the raw count_new_available; got {resp.json()['new']}"
 
     async def test_queue_stats_new_does_not_rebound_after_grading_introduced_card(self, api_app_state):
         """Regression: after sync introduces a card (sets `prior_state='new'`),

@@ -697,8 +697,15 @@ async def get_queue_stats(request: Request, response: Response):
     review_cap, review_cap_source = resolve_daily_review_cap(db)
     reviews_today = db.count_reviews_completed_today(today)
     review_remaining = max(0, min(review_due_raw, review_cap - reviews_today))
+    # New-sibling bury (Anki's bury_new): a new card whose sibling is gathered
+    # into today's queue (review-due-today / learning / graded-today) is buried
+    # out of the new pool. `_compute_live_main` already applies this to the
+    # served queue; the bury-aware count keeps the badge consistent with it.
+    # Falls back to the raw count when bury_new is off (no regression).
+    bury_new, _ = resolve_bury_new(db)
+    new_available = db.count_new_available_collocations(today) if bury_new else db.count_new_available()
     return {
-        "new": min(remaining_quota, db.count_new_available()),
+        "new": min(remaining_quota, new_available),
         "learning": db.count_learning(),
         "review": review_remaining,
         "daily_new_cap": new_cap,

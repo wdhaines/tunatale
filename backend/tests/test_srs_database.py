@@ -1914,6 +1914,95 @@ class TestQueueStatHelpers:
         assert db.count_review_due_collocations(date.today()) == expected
 
 
+class TestCountNewAvailableCollocations:
+    """Bury-aware new-card count: mirrors Anki's new-sibling bury for the badge.
+
+    Anki buries a new card at queue-build when ``bury_new`` is set and a sibling
+    was already gathered into *today's* queue (gather order: learning → review →
+    new). So a new card is excluded when a sibling is in learning/relearning, is
+    a review due today, or was graded today (grade-time sibling-bury persists as
+    queue=-2 until rollover). A *future*-due review sibling is NOT gathered and
+    does NOT bury — verified against the Anki binary. COUNT(DISTINCT
+    collocation_id) collapses a both-new note to one (Anki buries the second new
+    sibling). This is the mirror image of ``count_review_due_collocations``.
+    """
+
+    def _seed(
+        self,
+        db: SRSDatabase,
+        text: str,
+        rec_state: SRSState,
+        prod_state: SRSState,
+        *,
+        due_offset_days: int = 0,
+        prod_last_review: "datetime | None" = None,
+    ) -> None:
+        unit = SyntacticUnit(text=text, translation="t", word_count=2, difficulty=1, source="corpus")
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation(text)
+        assert item is not None
+        today = date.today()
+        due = today + timedelta(days=due_offset_days)
+        for direction, state in [(Direction.RECOGNITION, rec_state), (Direction.PRODUCTION, prod_state)]:
+            ds = DirectionState(
+                direction=direction,
+                due_at=datetime.combine(due, time(4, 0), tzinfo=UTC),
+                stability=1.0,
+                difficulty=5.0,
+                reps=0 if state == SRSState.NEW else 1,
+                lapses=0,
+                state=state,
+                last_review=prod_last_review if direction == Direction.PRODUCTION else None,
+            )
+            db.update_direction(item.guid, direction, ds)
+
+    @pytest.mark.parametrize(
+        "collocations,expected",
+        [
+            ([], 0),
+            # Lone new direction (sibling suspended → not gathered) → counted.
+            ([("hvala", SRSState.NEW, SRSState.SUSPENDED, 0)], 1),
+            # Both directions new → one distinct collocation (Anki buries the 2nd new sibling).
+            ([("hvala", SRSState.NEW, SRSState.NEW, 0)], 1),
+            # New + review due TODAY → buried (the reported 2-vs-0 divergence).
+            ([("hvala", SRSState.NEW, SRSState.REVIEW, 0)], 0),
+            # New + review due in the FUTURE → NOT buried (sibling isn't gathered today).
+            ([("hvala", SRSState.NEW, SRSState.REVIEW, 5)], 1),
+            # New + learning/relearning sibling → buried (learning is gathered first).
+            ([("hvala", SRSState.NEW, SRSState.LEARNING, 0)], 0),
+            ([("hvala", SRSState.NEW, SRSState.RELEARNING, 0)], 0),
+            # No new direction at all → 0.
+            ([("hvala", SRSState.REVIEW, SRSState.REVIEW, 0)], 0),
+            # Mix: clean new-pair counts (1); pair with review-due-today sibling buried (0) → 1.
+            ([("hvala", SRSState.NEW, SRSState.NEW, 0), ("banka", SRSState.NEW, SRSState.REVIEW, 0)], 1),
+            # Mix: clean new-pair (1) + new with a FUTURE review sibling (1) → 2.
+            ([("hvala", SRSState.NEW, SRSState.NEW, 0), ("banka", SRSState.NEW, SRSState.REVIEW, 5)], 2),
+        ],
+    )
+    def test_count_new_available_collocations(self, collocations, expected):
+        db = SRSDatabase(":memory:")
+        for text, rec_state, prod_state, off in collocations:
+            self._seed(db, text, rec_state, prod_state, due_offset_days=off)
+        assert db.count_new_available_collocations(date.today()) == expected
+
+    def test_graded_today_sibling_buries_new(self):
+        """A new card whose sibling was graded today is buried even when that
+        sibling's review was pushed to a future due date (grade-time bury
+        persists as queue=-2 until the day rollover). Caught by the
+        ``last_review today`` clause, not the ``review due today`` clause."""
+        db = SRSDatabase(":memory:")
+        self._seed(
+            db,
+            "hvala",
+            SRSState.NEW,
+            SRSState.REVIEW,
+            due_offset_days=5,
+            prod_last_review=datetime.now(UTC),
+        )
+        # Future due → "review due today" clause misses it; "graded today" catches it.
+        assert db.count_new_available_collocations(date.today()) == 0
+
+
 class TestGetAudioFilename:
     """Tests for get_audio_filename."""
 
