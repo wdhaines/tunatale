@@ -22,12 +22,7 @@ These three account for the bulk of "TT and Anki disagree on head card" reports.
 
 **Resolution**: refresh `/review` (frontend `onMount` sends `?session_start=1` → cutoff = `now`) or grade any TT card. For the mirror case (TT ahead, Anki behind): grade any Anki card, deck-navigate away and back, or close+reopen Anki. **File→Sync alone won't help if sync brings no card changes** — see divergence #3. **Do not** add a "live `now`" path or per-poll cutoff advance — stickiness is intentional and Anki works the same way.
 
-**Diagnostic**:
-```bash
-sqlite3 /tmp/tt_inspect.db "SELECT value FROM anki_state_cache WHERE key='learning_cutoff';"
-sqlite3 /tmp/tt_inspect.db "SELECT c.text, cd.direction, cd.due_at FROM collocation_directions cd JOIN collocations c ON cd.collocation_id=c.id WHERE cd.state IN ('learning','relearning') ORDER BY cd.due_at LIMIT 5;"
-```
-If the earliest learning `due_at` is just past the cutoff, you've found it.
+**Diagnostic**: `docs/anki-parity-diagnostics.md` §"Cutoff frozen" — if the earliest learning `due_at` is just past the cutoff, you've found it.
 
 ### #2 — Independent grading drift
 
@@ -41,14 +36,7 @@ Each app stamps its own `last_review` at the moment the grade fires, computes `d
 
 **Resolution**: sync. `_direction_differs` includes `due_at` (rule 6); after one round-trip both apps converge on the later grader's timestamp per card. **Do not** overwrite timestamps client-side — convergence is sync's job.
 
-**Diagnostic**:
-```bash
-sqlite3 /tmp/tt_inspect.db "SELECT c.text || ' ' || cd.direction, cd.anki_card_id, strftime('%s', cd.last_review) as tt_grade, cast(strftime('%s', cd.due_at) as int) as tt_due FROM collocation_directions cd JOIN collocations c ON cd.collocation_id=c.id WHERE cd.state IN ('learning','relearning') ORDER BY cd.due_at LIMIT 8;" | while IFS='|' read card cid tt_grade tt_due; do
-  anki=$(sqlite3 /tmp/anki_inspect.db "SELECT mod || '|' || due FROM cards WHERE id=$cid")
-  echo "  $card  TT(grade=$tt_grade due=$tt_due) Anki=$anki"
-done
-```
-If per-card deltas are O(seconds) and the step (due − grade) matches between apps, it's drift, not a bug.
+**Diagnostic**: `docs/anki-parity-diagnostics.md` §"Grading drift" — if per-card deltas are O(seconds) and the step (due − grade) matches between apps, it's drift, not a bug.
 
 ### #3 — Asymmetric queue-rebuild cadence (R-asc inversion captured by only one app)
 
@@ -117,21 +105,7 @@ Both apps freeze the main review queue and never re-sort mid-session (Anki `Card
 
 12. **Daily caps are render-only.** `daily_new_cap` and `daily_review_cap` affect ONLY badge counters. Queue assembly (`_compute_live_main`, `get_review_queue`) does NOT cap. Anki also only applies caps to the deck-list badge, not the review flow.
 
-13. **Trust the binary, not the source, when they disagree.** `/tmp/anki-source/` is a shallow clone of `main`, not a release tag — can be ahead of or behind the user's Anki. When TT mirrors source and still diverges, reproduce against the binary:
-    ```bash
-    cp "$HOME/Library/Application Support/Anki2/Will/collection.anki2" /tmp/anki_inspect.db
-    sqlite3 /tmp/anki_inspect.db "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
-    uv run --with anki python -c "
-    import shutil; shutil.copy('/tmp/anki_inspect.db', '/tmp/anki_writable.db')
-    from anki.collection import Collection
-    col = Collection('/tmp/anki_writable.db'); col.decks.select(1)
-    q = col.sched.get_queued_cards(fetch_limit=20)
-    for qc in q.cards:
-        c = qc.card; n = col.get_note(c.note_id)
-        print(c.id, c.queue, n.fields[0][:25])
-    col.close()"
-    ```
-    Anki must be CLOSED (Collection wants exclusive write access). Layer 38 was found this way. Source remains the right starting point — just not the final word.
+13. **Trust the binary, not the source, when they disagree.** `/tmp/anki-source/` is a shallow clone of `main`, not a release tag — can be ahead of or behind the user's Anki. When TT mirrors source and still diverges, reproduce against the binary (recipe in `docs/anki-parity-diagnostics.md` §"Reproduce queue head against the Anki binary"; Anki must be CLOSED — Collection wants exclusive write access). Layer 38 was found this way. Source remains the right starting point — just not the final word.
 
 14. **NULL R-value sorts at `desired_retention` (Layer 38).** Cards with no FSRS memory_state (`cards.data='{}'`) are placed by Anki at the position `desired_retention` occupies in R-asc — between R<dr and R>dr, NOT NULLs-first, NOT NULLs-last. `compute_retrievability` returns `desired_retention` (default 0.9) instead of None. Cached at sync via `refresh_desired_retention` (**proto field 37**, NOT field 40 = `historical_retention`, a pre-Layer-38 footgun).
 
@@ -206,107 +180,7 @@ Walk this tree on a divergence report. Each leaf → mechanism that handles it; 
 
 ## Diagnostic commands
 
-Snapshot first so analysis doesn't race the live DBs:
-
-```bash
-cp "$HOME/Library/Application Support/Anki2/Will/collection.anki2" /tmp/anki_inspect.db
-cp "$HOME/Library/Application Support/Anki2/Will/collection.anki2-shm" /tmp/anki_inspect.db-shm 2>/dev/null
-cp "$HOME/Library/Application Support/Anki2/Will/collection.anki2-wal" /tmp/anki_inspect.db-wal 2>/dev/null
-sqlite3 /tmp/anki_inspect.db "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
-cp backend/tunatale.db /tmp/tt_inspect.db
-```
-
-**Live TT badges + queue head:**
-```bash
-curl -s http://localhost:8000/api/srs/queue-stats | python3 -m json.tool
-curl -s http://localhost:8000/api/srs/review-queue | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-for i, c in enumerate(d.get('queue', [])[:10]):
-    print(f'  {i:2d} {c.get(\"text\",\"\")[:30]:<30s} state={c.get(\"state\")} due_at={c.get(\"due_at\",\"\")[:25]}')"
-```
-
-**Compare introduced-today (TT vs Anki revlog):**
-```bash
-cd backend && uv run python << 'PY'
-import sys, sqlite3, datetime; sys.path.insert(0, '.')
-from app.srs.database import SRSDatabase
-from app.srs.queue_stats import _register_unicase
-from app.config import settings
-
-today = datetime.date.today()
-local = datetime.datetime.now().astimezone().tzinfo
-today_4am = datetime.datetime.combine(today, datetime.time(4), tzinfo=local).astimezone(datetime.UTC)
-db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-print(f"TT count_new_introduced_today = {db.count_new_introduced_today(today)}")
-
-ac = sqlite3.connect("file:/tmp/anki_inspect.db?mode=ro", uri=True); _register_unicase(ac)
-ms = int(today_4am.timestamp() * 1000)
-n = ac.execute("""
-    SELECT COUNT(*) FROM (
-      SELECT r.cid FROM revlog r JOIN cards c ON c.id=r.cid AND c.did=1
-      GROUP BY r.cid HAVING MIN(r.id) >= ?
-    )""", (ms,)).fetchone()[0]
-print(f"Anki introduced today (revlog) = {n}")
-PY
-```
-
-**Compare step state (left / reps / lapses) for current learning cards:**
-```bash
-cd backend && uv run python << 'PY'
-import sqlite3, sys; sys.path.insert(0, '.')
-from app.srs.queue_stats import _register_unicase
-tt = sqlite3.connect("/tmp/tt_inspect.db"); tt.row_factory = sqlite3.Row
-ac = sqlite3.connect("file:/tmp/anki_inspect.db?mode=ro", uri=True); _register_unicase(ac)
-for r in tt.execute("""SELECT cd.anki_card_id, cd.state, cd.left, cd.prior_state, cd.reps, cd.lapses, c.text
-    FROM collocation_directions cd JOIN collocations c ON cd.collocation_id=c.id
-    WHERE cd.state IN ('learning','relearning') ORDER BY c.text""").fetchall():
-    a = ac.execute("SELECT queue, type, left, reps, lapses FROM cards WHERE id=?", (r['anki_card_id'],)).fetchone()
-    flag = "" if a and (r['left'] == a[2] and r['reps'] == a[3] and r['lapses'] == a[4]) else "  <-- DIFFERS"
-    print(f"{r['text']:<14s} TT(l={r['left']!s:<6s} prior={r['prior_state']!s:<10s} r={r['reps']} lap={r['lapses']}) Anki={a}{flag}")
-PY
-```
-
-**Compare R values for two suspect cards:**
-```bash
-cd backend && uv run python << 'PY'
-import sys, sqlite3, json, datetime; sys.path.insert(0, '.')
-from app.srs.database import SRSDatabase
-from app.srs.fsrs import compute_retrievability
-from app.models.srs_item import Direction
-from app.config import settings
-
-CARDS = ('drevo', 'svet')  # ← edit
-db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-today, now = datetime.date.today(), datetime.datetime.now(datetime.UTC)
-for name in CARDS:
-    item = db.get_collocation(name)
-    for d in (Direction.RECOGNITION, Direction.PRODUCTION):
-        ds = item.directions.get(d) if item else None
-        if ds and ds.state.value == 'review' and ds.due_date <= today:
-            print(f"TT  {name:<10s} {d.value:<11s} stab={ds.stability:.4f} lr={ds.last_review} R={compute_retrievability(ds, today, now=now):.4f}")
-conn = sqlite3.connect("file:/tmp/anki_inspect.db?mode=ro", uri=True)
-for name in CARDS:
-    rows = conn.execute("SELECT c.id, c.ord, c.due, c.ivl, c.data FROM cards c JOIN notes n ON c.nid=n.id WHERE n.flds LIKE ? AND c.queue=2", (f'{name}%',)).fetchall()
-    for r in rows:
-        data = json.loads(r[4]) if r[4] else {}
-        s, lrt, decay = data.get('s'), data.get('lrt'), data.get('decay', 0.5)
-        if s:
-            elapsed = (now.timestamp() - lrt) if lrt else (r[2] - (r[2] - r[3])) * 86400
-            R = (1 + 19/81 * elapsed/86400 / s) ** -decay
-            print(f"Anki {name:<10s} ord={r[1]} cid={r[0]} s={s:.4f} lrt={'Y' if lrt else 'N'} R={R:.4f}")
-PY
-```
-
-**Force fresh queue build (clears `session_main_queue` cache):**
-```bash
-cd backend && uv run python -c "
-import sys; sys.path.insert(0,'.')
-from app.srs.database import SRSDatabase
-from app.srs.queue_stats import clear_session_main_queue
-from app.config import settings
-clear_session_main_queue(SRSDatabase(settings.database_url.removeprefix('sqlite:///')))"
-```
+Moved to `docs/anki-parity-diagnostics.md` (snapshot-the-DBs, live badges + queue head, introduced-today, step-state, R-value compare, force-fresh-queue, binary repro, soak classifier). Open it when actively debugging.
 
 ## When to escalate to Path 2
 
@@ -325,26 +199,11 @@ Current model — TT reconstructs from TT state — has held through ~22 fixes. 
 - **`stability_replayed` divergence should be 0.** Any stability divergence is a genuine issue worth investigating (this is what Layer 58 fixed).
 - **`fsrs_difficulty_replayed` divergence should be 0 too.** The old "~104 benign floor" is **retired** — the 05-21 restore cohort washed out by 2026-05-30 (confirmed 0/1349 across two same-day syncs with 245 rows ingested, 422 recently-graded directions all bit-exact on both fields). A non-zero difficulty count now warrants the same scrutiny as stability: check whether it's a *recently-graded* card (real regression — e.g. a `_next_difficulty` op-order/f32 drift, cf. Layer 59) versus a *new* historical restore/import cohort (re-confirm the `card.data ≠ pure revlog replay` signature before declaring benign, and treat it as transient that will age out — don't let it normalize a standing floor).
 
-Classifier (TT-side only, no Anki needed):
-```bash
-sqlite3 backend/tunatale.db "
-SELECT 'stability_diverge' k, COUNT(*) FROM collocation_directions WHERE stability_replayed IS NOT NULL AND ABS(stability_replayed-stability)>1e-4
-UNION ALL SELECT 'difficulty_only_diverge', COUNT(*) FROM collocation_directions WHERE fsrs_difficulty_replayed IS NOT NULL AND ABS(fsrs_difficulty_replayed-fsrs_difficulty)>1e-4 AND ABS(COALESCE(stability_replayed,stability)-stability)<=1e-4;"
-```
-`stability_diverge=0` and `difficulty_only_diverge=0` ⇒ healthy. Full trail: memory `project_stage3b_soak_finding_difficulty_replay`.
+Classifier (TT-side only, no Anki needed): `docs/anki-parity-diagnostics.md` §"Soak compare-shadow classifier". `stability_diverge=0` and `difficulty_only_diverge=0` ⇒ healthy. Full trail: memory `project_stage3b_soak_finding_difficulty_replay`.
 
 ## Source references
 
-`anki-source-expert` subagent reads `/tmp/anki-source/`. Key files:
-- `rslib/.../scheduler/queue/builder/mod.rs` — `learn_count`, `current_learning_cutoff`, assembly
-- `rslib/.../scheduler/queue/learning.rs` — intraday-now vs intraday-ahead, `requeue_learning_entry` collapse, `update_learning_cutoff_and_count`
-- `rslib/.../scheduler/queue/mod.rs:149-157` — serve order: `intraday_now → main → intraday_ahead`
-- `rslib/.../scheduler/queue/builder/intersperser.rs` — ratio `(one_len+1)/(two_len+1)`
-- `rslib/.../storage/sqlite.rs:312-364` — `extract_fsrs_retrievability` (two branches)
-- `rslib/.../scheduler/timing.rs:27-81` — `sched_timing_today_v2_new`
-- `rslib/.../scheduler/answering/mod.rs:632-648` — `get_fuzz_seed_for_id_and_reps` = `card.id + card.reps`
-
-Ask the subagent when in doubt: cites file:line, pairs Anki's behavior with TT's parallel code path.
+The `anki-source-expert` subagent reads `/tmp/anki-source/` and cites file:line, pairing Anki's behavior with TT's parallel code path — ask it when in doubt. The key-files map (queue builder, learning, intersperser, R-extraction, timing, fuzz seed) lives in `docs/anki-parity-diagnostics.md` §"Source references".
 
 ## Pre-Layer checklist — read before opening a new Layer fix
 
@@ -352,31 +211,7 @@ Phase 1's elapsed-days collapse (commit `3ec0aa5`) and Phase 2.2.1's Layer 42 fi
 
 **Step 1: name the divergence.** What's TT computing that doesn't match Anki? Be specific about *which output* — a stability number, a queue position, a badge count, a state transition.
 
-**Step 2: scan the load-bearing helpers for an existing implementation.** If your fix is going to compute X, and one of these helpers already computes something X-shaped, the fix should extend the helper, not reimplement it elsewhere.
-
-| Helper | Path | Covers |
-|---|---|---|
-| `_elapsed_days_for_fsrs` | `app/srs/fsrs.py` | Dual-branch fractional-vs-integer-day elapsed since `last_review`. Used by both R formula and FSRS scheduling. |
-| `compute_retrievability` | `app/srs/fsrs.py` | R formula (forgetting curve + null-state → desired_retention). |
-| `_next_stability_recall` / `_next_stability_lapse` / `_stability_short_term` | `app/srs/fsrs.py` | FSRS stability update for recall / lapse / same-day. Lapse path has fsrs-rs's ceiling (Layer 42). **Never call these from a grade path directly** — go through `_next_stability_for_grade`, which selects the right one by `delta_t` (Layer 62). |
-| `_next_stability_for_grade` / `_clamp_stability` | `app/srs/fsrs.py` | TT's fsrs-rs `step()`-equivalent: selects short-term (Δt=0) vs recall/lapse (Δt>0) AND clamps to `[S_MIN, S_MAX]` (Layers 57, 62, 63). Used by the REVIEW-passing, learning-step, and graduation paths. |
-| `_next_difficulty` | `app/srs/fsrs.py` | FSRS difficulty update with linear damping + reversion. |
-| `_schedule_with_steps` | `app/srs/fsrs.py` | LEARNING/RELEARNING step transitions + Layer 41 single-step Hard delay. |
-| `_pack_left` / `_parse_left` | `app/srs/fsrs.py` | Anki's `cards.left = today_left*1000 + total_remaining` encoding. |
-| `_merge_by_retrievability_ascending` | `app/api/srs.py` | R-asc queue sort + FNV tiebreaker (Layer 37). |
-| `_merge_directions` | `app/api/srs.py` | Cross-direction gather + sibling-bury + Template stable-sort (Layer 28). |
-| `_fnv1a_64_i64` | `app/api/srs.py` | Anki's tiebreaker hash; required identical port. |
-| `_pull_merge_direction` | `app/anki/sync.py` | Per-card sync_pull merge (post Phase 1.3 extraction). |
-| `_direction_differs` | `app/anki/sync.py` | Field-by-field diff for sync write-back; must include `left`, `due_at`, `prior_state`, `bury_kind`, `anki_card_mod` (rule 6, Layer 17, Layer 37). |
-| `_resolve_prior_state` / `_grade_prior_state` | `app/anki/sync.py` + `app/srs/fsrs.py` | Sticky-NEW `prior_state` (Layers 20-22). |
-| `_resolve_introduced_at` | `app/anki/sync.py` | One-shot intro stamp (Layer 26). |
-| `_anki_step_ahead` | `app/anki/sync.py` | "Anki's `left` is further along than TT's" check (Layers 18, 19). |
-| `_bury_kind_from_queue` | `app/anki/sync.py` | `queue=-2/-3 → 'sched'` mapping (Layer 35, Layer 39). |
-| `_queue_to_state` | `app/anki/sync.py` | `cards.queue → SRSState`, trusts queue not reps (Layer 30). |
-| `_read_config_value_from_deck_config_table` | `app/srs/queue_stats.py` | Unified deck-config protobuf/legacy-JSON reader (Phase 1.1). Use this for any new deck-config field. |
-| `count_new_available_collocations` | `app/srs/database.py` | Bury-aware new-badge count: NEW directions minus collocations with a graded-today / learning / review-due-today sibling (`bury_new`, Layer 64). Mirror image of `count_review_due_collocations`. `count_new_available` (raw `COUNT(*)`) stays for the overfetch upper bound only. |
-| `unbury_if_needed` | `app/srs/database.py` | Daily unbury sweep (Layers 27, 35). |
-| `clear_session_main_queue` + `build_and_freeze_main_queue` | `app/srs/queue_stats.py` + `app/api/srs.py` | Session-queue cache management (Layers 4, 7, 29). |
+**Step 2: scan the load-bearing helpers for an existing implementation.** If your fix is going to compute X, and one of these helpers already computes something X-shaped, the fix should extend the helper, not reimplement it elsewhere. The full helper↔path↔coverage table (21 helpers across `fsrs.py` / `srs.py` / `sync.py` / `queue_stats.py` / `database.py`) is in `docs/anki-parity-diagnostics.md` §"Load-bearing helpers" — read it before writing any new stability/difficulty/queue/sync code.
 
 **Step 3: ask the duplication question.** *"Would my fix compute or branch on the same thing one of those helpers already does?"* If yes:
 - **Factor first.** Extend the existing helper (or extract a shared sub-helper, like `_elapsed_days_for_fsrs` did for Layers 11/15/40) before writing the fix at the new call site.
@@ -393,5 +228,6 @@ If you skip Step 2/3, you'll end up with two independent code paths reverse-engi
 
 - `.claude/rules/anki-sync.md` — USN, safety envelope, schema-change workflow.
 - `.claude/rules/anki-oracle-harness.md` — Phase-2 parity harness: when to add harness vs unit tests, subprocess boundary, synthetic-collection gotchas.
+- `docs/anki-parity-diagnostics.md` — pull-up reference: every diagnostic bash/python snippet, the source file:line map, and the 21-row load-bearing-helper table (moved out of this rule file to keep it lean).
 - `docs/anki-mirror-audit.md` — **inspection-driven** audit workflow: pin the source you mirror to the user's exact anki/fsrs-rs versions, the helper↔source map, the `fsrs_rs_python` differential-test recipe, and the live/dormant/inert triage rubric. Run it proactively (found Layers 62–63); the soak's incremental anchoring can't see a `schedule()`-only bug.
 - `docs/anki-parity-layers.md` — full layer history.
