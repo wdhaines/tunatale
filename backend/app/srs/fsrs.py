@@ -555,6 +555,22 @@ def _round_to_places_f32(value: float, decimal_places: int) -> float:
     return round(float(rounded / factor_f32), decimal_places)
 
 
+# fsrs-rs clamps every post-grade stability to [S_MIN, S_MAX] inside Model::step
+# (model.rs:178 `stability: new_s.clamp(S_MIN, S_MAX)`); constants live in
+# fsrs-rs/src/simulation.rs:41-42. The lower bound is reachable — the lapse
+# formula's own floor (`new_s / exp(w17*w18)`) drops below 0.001 near the
+# minimum-stability regime — so an Again on a floor card must clamp up to S_MIN
+# rather than store a sub-floor value (Layer 63). The upper bound is effectively
+# unreachable in practice but mirrored for faithfulness.
+_S_MIN = 0.001
+_S_MAX = 36500.0
+
+
+def _clamp_stability(s: float) -> float:
+    """Clamp stability to ``[S_MIN, S_MAX]`` in f32, matching fsrs-rs ``step``."""
+    return float(min(_F32(_S_MAX), max(_F32(_S_MIN), _F32(s))))
+
+
 def _quantize_stability(s: float) -> float:
     return _round_to_places_f32(s, 4)
 
@@ -672,11 +688,16 @@ def _next_stability_for_grade(
     last = prev.last_review or last_review_dt
     elapsed = _grade_elapsed_days(last, last_review_dt, col_crt=col_crt)
     if elapsed == 0:
-        return _stability_short_term(prev.stability, rating, params)
-    r = _forgetting_curve(elapsed, prev.stability, -params.decay)
-    if rating == Rating.AGAIN:
-        return _next_stability_lapse(prev.difficulty, prev.stability, r, w)
-    return _next_stability_recall(prev.difficulty, prev.stability, r, rating, w)
+        raw = _stability_short_term(prev.stability, rating, params)
+    else:
+        r = _forgetting_curve(elapsed, prev.stability, -params.decay)
+        if rating == Rating.AGAIN:
+            raw = _next_stability_lapse(prev.difficulty, prev.stability, r, w)
+        else:
+            raw = _next_stability_recall(prev.difficulty, prev.stability, r, rating, w)
+    # fsrs-rs Model::step clamps the post-grade stability to [S_MIN, S_MAX]
+    # (model.rs:178) regardless of which formula produced it (Layer 63).
+    return _clamp_stability(raw)
 
 
 def _parse_left(left: int | None) -> int:
@@ -1073,7 +1094,9 @@ def _schedule_review_again(
         r = _forgetting_curve(elapsed, prev.stability, -params.decay) if prev.stability > 0 else 1.0
         new_stability = _next_stability_lapse(prev.difficulty, prev.stability, r, w)
         new_difficulty = _next_difficulty(prev.difficulty, rating, w)
-    new_stability = _quantize_stability(new_stability)
+    # fsrs-rs Model::step clamps the result to [S_MIN, S_MAX] (model.rs:178); the
+    # lapse floor can fall below S_MIN near the minimum-stability regime (Layer 63).
+    new_stability = _quantize_stability(_clamp_stability(new_stability))
     new_difficulty = _quantize_difficulty(new_difficulty)
 
     steps, _ = _get_steps_for_state(SRSState.RELEARNING)

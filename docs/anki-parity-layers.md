@@ -1361,3 +1361,17 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 **Files.** `app/srs/fsrs.py` (`schedule` REVIEW branch). Tests: `tests/test_parity_same_day_review.py` (new). Workflow: `docs/anki-mirror-audit.md` F-1.
 
 **Surfaced by.** 2026-05-30 inspection audit against anki 25.09.4 / fsrs-rs 5.1.0 (`docs/anki-mirror-audit.md`) — found by reading `model.rs:163`'s unconditional `delta_t==0` mask, not by a divergence report. The soak's incremental anchoring is precisely what hid it.
+
+## Layer 63 — FSRS stability clamped to `[S_MIN, S_MAX]` like fsrs-rs `step`
+
+**The bug.** fsrs-rs clamps *every* post-grade stability to `[S_MIN=0.001, S_MAX=36500.0]` inside `Model::step` (`fsrs-rs/src/model.rs:178`: `stability: new_s.clamp(S_MIN, S_MAX)`; constants at `fsrs-rs/src/simulation.rs:41-42`). TT clamped inconsistently: `max(0.001, …)` on the REVIEW-passing and graduation storage boundaries, **no clamp at all** on the lapse path (`_schedule_review_again`) and the learning-step path (`_schedule_with_steps`, via `_next_stability_for_grade`), and **never** the `S_MAX` upper bound anywhere.
+
+**Reachability.** The lower bound is dormant-but-reachable: `stability_after_failure`'s own floor (`new_s_min = last_s / exp(w17·w18)`) drops *below* 0.001 once `last_s` is near the minimum-stability regime, so an Again on a floor card lands ≈0.0008 in TT but Anki clamps to 0.001 (verified against `fsrs_rs_python`: s=0.001 AGAIN → fsrs-rs 0.001, TT raw lapse 0.000801). On the live deck the lowest card (`taliti`, s≈0.0048, 7 lapses) is a handful of further lapses from tripping it. The upper bound is effectively unreachable (recall growth stalls as `s → S_MAX`; max live stability ≈310) but is mirrored for faithfulness.
+
+**Fix.** Added `_S_MIN`/`_S_MAX` constants and `_clamp_stability(s)` (f32 `min(S_MAX, max(S_MIN, s))`, matching fsrs-rs's clamp). Applied at the two step-equivalent sites that produce the stored memory state: the return of `_next_stability_for_grade` (covers REVIEW-passing — post Layer 62 — plus learning-step and graduation cascades) and `_schedule_review_again` (the only stability path not routed through `_next_stability_for_grade`). No-op on all current data (everything in `[0.0048, 310]`), so the soak/transition pins are unchanged.
+
+**Validation.** New test `tests/test_parity_stability_clamp.py`: `_clamp_stability` both bounds + passthrough, and a lapse-below-floor case pinned against `fsrs_rs_python` (S_MIN-clamped). Backend gate green (2604 passed, 100% coverage); oracle harness green (55 passed).
+
+**Files.** `app/srs/fsrs.py` (`_clamp_stability` + `_next_stability_for_grade` + `_schedule_review_again`). Tests: `tests/test_parity_stability_clamp.py` (new). Workflow: `docs/anki-mirror-audit.md` F-2.
+
+**Surfaced by.** 2026-05-30 inspection audit (`docs/anki-mirror-audit.md`) — found by comparing fsrs-rs's `clamp(S_MIN, S_MAX)` against TT's inconsistent `max(0.001, …)` write sites.
