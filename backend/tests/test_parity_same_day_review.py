@@ -31,6 +31,7 @@ at ``days_elapsed = 0`` so the divergence can never silently return.
 
 from __future__ import annotations
 
+import platform
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
@@ -40,6 +41,11 @@ from app.models.syntactic_unit import SyntacticUnit
 from app.srs.fsrs import DEFAULT_FSRS5_PARAMS, _quantize_stability, schedule
 
 fsrs_rs_python = pytest.importorskip("fsrs_rs_python")
+
+# Arch-aware storage-precision compare (see test_parity_fsrs_f32 for the rationale):
+# strict equality at the 4dp grid on the deploy arch (arm64), ±1 quantum on x86 CI where
+# numpy's f32 libm and fsrs-rs's Rust libm differ ~1 ULP and can tip a rounding boundary.
+_STRICT = platform.machine().lower() in ("arm64", "aarch64")
 
 W = DEFAULT_FSRS5_PARAMS.weights
 
@@ -106,8 +112,12 @@ def test_same_day_review_passing_uses_short_term(
         now=_NOW,
         params=DEFAULT_FSRS5_PARAMS,
     )
-    tt_s = item.directions[Direction.RECOGNITION].stability
-    anki_s = _anki_same_day_stability(stability, difficulty, attr)
-    assert _quantize_stability(tt_s) == _quantize_stability(anki_s), (
+    tt_s = item.directions[Direction.RECOGNITION].stability  # already stored-quantized
+    anki_s = _quantize_stability(_anki_same_day_stability(stability, difficulty, attr))
+    msg = (
         f"same-day REVIEW+{rating.name} s={stability} d={difficulty}: TT={tt_s} (stored) vs fsrs-rs short-term={anki_s}"
     )
+    if _STRICT:
+        assert tt_s == anki_s, msg
+    else:
+        assert abs(tt_s - anki_s) <= 1e-4 * 1.5, msg

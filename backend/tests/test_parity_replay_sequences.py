@@ -29,7 +29,6 @@ as ``test_parity_fsrs_f32`` rather than accumulating ULP noise across the chain.
 
 from __future__ import annotations
 
-import math
 import platform
 from datetime import UTC, date, datetime, timedelta
 
@@ -52,9 +51,8 @@ DR = 0.86  # the live deck's desired_retention (stability is dr-independent; mat
 # Same arch-aware precision stance as test_parity_fsrs_f32: numpy f32 transcendentals
 # are bit-reproducible with fsrs-rs's Rust libm only on the deploy arch (arm64); on x86
 # CI they differ ~1 ULP, which can tip a 4dp/3dp boundary. Strict storage-equality on
-# arm64 (enforced by local ./test.sh pre-commit), gross tolerance elsewhere.
+# arm64 (enforced by local ./test.sh pre-commit), ±1-quantum tolerance elsewhere.
 _STRICT = platform.machine().lower() in ("arm64", "aarch64")
-_GROSS_REL_TOL = 1e-4
 
 _RATING_ATTR = {Rating.AGAIN: "again", Rating.HARD: "hard", Rating.GOOD: "good", Rating.EASY: "easy"}
 
@@ -78,11 +76,21 @@ def _review_item(stability: float, difficulty: float, last_review: datetime) -> 
     return SRSItem(syntactic_unit=unit, directions={Direction.RECOGNITION: direction}, guid="g", anki_note_id=7)
 
 
-def _assert_close(tt: float, anki: float, quantize, msg: str) -> None:
+def _assert_close(tt_stored: float, anki_raw: float, quantize, quantum: float, msg: str) -> None:
+    """Compare TT's stored (already-quantized) value against Anki's stored value.
+
+    Anki's stored value is ``quantize(anki_raw)`` (Anki's ``round_to_places``, which
+    ``_quantize_*`` mirrors). On the deploy arch (arm64) the two are bit-identical, so we
+    assert exact storage equality. On x86 CI, fsrs-rs's Rust libm and numpy's f32 differ
+    by ~1 ULP, which can tip a single quantization boundary — so we allow ±1 quantum
+    (1e-4 stability / 1e-3 difficulty), far below any real-formula-bug delta. NOTE the
+    raw value must be quantized first: comparing the stored value against the *raw* value
+    spuriously fails at small magnitudes (a 5e-5 rounding gap exceeds 1e-4 relative)."""
+    anki_stored = quantize(anki_raw)
     if _STRICT:
-        assert quantize(tt) == quantize(anki), msg
+        assert tt_stored == anki_stored, msg
     else:
-        assert math.isclose(tt, anki, rel_tol=_GROSS_REL_TOL), msg
+        assert abs(tt_stored - anki_stored) <= quantum * 1.5, msg
 
 
 # Realistic trajectories: (label, (s0, d0), [(rating, gap_days), ...]).
@@ -134,8 +142,8 @@ def test_replay_sequence_matches_fsrs_rs(
         nd = item.directions[Direction.RECOGNITION]
 
         ctx = f"{label} step {i} ({rating.name}, gap={gap}d): TT s={nd.stability} d={nd.difficulty} vs fsrs-rs s={anki_s} d={anki_d}"
-        _assert_close(nd.stability, anki_s, _quantize_stability, f"stability {ctx}")
-        _assert_close(nd.difficulty, anki_d, _quantize_difficulty, f"difficulty {ctx}")
+        _assert_close(nd.stability, anki_s, _quantize_stability, 1e-4, f"stability {ctx}")
+        _assert_close(nd.difficulty, anki_d, _quantize_difficulty, 1e-3, f"difficulty {ctx}")
 
         # Advance along the ground-truth (quantized) path so the next step starts from a
         # realistic state without compounding any TT-side rounding.
