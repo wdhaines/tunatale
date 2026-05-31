@@ -22,6 +22,7 @@ from app.llm.cassette import CassetteLLMClient  # noqa: E402
 from app.llm.client import LLMClient  # noqa: E402
 from app.models.language import Language  # noqa: E402
 from app.srs.database import SRSDatabase  # noqa: E402
+from app.srs.lemmatizer import get_lemmatizer  # noqa: E402
 from app.storage.store import ContentStore  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
@@ -59,6 +60,11 @@ async def lifespan(app: FastAPI):
         pause_calculator=NaturalPauseCalculator(),
     )
     app.state.audio_dir = Path("output/audio")
+
+    # Warm the lemmatizer at startup so the first /listen or /transcript request
+    # doesn't pay the model-load cost. A no-op for the default lowercase
+    # lemmatizer; loads the classla pipeline up front when lemmatizer_type=classla.
+    get_lemmatizer().lemmatize("hotel", "sl")
 
     logger.info("TunaTale backend starting up")
     yield

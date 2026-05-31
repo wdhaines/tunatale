@@ -34,6 +34,10 @@ SLOVENE_FUNCTION_WORDS: frozenset[str] = frozenset(
         "pa",  # 2 / 2 — "and", "but", "so"
         "ti",  # 2 / 2 — "you" (singular dative)
         "po",  # 2 / 2 — "after", "along"
+        "vi",  # lemma of "vam" — "you" (plural/formal)
+        # NOTE: "biti" (copula lemma) is intentionally excluded. Its surface forms
+        # je/sem/si/ni are in the set above; adding "biti" would create ambiguity
+        # with verb-conjugation cloze targets for the same root.
     }
 )
 
@@ -123,3 +127,70 @@ def make_morphology_cloze_text(
         return f"{{{{c1::{m.group(0)}::{hint}}}}}"
 
     return pattern.sub(_replacer, source_sentence)
+
+
+# ── UD feats → TT feature mapping ──────────────────────────────────────────
+
+
+_CASE_MAP: dict[str, str] = {
+    "Nom": "nom",
+    "Acc": "acc",
+    "Gen": "gen",
+    "Dat": "dat",
+    "Loc": "loc",
+    "Ins": "ins",
+}
+
+_NUMBER_MAP: dict[str, str] = {
+    "Sing": "sg",
+    "Plur": "pl",
+    "Dual": "du",
+}
+
+_GENDER_MAP: dict[str, str] = {
+    "Masc": "m",
+    "Fem": "f",
+    "Neut": "n",
+}
+
+
+def ud_feats_to_tt_feature(
+    upos: str,
+    case: str = "",
+    number: str = "",
+    person: str = "",
+    gender: str = "",
+) -> str | None:
+    """Map Universal Dependencies POS + morphological features to a TT feature string.
+
+    Returns ``None`` when the combination is not A1-mappable (e.g., genitive nouns,
+    non-nominative adjectives).
+
+    TT feature format (matches ``_A1_MORPHOLOGY_PREFIXES`` in ``srs.py``):
+      * ``verb:1sg``  — verb with Person=1, Number=Sing
+      * ``noun:loc:sg`` — noun with Case=Loc, Number=Sing
+      * ``adj:nom:m:sg`` — adjective with Case=Nom, Gender=Masc, Number=Sing
+
+    A1 whitelist: all verbs; nouns in nom/acc/loc; adjectives in nom.
+    """
+    n = _NUMBER_MAP.get(number, "")
+    if upos in ("VERB", "AUX"):
+        p = person
+        if p and n:
+            return f"verb:{p}{n}"
+        return None
+
+    if upos == "NOUN":
+        c = _CASE_MAP.get(case, "")
+        if c in ("nom", "acc", "loc") and n:
+            return f"noun:{c}:{n}"
+        return None
+
+    if upos == "ADJ":
+        c = _CASE_MAP.get(case, "")
+        g = _GENDER_MAP.get(gender, "")
+        if c == "nom" and g and n:
+            return f"adj:{c}:{g}:{n}"
+        return None
+
+    return None

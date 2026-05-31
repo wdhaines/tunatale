@@ -2,7 +2,25 @@
 
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
+from functools import lru_cache
 from typing import Protocol, runtime_checkable
+
+_logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class TokenAnalysis:
+    """Result of analyzing a single token in sentence context."""
+
+    surface: str
+    lemma: str
+    upos: str = ""
+    case: str = ""
+    number: str = ""
+    person: str = ""
+    gender: str = ""
 
 
 @runtime_checkable
@@ -19,6 +37,14 @@ class Lemmatizer(Protocol):
         ``(word.lower(), "", "")``).
         """
 
+    def analyze_sentence(self, sentence: str, language_code: str) -> list[TokenAnalysis]:
+        """Analyze every token in *sentence*, returning a list of TokenAnalysis.
+
+        The default implementation splits on whitespace and runs ``analyze()``
+        per token. Language-specific subclasses should override with a
+        full NLP pipeline for sentence-context-aware analysis.
+        """
+
 
 class LowercaseLemmatizer:
     """Simple lemmatizer that lowercases the word.
@@ -32,6 +58,12 @@ class LowercaseLemmatizer:
 
     def analyze(self, word: str, language_code: str) -> tuple[str, str, str]:
         return word.lower(), "", ""
+
+    def analyze_sentence(self, sentence: str, language_code: str) -> list[TokenAnalysis]:
+        tokens = sentence.split()
+        return [
+            TokenAnalysis(surface=t, lemma=t.lower(), upos="", case="", number="", person="", gender="") for t in tokens
+        ]
 
 
 # ── Slovene morphological analyzer (classla, opt-in) ──────────────────────────
@@ -59,7 +91,8 @@ class ClasslaLemmatizer:  # pragma: no cover — requires classla/PyTorch; opt-i
         if self._nlp is None:
             import classla
 
-            classla.download(self._language_code)
+            # Pipeline auto-downloads missing models; no need for explicit
+            # classla.download() which pulls all processors unconditionally.
             self._nlp = classla.Pipeline(
                 self._language_code,
                 processors="tokenize,pos,lemma",
@@ -85,31 +118,133 @@ class ClasslaLemmatizer:  # pragma: no cover — requires classla/PyTorch; opt-i
             token = doc.sentences[0].words[0]
             lemma = token.lemma or word.lower()
             feats = token.feats or ""
-            case, number = _parse_morphology(feats)
+            case, number, _gender = _parse_morphology(feats)
             return lemma, case, number
         except (IndexError, AttributeError):
             return word.lower(), "", ""
 
+    def analyze_sentence(self, sentence: str, language_code: str) -> list[TokenAnalysis]:  # pragma: no cover
+        if language_code != self._language_code:
+            return [
+                TokenAnalysis(surface=t, lemma=t.lower(), upos="", case="", number="", person="", gender="")
+                for t in sentence.split()
+            ]
+        nlp = self._ensure_pipeline()
+        doc = nlp(sentence)
+        results: list[TokenAnalysis] = []
+        for sent in doc.sentences:
+            for token in sent.words:
+                feats = token.feats or ""
+                case, number, gender = _parse_morphology(feats)
+                person = _parse_person(feats)
+                results.append(
+                    TokenAnalysis(
+                        surface=token.text,
+                        lemma=token.lemma or token.text.lower(),
+                        upos=token.upos or "",
+                        case=case,
+                        number=number,
+                        person=person,
+                        gender=gender,
+                    )
+                )
+        return results
 
-def _parse_morphology(feats: str) -> tuple[str, str]:
-    """Extract ``(Case, Number)`` from a UD FEATS string like ``Case=Gen|Gender=Fem|Number=Sing``.
 
-    Returns ``("", "")`` when a feature is absent.
+def _parse_morphology(feats: str) -> tuple[str, str, str]:
+    """Extract ``(Case, Number, Gender)`` from a UD FEATS string.
+
+    Example: ``Case=Gen|Gender=Fem|Number=Sing`` → ``("Gen", "Sing", "Fem")``.
+    Returns ``("", "", "")`` when all features are absent.
     """
     case = ""
     number = ""
+    gender = ""
     for part in feats.split("|"):
         part = part.strip()
         if part.startswith("Case="):
             case = part.removeprefix("Case=")
         elif part.startswith("Number="):
             number = part.removeprefix("Number=")
-    return case, number
+        elif part.startswith("Gender="):
+            gender = part.removeprefix("Gender=")
+    return case, number, gender
+
+
+def _parse_person(feats: str) -> str:
+    """Extract ``Person`` from a UD FEATS string.
+
+    Returns ``""`` when absent.
+    """
+    for part in feats.split("|"):
+        part = part.strip()
+        if part.startswith("Person="):
+            return part.removeprefix("Person=")
+    return ""
 
 
 # Avoid importing classla at module level (CI guard).
 # The type alias lets us reference the type without a top-level import.
 try:
     from classla import Pipeline as ClasslaPipeline
-except ImportError:
+except ImportError:  # pragma: no cover — optional dep; classla presence is environment-dependent
     ClasslaPipeline = None  # type: ignore[misc,assignment]
+
+
+# ── Factory ────────────────────────────────────────────────────────────────
+
+
+@lru_cache(maxsize=1)
+def get_lemmatizer() -> Lemmatizer:
+    """Return a cached lemmatizer based on ``settings.lemmatizer_type``.
+
+    * ``"lowercase"`` (default) — ``LowercaseLemmatizer``
+    * ``"classla"`` — ``ClasslaLemmatizer``, falling back to ``LowercaseLemmatizer``
+      with a logged warning if classla is not importable.
+    """
+    from app.config import settings
+
+    lemmatizer_type = settings.lemmatizer_type
+    if lemmatizer_type == "classla":
+        try:
+            import classla  # noqa: F401 — check importability at factory time
+
+            return ClasslaLemmatizer()
+        except ImportError:
+            _logger.warning(
+                "classla not installed; falling back to LowercaseLemmatizer. "
+                "Install with `pip install classla` and set lemmatizer_type=classla."
+            )
+    return LowercaseLemmatizer()
+
+
+def lemmatize_surfaces_in_context(
+    surfaces: list[str],
+    sentence: str,
+    lemmatizer: Lemmatizer,
+    language_code: str,
+) -> list[str]:
+    """Lemmatize each surface using its *sentence* context, with a single-word fallback.
+
+    Slovene lemmas are POS-dependent: classla reads the bare token ``dobro`` as the
+    adverb (lemma ``dobro``) and bare ``hotel`` as the verb ``hoteti`` — but ``dobro``
+    in *"Vse je dobro"* as the adjective (lemma ``dober``) and ``hotel`` in *"To je
+    hotel"* as the noun. Lemmatizing tokens in isolation therefore mis-keys them and
+    they never match the dictionary-form cards in the DB. We instead analyze the whole
+    *sentence* once and map each *surface* to its in-context lemma, falling back to
+    single-word ``lemmatize`` when a surface isn't found in the analysis (tokenization
+    or punctuation mismatch).
+
+    For ``LowercaseLemmatizer`` ``analyze_sentence`` is a per-token lowercasing, so the
+    result is identical to the old single-word path — this change is a no-op for the
+    default lemmatizer and only sharpens the real (classla) engine.
+    """
+    context = {ta.surface.lower(): ta.lemma for ta in lemmatizer.analyze_sentence(sentence, language_code)}
+    result: list[str] = []
+    for surface in surfaces:
+        key = surface.lower()
+        if key in context:
+            result.append(context[key])
+        else:
+            result.append(lemmatizer.lemmatize(surface, language_code))
+    return result

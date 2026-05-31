@@ -17,7 +17,7 @@ from app.models.curriculum import CurriculumDay
 from app.models.language import Language
 from app.models.lesson import KeyPhraseInfo, Lesson
 from app.models.strategy import ContentStrategy
-from app.srs.lemmatizer import LowercaseLemmatizer
+from app.srs.lemmatizer import get_lemmatizer, lemmatize_surfaces_in_context
 from app.srs.tokenizer import tokenize
 
 logger = logging.getLogger(__name__)
@@ -37,12 +37,13 @@ def _extract_all_lemmas(data: dict, language: Language) -> set[str]:
     Uses the same lemmatizer pipeline as extract_transcript so the keyspace
     stays in sync when a real lemmatizer (e.g. stanza) replaces the default.
     """
-    lemmatizer = LowercaseLemmatizer()
+    lemmatizer = get_lemmatizer()
     lemmas: set[str] = set()
     for scene in data.get("scenes", []):
         for line in scene.get("lines", []):
-            for surface in tokenize(line.get("text", "")):
-                lemmas.add(lemmatizer.lemmatize(surface, language.code))
+            text = line.get("text", "")
+            surfaces = tokenize(text)
+            lemmas.update(lemmatize_surfaces_in_context(surfaces, text, lemmatizer, language.code))
     return lemmas
 
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
 from app.srs.collocation_matcher import match_spans
 from app.srs.database import SRSDatabase
-from app.srs.lemmatizer import Lemmatizer
+from app.srs.lemmatizer import Lemmatizer, lemmatize_surfaces_in_context
 from app.srs.tokenizer import tokenize
 
 
@@ -48,9 +48,16 @@ def _build_collocation_index(
     lemmatizer: Lemmatizer,
     language_code: str,
 ) -> dict[tuple[str, ...], int]:
-    """Build lemma-tuple → DB id index for multi-word collocation matching."""
+    """Build lemma-tuple → DB id index for multi-word collocation matching.
+
+    Lemmatizes each collocation's tokens in the context of its own text so the
+    keys stay consistent with the sentence-context lemmas used for the dialogue
+    (otherwise a POS-ambiguous word like ``dobro`` would key differently on the
+    two sides and the span would never match).
+    """
     return {
-        tuple(lemmatizer.lemmatize(t, language_code) for t in tokenize(text)): coll_id for coll_id, text in collocations
+        tuple(lemmatize_surfaces_in_context(tokenize(text), text, lemmatizer, language_code)): coll_id
+        for coll_id, text in collocations
     }
 
 
@@ -83,7 +90,7 @@ def extract_transcript(
                 continue  # skip narrator/English lines
 
             surfaces = tokenize(phrase.text)
-            lemmas = [lemmatizer.lemmatize(s, lesson.language_code) for s in surfaces]
+            lemmas = lemmatize_surfaces_in_context(surfaces, phrase.text, lemmatizer, lesson.language_code)
 
             # Resolve per-token SRS state and item id
             words: list[WordToken] = []

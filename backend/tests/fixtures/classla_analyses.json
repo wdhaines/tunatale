@@ -1,0 +1,346 @@
+{
+  "Grem v Ljubljano.": [
+    {
+      "surface": "Grem",
+      "lemma": "iti",
+      "upos": "VERB",
+      "case": "",
+      "number": "Sing",
+      "person": "1",
+      "gender": ""
+    },
+    {
+      "surface": "v",
+      "lemma": "v",
+      "upos": "ADP",
+      "case": "Acc",
+      "number": "",
+      "person": "",
+      "gender": ""
+    },
+    {
+      "surface": "Ljubljano",
+      "lemma": "Ljubljana",
+      "upos": "PROPN",
+      "case": "Acc",
+      "number": "Sing",
+      "person": "",
+      "gender": "Fem"
+    },
+    {
+      "surface": ".",
+      "lemma": ".",
+      "upos": "PUNCT",
+      "case": "",
+      "number": "",
+      "person": "",
+      "gender": ""
+    }
+  ],
+  "Sem v hotelu.": [
+    {
+      "surface": "Sem",
+      "lemma": "biti",
+      "upos": "AUX",
+      "case": "",
+      "number": "Sing",
+      "person": "1",
+      "gender": ""
+    },
+    {
+      "surface": "v",
+      "lemma": "v",
+      "upos": "ADP",
+      "case": "Loc",
+      "number": "",
+      "person": "",
+      "gender": ""
+    },
+    {
+      "surface": "hotelu",
+      "lemma": "hotel",
+      "upos": "NOUN",
+      "case": "Loc",
+      "number": "Sing",
+      "person": "",
+      "gender": "Masc"
+    },
+    {
+      "surface": ".",
+      "lemma": ".",
+      "upos": "PUNCT",
+      "case": "",
+      "number": "",
+      "person": "",
+      "gender": ""
+    }
+  ],
+  "Si v Ljubljani?": [
+    {
+      "surface": "Si",
+      "lemma": "se",
+      "upos": "PRON",
+      "case": "Dat",
+      "number": "",
+      "person": "",
+      "gender": ""
+    },
+    {
+      "surface": "v",
+      "lemma": "v",
+      "upos": "ADP",
+      "case": "Loc",
+      "number": "",
+      "person": "",
+      "gender": ""
+    },
+    {
+      "surface": "Ljubljani",
+      "lemma": "Ljubljana",
+      "upos": "PROPN",
+      "case": "Loc",
+      "number": "Sing",
+      "person": "",
+      "gender": "Fem"
+    },
+    {
+      "surface": "?",
+      "lemma": "?",
+      "upos": "PUNCT",
+      "case": "",
+      "number": "",
+      "person": "",
+      "gender": ""
+    }
+  ],
+  "Je to dobro?": [
+    {
+      "surface": "Je",
+      "lemma": "biti",
+      "upos": "AUX",
+      "case": "",
+      "number": "Sing",
+      "person": "3",
+      "gender": ""
+    },
+    {
+      "surface": "to",
+      "lemma": "ta",
+      "upos": "DET",
+      "case": "Nom",
+      "number": "Sing",
+      "person": "",
+      "gender": "Neut"
+    },
+    {
+      "surface": "dobro",
+      "lemma": "dober",
+      "upos": "ADJ",
+      "case": "Nom",
+      "number": "Sing",
+      "person": "",
+      "gender": "Neut"
+    },
+    {
+      "surface": "?",
+      "lemma": "?",
+      "upos": "PUNCT",
+      "case": "",
+      "number": "",
+      "person": "",
+      "gender": ""
+    }
+  ],
+  "Ni problema.": [
+    {
+      "surface": "Ni",
+      "lemma": "biti",
+      "upos": "VERB",
+      "case": "",
+      "number": "Sing",
+      "person": "3",
+      "gender": ""
+    },
+    {
+      "surface": "problema",
+      "lemma": "problem",
+      "upos": "NOUN",
+      "case": "Gen",
+      "number": "Sing",
+      "person": "",
+      "gender": "Masc"
+    },
+    {
+      "surface": ".",
+      "lemma": ".",
+      "upos": "PUNCT",
+      "case": "",
+      "number": "",
+      "person": "",
+      "gender": ""
+    }
+  ],
+  "Imam eno kavo.": [
+    {
+      "surface": "Imam",
+      "lemma": "imeti",
+      "upos": "VERB",
+      "case": "",
+      "number": "Sing",
+      "person": "1",
+      "gender": ""
+    },
+    {
+      "surface": "eno",
+      "lemma": "en",
+      "upos": "NUM",
+      "case": "Acc",
+      "number": "Sing",
+      "person": "",
+      "gender": "Fem"
+    },
+    {
+      "surface": "kavo",
+      "lemma": "kava",
+      "upos": "NOUN",
+      "case": "Acc",
+      "number": "Sing",
+      "person": "",
+      "gender": "Fem"
+    },
+    {
+      "surface": ".",
+      "lemma": ".",
+      "upos": "PUNCT",
+      "case": "",
+      "number": "",
+      "person": "",
+      "gender": ""
+    }
+  ],
+  "Dobro jutro.": [
+    {
+      "surface": "Dobro",
+      "lemma": "dober",
+      "upos": "ADJ",
+      "case": "Nom",
+      "number": "Sing",
+      "person": "",
+      "gender": "Neut"
+    },
+    {
+      "surface": "jutro",
+      "lemma": "jutro",
+      "upos": "NOUN",
+      "case": "Nom",
+      "number": "Sing",
+      "person": "",
+      "gender": "Neut"
+    },
+    {
+      "surface": ".",
+      "lemma": ".",
+      "upos": "PUNCT",
+      "case": "",
+      "number": "",
+      "person": "",
+      "gender": ""
+    }
+  ],
+  "Lepa hiša.": [
+    {
+      "surface": "Lepa",
+      "lemma": "lep",
+      "upos": "ADJ",
+      "case": "Nom",
+      "number": "Sing",
+      "person": "",
+      "gender": "Fem"
+    },
+    {
+      "surface": "hiša",
+      "lemma": "hiša",
+      "upos": "NOUN",
+      "case": "Nom",
+      "number": "Sing",
+      "person": "",
+      "gender": "Fem"
+    },
+    {
+      "surface": ".",
+      "lemma": ".",
+      "upos": "PUNCT",
+      "case": "",
+      "number": "",
+      "person": "",
+      "gender": ""
+    }
+  ],
+  "Lepo mesto.": [
+    {
+      "surface": "Lepo",
+      "lemma": "lep",
+      "upos": "ADJ",
+      "case": "Nom",
+      "number": "Sing",
+      "person": "",
+      "gender": "Neut"
+    },
+    {
+      "surface": "mesto",
+      "lemma": "mesto",
+      "upos": "NOUN",
+      "case": "Nom",
+      "number": "Sing",
+      "person": "",
+      "gender": "Neut"
+    },
+    {
+      "surface": ".",
+      "lemma": ".",
+      "upos": "PUNCT",
+      "case": "",
+      "number": "",
+      "person": "",
+      "gender": ""
+    }
+  ],
+  "Študenta v mestu.": [
+    {
+      "surface": "Študenta",
+      "lemma": "študent",
+      "upos": "NOUN",
+      "case": "Acc",
+      "number": "Sing",
+      "person": "",
+      "gender": "Masc"
+    },
+    {
+      "surface": "v",
+      "lemma": "v",
+      "upos": "ADP",
+      "case": "Loc",
+      "number": "",
+      "person": "",
+      "gender": ""
+    },
+    {
+      "surface": "mestu",
+      "lemma": "mesto",
+      "upos": "NOUN",
+      "case": "Loc",
+      "number": "Sing",
+      "person": "",
+      "gender": "Neut"
+    },
+    {
+      "surface": ".",
+      "lemma": ".",
+      "upos": "PUNCT",
+      "case": "",
+      "number": "",
+      "person": "",
+      "gender": ""
+    }
+  ]
+}

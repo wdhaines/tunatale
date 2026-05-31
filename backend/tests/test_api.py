@@ -1189,6 +1189,151 @@ class TestListenClozeIntegration:
             ).fetchall()
         assert rows[0]["cnt"] == 1
 
+    async def test_listen_analyzer_recall_adds_missed_morphology(self, monkeypatch):
+        """Analyzer-driven recall catches a form the LLM's morphology_focus missed."""
+        from app.srs.lemmatizer import TokenAnalysis
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_lemma("Grem", "iti")
+        stub.set_lemma("Sem", "biti")
+        stub.set_analysis("hotelu", "hotel", case="Loc", number="Sing", upos="NOUN", gender="Masc")
+        stub.set_analysis("študenta", "študent", case="Acc", number="Sing", upos="NOUN", gender="Masc")
+        stub.set_analysis("Ljubljano", "Ljubljana", upos="PROPN")
+        stub.set_analysis("grem", "iti", number="Sing", person="1", upos="VERB")
+        stub.set_sentence(
+            "Grem k študenta v Ljubljano. Sem v hotelu. Brez kave.",
+            [
+                TokenAnalysis(surface="Grem", lemma="iti", upos="VERB", case="", number="Sing", person="1", gender=""),
+                TokenAnalysis(surface="k", lemma="k", upos="", case="", number="", person="", gender=""),
+                TokenAnalysis(
+                    surface="študenta",
+                    lemma="študent",
+                    upos="NOUN",
+                    case="Acc",
+                    number="Sing",
+                    person="",
+                    gender="Masc",
+                ),
+                TokenAnalysis(surface="v", lemma="v", upos="", case="", number="", person="", gender=""),
+                TokenAnalysis(
+                    surface="Ljubljano",
+                    lemma="Ljubljana",
+                    upos="PROPN",
+                    case="Acc",
+                    number="Sing",
+                    person="",
+                    gender="Fem",
+                ),
+                TokenAnalysis(surface="Sem", lemma="biti", upos="AUX", case="", number="Sing", person="1", gender=""),
+                TokenAnalysis(surface="v", lemma="v", upos="", case="", number="", person="", gender=""),
+                TokenAnalysis(
+                    surface="hotelu", lemma="hotel", upos="NOUN", case="Loc", number="Sing", person="", gender="Masc"
+                ),
+                TokenAnalysis(surface="Brez", lemma="brez", upos="ADP", case="", number="", person="", gender=""),
+                # Genitive noun: non-degenerate (kave≠kava), not a function word, but
+                # gen is A2+ → ud_feats_to_tt_feature returns None → recall must skip it.
+                TokenAnalysis(
+                    surface="kave", lemma="kava", upos="NOUN", case="Gen", number="Sing", person="", gender="Fem"
+                ),
+            ],
+        )
+
+        # In morphology_focus: Ljubljano, študenta. Not in it: hotelu (analyzer
+        # recall must add it) and kave (recall must reject it as non-A1 genitive).
+        phrase_text = "Grem k študenta v Ljubljano. Sem v hotelu. Brez kave."
+        db = await self._setup_case_cloze_lesson(
+            phrase_text=phrase_text,
+            case_clozes_enabled=True,
+            extra_morphology=[],
+        )
+        # Override morphology_focus to include Ljubljano and študenta
+        from app.storage.store import ContentStore
+
+        store: ContentStore = app.state.content_store
+        lesson = store.get_lesson("case-cloze-1")
+        lesson.generation_metadata["morphology_focus"] = [
+            {"lemma": "ljubljana", "surface": "Ljubljano", "feature": "noun:acc:sg", "gloss": "Ljubljana"},
+            {"lemma": "študent", "surface": "študenta", "feature": "noun:acc:sg", "gloss": "student"},
+        ]
+        store.save_lesson("case-cloze-1", "curriculum-1", 1, lesson)
+
+        monkeypatch.setattr("app.api.srs._lemmatizer", stub)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-1"})
+        assert response.status_code == 200
+
+        # Ljubljano should have a morphology-cloze row (from LLM)
+        with db._get_conn() as conn:
+            ljubljano_row = conn.execute(
+                "SELECT text, lemma, disambig_key FROM collocations WHERE text = ? AND disambig_key LIKE ?",
+                ("Ljubljano", "morph:noun-acc-sg"),
+            ).fetchone()
+        assert ljubljano_row is not None, "Ljubljano should have a morphology-cloze row (from LLM)"
+
+        # hotelu should also have a morphology-cloze row (from analyzer recall)
+        with db._get_conn() as conn:
+            hotelu_row = conn.execute(
+                "SELECT text, lemma, disambig_key FROM collocations WHERE text = ? AND disambig_key LIKE ?",
+                ("hotelu", "morph:noun-loc-sg"),
+            ).fetchone()
+        assert hotelu_row is not None, "hotelu should have a morphology-cloze row (from analyzer recall)"
+
+        # študenta should have a morphology-cloze row (from morphology_focus directly)
+        with db._get_conn() as conn:
+            student_row = conn.execute(
+                "SELECT text, lemma, disambig_key FROM collocations WHERE text = ? AND disambig_key LIKE ?",
+                ("študenta", "morph:noun-acc-sg"),
+            ).fetchone()
+        assert student_row is not None, "študenta should have a morphology-cloze row (from LLM)"
+
+        # kave (genitive singular) is A2+ morphology — recall must NOT create a
+        # morphology cloze for it, even though it's non-degenerate and not a function word.
+        with db._get_conn() as conn:
+            kave_row = conn.execute(
+                "SELECT 1 FROM collocations WHERE text = ? AND disambig_key LIKE 'morph:%'",
+                ("kave",),
+            ).fetchone()
+        assert kave_row is None, "genitive 'kave' (A2+) must not get a morphology cloze"
+
+    async def test_listen_analyzer_recall_skips_mismatched_language(self, monkeypatch):
+        """Phrase with different language_code in NATURAL_SPEED is skipped in recall."""
+        from app.models.lesson import Phrase
+        from app.srs.lemmatizer import TokenAnalysis
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_sentence(
+            "Grem v Ljubljano. Sem v hotelu.",
+            [
+                TokenAnalysis(surface="Grem", lemma="grem", upos="", case="", number="", person="", gender=""),
+                TokenAnalysis(surface="v", lemma="v", upos="", case="", number="", person="", gender=""),
+                TokenAnalysis(
+                    surface="Ljubljano", lemma="ljubljano", upos="", case="", number="", person="", gender=""
+                ),
+                TokenAnalysis(surface="Sem", lemma="sem", upos="", case="", number="", person="", gender=""),
+                TokenAnalysis(surface="v", lemma="v", upos="", case="", number="", person="", gender=""),
+                TokenAnalysis(surface="hotelu", lemma="hotelu", upos="", case="", number="", person="", gender=""),
+            ],
+        )
+
+        await self._setup_case_cloze_lesson(case_clozes_enabled=True)
+        # Add a phrase with mismatched language_code to the 1st NATURAL_SPEED section
+        from app.storage.store import ContentStore
+
+        store: ContentStore = app.state.content_store
+        lesson = store.get_lesson("case-cloze-1")
+        natural = next(s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED)
+        natural.phrases.append(
+            Phrase(text="Hello world.", voice_id="eng-1", language_code="en", role="eng-1"),
+        )
+        store.save_lesson("case-cloze-1", "curriculum-1", 1, lesson)
+
+        monkeypatch.setattr("app.api.srs._lemmatizer", stub)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-1"})
+        assert response.status_code == 200
+
     async def test_listen_case_cloze_skips_degenerate_lemma_equals_surface(self):
         """No morphology-cloze when generator reports lemma == surface (hint would reveal answer)."""
         db = await self._setup_case_cloze_lesson(

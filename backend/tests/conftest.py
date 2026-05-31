@@ -15,6 +15,15 @@ pytest.register_assert_rewrite("tests.conftest")
 
 
 @pytest.fixture(autouse=True)
+def _settings_overrides(monkeypatch, tmp_path):
+    """Override settings that touch user data to tmp_path so tests never write to ~/.tunatale."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "anki_backup_dir", tmp_path / "anki-backups")
+    monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'tunatale.db'}")
+
+
+@pytest.fixture(autouse=True)
 def _autoclose_sqlite_connections(monkeypatch):
     """Track and close every sqlite3.Connection opened during a test.
 
@@ -552,6 +561,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run @pytest.mark.oracle tests (spawns `uv run --with anki` subprocesses).",
     )
+    parser.addoption(
+        "--run-classla",
+        action="store_true",
+        default=False,
+        help="Run @pytest.mark.classla tests (exercises the real classla Slovene pipeline).",
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -559,15 +574,23 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "oracle: requires --run-oracle (drives Anki's scheduler via subprocess).",
     )
+    config.addinivalue_line(
+        "markers",
+        "classla: requires --run-classla (exercises the real classla Slovene pipeline).",
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if config.getoption("--run-oracle"):
-        return
-    skip_oracle = pytest.mark.skip(reason="--run-oracle not specified")
-    for item in items:
-        if "oracle" in item.keywords:
-            item.add_marker(skip_oracle)
+    if not config.getoption("--run-classla"):
+        skip_classla = pytest.mark.skip(reason="--run-classla not specified")
+        for item in items:
+            if "classla" in item.keywords:
+                item.add_marker(skip_classla)
+    if not config.getoption("--run-oracle"):
+        skip_oracle = pytest.mark.skip(reason="--run-oracle not specified")
+        for item in items:
+            if "oracle" in item.keywords:
+                item.add_marker(skip_oracle)
 
 
 @pytest.fixture

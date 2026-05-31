@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     anki_model_name: str = ""
     forvo_api_key: str = ""
     pixabay_api_key: str = ""
+    lemmatizer_type: str = "lowercase"  # lowercase | classla
+
     anki_new_per_day_default: int = 20
     anki_reviews_per_day_default: int = 200
 

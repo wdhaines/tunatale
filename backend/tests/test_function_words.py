@@ -8,6 +8,7 @@ from app.srs.function_words import (
     is_function_word,
     make_cloze_text,
     make_morphology_cloze_text,
+    ud_feats_to_tt_feature,
 )
 
 
@@ -193,3 +194,71 @@ class TestSLOVENE_FUNCTION_WORDS:
         content = {"kava", "voda", "banka", "mesto", "hotel", "hvala", "prosim"}
         for word in content:
             assert word not in SLOVENE_FUNCTION_WORDS, f"{word!r} should NOT be in SLOVENE_FUNCTION_WORDS"
+
+
+class TestUdFeatsToTtFeature:
+    def test_verb_1sg(self):
+        assert ud_feats_to_tt_feature("VERB", number="Sing", person="1") == "verb:1sg"
+
+    def test_verb_3pl(self):
+        assert ud_feats_to_tt_feature("VERB", number="Plur", person="3") == "verb:3pl"
+
+    def test_aux_1sg(self):
+        assert ud_feats_to_tt_feature("AUX", number="Sing", person="1") == "verb:1sg"
+
+    def test_aux_3sg(self):
+        assert ud_feats_to_tt_feature("AUX", number="Sing", person="3") == "verb:3sg"
+
+    def test_aux_missing_person_returns_none(self):
+        assert ud_feats_to_tt_feature("AUX", number="Sing", person="") is None
+
+    def test_aux_missing_number_returns_none(self):
+        assert ud_feats_to_tt_feature("AUX", person="1") is None
+
+    def test_verb_missing_person_returns_none(self):
+        assert ud_feats_to_tt_feature("VERB", number="Sing", person="") is None
+
+    def test_verb_missing_number_returns_none(self):
+        assert ud_feats_to_tt_feature("VERB", person="1") is None
+
+    def test_noun_nom_sg(self):
+        assert ud_feats_to_tt_feature("NOUN", case="Nom", number="Sing") == "noun:nom:sg"
+
+    def test_noun_acc_sg(self):
+        assert ud_feats_to_tt_feature("NOUN", case="Acc", number="Sing") == "noun:acc:sg"
+
+    def test_noun_loc_sg(self):
+        assert ud_feats_to_tt_feature("NOUN", case="Loc", number="Sing") == "noun:loc:sg"
+
+    def test_noun_gen_returns_none(self):
+        assert ud_feats_to_tt_feature("NOUN", case="Gen", number="Sing") is None
+
+    def test_noun_dat_returns_none(self):
+        assert ud_feats_to_tt_feature("NOUN", case="Dat", number="Sing") is None
+
+    def test_noun_ins_returns_none(self):
+        assert ud_feats_to_tt_feature("NOUN", case="Ins", number="Sing") is None
+
+    def test_noun_nom_pl(self):
+        assert ud_feats_to_tt_feature("NOUN", case="Nom", number="Plur") == "noun:nom:pl"
+
+    def test_noun_nom_dual(self):
+        assert ud_feats_to_tt_feature("NOUN", case="Nom", number="Dual") == "noun:nom:du"
+
+    def test_adj_nom_masc_sg(self):
+        assert ud_feats_to_tt_feature("ADJ", case="Nom", number="Sing", gender="Masc") == "adj:nom:m:sg"
+
+    def test_adj_nom_fem_pl(self):
+        assert ud_feats_to_tt_feature("ADJ", case="Nom", number="Plur", gender="Fem") == "adj:nom:f:pl"
+
+    def test_adj_non_nom_returns_none(self):
+        assert ud_feats_to_tt_feature("ADJ", case="Gen", number="Sing", gender="Masc") is None
+
+    def test_adj_nom_missing_gender_returns_none(self):
+        assert ud_feats_to_tt_feature("ADJ", case="Nom", number="Sing") is None
+
+    def test_unknown_upos_returns_none(self):
+        assert ud_feats_to_tt_feature("PROPN", case="Nom", number="Sing") is None
+
+    def test_empty_upos_returns_none(self):
+        assert ud_feats_to_tt_feature("") is None

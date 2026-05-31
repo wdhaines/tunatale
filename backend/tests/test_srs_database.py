@@ -2430,18 +2430,17 @@ class TestDatabaseURLParsing:
             assert "collocations" in table_names
         db.close()
 
-    def test_sqlite_url_with_relative_path(self, srs_db):
+    def test_sqlite_url_with_relative_path(self, srs_db, tmp_path):
         """Test that relative paths in sqlite:// URLs work correctly."""
         # srs_db fixture uses :memory: which doesn't test the path parsing
         # This test ensures the parsing logic works
         from app.srs.database import SRSDatabase
 
-        # Test with the actual format used in settings
-        url = "sqlite:///./tunatale.db"
+        db_path = tmp_path / "tunatale.db"
+        url = f"sqlite:///{db_path}"
         # Just verify it doesn't raise an error
         try:
             db = SRSDatabase(url)
-            # Try to connect
             with db._get_conn() as conn:
                 conn.execute("SELECT 1")
             db.close()
