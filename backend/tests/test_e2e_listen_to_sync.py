@@ -140,12 +140,12 @@ class TestListenToSyncRoundTrip:
         kje = db.get_collocation_by_lemma("kje")
         assert kje is not None
         assert kje.syntactic_unit.card_type == "cloze"
-        assert kje.syntactic_unit.source_sentence == "Kje je banka?"
+        assert kje.syntactic_unit.source_sentence == "{{c1::Kje}} je banka?"
 
         je = db.get_collocation_by_lemma("je")
         assert je is not None
         assert je.syntactic_unit.card_type == "cloze"
-        assert je.syntactic_unit.source_sentence == "Kje je banka?"
+        assert je.syntactic_unit.source_sentence == "Kje {{c1::je}} banka?"
 
         # banka is a content word → created as vocab
         banka = db.get_collocation_by_lemma("banka")

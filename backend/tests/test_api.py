@@ -579,7 +579,7 @@ class TestSRSEndpoints:
         # kje and je appear in both phrases, but only first sentence stored
         kje = db.get_collocation_by_lemma("kje")
         assert kje is not None
-        assert kje.syntactic_unit.source_sentence == "Kje je banka?"
+        assert kje.syntactic_unit.source_sentence == "{{c1::Kje}} je banka?"
 
     async def test_listen_registers_collocations(self):
         from app.srs.database import SRSDatabase
@@ -1011,7 +1011,32 @@ class TestListenClozeIntegration:
         item_je = db.get_collocation_by_lemma("je")
         assert item_je is not None
         assert item_je.syntactic_unit.card_type == "cloze"
-        assert item_je.syntactic_unit.source_sentence == "Kje je banka?"
+        assert item_je.syntactic_unit.source_sentence == "Kje {{c1::je}} banka?"
+
+    async def test_listen_cloze_blanks_surface_not_lemma(self, monkeypatch):
+        """A function-word surface whose lemma differs (classla: "sem"→"biti") must be
+        blanked by its SURFACE in the stored cloze, not the dictionary lemma (which
+        isn't in the sentence). Regression for the classla blank-front cloze bug
+        (Phase 2b). With the default lowercase lemmatizer lemma==surface, so this
+        forces the divergence via a fake lemmatizer."""
+        import app.api.srs as srs_mod
+
+        def fake_lemmatize(surfaces, text, lemmatizer, language_code):
+            # Mimic classla: copula surface "sem" → lemma "biti"; else lowercase.
+            return ["biti" if s.lower() == "sem" else s.lower() for s in surfaces]
+
+        monkeypatch.setattr(srs_mod, "lemmatize_surfaces_in_context", fake_lemmatize)
+
+        db = await self._setup_lesson(phrase_text="Sem doma.")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        # Card is keyed by the lemma "biti", but the blank lands on the surface "Sem".
+        item = db.get_collocation_by_lemma("biti")
+        assert item is not None
+        assert item.syntactic_unit.card_type == "cloze"
+        assert item.syntactic_unit.source_sentence == "{{c1::Sem}} doma."
 
     async def test_listen_creates_vocab_for_unknown_content_word(self):
         """Unknown content-word lemma → vocab row, state='new', both directions present."""
@@ -1855,7 +1880,7 @@ class TestListenClozeIntegration:
         kje = items.get("kje")
         assert kje is not None
         assert kje["card_type"] == "cloze"
-        assert kje["source_sentence"] == "Kje je banka?"
+        assert kje["source_sentence"] == "{{c1::Kje}} je banka?"
 
         banka = items.get("banka")
         assert banka is not None

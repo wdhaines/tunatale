@@ -28,7 +28,12 @@ from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, build_revlog_row, schedule
-from app.srs.function_words import is_function_word, make_morphology_cloze_text, ud_feats_to_tt_feature
+from app.srs.function_words import (
+    is_function_word,
+    make_cloze_text,
+    make_morphology_cloze_text,
+    ud_feats_to_tt_feature,
+)
 from app.srs.lemmatizer import get_lemmatizer, lemmatize_surfaces_in_context
 from app.srs.queue_stats import (
     advance_learning_cutoff,
@@ -402,6 +407,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     unique_lemmas: set[str] = set()
     lemma_to_sentence: dict[str, str] = {}
     lemma_to_surfaces: dict[str, set[str]] = {}
+    # The surface as it first appeared, paired with lemma_to_sentence — used to
+    # blank the *surface* (not the dictionary lemma) in plain function-word clozes.
+    lemma_to_first_surface: dict[str, str] = {}
     if natural_speed is not None:
         for phrase in natural_speed.phrases:
             if phrase.language_code != lesson.language_code:
@@ -412,6 +420,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 unique_lemmas.add(lemma)
                 if lemma not in lemma_to_sentence:
                     lemma_to_sentence[lemma] = phrase.text
+                    lemma_to_first_surface[lemma] = surface
                 lemma_to_surfaces.setdefault(lemma, set()).add(surface)
 
     # ── surface_to_analysis from generator output, grounded by lemmatizer ─
@@ -457,6 +466,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         if existing is None:
             # ── Create new row (cloze for function words, vocab for content words) ──
             sent = lemma_to_sentence.get(lemma, "")
+            # Cloze rows blank the surface as it appeared, not the dictionary lemma:
+            # the lemmatizer may map an inflected surface to a different lemma (classla
+            # "sem" → "biti") that isn't in the sentence. Store the cloze pre-built;
+            # sync's idempotent make_cloze_text passes it through. (Phase 2b.)
+            stored_sentence = make_cloze_text(lemma_to_first_surface.get(lemma, lemma), sent) if is_func else sent
             unit = SyntacticUnit(
                 text=lemma,
                 translation=token_glosses.get(lemma, ""),
@@ -465,7 +479,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 source="llm",
                 lemma=lemma,
                 card_type="cloze" if is_func else "vocab",
-                source_sentence=sent,
+                source_sentence=stored_sentence,
                 source_sentence_translation=sentence_translations.get(sent, ""),
             )
             db.add_collocation(unit, language_code=lesson.language_code)
@@ -485,7 +499,10 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 # sentence in Anki / TT review. Mark dirty so sync_push picks it
                 # up and rewrites Back Extra.
                 if not existing.syntactic_unit.source_sentence_translation:
-                    sent = existing.syntactic_unit.source_sentence or lemma_to_sentence.get(lemma, "")
+                    # Translations are keyed by the raw sentence; the stored
+                    # source_sentence may now be pre-clozed (Phase 2b), so use the raw
+                    # sentence from this lesson (lemma is always present in the loop).
+                    sent = lemma_to_sentence.get(lemma, "")
                     new_st = sentence_translations.get(sent, "")
                     if new_st:
                         db.set_sentence_translation_dirty(existing.guid, new_st)
