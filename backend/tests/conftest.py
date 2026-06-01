@@ -16,11 +16,22 @@ pytest.register_assert_rewrite("tests.conftest")
 
 @pytest.fixture(autouse=True)
 def _settings_overrides(monkeypatch, tmp_path):
-    """Override settings that touch user data to tmp_path so tests never write to ~/.tunatale."""
+    """Override settings that touch user data to tmp_path so tests never write to ~/.tunatale.
+
+    Also pins the lemmatizer to the deterministic ``lowercase`` default so the
+    suite never depends on the developer's ``.env`` ``lemmatizer_type`` (a local
+    ``classla`` flag would change computed lemmas and break lemma-sensitive tests).
+    The module-level ``app.api.srs._lemmatizer`` is bound once at import, so it is
+    re-bound here too; tests that want a stub still monkeypatch it themselves.
+    """
     from app.config import settings
+    from app.srs.lemmatizer import get_lemmatizer
 
     monkeypatch.setattr(settings, "anki_backup_dir", tmp_path / "anki-backups")
     monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'tunatale.db'}")
+    monkeypatch.setattr(settings, "lemmatizer_type", "lowercase")
+    get_lemmatizer.cache_clear()
+    monkeypatch.setattr("app.api.srs._lemmatizer", get_lemmatizer())
 
 
 @pytest.fixture(autouse=True)

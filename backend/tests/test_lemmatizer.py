@@ -201,6 +201,21 @@ class TestGetLemmatizer:
         get_lemmatizer.cache_clear()
 
 
+def test_suite_pins_lowercase_lemmatizer_regardless_of_env():
+    """Regression: the autouse _settings_overrides fixture pins the lemmatizer to
+    lowercase so the suite never depends on the developer's .env lemmatizer_type.
+
+    Without the pin, `lemmatizer_type=classla` in a local .env leaks into the
+    suite and breaks lemma-sensitive listen/story/transcript tests (caught by a
+    full ./test.sh run after the flag was set in .env)."""
+    import app.api.srs as srs_mod
+    from app.config import settings
+    from app.srs.lemmatizer import LowercaseLemmatizer
+
+    assert settings.lemmatizer_type == "lowercase"
+    assert isinstance(srs_mod._lemmatizer, LowercaseLemmatizer)
+
+
 @pytest.fixture(scope="session")
 def classla_lemmatizer():
     """Session-scoped ClasslaLemmatizer — one pipeline load for all classla tests.
