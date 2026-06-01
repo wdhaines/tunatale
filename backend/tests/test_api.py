@@ -737,6 +737,55 @@ class TestSRSEndpoints:
         assert banka is not None
         assert banka.syntactic_unit.card_type == "vocab"
 
+    async def test_listen_surface_keyed_card_graded_not_duplicated(self, monkeypatch):
+        """A token whose lemma has no card but whose surface matches an existing
+        card (greeting 'dobrodošli' → lemma 'dobrodošel') grades the existing card
+        instead of spawning a 'dobrodošel' duplicate."""
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+        from app.srs.lemmatizer import TokenAnalysis
+        from app.storage.store import ContentStore
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="Dobrodošli", voice_id="female-1", language_code="sl", role="female-1")],
+                )
+            ],
+            key_phrases=[],
+        )
+        db = SRSDatabase(":memory:")
+        db.add_collocation(
+            SyntacticUnit(
+                text="dobrodošli",
+                translation="Welcome.",
+                word_count=1,
+                difficulty=1,
+                source="llm",
+                lemma="dobrodošli",
+            ),
+            language_code="sl",
+        )
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        stub = StubLemmatizer()
+        stub.set_sentence("Dobrodošli", [TokenAnalysis(surface="Dobrodošli", lemma="dobrodošel")])
+        monkeypatch.setattr("app.api.srs._lemmatizer", stub)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        assert response.status_code == 200
+        assert db.get_collocation_by_lemma("dobrodošel") is None
+        assert db.get_collocation_by_lemma("dobrodošli") is not None
+
     async def test_listen_key_phrases_translation_preserved(self):
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore

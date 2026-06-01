@@ -96,6 +96,11 @@ def extract_transcript(
             words: list[WordToken] = []
             for surface, lemma in zip(surfaces, lemmas, strict=True):
                 result = db.get_collocation_by_lemma_with_id(lemma)
+                if result is None and surface.lower() != lemma:
+                    # A card may be keyed by its surface/greeting form (e.g.
+                    # "dobrodošli", whose dictionary lemma "dobrodošel" has no card
+                    # of its own). Fall back to the literal word before giving up.
+                    result = db.get_collocation_by_lemma_with_id(surface.lower())
                 if result is not None:
                     item_id, item = result
                     srs_state = item.state.value

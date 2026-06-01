@@ -444,6 +444,15 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             continue
 
         existing = db.get_collocation_by_lemma(lemma)
+        if existing is None:
+            # A card may be keyed by its surface form (e.g. greeting "dobrodošli",
+            # whose dictionary lemma "dobrodošel" has no card) — grade it rather
+            # than spawning a duplicate.
+            for s in lemma_to_surfaces.get(lemma, set()):
+                if s.lower() != lemma:
+                    existing = db.get_collocation_by_lemma(s.lower())
+                    if existing is not None:
+                        break
 
         if existing is None:
             # ── Create new row (cloze for function words, vocab for content words) ──

@@ -53,6 +53,38 @@ class TestExtractTranscript:
         result = extract_transcript(lesson, self.db, self.lemmatizer)
         assert result.dialogue_lines[0].words[0].srs_state == "new"
 
+    def test_surface_keyed_card_matched_via_surface_fallback(self):
+        """A card keyed by its surface/greeting form is matched even when the
+        lemmatizer reduces the token to a dictionary lemma with no card.
+
+        Regression: 'dobrodošli' (Welcome) is stored under lemma 'dobrodošli',
+        but classla lemmatizes it to 'dobrodošel' → it showed as unknown.
+        """
+        from app.srs.lemmatizer import TokenAnalysis
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        unit = SyntacticUnit(
+            text="dobrodošli",
+            translation="Welcome.",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="dobrodošli",
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        item = self.db.get_collocation("dobrodošli")
+        item.state = SRSState.REVIEW
+        self.db.update_collocation(item)
+
+        stub = StubLemmatizer()
+        stub.set_sentence("Dobrodošli", [TokenAnalysis(surface="Dobrodošli", lemma="dobrodošel")])
+
+        lesson = _make_lesson([("female-1", "Dobrodošli")])
+        result = extract_transcript(lesson, self.db, stub)
+        word = result.dialogue_lines[0].words[0]
+        assert word.srs_state == "review"
+        assert word.translation == "Welcome."
+
     def test_known_word_in_review_state(self):
         unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
         self.db.add_collocation(unit, language_code="sl")
