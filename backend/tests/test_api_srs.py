@@ -1109,15 +1109,18 @@ class TestReviewQueue:
         assert order == [None, 99999, 12345], f"unexpected order: {order}"
 
     async def test_review_queue_new_head_unaffected_by_overfetch_truncation(self, api_app_state):
-        """Layer 32 regression. If `new_prod` overfetch is too small, paired notes
-        whose `prod` falls outside the per-direction limit have their `rec` survive
-        bury (no sibling to bury against). Template sort then puts those rec cards
-        at the head — wrong: in Anki, paired-note `prod` always wins under
-        HighestPosition+gather-bury, and the surviving pool is ord=1 (production).
+        """Layer 32 overfetch sizing, re-grounded for Phase 3. The new-card pool is
+        fetched unbounded-ish per direction so the merge sees every introducible
+        card. Setup: 120 production-only-new notes (recognition already review) with
+        high anki_due, plus a paired both-NEW note (paired_low, rec=10/prod=11).
 
-        Setup: many high-anki_due production-only-new notes (saturating overfetch)
-        + a paired note with low-due rec=10, prod=11. With a too-small overfetch the
-        paired prod is dropped; without truncation, prod survives and rec is buried.
+        Phase 3 (corrected from the old "production-first" premise): paired_low's
+        production is gated out because its recognition is still NEW, so the gate —
+        not an overfetch-truncation accident — leaves recognition to surface, and
+        the template sort (ord 0 before ord 1) puts it at the head. The rec=review
+        notes' productions remain introducible and the overfetch keeps them
+        un-truncated. Empirically Anki introduces recognition before production
+        (604/36 across the user's paired notes), so recognition-first is correct.
         """
         from datetime import date, timedelta
 
@@ -1195,22 +1198,31 @@ class TestReviewQueue:
         from app.api.srs import _compute_live_main
 
         live = _compute_live_main(db)
-        first_new = next((t for t in live if t[1].directions[t[3]].state == SRSState.NEW), None)
-        assert first_new is not None
-        assert first_new[3] == Direction.PRODUCTION, (
-            f"first new should be PRODUCTION (Anki parity); got {first_new[3]} "
-            f"text={first_new[1].syntactic_unit.text!r}"
-        )
+        new_cards = [t for t in live if t[1].directions[t[3]].state == SRSState.NEW]
+        assert new_cards
+        # Phase 3 + template sort: paired_low's recognition (its production is gated
+        # out while recognition is NEW) is the only ord=0 new card and sorts ahead
+        # of the production-only notes' ord=1 cards.
+        first_new = new_cards[0]
+        assert (first_new[1].syntactic_unit.text, first_new[3]) == ("paired_low", Direction.RECOGNITION)
+        prod_texts = {t[1].syntactic_unit.text for t in new_cards if t[3] == Direction.PRODUCTION}
+        # rec=review notes' productions are introducible and not truncated by overfetch.
+        assert any(txt.startswith("prod_only_") for txt in prod_texts)
+        # paired_low's production stays held while its recognition is NEW.
+        assert "paired_low" not in prod_texts
 
-    async def test_review_queue_new_head_matches_anki_gather_bury_template(self, api_app_state):
-        """The časa-vs-sekira regression — Anki's gather adds higher-due siblings first,
-        burying the lower-due one. Template sort then ranks surviving ord=0 (recognition)
-        ahead of surviving ord=1 (production). For two notes:
-          - časa: rec anki_due=1001997, prod anki_due=1001998 (prod higher)
-          - sekira: rec anki_due=1001974, prod anki_due=1001974 (tied)
-        Gather (anki_due DESC, ord ASC) adds: časa prod, časa rec (buried), sekira rec
-        (ord ASC tiebreak), sekira prod (buried). Survivors: časa prod, sekira rec.
-        Template sort by ord ASC: sekira rec first, then časa prod.
+    async def test_review_queue_new_head_recognition_first_for_paired_new(self, api_app_state):
+        """Phase 3 (corrected): for paired-NEW notes the new-queue head is
+        RECOGNITION — production is held until recognition graduates. This matches
+        Anki, which is direction-agnostic and orders new cards by deck position
+        (recognition cards sit at a lower position than production), so recognition
+        is introduced first — empirically 604/36 across the user's paired notes.
+        Supersedes the earlier "production-first" assertion (Layer 28), whose
+        premise was wrong. Two both-NEW notes:
+          - časa: rec anki_due=1001997, prod anki_due=1001998
+          - sekira: rec anki_due=1001974, prod anki_due=1001974
+        Both productions are gated out (recognition still NEW); the surviving
+        recognitions order by gather (anki_due DESC): časa, then sekira.
         """
         from datetime import date
 
@@ -1255,8 +1267,11 @@ class TestReviewQueue:
         queue = resp.json()["queue"]
         new_items = [q for q in queue if q["state"] == "new"]
         assert len(new_items) >= 2
-        assert (new_items[0]["text"], new_items[0]["direction"]) == ("sekira", "recognition")
-        assert (new_items[1]["text"], new_items[1]["direction"]) == ("časa", "production")
+        # Phase 3: both notes are paired-NEW, so both productions are gated out;
+        # the surviving recognitions order by gather (anki_due DESC): časa, sekira.
+        assert (new_items[0]["text"], new_items[0]["direction"]) == ("časa", "recognition")
+        assert (new_items[1]["text"], new_items[1]["direction"]) == ("sekira", "recognition")
+        assert all(q["direction"] == "recognition" for q in new_items)
 
     async def test_review_queue_includes_audio_url_when_audio_exists(self, api_app_state):
         from datetime import date
