@@ -86,6 +86,11 @@ class ClasslaLemmatizer:  # pragma: no cover — requires classla/PyTorch; opt-i
     def __init__(self, language_code: str = "sl") -> None:
         self._language_code = language_code
         self._nlp: ClasslaPipeline | None = None
+        # Lesson text is stable across requests; cache analyses by sentence so the
+        # transcript endpoint doesn't re-run the NLP pipeline on every state-change
+        # refetch (~3.6s → DB-only once warmed). Keyed by exact text, so edited
+        # sentences re-analyze. Bounded by the user's distinct lesson sentences.
+        self._sentence_cache: dict[str, list[TokenAnalysis]] = {}
 
     def _ensure_pipeline(self) -> ClasslaPipeline:
         if self._nlp is None:
@@ -129,6 +134,9 @@ class ClasslaLemmatizer:  # pragma: no cover — requires classla/PyTorch; opt-i
                 TokenAnalysis(surface=t, lemma=t.lower(), upos="", case="", number="", person="", gender="")
                 for t in sentence.split()
             ]
+        cached = self._sentence_cache.get(sentence)
+        if cached is not None:
+            return cached
         nlp = self._ensure_pipeline()
         doc = nlp(sentence)
         results: list[TokenAnalysis] = []
@@ -148,6 +156,7 @@ class ClasslaLemmatizer:  # pragma: no cover — requires classla/PyTorch; opt-i
                         gender=gender,
                     )
                 )
+        self._sentence_cache[sentence] = results
         return results
 
 

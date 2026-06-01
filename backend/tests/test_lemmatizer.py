@@ -270,6 +270,13 @@ class TestClasslaIntegration:
         assert lookup["dobro"].lemma == "dober"
         assert lookup["dobro"].upos == "ADJ"
 
+    def test_analyze_sentence_is_cached(self, classla_lemmatizer):
+        """Re-analyzing the same sentence returns the cached list, so the
+        transcript endpoint doesn't re-run the pipeline on every refetch."""
+        first = classla_lemmatizer.analyze_sentence("Sem v hotelu.", "sl")
+        second = classla_lemmatizer.analyze_sentence("Sem v hotelu.", "sl")
+        assert second is first
+
 
 class TestStubLemmatizer:
     def test_satisfies_protocol(self):
