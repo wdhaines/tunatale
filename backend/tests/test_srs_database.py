@@ -481,6 +481,63 @@ class TestDueQueries:
         texts = [item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(limit=10)]
         assert texts == ["newer", "older"]
 
+    def test_get_new_items_production_held_until_recognition_graduates(self, srs_db):
+        """Phase 3 introduction gate: a PRODUCTION new card is withheld while its
+        recognition sibling is still new/learning/relearning, and released once
+        recognition reaches review (or there is no recognition sibling — cloze).
+
+        This makes TT introduce recognition before production, matching Anki:
+        Anki is direction-agnostic and orders new cards by deck position
+        (recognition cards are created at a lower position than production), so
+        recognition surfaces first. The recognition direction is never gated.
+        See docs/anki-parity-layers.md.
+        """
+
+        def _add_paired(text: str, rec_state: SRSState) -> None:
+            srs_db.add_collocation(_unit(text, text), language_code="sl")
+            rows, _ = srs_db.list_collocations(search=text, limit=1)
+            row_id, _, _ = rows[0]
+            srs_db.update_direction_by_id(
+                row_id,
+                Direction.RECOGNITION,
+                DirectionState(
+                    direction=Direction.RECOGNITION,
+                    state=rec_state,
+                    due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+                ),
+            )
+
+        _add_paired("paired_new", SRSState.NEW)
+        _add_paired("paired_learning", SRSState.LEARNING)
+        _add_paired("paired_review", SRSState.REVIEW)
+        # Cloze note: production-only, no recognition sibling to gate on.
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="vcloze",
+                translation="",
+                word_count=1,
+                difficulty=1,
+                source="llm",
+                card_type="cloze",
+                source_sentence="{{c1::vcloze}} doma.",
+            ),
+            language_code="sl",
+        )
+
+        prod = {
+            item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(direction=Direction.PRODUCTION, limit=50)
+        }
+        assert "paired_review" in prod  # recognition graduated → production introducible
+        assert "vcloze" in prod  # cloze → no recognition sibling → always introducible
+        assert "paired_new" not in prod  # recognition still NEW → held
+        assert "paired_learning" not in prod  # recognition in learning → held
+
+        # The recognition direction is never gated.
+        rec = {
+            item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(direction=Direction.RECOGNITION, limit=50)
+        }
+        assert "paired_new" in rec
+
     def test_get_new_items_tiebreakers_after_anki_due(self, srs_db):
         """When anki_due ties, fall back to anki_card_id ASC then c.id ASC."""
         for t in ["word_a", "word_b", "word_c"]:

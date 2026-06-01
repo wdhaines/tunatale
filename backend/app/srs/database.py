@@ -714,12 +714,36 @@ class SRSDatabase:
         `anki_due DESC` so both apps order the synced pool identically while still
         keeping fresh TT-only rows up front. See `.claude/rules/anki-queue-parity.md`.
         """
+        # Phase 3 introduction gate (TT-only): a PRODUCTION new card is not
+        # introducible until its recognition sibling has graduated past the
+        # learning arc (recognition state not in new/learning/relearning). This
+        # makes TT introduce recognition before production — which is what Anki
+        # does too: Anki is direction-agnostic and orders new cards by deck
+        # position, and `create_note` places the recognition card (ord 0) at a
+        # lower position than production (ord 1), so recognition surfaces first
+        # (empirically 604/36 across the user's paired notes — the prior
+        # "production-first" parity assumption was wrong). A cloze note has no
+        # recognition direction, so NOT EXISTS is true and it stays introducible.
+        # The recognition direction is never gated. See
+        # ~/.claude/plans/word-learning-state-machine.md Phase 3 and
+        # docs/anki-parity-layers.md.
+        gate = (
+            """
+                  AND NOT EXISTS (
+                    SELECT 1 FROM collocation_directions r
+                    WHERE r.collocation_id = c.id
+                      AND r.direction = 'recognition'
+                      AND r.state IN ('new', 'learning', 'relearning')
+                  )"""
+            if direction == Direction.PRODUCTION
+            else ""
+        )
         with self._get_conn() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT c.* FROM collocations c
                 JOIN collocation_directions d ON d.collocation_id = c.id
-                WHERE d.direction = ? AND d.state = 'new'
+                WHERE d.direction = ? AND d.state = 'new'{gate}
                  ORDER BY d.anki_due DESC NULLS FIRST,
                           c.created_at DESC NULLS LAST,
                           d.anki_card_id ASC NULLS LAST,

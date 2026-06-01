@@ -1093,6 +1093,13 @@ def _merge_directions(
 
     Together with the post-bury Template sort in `get_review_queue`, this
     reproduces the gather → bury → Template-sort pipeline exactly.
+
+    Phase 3 note (Layer 65): the production NEW pool is gated upstream in
+    `get_new_items` — a production card is withheld until its recognition
+    sibling has graduated past the learning arc. So for a paired both-NEW note
+    no production card reaches this merge; recognition wins. The "higher-anki_due
+    sibling wins" behavior only applies once recognition is REVIEW (production
+    introducible) or among recognition cards / cloze cards.
     """
     combined: list[tuple[int, SRSItem, str, Direction]] = []
     for row_id, item, lang in rec:
