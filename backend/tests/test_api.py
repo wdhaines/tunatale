@@ -1038,6 +1038,28 @@ class TestListenClozeIntegration:
         assert item.syntactic_unit.card_type == "cloze"
         assert item.syntactic_unit.source_sentence == "{{c1::Sem}} doma."
 
+    async def test_listen_cloze_audio_uses_surface_not_lemma(self, monkeypatch):
+        """The answer-word audio for a plain cloze is synthesized from the surface
+        that was blanked (e.g. "Sem"), not the dictionary lemma ("biti")."""
+        import app.api.srs as srs_mod
+
+        def fake_lemmatize(surfaces, text, lemmatizer, language_code):
+            return ["biti" if s.lower() == "sem" else s.lower() for s in surfaces]
+
+        monkeypatch.setattr(srs_mod, "lemmatize_surfaces_in_context", fake_lemmatize)
+        audio_mock = AsyncMock()
+        monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", audio_mock)
+
+        await self._setup_lesson(phrase_text="Sem doma.")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert resp.status_code == 200
+
+        # synthesize_cloze_audios(db, coll_id, sentence, word) — word (4th arg) is the surface.
+        words = [call.args[3] for call in audio_mock.await_args_list]
+        assert "Sem" in words
+        assert "biti" not in words
+
     async def test_listen_creates_vocab_for_unknown_content_word(self):
         """Unknown content-word lemma → vocab row, state='new', both directions present."""
         from app.models.srs_item import Direction, SRSState

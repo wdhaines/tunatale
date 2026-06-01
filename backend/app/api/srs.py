@@ -487,7 +487,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 coll = db.get_collocation_by_lemma_with_id(lemma)
                 new_id, _ = coll
                 try:
-                    await synthesize_cloze_audios(db, new_id, sent, lemma)
+                    await synthesize_cloze_audios(db, new_id, sent, lemma_to_first_surface.get(lemma, lemma))
                 except Exception:
                     _logger.warning("Failed to synthesize cloze audio for %r", lemma)
             created_count += 1
@@ -512,7 +512,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 src_sent = existing_item.syntactic_unit.source_sentence
                 if src_sent and not db.get_sentence_audio_filename(existing_id):
                     try:
-                        await synthesize_cloze_audios(db, existing_id, src_sent, lemma)
+                        await synthesize_cloze_audios(
+                            db, existing_id, src_sent, lemma_to_first_surface.get(lemma, lemma)
+                        )
                     except Exception:
                         _logger.warning("Failed to synthesize cloze audio for %r", lemma)
                 continue
