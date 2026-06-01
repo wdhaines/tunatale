@@ -441,6 +441,60 @@ describe("TunaTaleAPI", () => {
       );
       expect(result.new_due_at).toBe("2026-04-30");
     });
+
+    it("createInflectionCloze calls POST /api/srs/inflection-clozes", async () => {
+      const mockResp = {
+        id: 1,
+        was_created: true,
+        item: {
+          id: 1,
+          text: "sem",
+          state: "new",
+          due_at: "",
+          stability: 1,
+          difficulty: 5,
+          reps: 0,
+          lapses: 0,
+          last_review: null,
+          language_code: "sl",
+        },
+      };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(mockResp)));
+
+      const body = {
+        surface: "sem",
+        lemma: "biti",
+        feature: "1sg-past",
+        sentence: "jaz sem bil",
+        language_code: "sl",
+      };
+      const result = await api.createInflectionCloze(body);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/inflection-clozes`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+      );
+      expect(result.id).toBe(1);
+      expect(result.was_created).toBe(true);
+      expect(result.item.text).toBe("sem");
+    });
+
+    it("createInflectionCloze throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail()));
+
+      await expect(
+        api.createInflectionCloze({
+          surface: "sem",
+          lemma: "biti",
+          feature: "1sg-past",
+          sentence: "jaz sem bil",
+          language_code: "sl",
+        }),
+      ).rejects.toThrow("POST /api/srs/inflection-clozes: Internal Server Error");
+    });
   });
 
   describe("curriculum progress", () => {

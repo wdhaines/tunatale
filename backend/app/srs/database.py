@@ -591,6 +591,22 @@ class SRSDatabase:
                 return None
             return (row["id"], self._row_to_item(conn, row))
 
+    def get_inflection_clozes_for_lemma(self, lemma: str) -> list[tuple[int, SRSItem]]:
+        """All morphology (inflection) clozes for a lemma, hydrated with directions.
+
+        Inflection clozes are card_type='cloze' with a disambig_key like 'morph:%'
+        (set by the /listen morphology path and POST /inflection-clozes). This
+        deliberately EXCLUDES the lemma's plain function-word base cloze, which
+        has disambig_key NULL/empty.
+        Returns (collocation_id, SRSItem) per row; empty list if none.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM collocations WHERE lemma = ? AND card_type = 'cloze' AND disambig_key LIKE 'morph:%'",
+                (lemma,),
+            ).fetchall()
+            return [(row["id"], self._row_to_item(conn, row)) for row in rows]
+
     def get_collocations_for_language(
         self,
         language_code: str,

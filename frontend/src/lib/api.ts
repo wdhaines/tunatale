@@ -444,6 +444,20 @@ export class TunaTaleAPI {
     return this.request(`/api/srs/items/${id}/untrack`, { method: "POST" });
   }
 
+  async createInflectionCloze(body: {
+    surface: string;
+    lemma: string;
+    feature: string;
+    sentence: string;
+    language_code: string;
+  }): Promise<{ id: number; was_created: boolean; item: SRSItemDetail }> {
+    return this.request("/api/srs/inflection-clozes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
   async syncWithAnki(dryRun = false): Promise<AnkiSyncResult> {
     return this.request(`/api/anki/sync?dry_run=${dryRun}`, { method: "POST" });
   }

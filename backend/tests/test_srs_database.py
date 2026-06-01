@@ -2781,3 +2781,154 @@ class TestRevlog:
         assert srs_db.has_revision_near(1, "recognition", 50200, 3, ignore_ids={99999})
         # Empty ignore set behaves like the default.
         assert srs_db.has_revision_near(1, "recognition", 50200, 3, ignore_ids=set())
+
+
+class TestGetInflectionClozesForLemma:
+    """get_inflection_clozes_for_lemma returns only morph clozes for a lemma."""
+
+    def test_returns_morph_clozes_with_hydrated_directions(self, srs_db):
+        """Two morph clozes for the same lemma are returned with directions."""
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="sem",
+                translation="I was",
+                word_count=1,
+                difficulty=1,
+                source="cloze",
+                lemma="biti",
+                disambig_key="morph:1sg-past",
+                source_sentence="jaz sem bil",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="si",
+                translation="you were",
+                word_count=1,
+                difficulty=1,
+                source="cloze",
+                lemma="biti",
+                disambig_key="morph:2sg-past",
+                source_sentence="ti si bil",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+
+        results = srs_db.get_inflection_clozes_for_lemma("biti")
+        assert len(results) == 2
+        texts = {item.syntactic_unit.text for _, item in results}
+        assert texts == {"sem", "si"}
+        for _, item in results:
+            # Hydration proof: production direction has state + stability populated
+            prod = item.directions.get(Direction.PRODUCTION)
+            assert prod is not None
+            assert prod.state == SRSState.NEW
+            assert prod.stability >= 1.0
+
+    def test_excludes_base_function_word_cloze(self, srs_db):
+        """A base cloze (disambig_key='') for the same lemma is not returned."""
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="sem",
+                translation="I was",
+                word_count=1,
+                difficulty=1,
+                source="cloze",
+                lemma="biti",
+                disambig_key="morph:1sg-past",
+                source_sentence="jaz sem bil",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="biti",
+                translation="to be",
+                word_count=1,
+                difficulty=1,
+                source="cloze",
+                lemma="biti",
+                source_sentence="biti ali ne biti",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+
+        results = srs_db.get_inflection_clozes_for_lemma("biti")
+        assert len(results) == 1
+        assert results[0][1].syntactic_unit.text == "sem"
+
+    def test_excludes_vocab_items(self, srs_db):
+        """A vocab item (card_type='vocab') for the same lemma is not returned."""
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="sem",
+                translation="I was",
+                word_count=1,
+                difficulty=1,
+                source="cloze",
+                lemma="biti",
+                disambig_key="morph:1sg-past",
+                source_sentence="jaz sem bil",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="bil",
+                translation="was",
+                word_count=1,
+                difficulty=1,
+                source="test",
+                lemma="biti",
+            ),
+            language_code="sl",
+        )
+
+        results = srs_db.get_inflection_clozes_for_lemma("biti")
+        assert len(results) == 1
+        assert results[0][1].syntactic_unit.text == "sem"
+
+    def test_excludes_other_lemma_morph_clozes(self, srs_db):
+        """A morph cloze for a different lemma is not returned."""
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="sem",
+                translation="I was",
+                word_count=1,
+                difficulty=1,
+                source="cloze",
+                lemma="biti",
+                disambig_key="morph:1sg-past",
+                source_sentence="jaz sem bil",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="bom",
+                translation="I will",
+                word_count=1,
+                difficulty=1,
+                source="cloze",
+                lemma="biti-future",
+                disambig_key="morph:1sg-fut",
+                source_sentence="jaz bom",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+
+        results = srs_db.get_inflection_clozes_for_lemma("biti")
+        assert len(results) == 1
+        assert results[0][1].syntactic_unit.text == "sem"
+
+    def test_empty_for_lemma_with_no_matches(self, srs_db):
+        """A lemma with no items at all returns empty list."""
+        assert srs_db.get_inflection_clozes_for_lemma("neobstojeci") == []
