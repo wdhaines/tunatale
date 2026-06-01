@@ -247,13 +247,18 @@ def lemmatize_surfaces_in_context(
     For ``LowercaseLemmatizer`` ``analyze_sentence`` is a per-token lowercasing, so the
     result is identical to the old single-word path — this change is a no-op for the
     default lemmatizer and only sharpens the real (classla) engine.
+
+    Lemmas are lowercased to match the card keyspace (``import_seed`` stores
+    ``lemma = front.lower()``). classla capitalizes proper-noun lemmas
+    (``Ženeve`` → ``Ženeva``), which would otherwise miss the lowercase
+    ``ženeva`` card on a case-sensitive ``lemma =`` lookup.
     """
-    context = {ta.surface.lower(): ta.lemma for ta in lemmatizer.analyze_sentence(sentence, language_code)}
+    context = {ta.surface.lower(): ta.lemma.lower() for ta in lemmatizer.analyze_sentence(sentence, language_code)}
     result: list[str] = []
     for surface in surfaces:
         key = surface.lower()
         if key in context:
             result.append(context[key])
         else:
-            result.append(lemmatizer.lemmatize(surface, language_code))
+            result.append(lemmatizer.lemmatize(surface, language_code).lower())
     return result

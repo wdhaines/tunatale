@@ -373,3 +373,15 @@ class TestLemmatizeSurfacesInContext:
 
         lem = LowercaseLemmatizer()
         assert lemmatize_surfaces_in_context(["Dobro", "jutro"], "Dobro jutro", lem, "sl") == ["dobro", "jutro"]
+
+    def test_lowercases_capitalized_lemmas_to_match_keyspace(self):
+        """Proper-noun lemmas come back capitalized (Ženeve→Ženeva), but the card
+        keyspace is lowercase — both the context and fallback paths must lowercase."""
+        from app.srs.lemmatizer import TokenAnalysis, lemmatize_surfaces_in_context
+
+        stub = StubLemmatizer()
+        stub.set_sentence("Ženeve Pariz", [TokenAnalysis(surface="Ženeve", lemma="Ženeva", upos="PROPN")])
+        stub.set_lemma("Pariz", "Pariz")  # absent from the sentence analysis → fallback path
+
+        result = lemmatize_surfaces_in_context(["Ženeve", "Pariz"], "Ženeve Pariz", stub, "sl")
+        assert result == ["ženeva", "pariz"]
