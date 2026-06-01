@@ -1,7 +1,7 @@
 /**
  * Tests for WordSpan.svelte — per-word SRS state widget.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import WordSpan from "./WordSpan.svelte";
 import { makeWordToken } from "../test/factories";
@@ -285,6 +285,46 @@ describe("WordSpan", () => {
         props: { word: makeWordToken(), selected: false },
       });
       expect(getByRole("button").className).not.toContain("word-selected");
+    });
+  });
+
+  describe("text selection", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("does not fire onStateChange when text is selected (drag-to-copy)", async () => {
+      const onStateChange = vi.fn();
+      vi.spyOn(window, "getSelection").mockReturnValue({
+        toString: () => "dobro hvala",
+      } as Selection);
+      const { getByRole } = render(WordSpan, {
+        props: { word: makeWordToken(), onStateChange },
+      });
+      await fireEvent.click(getByRole("button"));
+      expect(onStateChange).not.toHaveBeenCalled();
+    });
+
+    it("does not fire on Alt+click either when text is selected", async () => {
+      const onStateChange = vi.fn();
+      vi.spyOn(window, "getSelection").mockReturnValue({
+        toString: () => "dobro hvala",
+      } as Selection);
+      const { getByRole } = render(WordSpan, {
+        props: { word: makeWordToken(), onStateChange, requireModifier: true },
+      });
+      await fireEvent.click(getByRole("button"), { altKey: true });
+      expect(onStateChange).not.toHaveBeenCalled();
+    });
+
+    it("fires normally when getSelection returns null", async () => {
+      const onStateChange = vi.fn();
+      vi.spyOn(window, "getSelection").mockReturnValue(null);
+      const { getByRole } = render(WordSpan, {
+        props: { word: makeWordToken({ lemma: "zdravo", srs_item_id: 1 }), onStateChange },
+      });
+      await fireEvent.click(getByRole("button"));
+      expect(onStateChange).toHaveBeenCalledWith("zdravo", 1);
     });
   });
 });

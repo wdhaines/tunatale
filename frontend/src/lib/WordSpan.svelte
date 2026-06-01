@@ -26,7 +26,15 @@
 		onStateChange?.(word.lemma, word.srs_item_id);
 	}
 
+	// A drag-to-select leaves an active selection; don't treat the trailing
+	// click as a word tap, so the user can highlight and copy transcript text.
+	function hasTextSelection(): boolean {
+		const text = window.getSelection()?.toString() ?? '';
+		return text.trim() !== '';
+	}
+
 	function handleClick(e: MouseEvent) {
+		if (hasTextSelection()) return;
 		if (requireModifier) {
 			if (e.altKey || e.shiftKey) {
 				e.stopPropagation();

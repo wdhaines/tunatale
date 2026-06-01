@@ -663,7 +663,7 @@
 	.dialogue-words {
 		display: block;
 		line-height: 1.6;
-		user-select: none;
+		user-select: text;
 	}
 	.line-slow {
 		margin-top: 0.15rem;
