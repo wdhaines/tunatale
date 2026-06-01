@@ -321,7 +321,20 @@ describe("TunaTaleAPI", () => {
         dialogue_lines: [
           {
             role: "female-1",
-            words: [{ surface: "Zdravo", lemma: "zdravo", srs_state: "unknown" }],
+            words: [
+              {
+                surface: "Zdravo",
+                lemma: "zdravo",
+                srs_state: "unknown",
+                card_type: null,
+                active_state: "unknown",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+              },
+            ],
           },
         ],
       };

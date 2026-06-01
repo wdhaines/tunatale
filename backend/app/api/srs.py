@@ -33,7 +33,6 @@ from app.srs.function_words import (
     is_function_word,
     make_cloze_text,
     make_morphology_cloze_text,
-    ud_feats_to_tt_feature,
 )
 from app.srs.lemmatizer import get_lemmatizer, lemmatize_surfaces_in_context
 from app.srs.queue_stats import (
@@ -78,107 +77,6 @@ _WORD_RATING_MAP: dict[str, Rating] = {
     "good": Rating.GOOD,
     "easy": Rating.EASY,
 }
-
-# A1-appropriate morphology features for morphology_focus -> cloze cards.
-# Verb conjugations (all persons/numbers) + noun nom/acc/loc + adj nom.
-# Excludes Gen/Dat/Ins (A2+ territory) and adj non-nom cases.
-_A1_MORPHOLOGY_PREFIXES: tuple[str, ...] = (
-    "verb:",
-    "noun:nom:",
-    "noun:acc:",
-    "noun:loc:",
-    "adj:nom:",
-)
-
-
-def _is_a1_morphology_feature(feature: str) -> bool:
-    return any(feature.startswith(p) for p in _A1_MORPHOLOGY_PREFIXES)
-
-
-def _ground_morphology_focus(
-    morphology_focus: list[dict],
-    natural_speed_phrases: list | None,
-    lemmatizer: object,
-    language_code: str,
-) -> tuple[dict[str, tuple[str, str]], dict[str, str]]:
-    """Validate/correct LLM morphology_focus entries against the real lemmatizer.
-
-    For each LLM entry that passes the A1 whitelist:
-      1. Run the lemmatizer's ``analyze_sentence`` on the containing phrase.
-      2. If the analyzer yields an A1 TT feature: confirm or correct the
-         ``(lemma, feature)`` pair. Drop entries where the analyzer's lemma
-         contradicts the LLM's (analyzer is authoritative for lemmatization).
-      3. If the analyzer can't produce a feature for this surface (unknown word,
-         non-A1 morphology): keep the original LLM entry (tolerant).
-
-    Returns ``(surface_to_analysis, surface_to_sentence)``.
-    """
-    import re
-
-    surface_to_analysis: dict[str, tuple[str, str]] = {}
-    surface_to_sentence: dict[str, str] = {}
-
-    if not natural_speed_phrases:
-        return surface_to_analysis, surface_to_sentence
-
-    for d in morphology_focus:
-        if not isinstance(d, dict):
-            continue
-        feature = str(d.get("feature") or "").strip().lower()
-        if not feature or not _is_a1_morphology_feature(feature):
-            continue
-        surface = str(d.get("surface") or "")
-        llm_lemma = str(d.get("lemma") or "")
-        if not surface or not llm_lemma:
-            continue
-
-        # Find the phrase containing this surface
-        phrase_text = ""
-        for phrase in natural_speed_phrases:
-            if getattr(phrase, "language_code", language_code) != language_code:
-                continue
-            if re.search(rf"\b{re.escape(surface)}\b", phrase.text, re.IGNORECASE):
-                phrase_text = phrase.text
-                break
-
-        if not phrase_text:
-            continue
-
-        # Run the analyzer
-        analyses = lemmatizer.analyze_sentence(phrase_text, language_code)
-
-        # Find the token matching surface
-        matched = None
-        for ta in analyses:
-            if ta.surface.lower() == surface.lower():
-                matched = ta
-                break
-
-        if matched is not None:
-            analyzer_feature = ud_feats_to_tt_feature(
-                matched.upos,
-                matched.case,
-                matched.number,
-                matched.person,
-                matched.gender,
-            )
-            if analyzer_feature and _is_a1_morphology_feature(analyzer_feature):
-                # Analyzer produced an A1 feature — use it (correct/confirm)
-                if matched.lemma.lower() != llm_lemma.lower():
-                    # Analyzer contradicts LLM's lemma — drop (analyzer is authoritative)
-                    continue
-                surface_to_analysis[surface] = (matched.lemma, analyzer_feature)
-                surface_to_sentence[surface] = phrase_text
-            else:
-                # Analyzer can't produce an A1 feature — keep LLM's entry (tolerant)
-                surface_to_analysis[surface] = (llm_lemma, feature)
-                surface_to_sentence[surface] = phrase_text
-        else:
-            # Surface not found in analysis — keep LLM's entry
-            surface_to_analysis[surface] = (llm_lemma, feature)
-            surface_to_sentence[surface] = phrase_text
-
-    return surface_to_analysis, surface_to_sentence
 
 
 def _direction_to_dict(ds: DirectionState) -> dict:
@@ -424,16 +322,6 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                     lemma_to_first_surface[lemma] = surface
                 lemma_to_surfaces.setdefault(lemma, set()).add(surface)
 
-    # ── surface_to_analysis from generator output, grounded by lemmatizer ─
-    raw_morphology_focus = lesson.generation_metadata.get("morphology_focus", [])
-    morphology_focus = raw_morphology_focus if isinstance(raw_morphology_focus, list) else []
-    surface_to_analysis, surface_to_sentence = _ground_morphology_focus(
-        morphology_focus,
-        natural_speed.phrases if natural_speed is not None else None,
-        _lemmatizer,
-        lesson.language_code,
-    )
-
     # ── Today window (mirrors count_new_introduced_today convention) ────
     local_tz = datetime.datetime.now().astimezone().tzinfo
     today = datetime.date.today()
@@ -556,81 +444,6 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 )
                 graded_count += 1
 
-    # ── Analyzer-driven recall: catch morphology the LLM missed ──────────
-    # After grounding (above), scan NATURAL_SPEED lines with the real
-    # lemmatizer. Any token whose TT feature is A1, surface!=lemma, and not
-    # already in surface_to_analysis gets appended (respecting the cap).
-    if natural_speed is not None:
-        _seen_surfaces: set[str] = {s.casefold() for s in surface_to_analysis}
-        for phrase in natural_speed.phrases:
-            if phrase.language_code != lesson.language_code:
-                continue
-            analyses = _lemmatizer.analyze_sentence(phrase.text, lesson.language_code)
-            for ta in analyses:
-                if ta.surface.casefold() == ta.lemma.casefold():
-                    continue  # degenerate — hint would reveal answer
-                if ta.surface.casefold() in _seen_surfaces:
-                    continue  # already covered by LLM or earlier analyzer pass
-                feature = ud_feats_to_tt_feature(
-                    ta.upos,
-                    ta.case,
-                    ta.number,
-                    ta.person,
-                    ta.gender,
-                )
-                if not feature or not _is_a1_morphology_feature(feature):
-                    continue
-                if is_function_word(ta.surface, lesson.language_code):
-                    # Function words (copula sem/si/je, negation ni, etc.) have
-                    # their own plain-cloze card from the main loop above — don't
-                    # double-create a verb-conjugation morphology cloze for them.
-                    continue
-                surface_to_analysis[ta.surface] = (ta.lemma, feature)
-                _seen_surfaces.add(ta.surface.casefold())
-                surface_to_sentence.setdefault(ta.surface, phrase.text)
-
-    # ── Morphology-cloze creation (verb conjugations + A1 noun/adj forms) ──
-    # Always on, for every language. Actual creation is capability-driven: the
-    # pipeline only fires for surfaces the lemmatizer analyzes with an A1
-    # morphology feature (`surface_to_analysis`), so a language without an
-    # inflection-aware lemmatizer simply produces nothing here.
-    if surface_to_analysis:
-        morph_cloze_count = 0
-        max_morph_clozes = 5
-        for surface, (lemma, feature) in surface_to_analysis.items():
-            if morph_cloze_count >= max_morph_clozes:
-                break
-            if lemma.casefold() == surface.casefold():
-                # Degenerate hint: lemma == inflected surface, so the
-                # {{c1::surface::lemma, feature}} hint would reveal the answer.
-                # (Happens for nominative singular of many noun/adj paradigms.)
-                continue
-            disambig = f"morph:{feature.replace(':', '-')}"
-            sent = surface_to_sentence.get(surface, "")
-            cloze_sent = make_morphology_cloze_text(surface, lemma, feature, sent)
-            unit = SyntacticUnit(
-                text=surface,
-                translation=token_glosses.get(lemma, ""),
-                word_count=1,
-                difficulty=1,
-                source="llm",
-                lemma=lemma,
-                disambig_key=disambig,
-                card_type="cloze",
-                source_sentence=cloze_sent,
-                source_sentence_translation=sentence_translations.get(sent, ""),
-            )
-            was_created = db.add_collocation(unit, language_code=lesson.language_code)
-            if was_created:
-                try:
-                    guid = compute_guid(surface, lesson.language_code, disambig)
-                    coll_id = db.get_collocation_id_by_guid(guid)
-                    await synthesize_cloze_audios(db, coll_id, sent, surface)
-                except Exception:
-                    _logger.warning("Failed to synthesize morphology-cloze audio for %r", surface)
-                morph_cloze_count += 1
-                created_count += 1
-
     # ── Key phrase registration + auto-grade ────────────────────────────
     for kp in lesson.key_phrases:
         existing = db.get_collocation(kp.phrase)
@@ -687,13 +500,18 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
 @router.get("/lesson/{lesson_id}/transcript", status_code=200)
 async def get_lesson_transcript(lesson_id: str, request: Request):
+    from datetime import UTC, date, datetime
+
     store = request.app.state.content_store
     lesson = store.get_lesson(lesson_id)
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
 
     db = request.app.state.srs_db
-    transcript = extract_transcript(lesson, db, _lemmatizer)
+    col_crt = resolve_col_crt(db)
+    today = date.today()
+    now = datetime.now(UTC)
+    transcript = extract_transcript(lesson, db, _lemmatizer, today=today, now=now, col_crt=col_crt)
 
     return {
         "lesson_id": lesson_id,
@@ -713,6 +531,13 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
                         "collocation_srs_state": w.collocation_srs_state,
                         "collocation_lemma": w.collocation_lemma,
                         "collocation_translation": w.collocation_translation,
+                        "card_type": w.card_type,
+                        "active_state": w.active_state,
+                        "active_direction": w.active_direction,
+                        "is_due": w.is_due,
+                        "progress": w.progress,
+                        "inflectable": w.inflectable,
+                        "inflection_feature": w.inflection_feature,
                     }
                     for w in line.words
                 ],

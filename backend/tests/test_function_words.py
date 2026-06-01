@@ -268,6 +268,53 @@ class TestSLOVENE_FUNCTION_WORDS:
             assert word not in SLOVENE_FUNCTION_WORDS, f"{word!r} should NOT be in SLOVENE_FUNCTION_WORDS"
 
 
+class TestIsA1MorphologyFeature:
+    def test_a1_verb_prefix_true(self):
+        from app.srs.function_words import is_a1_morphology_feature
+
+        assert is_a1_morphology_feature("verb:1sg") is True
+
+    def test_a1_noun_nom_true(self):
+        from app.srs.function_words import is_a1_morphology_feature
+
+        assert is_a1_morphology_feature("noun:nom:sg") is True
+
+    def test_a1_noun_acc_true(self):
+        from app.srs.function_words import is_a1_morphology_feature
+
+        assert is_a1_morphology_feature("noun:acc:sg") is True
+
+    def test_a1_noun_loc_true(self):
+        from app.srs.function_words import is_a1_morphology_feature
+
+        assert is_a1_morphology_feature("noun:loc:sg") is True
+
+    def test_a1_adj_nom_true(self):
+        from app.srs.function_words import is_a1_morphology_feature
+
+        assert is_a1_morphology_feature("adj:nom:m:sg") is True
+
+    def test_non_a1_noun_gen_false(self):
+        from app.srs.function_words import is_a1_morphology_feature
+
+        assert is_a1_morphology_feature("noun:gen:sg") is False
+
+    def test_non_a1_adj_acc_false(self):
+        from app.srs.function_words import is_a1_morphology_feature
+
+        assert is_a1_morphology_feature("adj:acc:m:sg") is False
+
+    def test_empty_string_false(self):
+        from app.srs.function_words import is_a1_morphology_feature
+
+        assert is_a1_morphology_feature("") is False
+
+    def test_garbage_string_false(self):
+        from app.srs.function_words import is_a1_morphology_feature
+
+        assert is_a1_morphology_feature("xyz:foo") is False
+
+
 class TestUdFeatsToTtFeature:
     def test_verb_1sg(self):
         assert ud_feats_to_tt_feature("VERB", number="Sing", person="1") == "verb:1sg"

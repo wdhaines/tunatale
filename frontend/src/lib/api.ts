@@ -69,6 +69,13 @@ export interface WordToken {
   collocation_srs_state: string | null;
   collocation_lemma: string | null;
   collocation_translation: string | null;
+  card_type: string | null;
+  active_state: string;
+  active_direction: string | null;
+  is_due: boolean;
+  progress: number | null;
+  inflectable: boolean;
+  inflection_feature: string | null;
 }
 
 export interface CreateSRSItemRequest {

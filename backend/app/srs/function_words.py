@@ -182,6 +182,22 @@ _GENDER_MAP: dict[str, str] = {
 }
 
 
+# ── A1 morphology feature detection (moved from app/api/srs.py, Phase 4b) ──
+
+
+_A1_MORPHOLOGY_PREFIXES: tuple[str, ...] = (
+    "verb:",
+    "noun:nom:",
+    "noun:acc:",
+    "noun:loc:",
+    "adj:nom:",
+)
+
+
+def is_a1_morphology_feature(feature: str) -> bool:
+    return any(feature.startswith(p) for p in _A1_MORPHOLOGY_PREFIXES)
+
+
 def ud_feats_to_tt_feature(
     upos: str,
     case: str = "",

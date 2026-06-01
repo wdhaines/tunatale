@@ -10,7 +10,10 @@ from app.srs.fsrs import compute_retrievability
 
 
 def component_mastery(
-    ds: DirectionState, today: date, now: datetime | None, col_crt: int | None,
+    ds: DirectionState,
+    today: date,
+    now: datetime | None,
+    col_crt: int | None,
     desired_retention: float = 0.9,
 ) -> float:
     """Mastery of one component (a direction/card) ∈ [0,1].
@@ -28,14 +31,18 @@ def component_mastery(
 
 
 def compute_mastery_progress(
-    directions: Iterable[DirectionState], today: date, now: datetime | None,
-    col_crt: int | None, desired_retention: float = 0.9,
+    directions: Iterable[DirectionState],
+    today: date,
+    now: datetime | None,
+    col_crt: int | None,
+    desired_retention: float = 0.9,
 ) -> float | None:
     """Mean component_mastery over the learn-set. SUSPENDED components excluded.
     None if the set is empty (→ caller renders as not-on-the-ramp).
     """
     ms = [
         component_mastery(d, today, now, col_crt, desired_retention)
-        for d in directions if d.state != SRSState.SUSPENDED
+        for d in directions
+        if d.state != SRSState.SUSPENDED
     ]
     return sum(ms) / len(ms) if ms else None

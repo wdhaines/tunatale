@@ -1405,3 +1405,13 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 **Files.** `app/srs/database.py` (`get_new_items` production gate). Tests: `tests/test_srs_database.py::TestDueQueries::test_get_new_items_production_held_until_recognition_graduates` (new); rewrote the two stale production-first assertions in `tests/test_api_srs.py` — `test_review_queue_new_head_recognition_first_for_paired_new` (renamed from `…_matches_anki_gather_bury_template`) and `test_review_queue_new_head_unaffected_by_overfetch_truncation` — to recognition-first. `_merge_directions` docstring annotated.
 
 **Surfaced by.** 2026-06-01 — user reported "Anki has been introducing recognition before production, which is what I want"; confirmed against the binary (604/36) before inverting the parity test.
+
+---
+
+## Layer 66 — `/listen` no longer mints morphology clozes (Phase 4b)
+
+**Change.** Removed the morphology-cloze creation + analyzer-recall + `_ground_morphology_focus` from `mark_lesson_listened`; the A1-feature detector moved to `function_words.is_a1_morphology_feature` and now feeds the transcript's `inflectable` flag. Click-to-create (`POST /inflection-clozes`) is the sole inflection-mint path.
+
+**No queue-assembly / sort / FSRS change** — only fewer NEW cloze rows created on a content path; assembly, sibling-bury, R-sort untouched. `--run-oracle` goldens unchanged.
+
+**Files.** `app/api/srs.py`, `app/srs/function_words.py`, `app/srs/transcript.py`.

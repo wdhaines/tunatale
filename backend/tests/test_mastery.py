@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime
 
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.srs.fsrs import compute_retrievability
