@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 
 from app.api.models import (
     BulkDeleteRequest,
+    CreateBaseCardRequest,
     CreateItemRequest,
     DrillRequest,
     InflectionClozeRequest,
@@ -724,6 +725,65 @@ async def create_item(body: CreateItemRequest, request: Request):
         raise HTTPException(status_code=500, detail="Failed to retrieve created item")
     row_id, item, lang = rows[0]
     return _item_to_dict(row_id, item, lang)
+
+
+@router.post("/items/base", status_code=200)
+async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dict:
+    """Create a base card for an unknown clicked word (Phase 5, Part C / decision 8, C-a).
+
+    Branches by word type (the word-learning state machine):
+      - function word → production-only cloze (the *surface* blanked in the sentence)
+      - content word  → vocab (recognition + production)
+    Both created in NEW state. Idempotent by the base guid. Honors the
+    add_collocation card-adding contract (no Anki ids; sync_create_new mints +
+    links). No LLM auto-translate here — the caller passes the transcript gloss.
+    """
+    db = request.app.state.srs_db
+    lang = body.language_code
+    lemma = body.lemma.casefold()
+
+    # Function-word detection is capability-driven: is_function_word is only true
+    # where a curated list exists (Slovene today). The surface is checked too — an
+    # inflected function form (classla "sem" → lemma "biti") is detected via the
+    # surface even when the dictionary lemma isn't itself a function word.
+    is_func = is_function_word(lemma, lang) or is_function_word(body.surface, lang)
+    if is_func:
+        # Blank the surface as it appeared, not the dictionary lemma (Phase 2b):
+        # the cloze must reference the word present in the stored sentence.
+        source_sentence = make_cloze_text(body.surface, body.sentence)
+        card_type = "cloze"
+    else:
+        source_sentence = body.sentence
+        card_type = "vocab"
+
+    unit = SyntacticUnit(
+        text=lemma,
+        translation=body.translation,
+        word_count=1,
+        difficulty=1,
+        source="user",
+        lemma=lemma,
+        card_type=card_type,
+        source_sentence=source_sentence,
+    )
+    was_created = db.add_collocation(unit, language_code=lang)
+
+    guid = compute_guid(lemma, lang, "")
+    coll_id = db.get_collocation_id_by_guid(guid)
+    if coll_id is None:  # pragma: no cover — defensive; add_collocation just inserted
+        raise HTTPException(status_code=500, detail="Failed to create base card")
+
+    if is_func and was_created:
+        try:
+            await synthesize_cloze_audios(db, coll_id, body.sentence, body.surface)
+        except Exception:
+            _logger.warning("Failed to synthesize base-cloze audio for %r", lemma)
+
+    result = db.get_collocation_by_id(coll_id)
+    if result is None:  # pragma: no cover — defensive; id came from get_collocation_id_by_guid
+        raise HTTPException(status_code=500, detail="Failed to retrieve base card")
+    _, item, _ = result
+    return {"id": coll_id, "was_created": was_created, "item": _item_to_dict(coll_id, item, lang)}
 
 
 @router.get("/items", status_code=200)

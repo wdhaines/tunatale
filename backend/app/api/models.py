@@ -82,3 +82,11 @@ class InflectionClozeRequest(BaseModel):
     feature: str
     sentence: str
     language_code: str
+
+
+class CreateBaseCardRequest(BaseModel):
+    surface: str
+    lemma: str
+    sentence: str
+    language_code: str
+    translation: str = ""
