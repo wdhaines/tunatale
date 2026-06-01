@@ -1,7 +1,7 @@
 /**
  * Tests for WordSpan.svelte — per-word SRS state widget.
  */
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import WordSpan from "./WordSpan.svelte";
 import { makeWordToken } from "../test/factories";
@@ -288,43 +288,38 @@ describe("WordSpan", () => {
     });
   });
 
-  describe("text selection", () => {
-    afterEach(() => {
-      vi.restoreAllMocks();
-    });
-
-    it("does not fire onStateChange when text is selected (drag-to-copy)", async () => {
+  describe("drag-to-select vs click", () => {
+    it("does not fire onStateChange on a drag (pointer moved past threshold)", async () => {
       const onStateChange = vi.fn();
-      vi.spyOn(window, "getSelection").mockReturnValue({
-        toString: () => "dobro hvala",
-      } as Selection);
       const { getByRole } = render(WordSpan, {
         props: { word: makeWordToken(), onStateChange },
       });
-      await fireEvent.click(getByRole("button"));
+      const el = getByRole("button");
+      await fireEvent.mouseDown(el, { clientX: 0, clientY: 0 });
+      await fireEvent.click(el, { clientX: 50, clientY: 0 });
       expect(onStateChange).not.toHaveBeenCalled();
     });
 
-    it("does not fire on Alt+click either when text is selected", async () => {
+    it("fires onStateChange on a click (pointer barely moved)", async () => {
       const onStateChange = vi.fn();
-      vi.spyOn(window, "getSelection").mockReturnValue({
-        toString: () => "dobro hvala",
-      } as Selection);
-      const { getByRole } = render(WordSpan, {
-        props: { word: makeWordToken(), onStateChange, requireModifier: true },
-      });
-      await fireEvent.click(getByRole("button"), { altKey: true });
-      expect(onStateChange).not.toHaveBeenCalled();
-    });
-
-    it("fires normally when getSelection returns null", async () => {
-      const onStateChange = vi.fn();
-      vi.spyOn(window, "getSelection").mockReturnValue(null);
       const { getByRole } = render(WordSpan, {
         props: { word: makeWordToken({ lemma: "zdravo", srs_item_id: 1 }), onStateChange },
       });
-      await fireEvent.click(getByRole("button"));
+      const el = getByRole("button");
+      await fireEvent.mouseDown(el, { clientX: 10, clientY: 10 });
+      await fireEvent.click(el, { clientX: 12, clientY: 11 });
       expect(onStateChange).toHaveBeenCalledWith("zdravo", 1);
+    });
+
+    it("still suppresses a drag when requireModifier and Alt are set", async () => {
+      const onStateChange = vi.fn();
+      const { getByRole } = render(WordSpan, {
+        props: { word: makeWordToken(), onStateChange, requireModifier: true },
+      });
+      const el = getByRole("button");
+      await fireEvent.mouseDown(el, { clientX: 0, clientY: 0 });
+      await fireEvent.click(el, { clientX: 50, clientY: 0, altKey: true });
+      expect(onStateChange).not.toHaveBeenCalled();
     });
   });
 });

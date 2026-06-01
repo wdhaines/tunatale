@@ -26,15 +26,20 @@
 		onStateChange?.(word.lemma, word.srs_item_id);
 	}
 
-	// A drag-to-select leaves an active selection; don't treat the trailing
-	// click as a word tap, so the user can highlight and copy transcript text.
-	function hasTextSelection(): boolean {
-		const text = window.getSelection()?.toString() ?? '';
-		return text.trim() !== '';
+	// Distinguish a tap from a drag-to-select by how far the pointer moved
+	// between press and release: a tap cycles state, a drag selects/copies text.
+	// (Checking for a present selection regressed cycling — a double-click while
+	// rapidly cycling selects the word, which then blocked the following click.)
+	let downX = 0;
+	let downY = 0;
+
+	function handleMouseDown(e: MouseEvent) {
+		downX = e.clientX;
+		downY = e.clientY;
 	}
 
 	function handleClick(e: MouseEvent) {
-		if (hasTextSelection()) return;
+		if (Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > 8) return;
 		if (requireModifier) {
 			if (e.altKey || e.shiftKey) {
 				e.stopPropagation();
@@ -80,6 +85,7 @@
 			tabindex="0"
 			data-line-index={lineIndex}
 			data-word-index={wordIndex}
+			onmousedown={handleMouseDown}
 			onclick={handleClick}
 			onkeydown={handleKeydown}
 		>{word.surface}</span>
@@ -92,6 +98,7 @@
 		tabindex="0"
 		data-line-index={lineIndex}
 		data-word-index={wordIndex}
+		onmousedown={handleMouseDown}
 		onclick={handleClick}
 		onkeydown={handleKeydown}
 	>{word.surface}</span>
