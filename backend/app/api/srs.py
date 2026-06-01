@@ -15,6 +15,7 @@ from app.api.models import (
     BulkDeleteRequest,
     CreateItemRequest,
     DrillRequest,
+    InflectionClozeRequest,
     ListenRequest,
     SetStateRequest,
     SuspendRequest,
@@ -1290,6 +1291,70 @@ def build_and_freeze_main_queue(db) -> None:
     today = datetime.date.today()
     live_main = _compute_live_main(db)
     set_session_main_queue(db, today, [(t[0], t[3].value) for t in live_main])
+
+
+@router.post("/inflection-clozes", status_code=200)
+async def create_inflection_cloze(body: InflectionClozeRequest, request: Request) -> dict:
+    """Create one morphology cloze for an inflected surface (Phase 4a).
+
+    Gated on the lemma's base production being in REVIEW or KNOWN.
+    Idempotent by guid. Follows the add_collocation contract
+    (card_type=cloze, no Anki ids).
+    """
+    db = request.app.state.srs_db
+    language_code = body.language_code
+
+    # 1. Eligibility gate — base word production must be REVIEW/KNOWN
+    base = db.get_collocation_by_lemma(body.lemma)
+    if base is None:
+        raise HTTPException(status_code=409, detail="Base word not yet learned")
+    prod = base.directions.get(Direction.PRODUCTION)
+    if prod is None or prod.state not in (SRSState.REVIEW, SRSState.KNOWN):
+        raise HTTPException(status_code=409, detail="Base word not yet learned")
+
+    # 2. Degenerate guard — surface == lemma reveals the answer
+    if body.lemma.casefold() == body.surface.casefold():
+        raise HTTPException(status_code=422, detail="Surface equals lemma — nothing to cloze")
+
+    # 3. Build + create (mirrors /listen morphology-cloze block)
+    disambig = f"morph:{body.feature.replace(':', '-')}"
+    cloze_sent = make_morphology_cloze_text(body.surface, body.lemma, body.feature, body.sentence)
+    unit = SyntacticUnit(
+        text=body.surface,
+        translation="",
+        word_count=1,
+        difficulty=1,
+        source="llm",
+        lemma=body.lemma,
+        disambig_key=disambig,
+        card_type="cloze",
+        source_sentence=cloze_sent,
+    )
+    was_created = db.add_collocation(unit, language_code=language_code)
+
+    # 4. Look up collocation id (needed for both new and existing)
+    guid = compute_guid(body.surface, language_code, disambig)
+    coll_id = db.get_collocation_id_by_guid(guid)
+    if coll_id is None:  # pragma: no cover — defensive; add_collocation just inserted
+        raise HTTPException(status_code=500, detail="Failed to create collocation")
+
+    # 5. Synthesize audio if newly created (best-effort)
+    if was_created:
+        try:
+            await synthesize_cloze_audios(db, coll_id, body.sentence, body.surface)
+        except Exception:
+            _logger.warning("Failed to synthesize inflection-cloze audio for %r", body.surface)
+
+    # 6. Return serialized item
+    result = db.get_collocation_by_id(coll_id)
+    if result is None:  # pragma: no cover — defensive; id came from get_collocation_id_by_guid
+        raise HTTPException(status_code=500, detail="Failed to retrieve created collocation")
+    _, srs_item, _ = result
+    return {
+        "id": coll_id,
+        "was_created": was_created,
+        "item": _item_to_dict(coll_id, srs_item, language_code),
+    }
 
 
 @router.get("/review-queue", status_code=200)

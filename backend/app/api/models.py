@@ -74,3 +74,11 @@ class GenerateCurriculumRequest(BaseModel):
     topic: str
     cefr_level: str = "A2"
     num_days: int = 7
+
+
+class InflectionClozeRequest(BaseModel):
+    surface: str
+    lemma: str
+    feature: str
+    sentence: str
+    language_code: str
