@@ -82,6 +82,28 @@ def make_cloze_text(surface: str, source_sentence: str) -> str:
 # ── Morphology-cloze hint helpers ────────────────────────────────────────
 
 
+def _ending_blank_split(matched: str, lemma: str) -> tuple[str, str] | None:
+    """Split *matched* into (visible_stem, blanked_tail) for a Fluent-Forever cloze.
+
+    Computes the longest common prefix (LCP) of ``matched.casefold()`` and
+    ``lemma.casefold()``. If the LCP is at least 2 characters and shorter
+    than the full matched word, returns ``(matched[:n], matched[n:])`` so the
+    stem stays visible. Returns ``None`` for suppletive forms (LCP < 2) or
+    when *matched* is a prefix of *lemma* (no blankable tail).
+    """
+    cf_matched = matched.casefold()
+    cf_lemma = lemma.casefold()
+    n = 0
+    for a, b in zip(cf_matched, cf_lemma, strict=False):
+        if a == b:
+            n += 1
+        else:
+            break
+    if 2 <= n < len(matched):
+        return (matched[:n], matched[n:])
+    return None
+
+
 def _format_morphology_feature(feature: str) -> str:
     """Turn a feature key into a concise hint label.
 
@@ -120,11 +142,17 @@ def make_morphology_cloze_text(
     if _CLOZE_RE.search(source_sentence):
         return source_sentence
     label = _format_morphology_feature(feature)
-    hint = f"{lemma}, {label}" if label else lemma
     pattern = re.compile(rf"\b{re.escape(surface)}\b", re.IGNORECASE)
 
     def _replacer(m: re.Match) -> str:
-        return f"{{{{c1::{m.group(0)}::{hint}}}}}"
+        matched = m.group(0)
+        split = _ending_blank_split(matched, lemma)
+        if split is None:
+            hint = f"{lemma}, {label}" if label else lemma
+            return f"{{{{c1::{matched}::{hint}}}}}"
+        visible, tail = split
+        hint = label or lemma
+        return f"{visible}{{{{c1::{tail}::{hint}}}}}"
 
     return pattern.sub(_replacer, source_sentence)
 

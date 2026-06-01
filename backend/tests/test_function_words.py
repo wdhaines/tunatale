@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.srs.function_words import (
     SLOVENE_FUNCTION_WORDS,
+    _ending_blank_split,
     _format_morphology_feature,
     is_function_word,
     make_cloze_text,
@@ -106,6 +107,32 @@ class TestFormatMorphologyFeature:
         assert _format_morphology_feature("noun:loc:") == "loc"
 
 
+class TestEndingBlankSplit:
+    def test_regular_verb_split(self):
+        assert _ending_blank_split("delam", "delati") == ("dela", "m")
+
+    def test_noun_locative_split(self):
+        assert _ending_blank_split("mestu", "mesto") == ("mest", "u")
+
+    def test_adjective_nominative_split(self):
+        assert _ending_blank_split("lepa", "lep") == ("lep", "a")
+
+    def test_case_preserving_split(self):
+        assert _ending_blank_split("Ljubljano", "Ljubljana") == ("Ljubljan", "o")
+
+    def test_suppletive_returns_none(self):
+        assert _ending_blank_split("sem", "biti") is None
+
+    def test_short_stem_lcp_one_returns_none(self):
+        assert _ending_blank_split("bom", "biti") is None
+
+    def test_matched_is_prefix_of_lemma_returns_none(self):
+        assert _ending_blank_split("delam", "delamkor") is None
+
+    def test_empty_matched_returns_none(self):
+        assert _ending_blank_split("", "biti") is None
+
+
 class TestMakeMorphologyClozeText:
     def test_basic_verb_conjugation(self):
         result = make_morphology_cloze_text(
@@ -123,7 +150,7 @@ class TestMakeMorphologyClozeText:
             "noun:loc:sg",
             "Sem v Ljubljani.",
         )
-        assert result == "Sem v {{c1::Ljubljani::Ljubljana, loc sg}}."
+        assert result == "Sem v Ljubljan{{c1::i::loc sg}}."
 
     def test_adjective_agreement(self):
         result = make_morphology_cloze_text(
@@ -132,7 +159,7 @@ class TestMakeMorphologyClozeText:
             "adj:nom:f:sg",
             "Hiša je lepa.",
         )
-        assert result == "Hiša je {{c1::lepa::lep, nom f sg}}."
+        assert result == "Hiša je lep{{c1::a::nom f sg}}."
 
     def test_empty_sentence(self):
         assert make_morphology_cloze_text("sem", "biti", "verb:1sg", "") == ""
@@ -171,7 +198,7 @@ class TestMakeMorphologyClozeText:
             "noun:acc:sg",
             "Grem v Ljubljano.",
         )
-        assert result == "Grem v {{c1::Ljubljano::Ljubljana, acc sg}}."
+        assert result == "Grem v Ljubljan{{c1::o::acc sg}}."
 
     def test_empty_feature_falls_back_to_lemma_only(self):
         result = make_morphology_cloze_text(
@@ -181,6 +208,51 @@ class TestMakeMorphologyClozeText:
             "Jaz sem doma.",
         )
         assert result == "Jaz {{c1::sem::biti}} doma."
+
+    def test_ending_blank_verb_conjugation(self):
+        result = make_morphology_cloze_text(
+            "delam",
+            "delati",
+            "verb:1sg",
+            "Jaz delam doma.",
+        )
+        assert result == "Jaz dela{{c1::m::1sg}} doma."
+
+    def test_ending_blank_noun_locative(self):
+        result = make_morphology_cloze_text(
+            "mestu",
+            "mesto",
+            "noun:loc:sg",
+            "Sem v mestu.",
+        )
+        assert result == "Sem v mest{{c1::u::loc sg}}."
+
+    def test_ending_blank_adjective(self):
+        result = make_morphology_cloze_text(
+            "lepa",
+            "lep",
+            "adj:nom:f:sg",
+            "Hiša je lepa.",
+        )
+        assert result == "Hiša je lep{{c1::a::nom f sg}}."
+
+    def test_ending_blank_case_preserving(self):
+        result = make_morphology_cloze_text(
+            "Ljubljano",
+            "Ljubljana",
+            "noun:acc:sg",
+            "Grem v Ljubljano.",
+        )
+        assert result == "Grem v Ljubljan{{c1::o::acc sg}}."
+
+    def test_suppletive_fallback_preserves_whole_word(self):
+        result = make_morphology_cloze_text(
+            "sem",
+            "biti",
+            "verb:1sg",
+            "Jaz sem doma.",
+        )
+        assert result == "Jaz {{c1::sem::biti, 1sg}} doma."
 
 
 class TestSLOVENE_FUNCTION_WORDS:

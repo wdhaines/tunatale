@@ -733,7 +733,7 @@ class TestSyncCreateNewRouting:
         note = notes[0]
         assert note["mid"] == 1000002  # Cloze notetype
         flds = note["flds"].split("\x1f")
-        assert flds[0] == "Grem v {{c1::Ljubljano::ljubljana, acc sg}} s prijateljem."
+        assert flds[0] == "Grem v Ljubljan{{c1::o::acc sg}} s prijateljem."
 
         # Back Extra contains translation and sentence translation
         assert "Ljubljana" in flds[1]

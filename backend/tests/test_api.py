@@ -1189,7 +1189,7 @@ class TestListenClozeIntegration:
         assert row["lemma"] == "ljubljana"
         assert row["card_type"] == "cloze"
         assert row["disambig_key"] == "morph:noun-acc-sg"
-        assert row["source_sentence"] == "Grem v {{c1::Ljubljano::ljubljana, acc sg}}. Sem v hotelu."
+        assert row["source_sentence"] == "Grem v Ljubljan{{c1::o::acc sg}}. Sem v hotelu."
 
     async def test_listen_case_cloze_is_idempotent(self):
         """Second /listen with same lesson does not duplicate morphology-cloze rows."""
