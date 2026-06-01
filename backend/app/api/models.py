@@ -23,10 +23,6 @@ class TranslateRequest(BaseModel):
     language_code: str
 
 
-class ClozeSettingRequest(BaseModel):
-    enabled: bool
-
-
 class CreateItemRequest(BaseModel):
     text: str
     language_code: str

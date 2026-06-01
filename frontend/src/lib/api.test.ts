@@ -667,30 +667,6 @@ describe("TunaTaleAPI", () => {
       );
     });
 
-    it("getClozeSetting calls GET /api/srs/settings/cloze", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ enabled: true })));
-
-      const result = await api.getClozeSetting();
-
-      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/settings/cloze`);
-      expect(result.enabled).toBe(true);
-    });
-
-    it("setClozeSetting calls PUT /api/srs/settings/cloze with enabled flag", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ enabled: false })));
-
-      const result = await api.setClozeSetting(false);
-
-      expect(fetch).toHaveBeenCalledWith(
-        `${BASE}/api/srs/settings/cloze`,
-        expect.objectContaining({
-          method: "PUT",
-          body: JSON.stringify({ enabled: false }),
-        }),
-      );
-      expect(result.enabled).toBe(false);
-    });
-
     it("setSRSItemState calls POST /api/srs/items/:id/state with state", async () => {
       const item = {
         id: 3,

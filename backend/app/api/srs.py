@@ -13,7 +13,6 @@ from fastapi.responses import FileResponse
 
 from app.api.models import (
     BulkDeleteRequest,
-    ClozeSettingRequest,
     CreateItemRequest,
     DrillRequest,
     ListenRequest,
@@ -425,8 +424,6 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         lesson.language_code,
     )
 
-    cloze_enabled = lesson.language_code == "sl" and db.get_enable_cloze_cards()
-
     # ── Today window (mirrors count_new_introduced_today convention) ────
     local_tz = datetime.datetime.now().astimezone().tzinfo
     today = datetime.date.today()
@@ -437,11 +434,14 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     graded_count = 0
 
     for lemma in unique_lemmas:
+        # Cloze cards are always on, for every language (no feature flag, no
+        # language gate — see ~/.claude/plans/word-learning-state-machine.md
+        # Phase 1). Whether a cloze is actually created is capability-driven:
+        # `is_func` is only true where a function-word list exists for the
+        # language, so non-Slovene content words still fall through to vocab.
         is_func = is_function_word(lemma, lesson.language_code) or any(
             is_function_word(s, lesson.language_code) for s in lemma_to_surfaces.get(lemma, set())
         )
-        if is_func and not cloze_enabled:
-            continue
 
         existing = db.get_collocation_by_lemma(lemma)
         if existing is None:
@@ -540,8 +540,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # After grounding (above), scan NATURAL_SPEED lines with the real
     # lemmatizer. Any token whose TT feature is A1, surface!=lemma, and not
     # already in surface_to_analysis gets appended (respecting the cap).
-    morph_clozes_enabled = bool(cloze_enabled and db.get_enable_case_clozes())
-    if morph_clozes_enabled and natural_speed is not None:
+    if natural_speed is not None:
         _seen_surfaces: set[str] = {s.casefold() for s in surface_to_analysis}
         for phrase in natural_speed.phrases:
             if phrase.language_code != lesson.language_code:
@@ -571,11 +570,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 surface_to_sentence.setdefault(ta.surface, phrase.text)
 
     # ── Morphology-cloze creation (verb conjugations + A1 noun/adj forms) ──
-    # The enable_case_clozes toggle gates this pipeline (name kept for the DB
-    # column + settings endpoint; the feature now covers verb conjugations and
-    # noun/adj morphology more broadly, not just oblique cases).
-    # cloze_enabled already implies language_code == "sl" (set above).
-    if morph_clozes_enabled and surface_to_analysis:
+    # Always on, for every language. Actual creation is capability-driven: the
+    # pipeline only fires for surfaces the lemmatizer analyzes with an A1
+    # morphology feature (`surface_to_analysis`), so a language without an
+    # inflection-aware lemmatizer simply produces nothing here.
+    if surface_to_analysis:
         morph_cloze_count = 0
         max_morph_clozes = 5
         for surface, (lemma, feature) in surface_to_analysis.items():
@@ -829,42 +828,17 @@ async def get_queue_stats(request: Request, response: Response):
     }
 
 
-# ── Cloze settings ────────────────────────────────────────────────────────────
-
-
-@router.get("/settings/cloze")
-async def get_cloze_setting(request: Request):
-    db = request.app.state.srs_db
-    return {"enabled": db.get_enable_cloze_cards()}
-
-
-@router.put("/settings/cloze")
-async def set_cloze_setting(body: ClozeSettingRequest, request: Request):
-    db = request.app.state.srs_db
-    db.set_enable_cloze_cards(body.enabled)
-    return {"enabled": body.enabled}
-
-
-@router.get("/settings/case-clozes")
-async def get_case_cloze_setting(request: Request):
-    db = request.app.state.srs_db
-    return {"enabled": db.get_enable_case_clozes()}
-
-
-@router.put("/settings/case-clozes")
-async def set_case_cloze_setting(body: ClozeSettingRequest, request: Request):
-    db = request.app.state.srs_db
-    db.set_enable_case_clozes(body.enabled)
-    return {"enabled": body.enabled}
-
-
 # ── Admin endpoints ────────────────────────────────────────────────────────────
 
 
-_VALID_USER_STATES = {"new", "learning", "known", "ignored"}
+_VALID_USER_STATES = {"new", "learning", "review", "known", "ignored"}
 _STATE_MAP = {
     "new": SRSState.NEW,
     "learning": SRSState.LEARNING,
+    # `set_state_by_id` only changes the state label, preserving stability /
+    # difficulty / due_at / reps — so cycling a card back to `review` restores
+    # its original FSRS schedule rather than fabricating one.
+    "review": SRSState.REVIEW,
     "known": SRSState.KNOWN,
     "ignored": SRSState.SUSPENDED,
 }

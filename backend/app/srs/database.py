@@ -1981,16 +1981,6 @@ class SRSDatabase:
             conn.execute("DELETE FROM anki_state_cache WHERE key = ?", (key,))
             self._commit(conn)
 
-    def get_enable_cloze_cards(self) -> bool:
-        """Return the current cloze-cards flag (DB-backed, default False)."""
-        row = self.get_anki_state_cache("enable_cloze_cards")
-        if row is None:
-            return False
-        return row[0].lower() == "true"
-
-    def set_enable_cloze_cards(self, enabled: bool) -> None:
-        self.set_anki_state_cache("enable_cloze_cards", "true" if enabled else "false")
-
     def get_event_sync_pull_mode(self) -> str:
         """Return the sync_pull merge mode (Stage 3b): ``legacy`` / ``compare`` / ``new``.
 
@@ -2008,16 +1998,6 @@ class SRSDatabase:
         if mode not in _EVENT_SYNC_PULL_MODES:
             raise ValueError(f"event_sync_pull mode must be one of {sorted(_EVENT_SYNC_PULL_MODES)}, got {mode!r}")
         self.set_anki_state_cache("event_sync_pull", mode)
-
-    def get_enable_case_clozes(self) -> bool:
-        """Return the current case-clozes flag (DB-backed, default False)."""
-        row = self.get_anki_state_cache("enable_case_clozes")
-        if row is None:
-            return False
-        return row[0].lower() == "true"
-
-    def set_enable_case_clozes(self, enabled: bool) -> None:
-        self.set_anki_state_cache("enable_case_clozes", "true" if enabled else "false")
 
     def set_dirty_fields(self, guid: str, fields_str: str) -> None:
         """Set dirty_fields for the collocation identified by guid."""

@@ -105,7 +105,6 @@ class TestListenToSyncRoundTrip:
 
     async def test_listen_then_sync_creates_cloze_and_vocab(self):
         db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
 
         store = ContentStore(":memory:")
         lesson = Lesson(
@@ -186,47 +185,3 @@ class TestListenToSyncRoundTrip:
             cards = anki_conn.execute("SELECT id, ord, type, queue FROM cards WHERE nid = ?", (note["id"],)).fetchall()
             assert len(cards) == 1
             assert cards[0]["ord"] == 0
-
-    async def test_listen_then_sync_with_cloze_disabled_creates_vocab_only(self):
-        """With cloze disabled, function words are skipped but content words create vocab rows."""
-        db = SRSDatabase(":memory:")
-
-        store = ContentStore(":memory:")
-        lesson = Lesson(
-            title="Day 1",
-            language_code="sl",
-            sections=[
-                Section(
-                    section_type=SectionType.NATURAL_SPEED,
-                    phrases=[
-                        Phrase(
-                            text="Kje je banka?",
-                            voice_id="female-1",
-                            language_code="sl",
-                            role="female-1",
-                        ),
-                    ],
-                )
-            ],
-            key_phrases=[],
-        )
-        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
-
-        app.state.srs_db = db
-        app.state.content_store = store
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["registered"] == 1  # only banka created
-
-        # Function words NOT created when cloze disabled
-        assert db.get_collocation_by_lemma("kje") is None
-        assert db.get_collocation_by_lemma("je") is None
-
-        # Content word IS created as vocab
-        banka = db.get_collocation_by_lemma("banka")
-        assert banka is not None
-        assert banka.syntactic_unit.card_type == "vocab"
