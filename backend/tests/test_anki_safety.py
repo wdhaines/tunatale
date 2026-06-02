@@ -120,6 +120,37 @@ class TestSafeOpen:
         captured = capsys.readouterr()
         assert "WARNING" in captured.err or "sha256" in captured.err.lower() or "changed" in captured.err.lower()
 
+    def test_backup_paths_unique_within_same_second(self, fake_anki_db, tmp_path):
+        """Two safe_open calls in the same wall-clock second must not collide.
+
+        Backups are keyed only by a second-granularity timestamp historically.
+        Under parallel callers (pytest-xdist workers, or two rapid syncs) that
+        produced identical filenames, so one call validated and could overwrite
+        the other's backup. The filename must carry a per-call unique component.
+        """
+        from datetime import datetime
+
+        from app.anki import safety as safety_mod
+
+        fixed = datetime(2026, 5, 28, 22, 4, 34)
+
+        class _FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed
+
+        backup_dir = tmp_path / "bak"
+        with patch.object(safety_mod, "datetime", _FrozenDatetime):
+            with safe_open(fake_anki_db, backup_dir=backup_dir) as ctx1:
+                path1 = ctx1.backup_path
+            with safe_open(fake_anki_db, backup_dir=backup_dir) as ctx2:
+                path2 = ctx2.backup_path
+
+        assert path1 != path2, "same-second safe_open calls collided on backup filename"
+        assert path1.exists() and path2.exists()
+        assert path1.name.startswith("collection.anki2.bak_")
+        assert path2.name.startswith("collection.anki2.bak_")
+
     def test_bad_backup_deleted_on_note_count_mismatch(self, tmp_path):
         """_validate_backup deletes backup and raises on note count mismatch."""
         import sqlite3 as sq3
@@ -204,6 +235,110 @@ class TestSafeOpen:
         with safe_open(db_path, backup_dir=tmp_path / "bak") as ctx:
             count = ctx.conn.execute("SELECT COUNT(*) FROM decks WHERE name='default'").fetchone()[0]
         assert count == 1  # case-insensitive match proves the collation is active
+
+
+# ── backup retention / pruning ────────────────────────────────────────────────
+
+
+class TestBackupRetention:
+    """`safe_open` writes a fresh full-collection backup on every call and never
+    pruned old ones, so the directory grew without bound (6 GB / 4000+ files in
+    practice). `_prune_old_backups` caps it to the N most recent snapshots."""
+
+    def _make(self, d, name, sidecars=()):
+        (d / name).write_bytes(b"x")
+        for sc in sidecars:
+            (d / f"{name}{sc}").write_bytes(b"")
+
+    def test_keeps_n_most_recent_snapshots(self, tmp_path):
+        from app.anki.safety import _prune_old_backups
+
+        d = tmp_path / "bak"
+        d.mkdir()
+        names = [
+            "collection.anki2.bak_20260101_000000_1_a",
+            "collection.anki2.bak_20260102_000000_1_b",
+            "collection.anki2.bak_20260103_000000_1_c",
+            "collection.anki2.bak_20260104_000000_1_d",
+            "collection.anki2.bak_20260105_000000_1_e",
+        ]
+        for n in names:
+            self._make(d, n)
+        deleted = _prune_old_backups(d, keep=2)
+        remaining = sorted(p.name for p in d.glob("collection.anki2.bak_*"))
+        assert remaining == names[-2:]  # newest two kept (filename sorts chronologically)
+        assert len(deleted) == 3
+
+    def test_keep_ge_count_deletes_nothing(self, tmp_path):
+        from app.anki.safety import _prune_old_backups
+
+        d = tmp_path / "bak"
+        d.mkdir()
+        self._make(d, "collection.anki2.bak_20260101_000000_1_a")
+        self._make(d, "collection.anki2.bak_20260102_000000_1_b")
+        assert _prune_old_backups(d, keep=5) == []
+        assert len(list(d.glob("collection.anki2.bak_*"))) == 2
+
+    def test_keep_zero_or_negative_disables_pruning(self, tmp_path):
+        from app.anki.safety import _prune_old_backups
+
+        d = tmp_path / "bak"
+        d.mkdir()
+        self._make(d, "collection.anki2.bak_20260101_000000_1_a")
+        assert _prune_old_backups(d, keep=0) == []
+        assert _prune_old_backups(d, keep=-3) == []
+        assert len(list(d.glob("collection.anki2.bak_*"))) == 1
+
+    def test_deletes_sidecars_of_pruned_keeps_sidecars_of_kept(self, tmp_path):
+        from app.anki.safety import _prune_old_backups
+
+        d = tmp_path / "bak"
+        d.mkdir()
+        old = "collection.anki2.bak_20260101_000000_1_a"
+        new = "collection.anki2.bak_20260202_000000_1_b"
+        self._make(d, old, sidecars=("-wal", "-shm"))
+        self._make(d, new, sidecars=("-wal",))
+        deleted = _prune_old_backups(d, keep=1)
+        # pruned snapshot AND its sidecars are gone
+        assert not (d / old).exists()
+        assert not (d / f"{old}-wal").exists()
+        assert not (d / f"{old}-shm").exists()
+        # kept snapshot AND its sidecar survive
+        assert (d / new).exists()
+        assert (d / f"{new}-wal").exists()
+        # sidecars don't count toward `keep`: only `old` and `new` are snapshots
+        assert (d / old) in deleted
+
+    def test_unlink_error_is_suppressed(self, tmp_path, monkeypatch):
+        """A failed unlink must never propagate — the sync already succeeded."""
+        import pathlib
+
+        from app.anki.safety import _prune_old_backups
+
+        d = tmp_path / "bak"
+        d.mkdir()
+        self._make(d, "collection.anki2.bak_20260101_000000_1_a")
+        self._make(d, "collection.anki2.bak_20260102_000000_1_b")
+
+        def boom(self, *a, **k):
+            raise OSError("nope")
+
+        monkeypatch.setattr(pathlib.Path, "unlink", boom)
+        result = _prune_old_backups(d, keep=1)
+        assert result == []  # unlink failed, nothing recorded
+        assert (d / "collection.anki2.bak_20260101_000000_1_a").exists()
+
+    def test_safe_open_prunes_to_keep_setting(self, fake_anki_db, tmp_path, monkeypatch):
+        """End-to-end: repeated safe_open calls leave at most `anki_backup_keep` snapshots."""
+        from app.anki import safety as safety_mod
+
+        monkeypatch.setattr(safety_mod.settings, "anki_backup_keep", 3, raising=False)
+        backup_dir = tmp_path / "bak"
+        for _ in range(5):
+            with safe_open(fake_anki_db, backup_dir=backup_dir):
+                pass
+        snaps = [p for p in backup_dir.glob("collection.anki2.bak_*") if not p.name.endswith(("-wal", "-shm"))]
+        assert len(snaps) == 3
 
 
 # ── probe_lock + AnkiRunningError ─────────────────────────────────────────────

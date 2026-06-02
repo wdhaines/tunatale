@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     anki_media_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.media").expanduser()
     anki_deck_name: str = "0. Slovene"
     anki_backup_dir: Path = Path("~/.tunatale/anki-backups").expanduser()
+    # Retention cap for the safe_open backup directory. safe_open writes a full
+    # ~16 MB collection snapshot on every call; without a cap the directory grows
+    # without bound. Keep the N most recent snapshots (~16 MB each); <= 0 disables.
+    anki_backup_keep: int = 30
     media_dir: Path = Path("./media")
     anki_fallback_log: Path = Path("~/.tunatale/logs/anki-fallback.log").expanduser()
 

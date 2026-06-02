@@ -6,9 +6,11 @@ import asyncio
 import logging
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
-from pydub import AudioSegment
+import numpy as np
+import soundfile as sf
 
 from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.ports import TTSService
@@ -17,17 +19,76 @@ from app.models.lesson import Lesson, Section
 
 logger = logging.getLogger(__name__)
 
+_SAMPLE_DTYPE = "float32"
+_WAV_SUBTYPE = "PCM_16"
+
+
+@dataclass
+class _Audio:
+    """A decoded audio buffer: float32 samples shaped ``(frames, channels)`` + rate.
+
+    Replaces pydub's ``AudioSegment`` for the small set of operations the
+    renderer needs (decode, measure, silence, concatenate, export to WAV), so the
+    audio pipeline depends only on maintained libraries (``soundfile`` decodes
+    EdgeTTS MP3 via bundled libsndfile; ``numpy`` does the assembly).
+    """
+
+    samples: np.ndarray
+    rate: int
+
+    @property
+    def duration_ms(self) -> float:
+        return len(self.samples) / self.rate * 1000.0
+
+
+def _read_audio(path: Path) -> _Audio:
+    """Decode an audio file (EdgeTTS MP3 in prod, WAV in tests) to float32 samples."""
+    samples, rate = sf.read(str(path), dtype=_SAMPLE_DTYPE, always_2d=True)
+    return _Audio(samples, int(rate))
+
+
+def _silence(duration_ms: float, like: _Audio) -> _Audio:
+    """A silent buffer of *duration_ms*, matching *like*'s rate and channel count."""
+    frames = round(duration_ms / 1000.0 * like.rate)
+    return _Audio(np.zeros((frames, like.samples.shape[1]), dtype=_SAMPLE_DTYPE), like.rate)
+
+
+def _concat(parts: list[_Audio]) -> _Audio:
+    """Concatenate audio buffers that share sample rate and channel count.
+
+    EdgeTTS emits a uniform 24 kHz mono stream for every voice, so this holds in
+    practice. A mismatch means a foreign/corrupt input; we fail loudly rather
+    than silently re-speed it — pydub's implicit ``_sync`` resample used to hide
+    that. Always called with a non-empty list (a section always has ≥1 phrase;
+    the full mix always starts with the lesson title).
+    """
+    head = parts[0]
+    channels = head.samples.shape[1]
+    for part in parts[1:]:
+        if part.rate != head.rate or part.samples.shape[1] != channels:
+            raise ValueError(
+                "cannot concatenate audio with mismatched format: "
+                f"expected {head.rate} Hz / {channels} ch, "
+                f"got {part.rate} Hz / {part.samples.shape[1]} ch"
+            )
+    return _Audio(np.concatenate([p.samples for p in parts], axis=0), head.rate)
+
+
+def _write_wav(path: Path, audio: _Audio) -> None:
+    """Write *audio* to *path* as a 16-bit PCM WAV."""
+    sf.write(str(path), audio.samples, audio.rate, subtype=_WAV_SUBTYPE)
+
 
 class LessonRenderer:
-    """Renders a Lesson to a WAV audio file using pydub for assembly.
+    """Renders a Lesson to a WAV audio file using soundfile + numpy for assembly.
 
     Pipeline per phrase:
       1. Preprocess text (language-specific)
       2. Synthesize via TTS → temp file
-      3. Load as AudioSegment, measure actual duration
+      3. Decode to samples, measure actual duration
       4. Calculate post-phrase pause from real duration
-      5. Concatenate all segments with boundary gaps
-    Then export the combined AudioSegment as WAV.
+      5. Concatenate all buffers with boundary gaps
+    Then export the combined buffer as WAV.
     """
 
     def __init__(
@@ -40,8 +101,8 @@ class LessonRenderer:
         self._preprocessor = preprocessor
         self._calc = pause_calculator
 
-    async def _render_section(self, section: Section, tmp: Path, section_idx: int) -> AudioSegment:
-        """Render a single section to an AudioSegment (no boundary silence).
+    async def _render_section(self, section: Section, tmp: Path, section_idx: int) -> _Audio:
+        """Render a single section to an audio buffer (no boundary silence).
 
         Args:
             section: The Section to render.
@@ -49,7 +110,7 @@ class LessonRenderer:
             section_idx: Index used for temp file naming.
 
         Returns:
-            AudioSegment containing all phrases with inter-phrase pauses.
+            Audio buffer containing all phrases with inter-phrase pauses.
         """
         phrase_files = [tmp / f"s{section_idx}_p{i}.mp3" for i in range(len(section.phrases))]
         processed_texts = [
@@ -66,22 +127,21 @@ class LessonRenderer:
         )
 
         # Assemble in phrase order (order is preserved by the pre-allocated paths)
-        seg = AudioSegment.empty()
+        parts: list[_Audio] = []
         for i, phrase in enumerate(section.phrases):
-            phrase_seg = AudioSegment.from_file(str(phrase_files[i]))
-            audio_duration_s = len(phrase_seg) / 1000.0
-            seg += phrase_seg
+            phrase_audio = _read_audio(phrase_files[i])
+            parts.append(phrase_audio)
 
             pause_ms = self._calc.get_phrase_pause(
-                audio_duration_s=audio_duration_s,
+                audio_duration_s=phrase_audio.duration_ms / 1000.0,
                 word_count=len(phrase.text.split()),
                 section_type=section.section_type,
                 language_code=phrase.language_code,
             )
             if pause_ms > 0:
-                seg += AudioSegment.silent(duration=pause_ms)
+                parts.append(_silence(pause_ms, phrase_audio))
 
-        return seg
+        return _concat(parts)
 
     async def render(
         self,
@@ -102,7 +162,6 @@ class LessonRenderer:
                            Must have same length as lesson.sections if provided.
         """
         t_start = time.perf_counter()
-        boundary_silence = AudioSegment.silent(duration=self._calc.get_section_boundary_pause())
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp = Path(tmp_dir)
@@ -112,12 +171,12 @@ class LessonRenderer:
             title_file = tmp / "title.mp3"
             await self._tts.synthesize(lesson.title, lesson.narrator_voice, title_file, rate="+0%")
             logger.debug("TTS title → %.0f ms", (time.perf_counter() - t0) * 1000)
-            title_seg = AudioSegment.from_file(str(title_file))
+            title_audio = _read_audio(title_file)
 
             # Render all sections concurrently — phrases within each section are
             # also parallelised; EdgeTTSService._semaphore caps total concurrency.
             t0 = time.perf_counter()
-            section_segs: list[AudioSegment] = list(
+            section_audios: list[_Audio] = list(
                 await asyncio.gather(
                     *[self._render_section(section, tmp, i) for i, section in enumerate(lesson.sections)]
                 )
@@ -125,30 +184,29 @@ class LessonRenderer:
             logger.debug("All sections TTS → %.0f ms", (time.perf_counter() - t0) * 1000)
 
             if section_paths is not None:
-                for section_idx, sec_seg in enumerate(section_segs):
+                for section_idx, sec_audio in enumerate(section_audios):
                     sp = section_paths[section_idx]
                     sp.parent.mkdir(parents=True, exist_ok=True)
                     t0 = time.perf_counter()
-                    # pydub's export() returns an unclosed file handle; close it.
-                    sec_seg.export(str(sp), format="wav").close()
+                    _write_wav(sp, sec_audio)
                     logger.debug("Section %d export → %.0f ms", section_idx, (time.perf_counter() - t0) * 1000)
 
             # Assemble full lesson: title + bs + sec0 + bs + sec1 + ...
-            combined = title_seg + boundary_silence
-            for i, sec_seg in enumerate(section_segs):
+            boundary = _silence(self._calc.get_section_boundary_pause(), title_audio)
+            parts: list[_Audio] = [title_audio, boundary]
+            for i, sec_audio in enumerate(section_audios):
                 if i > 0:
-                    combined += boundary_silence
-                combined += sec_seg
+                    parts.append(boundary)
+                parts.append(sec_audio)
+            combined = _concat(parts)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
-        # pydub's export() returns an unclosed file handle; close it.
-        combined.export(str(output_path), format="wav").close()
+        _write_wav(output_path, combined)
         logger.debug("Full lesson export → %.0f ms", (time.perf_counter() - t0) * 1000)
-        total_ms = (time.perf_counter() - t_start) * 1000
         logger.info(
             "Rendered lesson to %s (audio: %d ms, wall: %.0f ms)",
             output_path,
-            len(combined),
-            total_ms,
+            round(combined.duration_ms),
+            (time.perf_counter() - t_start) * 1000,
         )

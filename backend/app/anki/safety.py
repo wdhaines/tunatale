@@ -8,6 +8,7 @@ Gates (in order):
 2. SHA256 of source before open.
 3. Backup via Connection.backup() (never shutil).
 4. Backup validation: integrity_check + row-count match.
+   Retention: prune backups beyond settings.anki_backup_keep (newest kept).
 5. Connection opened read-only (mode="ro") or read-write (mode="rw") via URI.
 6. In ro mode: post-run SHA256 re-check on context exit.
    In rw mode: SHA256 equality is *expected* to break; callers use
@@ -17,7 +18,9 @@ Gates (in order):
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import secrets
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager, suppress
@@ -110,6 +113,40 @@ def _register_anki_collations(conn: sqlite3.Connection) -> None:
     conn.create_collation("unicase", _unicase)
 
 
+_BACKUP_PREFIX = "collection.anki2.bak_"
+
+
+def _prune_old_backups(backup_dir: Path, keep: int) -> list[Path]:
+    """Cap the backup directory to the ``keep`` most recent snapshots.
+
+    ``safe_open`` writes a fresh full-collection backup on every call and used to
+    never remove old ones, so the directory grew without bound (6 GB / 4000+
+    files observed in practice). This keeps the ``keep`` newest
+    ``collection.anki2.bak_*`` snapshots and deletes older ones together with any
+    ``-wal`` / ``-shm`` sidecars. Snapshots are ordered by filename, whose
+    fixed-width ``YYYYMMDD_HHMMSS`` timestamp sorts chronologically.
+
+    ``keep <= 0`` disables pruning. Never raises: a failed unlink is suppressed so
+    retention cannot break a sync that already succeeded. Returns the deleted
+    paths (for logging/tests).
+    """
+    if keep <= 0:
+        return []
+    snapshots = sorted(
+        (p for p in backup_dir.glob(f"{_BACKUP_PREFIX}*") if not p.name.endswith(("-wal", "-shm"))),
+        reverse=True,
+    )
+    deleted: list[Path] = []
+    for snap in snapshots[keep:]:
+        for target in (snap, snap.with_name(f"{snap.name}-wal"), snap.with_name(f"{snap.name}-shm")):
+            if not target.exists():
+                continue
+            with suppress(OSError):
+                target.unlink()
+                deleted.append(target)
+    return deleted
+
+
 def _validate_backup(backup_path: Path, source_note_count: int) -> None:
     """Open the backup and verify it is a valid SQLite with matching row count.
 
@@ -192,9 +229,14 @@ def safe_open(
         _src.close()
 
     # Gate 3: backup via Connection.backup()
+    # The timestamp is only second-granularity, so two callers in the same
+    # second (parallel test workers, or two rapid syncs) would otherwise share
+    # a filename and clobber/cross-validate each other's backup. A per-call
+    # token (pid + random) keeps each backup distinct.
     backup_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_path = backup_dir / f"collection.anki2.bak_{timestamp}"
+    unique = f"{os.getpid()}_{secrets.token_hex(4)}"
+    backup_path = backup_dir / f"collection.anki2.bak_{timestamp}_{unique}"
 
     src_conn = sqlite3.connect(str(collection_path))
     dst_conn = sqlite3.connect(str(backup_path))
@@ -206,6 +248,11 @@ def safe_open(
 
     # Gate 4: validate backup
     _validate_backup(backup_path, source_note_count)
+
+    # Retention: bound the backup directory so it can't grow without limit.
+    # Runs after validation so the just-created backup is counted; failures are
+    # swallowed inside _prune_old_backups and never affect this open.
+    _prune_old_backups(backup_dir, getattr(settings, "anki_backup_keep", 0))
 
     # Gate 5: open source connection (ro or rw per mode)
     conn = sqlite3.connect(

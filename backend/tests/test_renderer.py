@@ -4,7 +4,9 @@ import wave
 from io import BytesIO
 from unittest.mock import AsyncMock
 
-from pydub import AudioSegment
+import numpy as np
+import pytest
+import soundfile as sf
 
 from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.preprocessing.slovene import SlovenePreprocessor
@@ -12,10 +14,11 @@ from app.audio.renderer import LessonRenderer
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 
 
-def _make_wav_bytes(duration_ms: int = 100) -> bytes:
-    """Generate minimal valid WAV bytes using pydub (no ffmpeg needed for WAV)."""
+def _make_wav_bytes(duration_ms: int = 100, rate: int = 11025) -> bytes:
+    """Generate minimal valid (silent) WAV bytes via soundfile."""
     buf = BytesIO()
-    AudioSegment.silent(duration=duration_ms).export(buf, format="wav")
+    frames = round(duration_ms / 1000 * rate)
+    sf.write(buf, np.zeros((frames, 1), dtype="float32"), rate, format="WAV", subtype="PCM_16")
     return buf.getvalue()
 
 
@@ -182,6 +185,26 @@ class TestLessonRenderer:
         phrase_call = next(c for c in rate_calls if c[0] == "hvala")
         assert phrase_call[1] == "-20%"
 
+    async def test_render_raises_on_mismatched_sample_rates(self, tmp_path):
+        """Mismatched sample rates fail loudly rather than silently re-speeding.
+
+        pydub's ``+`` used to implicitly resample (``_sync``) and hide a format
+        mismatch; the soundfile/numpy assembly asserts a uniform rate instead.
+        """
+        lesson = _minimal_lesson()
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+            # Title at 22.05 kHz, phrases at 11.025 kHz → mismatch in the full mix.
+            sample_rate = 22050 if text == lesson.title else 11025
+            output_path.write_bytes(_make_wav_bytes(rate=sample_rate))
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        rdr = _make_renderer(mock_tts)
+        with pytest.raises(ValueError, match="mismatched"):
+            await rdr.render(lesson, tmp_path / "out.wav")
+
 
 class TestLessonRendererSectionOutput:
     """Tests for per-section file generation."""
@@ -279,9 +302,11 @@ class TestLessonRendererSectionOutput:
         section_paths = [tmp_path / f"s{i}.wav" for i in range(len(lesson.sections))]
         await rdr.render(lesson, full_path, section_paths=section_paths)
 
-        full_duration = len(AudioSegment.from_file(str(full_path)))
+        with wave.open(str(full_path), "rb") as wf:
+            full_duration = wf.getnframes() / wf.getframerate()
         for sp in section_paths:
-            sec_duration = len(AudioSegment.from_file(str(sp)))
+            with wave.open(str(sp), "rb") as wf:
+                sec_duration = wf.getnframes() / wf.getframerate()
             assert full_duration > sec_duration, "Full WAV should be longer than individual section"
 
     async def test_render_without_section_paths_still_works(self, tmp_path):

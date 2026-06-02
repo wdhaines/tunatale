@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,15 @@ from tests.anki_oracle.synthetic_collection import (
 )
 
 ORACLE_SCRIPT = Path(__file__).with_name("oracle.py")
+
+# `uv run --with anki` builds an ephemeral environment on first use. When many
+# pytest-xdist workers spawn oracle subprocesses simultaneously, the losers of
+# the env-build race can return empty/garbage stdout once before uv's cache is
+# warm. Retry a few times so a transient race never turns into a silently
+# skipped parity test (which would be lost coverage). A persistent failure
+# (anki genuinely unavailable) still falls through to pytest.skip.
+_ORACLE_MAX_ATTEMPTS = 4
+_ORACLE_RETRY_SLEEP_S = 0.5
 
 
 class OracleResult:
@@ -57,42 +67,55 @@ def run_oracle(collection_path: Path, operations: list[dict]) -> OracleResult:
 
     Calls ``pytest.skip()`` when the ``anki`` package is not available
     (determined by the oracle script's JSON error response or a subprocess
-    failure).
+    failure). Transient invalid-JSON output (e.g. an env-build race across
+    parallel workers) is retried before skipping.
     """
-    try:
-        proc = subprocess.run(
-            [
-                "uv",
-                "run",
-                "--with",
-                "anki",
-                "python",
-                str(ORACLE_SCRIPT),
-                str(collection_path),
-            ],
-            input=json.dumps(operations),
-            capture_output=True,
-            text=True,
-            timeout=60,
-            env={
-                **os.environ,
-                "QT_QPA_PLATFORM": "offscreen",
-            },
-        )
-    except FileNotFoundError:
-        pytest.skip("`uv` not found on PATH — cannot run oracle tests.")
-    except subprocess.TimeoutExpired:
-        pytest.skip("Oracle subprocess timed out after 60s.")
+    last_error = ""
+    for attempt in range(_ORACLE_MAX_ATTEMPTS):
+        try:
+            proc = subprocess.run(
+                [
+                    "uv",
+                    "run",
+                    "--with",
+                    "anki",
+                    "python",
+                    str(ORACLE_SCRIPT),
+                    str(collection_path),
+                ],
+                input=json.dumps(operations),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env={
+                    **os.environ,
+                    "QT_QPA_PLATFORM": "offscreen",
+                },
+            )
+        except FileNotFoundError:
+            pytest.skip("`uv` not found on PATH — cannot run oracle tests.")
+        except subprocess.TimeoutExpired:
+            pytest.skip("Oracle subprocess timed out after 60s.")
 
-    try:
-        result = json.loads(proc.stdout)
-    except json.JSONDecodeError as e:
-        pytest.skip(f"Oracle output not valid JSON: {e}\nstderr: {proc.stderr}")
+        try:
+            result = json.loads(proc.stdout)
+        except json.JSONDecodeError as e:
+            # Empty/garbage stdout is a transient subprocess failure under
+            # parallel load — retry before giving up.
+            last_error = f"Oracle output not valid JSON: {e}\nstderr: {proc.stderr}"
+            if attempt < _ORACLE_MAX_ATTEMPTS - 1:
+                time.sleep(_ORACLE_RETRY_SLEEP_S)
+                continue
+            pytest.skip(last_error)
 
-    if "error" in result:
-        pytest.skip(f"Oracle not available: {result['error']}")
+        if "error" in result:
+            pytest.skip(f"Oracle not available: {result['error']}")
 
-    return OracleResult(result)
+        return OracleResult(result)
+
+    # Unreachable: the loop either returns, skips, or exhausts retries (which
+    # also skips on the final attempt above).
+    raise AssertionError("run_oracle retry loop exited without result")  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------

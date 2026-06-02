@@ -35,7 +35,7 @@ jobs:
         run: uv run ruff format --check app tests
 
       - name: Test
-        run: uv run pytest
+        run: uv run pytest -n auto
 
   frontend:
     runs-on: ubuntu-latest
