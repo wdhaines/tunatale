@@ -14,8 +14,7 @@ dependencies = [
     "httpx>=0.25.0",
     "python-dotenv>=1.0.0",
     "edge-tts>=6.1.0",
-    "pydub>=0.25.1",
-    "audioop-lts>=0.2.2",
+    "soundfile>=0.12.1",
     "aiofiles>=23.0.0",
     "numpy>=2.0.0",
 ]
