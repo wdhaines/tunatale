@@ -206,11 +206,14 @@ def _compute_replay(db, coll_id, stored):
     )
 
 
-def test_new_mode_writes_replay_derived_fsrs():
-    """new mode, replay within tolerance of Anki -> writes replay-derived stability/difficulty.
+def test_new_mode_writes_anki_verbatim_within_tolerance():
+    """new mode, replay within tolerance of Anki -> writes ANKI's value verbatim.
 
+    Take-Anki-verbatim (fork resolved 2026-06-02): Anki is the source of truth.
     Discriminating: card_rec is *within* 0.01 tolerance but *not equal* to the
-    replay, so the assertion can only pass if the code reads from the replay.
+    replay, so the assertions can only pass if the code writes Anki's value
+    (card.stability) and NOT the replay-derived value (expected.stability). When
+    within tolerance, no divergence is recorded.
     """
     db = _make_tt_db()
     guid = _add_banka(db)
@@ -221,7 +224,7 @@ def test_new_mode_writes_replay_derived_fsrs():
     revlog = [_good_revlog_row()]
     records = [make_note_record(anki_guid=guid, cards=[])]
 
-    # Pre-ingest the revlog row so we can compute the expected replay result.
+    # Pre-ingest the revlog row so we can compute the replay result to discriminate against.
     sync = AnkiSync(db=db, _reader=RevlogReader(records, revlog), _writer=FakeWriter())
     sync._ingest_anki_revlog_for_card(_CARD_ID, coll_id, Direction.RECOGNITION)
     expected = _compute_replay(db, coll_id, stored)
@@ -242,10 +245,10 @@ def test_new_mode_writes_replay_derived_fsrs():
     report = _run_pull_report(db, records2, revlog)
 
     after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
-    assert len(report.recompute_divergences) == 0
-    assert abs(after.stability - expected.stability) < 1e-9
-    assert after.stability != card.stability
-    assert abs(after.difficulty - expected.difficulty) < 1e-9
+    assert len(report.recompute_divergences) == 0  # within tolerance -> no divergence record
+    assert after.stability == card.stability  # took Anki's value verbatim
+    assert after.difficulty == card.difficulty
+    assert after.stability != expected.stability  # NOT the replay-derived value
     assert after.reps == 4
     assert after.state == SRSState.REVIEW
 
