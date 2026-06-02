@@ -37,7 +37,7 @@ def _parse_stored_due(stored: str | None) -> datetime | None:
         return None
     try:
         return datetime.fromisoformat(stored)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
 

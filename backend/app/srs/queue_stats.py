@@ -100,7 +100,7 @@ def _read_config_value_from_deck_config_table(
             try:
                 decks = json.loads(row[0] or "{}")
                 dconf_json = json.loads(dconf_raw)
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError, TypeError:
                 return None
 
             deck_info = next(
@@ -116,7 +116,7 @@ def _read_config_value_from_deck_config_table(
                         for key in legacy_keys:
                             val = val[key]
                         return int(val)
-                    except (KeyError, TypeError, ValueError):
+                    except KeyError, TypeError, ValueError:
                         pass
 
     # Modern protobuf path (deck_config table)
@@ -223,7 +223,7 @@ def _read_fsrs_params_from_deck_config_table(conn: sqlite3.Connection, deck_name
         retention = float(retention_raw) if retention_raw is not None else 0.9
         try:
             return FSRSParams(weights=tuple(weights_6), desired_retention=retention)
-        except (ValueError, TypeError):  # pragma: no cover
+        except ValueError, TypeError:  # pragma: no cover
             pass  # fall through to field 5
 
     # Fall back to field 5 (FSRS-5: 19 floats)
@@ -233,7 +233,7 @@ def _read_fsrs_params_from_deck_config_table(conn: sqlite3.Connection, deck_name
         retention = float(retention_raw) if retention_raw is not None else 0.9
         try:
             return FSRSParams(weights=tuple(weights_5), desired_retention=retention)
-        except (ValueError, TypeError):  # pragma: no cover
+        except ValueError, TypeError:  # pragma: no cover
             return None  # pragma: no cover
 
     return None
@@ -315,7 +315,7 @@ def resolve_daily_review_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
                 age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
                 if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
                     return (int(value_str), "cache")
-            except (ValueError, TypeError, OverflowError):
+            except ValueError, TypeError, OverflowError:
                 pass
 
     config_default = getattr(settings, "anki_reviews_per_day_default", 0)
@@ -382,7 +382,7 @@ def resolve_daily_new_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
                 age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
                 if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
                     return (int(value_str), "cache")
-            except (ValueError, TypeError, OverflowError):
+            except ValueError, TypeError, OverflowError:
                 pass
 
     config_default = getattr(settings, "anki_new_per_day_default", 0)
@@ -416,7 +416,7 @@ def resolve_new_spread(db: SRSDatabase | None = None) -> tuple[int, str]:
                     val = int(value_str)
                     if val in (0, 1, 2):
                         return (val, "cache")
-            except (ValueError, TypeError, OverflowError):
+            except ValueError, TypeError, OverflowError:
                 pass
 
     return (_DEFAULT_NEW_SPREAD, "default")
@@ -443,7 +443,7 @@ def resolve_bury_new(db: SRSDatabase | None = None) -> tuple[bool, str]:
                 age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
                 if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
                     return (value_str == "True", "cache")
-            except (ValueError, TypeError, OverflowError):
+            except ValueError, TypeError, OverflowError:
                 pass
 
     return (_DEFAULT_BURY_NEW, "default")
@@ -470,7 +470,7 @@ def resolve_bury_review(db: SRSDatabase | None = None) -> tuple[bool, str]:
                 age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
                 if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
                     return (value_str == "True", "cache")
-            except (ValueError, TypeError, OverflowError):
+            except ValueError, TypeError, OverflowError:
                 pass
 
     return (_DEFAULT_BURY_REVIEW, "default")
@@ -508,7 +508,7 @@ def resolve_col_crt(db: SRSDatabase | None = None) -> int | None:
         return None
     try:
         return int(row[0])
-    except (ValueError, TypeError):  # pragma: no cover - defensive
+    except ValueError, TypeError:  # pragma: no cover - defensive
         return None
 
 
@@ -534,7 +534,7 @@ def resolve_learning_cutoff(db: SRSDatabase, fallback: datetime) -> datetime:
     value_str, _ = row
     try:
         return datetime.fromisoformat(value_str)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return fallback
 
 
@@ -570,7 +570,7 @@ def get_session_main_queue(db: SRSDatabase, today: date) -> list[tuple[int, str]
         return None
     try:
         data = json.loads(row[0])
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         return None
     if data.get("day") != today.isoformat():
         return None
@@ -659,7 +659,7 @@ def resolve_fsrs_params(db: SRSDatabase | None = None) -> tuple[FSRSParams, str]
                         ),
                         "cache",
                     )
-            except (ValueError, TypeError, KeyError):
+            except ValueError, TypeError, KeyError:
                 pass
 
     return (DEFAULT_FSRS5_PARAMS, "default")
@@ -727,7 +727,7 @@ def resolve_learning_steps(db: SRSDatabase | None = None) -> tuple[list[float], 
                 age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
                 if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
                     return (json.loads(value_str), "cache")
-            except (ValueError, TypeError, OverflowError):
+            except ValueError, TypeError, OverflowError:
                 pass
 
     return (_DEFAULT_LEARN_STEPS, "default")
@@ -754,7 +754,7 @@ def resolve_relearning_steps(db: SRSDatabase | None = None) -> tuple[list[float]
                 age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
                 if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
                     return (json.loads(value_str), "cache")
-            except (ValueError, TypeError, OverflowError):
+            except ValueError, TypeError, OverflowError:
                 pass
 
     return (_DEFAULT_RELEARN_STEPS, "default")
@@ -812,7 +812,7 @@ def resolve_easy_days(db: SRSDatabase | None = None) -> list[float] | None:
         return None
     try:
         return json.loads(row[0])
-    except (ValueError, TypeError):  # pragma: no cover - defensive
+    except ValueError, TypeError:  # pragma: no cover - defensive
         return None  # pragma: no cover
 
 
