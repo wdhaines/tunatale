@@ -96,8 +96,9 @@ class ClasslaLemmatizer:  # pragma: no cover — requires classla/PyTorch; opt-i
         if self._nlp is None:
             import classla
 
-            # Pipeline auto-downloads missing models; no need for explicit
-            # classla.download() which pulls all processors unconditionally.
+            # Models must already be present under CLASSLA_RESOURCES_DIR (default
+            # ~/classla_resources); run `classla.download(self._language_code)`
+            # once if missing. Pipeline does not reliably auto-fetch across versions.
             self._nlp = classla.Pipeline(
                 self._language_code,
                 processors="tokenize,pos,lemma",
@@ -222,7 +223,9 @@ def get_lemmatizer() -> Lemmatizer:
         except ImportError:
             _logger.warning(
                 "classla not installed; falling back to LowercaseLemmatizer. "
-                "Install with `pip install classla` and set lemmatizer_type=classla."
+                "Install with `pip install classla` and set lemmatizer_type=classla. "
+                "On Python 3.14, override classla's torch<=2.6 pin to torch>=2.12 "
+                "(no torch<=2.6 wheel exists for 3.14) — see docs/walkthrough.md §22.2."
             )
     return LowercaseLemmatizer()
 

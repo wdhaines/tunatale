@@ -6353,12 +6353,16 @@ def get_lemmatizer() -> Lemmatizer:
         except ImportError:
             _logger.warning(
                 "classla not installed; falling back to LowercaseLemmatizer. "
-                "Install with `pip install classla` and set lemmatizer_type=classla."
+                "Install with `pip install classla` and set lemmatizer_type=classla. "
+                "On Python 3.14, override classla's torch<=2.6 pin to torch>=2.12 "
+                "(no torch<=2.6 wheel exists for 3.14) — see docs/walkthrough.md §22.2."
             )
     return LowercaseLemmatizer()
 ```
 
-Configuration is one new setting, `lemmatizer_type` (`"lowercase"` default, `"classla"` opt-in), in `app/config.py`. Tests pin `lemmatizer_type=lowercase` explicitly (commit `ed8937e`) so a developer's local `.env` with the classla flag can't leak PyTorch into a CI-style run. The pipeline auto-downloads its models on first use, and `ClasslaLemmatizer` caches `analyze_sentence` results **per exact sentence string** (commit `fa80ad1`) — lesson text is stable across requests, so the transcript endpoint's state-change refetches drop from ~3.6 s of NLP to a DB-only lookup once warmed.
+Configuration is one new setting, `lemmatizer_type` (`"lowercase"` default, `"classla"` opt-in), in `app/config.py`. Tests pin `lemmatizer_type=lowercase` explicitly (commit `ed8937e`) so a developer's local `.env` with the classla flag can't leak PyTorch into a CI-style run. Models live under `CLASSLA_RESOURCES_DIR` (default `~/classla_resources`); run `classla.download("sl")` once before first use — `Pipeline` does not reliably auto-fetch across classla versions. `ClasslaLemmatizer` caches `analyze_sentence` results **per exact sentence string** (commit `fa80ad1`) — lesson text is stable across requests, so the transcript endpoint's state-change refetches drop from ~3.6 s of NLP to a DB-only lookup once warmed.
+
+**Python 3.14 install caveat (verified 2026-06-02).** The latest working classla (`2.2.1`) pins `torch<=2.6`, but torch `<=2.6` ships no 3.14 (`cp314`) wheel — torch only gained 3.14 support at `2.12`. So a bare `pip install classla` on 3.14 silently resolves to the ancient `classla==1.1.0`, which crashes on modern torch (PyTorch-2.6 `weights_only=True` → "Vector file is not provided"), and the factory returns a `ClasslaLemmatizer` that fails at first use rather than falling back. classla `2.2.1` is pure-Python, so the fix is to override its torch pin: `uv pip install "classla==2.2.1" --override <(echo "torch==2.12.0")`. With that combo the pipeline produces correct lemmas on 3.14 (`hoteli → hoteti`, `smo → biti`); on Python 3.13 the bare `pip install classla` still resolves `2.2.1` directly.
 
 ### 22.3 What Was *Not* Built: Bulk Re-Lemmatization
 
