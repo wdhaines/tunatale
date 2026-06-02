@@ -53,6 +53,10 @@ conn.execute("UPDATE col SET mod=?, usn=-1", (int(time.time() * 1000),))
 
 Verify post-write: each deleted nid has exactly one type=1 grave; each deleted cid has exactly one type=0 grave.
 
+### Reading graves on pull — honoring Anki-side deletes (Layer 68)
+
+The above is the *write* side (TT-originated deletes). The *read* side: `detect_and_reset_orphans` (`app/anki/sync.py`) must distinguish an **intentional Anki delete** from a wipe before deciding to recover a missing card. It reads `OfflineReader.get_grave_note_ids()` (`graves WHERE type=1`) — a note grave means hard-delete the TT collocation (`db.delete_collocations_for_graves`); a note missing *without* a grave means resurrect (reset pointers + re-mint, the force-full-download net). **Don't "simplify" `detect_and_reset_orphans` to recover every missing card** — that reintroduces the resurrection loop (deleted cards keep coming back). Note-level only; a bare card grave on a still-live note keeps the recovery path.
+
 ## Diagnostic (safe while Anki is open — read-only)
 
 ```bash

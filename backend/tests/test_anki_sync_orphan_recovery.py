@@ -91,14 +91,18 @@ class FakeWriter:
 
 
 class FakeReader:
-    def __init__(self, records):
+    def __init__(self, records, grave_note_ids=None):
         self._records = records
+        self._grave_note_ids = set(grave_note_ids or ())
 
     def get_note_records(self):
         return self._records
 
     def get_revlog_for_card(self, card_id: int, after_ms: int = 0) -> list:
         return []
+
+    def get_grave_note_ids(self) -> set[int]:
+        return self._grave_note_ids
 
 
 def _make_db_with_link(text: str, *, note_id: int, rec_cid: int, prod_cid: int) -> tuple[SRSDatabase, str]:
@@ -290,3 +294,88 @@ class TestSyncPushHonorsRecoveryFlag:
         sync.sync_push(force_fsrs=False)
 
         assert writer.specific_value_calls == []
+
+
+class TestGraveHonoring:
+    """A note in Anki's `graves` table was deleted on purpose; honor it by
+    hard-deleting the TT collocation instead of resurrecting it (the user's
+    choice over recovery). A note merely missing — with no grave — is still
+    treated as a wipe and recovered, preserving the force-full-download net.
+    """
+
+    def test_hard_deletes_collocation_when_note_in_graves(self):
+        db, _ = _make_db_with_link("zdravo", note_id=999, rec_cid=998, prod_cid=997)
+        anchors = _add_anchor_rows(db, count=4)
+        # Note 999 is gone from Anki AND recorded in graves → intentional delete.
+        sync = AnkiSync(db=db, _reader=FakeReader(anchors, grave_note_ids={999}), _writer=FakeWriter())
+
+        sync.detect_and_reset_orphans()
+
+        # Hard-deleted (cascades to directions), not resurrected.
+        assert db.get_collocation("zdravo") is None
+        # Anchors untouched.
+        assert db.get_collocation("anchor_0").anki_note_id == 5000
+
+    def test_recovers_when_note_missing_but_not_graved(self):
+        db, _ = _make_db_with_link("zdravo", note_id=999, rec_cid=998, prod_cid=997)
+        anchors = _add_anchor_rows(db, count=4)
+        # Missing from Anki but NO grave → wipe/recovery: reset pointers, keep row.
+        sync = AnkiSync(db=db, _reader=FakeReader(anchors, grave_note_ids=set()), _writer=FakeWriter())
+
+        sync.detect_and_reset_orphans()
+
+        item = db.get_collocation("zdravo")
+        assert item is not None
+        assert item.anki_note_id is None
+        assert item.directions[Direction.RECOGNITION].anki_card_id is None
+
+    def test_unmatched_grave_is_a_no_op(self):
+        """Graves for notes TT no longer points to (e.g. already-resurrected-away
+        ids) delete nothing — the live collocation is untouched."""
+        db, _ = _make_db_with_link("zdravo", note_id=999, rec_cid=998, prod_cid=997)
+        # zdravo is still live in Anki; the grave is for a different, long-gone note.
+        rec = make_note_record(
+            anki_note_id=999,
+            l2_text="zdravo",
+            translation="zdravo_t",
+            cards=[make_card_record(anki_card_id=998, ord=0), make_card_record(anki_card_id=997, ord=1)],
+        )
+        sync = AnkiSync(db=db, _reader=FakeReader([rec], grave_note_ids={123456}), _writer=FakeWriter())
+
+        sync.detect_and_reset_orphans()
+
+        item = db.get_collocation("zdravo")
+        assert item is not None
+        assert item.anki_note_id == 999
+
+
+class TestOfflineReaderGraves:
+    """OfflineReader.get_grave_note_ids reads Anki's graves table (type=1 notes)."""
+
+    def test_reads_type1_note_graves_only(self):
+        import sqlite3
+
+        from app.anki.sync import OfflineReader
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE graves (oid INTEGER NOT NULL, type INTEGER NOT NULL, "
+            "usn INTEGER NOT NULL, PRIMARY KEY (oid, type))"
+        )
+        # type: 0=card, 1=note, 2=deck — only note graves are returned.
+        conn.executemany(
+            "INSERT INTO graves (oid, type, usn) VALUES (?, ?, -1)",
+            [(111, 1), (222, 1), (333, 0), (444, 2)],
+        )
+        conn.commit()
+        reader = OfflineReader(conn, "0. Slovene")
+        assert reader.get_grave_note_ids() == {111, 222}
+
+    def test_empty_set_when_graves_table_absent(self):
+        import sqlite3
+
+        from app.anki.sync import OfflineReader
+
+        conn = sqlite3.connect(":memory:")  # minimal collection, no graves table
+        reader = OfflineReader(conn, "0. Slovene")
+        assert reader.get_grave_note_ids() == set()

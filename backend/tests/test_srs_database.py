@@ -960,11 +960,14 @@ class TestReviewedToday:
         early_id, early_item, _ = rows[0]
 
         today_local = date(2026, 5, 8)
-        # 23:30 PDT on May 8 = 06:30 UTC on May 9. UTC date = May 9, local date = May 8.
+        # 23:30 PDT on May 8 = 06:30 UTC on May 9. UTC date = May 9, but it falls inside
+        # May 8's Anki day ([May 8 4 AM, May 9 4 AM) local) — must bucket to May 8.
         late_utc = datetime(2026, 5, 9, 6, 30, tzinfo=UTC)
-        # 00:30 PDT on May 8 = 07:30 UTC on May 8. Both UTC and local date = May 8 here,
-        # so this case is the control — should match in any tz.
-        early_utc = datetime(2026, 5, 8, 7, 30, tzinfo=UTC)
+        # 09:30 PDT on May 8 = 16:30 UTC on May 8 — a normal post-rollover morning,
+        # squarely inside May 8's Anki day. Control: UTC and local dates agree.
+        # (A pre-4 AM review would bucket to the prior Anki day — see
+        # TestAnkiRolloverDayBoundary.)
+        early_utc = datetime(2026, 5, 8, 16, 30, tzinfo=UTC)
 
         for row_id, item, last_review in (
             (late_id, late_item, late_utc),
@@ -993,6 +996,93 @@ class TestReviewedToday:
         # And NOT into adjacent days
         assert late_id not in srs_db.list_collocations_reviewed_today(today_local + timedelta(days=1))
         assert early_id not in srs_db.list_collocations_reviewed_today(today_local - timedelta(days=1))
+
+
+class TestAnkiRolloverDayBoundary:
+    """The 'today' window for graded-today / introduced-today / reviews-today
+    must use Anki's 4 AM *local* rollover, not local midnight.
+
+    Anki rolls the day over at `rollover` (default 4 AM local), so a grade
+    timestamped between local midnight and 4 AM belongs to the PRIOR Anki day.
+    `app.anki.sync._local_today_4am` already does this for sync-side counts; the
+    `database.py` badge counts must agree or TT under-counts the review badge by
+    sibling-burying cards Anki considers "graded yesterday" (the 66-vs-73 bug,
+    2026-06-02).
+    """
+
+    def test_anki_day_bounds_shifts_back_before_rollover(self, monkeypatch):
+        """Before today's 4 AM local, the active Anki day starts at yesterday's
+        4 AM; at/after 4 AM it starts at today's."""
+        import time as _time
+
+        from app.srs.database import _anki_day_bounds_utc
+
+        monkeypatch.setenv("TZ", "America/Los_Angeles")
+        _time.tzset()
+        today = date(2026, 5, 8)
+
+        # 02:00 PDT (before 4 AM rollover) → window anchored on May 7.
+        start_before, end_before = _anki_day_bounds_utc(today, now=datetime(2026, 5, 8, 2, 0, tzinfo=UTC))
+        # 09:00 PDT (after rollover) → window anchored on May 8.
+        start_after, end_after = _anki_day_bounds_utc(today, now=datetime(2026, 5, 8, 16, 0, tzinfo=UTC))
+
+        # 4 AM PDT == 11:00 UTC. May 8's day runs [May 8 11:00 UTC, May 9 11:00 UTC).
+        assert start_after == datetime(2026, 5, 8, 11, 0, tzinfo=UTC).isoformat()
+        assert end_after == datetime(2026, 5, 9, 11, 0, tzinfo=UTC).isoformat()
+        # Before rollover, shifted back one day.
+        assert start_before == datetime(2026, 5, 7, 11, 0, tzinfo=UTC).isoformat()
+        assert end_before == datetime(2026, 5, 8, 11, 0, tzinfo=UTC).isoformat()
+
+    def _make_review_pair(self, srs_db, text, rec_last_review):
+        """Dual review-due collocation; recognition graded at `rec_last_review`,
+        production graded long ago. Returns the collocation row id."""
+        srs_db.add_collocation(_unit(text), language_code="sl")
+        rows, _ = srs_db.list_collocations(search=text, limit=1)
+        row_id, item, _ = rows[0]
+        due = datetime(2026, 5, 8, 4, 0, tzinfo=UTC)  # due May 8
+        for direction, last_review in (
+            (Direction.RECOGNITION, rec_last_review),
+            (Direction.PRODUCTION, datetime(2026, 4, 20, 18, 0, tzinfo=UTC)),
+        ):
+            orig = item.directions[direction]
+            srs_db.update_direction_by_id(
+                row_id,
+                direction,
+                DirectionState(
+                    direction=direction,
+                    state=SRSState.REVIEW,
+                    due_at=due,
+                    stability=orig.stability,
+                    difficulty=orig.difficulty,
+                    reps=5,
+                    lapses=0,
+                    last_review=last_review,
+                    last_rating=3,
+                ),
+            )
+        return row_id
+
+    def test_review_graded_before_rollover_is_not_buried(self, srs_db, monkeypatch):
+        """A sibling graded at 01:00 local (before 4 AM) is 'yesterday' for Anki,
+        so the review-due note is NOT sibling-buried and IS counted (66→73)."""
+        import time as _time
+
+        monkeypatch.setenv("TZ", "America/Los_Angeles")
+        _time.tzset()
+        # 01:00 PDT May 8 == 08:00 UTC May 8: after local midnight, before 4 AM.
+        self._make_review_pair(srs_db, "pred_rollover", datetime(2026, 5, 8, 8, 0, tzinfo=UTC))
+        assert srs_db.count_review_due_collocations(date(2026, 5, 8)) == 1
+
+    def test_review_graded_after_rollover_is_buried(self, srs_db, monkeypatch):
+        """A sibling graded at 09:00 local (after 4 AM) IS 'today' for Anki, so
+        the review-due note is sibling-buried and NOT counted (boundary guard)."""
+        import time as _time
+
+        monkeypatch.setenv("TZ", "America/Los_Angeles")
+        _time.tzset()
+        # 09:00 PDT May 8 == 16:00 UTC May 8: well after the 4 AM rollover.
+        self._make_review_pair(srs_db, "post_rollover", datetime(2026, 5, 8, 16, 0, tzinfo=UTC))
+        assert srs_db.count_review_due_collocations(date(2026, 5, 8)) == 0
 
 
 class TestCountNewIntroducedToday:
