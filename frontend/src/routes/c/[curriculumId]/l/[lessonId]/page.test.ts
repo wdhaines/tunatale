@@ -15,6 +15,9 @@ vi.mock("$lib/api", () => ({
     createSRSItem: vi.fn(),
     setSRSItemState: vi.fn(),
     untrackSRSItem: vi.fn(),
+    createBaseCard: vi.fn(),
+    createInflectionCloze: vi.fn(),
+    submitDrill: vi.fn(),
     syncWithAnki: vi.fn(),
     generateStory: vi.fn(),
     audioUrl: vi.fn((id: string) => `/api/audio/${id}`),
@@ -38,6 +41,9 @@ const mockMarkAsListened = vi.mocked(api.markAsListened);
 const mockCreateSRSItem = vi.mocked(api.createSRSItem);
 const mockSetSRSItemState = vi.mocked(api.setSRSItemState);
 const mockUntrackSRSItem = vi.mocked(api.untrackSRSItem);
+const mockCreateBaseCard = vi.mocked(api.createBaseCard);
+const mockCreateInflectionCloze = vi.mocked(api.createInflectionCloze);
+const mockSubmitDrill = vi.mocked(api.submitDrill);
 const mockSyncWithAnki = vi.mocked(api.syncWithAnki);
 const mockGenerateStory = vi.mocked(api.generateStory);
 
@@ -216,18 +222,19 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(container.textContent).toContain("unknown_type");
   });
 
-  it("clicking a word with no SRS card creates the card and sets state to learning", async () => {
-    const transcriptWithWord = {
+  describe("handleWordClick", () => {
+    const makeTranscriptWithWord = (overrides: Record<string, unknown> = {}) => ({
       lesson_id: "l1",
       key_phrases: [],
       dialogue_lines: [
         {
           role: "Petra",
+          sentence: "Zdravo kako si",
           words: [
             {
               surface: "zdravo",
               lemma: "zdravo",
-              srs_state: "new" as const,
+              srs_state: "new",
               srs_item_id: null,
               translation: null,
               collocation_span_id: null,
@@ -242,371 +249,202 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
               progress: null,
               inflectable: false,
               inflection_feature: null,
+              ...overrides,
             },
           ],
         },
       ],
-    };
-    const createdItem = {
-      id: 99,
-      text: "zdravo",
-      translation: "",
-      state: "new" as const,
-      due_at: "2026-04-14",
-      stability: 1.0,
-      difficulty: 5.0,
-      reps: 0,
-      lapses: 0,
-      last_review: null,
-      language_code: "sl",
-    };
-    mockCreateSRSItem.mockResolvedValue(createdItem);
-    mockSetSRSItemState.mockResolvedValue({ ...createdItem, state: "learning" as const });
-    mockGetTranscript.mockResolvedValue(transcriptWithWord);
-
-    const { findByRole } = render(Page, {
-      props: { data: { curriculum, lesson, audio, transcript: transcriptWithWord } },
     });
 
-    const wordBtn = await findByRole("button", { name: "zdravo" });
-    await fireEvent.click(wordBtn);
-
-    await waitFor(() => {
-      expect(mockCreateSRSItem).toHaveBeenCalledWith({
-        text: "zdravo",
-        language_code: "sl",
-        word_count: 1,
+    it("unknown word calls createBaseCard with sentence from dialogue line", async () => {
+      const t = makeTranscriptWithWord({ active_state: "unknown" });
+      mockCreateBaseCard.mockResolvedValue({
+        id: 1,
+        was_created: true,
+        item: {
+          id: 1,
+          text: "zdravo",
+          translation: "",
+          state: "new",
+          due_at: "",
+          stability: 1,
+          difficulty: 5,
+          reps: 0,
+          lapses: 0,
+          last_review: null,
+          language_code: "sl",
+        },
       });
-      expect(mockSetSRSItemState).toHaveBeenCalledWith(99, "learning");
-    });
-  });
+      mockGetTranscript.mockResolvedValue(t);
 
-  it("clicking a word with an existing SRS card cycles to the next state", async () => {
-    const transcriptWithWord = {
-      lesson_id: "l1",
-      key_phrases: [],
-      dialogue_lines: [
-        {
-          role: "Petra",
-          words: [
-            {
-              surface: "zdravo",
-              lemma: "zdravo",
-              srs_state: "learning" as const,
-              srs_item_id: 42,
-              translation: null,
-              collocation_span_id: null,
-              collocation_start: false,
-              collocation_srs_state: null,
-              collocation_lemma: null,
-              collocation_translation: null,
-              card_type: null,
-              active_state: "new",
-              active_direction: null,
-              is_due: false,
-              progress: null,
-              inflectable: false,
-              inflection_feature: null,
-            },
-          ],
-        },
-      ],
-    };
-    mockSetSRSItemState.mockResolvedValue({
-      id: 42,
-      text: "zdravo",
-      translation: "",
-      state: "known" as const,
-      due_at: "2026-04-14",
-      stability: 1.0,
-      difficulty: 5.0,
-      reps: 0,
-      lapses: 0,
-      last_review: null,
-      language_code: "sl",
-    });
-    mockGetTranscript.mockResolvedValue(transcriptWithWord);
+      const { findByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: t } },
+      });
 
-    const { findByRole } = render(Page, {
-      props: { data: { curriculum, lesson, audio, transcript: transcriptWithWord } },
+      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+
+      await waitFor(() => {
+        expect(mockCreateBaseCard).toHaveBeenCalledWith({
+          surface: "zdravo",
+          lemma: "zdravo",
+          sentence: "Zdravo kako si",
+          language_code: "sl",
+          translation: "",
+        });
+        expect(mockSubmitDrill).not.toHaveBeenCalled();
+        expect(mockGetTranscript).toHaveBeenCalledWith("l1");
+      });
     });
 
-    const wordBtn = await findByRole("button", { name: "zdravo" });
-    await fireEvent.click(wordBtn);
+    it("due word with active direction calls submitDrill with 'good'", async () => {
+      const t = makeTranscriptWithWord({
+        active_state: "learning",
+        active_direction: "recognition",
+        is_due: true,
+        srs_item_id: 42,
+      });
+      mockSubmitDrill.mockResolvedValue({ new_due_at: "", new_state: "review" });
+      mockGetTranscript.mockResolvedValue(t);
 
-    await waitFor(() => {
-      expect(mockSetSRSItemState).toHaveBeenCalledWith(42, "known");
-    });
-  });
+      const { findByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: t } },
+      });
 
-  it("shows error when setSRSItemState throws", async () => {
-    const transcriptWithWord = {
-      lesson_id: "l1",
-      key_phrases: [],
-      dialogue_lines: [
-        {
-          role: "Petra",
-          words: [
-            {
-              surface: "zdravo",
-              lemma: "zdravo",
-              srs_state: "learning" as const,
-              srs_item_id: 42,
-              translation: null,
-              collocation_span_id: null,
-              collocation_start: false,
-              collocation_srs_state: null,
-              collocation_lemma: null,
-              collocation_translation: null,
-              card_type: null,
-              active_state: "new",
-              active_direction: null,
-              is_due: false,
-              progress: null,
-              inflectable: false,
-              inflection_feature: null,
-            },
-          ],
-        },
-      ],
-    };
-    mockSetSRSItemState.mockRejectedValue(new Error("state update failed"));
-    mockGetTranscript.mockResolvedValue(transcriptWithWord);
+      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
 
-    const { findByRole, findByText } = render(Page, {
-      props: { data: { curriculum, lesson, audio, transcript: transcriptWithWord } },
+      await waitFor(() => {
+        expect(mockSubmitDrill).toHaveBeenCalledWith(42, "recognition", "good");
+        expect(mockCreateBaseCard).not.toHaveBeenCalled();
+        expect(mockGetTranscript).toHaveBeenCalledWith("l1");
+      });
     });
 
-    await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+    it("due word with production direction calls submitDrill with production", async () => {
+      const t = makeTranscriptWithWord({
+        active_state: "review",
+        active_direction: "production",
+        is_due: true,
+        srs_item_id: 42,
+      });
+      mockSubmitDrill.mockResolvedValue({ new_due_at: "", new_state: "review" });
+      mockGetTranscript.mockResolvedValue(t);
 
-    expect(await findByText("state update failed")).toBeTruthy();
-  });
+      const { findByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: t } },
+      });
 
-  it("shows stringified error when setSRSItemState throws a non-Error", async () => {
-    const transcriptWithWord = {
-      lesson_id: "l1",
-      key_phrases: [],
-      dialogue_lines: [
-        {
-          role: "Petra",
-          words: [
-            {
-              surface: "zdravo",
-              lemma: "zdravo",
-              srs_state: "learning" as const,
-              srs_item_id: 42,
-              translation: null,
-              collocation_span_id: null,
-              collocation_start: false,
-              collocation_srs_state: null,
-              collocation_lemma: null,
-              collocation_translation: null,
-              card_type: null,
-              active_state: "new",
-              active_direction: null,
-              is_due: false,
-              progress: null,
-              inflectable: false,
-              inflection_feature: null,
-            },
-          ],
-        },
-      ],
-    };
-    mockSetSRSItemState.mockRejectedValue("plain state error");
-    mockGetTranscript.mockResolvedValue(transcriptWithWord);
+      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
 
-    const { findByRole, findByText } = render(Page, {
-      props: { data: { curriculum, lesson, audio, transcript: transcriptWithWord } },
+      await waitFor(() => {
+        expect(mockSubmitDrill).toHaveBeenCalledWith(42, "production", "good");
+      });
     });
 
-    await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+    it("word that is not due does not call any API", async () => {
+      const t = makeTranscriptWithWord({
+        active_state: "learning",
+        active_direction: "recognition",
+        is_due: false,
+        srs_item_id: 42,
+      });
+      mockGetTranscript.mockResolvedValue(t);
 
-    expect(await findByText("plain state error")).toBeTruthy();
-  });
+      const { findByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: t } },
+      });
 
-  it("finds word state in a later dialogue line", async () => {
-    const transcriptMultiLine = {
-      lesson_id: "l1",
-      key_phrases: [],
-      dialogue_lines: [
-        {
-          role: "Petra",
-          words: [
-            {
-              surface: "dober",
-              lemma: "dober",
-              srs_state: "new" as const,
-              srs_item_id: null,
-              translation: null,
-              collocation_span_id: null,
-              collocation_start: false,
-              collocation_srs_state: null,
-              collocation_lemma: null,
-              collocation_translation: null,
-              card_type: null,
-              active_state: "new",
-              active_direction: null,
-              is_due: false,
-              progress: null,
-              inflectable: false,
-              inflection_feature: null,
-            },
-          ],
-        },
-        {
-          role: "Ana",
-          words: [
-            {
-              surface: "zdravo",
-              lemma: "zdravo",
-              srs_state: "learning" as const,
-              srs_item_id: 42,
-              translation: null,
-              collocation_span_id: null,
-              collocation_start: false,
-              collocation_srs_state: null,
-              collocation_lemma: null,
-              collocation_translation: null,
-              card_type: null,
-              active_state: "new",
-              active_direction: null,
-              is_due: false,
-              progress: null,
-              inflectable: false,
-              inflection_feature: null,
-            },
-          ],
-        },
-      ],
-    };
-    mockSetSRSItemState.mockResolvedValue({
-      id: 42,
-      text: "zdravo",
-      translation: "",
-      state: "known" as const,
-      due_at: "2026-04-14",
-      stability: 1.0,
-      difficulty: 5.0,
-      reps: 0,
-      lapses: 0,
-      last_review: null,
-      language_code: "sl",
-    });
-    mockGetTranscript.mockResolvedValue(transcriptMultiLine);
+      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
 
-    const { findByRole } = render(Page, {
-      props: { data: { curriculum, lesson, audio, transcript: transcriptMultiLine } },
+      await waitFor(() => {
+        expect(mockCreateBaseCard).not.toHaveBeenCalled();
+        expect(mockSubmitDrill).not.toHaveBeenCalled();
+      });
     });
 
-    await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+    it("known word (terminal) does not call any API", async () => {
+      const t = makeTranscriptWithWord({
+        active_state: "known",
+        srs_item_id: 42,
+      });
+      mockGetTranscript.mockResolvedValue(t);
 
-    await waitFor(() => {
-      expect(mockSetSRSItemState).toHaveBeenCalledWith(42, "known");
-    });
-  });
+      const { findByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: t } },
+      });
 
-  it("falls back to learning state for unrecognized srs_state", async () => {
-    const transcriptWithWord = {
-      lesson_id: "l1",
-      key_phrases: [],
-      dialogue_lines: [
-        {
-          role: "Petra",
-          words: [
-            {
-              surface: "zdravo",
-              lemma: "zdravo",
-              srs_state: "exotic_state",
-              srs_item_id: 42,
-              translation: null,
-              collocation_span_id: null,
-              collocation_start: false,
-              collocation_srs_state: null,
-              collocation_lemma: null,
-              collocation_translation: null,
-              card_type: null,
-              active_state: "new",
-              active_direction: null,
-              is_due: false,
-              progress: null,
-              inflectable: false,
-              inflection_feature: null,
-            },
-          ],
-        },
-      ],
-    };
-    mockSetSRSItemState.mockResolvedValue({
-      id: 42,
-      text: "zdravo",
-      translation: "",
-      state: "learning" as const,
-      due_at: "2026-04-14",
-      stability: 1.0,
-      difficulty: 5.0,
-      reps: 0,
-      lapses: 0,
-      last_review: null,
-      language_code: "sl",
-    });
-    mockGetTranscript.mockResolvedValue(transcriptWithWord);
+      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
 
-    const { findByRole } = render(Page, {
-      props: { data: { curriculum, lesson, audio, transcript: transcriptWithWord } },
+      await waitFor(() => {
+        expect(mockCreateBaseCard).not.toHaveBeenCalled();
+        expect(mockSubmitDrill).not.toHaveBeenCalled();
+      });
     });
 
-    await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+    it("suspended word (terminal) does not call any API", async () => {
+      const t = makeTranscriptWithWord({
+        active_state: "suspended",
+        srs_item_id: 42,
+      });
+      mockGetTranscript.mockResolvedValue(t);
 
-    await waitFor(() => {
-      expect(mockSetSRSItemState).toHaveBeenCalledWith(42, "learning");
-    });
-  });
+      const { findByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: t } },
+      });
 
-  it("clicking a word in known state calls untrackSRSItem", async () => {
-    const transcriptWithWord = {
-      lesson_id: "l1",
-      key_phrases: [],
-      dialogue_lines: [
-        {
-          role: "Petra",
-          words: [
-            {
-              surface: "zdravo",
-              lemma: "zdravo",
-              srs_state: "known" as const,
-              srs_item_id: 42,
-              translation: null,
-              collocation_span_id: null,
-              collocation_start: false,
-              collocation_srs_state: null,
-              collocation_lemma: null,
-              collocation_translation: null,
-              card_type: null,
-              active_state: "new",
-              active_direction: null,
-              is_due: false,
-              progress: null,
-              inflectable: false,
-              inflection_feature: null,
-            },
-          ],
-        },
-      ],
-    };
-    mockUntrackSRSItem.mockResolvedValue({ action: "deleted" });
-    mockGetTranscript.mockResolvedValue(transcriptWithWord);
+      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
 
-    const { findByRole } = render(Page, {
-      props: { data: { curriculum, lesson, audio, transcript: transcriptWithWord } },
+      await waitFor(() => {
+        expect(mockCreateBaseCard).not.toHaveBeenCalled();
+        expect(mockSubmitDrill).not.toHaveBeenCalled();
+      });
     });
 
-    await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+    it("shows error when createBaseCard throws", async () => {
+      const t = makeTranscriptWithWord({ active_state: "unknown" });
+      mockCreateBaseCard.mockRejectedValue(new Error("base card failed"));
+      mockGetTranscript.mockResolvedValue(t);
 
-    await waitFor(() => {
-      expect(mockUntrackSRSItem).toHaveBeenCalledWith(42);
+      const { findByRole, findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: t } },
+      });
+
+      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+
+      expect(await findByText("base card failed")).toBeTruthy();
     });
-    expect(mockSetSRSItemState).not.toHaveBeenCalled();
+
+    it("shows stringified error when createBaseCard throws non-Error", async () => {
+      const t = makeTranscriptWithWord({ active_state: "unknown" });
+      mockCreateBaseCard.mockRejectedValue("plain error");
+      mockGetTranscript.mockResolvedValue(t);
+
+      const { findByRole, findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: t } },
+      });
+
+      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+
+      expect(await findByText("plain error")).toBeTruthy();
+    });
+
+    it("shows error when submitDrill throws", async () => {
+      const t = makeTranscriptWithWord({
+        active_state: "learning",
+        active_direction: "recognition",
+        is_due: true,
+        srs_item_id: 42,
+      });
+      mockSubmitDrill.mockRejectedValue(new Error("drill failed"));
+      mockGetTranscript.mockResolvedValue(t);
+
+      const { findByRole, findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: t } },
+      });
+
+      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+
+      expect(await findByText("drill failed")).toBeTruthy();
+    });
   });
 
   describe("collocation click", () => {
@@ -616,11 +454,12 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       dialogue_lines: [
         {
           role: "Petra",
+          sentence: "dober dan hvala",
           words: [
             {
               surface: "dober",
               lemma: "dober",
-              srs_state: "new" as const,
+              srs_state: "new",
               srs_item_id: null,
               translation: null,
               collocation_span_id: 77,
@@ -639,7 +478,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             {
               surface: "dan",
               lemma: "dan",
-              srs_state: "new" as const,
+              srs_state: "new",
               srs_item_id: null,
               translation: null,
               collocation_span_id: 77,
@@ -660,104 +499,24 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       ],
     };
 
-    it("clicking a collocation cycles its own SRS state without creating a new item", async () => {
-      mockSetSRSItemState.mockResolvedValue({
-        id: 77,
-        text: "dober dan",
-        translation: "",
-        state: "known" as const,
-        due_at: "2026-04-14",
-        stability: 1.0,
-        difficulty: 5.0,
-        reps: 0,
-        lapses: 0,
-        last_review: null,
-        language_code: "sl",
-      });
+    it("calls submitDrill with recognition good on click", async () => {
+      mockSubmitDrill.mockResolvedValue({ new_due_at: "", new_state: "review" });
       mockGetTranscript.mockResolvedValue(transcriptWithCollocation);
 
       const { container } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript: transcriptWithCollocation } },
       });
 
-      const span = container.querySelector(".collocation-span") as HTMLElement;
-      await fireEvent.click(span);
-
-      await waitFor(() => {
-        expect(mockSetSRSItemState).toHaveBeenCalledWith(77, "known");
-      });
-      expect(mockCreateSRSItem).not.toHaveBeenCalled();
-    });
-
-    it("collocation cycle follows STATE_CYCLE from new", async () => {
-      const transcriptNewColl = {
-        ...transcriptWithCollocation,
-        dialogue_lines: [
-          {
-            role: "Petra",
-            words: transcriptWithCollocation.dialogue_lines[0].words.map((w) => ({
-              ...w,
-              collocation_srs_state: "new",
-            })),
-          },
-        ],
-      };
-      mockSetSRSItemState.mockResolvedValue({
-        id: 77,
-        text: "dober dan",
-        translation: "",
-        state: "learning" as const,
-        due_at: "2026-04-14",
-        stability: 1.0,
-        difficulty: 5.0,
-        reps: 0,
-        lapses: 0,
-        last_review: null,
-        language_code: "sl",
-      });
-      mockGetTranscript.mockResolvedValue(transcriptNewColl);
-
-      const { container } = render(Page, {
-        props: { data: { curriculum, lesson, audio, transcript: transcriptNewColl } },
-      });
-
       await fireEvent.click(container.querySelector(".collocation-span") as HTMLElement);
 
       await waitFor(() => {
-        expect(mockSetSRSItemState).toHaveBeenCalledWith(77, "learning");
+        expect(mockSubmitDrill).toHaveBeenCalledWith(77, "recognition", "good");
+        expect(mockGetTranscript).toHaveBeenCalledWith("l1");
       });
     });
 
-    it("clicking a collocation in known state calls untrackSRSItem", async () => {
-      const transcriptKnownColl = {
-        ...transcriptWithCollocation,
-        dialogue_lines: [
-          {
-            role: "Petra",
-            words: transcriptWithCollocation.dialogue_lines[0].words.map((w) => ({
-              ...w,
-              collocation_srs_state: "known",
-            })),
-          },
-        ],
-      };
-      mockUntrackSRSItem.mockResolvedValue({ action: "deleted" });
-      mockGetTranscript.mockResolvedValue(transcriptKnownColl);
-
-      const { container } = render(Page, {
-        props: { data: { curriculum, lesson, audio, transcript: transcriptKnownColl } },
-      });
-
-      await fireEvent.click(container.querySelector(".collocation-span") as HTMLElement);
-
-      await waitFor(() => {
-        expect(mockUntrackSRSItem).toHaveBeenCalledWith(77);
-      });
-      expect(mockSetSRSItemState).not.toHaveBeenCalled();
-    });
-
-    it("shows error when collocation state update fails", async () => {
-      mockSetSRSItemState.mockRejectedValue(new Error("coll state failed"));
+    it("shows error when submitDrill throws", async () => {
+      mockSubmitDrill.mockRejectedValue(new Error("coll drill failed"));
       mockGetTranscript.mockResolvedValue(transcriptWithCollocation);
 
       const { container, findByText } = render(Page, {
@@ -766,59 +525,149 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
 
       await fireEvent.click(container.querySelector(".collocation-span") as HTMLElement);
 
-      expect(await findByText("coll state failed")).toBeTruthy();
+      expect(await findByText("coll drill failed")).toBeTruthy();
+    });
+  });
+
+  describe("tooltip actions", () => {
+    const makeInflectableTranscript = (overrides: Record<string, unknown> = {}) => ({
+      lesson_id: "l1",
+      key_phrases: [],
+      dialogue_lines: [
+        {
+          role: "Petra",
+          sentence: "Grem v Ljubljano",
+          words: [
+            {
+              surface: "Ljubljano",
+              lemma: "ljubljana",
+              srs_state: "review",
+              srs_item_id: 7,
+              translation: "Ljubljana",
+              collocation_span_id: null,
+              collocation_start: false,
+              collocation_srs_state: null,
+              collocation_lemma: null,
+              collocation_translation: null,
+              card_type: "vocab",
+              active_state: "review",
+              active_direction: "production",
+              is_due: false,
+              progress: 0.8,
+              inflectable: true,
+              inflection_feature: "noun:acc:sg",
+              ...overrides,
+            },
+          ],
+        },
+      ],
     });
 
-    it("shows stringified error when collocation update throws a non-Error", async () => {
-      mockSetSRSItemState.mockRejectedValue("plain coll error");
-      mockGetTranscript.mockResolvedValue(transcriptWithCollocation);
+    const renderInflectable = (t: ReturnType<typeof makeInflectableTranscript>) => {
+      mockGetTranscript.mockResolvedValue(t);
+      return render(Page, { props: { data: { curriculum, lesson, audio, transcript: t } } });
+    };
 
-      const { container, findByText } = render(Page, {
-        props: { data: { curriculum, lesson, audio, transcript: transcriptWithCollocation } },
+    it("Create inflection card button calls createInflectionCloze with the line sentence", async () => {
+      const t = makeInflectableTranscript();
+      mockCreateInflectionCloze.mockResolvedValue({
+        id: 9,
+        was_created: true,
+        item: {
+          id: 9,
+          text: "Ljubljano",
+          translation: "",
+          state: "new",
+          due_at: "",
+          stability: 1,
+          difficulty: 5,
+          reps: 0,
+          lapses: 0,
+          last_review: null,
+          language_code: "sl",
+        },
       });
+      const { findByRole } = renderInflectable(t);
 
-      await fireEvent.click(container.querySelector(".collocation-span") as HTMLElement);
-
-      expect(await findByText("plain coll error")).toBeTruthy();
-    });
-
-    it("falls back to learning state for unrecognized collocation srs_state", async () => {
-      const transcriptExotic = {
-        ...transcriptWithCollocation,
-        dialogue_lines: [
-          {
-            role: "Petra",
-            words: transcriptWithCollocation.dialogue_lines[0].words.map((w) => ({
-              ...w,
-              collocation_srs_state: "exotic",
-            })),
-          },
-        ],
-      };
-      mockSetSRSItemState.mockResolvedValue({
-        id: 77,
-        text: "dober dan",
-        translation: "",
-        state: "learning" as const,
-        due_at: "2026-04-14",
-        stability: 1.0,
-        difficulty: 5.0,
-        reps: 0,
-        lapses: 0,
-        last_review: null,
-        language_code: "sl",
-      });
-      mockGetTranscript.mockResolvedValue(transcriptExotic);
-
-      const { container } = render(Page, {
-        props: { data: { curriculum, lesson, audio, transcript: transcriptExotic } },
-      });
-
-      await fireEvent.click(container.querySelector(".collocation-span") as HTMLElement);
+      await fireEvent.click(await findByRole("button", { name: "Create inflection card" }));
 
       await waitFor(() => {
-        expect(mockSetSRSItemState).toHaveBeenCalledWith(77, "learning");
+        expect(mockCreateInflectionCloze).toHaveBeenCalledWith({
+          surface: "Ljubljano",
+          lemma: "ljubljana",
+          feature: "noun:acc:sg",
+          sentence: "Grem v Ljubljano",
+          language_code: "sl",
+        });
+        expect(mockGetTranscript).toHaveBeenCalledWith("l1");
       });
+    });
+
+    it("Ignore button calls untrackSRSItem", async () => {
+      const t = makeInflectableTranscript();
+      mockUntrackSRSItem.mockResolvedValue({ action: "suspended" } as never);
+      const { findByRole } = renderInflectable(t);
+
+      await fireEvent.click(await findByRole("button", { name: "Ignore" }));
+
+      await waitFor(() => {
+        expect(mockUntrackSRSItem).toHaveBeenCalledWith(7);
+        expect(mockGetTranscript).toHaveBeenCalledWith("l1");
+      });
+    });
+
+    it("Known button calls setSRSItemState with 'known'", async () => {
+      const t = makeInflectableTranscript();
+      mockSetSRSItemState.mockResolvedValue({} as never);
+      const { findByRole } = renderInflectable(t);
+
+      await fireEvent.click(await findByRole("button", { name: "Known" }));
+
+      await waitFor(() => {
+        expect(mockSetSRSItemState).toHaveBeenCalledWith(7, "known");
+      });
+    });
+
+    it("Un-ignore button (suspended word) calls setSRSItemState with 'new'", async () => {
+      const t = makeInflectableTranscript({ active_state: "suspended", inflectable: false });
+      mockSetSRSItemState.mockResolvedValue({} as never);
+      const { findByRole } = renderInflectable(t);
+
+      await fireEvent.click(await findByRole("button", { name: "Un-ignore" }));
+
+      await waitFor(() => {
+        expect(mockSetSRSItemState).toHaveBeenCalledWith(7, "new");
+      });
+    });
+
+    it("shows error when createInflectionCloze throws", async () => {
+      const t = makeInflectableTranscript();
+      mockCreateInflectionCloze.mockRejectedValue(new Error("inflect boom"));
+      const { findByRole, findByText } = renderInflectable(t);
+
+      await fireEvent.click(await findByRole("button", { name: "Create inflection card" }));
+
+      expect(await findByText("inflect boom")).toBeTruthy();
+    });
+
+    it("shows error when setSRSItemState throws", async () => {
+      const t = makeInflectableTranscript();
+      mockSetSRSItemState.mockRejectedValue(new Error("state boom"));
+      const { findByRole, findByText } = renderInflectable(t);
+
+      await fireEvent.click(await findByRole("button", { name: "Known" }));
+
+      expect(await findByText("state boom")).toBeTruthy();
+    });
+
+    it("shows error when untrackSRSItem throws", async () => {
+      const t = makeInflectableTranscript();
+      mockUntrackSRSItem.mockRejectedValue(new Error("untrack boom"));
+      const { findByRole, findByText } = renderInflectable(t);
+
+      await fireEvent.click(await findByRole("button", { name: "Ignore" }));
+
+      expect(await findByText("untrack boom")).toBeTruthy();
     });
   });
 

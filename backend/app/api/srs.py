@@ -520,6 +520,7 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
         "dialogue_lines": [
             {
                 "role": line.role,
+                "sentence": line.sentence,
                 "words": [
                     {
                         "surface": w.surface,

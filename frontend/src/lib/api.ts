@@ -90,6 +90,9 @@ export interface CreateSRSItemRequest {
 
 export interface DialogueLine {
   role: string;
+  // The backend always sends this (reconstructed from surfaces); optional here so
+  // test fixtures need not restate it. Consumers read it defensively (`?? ''`).
+  sentence?: string;
   words: WordToken[];
 }
 
@@ -459,6 +462,20 @@ export class TunaTaleAPI {
     language_code: string;
   }): Promise<{ id: number; was_created: boolean; item: SRSItemDetail }> {
     return this.request("/api/srs/inflection-clozes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async createBaseCard(body: {
+    surface: string;
+    lemma: string;
+    sentence: string;
+    language_code: string;
+    translation?: string;
+  }): Promise<{ id: number; was_created: boolean; item: SRSItemDetail }> {
+    return this.request("/api/srs/items/base", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

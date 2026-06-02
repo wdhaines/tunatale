@@ -508,6 +508,59 @@ describe("TunaTaleAPI", () => {
         }),
       ).rejects.toThrow("POST /api/srs/inflection-clozes: Internal Server Error");
     });
+
+    it("createBaseCard calls POST /api/srs/items/base", async () => {
+      const mockResp = {
+        id: 1,
+        was_created: true,
+        item: {
+          id: 1,
+          text: "zdravo",
+          state: "new",
+          due_at: "",
+          stability: 1,
+          difficulty: 5,
+          reps: 0,
+          lapses: 0,
+          last_review: null,
+          language_code: "sl",
+        },
+      };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(mockResp)));
+
+      const body = {
+        surface: "zdravo",
+        lemma: "zdravo",
+        sentence: "Zdravo, kako si?",
+        language_code: "sl",
+        translation: "hello",
+      };
+      const result = await api.createBaseCard(body);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/items/base`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+      );
+      expect(result.id).toBe(1);
+      expect(result.was_created).toBe(true);
+      expect(result.item.text).toBe("zdravo");
+    });
+
+    it("createBaseCard throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail()));
+
+      await expect(
+        api.createBaseCard({
+          surface: "zdravo",
+          lemma: "zdravo",
+          sentence: "Zdravo, kako si?",
+          language_code: "sl",
+        }),
+      ).rejects.toThrow("POST /api/srs/items/base: Internal Server Error");
+    });
   });
 
   describe("curriculum progress", () => {

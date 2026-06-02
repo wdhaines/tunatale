@@ -45,6 +45,7 @@ class DialogueLine:
 
     role: str
     words: list[WordToken] = field(default_factory=list)
+    sentence: str = ""  # full sentence text reconstructed from surfaces
 
 
 @dataclass
@@ -273,7 +274,9 @@ def extract_transcript(
                     span_cache[span_id] = cached
                 word.collocation_srs_state, word.collocation_lemma, word.collocation_translation = cached
 
-            dialogue_lines.append(DialogueLine(role=phrase.role, words=words))
+            dialogue_lines.append(
+                DialogueLine(role=phrase.role, words=words, sentence=" ".join(w.surface for w in words))
+            )
 
     return TranscriptData(
         key_phrases=list(lesson.key_phrases),

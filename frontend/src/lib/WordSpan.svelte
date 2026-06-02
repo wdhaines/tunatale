@@ -1,29 +1,35 @@
 <script lang="ts">
 	import type { WordToken } from './api';
 	import Tooltip from '$lib/components/Tooltip.svelte';
+	import type { TooltipActions } from '$lib/components/Tooltip.svelte';
+	import { masteryColor } from '$lib/mastery';
 
 	interface Props {
 		word: WordToken;
-		onStateChange?: (lemma: string, srs_item_id: number | null) => void;
+		onWordClick?: (word: WordToken, lineIndex: number) => void;
 		requireModifier?: boolean;
 		altHover?: boolean;
 		lineIndex?: number;
 		wordIndex?: number;
 		selected?: boolean;
+		sentence?: string;
+		tooltipActions?: TooltipActions;
 	}
 
 	let {
 		word,
-		onStateChange,
+		onWordClick,
 		requireModifier = false,
 		altHover = false,
 		lineIndex,
 		wordIndex,
-		selected = false
+		selected = false,
+		sentence,
+		tooltipActions
 	}: Props = $props();
 
 	function fire() {
-		onStateChange?.(word.lemma, word.srs_item_id);
+		onWordClick?.(word, lineIndex ?? 0);
 	}
 
 	// Distinguish a tap from a drag-to-select by how far the pointer moved
@@ -58,18 +64,20 @@
 		fire();
 	}
 
+	const dynamicStyle = $derived(
+		word.active_state !== 'unknown' && word.active_state !== 'known' && word.active_state !== 'suspended'
+			? `color: ${masteryColor(word.progress ?? 0)};`
+			: ''
+	);
+
 	const colorClass = $derived(
-		word.srs_state === 'known'
-			? 'word-known'
-			: word.srs_state === 'suspended'
-				? 'word-ignored'
-				: word.srs_state === 'unknown'
-					? 'word-unknown'
-					: word.srs_state === 'learning' || word.srs_state === 'relearning'
-						? 'word-learning'
-						: word.srs_state === 'review'
-							? 'word-review'
-							: 'word-new'
+		word.active_state === 'unknown'
+			? 'word-unknown'
+			: word.active_state === 'known'
+				? 'word-known'
+				: word.active_state === 'suspended'
+					? 'word-ignored'
+					: ''
 	);
 
 	// Show tooltip when: not inside a collocation, OR alt-hover mode is active
@@ -77,10 +85,12 @@
 </script>
 
 {#if showTooltip}
-	<Tooltip translation={word.translation} state={word.srs_state}>
+	<Tooltip translation={word.translation} state={word.srs_state} {word} {sentence} actions={tooltipActions}>
 		<span
 			class="word {colorClass}"
 			class:word-selected={selected}
+			class:word-due={word.is_due}
+			style={dynamicStyle}
 			role="button"
 			tabindex="0"
 			data-line-index={lineIndex}
@@ -94,6 +104,8 @@
 	<span
 		class="word {colorClass}"
 		class:word-selected={selected}
+		class:word-due={word.is_due}
+		style={dynamicStyle}
 		role="button"
 		tabindex="0"
 		data-line-index={lineIndex}
@@ -114,19 +126,10 @@
 	.word:hover {
 		opacity: 0.8;
 	}
-	.word-new {
-		color: #2563eb;
-	}
 	.word-unknown {
 		color: #818cf8;
 		text-decoration: underline dotted;
 		text-underline-offset: 2px;
-	}
-	.word-learning {
-		color: #ca8a04;
-	}
-	.word-review {
-		color: #16a34a;
 	}
 	.word-known {
 		color: #9ca3af;
@@ -134,6 +137,9 @@
 	.word-ignored {
 		color: #9ca3af;
 		text-decoration: line-through;
+	}
+	.word-due {
+		font-weight: bold;
 	}
 	.word-selected {
 		background-color: rgba(99, 102, 241, 0.2);

@@ -32,6 +32,7 @@ const transcriptWithDialogue: TranscriptData = {
   dialogue_lines: [
     {
       role: "Petra",
+      sentence: "",
       words: [
         {
           surface: "zdravo",
@@ -63,6 +64,7 @@ const transcriptWithCollocation: TranscriptData = {
   dialogue_lines: [
     {
       role: "Petra",
+      sentence: "",
       words: [
         {
           surface: "dober",
@@ -133,7 +135,7 @@ function defaultProps(overrides = {}) {
     listenLoading: false,
     listenResult: null,
     error: "",
-    onStateChange: vi.fn(),
+    onWordClick: vi.fn(),
     onMarkListened: vi.fn(),
     ...overrides,
   };
@@ -273,7 +275,7 @@ describe("Transcript", () => {
       });
       const span = container.querySelector(".collocation-span") as HTMLElement;
       await fireEvent.click(span);
-      expect(onCollocationStateChange).toHaveBeenCalledWith("dober dan", 99, "learning");
+      expect(onCollocationStateChange).toHaveBeenCalledWith(99);
     });
 
     it("Enter key on collocation wrapper fires onCollocationStateChange", async () => {
@@ -286,50 +288,50 @@ describe("Transcript", () => {
       });
       const span = container.querySelector(".collocation-span") as HTMLElement;
       await fireEvent.keyDown(span, { key: "Enter" });
-      expect(onCollocationStateChange).toHaveBeenCalledWith("dober dan", 99, "learning");
+      expect(onCollocationStateChange).toHaveBeenCalledWith(99);
     });
 
-    it("plain click inside collocation does not fire word-level onStateChange", async () => {
-      const onStateChange = vi.fn();
+    it("plain click inside collocation does not fire word-level onWordClick", async () => {
+      const onWordClick = vi.fn();
       const onCollocationStateChange = vi.fn();
       const { getByText } = render(Transcript, {
         props: defaultProps({
           transcript: transcriptWithCollocation,
-          onStateChange,
+          onWordClick,
           onCollocationStateChange,
         }),
       });
       await fireEvent.click(getByText("dober"));
-      expect(onStateChange).not.toHaveBeenCalled();
+      expect(onWordClick).not.toHaveBeenCalled();
       expect(onCollocationStateChange).toHaveBeenCalled();
     });
 
-    it("Alt+click inside collocation fires word-level onStateChange", async () => {
-      const onStateChange = vi.fn();
+    it("Alt+click inside collocation fires word-level onWordClick", async () => {
+      const onWordClick = vi.fn();
       const onCollocationStateChange = vi.fn();
       const { getByText } = render(Transcript, {
         props: defaultProps({
           transcript: transcriptWithCollocation,
-          onStateChange,
+          onWordClick,
           onCollocationStateChange,
         }),
       });
       await fireEvent.click(getByText("dober"), { altKey: true });
-      expect(onStateChange).toHaveBeenCalledWith("dober", null);
+      expect(onWordClick).toHaveBeenCalledWith(expect.objectContaining({ lemma: "dober" }), 0);
     });
 
-    it("plain click on word outside collocation fires word-level onStateChange", async () => {
-      const onStateChange = vi.fn();
+    it("plain click on word outside collocation fires word-level onWordClick", async () => {
+      const onWordClick = vi.fn();
       const onCollocationStateChange = vi.fn();
       const { getByText } = render(Transcript, {
         props: defaultProps({
           transcript: transcriptWithCollocation,
-          onStateChange,
+          onWordClick,
           onCollocationStateChange,
         }),
       });
       await fireEvent.click(getByText("hvala"));
-      expect(onStateChange).toHaveBeenCalledWith("hvala", null);
+      expect(onWordClick).toHaveBeenCalledWith(expect.objectContaining({ lemma: "hvala" }), 0);
       expect(onCollocationStateChange).not.toHaveBeenCalled();
     });
 
@@ -714,6 +716,7 @@ describe("Transcript", () => {
         },
         {
           role: "Ana",
+          sentence: "",
           words: [
             {
               surface: "hvala",
@@ -1084,6 +1087,7 @@ describe("Transcript", () => {
         dialogue_lines: [
           {
             role: "female-1",
+            sentence: "",
             words: [
               {
                 surface: "zdravo",
@@ -1147,6 +1151,7 @@ describe("Transcript", () => {
         dialogue_lines: [
           {
             role: "female-1",
+            sentence: "",
             words: [
               {
                 surface: "zdravo",
@@ -1171,6 +1176,7 @@ describe("Transcript", () => {
           },
           {
             role: "female-1",
+            sentence: "",
             words: [
               {
                 surface: "hvala",
@@ -1229,6 +1235,7 @@ describe("Transcript", () => {
         dialogue_lines: [
           {
             role: "female-1",
+            sentence: "",
             words: [
               {
                 surface: "zdravo",
@@ -1285,6 +1292,7 @@ describe("Transcript", () => {
         dialogue_lines: [
           {
             role: "female-1",
+            sentence: "",
             words: [
               {
                 surface: "zdravo",
@@ -1348,6 +1356,7 @@ describe("Transcript", () => {
         dialogue_lines: [
           {
             role: "female-1",
+            sentence: "",
             words: [
               {
                 surface: "zdravo",
@@ -1739,6 +1748,7 @@ describe("Transcript", () => {
       dialogue_lines: [
         {
           role: "A",
+          sentence: "",
           words: [
             {
               surface: "x",
@@ -1770,6 +1780,7 @@ describe("Transcript", () => {
       dialogue_lines: [
         {
           role: "A",
+          sentence: "",
           words: [
             {
               surface: "first",
@@ -1794,6 +1805,7 @@ describe("Transcript", () => {
         },
         {
           role: "B",
+          sentence: "",
           words: [
             {
               surface: "second",
