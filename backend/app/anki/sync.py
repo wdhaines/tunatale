@@ -300,6 +300,21 @@ class OfflineReader:
             (card_id, after_ms),
         ).fetchall()
 
+    def get_grave_note_ids(self) -> set[int]:
+        """Return the note ids in Anki's ``graves`` table (``type=1``).
+
+        A grave is Anki's tombstone for a deleted row (``type``: 0=card,
+        1=note, 2=deck). `detect_and_reset_orphans` uses note graves to tell an
+        *intentional* delete (honor it — hard-delete the TT collocation) from a
+        card merely missing after a wipe (recover it). Returns an empty set when
+        the table is absent (minimal/synthetic collections).
+        """
+        try:
+            rows = self._conn.execute("SELECT oid FROM graves WHERE type = 1").fetchall()
+        except sqlite3.OperationalError:
+            return set()
+        return {int(r[0]) for r in rows}
+
     def get_note_records(self) -> list[NoteRecord]:
         deck_id = find_deck_id(self._conn, self._deck_name)
         if deck_id is None:
@@ -1267,6 +1282,18 @@ class AnkiSync:
         records = self._reader.get_note_records()
         live_note_ids = {r.anki_note_id for r in records}
         live_card_ids = {c.anki_card_id for r in records for c in r.cards}
+
+        # Honor intentional deletes first: a TT collocation whose Anki note sits
+        # in the graves table was deleted on purpose — hard-delete it instead of
+        # resurrecting it below. A note missing *without* a grave falls through
+        # to the recovery (reset + re-mint) path, preserving the
+        # force-full-download safety net. Deleting here also removes the row's
+        # cards from the orphan ratio, so a purge can't trip the threshold.
+        deleted_guids = self._db.delete_collocations_for_graves(grave_note_ids=self._reader.get_grave_note_ids())
+        if deleted_guids:
+            _log.info(
+                "Honored %d Anki note grave(s); hard-deleted TT collocations: %s", len(deleted_guids), deleted_guids
+            )
 
         tt_card_ids = self._db.list_anki_card_ids()
         if tt_card_ids:

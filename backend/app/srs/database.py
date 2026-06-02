@@ -39,6 +39,32 @@ def _parse_last_review(value: str | None) -> datetime | None:
     return dt
 
 
+# Anki rolls the study day over at this *local* hour (default 4 AM), not at
+# midnight. A grade timestamped between local midnight and the rollover belongs
+# to the PRIOR Anki day. Mirrors `app.anki.sync._local_today_4am` and
+# `app.anki.protobuf_wire.compute_anki_day_index`; keep them in sync.
+ANKI_ROLLOVER_HOUR = 4
+
+
+def _anki_day_bounds_utc(today: date, now: datetime | None = None) -> tuple[str, str]:
+    """Return the UTC [start, end) ISO bounds of the Anki day anchored on `today`.
+
+    The window runs from `ANKI_ROLLOVER_HOUR` local on `today` to the same hour
+    the next day. When the wall-clock `now` is *before* today's rollover, the
+    active Anki day is still yesterday's, so the anchor shifts back one day —
+    matching what `_local_today_4am` does for sync-side counts. Counting on the
+    local-midnight boundary instead silently sibling-buries cards graded in the
+    `[midnight, rollover)` window that Anki still treats as graded yesterday
+    (the 66-vs-73 review-badge divergence, 2026-06-02).
+    """
+    local_tz = datetime.now().astimezone().tzinfo
+    now = (now or datetime.now(local_tz)).astimezone(local_tz)
+    day_start = datetime.combine(today, time(ANKI_ROLLOVER_HOUR), tzinfo=local_tz)
+    if now < day_start:
+        day_start -= timedelta(days=1)
+    return day_start.astimezone(UTC).isoformat(), (day_start + timedelta(days=1)).astimezone(UTC).isoformat()
+
+
 # v0 base schema. Fresh DBs go through v0 → v1 → v2 via migrations so every
 # deployment converges on the same path.
 _CREATE_COLLOCATIONS_V0 = """
@@ -773,9 +799,7 @@ class SRSDatabase:
         local-day bounds, tolerant of both full-ISO and legacy date-only
         timestamps.
         """
-        local_tz = datetime.now().astimezone().tzinfo
-        start_utc = datetime.combine(today, time(0), tzinfo=local_tz).astimezone(UTC)
-        end_utc = datetime.combine(today + timedelta(days=1), time(0), tzinfo=local_tz).astimezone(UTC)
+        start_iso, end_iso = _anki_day_bounds_utc(today)
         with self._get_conn() as conn:
             rows = conn.execute(
                 """
@@ -785,7 +809,7 @@ class SRSDatabase:
                   AND ((length(last_review) > 10 AND last_review >= ? AND last_review < ?)
                        OR (length(last_review) = 10 AND last_review = ?))
                 """,
-                (start_utc.isoformat(), end_utc.isoformat(), today.isoformat()),
+                (start_iso, end_iso, today.isoformat()),
             ).fetchall()
             return [(int(r[0]), r[1]) for r in rows]
 
@@ -802,9 +826,7 @@ class SRSDatabase:
           06:30 UTC next day.)
         - Legacy date-only: direct equality with the local-day ISO date.
         """
-        local_tz = datetime.now().astimezone().tzinfo
-        start_utc = datetime.combine(today, time(0), tzinfo=local_tz).astimezone(UTC)
-        end_utc = datetime.combine(today + timedelta(days=1), time(0), tzinfo=local_tz).astimezone(UTC)
+        start_iso, end_iso = _anki_day_bounds_utc(today)
         with self._get_conn() as conn:
             rows = conn.execute(
                 """
@@ -812,7 +834,7 @@ class SRSDatabase:
                 WHERE (length(last_review) > 10 AND last_review >= ? AND last_review < ?)
                    OR (length(last_review) = 10 AND last_review = ?)
                 """,
-                (start_utc.isoformat(), end_utc.isoformat(), today.isoformat()),
+                (start_iso, end_iso, today.isoformat()),
             ).fetchall()
             return {r[0] for r in rows}
 
@@ -1390,6 +1412,34 @@ class SRSDatabase:
             ).fetchall()
             return {row["anki_card_id"] for row in rows}
 
+    def delete_collocations_for_graves(self, *, grave_note_ids: set[int]) -> list[str]:
+        """Hard-delete collocations whose Anki note is in the graves table.
+
+        A note grave means the user deleted the note in Anki on purpose; honor
+        it by removing the TT collocation (FK cascade also drops its directions
+        and media) rather than resurrecting it on the next push. Counterpart to
+        the recovery path in ``reset_orphaned_anki_ids`` — the caller routes a
+        missing note here only when it carries a grave. Returns deleted guids.
+        """
+        if not grave_note_ids:
+            return []
+        placeholders = ",".join("?" * len(grave_note_ids))
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                f"SELECT id, guid, text FROM collocations WHERE anki_note_id IN ({placeholders})",
+                list(grave_note_ids),
+            ).fetchall()
+            if not rows:
+                return []
+            row_ids = [r["id"] for r in rows]
+            texts = [r["text"] for r in rows]
+            text_ph = ",".join("?" * len(texts))
+            conn.execute(f"DELETE FROM violations WHERE collocation_text IN ({text_ph})", texts)
+            id_ph = ",".join("?" * len(row_ids))
+            conn.execute(f"DELETE FROM collocations WHERE id IN ({id_ph})", row_ids)
+            self._commit(conn)
+            return [r["guid"] for r in rows]
+
     def reset_orphaned_anki_ids(
         self,
         *,
@@ -1785,9 +1835,7 @@ class SRSDatabase:
         otherwise. (`_compute_live_main` already applies the same bury to the
         served queue; this keeps the badge consistent with it.)
         """
-        local_tz = datetime.now().astimezone().tzinfo
-        start_utc = datetime.combine(today, time(0), tzinfo=local_tz).astimezone(UTC)
-        end_utc = datetime.combine(today + timedelta(days=1), time(0), tzinfo=local_tz).astimezone(UTC)
+        start_iso, end_iso = _anki_day_bounds_utc(today)
         end_of_day_utc = datetime.combine(today, time.max).isoformat()
         with self._get_conn() as conn:
             return conn.execute(
@@ -1802,7 +1850,7 @@ class SRSDatabase:
                        OR (state = 'review' AND due_at <= ?)
                   )
                 """,
-                (start_utc.isoformat(), end_utc.isoformat(), today.isoformat(), end_of_day_utc),
+                (start_iso, end_iso, today.isoformat(), end_of_day_utc),
             ).fetchone()[0]
 
     def count_learning(self) -> int:
@@ -1843,9 +1891,7 @@ class SRSDatabase:
         Together these match Anki's deck-overview review count when both apps
         share the same data.
         """
-        local_tz = datetime.now().astimezone().tzinfo
-        start_utc = datetime.combine(today, time(0), tzinfo=local_tz).astimezone(UTC)
-        end_utc = datetime.combine(today + timedelta(days=1), time(0), tzinfo=local_tz).astimezone(UTC)
+        start_iso, end_iso = _anki_day_bounds_utc(today)
         end_of_day_utc = datetime.combine(today, time.max).isoformat()
         with self._get_conn() as conn:
             return conn.execute(
@@ -1859,7 +1905,7 @@ class SRSDatabase:
                        OR state IN ('learning', 'relearning')
                   )
                 """,
-                (end_of_day_utc, start_utc.isoformat(), end_utc.isoformat(), today.isoformat()),
+                (end_of_day_utc, start_iso, end_iso, today.isoformat()),
             ).fetchone()[0]
 
     def count_new_introduced_today(self, today: date) -> int:
@@ -1875,9 +1921,7 @@ class SRSDatabase:
         have NULL and naturally fall out of the count. Going forward, every new
         grade populates the column.
         """
-        local_tz = datetime.now().astimezone().tzinfo
-        start_utc = datetime.combine(today, time(0), tzinfo=local_tz).astimezone(UTC)
-        end_utc = datetime.combine(today + timedelta(days=1), time(0), tzinfo=local_tz).astimezone(UTC)
+        start_iso, end_iso = _anki_day_bounds_utc(today)
         with self._get_conn() as conn:
             row = conn.execute(
                 """
@@ -1886,7 +1930,7 @@ class SRSDatabase:
                   AND introduced_at >= ?
                   AND introduced_at < ?
                 """,
-                (start_utc.isoformat(), end_utc.isoformat()),
+                (start_iso, end_iso),
             ).fetchone()
             return row[0] if row else 0
 
@@ -1898,9 +1942,7 @@ class SRSDatabase:
         (filters out new-card introductions that happened to land today).
         Mirrors Anki's 'reviews done today' derived from revlog.
         """
-        local_tz = datetime.now().astimezone().tzinfo
-        start_utc = datetime.combine(today, time(0), tzinfo=local_tz).astimezone(UTC)
-        end_utc = datetime.combine(today + timedelta(days=1), time(0), tzinfo=local_tz).astimezone(UTC)
+        start_iso, end_iso = _anki_day_bounds_utc(today)
         with self._get_conn() as conn:
             row = conn.execute(
                 """
@@ -1912,7 +1954,7 @@ class SRSDatabase:
                   AND last_review < ?
                   AND last_rating IS NOT NULL
                 """,
-                (start_utc.isoformat(), end_utc.isoformat()),
+                (start_iso, end_iso),
             ).fetchone()
             return row[0] if row else 0
 
