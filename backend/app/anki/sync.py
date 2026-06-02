@@ -42,6 +42,11 @@ KNOWN_ANKI_SCHEMA_VER = 18
 
 _MEDIA_DIR = Path(__file__).parent.parent.parent / "media"
 
+# Stage 3b: absolute tolerance for FSRS memory-state comparison between the
+# forward-step replay and Anki's cards.data. Matches the strict threshold in
+# app/anki/measure_stage3b_premise.py (lines 369/377).
+_FSRS_REPLAY_TOLERANCE = 0.01
+
 
 def _safe_stem(word: str, prefix: str) -> str:
     """Sanitize word for use as a media filename stem: keep letters/digits/underscores."""
@@ -162,10 +167,21 @@ class SyncConflict:
 
 
 @dataclass
+class RecomputeDivergence:
+    collocation_id: int
+    direction: str
+    replay_stability: float
+    replay_difficulty: float
+    anki_stability: float
+    anki_difficulty: float
+
+
+@dataclass
 class PullReport:
     notes_updated: int = 0
     directions_updated: int = 0
     conflicts: list[SyncConflict] = field(default_factory=list)
+    recompute_divergences: list[RecomputeDivergence] = field(default_factory=list)
     skipped_unknown_guid: int = 0
 
 
@@ -1300,6 +1316,37 @@ class AnkiSync:
                 resolution=resolution,
             )
 
+    def _record_recompute_divergence(
+        self,
+        report: PullReport,
+        *,
+        collocation_id: int,
+        direction: Direction,
+        replay_stability: float,
+        replay_difficulty: float,
+        anki_stability: float,
+        anki_difficulty: float,
+    ) -> None:
+        """Record an FSRS recompute-memory-state divergence event on PullReport.
+
+        Called when ``event_sync_pull='new'`` and the forward-step replay of
+        tt_revlog produces stability/difficulty outside tolerance (0.01) from
+        Anki's ``cards.data`` — indicating Anki ran ``recompute_memory_state``
+        between syncs. The divergence is surfaced via ``report.recompute_divergences``
+        and the sync summary log, but does NOT write to a DB table (it is a
+        diagnostic signal for the soak, not a permanent record).
+        """
+        report.recompute_divergences.append(
+            RecomputeDivergence(
+                collocation_id=collocation_id,
+                direction=direction.value,
+                replay_stability=replay_stability,
+                replay_difficulty=replay_difficulty,
+                anki_stability=anki_stability,
+                anki_difficulty=anki_difficulty,
+            )
+        )
+
     def _pull_unbury_sweep(self, dry_run: bool) -> None:
         """Anki-parity daily unbury sweep. Run BEFORE processing Anki records.
 
@@ -1675,18 +1722,23 @@ class AnkiSync:
         """
         held_ids = self._db.get_tt_revlog_ids(collocation_id, direction)
         rows = self._reader.get_revlog_for_card(anki_card_id)
+        anki_ids = {r["id"] for r in rows}
         for r in rows:
             if r["id"] in held_ids:
                 continue
-            # Skip if a TT-written row (same direction, ±5s, same ease) already
-            # records this grade event. PK-equal matches go through INSERT OR
-            # IGNORE; exclude the candidate's own id from the near-match check.
+            # Skip if a TT-*written* row (same direction, ±5s, same ease) already
+            # records this grade event — TT wrote it at grade time and the Anki
+            # copy round-tripped with a bumped id. PK-equal matches go through
+            # INSERT OR IGNORE; exclude the candidate's own id. ``ignore_ids`` =
+            # this card's Anki revlog ids, so an already-ingested Anki row never
+            # suppresses a distinct rapid grade a few seconds later (Layer 60).
             if self._db.has_revision_near(
                 collocation_id,
                 direction.value,
                 r["id"],
                 r["ease"],
                 exclude_id=r["id"],
+                ignore_ids=anki_ids,
             ):
                 continue
             self._db.append_revlog(
@@ -1703,6 +1755,59 @@ class AnkiSync:
                     anki_card_id=anki_card_id,
                 )
             )
+
+    def _replay_incremental(
+        self,
+        collocation_id: int,
+        direction: Direction,
+        local_dir: DirectionState,
+        since_id: int | None,
+        params,
+        col_crt: int | None,
+    ) -> DirectionState:
+        """Incremental forward-step replay — shared by compare and new modes.
+
+        Walks tt_revlog rows newer than ``since_id`` (all rows when None) from a
+        stored ``local_dir`` starting state. With zero new rows returns ``local_dir``
+        unchanged.  A pure wrapper around ``rebuild_from_revlog`` that canonicalises
+        the common argument shape so the two call sites stay in lockstep.
+        """
+        return self._db.rebuild_from_revlog(
+            collocation_id,
+            direction,
+            params=params,
+            col_crt=col_crt,
+            anki_card_id=local_dir.anki_card_id,
+            starting_state=local_dir,
+            since_id=since_id,
+        )
+
+    def _write_compare_shadow(
+        self,
+        collocation_id: int,
+        direction: Direction,
+        local_dir: DirectionState,
+        since_id: int | None,
+        params,
+        col_crt: int | None,
+    ) -> None:
+        """Stage 3b compare-mode: replay forward from the stored state and record
+        the result in the shadow columns for post-hoc SQL-diffing.
+
+        Incremental forward-step: starts from ``local_dir`` (the stored,
+        Anki-aligned-at-last-sync state) and walks only tt_revlog rows newer than
+        ``since_id`` — this sync's freshly-ingested Anki grades. With zero new
+        rows it returns ``local_dir`` unchanged (the common "no Anki grades since
+        last sync" case). Never touches the authoritative columns; legacy stays
+        the production write.
+        """
+        replayed = self._replay_incremental(collocation_id, direction, local_dir, since_id, params, col_crt)
+        self._db.set_direction_shadow_replay(
+            collocation_id,
+            direction,
+            replayed.stability,
+            replayed.difficulty,
+        )
 
     def _pull_advance_learning_cutoff(self, max_revlog_ms: int, dry_run: bool) -> None:
         """Advance the learning cutoff to the most recent Anki revlog timestamp ingested.
@@ -1737,6 +1842,19 @@ class AnkiSync:
         report = PullReport()
         max_revlog_ms = 0
         bury_stats = self._init_bury_stats()
+
+        # Stage 3b: compare/new modes both run incremental replay alongside the
+        # legacy merge. Compare writes replay to shadow columns (legacy stays
+        # authoritative); new replaces authoritative FSRS state with replay-derived
+        # values (or Anki's on divergence). Resolve params/col_crt once.
+        event_mode = self._db.get_event_sync_pull_mode()
+        compare_params = None
+        compare_col_crt = None
+        if event_mode in ("compare", "new"):
+            from app.srs.queue_stats import resolve_fsrs_params
+
+            compare_params = resolve_fsrs_params(self._db)[0]
+            compare_col_crt = self._anki_col_crt
 
         self._pull_unbury_sweep(dry_run)
 
@@ -1817,6 +1935,16 @@ class AnkiSync:
                 # `guid` came from local_item we just looked up → row always exists.
                 coll_id = self._db.get_collocation_id_by_guid(guid)
                 assert coll_id is not None
+                # Stage 3b compare/new-mode: the incremental-replay boundary is the
+                # newest tt_revlog id BEFORE this sync's ingest. Everything ≤ it
+                # is already folded into the stored `local_dir` (TT-native grades
+                # applied live, prior Anki grades applied at the last sync); the
+                # rows ingested below (this sync's new Anki grades) are > it.
+                pre_ingest_revlog_id = (
+                    self._db.latest_revlog_id_for_card(card_rec.anki_card_id)
+                    if event_mode in ("compare", "new")
+                    else None
+                )
                 self._ingest_anki_revlog_for_card(
                     card_rec.anki_card_id,
                     coll_id,
@@ -1838,6 +1966,45 @@ class AnkiSync:
                     report,
                     dry_run,
                 )
+
+                # Stage 3b new-mode: replace FSRS fields with replay-derived
+                # values when replay matches Anki within tolerance.  On
+                # divergence (recompute-memory-state) just record the event —
+                # legacy already took Anki's value, so no override needed.
+                # Suspend/bury are unchanged — the guard below skips them.
+                if event_mode == "new" and not dry_run:
+                    replayed = self._replay_incremental(
+                        coll_id,
+                        direction,
+                        local_dir,
+                        pre_ingest_revlog_id,
+                        compare_params,
+                        compare_col_crt,
+                    )
+                    stab_diff = abs(card_rec.stability - replayed.stability)
+                    diff_diff = abs(card_rec.difficulty - replayed.difficulty)
+                    if new_dir_state.state not in (SRSState.SUSPENDED, SRSState.BURIED):
+                        if stab_diff <= _FSRS_REPLAY_TOLERANCE and diff_diff <= _FSRS_REPLAY_TOLERANCE:
+                            new_dir_state = replace(
+                                new_dir_state,
+                                stability=replayed.stability,
+                                difficulty=replayed.difficulty,
+                                last_review=replayed.last_review,
+                                last_review_time_ms=replayed.last_review_time_ms,
+                            )
+                        else:
+                            # Divergence: legacy already takes Anki's value, so no
+                            # override needed — just record the event for diagnostics.
+                            self._record_recompute_divergence(
+                                report,
+                                collocation_id=coll_id,
+                                direction=direction,
+                                replay_stability=replayed.stability,
+                                replay_difficulty=replayed.difficulty,
+                                anki_stability=card_rec.stability,
+                                anki_difficulty=card_rec.difficulty,
+                            )
+
                 differs = _direction_differs(local_dir, new_dir_state)
                 # Forensic trace for any direction whose Anki state OR TT state
                 # touches BURIED. Lets future investigators reconstruct exactly
@@ -1891,6 +2058,16 @@ class AnkiSync:
                     if not dry_run:
                         self._db.update_direction(guid, direction, new_dir_state)
                     report.directions_updated += 1
+
+                if event_mode == "compare" and not dry_run:
+                    self._write_compare_shadow(
+                        coll_id,
+                        direction,
+                        local_dir,
+                        pre_ingest_revlog_id,
+                        compare_params,
+                        compare_col_crt,
+                    )
 
         self._pull_advance_learning_cutoff(max_revlog_ms, dry_run)
         self._pull_rebuild_session_main_queue(dry_run)
@@ -2363,7 +2540,8 @@ def main(
             print(
                 f"Pull: {pull.notes_updated} notes updated, "
                 f"{pull.directions_updated} directions, "
-                f"{len(pull.conflicts)} conflicts"
+                f"{len(pull.conflicts)} conflicts, "
+                f"{len(pull.recompute_divergences)} recompute divergences"
             )
             print(f"Push: {push.notes_pushed} notes, {push.directions_pushed} directions")
             return 0

@@ -106,6 +106,10 @@ def _packed_float_field(field_num: int, values: tuple[float, ...] | list[float])
 REVIEW_ORDER_FIELD = 33  # DeckConfig.Config.review_order (enum)
 REVIEW_ORDER_RETRIEVABILITY_ASCENDING = 7  # ReviewCardOrder.RETRIEVABILITY_ASCENDING
 
+BURY_NEW_FIELD = 27  # DeckConfig.Config.bury_new (bool)
+BURY_REVIEWS_FIELD = 28  # DeckConfig.Config.bury_reviews (bool)
+BURY_INTERDAY_LEARNING_FIELD = 29  # DeckConfig.Config.bury_interday_learning (bool)
+
 
 def _make_deck_config_blob(
     weights: tuple[float, ...] = DEFAULT_WEIGHTS,
@@ -115,12 +119,15 @@ def _make_deck_config_blob(
     learn_steps: tuple[float, ...] = (),
     relearn_steps: tuple[float, ...] = (),
     review_order: int = REVIEW_ORDER_RETRIEVABILITY_ASCENDING,
+    bury_new: bool = False,
+    bury_reviews: bool = False,
+    bury_interday_learning: bool = False,
 ) -> bytes:
     """Build a DeckConfig.Config protobuf blob.
 
     Fields follow the anki/deck_config.proto schema. Only fields relevant to
     queue-order and FSRS scheduling are emitted; callers that need additional
-    protobuf fields (bury, new_spread, etc.) can append them after calling this
+    protobuf fields (new_spread, etc.) can append them after calling this
     helper.
 
     ``learn_steps`` / ``relearn_steps`` are protobuf ``repeated float`` fields
@@ -131,6 +138,12 @@ def _make_deck_config_blob(
     ``review_order`` defaults to RETRIEVABILITY_ASCENDING (TT's mode), not
     Anki's app-default DAY — otherwise parity tests against TT's R-asc queue
     assembly would compare different orderings on the two sides.
+
+    The ``bury_*`` bools default to ``False`` (proto-default) to keep blobs
+    byte-identical for callers that don't set them. Anki's *application* default
+    is ``bury_new=true``/``bury_reviews=true``, so any sibling-bury parity test
+    must set them explicitly via ``SyntheticCollection.set_bury`` — the proto
+    field is absent (false) otherwise, and Anki performs no bury at all.
     """
     blob = pb_varint_field(9, new_per_day)
     blob += pb_varint_field(10, reviews_per_day)
@@ -140,6 +153,14 @@ def _make_deck_config_blob(
     tag37 = encode_varint((DESIRED_RETENTION_FIELD << 3) | 5)
     blob += tag37 + struct.pack("<f", retention)
     blob += pb_varint_field(REVIEW_ORDER_FIELD, review_order)
+    # Bool fields: emit only when True. A proto3 bool defaults to false when the
+    # field is absent, so omitting the False case keeps existing blobs unchanged.
+    if bury_new:
+        blob += pb_varint_field(BURY_NEW_FIELD, 1)
+    if bury_reviews:
+        blob += pb_varint_field(BURY_REVIEWS_FIELD, 1)
+    if bury_interday_learning:
+        blob += pb_varint_field(BURY_INTERDAY_LEARNING_FIELD, 1)
     return blob
 
 
@@ -168,6 +189,9 @@ class SyntheticCollection:
         self.reviews_per_day: int = 200
         self.learn_steps: tuple[float, ...] = ()
         self.relearn_steps: tuple[float, ...] = ()
+        self.bury_new: bool = False
+        self.bury_reviews: bool = False
+        self.bury_interday_learning: bool = False
         self.col_crt: int = COL_CRT
         self.notetypes: list[dict[str, Any]] = []
         self.fields: list[tuple[int, int, str]] = []
@@ -210,6 +234,23 @@ class SyntheticCollection:
         """
         self.learn_steps = tuple(learn_steps)
         self.relearn_steps = tuple(relearn_steps)
+
+    def set_bury(
+        self,
+        *,
+        bury_new: bool = False,
+        bury_reviews: bool = False,
+        bury_interday_learning: bool = False,
+    ) -> None:
+        """Set the deck's sibling-bury flags (deck_config proto fields 27-29).
+
+        Defaults are proto-false. Anki's app default is
+        ``bury_new=True``/``bury_reviews=True``; a sibling-bury parity test must
+        opt in here or Anki gathers every sibling and buries nothing.
+        """
+        self.bury_new = bury_new
+        self.bury_reviews = bury_reviews
+        self.bury_interday_learning = bury_interday_learning
 
     def add_notetype(self, id: int, name: str, field_names: tuple[str, ...], template_count: int = 1) -> None:
         self.notetypes.append({"id": id, "name": name})
@@ -409,6 +450,9 @@ class SyntheticCollection:
             reviews_per_day=self.reviews_per_day,
             learn_steps=self.learn_steps,
             relearn_steps=self.relearn_steps,
+            bury_new=self.bury_new,
+            bury_reviews=self.bury_reviews,
+            bury_interday_learning=self.bury_interday_learning,
         )
         conn.execute(
             "INSERT INTO deck_config VALUES (?, ?, 0, -1, ?)",

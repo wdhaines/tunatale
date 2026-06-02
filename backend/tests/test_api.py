@@ -1461,6 +1461,103 @@ class TestListenClozeIntegration:
             ).fetchall()
         assert rows[0]["cnt"] == 2, "Only the two complete entries should create morphology-cloze rows"
 
+    async def test_listen_tolerates_malformed_morphology_focus_entries(self):
+        """Malformed morphology_focus entries must not 500 /listen (regression).
+
+        The morphology_focus loop runs on every /listen for any lesson carrying the
+        metadata — independent of the case-clozes toggle — so a non-dict entry, a
+        null ``feature``, or a non-string ``feature`` (all reachable now that the
+        model-agnostic parser accepts looser non-JSON-mode model output) would
+        otherwise raise AttributeError. Valid entries beside the junk still create
+        their rows.
+        """
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        phrase = "Grem v Ljubljano. Sem v hotelu."
+        morphology = [
+            {"lemma": "ljubljana", "surface": "Ljubljano", "feature": "noun:acc:sg", "gloss": "Ljubljana"},
+            {"lemma": "hotel", "surface": "hotelu", "feature": None, "gloss": "hotel"},  # null feature
+            "not-a-dict",  # non-dict entry
+            {"lemma": "x", "surface": "y", "feature": ["noun:acc:sg"]},  # non-string feature
+        ]
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text=phrase, voice_id="female-1", language_code="sl", role="female-1"),
+                    ],
+                )
+            ],
+            key_phrases=[],
+            generation_metadata={
+                "token_glosses": {},
+                "sentence_translations": {},
+                "morphology_focus": morphology,
+            },
+        )
+        db = SRSDatabase(":memory:")
+        db.set_enable_cloze_cards(True)
+        db.set_enable_case_clozes(True)
+        store = ContentStore(":memory:")
+        store.save_lesson("case-cloze-malformed", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-malformed"})
+        assert response.status_code == 200
+
+        with db._get_conn() as conn:
+            cnt = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'morph:%'",
+            ).fetchone()["cnt"]
+        assert cnt == 1, "Only the single well-formed entry should create a morphology-cloze row"
+
+    async def test_listen_tolerates_non_list_morphology_focus(self):
+        """A non-list morphology_focus (model emits a bare string/dict) is ignored, not iterated char-by-char."""
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text="Grem v Ljubljano.", voice_id="female-1", language_code="sl", role="female-1"),
+                    ],
+                )
+            ],
+            key_phrases=[],
+            generation_metadata={
+                "token_glosses": {},
+                "sentence_translations": {},
+                "morphology_focus": "noun:acc:sg",  # not a list
+            },
+        )
+        db = SRSDatabase(":memory:")
+        db.set_enable_cloze_cards(True)
+        db.set_enable_case_clozes(True)
+        store = ContentStore(":memory:")
+        store.save_lesson("case-cloze-nonlist", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-nonlist"})
+        assert response.status_code == 200
+
+        with db._get_conn() as conn:
+            cnt = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'morph:%'",
+            ).fetchone()["cnt"]
+        assert cnt == 0, "A non-list morphology_focus produces no morphology-cloze rows"
+
     async def test_listen_case_cloze_noop_without_natural_speed(self):
         """No NATURAL_SPEED section → surface_to_analysis stays empty → no morphology-clozes."""
         from app.srs.database import SRSDatabase

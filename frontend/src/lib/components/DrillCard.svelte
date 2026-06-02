@@ -39,15 +39,16 @@
 		return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 	}
 
+	// Cloze markup can repeat: make_morphology_cloze_text wraps *every* occurrence
+	// of the surface, so a surface appearing twice yields two {{c1::...}} spans.
+	// Replace them all (global regex), and use replacer functions so `$`/`&` in a
+	// surface or hint can't be reinterpreted as replacement-string specials.
 	function clozePromptHtml(): string {
 		const sent = item.source_sentence!;
-		const hinted = sent.match(/\{\{c1::(.+?)::(.+?)\}\}/);
-		if (hinted) {
-			return sent.replace(hinted[0], `[${hinted[2]}]`);
-		}
-		const plain = sent.match(/\{\{c1::(.+?)\}\}/);
-		if (plain) {
-			return sent.replace(plain[0], '[...]');
+		if (/\{\{c1::.+?\}\}/.test(sent)) {
+			return sent
+				.replace(/\{\{c1::(.+?)::(.+?)\}\}/g, (_m, _surface, hint) => `[${hint}]`)
+				.replace(/\{\{c1::(.+?)\}\}/g, () => '[...]');
 		}
 		const escaped = escapeRegex(item.text);
 		const re = new RegExp(`(?<!\\p{L})${escaped}(?!\\p{L})`, 'giu');
@@ -56,13 +57,16 @@
 
 	function clozeAnswerHtml(): string {
 		const sent = item.source_sentence!;
-		const hinted = sent.match(/\{\{c1::(.+?)::(.+?)\}\}/);
-		if (hinted) {
-			return sent.replace(hinted[0], `<mark class="cloze-answer">${hinted[1]}</mark>`);
-		}
-		const plain = sent.match(/\{\{c1::(.+?)\}\}/);
-		if (plain) {
-			return sent.replace(plain[0], `<mark class="cloze-answer">${plain[1]}</mark>`);
+		if (/\{\{c1::.+?\}\}/.test(sent)) {
+			return sent
+				.replace(
+					/\{\{c1::(.+?)::(.+?)\}\}/g,
+					(_m, surface) => `<mark class="cloze-answer">${surface}</mark>`
+				)
+				.replace(
+					/\{\{c1::(.+?)\}\}/g,
+					(_m, surface) => `<mark class="cloze-answer">${surface}</mark>`
+				);
 		}
 		const escaped = escapeRegex(item.text);
 		const re = new RegExp(`(?<!\\p{L})${escaped}(?!\\p{L})`, 'giu');

@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import importlib
+import sys
+import types
+
+import app.srs.lemmatizer as lemmatizer_module
 from app.srs.lemmatizer import (
     Lemmatizer,
     LowercaseLemmatizer,
@@ -80,3 +85,23 @@ class TestParseMorphology:
         case, number = _parse_morphology("Case=Ins|Gender=Masc|Number=Dual")
         assert case == "Ins"
         assert number == "Dual"
+
+
+class TestClasslaPipelineImportGuard:
+    """The module-level ``try/except ImportError`` guard that sets
+    ``ClasslaPipeline = None`` when classla (or its ``Pipeline`` export) is
+    unavailable. This branch only executes naturally when classla is absent
+    (e.g. CI); the reload below exercises it even when classla is installed."""
+
+    def test_falls_back_to_none_when_pipeline_unavailable(self, monkeypatch):
+        # Replace classla with a stub lacking ``Pipeline`` so the module-level
+        # ``from classla import Pipeline`` raises ImportError on reload.
+        stub = types.ModuleType("classla")
+        monkeypatch.setitem(sys.modules, "classla", stub)
+        try:
+            importlib.reload(lemmatizer_module)
+            assert lemmatizer_module.ClasslaPipeline is None
+        finally:
+            # Restore real module state so later tests see the genuine import.
+            monkeypatch.undo()
+            importlib.reload(lemmatizer_module)

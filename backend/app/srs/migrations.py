@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 26
+CURRENT_VERSION = 27
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -824,6 +824,21 @@ def migrate_v25_to_v26(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA foreign_keys = ON")
 
 
+def migrate_v26_to_v27(conn: sqlite3.Connection) -> None:
+    """Add Stage-3b compare-mode shadow columns to collocation_directions.
+
+    ``stability_replayed`` / ``fsrs_difficulty_replayed`` are nullable, written
+    only by ``_pull_merge_direction`` in ``compare`` mode (the replay-derived
+    FSRS state, for SQL-diffing against the authoritative columns during the
+    ≥1-week soak). Authoritative ``stability`` / ``fsrs_difficulty`` are
+    untouched. Dropped in Stage 3b step 6 (migration v28) once the flag flips.
+    """
+    for col in ("stability_replayed", "fsrs_difficulty_replayed"):
+        if not _column_exists(conn, "collocation_directions", col):
+            conn.execute(f"ALTER TABLE collocation_directions ADD COLUMN {col} REAL")
+    _set_version(conn, 27)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -851,6 +866,7 @@ _MIGRATIONS = {
     23: migrate_v23_to_v24,
     24: migrate_v24_to_v25,
     25: migrate_v25_to_v26,
+    26: migrate_v26_to_v27,
 }
 
 

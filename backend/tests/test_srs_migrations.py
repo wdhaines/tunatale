@@ -73,7 +73,38 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 26
+        assert CURRENT_VERSION == 27
+
+    def test_migrates_v26_to_v27_adds_replay_shadow_columns(self, tmp_path):
+        """v27 adds Stage-3b shadow columns (stability_replayed, fsrs_difficulty_replayed)."""
+        import sqlite3
+
+        from app.srs.migrations import _column_exists, _set_version, migrate_v26_to_v27
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.execute(
+            "CREATE TABLE collocation_directions ("
+            "collocation_id INTEGER, direction TEXT, "
+            "stability REAL, fsrs_difficulty REAL)"
+        )
+        _set_version(conn, 26)
+        assert not _column_exists(conn, "collocation_directions", "stability_replayed")
+        assert not _column_exists(conn, "collocation_directions", "fsrs_difficulty_replayed")
+
+        migrate_v26_to_v27(conn)
+
+        assert _column_exists(conn, "collocation_directions", "stability_replayed")
+        assert _column_exists(conn, "collocation_directions", "fsrs_difficulty_replayed")
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 27
+
+        # Shadow columns default to NULL (write-only-from-replay).
+        conn.execute("INSERT INTO collocation_directions (collocation_id, direction) VALUES (1, 'recognition')")
+        row = conn.execute("SELECT stability_replayed, fsrs_difficulty_replayed FROM collocation_directions").fetchone()
+        assert row == (None, None)
+
+        # Idempotent.
+        migrate_v26_to_v27(conn)
+        assert _column_exists(conn, "collocation_directions", "stability_replayed")
 
     def test_migrates_v15_to_v16_deletes_phantom_directions(self, tmp_path):
         """v16 deletes direction rows that were auto-filled by the pre-fix

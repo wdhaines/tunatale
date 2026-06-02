@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { backendAvailable, resetSRSItems, seedSRSItems } from './helpers';
 
-// This spec asserts on exact queue counts ("6 + 0 + 0" → 3 reviews → "Done").
+// This spec asserts on exact queue counts ("3 + 0 + 0" → 3 reviews → "Done").
 // Other specs in this suite (admin-srs, review-again-rating) seed into the
 // same test DB earlier in the run, so we wipe SRS items here before seeding
 // to restore the clean precondition this spec needs.
@@ -20,20 +20,21 @@ test('review flow: seed items, drill through queue, complete', async ({ page, re
 	]);
 
 	// Wait for home page and queue stats to load
-	// Queue stats show Anki-style widget: "6 + 0 + 0" (new + learning + review)
-	// 3 words × 2 directions = 6 new directions
+	// Queue stats show Anki-style widget: "3 + 0 + 0" (new + learning + review).
+	// 3 words × 2 directions = 6 new directions, but Anki's bury_new buries the
+	// second new sibling of each note, so the new badge mirrors Anki at 3 (one
+	// per word), matching what the queue actually serves (Layer 64).
 	await page.goto('/');
-	await expect(page.getByText('6').first()).toBeVisible({ timeout: 10000 });
+	await expect(page.getByText('3').first()).toBeVisible({ timeout: 10000 });
 	await expect(page.getByText('0').first()).toBeVisible();
 
 	// Click the Review link in the main content (not the nav)
 	await page.getByRole('main').getByRole('link', { name: 'Review' }).click();
 	await expect(page).toHaveURL('/review');
-	// Check for Anki-style widget on review page: "6 + 0 + 0"
-	await expect(page.getByText('6').first()).toBeVisible({ timeout: 10000 });
+	// Check for Anki-style widget on review page: "3 + 0 + 0"
+	await expect(page.getByText('3').first()).toBeVisible({ timeout: 10000 });
 
-	// Queue has 6 items (3 words × 2 directions), but client-side sibling burying skips
-	// the second direction of each word once one direction is rated. So 3 effective reviews.
+	// The queue serves one direction per word (sibling burying), so 3 reviews.
 	// With NEW+GOOD now going to LEARNING step 1 (due_at = now + 10min), those cards
 	// won't reappear in the queue until due_at passes. To complete the review flow in this
 	// test, we use EASY which graduates immediately to REVIEW.

@@ -37,6 +37,21 @@ The remaining 7 are **not** a port bug (proven: with the correct histogram, `fin
 
 The rest of this doc is the procedure used. Useful as a template if Stage 3b's measurement ever needs re-running.
 
+## Design note (2026-05-28): anchor event-sourcing to `card.data`, not the revlog — Anki's revlog is not a pure event log
+
+**The finding.** The Stage 3b compare-soak (event_sync_pull=compare) surfaced 104 shadow **difficulty** divergences (stability bit-exact, difficulty only). Root cause is NOT an FSRS bug and NOT a `recompute_memory_state` event: it's that **Anki's `card.data` is not a pure function of its `revlog`**. A Check Database / forced AnkiWeb download (restore) on 2026-05-21 re-stamped ~2333 revlog rows — original sub-second timestamps were lost, so ids collapsed into sequential runs within a single second (`base+923, +924, +925…`), each cluster sharing one `usn`. Many of those rows are **duplicate re-gradings that Anki never applied to `card.data`** (verified: a card graded 19:26:43 ivl=19 has a 20:23:12 cluster entry ivl=12, and the card keeps ivl=19). TT's event-sourcing replay faithfully applies every revlog row, so it over-applies these orphans. Difficulty exposes it (not stability) because the cluster grades are same-day → elapsed=0 → the recall term zeroes → stability unchanged, while the difficulty update is time-independent. Full root-cause trail: memory `project_stage3b_soak_finding_difficulty_replay`.
+
+**Why this matters for the design.** The premise below (line ~44) assumes divergence happens *only* when Anki ran `recompute_memory_state` between syncs. That's incomplete. Anki **never replays revlog** — it forward-updates `card.data` per grade — so sync-merge / import / restore / Check-Database can leave revlog rows that the live `card.data` does not reflect. Any design that reconstructs memory state by replaying the *full* revlog (the eventual "new" mode) will diverge on every such card, forever, with no per-row signal to distinguish an orphan from a real grade (`dedup_tt_revlog`'s 5s window can't catch clusters minutes/hours from the real grade, and a sequential-id heuristic risks dropping legitimate rapid grades).
+
+**The fix for compare→new: anchor to `card.data`.** When flipping `event_sync_pull` compare→new, do NOT derive state by replaying the full revlog. Instead:
+1. **At sync, take Anki's `card.data` as the authoritative baseline** for every synced card (this is exactly what the legacy `_pull_merge_direction` already does, and why legacy never diverges here).
+2. **Forward-apply only grades newer than that baseline** — i.e. post-sync TT-native grades. Never re-derive pre-baseline state from revlog.
+3. Revlog stays the inter-sync event log for TT-native grading and audit; it is not the source of truth for already-synced state.
+
+This dissolves the entire revlog-impurity class (restores, imports, multi-device merges) rather than chasing per-row heuristics, and it matches the Path-2 escalation in `.claude/rules/anki-queue-parity.md` ("at sync time persist Anki's authoritative state; between syncs serve from snapshot filtered by grades-since-sync"). It also means the compare-mode shadow's job is narrower than first scoped: it validates *forward-step* replay of new grades, not from-scratch reconstruction of historical state.
+
+**Soak interpretation going forward.** The 104 difficulty divergences are a **benign one-off** from the 05-21 restore — NOT a regression and NOT a Stage 3b blocker on their own. See the queue-parity rule's "Already-decided non-issue" entry and `project_stage3b_soak_finding_difficulty_replay` for the exact classifier (difficulty-only + stability-OK = the known cohort; **stability divergence is the real health signal**).
+
 ## What Stage 3b is
 
 The TT↔Anki sync layer's `_pull_merge_direction` in `backend/app/anki/sync.py` is a 9-branch merge tree (~318 LOC) that reconciles TT's stored FSRS state with what Anki sent over. The event-sync migration's Stage 3b proposes to collapse 6 of those 9 branches into one: "ingest new revlog rows from Anki since `last_synced_at`; apply them forward via `schedule(stored_state, row)`; compare result with Anki's `cards.data`; if matched, write the replayed value; if mismatched, take Anki's value and record a divergence event."
