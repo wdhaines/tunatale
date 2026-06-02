@@ -1994,12 +1994,24 @@ class AnkiSync:
                     dry_run,
                 )
 
-                # Stage 3b new-mode: replace FSRS fields with replay-derived
-                # values when replay matches Anki within tolerance.  On
-                # divergence (recompute-memory-state) just record the event —
-                # legacy already took Anki's value, so no override needed.
-                # Suspend/bury are unchanged — the guard below skips them.
-                if event_mode == "new" and not dry_run:
+                # Stage 3b new-mode (take-Anki-verbatim, fork resolved 2026-06-02):
+                # new_dir_state already holds Anki's cards.data (the legacy merge
+                # result), which IS the authoritative write — Anki is the source of
+                # truth on divergence. The forward-step replay runs only as a
+                # divergence DETECTOR: on a recompute event (Optimize / FSRS-param /
+                # retention change / FSRS toggle / restore) it can't reproduce
+                # Anki's state, so we record the event for diagnostics but keep
+                # Anki's value. Stored state therefore does NOT depend on f32 replay
+                # parity. Suspend/bury skip the check — the legacy branch owns them.
+                if (
+                    event_mode == "new"
+                    and not dry_run
+                    and new_dir_state.state
+                    not in (
+                        SRSState.SUSPENDED,
+                        SRSState.BURIED,
+                    )
+                ):
                     replayed = self._replay_incremental(
                         coll_id,
                         direction,
@@ -2010,27 +2022,16 @@ class AnkiSync:
                     )
                     stab_diff = abs(card_rec.stability - replayed.stability)
                     diff_diff = abs(card_rec.difficulty - replayed.difficulty)
-                    if new_dir_state.state not in (SRSState.SUSPENDED, SRSState.BURIED):
-                        if stab_diff <= _FSRS_REPLAY_TOLERANCE and diff_diff <= _FSRS_REPLAY_TOLERANCE:
-                            new_dir_state = replace(
-                                new_dir_state,
-                                stability=replayed.stability,
-                                difficulty=replayed.difficulty,
-                                last_review=replayed.last_review,
-                                last_review_time_ms=replayed.last_review_time_ms,
-                            )
-                        else:
-                            # Divergence: legacy already takes Anki's value, so no
-                            # override needed — just record the event for diagnostics.
-                            self._record_recompute_divergence(
-                                report,
-                                collocation_id=coll_id,
-                                direction=direction,
-                                replay_stability=replayed.stability,
-                                replay_difficulty=replayed.difficulty,
-                                anki_stability=card_rec.stability,
-                                anki_difficulty=card_rec.difficulty,
-                            )
+                    if stab_diff > _FSRS_REPLAY_TOLERANCE or diff_diff > _FSRS_REPLAY_TOLERANCE:
+                        self._record_recompute_divergence(
+                            report,
+                            collocation_id=coll_id,
+                            direction=direction,
+                            replay_stability=replayed.stability,
+                            replay_difficulty=replayed.difficulty,
+                            anki_stability=card_rec.stability,
+                            anki_difficulty=card_rec.difficulty,
+                        )
 
                 differs = _direction_differs(local_dir, new_dir_state)
                 # Forensic trace for any direction whose Anki state OR TT state
