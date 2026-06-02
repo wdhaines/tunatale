@@ -178,6 +178,36 @@ class TestExtractTranscript:
         assert word.lemma == "banka"
         assert word.srs_state == "unknown"
 
+    def test_reset_to_new_makes_word_due_again(self):
+        """Regression (stuck reset): after Reset→new the word is clickable again.
+
+        A graduated card (future due_at) reset to NEW via the popover used to stay
+        not-due in the transcript (is_due False) → the plain click no-op'd and the
+        card was stuck red. set_state_by_id now full-resets the schedule, so the
+        reset word renders red (progress 0) AND due (is_due True) → re-learnable.
+        """
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
+        self.db.add_collocation(unit, language_code="sl")
+        rows, _ = self.db.list_collocations()
+        row_id = rows[0][0]
+        future = datetime(2099, 1, 1, 4, 0, tzinfo=UTC)
+        with self.db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET state='review', due_at=?, last_review=?,"
+                " reps=2, stability=4.47 WHERE collocation_id=?",
+                (future.isoformat(), datetime(2026, 6, 2, tzinfo=UTC).isoformat(), row_id),
+            )
+            conn.commit()
+
+        self.db.set_state_by_id(row_id, SRSState.NEW)
+
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        word = result.dialogue_lines[0].words[0]
+        assert word.active_state == "new"
+        assert word.is_due is True  # ← was False (stuck) before the fix
+        assert word.progress == 0.0  # red on the ramp
+
 
 class TestWordTokenEnrichment:
     """Tests for new srs_item_id, translation, and collocation_span_id fields."""

@@ -716,6 +716,77 @@ class TestDueQueries:
             assert item.directions[d].state == SRSState.KNOWN
             assert item.directions[d].introduced_at == stamp
 
+    def test_set_state_by_id_to_new_resets_schedule(self, srs_db):
+        """Reset-to-NEW clears the FSRS schedule, not just the state label.
+
+        Regression (stuck reset): the popover "Reset" → set_state_by_id(NEW) used
+        to flip state='new' while preserving the card's graduated due_at /
+        last_review / reps / stability. The transcript then showed the card red
+        (mastery keys off state=NEW) but NOT due (is_due keys off the stale future
+        due_at), so a plain click hit the no-op branch — stuck red and unclickable.
+        A reset must yield a fresh NEW card: due today, no review history, so it is
+        re-learnable. Schedule columns mirror reset_collocation; dirty_fsrs stays
+        set so the reset syncs to Anki.
+        """
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        # Simulate a graduated card: future due_at + review history on both directions.
+        future = datetime(2099, 1, 1, 4, 0, tzinfo=UTC)
+        last = datetime(2026, 6, 2, 20, 59, tzinfo=UTC)
+        with srs_db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET state='review', due_at=?, last_review=?,"
+                " reps=2, lapses=1, stability=4.47, fsrs_difficulty=5.27 WHERE collocation_id=?",
+                (future.isoformat(), last.isoformat(), row_id),
+            )
+            conn.commit()
+
+        srs_db.set_state_by_id(row_id, SRSState.NEW)
+
+        item = srs_db.get_collocation("banka")
+        today_due = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            ds = item.directions[d]
+            assert ds.state == SRSState.NEW
+            assert ds.due_at == today_due  # due today → is_due True → clickable again
+            assert ds.last_review is None
+            assert ds.reps == 0
+            assert ds.lapses == 0
+            assert ds.stability == 1.0
+            assert ds.difficulty == 5.0
+            assert ds.introduced_at is None
+            assert ds.prior_state is None
+            assert ds.dirty_fsrs is True
+
+    def test_set_state_by_id_to_non_new_preserves_schedule(self, srs_db):
+        """Label-only states (review/known/…) must NOT reset the schedule (srs.py:685).
+
+        Guards the invariant that the NEW-reset path is the *only* one that touches
+        FSRS columns — cycling a card to `known`/`review` keeps its real schedule.
+        """
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        future = datetime(2099, 1, 1, 4, 0, tzinfo=UTC)
+        last = datetime(2026, 6, 2, 20, 59, tzinfo=UTC)
+        with srs_db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET state='review', due_at=?, last_review=?,"
+                " reps=2, lapses=1, stability=4.47 WHERE collocation_id=?",
+                (future.isoformat(), last.isoformat(), row_id),
+            )
+            conn.commit()
+        srs_db.set_state_by_id(row_id, SRSState.KNOWN)
+        item = srs_db.get_collocation("banka")
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            ds = item.directions[d]
+            assert ds.state == SRSState.KNOWN
+            assert ds.due_at == future
+            assert ds.last_review == last
+            assert ds.reps == 2
+            assert ds.stability == 4.47
+
     def test_get_due_items_excludes_buried_state(self, srs_db):
         """Buried directions must not appear in get_due_items even if due_date <= today."""
         today = date.today()

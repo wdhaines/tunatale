@@ -148,6 +148,14 @@ _DIR_COLUMNS = (
 
 # States that should never surface in the due queue regardless of due_date.
 _NON_REVIEWABLE_STATES = ("new", "suspended", "known", "buried")
+
+# Column assignments that return a direction to a pristine NEW card (no FSRS
+# history). Shared by `reset_collocation` and `set_state_by_id`'s NEW branch so
+# the "what NEW means" definition lives in one place. `due_at = ?` is bound to
+# today's 4 AM rollover by the caller (so the card reads due-today, not stuck).
+_NEW_RESET_SET = (
+    "state = 'new', stability = 1.0, fsrs_difficulty = 5.0, reps = 0, lapses = 0, due_at = ?, last_review = NULL"
+)
 # States that count as "in the learning bucket" (Anki queue=1 / queue=3).
 # Shared by get_learning_items (review queue) and count_learning (badge).
 _LEARNING_STATES = ("learning", "relearning")
@@ -988,20 +996,11 @@ class SRSDatabase:
         """Reset FSRS scheduling for one or both directions of a collocation."""
         today_due_at = datetime.combine(date.today(), time(4, 0), tzinfo=UTC).isoformat()
         if direction is None:
-            sql = (
-                "UPDATE collocation_directions SET "
-                "state = 'new', stability = 1.0, fsrs_difficulty = 5.0, "
-                "reps = 0, lapses = 0, due_at = ?, last_review = NULL, "
-                "dirty_fsrs = 0 "
-                "WHERE collocation_id = ?"
-            )
+            sql = f"UPDATE collocation_directions SET {_NEW_RESET_SET}, dirty_fsrs = 0 WHERE collocation_id = ?"
             params = (today_due_at, row_id)
         else:
             sql = (
-                "UPDATE collocation_directions SET "
-                "state = 'new', stability = 1.0, fsrs_difficulty = 5.0, "
-                "reps = 0, lapses = 0, due_at = ?, last_review = NULL, "
-                "dirty_fsrs = 0 "
+                f"UPDATE collocation_directions SET {_NEW_RESET_SET}, dirty_fsrs = 0 "
                 "WHERE collocation_id = ? AND direction = ?"
             )
             params = (today_due_at, row_id, direction.value)
@@ -1023,23 +1022,37 @@ class SRSDatabase:
     ) -> None:
         """Set the state of a collocation directly, bypassing FSRS scheduling.
 
-        When ``state == NEW`` we also clear ``introduced_at`` and ``prior_state``:
-        cycling a card back to NEW via the WordSpan word-click is a reset, and
-        leaving those columns stamped inflates ``count_new_introduced_today``.
+        For non-NEW states this is label-only: ``stability`` / ``difficulty`` /
+        ``due_at`` / ``reps`` are preserved, so cycling a card to ``review`` /
+        ``known`` restores its real schedule rather than fabricating one.
+
+        ``state == NEW`` is a **full reset** (mirrors ``reset_collocation``): a NEW
+        card has no schedule, so leaving a graduated ``due_at`` / ``last_review`` /
+        ``reps`` / ``stability`` stamped makes the transcript render it red (mastery
+        keys off ``state == NEW``) yet read *not* due (``is_due`` keys off
+        ``due_at``) — the plain click then no-ops ("stuck reset"). Resetting the
+        schedule makes the card due today and re-learnable. NEW also clears
+        ``introduced_at`` / ``prior_state`` so ``count_new_introduced_today`` isn't
+        inflated.
         """
         dirty_clause = ", dirty_fsrs = 1" if mark_dirty else ""
-        reset_clause = ", introduced_at = NULL, prior_state = NULL" if state == SRSState.NEW else ""
+        if state == SRSState.NEW:
+            today_due_at = datetime.combine(date.today(), time(4, 0), tzinfo=UTC).isoformat()
+            set_clause = f"{_NEW_RESET_SET}{dirty_clause}, introduced_at = NULL, prior_state = NULL"
+            params_head: tuple[object, ...] = (today_due_at,)
+        else:
+            set_clause = f"state = ?{dirty_clause}"
+            params_head = (state.value,)
         with self._get_conn() as conn:
             if direction is None:
                 conn.execute(
-                    f"UPDATE collocation_directions SET state = ?{dirty_clause}{reset_clause} WHERE collocation_id = ?",
-                    (state.value, row_id),
+                    f"UPDATE collocation_directions SET {set_clause} WHERE collocation_id = ?",
+                    (*params_head, row_id),
                 )
             else:
                 conn.execute(
-                    f"UPDATE collocation_directions SET state = ?{dirty_clause}{reset_clause}"
-                    " WHERE collocation_id = ? AND direction = ?",
-                    (state.value, row_id, direction.value),
+                    f"UPDATE collocation_directions SET {set_clause} WHERE collocation_id = ? AND direction = ?",
+                    (*params_head, row_id, direction.value),
                 )
             conn.execute(
                 "UPDATE collocations SET updated_at = datetime('now') WHERE id = ?",
