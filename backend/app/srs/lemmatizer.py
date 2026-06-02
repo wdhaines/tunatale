@@ -111,7 +111,7 @@ class ClasslaLemmatizer:  # pragma: no cover — requires classla/PyTorch; opt-i
         doc = nlp(word)
         try:
             return doc.sentences[0].words[0].lemma or word.lower()
-        except (IndexError, AttributeError):
+        except IndexError, AttributeError:
             return word.lower()
 
     def analyze(self, word: str, language_code: str) -> tuple[str, str, str]:
@@ -125,7 +125,7 @@ class ClasslaLemmatizer:  # pragma: no cover — requires classla/PyTorch; opt-i
             feats = token.feats or ""
             case, number, _gender = _parse_morphology(feats)
             return lemma, case, number
-        except (IndexError, AttributeError):
+        except IndexError, AttributeError:
             return word.lower(), "", ""
 
     def analyze_sentence(self, sentence: str, language_code: str) -> list[TokenAnalysis]:  # pragma: no cover

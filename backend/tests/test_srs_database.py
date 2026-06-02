@@ -2095,7 +2095,7 @@ class TestCountNewAvailableCollocations:
         prod_state: SRSState,
         *,
         due_offset_days: int = 0,
-        prod_last_review: "datetime | None" = None,
+        prod_last_review: datetime | None = None,
     ) -> None:
         unit = SyntacticUnit(text=text, translation="t", word_count=2, difficulty=1, source="corpus")
         db.add_collocation(unit, language_code="sl")

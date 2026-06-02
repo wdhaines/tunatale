@@ -42,7 +42,7 @@ def read_col_conf(conn: sqlite3.Connection) -> dict:
         return {}
     try:
         parsed = json.loads(raw)
-    except (json.JSONDecodeError, TypeError, ValueError):
+    except json.JSONDecodeError, TypeError, ValueError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
 

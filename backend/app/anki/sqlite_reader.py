@@ -84,7 +84,7 @@ def find_deck_id(conn: sqlite3.Connection, deck_name: str) -> int | None:
             for did, info in deck_data.items():
                 if isinstance(info, dict) and info.get("name") == deck_name:
                     return int(did)
-        except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+        except json.JSONDecodeError, KeyError, ValueError, TypeError:
             pass
 
     try:
@@ -255,7 +255,7 @@ def parse_fsrs_data(
                 last_review=resolved_last_review,
                 left=left if left != 0 else None,
             )
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+    except json.JSONDecodeError, KeyError, TypeError, ValueError:
         pass
 
     # Fallback
@@ -380,7 +380,7 @@ def extract_inline_images(fields: list[str]) -> list[InlineImage]:
                 continue
             try:
                 data = base64.b64decode(m.group(2), validate=True)
-            except (binascii.Error, ValueError):
+            except binascii.Error, ValueError:
                 continue
             images.append(InlineImage(ext=_normalize_image_ext(m.group(1)), data=data))
     return images
