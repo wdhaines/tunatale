@@ -14,6 +14,7 @@ vi.mock("$lib/api", () => ({
     markAsListened: vi.fn(),
     createSRSItem: vi.fn(),
     setSRSItemState: vi.fn(),
+    suspendSRSItem: vi.fn(),
     untrackSRSItem: vi.fn(),
     createBaseCard: vi.fn(),
     createInflectionCloze: vi.fn(),
@@ -40,6 +41,7 @@ const mockGetTranscript = vi.mocked(api.getLessonTranscript);
 const mockMarkAsListened = vi.mocked(api.markAsListened);
 const mockCreateSRSItem = vi.mocked(api.createSRSItem);
 const mockSetSRSItemState = vi.mocked(api.setSRSItemState);
+const mockSuspendSRSItem = vi.mocked(api.suspendSRSItem);
 const mockUntrackSRSItem = vi.mocked(api.untrackSRSItem);
 const mockCreateBaseCard = vi.mocked(api.createBaseCard);
 const mockCreateInflectionCloze = vi.mocked(api.createInflectionCloze);
@@ -665,15 +667,15 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       });
     });
 
-    it("Un-ignore button (suspended word) calls setSRSItemState with 'new'", async () => {
+    it("Un-ignore button (suspended word) calls suspendSRSItem with id and false", async () => {
       const t = makeInflectableTranscript({ active_state: "suspended", inflectable: false });
-      mockSetSRSItemState.mockResolvedValue({} as never);
+      mockSuspendSRSItem.mockResolvedValue({} as never);
       const { findByRole } = renderInflectable(t);
 
       await fireEvent.click(await findByRole("button", { name: "Un-ignore" }));
 
       await waitFor(() => {
-        expect(mockSetSRSItemState).toHaveBeenCalledWith(7, "new");
+        expect(mockSuspendSRSItem).toHaveBeenCalledWith(7, false);
       });
     });
 
@@ -705,6 +707,16 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await fireEvent.click(await findByRole("button", { name: "Ignore" }));
 
       expect(await findByText("untrack boom")).toBeTruthy();
+    });
+
+    it("shows error when suspendSRSItem throws on Un-ignore", async () => {
+      const t = makeInflectableTranscript({ active_state: "suspended", inflectable: false });
+      mockSuspendSRSItem.mockRejectedValue(new Error("suspend boom"));
+      const { findByRole, findByText } = renderInflectable(t);
+
+      await fireEvent.click(await findByRole("button", { name: "Un-ignore" }));
+
+      expect(await findByText("suspend boom")).toBeTruthy();
     });
   });
 

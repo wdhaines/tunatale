@@ -196,14 +196,14 @@ describe("Tooltip", () => {
     expect(onUntrack).toHaveBeenCalledWith(42);
   });
 
-  it("calls onSetState with id and 'new' when Un-ignore clicked", async () => {
+  it("calls onUnignore with id when Un-ignore clicked", async () => {
     const word = makeWordToken({ active_state: "suspended", srs_item_id: 7 });
-    const onSetState = vi.fn();
+    const onUnignore = vi.fn();
     const { getByRole } = render(TooltipTest, {
-      props: { word, actions: { onSetState }, childText: "test" },
+      props: { word, actions: { onUnignore }, childText: "test" },
     });
     await getByRole("button", { name: /un-ignore/i }).click();
-    expect(onSetState).toHaveBeenCalledWith(7, "new");
+    expect(onUnignore).toHaveBeenCalledWith(7);
   });
 
   it("calls onSetState with id and 'known' when Known clicked", async () => {

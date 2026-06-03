@@ -6,6 +6,7 @@
 		onCreateInflection?: (word: WordToken, sentence: string) => Promise<void>;
 		onSetState?: (id: number, state: string) => Promise<void>;
 		onUntrack?: (id: number) => Promise<void>;
+		onUnignore?: (id: number) => Promise<void>;
 	}
 
 	interface Props {
@@ -91,7 +92,7 @@
 						<button
 							type="button"
 							class="tt-btn"
-							onclick={() => actions!.onSetState!(word!.srs_item_id!, 'new')}
+							onclick={() => actions!.onUnignore!(word!.srs_item_id!)}
 						>Un-ignore</button>
 					{/if}
 					{#if showIgnore}

@@ -1676,6 +1676,8 @@ class TestUnsuspendRestoresState:
         ds = item.directions[Direction.RECOGNITION]
         assert ds.reps == 5
         assert ds.stability == 15.0
+        expected_due = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        assert ds.due_at == expected_due
 
     def test_unsuspend_nonexistent_direction_is_noop(self):
         db = SRSDatabase(":memory:")

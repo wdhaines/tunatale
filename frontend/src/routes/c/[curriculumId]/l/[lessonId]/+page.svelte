@@ -155,6 +155,15 @@
 			} catch (e) {
 				error = e instanceof Error ? e.message : String(e);
 			}
+		},
+		onUnignore: async (id: number) => {
+			error = '';
+			try {
+				await api.suspendSRSItem(id, false);
+				transcript = await api.getLessonTranscript(data.lesson.id);
+			} catch (e) {
+				error = e instanceof Error ? e.message : String(e);
+			}
 		}
 	};
 
