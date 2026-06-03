@@ -223,9 +223,10 @@ def get_lemmatizer() -> Lemmatizer:
         except ImportError:
             _logger.warning(
                 "classla not installed; falling back to LowercaseLemmatizer. "
-                "Install with `pip install classla` and set lemmatizer_type=classla. "
-                "On Python 3.14, override classla's torch<=2.6 pin to torch>=2.12 "
-                "(no torch<=2.6 wheel exists for 3.14) — see docs/walkthrough.md §22.2."
+                "Install the opt-in extra: `uv sync --all-groups --extra classla` "
+                "(pins classla==2.2.1; the torch==2.12.0 override for Python 3.14 is "
+                "baked into pyproject.toml). Then set lemmatizer_type=classla. "
+                "See docs/walkthrough.md §22.2."
             )
     return LowercaseLemmatizer()
 
