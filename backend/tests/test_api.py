@@ -1781,6 +1781,73 @@ class TestListenClozeIntegration:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
 
+    async def test_listen_existing_cloze_audio_uses_raw_sentence(self, monkeypatch):
+        """Existing cloze audio backfill reads the raw sentence, not the pre-clozed
+        source_sentence (which contains {{c1::…}} markup under Phase-2b)."""
+        from datetime import date
+
+        import app.api.srs as srs_mod
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        db = SRSDatabase(":memory:")
+        app.state.srs_db = db
+
+        # Seed a cloze row with pre-clozed source_sentence (simulating Phase-2b
+        # storage) and no sentence audio.
+        cloze_unit = SyntacticUnit(
+            text="je",
+            translation="is",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="je",
+            card_type="cloze",
+            source_sentence="Kje {{c1::je}} banka?",
+        )
+        cloze_dir = {
+            Direction.PRODUCTION: DirectionState(
+                Direction.PRODUCTION,
+                date.today(),
+                state=SRSState.NEW,
+            )
+        }
+        db.upsert_by_guid(cloze_unit, "sl", cloze_dir)
+
+        audio_mock = AsyncMock()
+        monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", audio_mock)
+
+        store = ContentStore(":memory:")
+        app.state.content_store = store
+        app.state.language = None
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text="Kje je banka?", voice_id="female-1", language_code="sl", role="female-1"),
+                    ],
+                )
+            ],
+            key_phrases=[],
+        )
+        store.save_lesson("lesson-a", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-a"})
+        assert response.status_code == 200
+
+        assert len(audio_mock.await_args_list) > 0
+        for call in audio_mock.await_args_list:
+            sent = call.args[2]
+            assert isinstance(sent, str), f"sentence arg is not str: {sent!r}"
+            assert "{{c1" not in sent, f"sentence arg contains cloze markup: {sent!r}"
+            assert sent == "Kje je banka?"
+
 
 class TestListenGradeEligible:
     """Direct unit tests for _listen_grade_eligible edge cases."""

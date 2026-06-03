@@ -406,15 +406,15 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                     new_st = sentence_translations.get(sent, "")
                     if new_st:
                         db.set_sentence_translation_dirty(existing.guid, new_st)
-                # Try to generate missing audio for existing cloze rows
+                # Try to generate missing audio for existing cloze rows.
+                # Use the raw sentence (lemma_to_sentence) — the stored
+                # source_sentence contains {{c1::…}} markup under Phase-2b.
                 coll_with_id = db.get_collocation_by_lemma_with_id(lemma)
-                existing_id, existing_item = coll_with_id
-                src_sent = existing_item.syntactic_unit.source_sentence
-                if src_sent and not db.get_sentence_audio_filename(existing_id):
+                existing_id, _ = coll_with_id
+                sent = lemma_to_sentence.get(lemma, "")
+                if sent and not db.get_sentence_audio_filename(existing_id):
                     try:
-                        await synthesize_cloze_audios(
-                            db, existing_id, src_sent, lemma_to_first_surface.get(lemma, lemma)
-                        )
+                        await synthesize_cloze_audios(db, existing_id, sent, lemma_to_first_surface.get(lemma, lemma))
                     except Exception:
                         _logger.warning("Failed to synthesize cloze audio for %r", lemma)
                 continue
