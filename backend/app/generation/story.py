@@ -22,31 +22,6 @@ from app.srs.tokenizer import tokenize
 
 logger = logging.getLogger(__name__)
 
-_FILL_SYSTEM = "You are a concise translation assistant. Return ONLY valid JSON."
-_FILL_PROMPT_TEMPLATE = """\
-Translate these {language_name} words to concise English.
-Return a JSON object mapping each word to its translation: {{"word": "translation", ...}}
-
-Words to translate:
-{word_list}"""
-
-
-def _extract_all_lemmas(data: dict, language: Language) -> set[str]:
-    """Extract all unique lemmas from all scene dialogue lines.
-
-    Uses the same lemmatizer pipeline as extract_transcript so the keyspace
-    stays in sync when a real lemmatizer (e.g. stanza) replaces the default.
-    """
-    lemmatizer = get_lemmatizer()
-    lemmas: set[str] = set()
-    for scene in data.get("scenes", []):
-        for line in scene.get("lines", []):
-            text = line.get("text", "")
-            surfaces = tokenize(text)
-            lemmas.update(lemmatize_surfaces_in_context(surfaces, text, lemmatizer, language.code))
-    return lemmas
-
-
 # Reasoning models (e.g. qwen3) emit <think>…</think> before the answer; strip it
 # so it can't swallow the JSON object during brace-extraction.
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
@@ -63,6 +38,17 @@ def _strip_fences(raw: str) -> str:
 
 class StoryGenerationError(Exception):
     pass
+
+
+def _missing_log(missing: list[str], language_code: str) -> None:
+    """Log a warning when the LLM omitted words from dialogue_glosses."""
+    sample = sorted(missing)[:10]
+    logger.warning(
+        "LLM omitted %d word(s) from dialogue_glosses (%s): %s",
+        len(missing),
+        language_code,
+        " ".join(sample),
+    )
 
 
 class StoryGenerator:
@@ -109,28 +95,6 @@ class StoryGenerator:
         raw = await self._llm.complete(user_prompt, system_prompt=system_prompt, temperature=0.7, max_tokens=4096)
         data = self._parse_json(raw)
         lesson = self._parse_response(data, language=language)
-
-        # Auto-fill any dialogue glosses missing from the LLM response
-        try:
-            all_lemmas = _extract_all_lemmas(data, language)
-            token_glosses = lesson.generation_metadata.get("token_glosses", {})
-            missing = all_lemmas - set(token_glosses.keys())
-            if missing:
-                logger.info("Filling %d missing dialogue glosses: %s", len(missing), sorted(missing))
-                word_list = "\n".join(f"- {w}" for w in sorted(missing))
-                prompt = _FILL_PROMPT_TEMPLATE.format(language_name=language.name, word_list=word_list)
-                fill_raw = await self._llm.complete(
-                    prompt, system_prompt=_FILL_SYSTEM, temperature=0.1, max_tokens=2048
-                )
-                fill_raw = _strip_fences(fill_raw)
-                fill_glosses = json.loads(fill_raw.strip())
-                filled = {k: v for k, v in fill_glosses.items() if k in missing and v}
-                token_glosses.update(filled)
-                lesson.generation_metadata["token_glosses"] = token_glosses
-                logger.info("Filled %d/%d missing glosses", len(filled), len(missing))
-        except Exception as exc:
-            logger.warning("Failed to fill missing dialogue glosses: %s", exc)
-
         return lesson
 
     @staticmethod
@@ -176,7 +140,40 @@ class StoryGenerator:
         kp_infos = [KeyPhraseInfo(phrase=kp["phrase"], translation=kp["translation"]) for kp in key_phrases]
 
         glosses = data.get("dialogue_glosses", [])
-        token_glosses = {g["lemma"]: g["translation"] for g in glosses if "lemma" in g and "translation" in g}
+        lemmatizer = get_lemmatizer()
+
+        # Sentence-aware surface→lemma map (prevents POS-blind fallback
+        # where single-word lemmatize miskeys e.g. "hotel" → as verb "hoteti"
+        # instead of noun "hotel").
+        surface_lemma: dict[str, str] = {}
+        for scene in scenes:
+            for line in scene.get("lines", []):
+                text = line.get("text", "").strip()
+                if not text:
+                    continue
+                surfaces = tokenize(text)
+                lemmas = lemmatize_surfaces_in_context(surfaces, text, lemmatizer, language.code)
+                for s, lem in zip(surfaces, lemmas, strict=True):
+                    surface_lemma.setdefault(s.lower(), lem)
+
+        token_glosses: dict[str, str] = {}
+        glossed_surfaces: set[str] = set()
+        for g in glosses:
+            raw_key = g.get("word") or g.get("lemma", "")
+            translation = g.get("translation", "")
+            if raw_key and translation:
+                glossed_surfaces.add(raw_key.lower())
+                lemma = surface_lemma.get(raw_key.lower(), raw_key)
+                # Surface key preserves the specific conjugated translation
+                # (e.g. "boste" → "you will", "bom" → "I will").
+                token_glosses[raw_key] = translation
+                # Lemma key provides a fallback generic translation
+                # (e.g. "biti" → "you will" from whichever surface came first).
+                token_glosses.setdefault(lemma, translation)
+
+        missing = [s for s in surface_lemma if s not in glossed_surfaces]
+        if missing:
+            _missing_log(missing, language.code)
 
         sentence_translations: dict[str, str] = {}
         for scene in scenes:

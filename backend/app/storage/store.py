@@ -197,6 +197,15 @@ class ContentStore:
             ).fetchall()
         return [{"day": row["day"], "lesson_id": row["lesson_id"]} for row in rows]
 
+    def list_lessons(self) -> list[tuple[str, str, int, Lesson]]:
+        """Every lesson as ``(lesson_id, curriculum_id, day, Lesson)``, oldest first.
+
+        Used by one-shot migrations that need to walk and rewrite all lessons.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT id, curriculum_id, day, data_json FROM lessons ORDER BY created_at").fetchall()
+        return [(r["id"], r["curriculum_id"], r["day"], Lesson.from_json(r["data_json"])) for r in rows]
+
     def get_all_token_glosses(self) -> dict[str, str]:
         """Merge token_glosses from all stored lessons into a single dict.
 

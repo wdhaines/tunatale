@@ -117,7 +117,7 @@ Respond with ONLY a JSON object matching this schema (no markdown fences, no pre
     }}
   ],
   "dialogue_glosses": [
-    {{"lemma": "lowercased_word", "translation": "English translation"}}
+    {{"word": "lowercased_word", "translation": "English translation"}}
   ],
   "morphology_focus": [
     {{"lemma": "lemma", "surface": "inflected_form", "feature": "verb:1sg", "gloss": "English translation"}}
@@ -127,8 +127,8 @@ Respond with ONLY a JSON object matching this schema (no markdown fences, no pre
 The "dialogue_glosses" array MUST contain an entry for EVERY unique word that appears
 in the dialogue lines — including articles, prepositions, pronouns, auxiliary verbs,
 proper names, interjections, and all other words. If a word appears in any dialogue line
-in any scene, it must have a gloss entry. No exceptions. Give each word's lowercase base
-form (lemma) and a concise English translation. This enables word-level hover translations
+in any scene, it must have a gloss entry. No exceptions. Give each word's lowercase form
+and a concise English translation. This enables word-level hover translations
 in the learning UI.
 
 Build the "morphology_focus" array LAST by scanning the NATURAL_SPEED lines you wrote and tagging

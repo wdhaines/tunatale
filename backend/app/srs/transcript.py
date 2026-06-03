@@ -279,8 +279,11 @@ def extract_transcript(
                                 inflectable_flag = True
                                 inflection_feature_val = feature_str
 
-                # DB translation wins; fall back to gloss map
-                translation = db_translation if db_translation else gloss_map.get(lemma)
+                # DB translation wins; fall back to gloss map — prefer surface-specific
+                # (e.g. "boste" → "you will") over lemma-generic (e.g. "biti" → "am").
+                translation = (
+                    db_translation if db_translation else (gloss_map.get(surface.lower()) or gloss_map.get(lemma))
+                )
 
                 words.append(
                     WordToken(
