@@ -9,7 +9,14 @@ from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 from app.srs.lemmatizer import LowercaseLemmatizer
-from app.srs.transcript import TranscriptData, WordToken, _is_due, extract_transcript, resolve_active_direction
+from app.srs.transcript import (
+    TranscriptData,
+    WordToken,
+    _extract_punct_pairs,
+    _is_due,
+    extract_transcript,
+    resolve_active_direction,
+)
 
 
 def _make_lesson(l2_phrases: list[tuple[str, str]] | None = None) -> Lesson:
@@ -149,6 +156,8 @@ class TestExtractTranscript:
         words = result.dialogue_lines[0].words
         assert words[0].surface == "Zdravo"
         assert words[0].lemma == "zdravo"
+        assert words[0].prefix_punct == ""
+        assert words[0].suffix_punct == ","
 
     def test_empty_lesson_no_natural_speed_section(self):
         lesson = Lesson(title="Empty", language_code="sl")
@@ -163,6 +172,8 @@ class TestExtractTranscript:
         assert len(words) == 3
         assert [w.surface for w in words] == ["Kje", "je", "banka"]
         assert [w.lemma for w in words] == ["kje", "je", "banka"]
+        assert [w.prefix_punct for w in words] == ["", "", ""]
+        assert [w.suffix_punct for w in words] == ["", "", "?"]
 
     def test_role_preserved_on_dialogue_line(self):
         lesson = _make_lesson([("male-1", "Zdravo.")])
@@ -929,3 +940,12 @@ class TestCollocationLemmaKey:
         rows = self.db.get_collocations_with_lemma_key("sl", min_word_count=2)
         index = _build_collocation_index(self.db, rows, BoomLemmatizer(), "sl")
         assert index == {("dober", "dan"): coll_id}
+
+
+class TestExtractPunctPairs:
+    """Tests for _extract_punct_pairs edge cases."""
+
+    def test_surface_not_found_returns_empty(self):
+        """When surface is not a substring of a raw token, both punct fields are empty."""
+        result = _extract_punct_pairs(["foo"], ["bar"])
+        assert result == [("", "")]

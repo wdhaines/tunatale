@@ -309,6 +309,59 @@ describe("WordSpan", () => {
     });
   });
 
+  describe("punctuation guarding", () => {
+    it("renders prefix and suffix punctuation spans inside the button", () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ prefix_punct: '"', suffix_punct: "," }) },
+      });
+      const puncts = container.querySelectorAll(".punct");
+      expect(puncts.length).toBe(2);
+      expect(puncts[0].textContent).toBe('"');
+      expect(puncts[1].textContent).toBe(",");
+    });
+
+    it("does not fire onWordClick when clicking on prefix punctuation", async () => {
+      const onWordClick = vi.fn();
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ prefix_punct: '"' }), onWordClick },
+      });
+      const puncts = container.querySelectorAll(".punct");
+      await fireEvent.click(puncts[0]);
+      expect(onWordClick).not.toHaveBeenCalled();
+    });
+
+    it("does not fire onWordClick when clicking on suffix punctuation", async () => {
+      const onWordClick = vi.fn();
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ suffix_punct: "," }), onWordClick },
+      });
+      const puncts = container.querySelectorAll(".punct");
+      await fireEvent.click(puncts[1]);
+      expect(onWordClick).not.toHaveBeenCalled();
+    });
+
+    it("mousedown on punct does not set drag anchor", async () => {
+      const onWordClick = vi.fn();
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ suffix_punct: "," }), onWordClick },
+      });
+      const puncts = container.querySelectorAll(".punct");
+      await fireEvent.mouseDown(puncts[1], { clientX: 0, clientY: 0 });
+      await fireEvent.click(puncts[1], { clientX: 50, clientY: 0 });
+      expect(onWordClick).not.toHaveBeenCalled();
+    });
+
+    it("still fires onWordClick when clicking the word surface with punct present", async () => {
+      const onWordClick = vi.fn();
+      const word = makeWordToken({ lemma: "zdravo", srs_item_id: 1, suffix_punct: "?" });
+      const { getByRole } = render(WordSpan, {
+        props: { word, onWordClick },
+      });
+      await fireEvent.click(getByRole("button", { name: /^zdravo/ }));
+      expect(onWordClick).toHaveBeenCalledWith(word, 0);
+    });
+  });
+
   describe("drag-to-select vs click", () => {
     it("does not fire onWordClick on a drag (pointer moved past threshold)", async () => {
       const onWordClick = vi.fn();

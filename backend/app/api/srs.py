@@ -531,6 +531,8 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
                 "words": [
                     {
                         "surface": w.surface,
+                        "prefix_punct": w.prefix_punct,
+                        "suffix_punct": w.suffix_punct,
                         "lemma": w.lemma,
                         "srs_state": w.srs_state,
                         "srs_item_id": w.srs_item_id,

@@ -60,6 +60,8 @@ export type WordRating = "hard" | "easy" | "again";
 
 export interface WordToken {
   surface: string;
+  prefix_punct?: string;
+  suffix_punct?: string;
   lemma: string;
   srs_state: string;
   srs_item_id: number | null;

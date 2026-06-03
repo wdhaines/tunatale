@@ -22,6 +22,8 @@ class WordToken:
     surface: str  # original word as it appears in text (punctuation stripped)
     lemma: str  # canonical base form (lowercased)
     srs_state: str  # "unknown"|"new"|"learning"|"review"|"relearning"|"known"
+    prefix_punct: str = ""  # non-word characters before the surface in the raw token
+    suffix_punct: str = ""  # non-word characters after the surface in the raw token
     srs_item_id: int | None = None  # database id of the SRS card, if one exists
     translation: str | None = None  # L1 translation: DB value wins over gloss map
     collocation_span_id: int | None = None  # DB id of multi-word collocation this token belongs to
@@ -54,6 +56,22 @@ class TranscriptData:
 
     key_phrases: list[KeyPhraseInfo] = field(default_factory=list)
     dialogue_lines: list[DialogueLine] = field(default_factory=list)
+
+
+def _extract_punct_pairs(raw_tokens: list[str], surfaces: list[str]) -> list[tuple[str, str]]:
+    """Extract prefix/suffix punctuation around each surface in its raw token.
+
+    Each raw token contains the surface as a contiguous substring (case-insensitive).
+    Returns list of (prefix_punct, suffix_punct) tuples.
+    """
+    pairs: list[tuple[str, str]] = []
+    for raw, surf in zip(raw_tokens, surfaces, strict=True):
+        idx = raw.lower().find(surf.lower())
+        if idx == -1:
+            pairs.append(("", ""))
+        else:
+            pairs.append((raw[:idx], raw[idx + len(surf) :]))
+    return pairs
 
 
 def build_collocation_lemma_key(text: str, lemmatizer: Lemmatizer, language_code: str) -> str:
@@ -157,6 +175,10 @@ def extract_transcript(
             surfaces = tokenize(phrase.text)
             lemmas = lemmatize_surfaces_in_context(surfaces, phrase.text, lemmatizer, lesson.language_code)
 
+            # Extract punctuation from raw tokens for display
+            raw_tokens = phrase.text.split()
+            punct_pairs = _extract_punct_pairs(raw_tokens, surfaces)
+
             # Run lemmatizer analyze_sentence once per phrase for inflectable detection
             phrase_analyses = lemmatizer.analyze_sentence(phrase.text, lesson.language_code)
             analysis_by_surface: dict[str, object] = {}
@@ -165,7 +187,8 @@ def extract_transcript(
 
             # Resolve per-token SRS state and item id
             words: list[WordToken] = []
-            for surface, lemma in zip(surfaces, lemmas, strict=True):
+            for i, (surface, lemma) in enumerate(zip(surfaces, lemmas, strict=True)):
+                prefix_punct, suffix_punct = punct_pairs[i]
                 # Resolution order: 1) exact-surface inflection cloze, 2) base, 3) unknown
                 resolved_item: object = None
                 resolved_item_id: int | None = None
@@ -253,6 +276,8 @@ def extract_transcript(
                 words.append(
                     WordToken(
                         surface=surface,
+                        prefix_punct=prefix_punct,
+                        suffix_punct=suffix_punct,
                         lemma=lemma,
                         srs_state=srs_state,
                         srs_item_id=resolved_item_id,

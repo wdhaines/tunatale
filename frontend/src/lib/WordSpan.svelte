@@ -32,6 +32,11 @@
 		onWordClick?.(word, lineIndex ?? 0);
 	}
 
+	function isPunctClick(e: MouseEvent | KeyboardEvent): boolean {
+		const target = 'key' in e ? null : (e.target as Element | null);
+		return target != null && target.closest('.punct') != null;
+	}
+
 	// Distinguish a tap from a drag-to-select by how far the pointer moved
 	// between press and release: a tap cycles state, a drag selects/copies text.
 	// (Checking for a present selection regressed cycling — a double-click while
@@ -40,11 +45,13 @@
 	let downY = 0;
 
 	function handleMouseDown(e: MouseEvent) {
+		if (isPunctClick(e)) return;
 		downX = e.clientX;
 		downY = e.clientY;
 	}
 
 	function handleClick(e: MouseEvent) {
+		if (isPunctClick(e)) return;
 		if (Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > 8) return;
 		if (requireModifier) {
 			if (e.altKey || e.shiftKey) {
@@ -98,7 +105,7 @@
 			onmousedown={handleMouseDown}
 			onclick={handleClick}
 			onkeydown={handleKeydown}
-		>{word.surface}</span>
+		><span class="punct">{word.prefix_punct ?? ''}</span>{word.surface}<span class="punct">{word.suffix_punct ?? ''}</span></span>
 	</Tooltip>
 {:else}
 	<span
@@ -113,7 +120,7 @@
 		onmousedown={handleMouseDown}
 		onclick={handleClick}
 		onkeydown={handleKeydown}
-	>{word.surface}</span>
+	><span class="punct">{word.prefix_punct ?? ''}</span>{word.surface}<span class="punct">{word.suffix_punct ?? ''}</span></span>
 {/if}
 
 <style>
@@ -143,5 +150,9 @@
 	}
 	.word-selected {
 		background-color: rgba(99, 102, 241, 0.2);
+	}
+	.punct {
+		color: #000;
+		font-weight: normal;
 	}
 </style>
