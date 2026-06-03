@@ -149,14 +149,55 @@ for qc in q.cards:
 col.close()"
 ```
 
-## Soak compare-shadow classifier (TT-side only, no Anki needed)
+## Soak compare-shadow classifier (TT-side only, no Anki needed) — ⚠️ COMPARE MODE ONLY
 
-`stability_diverge=0` and `difficulty_only_diverge=0` ⇒ healthy. Full trail: memory `project_stage3b_soak_finding_difficulty_replay`.
+**Check the mode first:** `sqlite3 backend/tunatale.db "SELECT value FROM anki_state_cache WHERE key='event_sync_pull';"`
+
+This classifier is valid **only when `event_sync_pull='compare'`**. The live flag flipped to **`new`** on 2026-06-02, and in `new` mode `_write_compare_shadow` is gated off — the `*_replayed` columns are **frozen** at the last compare-era sync, so this query reports **false positives** (every direction graded since the flip shows as "diverging"). For the new-mode soak signal, jump to "New-mode soak signal" below.
+
+In compare mode: `stability_diverge=0` and `difficulty_only_diverge=0` ⇒ healthy. Full trail: memory `project_stage3b_soak_finding_difficulty_replay`.
 
 ```bash
 sqlite3 backend/tunatale.db "
 SELECT 'stability_diverge' k, COUNT(*) FROM collocation_directions WHERE stability_replayed IS NOT NULL AND ABS(stability_replayed-stability)>1e-4
 UNION ALL SELECT 'difficulty_only_diverge', COUNT(*) FROM collocation_directions WHERE fsrs_difficulty_replayed IS NOT NULL AND ABS(fsrs_difficulty_replayed-fsrs_difficulty)>1e-4 AND ABS(COALESCE(stability_replayed,stability)-stability)<=1e-4;"
+```
+
+## New-mode soak signal (`event_sync_pull='new'`)
+
+In `new` mode the authoritative write is take-Anki-verbatim, so the signal is **`recompute_divergences ≈ 0` per sync** (a non-zero count flags a genuine Anki recompute event — Optimize / FSRS-param / retention / FSRS-toggle / restore — the forward-step replay can't reproduce). It is NOT persisted to a DB column. Read it from:
+
+```bash
+# Durable per-sync soak log (each non-dry CLI sync appends a SYNC_SOAK heartbeat
+# + one RECOMPUTE_DIVERGENCE line per divergence). Expect the grep to be empty.
+tail -20 ~/.tunatale/logs/sync.log
+grep RECOMPUTE_DIVERGENCE ~/.tunatale/logs/sync.log
+```
+
+**Strongest check — read-only TT-authoritative vs Anki `cards.data`** (no sync, safe while Anki is open; take-Anki-verbatim ⇒ bit-exact post-sync). Verified 1345/1345 on 2026-06-02:
+
+```bash
+cd backend && uv run python - <<'PY'
+import sqlite3, json, os
+tt = sqlite3.connect("file:tunatale.db?mode=ro", uri=True)
+ak = sqlite3.connect(f"file:{os.path.expanduser('~/Library/Application Support/Anki2/Will/collection.anki2')}?mode=ro", uri=True)
+anki = {}
+for cid, data in ak.execute("SELECT id, data FROM cards"):
+    try:
+        j = json.loads(data) if data else {}
+        anki[cid] = (j.get("s"), j.get("d"))
+    except Exception:
+        anki[cid] = (None, None)
+sdiv = ddiv = both = 0
+for akid, s, d in tt.execute("SELECT anki_card_id, stability, fsrs_difficulty FROM collocation_directions WHERE anki_card_id IS NOT NULL"):
+    a_s, a_d = anki.get(akid, (None, None))
+    if a_s is None or a_d is None:
+        continue
+    both += 1
+    if abs((s or 0) - a_s) > 1e-2: sdiv += 1
+    if abs((d or 0) - a_d) > 1e-2: ddiv += 1
+print(f"compared={both} stability_diverge={sdiv} difficulty_diverge={ddiv}")  # both 0 ⇒ healthy
+PY
 ```
 
 ## Source references

@@ -15,6 +15,7 @@ soak SQL-diff. These tests pin:
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 from app.anki.sync import AnkiSync, PullReport
@@ -253,7 +254,7 @@ def test_new_mode_writes_anki_verbatim_within_tolerance():
     assert after.state == SRSState.REVIEW
 
 
-def test_new_mode_divergence_takes_anki():
+def test_new_mode_divergence_takes_anki(caplog):
     """new mode, replay diverges -> takes Anki's value + records recompute_divergence."""
     db = _make_tt_db()
     guid = _add_banka(db)
@@ -283,7 +284,11 @@ def test_new_mode_divergence_takes_anki():
         difficulty=expected.difficulty + 5.0,
     )
     records2 = [make_note_record(anki_guid=guid, cards=[card2])]
-    report = _run_pull_report(db, records2, revlog)
+    with caplog.at_level(logging.WARNING, logger="app.anki.sync"):
+        report = _run_pull_report(db, records2, revlog)
+
+    # Soak signal: every recorded divergence emits a greppable WARNING line.
+    assert f"RECOMPUTE_DIVERGENCE cid={coll_id} dir={Direction.RECOGNITION.value}" in caplog.text
 
     after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
     assert after.stability == expected.stability * 2

@@ -118,6 +118,7 @@ class TestSyncOfflineEndpoint:
         assert data["created"] == 2
         assert data["directions_pushed"] == 3
         assert data["directions_pulled"] == 4
+        assert data["recompute_divergences"] == 0
         assert data["dry_run"] is False
 
     @patch("app.anki.import_seed.refresh_media_for_deck")
