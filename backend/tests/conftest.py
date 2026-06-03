@@ -4,7 +4,7 @@ import contextlib
 import json
 import os
 import sqlite3
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
 import pytest
@@ -12,6 +12,35 @@ import pytest
 from app.anki.sync import CardRecord, NoteRecord
 
 pytest.register_assert_rewrite("tests.conftest")
+
+
+def anki_day_anchor(today: date) -> datetime:
+    """A UTC instant guaranteed INSIDE the current Anki-day window — its 4 AM
+    rollover start (the count queries treat the start as inclusive).
+
+    Date-sensitive badge/count fixtures must stamp ``last_review`` /
+    ``introduced_at`` here, NOT at a naive ``today 12:00``. In the
+    ``[midnight, 4 AM)`` local rollover band ``_anki_day_bounds_utc`` shifts the
+    active window back a day, so an afternoon ``today`` timestamp lands *outside*
+    it and reviewed-/introduced-today counts read 0 — which flaked these tests
+    whenever CI ran in that band (~00:00–04:00 UTC). The window start is always
+    ``<= now`` and inside ``[start, end)``, so it counts in every wall-clock hour.
+    """
+    from app.srs.database import _anki_day_bounds_utc
+
+    start_iso, _ = _anki_day_bounds_utc(today)
+    return datetime.fromisoformat(start_iso)
+
+
+def anki_prev_day_anchor(today: date) -> datetime:
+    """A UTC instant guaranteed BEFORE the current Anki-day window (one second
+    before its 4 AM start) — the robust "reviewed yesterday" stamp.
+
+    A naive ``yesterday 12:00`` is unsafe: in the ``[midnight, 4 AM)`` rollover
+    band the active window is ``[yesterday 4 AM, today 4 AM)``, so yesterday noon
+    falls *inside* it and an "excludes yesterday" assertion flips.
+    """
+    return anki_day_anchor(today) - timedelta(seconds=1)
 
 
 @pytest.fixture(autouse=True)
