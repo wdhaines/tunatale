@@ -140,6 +140,7 @@ async def trigger_sync(request: Request, dry_run: bool = False):
         "notes_pulled": pull_report.notes_updated,
         "directions_pulled": pull_report.directions_updated,
         "conflicts": len(pull_report.conflicts),
+        "recompute_divergences": len(pull_report.recompute_divergences),
         "notes_pushed": push_report.notes_pushed,
         "directions_pushed": push_report.directions_pushed,
         "notes_created_from_anki": create_report.notes_created_from_anki,

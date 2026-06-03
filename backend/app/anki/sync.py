@@ -1373,6 +1373,21 @@ class AnkiSync:
                 anki_difficulty=anki_difficulty,
             )
         )
+        # Soak signal for the Stage-3b `new`-mode roll-out. Expected ≈0 per sync;
+        # a non-zero count flags a genuine Anki recompute event (Optimize / FSRS
+        # param / retention / FSRS-toggle / restore) the forward-step replay
+        # cannot reproduce. WARNING so it surfaces even under the bare CLI (no
+        # logging handler configured); grep server stderr / sync.log for
+        # "RECOMPUTE_DIVERGENCE".
+        _log.warning(
+            "RECOMPUTE_DIVERGENCE cid=%s dir=%s replay_s=%.4f anki_s=%.4f replay_d=%.4f anki_d=%.4f",
+            collocation_id,
+            direction.value,
+            replay_stability,
+            anki_stability,
+            replay_difficulty,
+            anki_difficulty,
+        )
 
     def _pull_unbury_sweep(self, dry_run: bool) -> None:
         """Anki-parity daily unbury sweep. Run BEFORE processing Anki records.
@@ -2510,12 +2525,46 @@ class AnkiSync:
         )
 
 
+def _write_sync_soak_log(
+    path: Path,
+    *,
+    event_mode: str,
+    pull: PullReport,
+    push,
+) -> None:
+    """Append a durable, greppable soak line for each non-dry CLI sync.
+
+    The CLI only print()s its summary to stdout, so the Stage-3b `new`-mode soak
+    signal (``recompute_divergences``) was lost the moment the terminal scrolled.
+    This persists one ``SYNC_SOAK`` heartbeat per sync (even at count 0, so the
+    soak has positive "ran clean" confirmation) plus one ``RECOMPUTE_DIVERGENCE``
+    detail line per divergence. Grep ``~/.tunatale/logs/sync.log`` for either.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().isoformat(timespec="seconds")
+    lines = [
+        f"{ts} SYNC_SOAK mode={event_mode} pull_notes={pull.notes_updated} "
+        f"pull_dirs={pull.directions_updated} conflicts={len(pull.conflicts)} "
+        f"recompute_divergences={len(pull.recompute_divergences)} "
+        f"push_notes={push.notes_pushed} push_dirs={push.directions_pushed}"
+    ]
+    for d in pull.recompute_divergences:
+        lines.append(
+            f"{ts}   RECOMPUTE_DIVERGENCE cid={d.collocation_id} dir={d.direction} "
+            f"replay_s={d.replay_stability:.4f} anki_s={d.anki_stability:.4f} "
+            f"replay_d={d.replay_difficulty:.4f} anki_d={d.anki_difficulty:.4f}"
+        )
+    with open(path, "a") as f:
+        f.write("\n".join(lines) + "\n")
+
+
 def main(
     argv: list[str] | None = None,
     *,
     _settings=None,
     _safe_open_fn=None,
     _force_fsrs_ack_path: Path | None = None,
+    _sync_log_path: Path | None = None,
     _db=None,
 ) -> int:
     import argparse
@@ -2532,6 +2581,7 @@ def main(
         if _force_fsrs_ack_path is not None
         else Path("~/.tunatale/force_fsrs_ack.txt").expanduser()
     )
+    _sync_log = _sync_log_path if _sync_log_path is not None else Path("~/.tunatale/logs/sync.log").expanduser()
 
     # Get database instance
     db = _db if _db is not None else SRSDatabase(_s.database_url.removeprefix("sqlite:///"))
@@ -2572,6 +2622,13 @@ def main(
                 f"{len(pull.recompute_divergences)} recompute divergences"
             )
             print(f"Push: {push.notes_pushed} notes, {push.directions_pushed} directions")
+            if not args.dry_run:
+                _write_sync_soak_log(
+                    _sync_log,
+                    event_mode=db.get_event_sync_pull_mode(),
+                    pull=pull,
+                    push=push,
+                )
             return 0
     except RuntimeError as e:
         print(f"Error opening collection: {e}", file=sys.stderr)
