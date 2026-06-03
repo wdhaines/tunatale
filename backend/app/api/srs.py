@@ -362,7 +362,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                     res = db.get_collocation_by_lemma_with_id(s.lower())
                     if res is not None:
                         break
-        existing_id, existing = (res if res is not None else (None, None))
+        existing_id, existing = res if res is not None else (None, None)
 
         if existing is None:
             # ── Create new row (cloze for function words, vocab for content words) ──

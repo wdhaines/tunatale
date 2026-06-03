@@ -4,6 +4,8 @@ AI-generated audio language curricula — Pimsleur-style listening with content 
 
 ## Developer Commands
 
+**⚠️ Must run `./test.sh` before every commit — the full suite must pass, or you DO NOT commit.**
+
 ```bash
 # Full suite (root): lint + format + pytest + svelte-check + vitest + playwright
 ./test.sh
