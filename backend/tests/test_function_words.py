@@ -11,6 +11,7 @@ from app.srs.function_words import (
     _load_function_word_config,
     format_morphology_hint,
     is_function_word,
+    is_function_word_for,
     make_cloze_text,
     make_morphology_cloze_text,
     ud_feats_to_tt_feature,
@@ -60,6 +61,33 @@ class TestIsFunctionWord:
 
     def test_unknown_pos_tag_is_false(self):
         assert is_function_word("blah", "sl", upos="ADV") is False  # ADV not in sl pos set
+
+
+class TestIsFunctionWordFor:
+    """is_function_word_for: lemma-or-any-surface detection (shared by /listen + base-card)."""
+
+    def test_lemma_itself_is_function_word(self):
+        # "je" is in the curated include set → True regardless of surfaces/upos.
+        assert is_function_word_for("je", set(), "sl") is True
+
+    def test_surface_with_closed_class_upos(self):
+        # Content lemma, but an inflected surface carries an AUX upos → True.
+        assert is_function_word_for("kava", {"ste"}, "sl", {"ste": "AUX"}) is True
+
+    def test_no_function_lemma_or_surface(self):
+        assert is_function_word_for("kava", {"kava"}, "sl", {"kava": "NOUN"}) is False
+
+    def test_surface_upos_map_keyed_by_casefold(self):
+        # The map lookup casefolds the surface, matching the /listen call site.
+        assert is_function_word_for("kava", {"STE"}, "sl", {"ste": "AUX"}) is True
+
+    def test_no_upos_map_falls_back_to_include_only(self):
+        # Without an analyzer (LowercaseLemmatizer), upos is absent → "ste" misses.
+        assert is_function_word_for("kava", {"ste"}, "sl") is False
+        assert is_function_word_for("kava", {"je"}, "sl") is True  # include still hits
+
+    def test_empty_surfaces_non_function_lemma(self):
+        assert is_function_word_for("kava", set(), "sl") is False
 
 
 class TestFunctionWordConfig:

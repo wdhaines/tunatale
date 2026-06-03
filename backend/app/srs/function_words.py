@@ -57,6 +57,26 @@ def is_function_word(token: str, language_code: str, *, upos: str | None = None)
     return upos is not None and upos in pos
 
 
+def is_function_word_for(
+    lemma: str,
+    surfaces: set[str],
+    language_code: str,
+    surface_to_upos: dict[str, str] | None = None,
+) -> bool:
+    """True if *lemma* is a function word, or any of its inflected *surfaces* is.
+
+    Mirrors the POS-first detection used on both card-creation paths: the
+    dictionary lemma may not itself be a function word (classla maps "sem" →
+    "biti"), but an inflected surface carries a closed-class UPOS that does.
+    ``surface_to_upos`` maps a casefolded surface to its analyzer UPOS (absent
+    under LowercaseLemmatizer, so the curated include-list is the sole signal).
+    """
+    if is_function_word(lemma, language_code):
+        return True
+    upos_map = surface_to_upos or {}
+    return any(is_function_word(s, language_code, upos=upos_map.get(s.casefold())) for s in surfaces)
+
+
 _CLOZE_RE = re.compile(r"\{\{c1::")
 
 

@@ -32,7 +32,7 @@ from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, build_revlog_row, schedule
 from app.srs.function_words import (
     format_morphology_hint,
-    is_function_word,
+    is_function_word_for,
     make_cloze_text,
     make_morphology_cloze_text,
 )
@@ -347,9 +347,8 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         # `is_func` is only true where a function-word config exists for the
         # language, so non-Slovene content words still fall through to vocab.
         # POS-first: each surface carries its UPOS (when an analyzer is present).
-        is_func = is_function_word(lemma, lesson.language_code) or any(
-            is_function_word(s, lesson.language_code, upos=surface_to_upos.get(s.casefold()))
-            for s in lemma_to_surfaces.get(lemma, set())
+        is_func = is_function_word_for(
+            lemma, lemma_to_surfaces.get(lemma, set()), lesson.language_code, surface_to_upos
         )
 
         res = db.get_collocation_by_lemma_with_id(lemma)
@@ -737,6 +736,42 @@ async def create_item(body: CreateItemRequest, request: Request):
     return _item_to_dict(row_id, item, lang)
 
 
+async def _persist_new_card(
+    db,
+    unit: SyntacticUnit,
+    language_code: str,
+    *,
+    synthesize: bool,
+    audio_sentence: str = "",
+    audio_word: str = "",
+) -> dict:
+    """Add a NEW collocation and return its ``{id, was_created, item}`` dict.
+
+    Shared persistence tail for the card-creating endpoints (``/items/base`` and
+    ``/inflection-clozes``): insert (idempotent by guid), look the id back up,
+    best-effort synthesize cloze audio when ``synthesize`` and the row is newly
+    created, then serialize. ``audio_sentence`` is the *raw* sentence (never the
+    pre-clozed ``source_sentence``) and ``audio_word`` the surface to voice.
+    """
+    was_created = db.add_collocation(unit, language_code=language_code)
+    guid = compute_guid(unit.text, language_code, unit.disambig_key or "")
+    coll_id = db.get_collocation_id_by_guid(guid)
+    if coll_id is None:  # pragma: no cover — defensive; add_collocation just inserted
+        raise HTTPException(status_code=500, detail="Failed to create collocation")
+
+    if synthesize and was_created:
+        try:
+            await synthesize_cloze_audios(db, coll_id, audio_sentence, audio_word)
+        except Exception:
+            _logger.warning("Failed to synthesize cloze audio for %r", unit.text)
+
+    result = db.get_collocation_by_id(coll_id)
+    if result is None:  # pragma: no cover — defensive; id came from get_collocation_id_by_guid
+        raise HTTPException(status_code=500, detail="Failed to retrieve created collocation")
+    _, item, _ = result
+    return {"id": coll_id, "was_created": was_created, "item": _item_to_dict(coll_id, item, language_code)}
+
+
 @router.post("/items/base", status_code=200)
 async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dict:
     """Create a base card for an unknown clicked word (Phase 5, Part C / decision 8, C-a).
@@ -759,7 +794,9 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
     # surface even when the dictionary lemma isn't itself a function word.
     analyses = _lemmatizer.analyze_sentence(body.sentence, lang)
     upos = next((ta.upos for ta in analyses if ta.surface.casefold() == body.surface.casefold()), None)
-    is_func = is_function_word(lemma, lang, upos=upos) or is_function_word(body.surface, lang, upos=upos)
+    # Check both lemma and surface with the surface's upos (a single-word click).
+    upos_map = {lemma.casefold(): upos, body.surface.casefold(): upos} if upos else None
+    is_func = is_function_word_for(lemma, {lemma, body.surface}, lang, upos_map)
     if is_func:
         # Blank the surface as it appeared, not the dictionary lemma (Phase 2b):
         # the cloze must reference the word present in the stored sentence.
@@ -779,24 +816,9 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
         card_type=card_type,
         source_sentence=source_sentence,
     )
-    was_created = db.add_collocation(unit, language_code=lang)
-
-    guid = compute_guid(lemma, lang, "")
-    coll_id = db.get_collocation_id_by_guid(guid)
-    if coll_id is None:  # pragma: no cover — defensive; add_collocation just inserted
-        raise HTTPException(status_code=500, detail="Failed to create base card")
-
-    if is_func and was_created:
-        try:
-            await synthesize_cloze_audios(db, coll_id, body.sentence, body.surface)
-        except Exception:
-            _logger.warning("Failed to synthesize base-cloze audio for %r", lemma)
-
-    result = db.get_collocation_by_id(coll_id)
-    if result is None:  # pragma: no cover — defensive; id came from get_collocation_id_by_guid
-        raise HTTPException(status_code=500, detail="Failed to retrieve base card")
-    _, item, _ = result
-    return {"id": coll_id, "was_created": was_created, "item": _item_to_dict(coll_id, item, lang)}
+    return await _persist_new_card(
+        db, unit, lang, synthesize=is_func, audio_sentence=body.sentence, audio_word=body.surface
+    )
 
 
 @router.get("/items", status_code=200)
@@ -1230,31 +1252,10 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
         source_sentence=cloze_sent,
         grammar=grammar_hint,
     )
-    was_created = db.add_collocation(unit, language_code=language_code)
-
-    # 4. Look up collocation id (needed for both new and existing)
-    guid = compute_guid(body.surface, language_code, disambig)
-    coll_id = db.get_collocation_id_by_guid(guid)
-    if coll_id is None:  # pragma: no cover — defensive; add_collocation just inserted
-        raise HTTPException(status_code=500, detail="Failed to create collocation")
-
-    # 5. Synthesize audio if newly created (best-effort)
-    if was_created:
-        try:
-            await synthesize_cloze_audios(db, coll_id, body.sentence, body.surface)
-        except Exception:
-            _logger.warning("Failed to synthesize inflection-cloze audio for %r", body.surface)
-
-    # 6. Return serialized item
-    result = db.get_collocation_by_id(coll_id)
-    if result is None:  # pragma: no cover — defensive; id came from get_collocation_id_by_guid
-        raise HTTPException(status_code=500, detail="Failed to retrieve created collocation")
-    _, srs_item, _ = result
-    return {
-        "id": coll_id,
-        "was_created": was_created,
-        "item": _item_to_dict(coll_id, srs_item, language_code),
-    }
+    # 4-6. Persist + synthesize + serialize (always a cloze).
+    return await _persist_new_card(
+        db, unit, language_code, synthesize=True, audio_sentence=body.sentence, audio_word=body.surface
+    )
 
 
 @router.get("/review-queue", status_code=200)
