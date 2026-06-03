@@ -4,6 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import anyio
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -64,7 +65,12 @@ async def lifespan(app: FastAPI):
     # Warm the lemmatizer at startup so the first /listen or /transcript request
     # doesn't pay the model-load cost. A no-op for the default lowercase
     # lemmatizer; loads the classla pipeline up front when lemmatizer_type=classla.
-    get_lemmatizer().lemmatize("hotel", "sl")
+    # Offloaded to a thread (classla/PyTorch is blocking) and guarded with
+    # try/except so a missing-model error logs a warning but doesn't abort startup.
+    try:
+        await anyio.to_thread.run_sync(get_lemmatizer().lemmatize, "hotel", "sl")
+    except Exception:
+        logger.warning("Lemmatizer warm-up failed — continuing with on-demand loading")
 
     logger.info("TunaTale backend starting up")
     yield

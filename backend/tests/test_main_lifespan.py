@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 from fastapi import FastAPI
 
 
@@ -43,3 +45,23 @@ async def test_lifespan_live_mode_uses_raw_client(tmp_path, monkeypatch):
 
     async with lifespan(test_app):
         assert not isinstance(test_app.state.curriculum_generator._llm, CassetteLLMClient)
+
+
+async def test_lifespan_warmup_failure_does_not_abort(tmp_path, monkeypatch):
+    """A lemmatizer warm-up that raises must log a warning but not abort startup."""
+    from app.config import settings
+    from app.main import lifespan
+
+    monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'test.db'}")
+    monkeypatch.setattr(settings, "llm_mode", "mock")
+
+    mock_lemmatizer = MagicMock()
+    mock_lemmatizer.lemmatize.side_effect = RuntimeError("classla model missing")
+    monkeypatch.setattr("app.main.get_lemmatizer", lambda: mock_lemmatizer)
+
+    test_app = FastAPI()
+
+    async with lifespan(test_app):
+        assert test_app.state.srs_db is not None
+        # The warm-up failure must not prevent other app state from being wired
+        assert test_app.state.content_store is not None

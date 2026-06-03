@@ -42,7 +42,7 @@ The PRD targets are still ahead:
 ## Quickstart
 
 ```bash
-# Backend (Python 3.13, uv)
+# Backend (Python 3.14, uv)
 cd backend
 uv sync --all-groups
 cp ../.env.example .env   # set GROQ_API_KEY for live generation; LLM_MODE=mock is CI-safe
@@ -70,7 +70,7 @@ CI runs backend and frontend in parallel. The Anki oracle harness (`--run-oracle
 
 ## Stack
 
-- **Backend** — FastAPI on Python 3.13, `uv` for dependencies, SQLite for SRS storage. Pluggable language preprocessors so adding a new L2 doesn't require touching the core.
+- **Backend** — FastAPI on Python 3.14, `uv` for dependencies, SQLite for SRS storage. Pluggable language preprocessors so adding a new L2 doesn't require touching the core.
 - **Frontend** — SvelteKit + TypeScript, Vite 8, Vitest 4 with a custom Svelte-5 phantom-filter coverage gate that hits 100% per-file. Lint via Oxlint (fast Rust) + ESLint with `eslint-plugin-svelte` (thorough). Format via Oxfmt. Playwright for E2E.
 - **Audio** — EdgeTTS, ffmpeg, pydub, Forvo + Pixabay for media enrichment with deterministic fallbacks.
 - **SRS** — FSRS-5, per-direction state, daily unbury sweep, an emerging `tt_revlog` event log alongside today's field-merge sync (full story in `docs/walkthrough.md` PART 19).

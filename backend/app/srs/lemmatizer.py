@@ -257,6 +257,10 @@ def lemmatize_surfaces_in_context(
     (``Ženeve`` → ``Ženeva``), which would otherwise miss the lowercase
     ``ženeva`` card on a case-sensitive ``lemma =`` lookup.
     """
+    # note: this dict collapses on lowercase key. If the sentence contains multiple
+    # surface forms that lowercase to the same key, the last analysis wins. This is
+    # usually correct (same surface → same lemma) but can lose distinct lemmas when
+    # genuinely different words share a lowercase form.
     context = {ta.surface.lower(): ta.lemma.lower() for ta in lemmatizer.analyze_sentence(sentence, language_code)}
     result: list[str] = []
     for surface in surfaces:

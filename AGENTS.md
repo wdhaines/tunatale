@@ -28,7 +28,7 @@ cd frontend && bun run test:e2e                 # playwright
 
 Two main packages:
 
-- **`backend/`** — FastAPI app (`app/main.py`), Python 3.13, `uv` for deps
+- **`backend/`** — FastAPI app (`app/main.py`), Python 3.14, `uv` for deps
   - `app/anki/` — Anki collection reading & USN sync (use `safety.safe_open`, never raw sqlite3)
   - `app/api/` — FastAPI route modules
   - `app/audio/` — EdgeTTS + audio assembly pipeline

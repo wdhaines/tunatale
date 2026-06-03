@@ -157,6 +157,9 @@ def extract_transcript(
         None,
     )
 
+    # note: token_glosses is a plain dict — if the same key appears in two different
+    # sources the last-write-wins. Collocation matching uses the lemmatizer which may
+    # disambiguate homographs via sentence context.
     gloss_map: dict[str, str] = (lesson.generation_metadata or {}).get("token_glosses", {})
 
     # Pre-load multi-word collocations for span detection
