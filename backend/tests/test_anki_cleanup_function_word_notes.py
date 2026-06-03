@@ -190,10 +190,10 @@ def test_delete_ops_target_že_and_njega():
 
 
 def test_ja_not_in_slovene_function_words():
-    """ja should be removed from the curated function-word list."""
-    from app.srs.function_words import SLOVENE_FUNCTION_WORDS
+    """ja should not classify as a function word (removed from the curated list)."""
+    from app.srs.function_words import is_function_word
 
-    assert "ja" not in SLOVENE_FUNCTION_WORDS
+    assert is_function_word("ja", "sl") is False
 
 
 # ── apply_fix_image ─────────────────────────────────────────────────────────

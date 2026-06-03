@@ -1,56 +1,60 @@
-"""Slovene function words used by Phase F's cloze-card spike, plus morphology-cloze hint generation.
+"""Function-word detection (POS-first, per-language config) + morphology-cloze hints.
 
-This set was generated from the user's 7-day curriculum by
-build_function_word_list.py and manually curated to remove obvious
-content words. To extend after adding new lessons, re-run the generator
-and merge new entries.
+Function-word policy is data-driven, one swappable JSON file per language under
+``data/function_words/`` (``pos`` / ``include`` / ``exclude`` — see the file's
+``_comment``). A language with no file simply has no function words (clozes are
+capability-driven). Surfaces for ``include`` are seeded by build_function_word_list.py
+and hand-curated; the classla UPOS ``pos`` set is the primary signal when an
+analyzer is present.
 """
 
 from __future__ import annotations
 
+import json
 import re
+from functools import cache
+from pathlib import Path
 
-# Generated 2026-05-12 from curriculum 'arrival-in-ljubljana-5f8c0f52'; manually curated.
-SLOVENE_FUNCTION_WORDS: frozenset[str] = frozenset(
-    {
-        "je",  # 38 occurrences across 7 lessons — copula "is"
-        "kje",  # 17 / 6 — "where"
-        "v",  # 12 / 6 — "in"
-        "kaj",  # 10 / 6 — "what"
-        "sem",  # 9 / 4 — "am"
-        "si",  # 7 / 3 — "are" (singular)
-        "da",  # 7 / 4 — "that", "yes"
-        "za",  # 6 / 3 — "for"
-        "tam",  # 6 / 5 — "there"
-        "na",  # 6 / 3 — "on"
-        "kako",  # 5 / 3 — "how"
-        "ni",  # 5 / 3 — "is not"
-        "se",  # 4 / 4 — reflexive pronoun
-        "to",  # 3 / 2 — "this", "that"
-        "vam",  # 3 / 3 — "you" (plural/formal dative)
-        "z",  # 3 / 2 — "with"
-        "mi",  # 3 / 2 — "me" (dative)
-        "še",  # 2 / 2 — "still", "yet"
-        "pa",  # 2 / 2 — "and", "but", "so"
-        "ti",  # 2 / 2 — "you" (singular dative)
-        "po",  # 2 / 2 — "after", "along"
-        "vi",  # lemma of "vam" — "you" (plural/formal)
-        # NOTE: "biti" (copula lemma) is intentionally excluded. Its surface forms
-        # je/sem/si/ni are in the set above; adding "biti" would create ambiguity
-        # with verb-conjugation cloze targets for the same root.
-    }
-)
+_FUNCTION_WORD_DATA_DIR = Path(__file__).parent / "data" / "function_words"
 
 
-def is_function_word(lemma: str, language_code: str) -> bool:
-    """Return True if *lemma* is a known function word in *language_code*.
+@cache
+def _load_function_word_config(language_code: str) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+    """Load ``(pos, include, exclude)`` for *language_code* from its data file.
 
-    Phase F scope: Slovene only (language_code == "sl").
-    Case-insensitive (casefold) lookup against the curated set.
+    Returns three empty sets when no file exists — a language without a curated
+    config produces no function-word clozes (capability-driven). ``include`` /
+    ``exclude`` are casefolded for case-insensitive matching; ``pos`` is the raw
+    UPOS tag set (already uppercase).
     """
-    if language_code == "sl":
-        return lemma.casefold() in SLOVENE_FUNCTION_WORDS
-    return False
+    path = _FUNCTION_WORD_DATA_DIR / f"{language_code}.json"
+    if not path.exists():
+        return frozenset(), frozenset(), frozenset()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    pos = frozenset(data.get("pos", []))
+    include = frozenset(w.casefold() for w in data.get("include", []))
+    exclude = frozenset(w.casefold() for w in data.get("exclude", []))
+    return pos, include, exclude
+
+
+def is_function_word(token: str, language_code: str, *, upos: str | None = None) -> bool:
+    """Return True if *token* is a function word in *language_code*.
+
+    POS-first: when an analyzer supplies *upos*, a token whose classla UPOS is in
+    the language's closed-class ``pos`` set counts — so the whole biti AUX paradigm
+    (sem/si/je/smo/ste/so) is caught without enumerating surfaces. The curated
+    ``include`` set adds words POS misses or mistags (the open-class adverbs
+    kje/kako/tam; ``ni``, which classla tags VERB) and is the *sole* signal when no
+    analyzer is present (LowercaseLemmatizer emits ``upos=""``), exactly reproducing
+    the legacy surface-list behavior. ``exclude`` force-removes. Case-insensitive.
+    """
+    pos, include, exclude = _load_function_word_config(language_code)
+    t = token.casefold()
+    if t in exclude:
+        return False
+    if t in include:
+        return True
+    return upos is not None and upos in pos
 
 
 _CLOZE_RE = re.compile(r"\{\{c1::")

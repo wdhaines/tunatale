@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
+
+from app.srs import function_words as fw
 from app.srs.function_words import (
-    SLOVENE_FUNCTION_WORDS,
     _ending_blank_split,
     _format_morphology_feature,
+    _load_function_word_config,
     is_function_word,
     make_cloze_text,
     make_morphology_cloze_text,
@@ -32,6 +35,70 @@ class TestIsFunctionWord:
 
     def test_empty_string_not_in_set(self):
         assert is_function_word("", "sl") is False
+
+    # ── POS-first behavior (classla supplies upos) ───────────────────────────
+    def test_pos_catches_aux_not_in_include(self):
+        """'ste' isn't in the curated include list, but classla tags it AUX → True.
+
+        This is the whole point: the biti paradigm (ste/smo/so) classifies via POS
+        without enumerating surfaces.
+        """
+        assert is_function_word("ste", "sl") is False  # no analyzer → include-only
+        assert is_function_word("ste", "sl", upos="AUX") is True
+        assert is_function_word("smo", "sl", upos="AUX") is True
+
+    def test_pos_does_not_catch_content_word(self):
+        assert is_function_word("kava", "sl", upos="NOUN") is False
+
+    def test_include_overrides_missing_or_wrong_pos(self):
+        """Curated include wins regardless of upos: open-class adverbs we want
+        (kje/tam → ADV) and classla's mistag of 'ni' (VERB) still count."""
+        assert is_function_word("kje", "sl", upos="ADV") is True
+        assert is_function_word("tam", "sl", upos="ADV") is True
+        assert is_function_word("ni", "sl", upos="VERB") is True
+
+    def test_unknown_pos_tag_is_false(self):
+        assert is_function_word("blah", "sl", upos="ADV") is False  # ADV not in sl pos set
+
+
+class TestFunctionWordConfig:
+    """The per-language data file is the source of truth (replaces the old
+    hardcoded SLOVENE_FUNCTION_WORDS frozenset)."""
+
+    def test_curated_include_members(self):
+        for word in ("je", "kje", "v", "kaj", "se", "na", "za", "tam", "da", "ni"):
+            assert is_function_word(word, "sl") is True, f"{word!r} should be a function word"
+
+    def test_content_words_excluded(self):
+        for word in ("kava", "voda", "banka", "mesto", "hotel", "hvala", "prosim"):
+            assert is_function_word(word, "sl") is False, f"{word!r} should NOT be a function word"
+
+    def test_biti_paradigm_not_enumerated_in_include(self):
+        """ste/smo/so and the lemma 'biti' are deliberately absent from include —
+        POS (AUX) handles them. Without an analyzer they're not function words."""
+        for word in ("ste", "smo", "so", "biti"):
+            assert is_function_word(word, "sl") is False
+
+    def test_missing_language_file_yields_empty_config(self):
+        pos, include, exclude = _load_function_word_config("zz")
+        assert pos == frozenset() and include == frozenset() and exclude == frozenset()
+        assert is_function_word("anything", "zz", upos="AUX") is False
+
+    def test_exclude_force_removes(self, tmp_path, monkeypatch):
+        """A synthetic config exercises the exclude branch + the loader end-to-end."""
+        (tmp_path / "xx.json").write_text(
+            json.dumps({"pos": ["AUX"], "include": ["foo"], "exclude": ["bar"]}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(fw, "_FUNCTION_WORD_DATA_DIR", tmp_path)
+        _load_function_word_config.cache_clear()
+        try:
+            assert is_function_word("foo", "xx") is True  # include
+            assert is_function_word("baz", "xx", upos="AUX") is True  # pos
+            assert is_function_word("bar", "xx", upos="AUX") is False  # exclude beats pos
+            assert is_function_word("baz", "xx") is False  # no upos, not in include
+        finally:
+            _load_function_word_config.cache_clear()
 
 
 class TestMakeClozeText:
@@ -253,19 +320,6 @@ class TestMakeMorphologyClozeText:
             "Jaz sem doma.",
         )
         assert result == "Jaz {{c1::sem::biti, 1sg}} doma."
-
-
-class TestSLOVENE_FUNCTION_WORDS:
-    def test_has_expected_entries(self):
-        expected = {"je", "kje", "v", "kaj", "se", "na", "za", "tam", "da", "ni"}
-        for word in expected:
-            assert word in SLOVENE_FUNCTION_WORDS, f"{word!r} should be in SLOVENE_FUNCTION_WORDS"
-
-    def test_no_content_words(self):
-        """Verify that obvious content words are NOT in the curated set."""
-        content = {"kava", "voda", "banka", "mesto", "hotel", "hvala", "prosim"}
-        for word in content:
-            assert word not in SLOVENE_FUNCTION_WORDS, f"{word!r} should NOT be in SLOVENE_FUNCTION_WORDS"
 
 
 class TestIsA1MorphologyFeature:

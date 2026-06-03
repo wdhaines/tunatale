@@ -105,6 +105,40 @@ class TestCreateBaseCard:
         assert coll.syntactic_unit.text == "biti"
         assert coll.syntactic_unit.source_sentence == "Jaz {{c1::sem}} doma."
 
+    async def test_function_word_via_pos_aux(self, api_app_state, monkeypatch):
+        """A biti form absent from the curated include list (ste) is classified as a
+        function word via its classla UPOS (AUX) → cloze base, not vocab.
+
+        Regression: under the lowercase lemmatizer (or before POS-first detection)
+        'ste' fell through to a standalone vocab card. With classla, 'ste' → lemma
+        'biti', upos AUX → cloze, keyed by the lemma and blanking the surface.
+        """
+        import app.api.srs as srs_mod
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_analysis("ste", "biti", upos="AUX")
+        monkeypatch.setattr(srs_mod, "_lemmatizer", stub)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "ste",
+                    "lemma": "biti",
+                    "sentence": "Zdravo kje ste",
+                    "language_code": "sl",
+                    "translation": "to be",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["item"]["card_type"] == "cloze"
+        coll = api_app_state.get_collocation_by_guid(compute_guid("biti", "sl", ""))
+        assert coll.syntactic_unit.card_type == "cloze"
+        assert coll.syntactic_unit.source_sentence == "Zdravo kje {{c1::ste}}"
+        assert coll.directions[Direction.PRODUCTION].state == SRSState.NEW
+
     async def test_idempotent_returns_existing(self, api_app_state):
         """POST twice → one row; second call was_created False, same id."""
         body = {

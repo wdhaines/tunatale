@@ -1038,6 +1038,30 @@ class TestListenClozeIntegration:
         assert item.syntactic_unit.card_type == "cloze"
         assert item.syntactic_unit.source_sentence == "{{c1::Sem}} doma."
 
+    async def test_listen_cloze_via_pos_aux(self, monkeypatch):
+        """A biti form absent from the curated include list (ste → classla AUX) is
+        created as a cloze via /listen too, by POS — mirrors the create-base POS
+        path. Without an analyzer 'ste' would fall through to a standalone vocab."""
+        import app.api.srs as srs_mod
+        from app.models.srs_item import Direction, SRSState
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_analysis("ste", "biti", upos="AUX")
+        monkeypatch.setattr(srs_mod, "_lemmatizer", stub)
+        monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", AsyncMock())
+
+        db = await self._setup_lesson(phrase_text="Zdravo kje ste")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        item = db.get_collocation_by_lemma("biti")
+        assert item is not None
+        assert item.syntactic_unit.card_type == "cloze"
+        assert item.syntactic_unit.source_sentence == "Zdravo kje {{c1::ste}}"
+        assert item.directions[Direction.PRODUCTION].state == SRSState.NEW
+
     async def test_listen_cloze_audio_uses_surface_not_lemma(self, monkeypatch):
         """The answer-word audio for a plain cloze is synthesized from the surface
         that was blanked (e.g. "Sem"), not the dictionary lemma ("biti")."""

@@ -310,12 +310,19 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # The surface as it first appeared, paired with lemma_to_sentence — used to
     # blank the *surface* (not the dictionary lemma) in plain function-word clozes.
     lemma_to_first_surface: dict[str, str] = {}
+    # Surface (casefolded) → classla UPOS, for POS-first function-word detection.
+    # Empty/"" under LowercaseLemmatizer, so the curated include-list is the only
+    # signal there (legacy behavior); classla supplies AUX/ADP/PRON/... and catches
+    # the whole biti paradigm (ste/smo/so) without enumerating surfaces.
+    surface_to_upos: dict[str, str] = {}
     if natural_speed is not None:
         for phrase in natural_speed.phrases:
             if phrase.language_code != lesson.language_code:
                 continue
             surfaces = tokenize(phrase.text)
             phrase_lemmas = lemmatize_surfaces_in_context(surfaces, phrase.text, _lemmatizer, lesson.language_code)
+            for ta in _lemmatizer.analyze_sentence(phrase.text, lesson.language_code):
+                surface_to_upos.setdefault(ta.surface.casefold(), ta.upos)
             for surface, lemma in zip(surfaces, phrase_lemmas, strict=True):
                 unique_lemmas.add(lemma)
                 if lemma not in lemma_to_sentence:
@@ -336,10 +343,12 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         # Cloze cards are always on, for every language (no feature flag, no
         # language gate — see ~/.claude/plans/word-learning-state-machine.md
         # Phase 1). Whether a cloze is actually created is capability-driven:
-        # `is_func` is only true where a function-word list exists for the
+        # `is_func` is only true where a function-word config exists for the
         # language, so non-Slovene content words still fall through to vocab.
+        # POS-first: each surface carries its UPOS (when an analyzer is present).
         is_func = is_function_word(lemma, lesson.language_code) or any(
-            is_function_word(s, lesson.language_code) for s in lemma_to_surfaces.get(lemma, set())
+            is_function_word(s, lesson.language_code, upos=surface_to_upos.get(s.casefold()))
+            for s in lemma_to_surfaces.get(lemma, set())
         )
 
         existing = db.get_collocation_by_lemma(lemma)
@@ -743,11 +752,14 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
     lang = body.language_code
     lemma = body.lemma.casefold()
 
-    # Function-word detection is capability-driven: is_function_word is only true
-    # where a curated list exists (Slovene today). The surface is checked too — an
-    # inflected function form (classla "sem" → lemma "biti") is detected via the
+    # POS-first function-word detection: read the active surface's UPOS from the
+    # sentence (classla → AUX for biti forms etc.; LowercaseLemmatizer → "" so the
+    # curated include-list is the sole signal). The surface is checked too — an
+    # inflected function form (classla "sem" → lemma "biti") classifies via its
     # surface even when the dictionary lemma isn't itself a function word.
-    is_func = is_function_word(lemma, lang) or is_function_word(body.surface, lang)
+    analyses = _lemmatizer.analyze_sentence(body.sentence, lang)
+    upos = next((ta.upos for ta in analyses if ta.surface.casefold() == body.surface.casefold()), None)
+    is_func = is_function_word(lemma, lang, upos=upos) or is_function_word(body.surface, lang, upos=upos)
     if is_func:
         # Blank the surface as it appeared, not the dictionary lemma (Phase 2b):
         # the cloze must reference the word present in the stored sentence.
