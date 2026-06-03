@@ -2367,6 +2367,13 @@ class AnkiSync:
         Returns a CreateNewReport with created/linked/skipped counters.
         """
         items = list(self._db.list_items_without_anki_note())
+
+        # Skip items whose directions are all suspended/buried — they were
+        # ignored via "Ignore" (untrack) before ever reaching Anki, or orphan
+        # recovery cleared their anki_note_id while they were suspended.
+        _FILTER_OUT = {SRSState.SUSPENDED, SRSState.BURIED}
+        items = [(g, i, c) for g, i, c in items if not all(ds.state in _FILTER_OUT for ds in i.directions.values())]
+
         if dry_run:
             return CreateNewReport(count=len(items))
 

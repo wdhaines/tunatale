@@ -755,6 +755,66 @@ class TestSyncCreateNewRouting:
         assert report.created == 0
         assert report.linked == 1
 
+    async def test_skips_wholly_suspended_item(self):
+        """An item whose directions are ALL suspended is skipped.
+
+        Covers the orphan-resurrection bug: a synced-then-untracked item's
+        anki_note_id was cleared by orphan recovery, but sync_create_new must
+        not re-create a card for it.
+        """
+        db = _make_db()
+        guid = _add_item(db, "voda", "water")
+
+        row_id = db.get_collocation_id_by_guid(guid)
+        db.set_state_by_id(row_id, SRSState.SUSPENDED)
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        assert report.count == 0
+        assert report.created == 0
+        notes = anki_conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+        assert notes == 0
+
+    async def test_creates_note_for_partially_suspended_item(self):
+        """An item with one direction active and one suspended still gets a card."""
+        db = _make_db()
+        guid = _add_item(db, "voda", "water")
+
+        row_id = db.get_collocation_id_by_guid(guid)
+        db.set_state_by_id(row_id, SRSState.SUSPENDED, direction=Direction.PRODUCTION)
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        assert report.count == 1
+        assert report.created == 1
+        notes = anki_conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+        assert notes == 1
+
+    async def test_dry_run_excludes_wholly_suspended(self):
+        """dry_run count excludes wholly-suspended items."""
+        db = _make_db()
+        guid = _add_item(db, "voda", "water")
+        _add_item(db, "vino", "wine")
+
+        row_id = db.get_collocation_id_by_guid(guid)
+        db.set_state_by_id(row_id, SRSState.SUSPENDED)
+
+        writer = FakeCreateWriter()
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", dry_run=True
+        )
+
+        assert report.count == 1
+        assert "create_note" not in writer.action_names()
+
 
 # ── TestListItemsWithoutAnkiNote ──────────────────────────────────────────────
 

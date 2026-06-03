@@ -103,7 +103,7 @@ class TestMigrations:
         """v29 backfills the grammar column for inflection clozes with empty grammar."""
         import sqlite3
 
-        from app.srs.migrations import _column_exists, _set_version, migrate_v28_to_v29
+        from app.srs.migrations import _set_version, migrate_v28_to_v29
 
         conn = sqlite3.connect(str(tmp_path / "test.db"))
         conn.execute(
@@ -153,9 +153,7 @@ class TestMigrations:
         conn.row_factory = sqlite3.Row
         rows = {
             r["text"]: r["grammar"]
-            for r in conn.execute(
-                "SELECT text, grammar FROM collocations ORDER BY text"
-            ).fetchall()
+            for r in conn.execute("SELECT text, grammar FROM collocations ORDER BY text").fetchall()
         }
         assert rows["sem"] == "biti, 1st person singular", f"got {rows['sem']!r}"
         assert rows["mesto"] == "mesto, accusative singular", f"got {rows['mesto']!r}"
