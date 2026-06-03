@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     anki_backup_keep: int = 30
     media_dir: Path = Path("./media")
     anki_fallback_log: Path = Path("~/.tunatale/logs/anki-fallback.log").expanduser()
+    # Durable per-sync soak log: every non-dry sync (CLI or API) appends a
+    # SYNC_SOAK heartbeat + one RECOMPUTE_DIVERGENCE line per divergence.
+    sync_log: Path = Path("~/.tunatale/logs/sync.log").expanduser()
 
     anki_connect_url: str = "http://127.0.0.1:8765"
     anki_model_name: str = ""

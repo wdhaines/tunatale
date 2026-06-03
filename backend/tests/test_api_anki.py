@@ -121,6 +121,15 @@ class TestSyncOfflineEndpoint:
         assert data["recompute_divergences"] == 0
         assert data["dry_run"] is False
 
+        # New-mode soak heartbeat is persisted on the API path too (not just the
+        # CLI). settings.sync_log is redirected to tmp by the _settings_overrides
+        # fixture, so this never touches the real ~/.tunatale/logs.
+        assert settings.sync_log.exists()
+        soak = settings.sync_log.read_text()
+        assert "SYNC_SOAK" in soak
+        assert "recompute_divergences=0" in soak
+        assert "push_dirs=3" in soak
+
     @patch("app.anki.import_seed.refresh_media_for_deck")
     async def test_passes_col_crt_to_anki_sync(self, mock_refresh_media_for_deck, monkeypatch):
         """Layer 4 regression: sync_push needs col.crt to compute the day_index
