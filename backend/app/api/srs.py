@@ -352,16 +352,17 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             for s in lemma_to_surfaces.get(lemma, set())
         )
 
-        existing = db.get_collocation_by_lemma(lemma)
-        if existing is None:
+        res = db.get_collocation_by_lemma_with_id(lemma)
+        if res is None:
             # A card may be keyed by its surface form (e.g. greeting "dobrodošli",
             # whose dictionary lemma "dobrodošel" has no card) — grade it rather
             # than spawning a duplicate.
             for s in lemma_to_surfaces.get(lemma, set()):
                 if s.lower() != lemma:
-                    existing = db.get_collocation_by_lemma(s.lower())
-                    if existing is not None:
+                    res = db.get_collocation_by_lemma_with_id(s.lower())
+                    if res is not None:
                         break
+        existing_id, existing = (res if res is not None else (None, None))
 
         if existing is None:
             # ── Create new row (cloze for function words, vocab for content words) ──
@@ -409,8 +410,6 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 # Try to generate missing audio for existing cloze rows.
                 # Use the raw sentence (lemma_to_sentence) — the stored
                 # source_sentence contains {{c1::…}} markup under Phase-2b.
-                coll_with_id = db.get_collocation_by_lemma_with_id(lemma)
-                existing_id, _ = coll_with_id
                 sent = lemma_to_sentence.get(lemma, "")
                 if sent and not db.get_sentence_audio_filename(existing_id):
                     try:

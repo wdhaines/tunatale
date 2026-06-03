@@ -1084,6 +1084,49 @@ class TestListenClozeIntegration:
         assert "Sem" in words
         assert "biti" not in words
 
+    async def test_listen_existing_cloze_surface_keyed(self, monkeypatch):
+        """A cloze card keyed by surface (not lemma) is found via the surface
+        fallback and does not crash on re-query — the id is carried from the
+        initial lookup rather than re-queried by lemma."""
+        import app.api.srs as srs_mod
+        from app.models.syntactic_unit import SyntacticUnit
+
+        def fake_lemmatize(surfaces, text, lemmatizer, language_code):
+            return ["pozdrav" if s.lower() == "zdravo" else s.lower() for s in surfaces]
+
+        monkeypatch.setattr(srs_mod, "lemmatize_surfaces_in_context", fake_lemmatize)
+        audio_mock = AsyncMock()
+        monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", audio_mock)
+
+        db = await self._setup_lesson(phrase_text="Zdravo svet")
+
+        # Pre-create a cloze card keyed by the surface form, not the lemma
+        pre_unit = SyntacticUnit(
+            text="zdravo",
+            translation="hello",
+            word_count=1,
+            difficulty=1,
+            source="test",
+            lemma="zdravo",
+            card_type="cloze",
+            source_sentence="Zdravo svet",
+        )
+        db.add_collocation(pre_unit, language_code="sl")
+        pre_id, _ = db.get_collocation_by_lemma_with_id("zdravo")
+        assert pre_id is not None
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        # No new card was created for the dictionary lemma (surface-keyed one was reused)
+        assert db.get_collocation_by_lemma("pozdrav") is None
+
+        # Audio was synthesized for the pre-existing card, not a new one
+        assert audio_mock.await_args is not None
+        call_ids = [call.args[1] for call in audio_mock.await_args_list]
+        assert pre_id in call_ids
+
     async def test_listen_creates_vocab_for_unknown_content_word(self):
         """Unknown content-word lemma → vocab row, state='new', both directions present."""
         from app.models.srs_item import Direction, SRSState
