@@ -360,6 +360,16 @@ describe("WordSpan", () => {
       await fireEvent.click(getByRole("button", { name: /^zdravo/ }));
       expect(onWordClick).toHaveBeenCalledWith(word, 0);
     });
+
+    it("passes the given lineIndex to onWordClick", async () => {
+      const onWordClick = vi.fn();
+      const word = makeWordToken({ lemma: "zdravo" });
+      const { getByRole } = render(WordSpan, {
+        props: { word, onWordClick, lineIndex: 7 },
+      });
+      await fireEvent.click(getByRole("button", { name: /^zdravo/ }));
+      expect(onWordClick).toHaveBeenCalledWith(word, 7);
+    });
   });
 
   describe("drag-to-select vs click", () => {

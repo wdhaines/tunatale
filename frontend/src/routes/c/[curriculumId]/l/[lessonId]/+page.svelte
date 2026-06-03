@@ -89,7 +89,7 @@
 		error = '';
 		try {
 			if (word.active_state === 'unknown') {
-				const sentence = transcript!.dialogue_lines[lineIndex].sentence ?? '';
+				const sentence = transcript!.dialogue_lines[lineIndex]?.sentence ?? '';
 				await api.createBaseCard({
 					surface: word.surface,
 					lemma: word.lemma,

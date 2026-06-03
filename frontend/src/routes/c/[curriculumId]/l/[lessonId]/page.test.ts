@@ -466,6 +466,41 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       expect(await findByText("plain error")).toBeTruthy();
     });
 
+    it("unknown word with missing dialogue line sentence uses empty string", async () => {
+      const t = makeTranscriptWithWord({ active_state: "unknown" });
+      const raw: Record<string, unknown> = { ...t.dialogue_lines[0] };
+      delete raw.sentence;
+      t.dialogue_lines[0] = raw as (typeof t.dialogue_lines)[0];
+      mockCreateBaseCard.mockResolvedValue({
+        id: 1,
+        was_created: true,
+        item: {
+          id: 1,
+          text: "zdravo",
+          translation: "",
+          state: "new",
+          due_at: "",
+          stability: 1,
+          difficulty: 5,
+          reps: 0,
+          lapses: 0,
+          last_review: null,
+          language_code: "sl",
+        },
+      });
+      mockGetTranscript.mockResolvedValue(t);
+
+      const { findByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: t } },
+      });
+
+      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+
+      await waitFor(() => {
+        expect(mockCreateBaseCard).toHaveBeenCalledWith(expect.objectContaining({ sentence: "" }));
+      });
+    });
+
     it("shows error when submitDrill throws", async () => {
       const t = makeTranscriptWithWord({
         active_state: "learning",
