@@ -30,7 +30,13 @@ async def trigger_sync(request: Request, dry_run: bool = False):
     """
     from app.anki import model_discovery
     from app.anki.safety import AnkiRunningError, safe_open
-    from app.anki.sync import AnkiSync, OfflineReader, OfflineWriter, OrphanThresholdExceededError
+    from app.anki.sync import (
+        AnkiSync,
+        OfflineReader,
+        OfflineWriter,
+        OrphanThresholdExceededError,
+        _write_sync_soak_log,
+    )
     from app.config import settings
 
     db = request.app.state.srs_db
@@ -113,6 +119,17 @@ async def trigger_sync(request: Request, dry_run: bool = False):
                 refresh_load_balancer_enabled(db, ctx.conn)
                 refresh_easy_days(db, ctx.conn, settings.anki_deck_name)
                 warn_if_multi_deck_preset(ctx.conn, settings.anki_deck_name)
+
+                # Durable soak heartbeat for the new-mode roll-out. The CLI
+                # (`sync.main`) already writes this; the API path is what the user
+                # actually triggers, so without this the recompute_divergences
+                # signal scrolls off in the response and is never persisted.
+                _write_sync_soak_log(
+                    settings.sync_log,
+                    event_mode=db.get_event_sync_pull_mode(),
+                    pull=pull_report,
+                    push=push_report,
+                )
 
     except AnkiRunningError as exc:
         raise HTTPException(

@@ -44,6 +44,24 @@ def anki_prev_day_anchor(today: date) -> datetime:
 
 
 @pytest.fixture(autouse=True)
+def _settings_overrides(monkeypatch, tmp_path):
+    """Redirect every settings path that touches real user data to tmp_path so
+    tests never write to ~/.tunatale.
+
+    Backported to main after a full-suite run on a *main* checkout (which lacked
+    this fixture) wrote ~30 synthetic-collection backups into the real
+    ``~/.tunatale/anki-backups`` and the keep-30 retention cap pruned every real
+    17 MB snapshot. ``stage4-lemmatizer`` also pins ``lemmatizer_type`` here, but
+    main has no such config field, so that part is intentionally omitted.
+    """
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "anki_backup_dir", tmp_path / "anki-backups")
+    monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'tunatale.db'}")
+    monkeypatch.setattr(settings, "sync_log", tmp_path / "logs" / "sync.log")
+
+
+@pytest.fixture(autouse=True)
 def _autoclose_sqlite_connections(monkeypatch):
     """Track and close every sqlite3.Connection opened during a test.
 
