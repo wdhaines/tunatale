@@ -87,6 +87,12 @@ filterwarnings = [
     # loop teardown (pytest_asyncio/plugin.py) — plugin-internal, not a project leak.
     "default::ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
+    # Third-party file-handle leak: reldi_tokeniser (a classla tokenizer dependency) opens
+    # abbrev/punct files at import without closing them. Unfixable by us, and only present
+    # when the optional `classla` extra is installed locally (never in CI). Listed LAST so
+    # it takes precedence over default::ResourceWarning above (pytest inserts each filter
+    # at the front, so the final entry wins).
+    "ignore::ResourceWarning:reldi_tokeniser",
 ]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
