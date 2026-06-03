@@ -73,7 +73,31 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 27
+        assert CURRENT_VERSION == 28
+
+    def test_migrates_v27_to_v28_adds_lemma_key_column(self, tmp_path):
+        """v28 adds collocations.lemma_key (space-joined lemma tuple for span matching)."""
+        import sqlite3
+
+        from app.srs.migrations import _column_exists, _set_version, migrate_v27_to_v28
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.execute("CREATE TABLE collocations (id INTEGER PRIMARY KEY, text TEXT)")
+        _set_version(conn, 27)
+        assert not _column_exists(conn, "collocations", "lemma_key")
+
+        migrate_v27_to_v28(conn)
+
+        assert _column_exists(conn, "collocations", "lemma_key")
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 28
+
+        # Defaults to NULL (lazily populated at read/write time).
+        conn.execute("INSERT INTO collocations (id, text) VALUES (1, 'dober dan')")
+        assert conn.execute("SELECT lemma_key FROM collocations").fetchone()[0] is None
+
+        # Idempotent.
+        migrate_v27_to_v28(conn)
+        assert _column_exists(conn, "collocations", "lemma_key")
 
     def test_migrates_v26_to_v27_adds_replay_shadow_columns(self, tmp_path):
         """v27 adds Stage-3b shadow columns (stability_replayed, fsrs_difficulty_replayed)."""

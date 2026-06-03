@@ -492,7 +492,7 @@ class TestTranscriptEnrichment:
 
     def test_unknown_token_has_defaults(self):
         lesson = _make_lesson([("female-1", "banka")])
-        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today, now=self.now, col_crt=None)
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
         word = result.dialogue_lines[0].words[0]
         assert word.progress is None
         assert word.active_state == "unknown"
@@ -505,7 +505,7 @@ class TestTranscriptEnrichment:
     def test_vocab_recognition_not_review_active_direction_recognition(self):
         self._add_vocab("banka", "bank", lemma="banka")
         lesson = _make_lesson([("female-1", "banka")])
-        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today, now=self.now, col_crt=None)
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
         word = result.dialogue_lines[0].words[0]
         assert word.active_direction == "recognition"
         assert word.active_state == "new"
@@ -522,7 +522,7 @@ class TestTranscriptEnrichment:
         self.db.update_direction(item.guid, Direction.RECOGNITION, item.directions[Direction.RECOGNITION])
         self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
         lesson = _make_lesson([("female-1", "banka")])
-        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today, now=self.now, col_crt=None)
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
         word = result.dialogue_lines[0].words[0]
         assert word.active_direction == "production"
         assert word.active_state == "review"
@@ -540,7 +540,7 @@ class TestTranscriptEnrichment:
         )
         self.db.add_collocation(unit, language_code="sl")
         lesson = _make_lesson([("female-1", "To je dobro.")])
-        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today, now=self.now, col_crt=None)
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
         word = next(w for w in result.dialogue_lines[0].words if w.lemma == "je")
         assert word.active_direction == "production"
         assert word.card_type == "cloze"
@@ -548,7 +548,7 @@ class TestTranscriptEnrichment:
     def test_progress_reflects_components(self):
         self._add_vocab("banka", "bank", lemma="banka")
         lesson = _make_lesson([("female-1", "banka")])
-        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today, now=self.now, col_crt=None)
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
         word = result.dialogue_lines[0].words[0]
         # NEW → mastery is 0.0
         assert word.progress == 0.0
@@ -567,7 +567,7 @@ class TestTranscriptEnrichment:
         self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
 
         lesson = _make_lesson([("female-1", "hodim")])
-        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today, now=self.now, col_crt=None)
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
         word = result.dialogue_lines[0].words[0]
         # LowercaseLemmatizer returns empty upos/case/number → ud_feats_to_tt_feature returns None
         # So inflectable depends on having analysis data. With LowercaseLemmatizer, analysis returns
@@ -580,7 +580,7 @@ class TestTranscriptEnrichment:
         item.directions[Direction.PRODUCTION].state = SRSState.REVIEW
         self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
         lesson = _make_lesson([("female-1", "banka")])
-        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today, now=self.now, col_crt=None)
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
         word = result.dialogue_lines[0].words[0]
         assert word.inflectable is False  # surface==lemma
 
@@ -609,7 +609,7 @@ class TestTranscriptEnrichment:
         self.db.add_collocation(unit, language_code="sl")
 
         lesson = _make_lesson([("female-1", "Hiša je lepa.")])
-        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today, now=self.now, col_crt=None)
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
         lepa_words = [w for w in result.dialogue_lines[0].words if w.surface == "lepa"]
         for w in lepa_words:
             assert w.inflectable is False  # cloze already exists
@@ -618,7 +618,7 @@ class TestTranscriptEnrichment:
         """Two occurrences of the same lemma within one lesson hit inflection cache."""
         self._add_vocab("banka", "bank", lemma="banka")
         lesson = _make_lesson([("female-1", "Banka je v banki.")])
-        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today, now=self.now, col_crt=None)
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
         # Both "banka" tokens should resolve (lemma same either way)
         words = result.dialogue_lines[0].words
         banka_words = [w for w in words if w.lemma == "banka"]
@@ -626,7 +626,7 @@ class TestTranscriptEnrichment:
 
     def test_unknown_word_has_empty_components(self):
         lesson = _make_lesson([("female-1", "xyznonexistent")])
-        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today, now=self.now, col_crt=None)
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
         word = result.dialogue_lines[0].words[0]
         assert word.progress is None
         assert word.srs_state == "unknown"
@@ -668,7 +668,7 @@ class TestTranscriptEnrichment:
         self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
 
         lesson = _make_lesson([("female-1", "hodim")])
-        result = extract_transcript(lesson, self.db, _MockLemmatizer(), today=self.today, now=self.now, col_crt=None)
+        result = extract_transcript(lesson, self.db, _MockLemmatizer(), today=self.today)
         word = result.dialogue_lines[0].words[0]
         # Now lemmatizer maps "hodim" → "hoditi" → base found → inflectable detection runs
         # ud_feats_to_tt_feature("VERB", "", "Sing", "1", "") → "verb:1sg" → is_a1_morphology_feature True
@@ -728,7 +728,7 @@ class TestTranscriptEnrichment:
         self.db.add_collocation(unit, language_code="sl")
 
         lesson = _make_lesson([("female-1", "Lepa je lepa.")])
-        result = extract_transcript(lesson, self.db, _MockLemmatizer2(), today=self.today, now=self.now, col_crt=None)
+        result = extract_transcript(lesson, self.db, _MockLemmatizer2(), today=self.today)
         words = result.dialogue_lines[0].words
         lepa_words = [w for w in words if w.surface == "lepa"]
         for w in lepa_words:
@@ -762,7 +762,7 @@ class TestTranscriptEnrichment:
         self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
 
         lesson = _make_lesson([("female-1", "hodim")])
-        result = extract_transcript(lesson, self.db, _MockNoAnalysis(), today=self.today, now=self.now, col_crt=None)
+        result = extract_transcript(lesson, self.db, _MockNoAnalysis(), today=self.today)
         word = result.dialogue_lines[0].words[0]
         # analysis_by_surface is empty → ta=None → feature_str="" → no inflectable detection
         assert word.inflectable is False
@@ -821,7 +821,7 @@ class TestTranscriptEnrichment:
             self.db.update_direction(ic_item.guid, Direction.PRODUCTION, ic_item.directions[Direction.PRODUCTION])
 
         lesson = _make_lesson([("female-1", "Lepa je lepa.")])
-        result = extract_transcript(lesson, self.db, _MockLemmatizer3(), today=self.today, now=self.now, col_crt=None)
+        result = extract_transcript(lesson, self.db, _MockLemmatizer3(), today=self.today)
         lepa_words = [w for w in result.dialogue_lines[0].words if w.surface == "lepa"]
         for w in lepa_words:
             # Token resolved as cloze, but inflectable=False (else branch of inflection_match is None)
@@ -837,13 +837,15 @@ class TestTranscriptEnrichment:
         item.directions[Direction.PRODUCTION].state = SRSState.REVIEW
         item.directions[Direction.RECOGNITION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
         item.directions[Direction.PRODUCTION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        # Non-trivial stability so the base has positive mastery; otherwise the
+        # default stability=1.0 maps to log10(1)=0.0 and there's nothing to lower.
+        item.directions[Direction.RECOGNITION].stability = 50.0
+        item.directions[Direction.PRODUCTION].stability = 50.0
         self.db.update_direction(item.guid, Direction.RECOGNITION, item.directions[Direction.RECOGNITION])
         self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
 
         lesson_no_inflection = _make_lesson([("female-1", "delati")])
-        result_no = extract_transcript(
-            lesson_no_inflection, self.db, self.lemmatizer, today=self.today, now=self.now, col_crt=None
-        )
+        result_no = extract_transcript(lesson_no_inflection, self.db, self.lemmatizer, today=self.today)
         progress_without = result_no.dialogue_lines[0].words[0].progress
 
         # Add an inflection cloze for this lemma (no last_review → mastery=0.0)
@@ -865,10 +867,65 @@ class TestTranscriptEnrichment:
             self.db.update_direction(ic_item.guid, Direction.PRODUCTION, ic_item.directions[Direction.PRODUCTION])
 
         lesson_with_inflection = _make_lesson([("female-1", "delati")])
-        result_with = extract_transcript(
-            lesson_with_inflection, self.db, self.lemmatizer, today=self.today, now=self.now, col_crt=None
-        )
+        result_with = extract_transcript(lesson_with_inflection, self.db, self.lemmatizer, today=self.today)
         progress_with = result_with.dialogue_lines[0].words[0].progress
         assert progress_with is not None
         assert progress_without is not None
         assert progress_with < progress_without
+
+
+class TestCollocationLemmaKey:
+    """Precompute + persist of collocations.lemma_key (review finding #4).
+
+    _build_collocation_index used to re-lemmatize every multi-word collocation on
+    every /transcript request. The lemma tuple is now stored as lemma_key and
+    reused; rows missing it are lemmatized once and persisted (self-healing
+    backfill), so the request path lemmatizes each collocation at most once ever.
+    """
+
+    def setup_method(self):
+        self.db = SRSDatabase(":memory:")
+        self.lemmatizer = LowercaseLemmatizer()
+
+    def _add_phrase(self, text: str) -> int:
+        self.db.add_collocation(
+            SyntacticUnit(text=text, translation="x", word_count=len(text.split()), difficulty=1, source="user"),
+            language_code="sl",
+        )
+        with self.db._get_conn() as conn:
+            return conn.execute("SELECT id FROM collocations WHERE text = ?", (text,)).fetchone()[0]
+
+    def test_build_collocation_lemma_key_joins_lemmas(self):
+        from app.srs.transcript import build_collocation_lemma_key
+
+        assert build_collocation_lemma_key("Dober Dan", self.lemmatizer, "sl") == "dober dan"
+
+    def test_build_index_lazily_persists_missing_key(self):
+        from app.srs.transcript import _build_collocation_index
+
+        coll_id = self._add_phrase("dober dan")
+        rows = self.db.get_collocations_with_lemma_key("sl", min_word_count=2)
+        assert rows == [(coll_id, "dober dan", None)]
+
+        index = _build_collocation_index(self.db, rows, self.lemmatizer, "sl")
+        assert index == {("dober", "dan"): coll_id}
+
+        # Persisted, so the next request reads the stored key.
+        assert self.db.get_collocations_with_lemma_key("sl", min_word_count=2) == [(coll_id, "dober dan", "dober dan")]
+
+    def test_build_index_uses_stored_key_without_lemmatizing(self):
+        from app.srs.transcript import _build_collocation_index
+
+        coll_id = self._add_phrase("dober dan")
+        self.db.set_lemma_key(coll_id, "dober dan")
+
+        class BoomLemmatizer:
+            def lemmatize(self, *a, **k):
+                raise AssertionError("must not lemmatize when lemma_key is stored")
+
+            def analyze_sentence(self, *a, **k):
+                raise AssertionError("must not analyze when lemma_key is stored")
+
+        rows = self.db.get_collocations_with_lemma_key("sl", min_word_count=2)
+        index = _build_collocation_index(self.db, rows, BoomLemmatizer(), "sl")
+        assert index == {("dober", "dan"): coll_id}

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import date
 
 from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
 from app.models.srs_item import Direction, DirectionState, SRSState
@@ -56,22 +56,38 @@ class TranscriptData:
     dialogue_lines: list[DialogueLine] = field(default_factory=list)
 
 
+def build_collocation_lemma_key(text: str, lemmatizer: Lemmatizer, language_code: str) -> str:
+    """Space-joined lemma tuple for a collocation's text.
+
+    Lemmatizes the tokens in the context of the collocation's own text so the key
+    stays consistent with the sentence-context lemmas used for the dialogue
+    (otherwise a POS-ambiguous word like ``dobro`` would key differently on the
+    two sides and the span would never match). Lemmas are single tokens, so the
+    join is round-trippable via ``str.split(" ")``.
+    """
+    return " ".join(lemmatize_surfaces_in_context(tokenize(text), text, lemmatizer, language_code))
+
+
 def _build_collocation_index(
-    collocations: list[tuple[int, str]],
+    db: SRSDatabase,
+    collocations: list[tuple[int, str, str | None]],
     lemmatizer: Lemmatizer,
     language_code: str,
 ) -> dict[tuple[str, ...], int]:
     """Build lemma-tuple → DB id index for multi-word collocation matching.
 
-    Lemmatizes each collocation's tokens in the context of its own text so the
-    keys stay consistent with the sentence-context lemmas used for the dialogue
-    (otherwise a POS-ambiguous word like ``dobro`` would key differently on the
-    two sides and the span would never match).
+    Uses each collocation's stored ``lemma_key`` (review finding #4) so the
+    request path doesn't re-lemmatize on every call. Rows whose key is still NULL
+    are lemmatized once and persisted (self-healing backfill), so a given
+    collocation is lemmatized at most once ever rather than per request.
     """
-    return {
-        tuple(lemmatize_surfaces_in_context(tokenize(text), text, lemmatizer, language_code)): coll_id
-        for coll_id, text in collocations
-    }
+    index: dict[tuple[str, ...], int] = {}
+    for coll_id, text, lemma_key in collocations:
+        if lemma_key is None:
+            lemma_key = build_collocation_lemma_key(text, lemmatizer, language_code)
+            db.set_lemma_key(coll_id, lemma_key)
+        index[tuple(lemma_key.split(" ")) if lemma_key else ()] = coll_id
+    return index
 
 
 def resolve_active_direction(item: object) -> Direction:
@@ -106,8 +122,6 @@ def extract_transcript(
     db: SRSDatabase,
     lemmatizer: Lemmatizer,
     today: date | None = None,
-    now: datetime | None = None,
-    col_crt: int | None = None,
 ) -> TranscriptData:
     """Extract transcript data from a lesson with current SRS states.
 
@@ -118,8 +132,6 @@ def extract_transcript(
     """
     if today is None:
         today = date.today()
-    if now is None:
-        now = datetime.now(UTC)
 
     natural_speed = next(
         (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
@@ -129,8 +141,8 @@ def extract_transcript(
     gloss_map: dict[str, str] = (lesson.generation_metadata or {}).get("token_glosses", {})
 
     # Pre-load multi-word collocations for span detection
-    raw_collocations = db.get_collocations_for_language(lesson.language_code, min_word_count=2)
-    collocation_index = _build_collocation_index(raw_collocations, lemmatizer, lesson.language_code)
+    raw_collocations = db.get_collocations_with_lemma_key(lesson.language_code, min_word_count=2)
+    collocation_index = _build_collocation_index(db, raw_collocations, lemmatizer, lesson.language_code)
 
     dialogue_lines: list[DialogueLine] = []
 
@@ -220,7 +232,7 @@ def extract_transcript(
                     active_state_val = active_ds.state.value
                     is_due_flag = _is_due(active_ds, today)
                     valid_components = [c for c in components if c is not None]
-                    progress_val = compute_mastery_progress(valid_components, today, now=now, col_crt=col_crt)
+                    progress_val = compute_mastery_progress(valid_components)
 
                     if surface.lower() != lemma.lower():
                         ta = analysis_by_surface.get(surface.lower())

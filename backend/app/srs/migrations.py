@@ -12,7 +12,7 @@ from datetime import date
 
 from app.common.guid import compute_guid
 
-CURRENT_VERSION = 27
+CURRENT_VERSION = 28
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -839,6 +839,22 @@ def migrate_v26_to_v27(conn: sqlite3.Connection) -> None:
     _set_version(conn, 27)
 
 
+def migrate_v27_to_v28(conn: sqlite3.Connection) -> None:
+    """Add collocations.lemma_key — the space-joined lemma tuple used to match
+    multi-word collocation spans in the transcript.
+
+    Nullable; the column starts NULL on every row. It is populated lazily on
+    first read (``transcript._build_collocation_index`` computes + persists it)
+    and eagerly at the interactive add-phrase write site, so the request path
+    lemmatizes each collocation at most once ever instead of on every request.
+    A pure-SQL migration can't run the (runtime-configured) lemmatizer, so it
+    only adds the column — backfill is the read path's job.
+    """
+    if not _column_exists(conn, "collocations", "lemma_key"):
+        conn.execute("ALTER TABLE collocations ADD COLUMN lemma_key TEXT")
+    _set_version(conn, 28)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -867,6 +883,7 @@ _MIGRATIONS = {
     24: migrate_v24_to_v25,
     25: migrate_v25_to_v26,
     26: migrate_v26_to_v27,
+    27: migrate_v27_to_v28,
 }
 
 

@@ -510,7 +510,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
 @router.get("/lesson/{lesson_id}/transcript", status_code=200)
 async def get_lesson_transcript(lesson_id: str, request: Request):
-    from datetime import UTC, date, datetime
+    from datetime import date
 
     store = request.app.state.content_store
     lesson = store.get_lesson(lesson_id)
@@ -518,10 +518,8 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Lesson not found")
 
     db = request.app.state.srs_db
-    col_crt = resolve_col_crt(db)
     today = date.today()
-    now = datetime.now(UTC)
-    transcript = extract_transcript(lesson, db, _lemmatizer, today=today, now=now, col_crt=col_crt)
+    transcript = extract_transcript(lesson, db, _lemmatizer, today=today)
 
     return {
         "lesson_id": lesson_id,

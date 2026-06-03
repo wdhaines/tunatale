@@ -641,17 +641,29 @@ class SRSDatabase:
             ).fetchall()
             return [(row["id"], self._row_to_item(conn, row)) for row in rows]
 
-    def get_collocations_for_language(
+    def get_collocations_with_lemma_key(
         self,
         language_code: str,
         min_word_count: int = 2,
-    ) -> list[tuple[int, str]]:
+    ) -> list[tuple[int, str, str | None]]:
+        """Return (id, text, lemma_key) for collocations of at least min_word_count words.
+
+        lemma_key is the space-joined lemma tuple for multi-word span matching
+        (NULL until first computed). Read by transcript._build_collocation_index,
+        which lazily fills any NULL via set_lemma_key.
+        """
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT id, text FROM collocations WHERE language_code = ? AND word_count >= ?",
+                "SELECT id, text, lemma_key FROM collocations WHERE language_code = ? AND word_count >= ?",
                 (language_code, min_word_count),
             ).fetchall()
-        return [(row["id"], row["text"]) for row in rows]
+        return [(row["id"], row["text"], row["lemma_key"]) for row in rows]
+
+    def set_lemma_key(self, row_id: int, lemma_key: str) -> None:
+        """Persist the precomputed lemma_key for a collocation (span-match cache)."""
+        with self._get_conn() as conn:
+            conn.execute("UPDATE collocations SET lemma_key = ? WHERE id = ?", (lemma_key, row_id))
+            self._commit(conn)
 
     def get_due_collocations(
         self,
@@ -1024,7 +1036,12 @@ class SRSDatabase:
 
         For non-NEW states this is label-only: ``stability`` / ``difficulty`` /
         ``due_at`` / ``reps`` are preserved, so cycling a card to ``review`` /
-        ``known`` restores its real schedule rather than fabricating one.
+        ``known`` restores its real schedule rather than fabricating one. When the
+        target state enters the review/learning flow (review / learning / relearning
+        / known) and the card was never introduced, ``introduced_at`` is stamped
+        (one-shot via ``COALESCE``, Layer 26) so ``count_new_introduced_today`` stays
+        consistent — a card leaving NEW must decrement the new quota. ``suspended``
+        is *not* an introduction, so it does not stamp.
 
         ``state == NEW`` is a **full reset** (mirrors ``reset_collocation``): a NEW
         card has no schedule, so leaving a graduated ``due_at`` / ``last_review`` /
@@ -1040,6 +1057,12 @@ class SRSDatabase:
             today_due_at = datetime.combine(date.today(), time(4, 0), tzinfo=UTC).isoformat()
             set_clause = f"{_NEW_RESET_SET}{dirty_clause}, introduced_at = NULL, prior_state = NULL"
             params_head: tuple[object, ...] = (today_due_at,)
+        elif state in (SRSState.LEARNING, SRSState.RELEARNING, SRSState.REVIEW, SRSState.KNOWN):
+            # Entering the review/learning flow: stamp introduced_at if unset so the
+            # new-introduced quota decrements (COALESCE keeps any prior stamp).
+            now_iso = datetime.now(UTC).isoformat()
+            set_clause = f"state = ?{dirty_clause}, introduced_at = COALESCE(introduced_at, ?)"
+            params_head = (state.value, now_iso)
         else:
             set_clause = f"state = ?{dirty_clause}"
             params_head = (state.value,)

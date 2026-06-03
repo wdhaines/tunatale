@@ -14,6 +14,12 @@ def _unit(text: str = "dober dan", translation: str = "good day") -> SyntacticUn
     return SyntacticUnit(text=text, translation=translation, word_count=2, difficulty=1, source="corpus")
 
 
+def _id_for_text(srs_db, text: str) -> int:
+    """Resolve a collocation id by its ``text`` (``_unit`` leaves ``lemma`` unset)."""
+    with srs_db._get_conn() as conn:
+        return conn.execute("SELECT id FROM collocations WHERE text = ?", (text,)).fetchone()[0]
+
+
 class TestCRUD:
     """Tests for basic add/get/update collocation operations."""
 
@@ -787,6 +793,66 @@ class TestDueQueries:
             assert ds.last_review == last
             assert ds.reps == 2
             assert ds.stability == 4.47
+
+    def test_set_state_by_id_stamps_introduced_at_entering_review_flow(self, srs_db):
+        """A never-introduced NEW card forced into the review/learning flow must
+        stamp introduced_at so count_new_introduced_today stays consistent (finding #8).
+
+        Without the stamp the card leaves the new pool but the new-introduced quota
+        never decrements (introduced_at NULL → count_new_introduced_today ignores it),
+        and a review card with no FSRS history can surface with the quota miscounted.
+        """
+        today = date.today()
+        for state in (SRSState.REVIEW, SRSState.LEARNING, SRSState.KNOWN):
+            text = f"flow {state.value}"
+            srs_db.add_collocation(_unit(text, "x"), language_code="sl")
+            item = srs_db.get_collocation(text)
+            row_id = _id_for_text(srs_db, text)
+            # Fresh NEW card: no introduced_at yet.
+            assert item.directions[Direction.RECOGNITION].introduced_at is None
+
+            srs_db.set_state_by_id(row_id, state)
+
+            refreshed = srs_db.get_collocation(text)
+            for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+                assert refreshed.directions[d].state == state
+                assert refreshed.directions[d].introduced_at is not None
+        # Each of the three collocations counts once toward today's introductions.
+        assert srs_db.count_new_introduced_today(today) == 3
+
+    def test_set_state_by_id_suspended_does_not_stamp_introduced_at(self, srs_db):
+        """Suspending a never-introduced NEW card is not an introduction — leave
+        introduced_at NULL so it does not inflate count_new_introduced_today."""
+        today = date.today()
+        srs_db.add_collocation(_unit("paused", "x"), language_code="sl")
+        row_id = _id_for_text(srs_db, "paused")
+
+        srs_db.set_state_by_id(row_id, SRSState.SUSPENDED)
+
+        item = srs_db.get_collocation("paused")
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            assert item.directions[d].state == SRSState.SUSPENDED
+            assert item.directions[d].introduced_at is None
+        assert srs_db.count_new_introduced_today(today) == 0
+
+    def test_set_state_by_id_preserves_existing_introduced_at(self, srs_db):
+        """introduced_at is a one-shot stamp (Layer 26): a card already introduced
+        on a prior day keeps its original timestamp when re-stated, not today's."""
+        srs_db.add_collocation(_unit("already", "x"), language_code="sl")
+        row_id = _id_for_text(srs_db, "already")
+        stamp = datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
+        with srs_db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET introduced_at=? WHERE collocation_id=?",
+                (stamp.isoformat(), row_id),
+            )
+            conn.commit()
+
+        srs_db.set_state_by_id(row_id, SRSState.REVIEW)
+
+        item = srs_db.get_collocation("already")
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            assert item.directions[d].introduced_at == stamp
 
     def test_get_due_items_excludes_buried_state(self, srs_db):
         """Buried directions must not appear in get_due_items even if due_date <= today."""
