@@ -31,6 +31,7 @@ from app.models.syntactic_unit import SyntacticUnit
 from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, build_revlog_row, schedule
 from app.srs.function_words import (
+    format_morphology_hint,
     is_function_word,
     make_cloze_text,
     make_morphology_cloze_text,
@@ -1217,6 +1218,7 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
     # 3. Build + create (mirrors /listen morphology-cloze block)
     disambig = f"morph:{body.feature.replace(':', '-')}"
     cloze_sent = make_morphology_cloze_text(body.surface, body.lemma, body.feature, body.sentence)
+    grammar_hint = format_morphology_hint(body.lemma, body.feature)
     unit = SyntacticUnit(
         text=body.surface,
         translation="",
@@ -1227,6 +1229,7 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
         disambig_key=disambig,
         card_type="cloze",
         source_sentence=cloze_sent,
+        grammar=grammar_hint,
     )
     was_created = db.add_collocation(unit, language_code=language_code)
 

@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 28
+        assert CURRENT_VERSION == 29
 
     def test_migrates_v27_to_v28_adds_lemma_key_column(self, tmp_path):
         """v28 adds collocations.lemma_key (space-joined lemma tuple for span matching)."""
@@ -98,6 +98,76 @@ class TestMigrations:
         # Idempotent.
         migrate_v27_to_v28(conn)
         assert _column_exists(conn, "collocations", "lemma_key")
+
+    def test_migrates_v28_to_v29_backfills_inflection_grammar(self, tmp_path):
+        """v29 backfills the grammar column for inflection clozes with empty grammar."""
+        import sqlite3
+
+        from app.srs.migrations import _column_exists, _set_version, migrate_v28_to_v29
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.execute(
+            """CREATE TABLE collocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT UNIQUE NOT NULL,
+                lemma TEXT,
+                disambig_key TEXT NOT NULL DEFAULT '',
+                card_type TEXT DEFAULT 'vocab',
+                grammar TEXT DEFAULT ''
+            )"""
+        )
+        # Seed: inflection cloze with null grammar → should be backfilled
+        conn.execute(
+            "INSERT INTO collocations (text, lemma, disambig_key, card_type, grammar) "
+            "VALUES ('sem', 'biti', 'morph:verb-1sg', 'cloze', NULL)"
+        )
+        # Seed: inflection cloze with empty grammar → should be backfilled
+        conn.execute(
+            "INSERT INTO collocations (text, lemma, disambig_key, card_type, grammar) "
+            "VALUES ('mesto', 'mesto', 'morph:noun-acc-sg', 'cloze', '')"
+        )
+        # Seed: inflection cloze that already has grammar → should not be touched
+        conn.execute(
+            "INSERT INTO collocations (text, lemma, disambig_key, card_type, grammar) "
+            "VALUES ('psa', 'pes', 'morph:noun-acc-sg', 'cloze', 'pes, accusative singular')"
+        )
+        # Seed: non-inflection cloze (no morph:) → should not be touched
+        conn.execute(
+            "INSERT INTO collocations (text, lemma, disambig_key, card_type, grammar) "
+            "VALUES ('some text', NULL, '', 'cloze', NULL)"
+        )
+        # Seed: unrecognized morphology with null lemma → format_morphology_hint returns ""
+        conn.execute(
+            "INSERT INTO collocations (text, lemma, disambig_key, card_type, grammar) "
+            "VALUES ('xyz', NULL, 'morph:unknown', 'cloze', NULL)"
+        )
+        # Seed: vocab card (not cloze) → should not be touched
+        conn.execute(
+            "INSERT INTO collocations (text, lemma, disambig_key, card_type, grammar) "
+            "VALUES ('hiša', NULL, '', 'vocab', NULL)"
+        )
+
+        _set_version(conn, 28)
+        migrate_v28_to_v29(conn)
+
+        conn.row_factory = sqlite3.Row
+        rows = {
+            r["text"]: r["grammar"]
+            for r in conn.execute(
+                "SELECT text, grammar FROM collocations ORDER BY text"
+            ).fetchall()
+        }
+        assert rows["sem"] == "biti, 1st person singular", f"got {rows['sem']!r}"
+        assert rows["mesto"] == "mesto, accusative singular", f"got {rows['mesto']!r}"
+        assert rows["psa"] == "pes, accusative singular", "existing grammar should be preserved"
+        assert rows["some text"] is None, "non-morph clozes should not be affected"
+        assert rows["hiša"] is None, "vocab cards should not be affected"
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 29
+
+        # Idempotent.
+        migrate_v28_to_v29(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 29
+        # (data already validated above)
 
     def test_migrates_v26_to_v27_adds_replay_shadow_columns(self, tmp_path):
         """v27 adds Stage-3b shadow columns (stability_replayed, fsrs_difficulty_replayed)."""

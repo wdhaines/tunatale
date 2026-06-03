@@ -70,8 +70,9 @@ class TestInflectionClozes:
         assert cloze is not None
         assert cloze.syntactic_unit.card_type == "cloze"
         assert cloze.syntactic_unit.disambig_key == "morph:noun-acc-sg"
-        expected_sentence = "Grem v Ljubljan{{c1::o::acc sg}}."
+        expected_sentence = "Grem v Ljubljan{{c1::o}}."
         assert cloze.syntactic_unit.source_sentence == expected_sentence
+        assert cloze.syntactic_unit.grammar == "ljubljana, accusative singular"
         assert cloze.anki_note_id is None
         assert cloze.directions[Direction.PRODUCTION].state == SRSState.NEW
 
@@ -203,8 +204,10 @@ class TestInflectionClozes:
         note = notes[0]
         assert note["mid"] == 1000002  # Cloze notetype
         flds = note["flds"].split("\x1f")
-        expected_cloze = "Grem v Ljubljan{{c1::o::acc sg}}."
+        expected_cloze = "Grem v Ljubljan{{c1::o}}."
         assert flds[0] == expected_cloze
+        assert "ljubljana, accusative singular" in flds[1]
+        assert 'class="grammar"' in flds[1]
 
         cards = anki_conn.execute("SELECT * FROM cards WHERE nid = ?", (note["id"],)).fetchall()
         assert len(cards) == 1

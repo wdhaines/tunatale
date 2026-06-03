@@ -315,6 +315,15 @@ class TestBuildClozeBackExtra:
         )
         assert result.endswith("[sound:x.mp3]")
 
+    def test_build_cloze_back_extra_with_grammar(self):
+        """Grammar hint renders in a <span class='grammar'> element."""
+        result = build_cloze_back_extra(
+            translation="every",
+            sentence_translation="It is open every day",
+            grammar="biti, 1st person singular",
+        )
+        assert '<span class="grammar">biti, 1st person singular</span>' in result
+
     def test_build_cloze_back_extra_audio_only(self):
         """With no other parts, returns just [sound:...]."""
         result = build_cloze_back_extra(

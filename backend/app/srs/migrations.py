@@ -11,8 +11,9 @@ import sqlite3
 from datetime import date
 
 from app.common.guid import compute_guid
+from app.srs.function_words import format_morphology_hint
 
-CURRENT_VERSION = 28
+CURRENT_VERSION = 29
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -855,6 +856,39 @@ def migrate_v27_to_v28(conn: sqlite3.Connection) -> None:
     _set_version(conn, 28)
 
 
+def migrate_v28_to_v29(conn: sqlite3.Connection) -> None:
+    """Backfill the grammar column for existing inflection clozes.
+
+    Phase 4a inflection clozes stored the morphological hint in the cloze
+    markup (``{{c1::sem::biti, 1sg}}``). The grammar column was added as a
+    separate field later. This migration backfills grammar for any inflection
+    cloze where it's still empty by reconstructing the feature from the
+    ``disambig_key`` (``morph:noun-acc-sg`` → feature ``noun:acc:sg``).
+    """
+    saved_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, lemma, disambig_key FROM collocations
+            WHERE card_type = 'cloze'
+              AND disambig_key LIKE 'morph:%'
+              AND (grammar IS NULL OR grammar = '')
+            """
+        ).fetchall()
+        for row in rows:
+            feature = row["disambig_key"].replace("morph:", "", 1).replace("-", ":")
+            hint = format_morphology_hint(row["lemma"] or "", feature)
+            if hint:
+                conn.execute(
+                    "UPDATE collocations SET grammar = ? WHERE id = ?",
+                    (hint, row["id"]),
+                )
+    finally:
+        conn.row_factory = saved_factory
+    _set_version(conn, 29)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -884,6 +918,7 @@ _MIGRATIONS = {
     25: migrate_v25_to_v26,
     26: migrate_v26_to_v27,
     27: migrate_v27_to_v28,
+    28: migrate_v28_to_v29,
 }
 
 

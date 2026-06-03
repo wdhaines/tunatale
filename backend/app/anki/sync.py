@@ -233,11 +233,15 @@ def extract_cloze_sentence_translation(back_extra: str) -> str:
 
 
 def build_cloze_back_extra(
-    translation: str, sentence_translation: str, note: str = "", sentence_audio_filename: str | None = None
+    translation: str,
+    sentence_translation: str,
+    note: str = "",
+    grammar: str = "",
+    sentence_audio_filename: str | None = None,
 ) -> str:
     """Compose a Cloze note's `Back Extra` field from its parts.
 
-    Format: `<i>WORD</i><br><br><span class="st">SENTENCE</span><br><br>NOTE<br><br>[sound:filename]`,
+    Format: ``<i>WORD</i><br><br><span class="st">SENTENCE</span><br><br>NOTE<br><br><span class="grammar">GRAMMAR</span><br><br>[sound:filename]``,
     skipping any empty part. Single source of truth for both card creation
     (sync_create_new) and edit-push (sync_push).
     """
@@ -248,6 +252,8 @@ def build_cloze_back_extra(
         parts.append(f'<span class="st">{sentence_translation}</span>')
     if note:
         parts.append(note)
+    if grammar:
+        parts.append(f'<span class="grammar">{grammar}</span>')
     if sentence_audio_filename:
         parts.append(f"[sound:{sentence_audio_filename}]")
     return "<br><br>".join(parts)
@@ -2167,12 +2173,13 @@ class AnkiSync:
             if item.syntactic_unit.card_type == "cloze":
                 # Cloze notes: any of {translation, sentence_translation, note, audio}
                 # dirty → rebuild Back Extra. Cloze has no separate "English" field.
-                if dirty_set & {"translation", "sentence_translation", "note", "audio"}:
+                if dirty_set & {"translation", "sentence_translation", "note", "grammar", "audio"}:
                     sentence_audio = self._db.get_sentence_audio_filename(coll_id)
                     fields["Back Extra"] = build_cloze_back_extra(
                         item.syntactic_unit.translation,
                         item.syntactic_unit.source_sentence_translation,
-                        item.syntactic_unit.note,
+                        note=item.syntactic_unit.note,
+                        grammar=item.syntactic_unit.grammar,
                         sentence_audio_filename=sentence_audio,
                     )
                     if sentence_audio and not dry_run:
@@ -2387,6 +2394,7 @@ class AnkiSync:
                 back_extra = build_cloze_back_extra(
                     item.syntactic_unit.translation,
                     item.syntactic_unit.source_sentence_translation,
+                    grammar=item.syntactic_unit.grammar,
                     sentence_audio_filename=sentence_audio,
                 )
                 try:

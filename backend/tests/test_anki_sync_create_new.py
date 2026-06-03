@@ -697,10 +697,10 @@ class TestSyncCreateNewRouting:
         assert Direction.PRODUCTION in item.directions
         assert Direction.RECOGNITION not in item.directions
 
-    async def test_sync_create_new_case_cloze_preserves_hint_in_anki_note(self):
-        """Morphology-cloze hint ({{c1::surface::hint}}) passes through to the Anki note's Text field."""
+    async def test_sync_create_new_case_cloze_with_grammar_hint(self):
+        """Morphology cloze writes plain {{c1::surface}} to Anki Text field, grammar hint to Back Extra."""
         db = _make_db()
-        from app.srs.function_words import make_morphology_cloze_text
+        from app.srs.function_words import format_morphology_hint, make_morphology_cloze_text
 
         morph_cloze_sentence = make_morphology_cloze_text(
             "Ljubljano",
@@ -708,6 +708,7 @@ class TestSyncCreateNewRouting:
             "noun:acc:sg",
             "Grem v Ljubljano s prijateljem.",
         )
+        grammar_hint = format_morphology_hint("ljubljana", "noun:acc:sg")
         unit = SyntacticUnit(
             text="Ljubljano",
             translation="Ljubljana",
@@ -719,6 +720,7 @@ class TestSyncCreateNewRouting:
             card_type="cloze",
             source_sentence=morph_cloze_sentence,
             source_sentence_translation="I'm going to Ljubljana with a friend.",
+            grammar=grammar_hint,
         )
         db.add_collocation(unit)
 
@@ -733,11 +735,13 @@ class TestSyncCreateNewRouting:
         note = notes[0]
         assert note["mid"] == 1000002  # Cloze notetype
         flds = note["flds"].split("\x1f")
-        assert flds[0] == "Grem v Ljubljan{{c1::o::acc sg}} s prijateljem."
+        assert flds[0] == "Grem v Ljubljan{{c1::o}} s prijateljem."
 
-        # Back Extra contains translation and sentence translation
+        # Back Extra contains translation, sentence translation, and grammar hint
         assert "Ljubljana" in flds[1]
         assert "I'm going to Ljubljana with a friend." in flds[1]
+        assert "ljubljana, accusative singular" in flds[1]
+        assert 'class="grammar"' in flds[1]
 
         # Verify GUID stability — re-sync with cleared anki_note_id should link, not duplicate
         guid = db.get_collocation("Ljubljano").guid

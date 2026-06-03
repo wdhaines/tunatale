@@ -125,16 +125,66 @@ def _format_morphology_feature(feature: str) -> str:
     return " ".join(p for p in feature.split(":")[1:] if p)
 
 
+def format_morphology_hint(lemma: str, feature: str) -> str:
+    """Return a human-readable grammar hint like ``"biti, 1st person singular"``.
+
+    Examples:
+      ``("biti", "verb:1sg")``        -> ``"biti, 1st person singular"``
+      ``("ljubljana", "noun:loc:sg")`` -> ``"ljubljana, locative singular"``
+      ``("lep", "adj:nom:f:sg")``      -> ``"lep, nominative feminine singular"``
+    """
+    if not feature:
+        return lemma or ""
+
+    person_map = {"1": "1st", "2": "2nd", "3": "3rd"}
+    number_map = {"sg": "singular", "pl": "plural", "du": "dual"}
+    case_map = {"nom": "nominative", "acc": "accusative", "loc": "locative"}
+    gender_map = {"m": "masculine", "f": "feminine", "n": "neuter"}
+
+    parts = feature.split(":")
+    pos = parts[0]
+
+    if pos == "verb" and len(parts) >= 2:
+        fc = parts[1]
+        person_code = fc[0] if fc else ""
+        number_code = fc[1:] if len(fc) > 1 else ""
+        person_str = person_map.get(person_code, person_code)
+        number_str = number_map.get(number_code, number_code)
+        return f"{lemma}, {person_str} person {number_str}".strip()
+
+    if pos == "noun" and len(parts) >= 3:
+        c = parts[1]
+        n = parts[2]
+        case_str = case_map.get(c, c)
+        number_str = number_map.get(n, n)
+        return f"{lemma}, {case_str} {number_str}"
+
+    if pos == "adj" and len(parts) >= 4:
+        c = parts[1]
+        g = parts[2]
+        n = parts[3]
+        case_str = case_map.get(c, c)
+        gender_str = gender_map.get(g, g)
+        number_str = number_map.get(n, n)
+        return f"{lemma}, {case_str} {gender_str} {number_str}"
+
+    label = _format_morphology_feature(feature)
+    if label:
+        return f"{lemma}, {label}"
+    return lemma or ""
+
+
 def make_morphology_cloze_text(
     surface: str,
     lemma: str,
     feature: str,
     source_sentence: str,
 ) -> str:
-    """Wrap ``surface`` with a hinted cloze: ``{{c1::sem::biti, 1sg}}``.
+    """Wrap ``surface`` with a plain cloze: ``{{c1::sem}}``.
 
-    The hint (``::hint``) tells the learner which lemma + morphology to
-    produce. Anki renders the blank as ``[biti, 1sg]``.
+    The grammatical hint is NOT embedded in the cloze markup — caller
+    should store it separately (e.g. via ``_format_morphology_hint``)
+    for display on the answer side.
 
     Idempotent: already-clozed text passes through unchanged.
     Returns empty string when ``source_sentence`` is empty.
@@ -145,18 +195,15 @@ def make_morphology_cloze_text(
         return source_sentence
     if _CLOZE_RE.search(source_sentence):
         return source_sentence
-    label = _format_morphology_feature(feature)
     pattern = re.compile(rf"\b{re.escape(surface)}\b", re.IGNORECASE)
 
     def _replacer(m: re.Match) -> str:
         matched = m.group(0)
         split = _ending_blank_split(matched, lemma)
         if split is None:
-            hint = f"{lemma}, {label}" if label else lemma
-            return f"{{{{c1::{matched}::{hint}}}}}"
+            return f"{{{{c1::{matched}}}}}"
         visible, tail = split
-        hint = label or lemma
-        return f"{visible}{{{{c1::{tail}::{hint}}}}}"
+        return f"{visible}{{{{c1::{tail}}}}}"
 
     return pattern.sub(_replacer, source_sentence)
 

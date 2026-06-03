@@ -9,6 +9,7 @@ from app.srs.function_words import (
     _ending_blank_split,
     _format_morphology_feature,
     _load_function_word_config,
+    format_morphology_hint,
     is_function_word,
     make_cloze_text,
     make_morphology_cloze_text,
@@ -208,7 +209,7 @@ class TestMakeMorphologyClozeText:
             "verb:1sg",
             "Jaz sem doma.",
         )
-        assert result == "Jaz {{c1::sem::biti, 1sg}} doma."
+        assert result == "Jaz {{c1::sem}} doma."
 
     def test_noun_locative(self):
         result = make_morphology_cloze_text(
@@ -217,7 +218,7 @@ class TestMakeMorphologyClozeText:
             "noun:loc:sg",
             "Sem v Ljubljani.",
         )
-        assert result == "Sem v Ljubljan{{c1::i::loc sg}}."
+        assert result == "Sem v Ljubljan{{c1::i}}."
 
     def test_adjective_agreement(self):
         result = make_morphology_cloze_text(
@@ -226,7 +227,7 @@ class TestMakeMorphologyClozeText:
             "adj:nom:f:sg",
             "Hiša je lepa.",
         )
-        assert result == "Hiša je lep{{c1::a::nom f sg}}."
+        assert result == "Hiša je lep{{c1::a}}."
 
     def test_empty_sentence(self):
         assert make_morphology_cloze_text("sem", "biti", "verb:1sg", "") == ""
@@ -256,7 +257,7 @@ class TestMakeMorphologyClozeText:
             "verb:3sg",
             "On je tu, ona je tam.",
         )
-        assert result == "On {{c1::je::biti, 3sg}} tu, ona {{c1::je::biti, 3sg}} tam."
+        assert result == "On {{c1::je}} tu, ona {{c1::je}} tam."
 
     def test_case_insensitive_case_preserving(self):
         result = make_morphology_cloze_text(
@@ -265,16 +266,16 @@ class TestMakeMorphologyClozeText:
             "noun:acc:sg",
             "Grem v Ljubljano.",
         )
-        assert result == "Grem v Ljubljan{{c1::o::acc sg}}."
+        assert result == "Grem v Ljubljan{{c1::o}}."
 
-    def test_empty_feature_falls_back_to_lemma_only(self):
+    def test_empty_feature(self):
         result = make_morphology_cloze_text(
             "sem",
             "biti",
             "",
             "Jaz sem doma.",
         )
-        assert result == "Jaz {{c1::sem::biti}} doma."
+        assert result == "Jaz {{c1::sem}} doma."
 
     def test_ending_blank_verb_conjugation(self):
         result = make_morphology_cloze_text(
@@ -283,7 +284,7 @@ class TestMakeMorphologyClozeText:
             "verb:1sg",
             "Jaz delam doma.",
         )
-        assert result == "Jaz dela{{c1::m::1sg}} doma."
+        assert result == "Jaz dela{{c1::m}} doma."
 
     def test_ending_blank_noun_locative(self):
         result = make_morphology_cloze_text(
@@ -292,7 +293,7 @@ class TestMakeMorphologyClozeText:
             "noun:loc:sg",
             "Sem v mestu.",
         )
-        assert result == "Sem v mest{{c1::u::loc sg}}."
+        assert result == "Sem v mest{{c1::u}}."
 
     def test_ending_blank_adjective(self):
         result = make_morphology_cloze_text(
@@ -301,7 +302,7 @@ class TestMakeMorphologyClozeText:
             "adj:nom:f:sg",
             "Hiša je lepa.",
         )
-        assert result == "Hiša je lep{{c1::a::nom f sg}}."
+        assert result == "Hiša je lep{{c1::a}}."
 
     def test_ending_blank_case_preserving(self):
         result = make_morphology_cloze_text(
@@ -310,7 +311,7 @@ class TestMakeMorphologyClozeText:
             "noun:acc:sg",
             "Grem v Ljubljano.",
         )
-        assert result == "Grem v Ljubljan{{c1::o::acc sg}}."
+        assert result == "Grem v Ljubljan{{c1::o}}."
 
     def test_suppletive_fallback_preserves_whole_word(self):
         result = make_morphology_cloze_text(
@@ -319,7 +320,48 @@ class TestMakeMorphologyClozeText:
             "verb:1sg",
             "Jaz sem doma.",
         )
-        assert result == "Jaz {{c1::sem::biti, 1sg}} doma."
+        assert result == "Jaz {{c1::sem}} doma."
+
+
+class TestFormatMorphologyHint:
+    def test_verb_1sg(self):
+        assert format_morphology_hint("biti", "verb:1sg") == "biti, 1st person singular"
+
+    def test_verb_2sg(self):
+        assert format_morphology_hint("biti", "verb:2sg") == "biti, 2nd person singular"
+
+    def test_verb_3sg(self):
+        assert format_morphology_hint("biti", "verb:3sg") == "biti, 3rd person singular"
+
+    def test_verb_1pl(self):
+        assert format_morphology_hint("biti", "verb:1pl") == "biti, 1st person plural"
+
+    def test_noun_loc_sg(self):
+        assert format_morphology_hint("ljubljana", "noun:loc:sg") == "ljubljana, locative singular"
+
+    def test_noun_acc_sg(self):
+        assert format_morphology_hint("vodo", "noun:acc:sg") == "vodo, accusative singular"
+
+    def test_noun_nom_pl(self):
+        assert format_morphology_hint("vode", "noun:nom:pl") == "vode, nominative plural"
+
+    def test_adj_nom_f_sg(self):
+        assert format_morphology_hint("lepa", "adj:nom:f:sg") == "lepa, nominative feminine singular"
+
+    def test_adj_nom_m_pl(self):
+        assert format_morphology_hint("lepi", "adj:nom:m:pl") == "lepi, nominative masculine plural"
+
+    def test_empty_feature_returns_lemma(self):
+        assert format_morphology_hint("biti", "") == "biti"
+
+    def test_empty_lemma_and_feature(self):
+        assert format_morphology_hint("", "") == ""
+
+    def test_unknown_feature_falls_back_to_short_label(self):
+        assert format_morphology_hint("biti", "unknown:weird") == "biti, weird"
+
+    def test_unknown_feature_empty_label_returns_lemma(self):
+        assert format_morphology_hint("biti", "unknown") == "biti"
 
 
 class TestIsA1MorphologyFeature:
