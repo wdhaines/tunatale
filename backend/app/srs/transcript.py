@@ -130,7 +130,8 @@ def resolve_active_direction(item: object) -> Direction:
 
 def _is_due(ds: DirectionState, today: date) -> bool:
     """True when the direction state is actionable (not known/suspended/unknown) and due."""
-    if ds.state in ("unknown", SRSState.KNOWN, SRSState.SUSPENDED):
+    # NEW directions are intentionally due (gates govern introduction, not review).
+    if ds.state in (SRSState.KNOWN, SRSState.SUSPENDED):
         return False
     return ds.due_at.date() <= today
 
@@ -167,6 +168,8 @@ def extract_transcript(
     if natural_speed is not None:
         # Cache inflection clozes per lemma (one gather per unique lemma)
         inflection_cache: dict[str, list[tuple[int, object]]] = {}
+        # Cache base-collocation lookups per lemma (finding #6)
+        base_cache: dict[str, tuple | None] = {}
 
         for phrase in natural_speed.phrases:
             if phrase.language_code != lesson.language_code:
@@ -215,10 +218,16 @@ def extract_transcript(
                     # Components for progress = just the production direction
                     components = [item.directions.get(Direction.PRODUCTION)]
                 else:
-                    # Step 2: Try base via get_collocation_by_lemma_with_id
-                    result = db.get_collocation_by_lemma_with_id(lemma)
-                    if result is None and surface.lower() != lemma:
-                        result = db.get_collocation_by_lemma_with_id(surface.lower())
+                    # Step 2: Try base via get_collocation_by_lemma_with_id (cached)
+                    if lemma in base_cache:
+                        result = base_cache[lemma]
+                    else:
+                        result = db.get_collocation_by_lemma_with_id(lemma)
+                        if result is None and surface.lower() != lemma:
+                            result = db.get_collocation_by_lemma_with_id(surface.lower())
+                        base_cache[lemma] = result
+                        if result is not None and surface.lower() != lemma:
+                            base_cache[surface.lower()] = result
                     if result is not None:
                         item_id, item = result
                         resolved_item = item

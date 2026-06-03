@@ -474,6 +474,18 @@ class TestIsDue:
         )
         assert _is_due(ds, date(2026, 6, 1)) is False
 
+    def test_not_due_when_suspended(self):
+        ds = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.SUSPENDED, due_at=datetime(2024, 1, 1, tzinfo=UTC)
+        )
+        assert _is_due(ds, date(2026, 6, 1)) is False
+
+    def test_due_when_new_and_due_today(self):
+        ds = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.NEW, due_at=datetime(2026, 6, 1, tzinfo=UTC)
+        )
+        assert _is_due(ds, date(2026, 6, 1)) is True
+
     def test_due_when_review_and_past_due(self):
         ds = DirectionState(
             direction=Direction.RECOGNITION, state=SRSState.REVIEW, due_at=datetime(2024, 1, 1, tzinfo=UTC)
@@ -883,6 +895,27 @@ class TestTranscriptEnrichment:
         assert progress_with is not None
         assert progress_without is not None
         assert progress_with < progress_without
+
+    def test_repeated_lemma_triggers_one_base_lookup(self):
+        """N occurrences of the same lemma cause 1 DB lookup, not N (finding #6).
+
+        Regression: without a base_cache, each token calls
+        get_collocation_by_lemma_with_id per occurrence of its lemma.
+        """
+        self._add_vocab("banka", "bank", lemma="banka")
+        lesson = _make_lesson([("female-1", "banka banka banka")])
+
+        original_lookup = self.db.get_collocation_by_lemma_with_id
+        call_count = 0
+
+        def counting_lookup(lemma: str):
+            nonlocal call_count
+            call_count += 1
+            return original_lookup(lemma)
+
+        self.db.get_collocation_by_lemma_with_id = counting_lookup
+        extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        assert call_count == 1, f"expected 1 lookup, got {call_count}"
 
 
 class TestCollocationLemmaKey:
