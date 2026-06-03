@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.main import app
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
-from tests.conftest import seed_direction
+from tests.conftest import anki_day_anchor, seed_direction
 
 
 def _add_review_due_collocation(db, text: str, today: date):
@@ -71,8 +71,7 @@ def _stamp_reviews_completed_today(db, today: date, count: int):
     """Stamp last_rating and last_review on count collocations to simulate reviews done today."""
     import random
 
-    local_tz = datetime.now().astimezone().tzinfo
-    now_local = datetime.combine(today, datetime.min.time(), tzinfo=local_tz).replace(hour=10)
+    reviewed_at = anki_day_anchor(today).isoformat()
 
     conn = db._get_conn().__enter__()
     rows = conn.execute(
@@ -82,7 +81,7 @@ def _stamp_reviews_completed_today(db, today: date, count: int):
     for row in rows:
         conn.execute(
             "UPDATE collocation_directions SET last_review = ?, last_rating = ? WHERE collocation_id = ? AND direction = ?",
-            (now_local.isoformat(), random.choice([1, 2, 3]), row["collocation_id"], row["direction"]),
+            (reviewed_at, random.choice([1, 2, 3]), row["collocation_id"], row["direction"]),
         )
     conn.commit()
 
@@ -204,7 +203,7 @@ class TestQueueStats:
         'new' to 'learning' on a step-advance grade, so the card dropped out of
         `count_new_introduced_today` and `cap - introduced_today` rebounded by 1.
         """
-        from datetime import UTC, date, datetime, time, timedelta
+        from datetime import UTC, date, datetime, timedelta
 
         from app.models.syntactic_unit import SyntacticUnit
 
@@ -221,8 +220,7 @@ class TestQueueStats:
             )
         # Seed one collocation that's already been introduced today: sync would have
         # set state=LEARNING, prior_state=NEW, last_review=today.
-        local_tz = datetime.now().astimezone().tzinfo
-        graded_at = datetime.combine(today, time(12, 0), tzinfo=local_tz).astimezone(UTC)
+        graded_at = anki_day_anchor(today)
         row_id = seed_direction(
             db,
             text="intro_card",
@@ -2452,7 +2450,6 @@ class TestSessionMainQueueFreeze:
           - Start-of-day ratio:   (12+1)/(3+1) = 3.25 → news at position 2 or 3
         Asserting first_new >= 2 distinguishes start-of-day from current-counts.
         """
-        import datetime as dt
         from datetime import UTC, date, datetime, timedelta
 
         from app.models.syntactic_unit import SyntacticUnit
@@ -2461,7 +2458,7 @@ class TestSessionMainQueueFreeze:
         today = date.today()
 
         db.set_anki_state_cache("daily_new_cap", "10")
-        graded_lr = datetime.combine(today, dt.time(12, 0), tzinfo=UTC).isoformat()
+        graded_lr = anki_day_anchor(today).isoformat()
 
         # 6 review-state cards graded earlier today (prior_state=review).
         for i in range(6):

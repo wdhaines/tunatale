@@ -7,6 +7,7 @@ import pytest
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
+from tests.conftest import anki_day_anchor, anki_prev_day_anchor
 
 
 def _unit(text: str = "dober dan", translation: str = "good day") -> SyntacticUnit:
@@ -1145,11 +1146,8 @@ class TestCountNewIntroducedToday:
         db.update_direction(item.guid, Direction.RECOGNITION, new_dir)
 
     def test_counts_card_introduced_today(self, srs_db):
-        from datetime import datetime as _dt
-
         today = date.today()
-        local = _dt.now().astimezone().tzinfo
-        today_noon = _dt.combine(today, time(12), tzinfo=local).astimezone(UTC).isoformat()
+        today_noon = anki_day_anchor(today).isoformat()
         self._seed_with_introduction(srs_db, "intro_today", today_noon, today_noon)
         assert srs_db.count_new_introduced_today(today) == 1
 
@@ -1184,11 +1182,8 @@ class TestCountNewIntroducedToday:
 
     def test_counts_distinct_collocations_when_both_directions_introduced(self, srs_db):
         """Both directions of the same colloc introduced today → still counts once."""
-        from datetime import datetime as _dt
-
         today = date.today()
-        local = _dt.now().astimezone().tzinfo
-        today_noon = _dt.combine(today, time(12), tzinfo=local).astimezone(UTC).isoformat()
+        today_noon = anki_day_anchor(today).isoformat()
         self._seed_with_introduction(srs_db, "dual_intro", today_noon, today_noon)
         item = srs_db.get_collocation("dual_intro")
         orig_prod = item.directions[Direction.PRODUCTION]
@@ -1240,32 +1235,22 @@ class TestCountReviewsCompletedToday:
 
     def test_counts_review_completed_today(self, srs_db):
         """A REVIEW direction with last_review today and a rating counts."""
-        from datetime import datetime as _dt
-
         today = date.today()
-        local = _dt.now().astimezone().tzinfo
-        today_noon = _dt.combine(today, time(12), tzinfo=local).astimezone(UTC).isoformat()
+        today_noon = anki_day_anchor(today).isoformat()
         self._seed_review(srs_db, "done_today", SRSState.REVIEW, today_noon, last_rating=3)
         assert srs_db.count_reviews_completed_today(today) == 1
 
     def test_counts_relearning_completed_today(self, srs_db):
         """A RELEARNING direction with last_review today counts."""
-        from datetime import datetime as _dt
-
         today = date.today()
-        local = _dt.now().astimezone().tzinfo
-        today_noon = _dt.combine(today, time(12), tzinfo=local).astimezone(UTC).isoformat()
+        today_noon = anki_day_anchor(today).isoformat()
         self._seed_review(srs_db, "relearn_today", SRSState.RELEARNING, today_noon, last_rating=2)
         assert srs_db.count_reviews_completed_today(today) == 1
 
     def test_excludes_review_from_yesterday(self, srs_db):
         """A REVIEW direction with last_review yesterday does NOT count."""
-        from datetime import datetime as _dt
-
         today = date.today()
-        yesterday = today - timedelta(days=1)
-        local = _dt.now().astimezone().tzinfo
-        yesterday_noon = _dt.combine(yesterday, time(12), tzinfo=local).astimezone(UTC).isoformat()
+        yesterday_noon = anki_prev_day_anchor(today).isoformat()
         self._seed_review(srs_db, "yesterday", SRSState.REVIEW, yesterday_noon, last_rating=3)
         assert srs_db.count_reviews_completed_today(today) == 0
 
@@ -1287,11 +1272,8 @@ class TestCountReviewsCompletedToday:
 
     def test_counts_multiple_directions_on_same_collocation_individually(self, srs_db):
         """Both directions of the same collocation reviewed today → counts each."""
-        from datetime import datetime as _dt
-
         today = date.today()
-        local = _dt.now().astimezone().tzinfo
-        today_noon = _dt.combine(today, time(12), tzinfo=local).astimezone(UTC).isoformat()
+        today_noon = anki_day_anchor(today).isoformat()
         srs_db.add_collocation(_unit("dual", "x"), language_code="sl")
         item = srs_db.get_collocation("dual")
         orig = item.directions[Direction.RECOGNITION]
