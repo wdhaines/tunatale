@@ -230,6 +230,32 @@ class TestOfflineReader:
         assert target_card.first_review_ms == 1_700_000_000_000
         assert target_card.last_review_ms == 1_700_000_500_000
 
+    def test_card_record_fsrs_known_false_for_lrt_only_data(self, fake_anki_db):
+        """A card whose Anki `data` has `lrt` but no `s`/`d` must be marked
+        fsrs_known=False, so sync_pull preserves TT's real stability instead of
+        clobbering it to the parse_fsrs_data fallback default (the 'stuck at 1.0'
+        bug — e.g. upogniti's recognition card, data='{"lrt":...}').
+        """
+        conn = sqlite3.connect(str(fake_anki_db))
+        cid = conn.execute("SELECT id FROM cards LIMIT 1").fetchone()[0]
+        conn.execute("UPDATE cards SET data=? WHERE id=?", (json.dumps({"lrt": 1779293316}), cid))
+        conn.commit()
+        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        conn.close()
+        target = next(c for r in records for c in r.cards if c.anki_card_id == cid)
+        assert target.fsrs_known is False
+
+    def test_card_record_fsrs_known_true_for_real_fsrs_data(self, fake_anki_db):
+        """A card with real `s`/`d` in Anki data stays fsrs_known=True (Anki wins)."""
+        conn = sqlite3.connect(str(fake_anki_db))
+        cid = conn.execute("SELECT id FROM cards LIMIT 1").fetchone()[0]
+        conn.execute("UPDATE cards SET data=? WHERE id=?", (json.dumps({"s": 7.5, "d": 5.2, "lrt": 1779293316}), cid))
+        conn.commit()
+        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        conn.close()
+        target = next(c for r in records for c in r.cards if c.anki_card_id == cid)
+        assert target.fsrs_known is True
+
     def test_note_record_fields(self, fake_anki_db):
         """NoteRecord exposes anki_note_id, anki_guid, mod."""
         conn = sqlite3.connect(str(fake_anki_db))

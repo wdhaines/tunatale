@@ -384,6 +384,11 @@ class OfflineReader:
                     last_review_ms=last_revlog_ms.get(c.id),
                     first_review_ms=first_revlog_ms.get(c.id),
                     left=c.fsrs_state.left,
+                    # When Anki's data has no real FSRS state (lrt-only / empty),
+                    # the stability/difficulty above are placeholder defaults —
+                    # mark fsrs_known=False so sync_pull preserves TT's values
+                    # instead of clobbering them (the 'stuck at 1.0' bug).
+                    fsrs_known=c.fsrs_known,
                 )
                 for c in cards_by_note.get(note.id, [])
             ]

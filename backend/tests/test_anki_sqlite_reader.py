@@ -13,6 +13,7 @@ from app.anki.sqlite_reader import (
     fetch_cards_for_notes,
     fetch_notes_for_deck,
     find_deck_id,
+    fsrs_memory_state_present,
     list_media_refs,
     parse_fsrs_data,
 )
@@ -282,6 +283,31 @@ class TestParseFsrsData:
     def test_missing_keys_fall_back(self):
         state = parse_fsrs_data(card_id=99, ord=0, data_str=json.dumps({"x": 1}), queue=0, reps=0, lapses=0)
         assert state.stability == pytest.approx(1.0)
+
+
+class TestFsrsMemoryStatePresent:
+    """`fsrs_memory_state_present` distinguishes real Anki FSRS state from the
+    `parse_fsrs_data` fallback — drives CardRecord.fsrs_known so sync_pull won't
+    overwrite TT's stability with the placeholder default (the 'stuck at 1.0' bug)."""
+
+    def test_true_when_s_and_d_present(self):
+        assert fsrs_memory_state_present(json.dumps({"s": 5.0, "d": 5.0, "lrt": 1})) is True
+
+    def test_false_when_only_lrt(self):
+        # This is the exact shape that clobbered upogniti's recognition card.
+        assert fsrs_memory_state_present(json.dumps({"lrt": 1779293316})) is False
+
+    def test_false_when_only_s(self):
+        assert fsrs_memory_state_present(json.dumps({"s": 5.0})) is False
+
+    def test_false_when_empty_string(self):
+        assert fsrs_memory_state_present("") is False
+
+    def test_false_when_braces_only(self):
+        assert fsrs_memory_state_present("{}") is False
+
+    def test_false_when_malformed(self):
+        assert fsrs_memory_state_present("{bad json}") is False
 
     def test_suspended_queue_sets_state(self):
         state = parse_fsrs_data(
