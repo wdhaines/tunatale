@@ -35,6 +35,7 @@ from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, build_revlog_row, schedule
 from app.srs.function_words import (
     format_morphology_hint,
+    is_clozes_only_verb,
     is_function_word_for,
     make_cloze_text,
     make_morphology_cloze_text,
@@ -376,6 +377,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
         if existing is None:
             # ── Create new row (cloze for function words, vocab for content words) ──
+            # Clozes-only verbs (e.g. biti) get no base card — only per-form
+            # conjugation clozes created by click. Skip entirely.
+            if is_func and is_clozes_only_verb(lemma, lesson.language_code):
+                continue
+
             sent = lemma_to_sentence.get(lemma, "")
             # Cloze rows blank the surface as it appeared, not the dictionary lemma:
             # the lemmatizer may map an inflected surface to a different lemma (classla
@@ -1265,13 +1271,15 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
     db = request.app.state.srs_db
     language_code = body.language_code
 
-    # 1. Eligibility gate — base word production must be REVIEW/KNOWN
-    base = db.get_collocation_by_lemma(body.lemma)
-    if base is None:
-        raise HTTPException(status_code=409, detail="Base word not yet learned")
-    prod = base.directions.get(Direction.PRODUCTION)
-    if prod is None or prod.state not in (SRSState.REVIEW, SRSState.KNOWN):
-        raise HTTPException(status_code=409, detail="Base word not yet learned")
+    # 1. Eligibility gate — base word production must be REVIEW/KNOWN.
+    #    Clozes-only verbs (e.g. biti) have no base card and are ungated.
+    if not is_clozes_only_verb(body.lemma, language_code):
+        base = db.get_collocation_by_lemma(body.lemma)
+        if base is None:
+            raise HTTPException(status_code=409, detail="Base word not yet learned")
+        prod = base.directions.get(Direction.PRODUCTION)
+        if prod is None or prod.state not in (SRSState.REVIEW, SRSState.KNOWN):
+            raise HTTPException(status_code=409, detail="Base word not yet learned")
 
     # 2. Degenerate guard — surface == lemma reveals the answer
     if body.lemma.casefold() == body.surface.casefold():

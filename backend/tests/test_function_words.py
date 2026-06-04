@@ -10,6 +10,7 @@ from app.srs.function_words import (
     _format_morphology_feature,
     _load_function_word_config,
     format_morphology_hint,
+    is_clozes_only_verb,
     is_function_word,
     is_function_word_for,
     make_cloze_text,
@@ -109,8 +110,8 @@ class TestFunctionWordConfig:
             assert is_function_word(word, "sl") is False
 
     def test_missing_language_file_yields_empty_config(self):
-        pos, include, exclude = _load_function_word_config("zz")
-        assert pos == frozenset() and include == frozenset() and exclude == frozenset()
+        pos, include, exclude, clozes_only = _load_function_word_config("zz")
+        assert pos == frozenset() and include == frozenset() and exclude == frozenset() and clozes_only == frozenset()
         assert is_function_word("anything", "zz", upos="AUX") is False
 
     def test_exclude_force_removes(self, tmp_path, monkeypatch):
@@ -128,6 +129,27 @@ class TestFunctionWordConfig:
             assert is_function_word("baz", "xx") is False  # no upos, not in include
         finally:
             _load_function_word_config.cache_clear()
+
+
+class TestIsClozesOnlyVerb:
+    def test_biti_is_clozes_only(self):
+        assert is_clozes_only_verb("biti", "sl") is True
+
+    def test_case_insensitive(self):
+        assert is_clozes_only_verb("Biti", "sl") is True
+        assert is_clozes_only_verb("BITI", "sl") is True
+
+    def test_regular_verb_not_clozes_only(self):
+        assert is_clozes_only_verb("delati", "sl") is False
+        assert is_clozes_only_verb("imeti", "sl") is False
+
+    def test_content_word_not_clozes_only(self):
+        assert is_clozes_only_verb("čas", "sl") is False
+        assert is_clozes_only_verb("voda", "sl") is False
+
+    def test_unknown_language_returns_false(self):
+        assert is_clozes_only_verb("biti", "en") is False
+        assert is_clozes_only_verb("biti", "zz") is False
 
 
 class TestMakeClozeText:

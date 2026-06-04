@@ -19,22 +19,25 @@ _FUNCTION_WORD_DATA_DIR = Path(__file__).parent / "data" / "function_words"
 
 
 @cache
-def _load_function_word_config(language_code: str) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
-    """Load ``(pos, include, exclude)`` for *language_code* from its data file.
+def _load_function_word_config(
+    language_code: str,
+) -> tuple[frozenset[str], frozenset[str], frozenset[str], frozenset[str]]:
+    """Load ``(pos, include, exclude, clozes_only_verbs)`` for *language_code*.
 
-    Returns three empty sets when no file exists — a language without a curated
+    Returns four empty sets when no file exists — a language without a curated
     config produces no function-word clozes (capability-driven). ``include`` /
-    ``exclude`` are casefolded for case-insensitive matching; ``pos`` is the raw
-    UPOS tag set (already uppercase).
+    ``exclude`` / ``clozes_only_verbs`` are casefolded for case-insensitive
+    matching; ``pos`` is the raw UPOS tag set (already uppercase).
     """
     path = _FUNCTION_WORD_DATA_DIR / f"{language_code}.json"
     if not path.exists():
-        return frozenset(), frozenset(), frozenset()
+        return frozenset(), frozenset(), frozenset(), frozenset()
     data = json.loads(path.read_text(encoding="utf-8"))
     pos = frozenset(data.get("pos", []))
     include = frozenset(w.casefold() for w in data.get("include", []))
     exclude = frozenset(w.casefold() for w in data.get("exclude", []))
-    return pos, include, exclude
+    clozes_only = frozenset(w.casefold() for w in data.get("clozes_only_verbs", []))
+    return pos, include, exclude, clozes_only
 
 
 def is_function_word(token: str, language_code: str, *, upos: str | None = None) -> bool:
@@ -48,7 +51,7 @@ def is_function_word(token: str, language_code: str, *, upos: str | None = None)
     analyzer is present (LowercaseLemmatizer emits ``upos=""``), exactly reproducing
     the legacy surface-list behavior. ``exclude`` force-removes. Case-insensitive.
     """
-    pos, include, exclude = _load_function_word_config(language_code)
+    pos, include, exclude, _ = _load_function_word_config(language_code)
     t = token.casefold()
     if t in exclude:
         return False
@@ -75,6 +78,18 @@ def is_function_word_for(
         return True
     upos_map = surface_to_upos or {}
     return any(is_function_word(s, language_code, upos=upos_map.get(s.casefold())) for s in surfaces)
+
+
+def is_clozes_only_verb(lemma: str, language_code: str) -> bool:
+    """True if *lemma* is registered as a clozes-only verb for *language_code*.
+
+    Clozes-only verbs (e.g. ``biti`` in Slovene) are suppletive/auxiliary verbs
+    that produce *only* per-person conjugation clozes — no base card of any kind,
+    and their conjugations are ungated (no base to gate on). The registry is in
+    the language's JSON config under the ``clozes_only_verbs`` key. Casefolded.
+    """
+    _, _, _, clozes_only = _load_function_word_config(language_code)
+    return lemma.casefold() in clozes_only
 
 
 _CLOZE_RE = re.compile(r"\{\{c1::")

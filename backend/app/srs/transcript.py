@@ -9,7 +9,7 @@ from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.srs.collocation_matcher import match_spans
 from app.srs.database import SRSDatabase
-from app.srs.function_words import is_a1_morphology_feature, ud_feats_to_tt_feature
+from app.srs.function_words import is_a1_morphology_feature, is_clozes_only_verb, ud_feats_to_tt_feature
 from app.srs.lemmatizer import Lemmatizer, lemmatize_surfaces_in_context
 from app.srs.mastery import compute_mastery_progress
 from app.srs.tokenizer import tokenize
@@ -136,6 +136,20 @@ def _is_due(ds: DirectionState, today: date) -> bool:
     return ds.due_at.date() <= today
 
 
+def _inflection_feature_for(surface: str, analysis_by_surface: dict[str, object]) -> str:
+    """Compute the A1 morphology feature string for *surface*, or ``""`` if none.
+
+    Looks up the surface in the per-phrase analysis map, maps UD features via
+    ``ud_feats_to_tt_feature``, and returns the feature string if valid.
+    Returns ``""`` when no analysis is available or the feature is not mappable.
+    """
+    ta = analysis_by_surface.get(surface.lower())
+    if ta is not None:
+        feature = ud_feats_to_tt_feature(ta.upos, ta.case, ta.number, ta.person, ta.gender)
+        return feature if feature is not None else ""
+    return ""
+
+
 def extract_transcript(
     lesson: Lesson,
     db: SRSDatabase,
@@ -223,8 +237,11 @@ def extract_transcript(
                     # Components for progress = just the production direction
                     components = [item.directions.get(Direction.PRODUCTION)]
                 else:
-                    # Step 2: Try base via get_collocation_by_lemma_with_id (cached)
-                    if lemma in base_cache:
+                    # Step 2: Try base via get_collocation_by_lemma_with_id (cached).
+                    # Clozes-only verbs (e.g. biti) have no base card — skip.
+                    if is_clozes_only_verb(lemma, lesson.language_code):
+                        result = None
+                    elif lemma in base_cache:
                         result = base_cache[lemma]
                     else:
                         result = db.get_collocation_by_lemma_with_id(lemma)
@@ -279,17 +296,25 @@ def extract_transcript(
                     progress_val = compute_mastery_progress(valid_components)
 
                     if surface.lower() != lemma.lower():
-                        ta = analysis_by_surface.get(surface.lower())
-                        if ta is not None:
-                            feature_str = ud_feats_to_tt_feature(ta.upos, ta.case, ta.number, ta.person, ta.gender)
-                        else:
-                            feature_str = ""
+                        feature_str = _inflection_feature_for(surface, analysis_by_surface)
                         if feature_str and is_a1_morphology_feature(feature_str):
                             base_prod = item.directions.get(Direction.PRODUCTION)
                             base_prod_state = base_prod.state if base_prod is not None else None
                             if base_prod_state in (_SRSState.REVIEW, _SRSState.KNOWN) and inflection_match is None:
                                 inflectable_flag = True
                                 inflection_feature_val = feature_str
+
+                # For clozes-only verbs with no resolvable card, still check
+                # inflectable — they are ungated (no base required).
+                if (
+                    resolved_item is None
+                    and is_clozes_only_verb(lemma, lesson.language_code)
+                    and surface.lower() != lemma.lower()
+                ):
+                    feature_str = _inflection_feature_for(surface, analysis_by_surface)
+                    if feature_str and is_a1_morphology_feature(feature_str) and inflection_match is None:
+                        inflectable_flag = True
+                        inflection_feature_val = feature_str
 
                 # DB translation wins; fall back to gloss map — prefer surface-specific
                 # (e.g. "boste" → "you will") over lemma-generic (e.g. "biti" → "am").

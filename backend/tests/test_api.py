@@ -1013,16 +1013,13 @@ class TestListenClozeIntegration:
         assert item_je.syntactic_unit.card_type == "cloze"
         assert item_je.syntactic_unit.source_sentence == "Kje {{c1::je}} banka?"
 
-    async def test_listen_cloze_blanks_surface_not_lemma(self, monkeypatch):
-        """A function-word surface whose lemma differs (classla: "sem"→"biti") must be
-        blanked by its SURFACE in the stored cloze, not the dictionary lemma (which
-        isn't in the sentence). Regression for the classla blank-front cloze bug
-        (Phase 2b). With the default lowercase lemmatizer lemma==surface, so this
-        forces the divergence via a fake lemmatizer."""
+    async def test_listen_creates_no_cloze_for_biti_surface(self, monkeypatch):
+        """A biti surface (lemma "biti") is clozes-only — no base cloze created by /listen.
+        biti's per-person conjugation clozes are created by click, not auto.
+        Regression: Phase 2b surface-blanking test now reflects the special-case."""
         import app.api.srs as srs_mod
 
         def fake_lemmatize(surfaces, text, lemmatizer, language_code):
-            # Mimic classla: copula surface "sem" → lemma "biti"; else lowercase.
             return ["biti" if s.lower() == "sem" else s.lower() for s in surfaces]
 
         monkeypatch.setattr(srs_mod, "lemmatize_surfaces_in_context", fake_lemmatize)
@@ -1032,18 +1029,22 @@ class TestListenClozeIntegration:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
 
-        # Card is keyed by the lemma "biti", but the blank lands on the surface "Sem".
+        # No base cloze should be created for biti
         item = db.get_collocation_by_lemma("biti")
-        assert item is not None
-        assert item.syntactic_unit.card_type == "cloze"
-        assert item.syntactic_unit.source_sentence == "{{c1::Sem}} doma."
+        assert item is None
 
-    async def test_listen_cloze_via_pos_aux(self, monkeypatch):
-        """A biti form absent from the curated include list (ste → classla AUX) is
-        created as a cloze via /listen too, by POS — mirrors the create-base POS
-        path. Without an analyzer 'ste' would fall through to a standalone vocab."""
+        # Other function words (e.g. "kje" if present) still get base clozes fine.
+        # In this lesson ("Sem doma."), there are no other function words — just verify
+        # no biti row was created regardless of surface.
+        with db._get_conn() as conn:
+            rows = conn.execute("SELECT * FROM collocations WHERE lemma = 'biti'").fetchall()
+        assert len(rows) == 0
+
+    async def test_listen_skips_biti_via_pos_aux(self, monkeypatch):
+        """A biti surface (ste → classla AUX) is a clozes-only verb — no base cloze
+        created by /listen. Without an analyzer 'ste' would fall through to
+        standalone vocab, but even with POS detection biti is skipped."""
         import app.api.srs as srs_mod
-        from app.models.srs_item import Direction, SRSState
         from tests._helpers.lemmatizer import StubLemmatizer
 
         stub = StubLemmatizer()
@@ -1056,33 +1057,67 @@ class TestListenClozeIntegration:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
 
+        # No base cloze for biti
         item = db.get_collocation_by_lemma("biti")
-        assert item is not None
-        assert item.syntactic_unit.card_type == "cloze"
-        assert item.syntactic_unit.source_sentence == "Zdravo kje {{c1::ste}}"
-        assert item.directions[Direction.PRODUCTION].state == SRSState.NEW
+        assert item is None
 
-    async def test_listen_cloze_audio_uses_surface_not_lemma(self, monkeypatch):
-        """The answer-word audio for a plain cloze is synthesized from the surface
-        that was blanked (e.g. "Sem"), not the dictionary lemma ("biti")."""
+        # Other function words (kje) still get base clozes
+        item_kje = db.get_collocation_by_lemma("kje")
+        assert item_kje is not None
+        assert item_kje.syntactic_unit.card_type == "cloze"
+
+    async def test_listen_creates_no_base_cloze_for_biti(self, monkeypatch):
+        """A lesson with biti surfaces creates NO base cloze — only click-triggered
+        conjugation clozes. Regression for the biti clozes-only special case."""
         import app.api.srs as srs_mod
+        from tests._helpers.lemmatizer import StubLemmatizer
 
-        def fake_lemmatize(surfaces, text, lemmatizer, language_code):
-            return ["biti" if s.lower() == "sem" else s.lower() for s in surfaces]
-
-        monkeypatch.setattr(srs_mod, "lemmatize_surfaces_in_context", fake_lemmatize)
+        stub = StubLemmatizer()
+        stub.set_lemma("ste", "biti")
+        stub.set_lemma("sem", "biti")
+        stub.set_analysis("ste", "biti", upos="AUX")
+        stub.set_analysis("sem", "biti", upos="AUX")
+        monkeypatch.setattr(srs_mod, "_lemmatizer", stub)
         audio_mock = AsyncMock()
         monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", audio_mock)
 
-        await self._setup_lesson(phrase_text="Sem doma.")
+        db = await self._setup_lesson(phrase_text="Sem doma, kje ste")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        # biti should have NO base cloze (card_type='cloze', lemma='biti', empty disambig)
+        with db._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM collocations WHERE lemma = 'biti' AND card_type = 'cloze' AND (disambig_key IS NULL OR disambig_key = '')"
+            ).fetchall()
+        assert len(rows) == 0, f"Expected no base cloze for biti, got {len(rows)}"
+
+        # Other function words in the lesson (kje) should still get their base clozes
+        with db._get_conn() as conn:
+            kje_row = conn.execute("SELECT * FROM collocations WHERE lemma = 'kje'").fetchone()
+        assert kje_row is not None
+
+    async def test_listen_cloze_audio_uses_surface_not_lemma(self, monkeypatch):
+        """The answer-word audio for a plain cloze is synthesized from the surface
+        that was blanked, not the dictionary lemma. Uses a non-biti function word
+        (biti is clozes-only and no longer creates a base cloze)."""
+        import app.api.srs as srs_mod
+
+        # Use a mock lemmatizer that diverges lemma from surface for a non-biti
+        # function word: "kje" maps to lemma "kje" (same), so we fake a different
+        # scenario: surface "Kje" (capitalized) maps to "kje"
+        audio_mock = AsyncMock()
+        monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", audio_mock)
+
+        await self._setup_lesson(phrase_text="Kje je banka?")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert resp.status_code == 200
 
-        # synthesize_cloze_audios(db, coll_id, sentence, word) — word (4th arg) is the surface.
+        # Cloze for kje — audio uses the surface that appears in the sentence
         words = [call.args[3] for call in audio_mock.await_args_list]
-        assert "Sem" in words
-        assert "biti" not in words
+        assert "Kje" in words
 
     async def test_listen_existing_cloze_surface_keyed(self, monkeypatch):
         """A cloze card keyed by surface (not lemma) is found via the surface

@@ -1003,3 +1003,253 @@ class TestExtractPunctPairs:
         """When surface is not a substring of a raw token, both punct fields are empty."""
         result = _extract_punct_pairs(["foo"], ["bar"])
         assert result == [("", "")]
+
+
+class TestBitiTranscriptSpecialCase:
+    """Transcript resolution for biti (clozes-only verb)."""
+
+    def setup_method(self):
+        self.db = SRSDatabase(":memory:")
+        self.lemmatizer = LowercaseLemmatizer()
+        self.today = date(2026, 6, 4)
+
+    def test_biti_surface_unknown_is_inflectable_ungated(self):
+        """A biti surface with no cloze yet is inflectable=True, even without a base card."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockBitiLemmatizer:
+            def lemmatize(self, word, language_code):
+                return {"sem": "biti", "ste": "biti", "smo": "biti"}.get(word, word.lower())
+
+            def analyze(self, word, language_code):
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence, language_code):
+                tokens = sentence.split()
+                analyses = []
+                for t in tokens:
+                    t_lower = t.lower()
+                    if t_lower == "sem":
+                        analyses.append(
+                            _TA(surface=t, lemma="biti", upos="AUX", case="", number="Sing", person="1", gender="")
+                        )
+                    elif t_lower == "ste":
+                        analyses.append(
+                            _TA(surface=t, lemma="biti", upos="AUX", case="", number="Plur", person="2", gender="")
+                        )
+                    else:
+                        analyses.append(
+                            _TA(surface=t, lemma=t_lower, upos="", case="", number="", person="", gender="")
+                        )
+                return analyses
+
+        lesson = _make_lesson([("female-1", "Sem doma")])
+        result = extract_transcript(lesson, self.db, _MockBitiLemmatizer(), today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.surface == "Sem"
+        assert word.lemma == "biti"
+        assert word.srs_state == "unknown"
+        assert word.inflectable is True
+        assert word.inflection_feature == "verb:1sg"
+
+    def test_biti_surface_equals_lemma_no_inflectable(self):
+        """When biti surface == lemma (rare, but guards the branch)."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockLemmatizer:
+            def lemmatize(self, word, language_code):
+                return word.lower()
+
+            def analyze(self, word, language_code):
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence, language_code):
+                return [
+                    _TA(surface=t, lemma=t.lower(), upos="", case="", number="", person="", gender="")
+                    for t in sentence.split()
+                ]
+
+        # biti as base-form surface — unlikely in practice but tests the surface==lemma branch
+        lesson = _make_lesson([("female-1", "biti")])
+        result = extract_transcript(lesson, self.db, _MockLemmatizer(), today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.lemma == "biti"
+        assert word.inflectable is False  # surface==lemma
+
+    def test_biti_surface_no_analysis_no_inflectable(self):
+        """biti surface with no analysis_by_surface entry → feature_str='' → inflectable=False."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockNoAnalysis:
+            def lemmatize(self, word, language_code):
+                return {"ste": "biti"}.get(word, word.lower())
+
+            def analyze(self, word, language_code):
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence, language_code):
+                # Return analysis for "kje" only — "ste" is absent from the dict
+                return [
+                    _TA(surface="kje", lemma="kje", upos="ADV", case="", number="", person="", gender=""),
+                ]
+
+        lesson = _make_lesson([("female-1", "kje ste")])
+        result = extract_transcript(lesson, self.db, _MockNoAnalysis(), today=self.today)
+        # ste has no analysis → feature_str='' → inflectable stays False
+        ste_words = [w for w in result.dialogue_lines[0].words if w.surface == "ste"]
+        assert len(ste_words) == 1
+        assert ste_words[0].inflectable is False
+
+    def test_biti_surface_non_a1_feature_no_inflectable(self):
+        """biti surface with analysis but non-A1 feature → inflectable=False."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockNonA1:
+            def lemmatize(self, word, language_code):
+                return {"ste": "biti"}.get(word, word.lower())
+
+            def analyze(self, word, language_code):
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence, language_code):
+                tokens = sentence.split()
+                analyses = []
+                for t in tokens:
+                    t_lower = t.lower()
+                    if t_lower == "ste":
+                        # Return a non-A1 feature (missing number makes ud_feats_to_tt_feature return None)
+                        analyses.append(
+                            _TA(surface=t, lemma="biti", upos="AUX", case="", number="", person="2", gender="")
+                        )
+                    else:
+                        analyses.append(
+                            _TA(surface=t, lemma=t_lower, upos="", case="", number="", person="", gender="")
+                        )
+                return analyses
+
+        lesson = _make_lesson([("female-1", "ste")])
+        result = extract_transcript(lesson, self.db, _MockNonA1(), today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.lemma == "biti"
+        # ud_feats_to_tt_feature returns None for person=2, number="" → inflectable stays False
+        assert word.inflectable is False
+
+    def test_biti_surface_resolves_existing_inflection_cloze(self):
+        """A biti surface with an existing conjugation cloze resolves to that cloze."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockBitiLemmatizer2:
+            def lemmatize(self, word, language_code):
+                return {"ste": "biti"}.get(word, word.lower())
+
+            def analyze(self, word, language_code):
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence, language_code):
+                tokens = sentence.split()
+                analyses = []
+                for t in tokens:
+                    t_lower = t.lower()
+                    if t_lower == "ste":
+                        analyses.append(
+                            _TA(surface=t, lemma="biti", upos="AUX", case="", number="Plur", person="2", gender="")
+                        )
+                    else:
+                        analyses.append(
+                            _TA(surface=t, lemma=t_lower, upos="", case="", number="", person="", gender="")
+                        )
+                return analyses
+
+        # Create a conjugation cloze for "ste"
+        unit = SyntacticUnit(
+            text="ste",
+            translation="",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="biti",
+            disambig_key="morph:verb-2pl",
+            card_type="cloze",
+            source_sentence="Zdravo kje {{c1::ste}}",
+            grammar="biti, 2nd person plural",
+        )
+        self.db.add_collocation(unit, language_code="sl")
+
+        lesson = _make_lesson([("female-1", "Zdravo kje ste")])
+        result = extract_transcript(lesson, self.db, _MockBitiLemmatizer2(), today=self.today)
+        # Find the "ste" word
+        ste_words = [w for w in result.dialogue_lines[0].words if w.surface == "ste"]
+        assert len(ste_words) == 1
+        w = ste_words[0]
+        assert w.lemma == "biti"
+        assert w.card_type == "cloze"
+        assert w.inflectable is False  # already has the cloze
+        assert w.srs_state != "unknown"
+
+    def test_biti_surface_no_inflection_cloze_still_inflectable(self):
+        """biti surface with no exact cloze is inflectable=True ungated,
+        even when no base card exists at all."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockBitiLemmatizer3:
+            def lemmatize(self, word, language_code):
+                return {"smo": "biti"}.get(word, word.lower())
+
+            def analyze(self, word, language_code):
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence, language_code):
+                tokens = sentence.split()
+                analyses = []
+                for t in tokens:
+                    t_lower = t.lower()
+                    if t_lower == "smo":
+                        analyses.append(
+                            _TA(surface=t, lemma="biti", upos="AUX", case="", number="Plur", person="1", gender="")
+                        )
+                    else:
+                        analyses.append(
+                            _TA(surface=t, lemma=t_lower, upos="", case="", number="", person="", gender="")
+                        )
+                return analyses
+
+        lesson = _make_lesson([("female-1", "smo")])
+        result = extract_transcript(lesson, self.db, _MockBitiLemmatizer3(), today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.lemma == "biti"
+        assert word.srs_state == "unknown"
+        assert word.inflectable is True
+        assert word.inflection_feature == "verb:1pl"
+
+    def test_regular_verb_no_base_not_inflectable(self):
+        """Non-special verb with no base is NOT inflectable — still gated."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockRegularLemmatizer:
+            def lemmatize(self, word, language_code):
+                return {"hodim": "hoditi"}.get(word, word.lower())
+
+            def analyze(self, word, language_code):
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence, language_code):
+                tokens = sentence.split()
+                analyses = []
+                for t in tokens:
+                    t_lower = t.lower()
+                    if t_lower == "hodim":
+                        analyses.append(
+                            _TA(surface=t, lemma="hoditi", upos="VERB", case="", number="Sing", person="1", gender="")
+                        )
+                    else:
+                        analyses.append(
+                            _TA(surface=t, lemma=t_lower, upos="", case="", number="", person="", gender="")
+                        )
+                return analyses
+
+        lesson = _make_lesson([("female-1", "hodim")])
+        result = extract_transcript(lesson, self.db, _MockRegularLemmatizer(), today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.lemma == "hoditi"
+        assert word.srs_state == "unknown"
+        assert word.inflectable is False  # no base → gated

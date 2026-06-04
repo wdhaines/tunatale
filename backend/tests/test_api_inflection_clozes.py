@@ -269,3 +269,52 @@ class TestInflectionClozes:
         item = matching[0]
         assert item["card_type"] == "cloze"
         assert item["state"] == "new"
+
+    async def test_biti_with_no_base_succeeds(self, api_app_state):
+        """biti is a clozes-only verb — no base required for inflection cloze."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "ste",
+                    "lemma": "biti",
+                    "feature": "verb:2pl",
+                    "sentence": "Zdravo kje ste",
+                    "language_code": "sl",
+                },
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "id" in data
+        assert data["was_created"] is True
+
+        guid = compute_guid("ste", "sl", "morph:verb-2pl")
+        cloze = api_app_state.get_collocation_by_guid(guid)
+        assert cloze is not None
+        assert cloze.syntactic_unit.card_type == "cloze"
+        assert cloze.syntactic_unit.disambig_key == "morph:verb-2pl"
+        assert cloze.syntactic_unit.grammar == "biti, 2nd person plural"
+        assert cloze.directions[Direction.PRODUCTION].state == SRSState.NEW
+
+    async def test_biti_with_no_base_idempotent(self, api_app_state):
+        """POST biti inflection cloze twice → exactly one row."""
+        body = {
+            "surface": "ste",
+            "lemma": "biti",
+            "feature": "verb:2pl",
+            "sentence": "Zdravo kje ste",
+            "language_code": "sl",
+        }
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp1 = await client.post("/api/srs/inflection-clozes", json=body)
+            resp2 = await client.post("/api/srs/inflection-clozes", json=body)
+
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+
+        guid = compute_guid("ste", "sl", "morph:verb-2pl")
+        with api_app_state._get_conn() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM collocations WHERE guid = ?", (guid,)).fetchone()[0]
+        assert count == 1
