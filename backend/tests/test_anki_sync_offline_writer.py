@@ -199,3 +199,79 @@ class TestSetDeckNewToday:
         writer.set_deck_new_today(999, 4513, 5)
         row = conn.execute("SELECT COUNT(*) FROM decks WHERE id = 999").fetchone()
         assert row[0] == 0
+
+
+def _make_cards_db(col_usn: int = 5) -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, usn INTEGER)")
+    conn.execute("INSERT INTO col (id, crt, mod, usn) VALUES (1, 1704067200, 0, ?)", (col_usn,))
+    conn.execute(
+        "CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER, ord INTEGER, "
+        "mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER, due INTEGER, ivl INTEGER, "
+        "factor INTEGER, reps INTEGER, lapses INTEGER, left INTEGER, odue INTEGER, odid INTEGER, "
+        "flags INTEGER, data TEXT)"
+    )
+    conn.commit()
+    return conn
+
+
+def _insert_review_card(conn: sqlite3.Connection, *, cid: int = 90011, due: int = 4533) -> None:
+    conn.execute(
+        "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, "
+        "lapses, left, odue, odid, flags, data) "
+        'VALUES (?, 1, 1, 1, 100, 5, 2, 2, ?, 8, 2500, 3, 1, 0, 5, 9, 0, \'{"s":7.5,"d":5.2}\')',
+        (cid, due),
+    )
+    conn.commit()
+
+
+class TestForgetCard:
+    """forget_card resets an Anki card to NEW (Anki's "Forget") so a TT reset
+    propagates instead of leaving Anki on the graduated review."""
+
+    def test_resets_review_card_to_new(self):
+        conn = _make_cards_db()
+        _insert_review_card(conn, cid=90011)
+        OfflineWriter(conn).forget_card(90011)
+        row = conn.execute(
+            "SELECT type, queue, reps, lapses, ivl, factor, odue, odid, data, usn FROM cards WHERE id = 90011"
+        ).fetchone()
+        assert row["type"] == 0
+        assert row["queue"] == 0
+        assert row["reps"] == 0
+        assert row["lapses"] == 0
+        assert row["ivl"] == 0
+        assert row["factor"] == 0
+        assert row["odue"] == 0
+        assert row["odid"] == 0
+        assert row["data"] == "{}"
+        assert row["usn"] == -1
+
+    def test_bumps_col_mod_preserves_usn_anchor(self):
+        conn = _make_cards_db(col_usn=7)
+        _insert_review_card(conn)
+        OfflineWriter(conn).forget_card(90011)
+        col = conn.execute("SELECT mod, usn FROM col").fetchone()
+        assert col["mod"] > 0
+        assert col["usn"] == 7  # anchor preserved (Layer 61)
+
+    def test_places_card_at_tail_of_new_queue(self):
+        conn = _make_cards_db()
+        # Existing new card sitting at position 12 → forgotten card lands at 13.
+        conn.execute(
+            "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, "
+            "lapses, left, odue, odid, flags, data) "
+            "VALUES (5, 2, 1, 0, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0, '{}')"
+        )
+        _insert_review_card(conn, cid=90011)
+        OfflineWriter(conn).forget_card(90011)
+        row = conn.execute("SELECT due FROM cards WHERE id = 90011").fetchone()
+        assert row["due"] == 13
+
+    def test_first_new_card_lands_at_position_one(self):
+        conn = _make_cards_db()
+        _insert_review_card(conn, cid=90011)
+        OfflineWriter(conn).forget_card(90011)
+        row = conn.execute("SELECT due FROM cards WHERE id = 90011").fetchone()
+        assert row["due"] == 1

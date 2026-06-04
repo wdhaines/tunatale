@@ -768,6 +768,48 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       });
     });
 
+    it("Reset button asks for confirmation, then forgets in Anki when confirmed", async () => {
+      const t = makeInflectableTranscript();
+      mockSetSRSItemState.mockResolvedValue({} as never);
+      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      const { findByRole } = renderInflectable(t);
+
+      await fireEvent.click(await findByRole("button", { name: "Reset" }));
+
+      await waitFor(() => {
+        expect(mockSetSRSItemState).toHaveBeenCalledWith(7, "new");
+      });
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+      expect(confirmSpy.mock.calls[0][0]).toMatch(/Anki/);
+      confirmSpy.mockRestore();
+    });
+
+    it("Reset button does nothing when confirmation is cancelled", async () => {
+      const t = makeInflectableTranscript();
+      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+      const { findByRole } = renderInflectable(t);
+
+      await fireEvent.click(await findByRole("button", { name: "Reset" }));
+
+      expect(mockSetSRSItemState).not.toHaveBeenCalled();
+      confirmSpy.mockRestore();
+    });
+
+    it("Known button does not prompt for confirmation", async () => {
+      const t = makeInflectableTranscript();
+      mockSetSRSItemState.mockResolvedValue({} as never);
+      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      const { findByRole } = renderInflectable(t);
+
+      await fireEvent.click(await findByRole("button", { name: "Known" }));
+
+      await waitFor(() => {
+        expect(mockSetSRSItemState).toHaveBeenCalledWith(7, "known");
+      });
+      expect(confirmSpy).not.toHaveBeenCalled();
+      confirmSpy.mockRestore();
+    });
+
     it("Un-ignore button (suspended word) calls suspendSRSItem with id and false", async () => {
       const t = makeInflectableTranscript({ active_state: "suspended", inflectable: false });
       mockSuspendSRSItem.mockResolvedValue({} as never);

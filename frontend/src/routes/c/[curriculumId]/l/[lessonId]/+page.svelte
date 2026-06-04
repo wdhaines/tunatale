@@ -164,6 +164,14 @@
 			}
 		},
 		onSetState: async (id: number, state: string) => {
+			// Reset-to-new forgets the card in Anki too (re-learn from scratch),
+			// so confirm before discarding the schedule. Other states are label-only.
+			if (
+				state === 'new' &&
+				!confirm('Reset this word? It will be forgotten in Anki too and re-learned from scratch.')
+			) {
+				return;
+			}
 			error = '';
 			try {
 				await api.setSRSItemState(id, state);

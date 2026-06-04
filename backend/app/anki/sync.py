@@ -540,6 +540,35 @@ class OfflineWriter:
         self._bump_col(ts)
         self._conn.commit()
 
+    def forget_card(self, card_id: int) -> None:
+        """Reset a card to NEW — Anki's "Forget".
+
+        Clears the schedule and FSRS memory so the card is genuinely new in
+        Anki, mirroring TT's ``reset_collocation``. sync_push calls this when a
+        TT reset marks a NEW-state direction dirty, so a reset in TunaTale
+        forgets the card in Anki too instead of silently diverging (Anki keeping
+        the graduated review while TT shows a fresh NEW card; 2026-06-04).
+
+        Places the card at the tail of the new queue (``MAX(due)+1`` over
+        existing new cards) and drops ``data`` to ``{}`` so it carries no FSRS
+        ``s``/``d`` — NULL-R, like any never-graded card.
+        """
+        ts = int(_time.time())
+        row = self._conn.execute("SELECT IFNULL(MAX(due), 0) FROM cards WHERE type = 0").fetchone()
+        new_due = int(row[0] or 0) + 1
+        self._conn.execute(
+            """
+            UPDATE cards
+            SET type = 0, queue = 0, due = ?, ivl = 0, factor = 0,
+                reps = 0, lapses = 0, odue = 0, odid = 0, data = '{}',
+                mod = ?, usn = -1
+            WHERE id = ?
+            """,
+            (new_due, ts, card_id),
+        )
+        self._bump_col(ts)
+        self._conn.commit()
+
     def get_current_card_state(self, card_id: int) -> dict | None:
         """Return Anki's current `queue`/`type`/`left` for the card, or None
         if the card doesn't exist. Used by sync_push (Fix 3) to skip writes
@@ -2229,6 +2258,21 @@ class AnkiSync:
         recovered = self._recovered_directions
         for guid, direction, ds in self._db.list_dirty():
             if ds.anki_card_id is None:
+                continue
+            # Reset-to-new ("Forget"): a NEW-state dirty direction with no reps is
+            # a TunaTale reset (reset_collocation / set_state_by_id→NEW). Propagate
+            # it as an Anki forget rather than the default review-promoting
+            # set_due_date, so both apps agree the card is new. Push runs before
+            # pull, so once Anki is forgotten the subsequent pull reads queue=0 and
+            # keeps NEW. Skip recovered directions — orphan re-mint already rebuilds
+            # those fresh. Idempotent: no-op when Anki already has the card new.
+            if ds.state == SRSState.NEW and ds.reps == 0 and (guid, direction.value) not in recovered:
+                if not dry_run:
+                    anki_state_before = self._capture_anki_card_state(ds.anki_card_id)
+                    if anki_state_before is not None and anki_state_before["type"] != 0:
+                        self._writer.forget_card(ds.anki_card_id)
+                    self._db.mark_direction_clean(guid, direction)
+                report.directions_pushed += 1
                 continue
             # Recovery: when detect_and_reset_orphans cleared this direction's
             # anki_card_id earlier in the run and sync_create_new just minted a

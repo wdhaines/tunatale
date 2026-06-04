@@ -106,6 +106,9 @@ class FakeWriter:
     def set_due_date(self, card_ids: list[int], days: str) -> None:
         self.calls.append(("set_due_date", list(card_ids), days))
 
+    def forget_card(self, card_id: int) -> None:
+        self.calls.append(("forget_card", card_id))
+
     def set_learning_state(self, card_id: int, left: int, due_at: int, *, type_: int = 1) -> None:
         self.calls.append(("set_learning_state", card_id, left, due_at, type_))
 
@@ -719,6 +722,76 @@ class FakeReader:
 
     def get_revlog_for_card(self, card_id: int, after_ms: int = 0) -> list:
         return []
+
+
+class TestSyncPushForget:
+    """A TT reset (dirty NEW direction, reps=0) must push an Anki "Forget" so
+    both apps agree the card is new — not the default review-promoting
+    set_due_date. Regression for the 2026-06-04 new-vs-review badge divergence.
+    """
+
+    @staticmethod
+    def _reset_dirty(db, guid, direction, anki_card_id):
+        ds = DirectionState(
+            direction=direction,
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+            stability=1.0,
+            difficulty=5.0,
+            reps=0,
+            lapses=0,
+            state=SRSState.NEW,
+            dirty_fsrs=True,
+            anki_card_id=anki_card_id,
+        )
+        db.update_direction(guid, direction, ds)
+
+    def test_forgets_graduated_anki_card_and_does_not_promote_to_review(self):
+        db = _make_tt_db()
+        guid, _, _, prod_cid = _add_banka_with_anki_ids(db)
+        self._reset_dirty(db, guid, Direction.PRODUCTION, prod_cid)
+
+        writer = FakeWriter()
+        writer.current_states[prod_cid] = {"queue": 2, "type": 2, "left": 0}  # Anki has it graduated
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert ("forget_card", prod_cid) in writer.calls
+        assert "set_due_date" not in writer.action_names()  # must NOT promote to review
+        assert db.get_collocation("banka").directions[Direction.PRODUCTION].dirty_fsrs is False
+
+    def test_noop_when_anki_card_already_new(self):
+        db = _make_tt_db()
+        guid, _, _, prod_cid = _add_banka_with_anki_ids(db)
+        self._reset_dirty(db, guid, Direction.PRODUCTION, prod_cid)
+
+        writer = FakeWriter()
+        writer.current_states[prod_cid] = {"queue": 0, "type": 0, "left": 0}  # already new
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert "forget_card" not in writer.action_names()
+        assert db.get_collocation("banka").directions[Direction.PRODUCTION].dirty_fsrs is False
+
+    def test_noop_when_anki_card_state_unknown(self):
+        db = _make_tt_db()
+        guid, _, _, prod_cid = _add_banka_with_anki_ids(db)
+        self._reset_dirty(db, guid, Direction.PRODUCTION, prod_cid)
+
+        writer = FakeWriter()  # no current_states entry → get_current_card_state returns None
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert "forget_card" not in writer.action_names()
+        assert db.get_collocation("banka").directions[Direction.PRODUCTION].dirty_fsrs is False
+
+    def test_dry_run_does_not_write_or_clean(self):
+        db = _make_tt_db()
+        guid, _, _, prod_cid = _add_banka_with_anki_ids(db)
+        self._reset_dirty(db, guid, Direction.PRODUCTION, prod_cid)
+
+        writer = FakeWriter()
+        writer.current_states[prod_cid] = {"queue": 2, "type": 2, "left": 0}
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push(dry_run=True)
+
+        assert "forget_card" not in writer.action_names()
+        assert db.get_collocation("banka").directions[Direction.PRODUCTION].dirty_fsrs is True
 
 
 class TestSyncPush:

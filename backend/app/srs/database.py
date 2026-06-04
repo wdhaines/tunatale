@@ -1005,14 +1005,22 @@ class SRSDatabase:
             return {"action": "suspended"}
 
     def reset_collocation(self, row_id: int, direction: Direction | None = None) -> None:
-        """Reset FSRS scheduling for one or both directions of a collocation."""
+        """Reset FSRS scheduling for one or both directions of a collocation.
+
+        ``dirty_fsrs = 1`` so the reset propagates to Anki on the next
+        ``sync_push`` (which forgets the card). Writing ``dirty_fsrs = 0`` left
+        the reset TT-local: Anki kept the graduated review while TT showed a
+        fresh NEW card — a permanent new-vs-review badge divergence that the
+        next pull silently clobbered (2026-06-04). Mirrors
+        ``set_state_by_id(NEW)``, which already marks dirty.
+        """
         today_due_at = datetime.combine(date.today(), time(4, 0), tzinfo=UTC).isoformat()
         if direction is None:
-            sql = f"UPDATE collocation_directions SET {_NEW_RESET_SET}, dirty_fsrs = 0 WHERE collocation_id = ?"
+            sql = f"UPDATE collocation_directions SET {_NEW_RESET_SET}, dirty_fsrs = 1 WHERE collocation_id = ?"
             params = (today_due_at, row_id)
         else:
             sql = (
-                f"UPDATE collocation_directions SET {_NEW_RESET_SET}, dirty_fsrs = 0 "
+                f"UPDATE collocation_directions SET {_NEW_RESET_SET}, dirty_fsrs = 1 "
                 "WHERE collocation_id = ? AND direction = ?"
             )
             params = (today_due_at, row_id, direction.value)

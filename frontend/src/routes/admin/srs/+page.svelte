@@ -139,7 +139,7 @@
 	}
 
 	async function resetItem(id: number) {
-		if (!confirm('Reset this item to new state?')) return;
+		if (!confirm('Reset this item? It will be forgotten in Anki too and re-learned from scratch.')) return;
 		try {
 			await api.resetSRSItem(id);
 			await loadItems();

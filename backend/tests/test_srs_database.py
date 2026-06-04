@@ -1664,6 +1664,32 @@ class TestAdminMutations:
         assert reset.state == SRSState.NEW
         assert reset.last_review is None
 
+    def test_reset_collocation_marks_dirty_for_anki_forget(self, srs_db):
+        """Reset must mark directions dirty so sync_push forgets the card in Anki.
+
+        Regression (2026-06-04): reset_collocation wrote dirty_fsrs=0, so a reset
+        never reached Anki — Anki kept the graduated review while TT showed a
+        fresh NEW card (a permanent new-vs-review badge divergence), and the next
+        pull (queue=2→REVIEW) silently clobbered the reset. Mirrors
+        set_state_by_id(NEW), which already marks dirty.
+        """
+        srs_db.add_collocation(_unit("hvala", "thank you"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        srs_db.reset_collocation(row_id)
+        item = srs_db.get_collocation("hvala")
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
+        assert item.directions[Direction.PRODUCTION].dirty_fsrs is True
+
+    def test_reset_collocation_single_direction_marks_only_that_dirty(self, srs_db):
+        srs_db.add_collocation(_unit("hvala", "thank you"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        srs_db.reset_collocation(row_id, direction=Direction.PRODUCTION)
+        item = srs_db.get_collocation("hvala")
+        assert item.directions[Direction.PRODUCTION].dirty_fsrs is True
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is False
+
     def test_suspend_then_unsuspend_flow(self, srs_db):
         srs_db.add_collocation(_unit("lep", "nice"), language_code="sl")
         rows, _ = srs_db.list_collocations()
