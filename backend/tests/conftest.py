@@ -47,6 +47,10 @@ def anki_prev_day_anchor(today: date) -> datetime:
 def _settings_overrides(monkeypatch, tmp_path):
     """Override settings that touch user data to tmp_path so tests never write to ~/.tunatale.
 
+    Why it exists: a full-suite run on a checkout *without* this fixture wrote
+    ~30 synthetic-collection backups into the real ``~/.tunatale/anki-backups``
+    and the keep-30 retention cap pruned every real 17 MB snapshot.
+
     Also pins the lemmatizer to the deterministic ``lowercase`` default so the
     suite never depends on the developer's ``.env`` ``lemmatizer_type`` (a local
     ``classla`` flag would change computed lemmas and break lemma-sensitive tests).

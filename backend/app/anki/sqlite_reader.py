@@ -38,6 +38,11 @@ class AnkiCard:
     direction: Direction
     fsrs_state: DirectionState
     mod: int = 0  # Anki's cards.mod — needed for fnvhash(id, mod) sort tiebreak
+    # False when Anki's cards.data carries no real FSRS memory state (s/d) — i.e.
+    # `parse_fsrs_data` fell back to the placeholder default (stability=1.0). The
+    # caller maps this onto CardRecord.fsrs_known so sync_pull preserves TT's real
+    # stability instead of overwriting it with the placeholder.
+    fsrs_known: bool = True
 
 
 def compute_due_at(queue: int, due_raw: int, col_crt: int, card_type: int = 0) -> datetime:
@@ -117,6 +122,25 @@ def fetch_notes_for_deck(conn: sqlite3.Connection, deck_id: int) -> list[AnkiNot
     return notes
 
 
+def fsrs_memory_state_present(data_str: str) -> bool:
+    """True iff Anki's ``cards.data`` carries real FSRS memory state (both ``s``
+    and ``d``).
+
+    This is exactly the condition under which ``parse_fsrs_data`` returns a real
+    stability rather than its placeholder fallback (``stability=1.0``). A card
+    that was graded only in TunaTale and pushed — but never reviewed or optimized
+    on the Anki side — ends up with ``{"lrt": ...}`` (a timestamp, no ``s``/``d``)
+    or empty data; sync_pull must NOT treat that placeholder as authoritative.
+    """
+    if not data_str or not data_str.strip():
+        return False
+    try:
+        data = json.loads(data_str)
+    except json.JSONDecodeError, ValueError:
+        return False
+    return isinstance(data, dict) and "s" in data and "d" in data
+
+
 def fetch_cards_for_notes(
     conn: sqlite3.Connection,
     note_ids: list[int],
@@ -180,6 +204,7 @@ def fetch_cards_for_notes(
                 direction=direction,
                 fsrs_state=fsrs,
                 mod=card_mod,
+                fsrs_known=fsrs_memory_state_present(data_str),
             )
         )
     return cards
