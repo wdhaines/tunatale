@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, time, timedelta
 from unittest.mock import patch
 
-from app.anki.sync import AnkiSync, CardRecord, NoteRecord
+from app.anki.sync import AnkiSync, CardRecord, NoteRecord, OfflineWriter
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
@@ -49,6 +49,7 @@ class _FakeWriter:
         self.write_revlog_calls: list[int] = []
         self.suspend_calls: list[list[int]] = []
         self.set_learning_state_calls: list[tuple[int, int, int]] = []
+        self.set_specific_value_calls: list[tuple[int, list[str], list[str]]] = []
 
     def update_note_fields(self, note_id: int, fields: dict) -> None:
         pass
@@ -83,7 +84,7 @@ class _FakeWriter:
         self.write_revlog_calls.append(cid)
 
     def set_specific_value_of_card(self, card_id: int, keys: list, new_values: list) -> None:
-        pass
+        self.set_specific_value_calls.append((card_id, list(keys), list(new_values)))
 
     def get_current_card_state(self, card_id: int) -> dict | None:
         return None
@@ -362,6 +363,84 @@ def test_untrack_suspend_dirty_cleared_by_push():
     assert writer2.suspend_calls == []
 
 
+def test_known_direction_pushes_far_future_due_date():
+    """KNOWN direction pushes as a review card with due_date = max_ivl days.
+
+    mark_known sets dirty_fsrs=1; sync_push must set_due_date with the
+    far-future interval and then clear the dirty flag.
+    """
+    db, guid, row_id = _make_db_with_banka()
+
+    max_ivl = 3650
+    due_at = datetime.combine(date.today() + timedelta(days=max_ivl), time(4, 0), tzinfo=UTC)
+    import json as _json
+
+    db.mark_known(row_id, due_at=due_at, stability=float(max_ivl))
+
+    # Verify dirty direction appears in list_dirty
+    dirty = db.list_dirty()
+    assert any(d[0] == guid and d[2].state == SRSState.KNOWN for d in dirty), (
+        f"KNOWN direction should be dirty, got {[(d[0], d[2].state) for d in dirty]}"
+    )
+
+    stale = _FakeReader(
+        [
+            NoteRecord(
+                anki_note_id=9001,
+                anki_guid=guid,
+                l2_text="banka",
+                translation="bank",
+                note="",
+                disambig_key="",
+                mod=0,
+                cards=[
+                    CardRecord(
+                        anki_card_id=90010,
+                        ord=0,
+                        queue=2,
+                        reps=0,
+                        lapses=0,
+                        stability=0.0,
+                        difficulty=0.0,
+                        due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+                        fsrs_known=True,
+                    ),
+                ],
+            )
+        ]
+    )
+    writer = _FakeWriter()
+    AnkiSync(db=db, _reader=stale, _writer=writer).sync_push()
+
+    # Must push the far-future interval as the due date for both directions
+    assert len(writer.set_due_date_calls) == 2, (
+        f"expected 2 set_due_date calls (recognition + production), got {writer.set_due_date_calls}"
+    )
+    for _cids, days in writer.set_due_date_calls:
+        assert days == str(max_ivl), f"expected days={max_ivl}, got {days!r}"
+    all_cids = [cid for _cids, _ in writer.set_due_date_calls for cid in _cids]
+    assert 90010 in all_cids
+    assert 90011 in all_cids
+
+    # Must also push FSRS data (force_fsrs for KNOWN state)
+    assert len(writer.set_specific_value_calls) == 2, (
+        f"expected 2 set_specific_value calls, got {writer.set_specific_value_calls}"
+    )
+    for _cid, keys, values in writer.set_specific_value_calls:
+        assert keys == ["data", "ivl", "factor"]
+        data = _json.loads(values[0])
+        assert data["s"] == float(max_ivl), f"expected stability={max_ivl}, got {data['s']}"
+
+    # After push, dirty_fsrs cleared
+    dirty_after = db.list_dirty()
+    assert not any(d[0] == guid for d in dirty_after), "dirty_fsrs should be cleared after push"
+
+    # Idempotent: second push sends nothing
+    writer2 = _FakeWriter()
+    AnkiSync(db=db, _reader=stale, _writer=writer2).sync_push()
+    assert writer2.set_due_date_calls == []
+
+
 def test_pull_syncs_note_field():
     """sync_pull writes the note field from Anki records to the local DB."""
     db, guid, _ = _make_db_with_banka()
@@ -472,3 +551,98 @@ def test_sync_pull_state_not_clobbered_by_media_refresh():
     after2 = db.get_collocation_by_guid(guid)
     rec2 = after2.directions[Direction.RECOGNITION]
     assert rec2.state == SRSState.REVIEW, f"state clobbered after media refresh: got {rec2.state}"
+
+
+def _make_anki_conn():
+    """In-memory Anki collection with Slovene notetype, one note, one card."""
+    import sqlite3
+
+    from app.anki.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript("""
+        CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER,
+            dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT,
+            decks TEXT, dconf TEXT, tags TEXT);
+        CREATE TABLE notes (id INTEGER PRIMARY KEY, guid TEXT UNIQUE, mid INTEGER, mod INTEGER,
+            usn INTEGER, tags TEXT, flds TEXT, sfld TEXT, csum INTEGER,
+            flags INTEGER, data TEXT);
+        CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER, ord INTEGER,
+            mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER, due INTEGER,
+            ivl INTEGER, factor INTEGER, reps INTEGER, lapses INTEGER, left INTEGER,
+            odue INTEGER, odid INTEGER, flags INTEGER, data TEXT);
+        CREATE TABLE revlog (id INTEGER PRIMARY KEY, cid INTEGER, usn INTEGER, ease INTEGER,
+            ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER);
+        CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER,
+            usn INTEGER, config BLOB);
+        CREATE TABLE templates (ntid INTEGER, ord INTEGER, name TEXT, mtime_secs INTEGER,
+            usn INTEGER, config BLOB, PRIMARY KEY (ntid, ord));
+        CREATE TABLE fields (ntid INTEGER, ord INTEGER, name TEXT, config BLOB,
+            PRIMARY KEY (ntid, ord));
+        CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER,
+            usn INTEGER, common BLOB);
+    """)
+    conn.execute("INSERT INTO col VALUES (1, 1704067200, 0, 1000, 18, 0, 0, 0, '{}', '{}', '{}', '{}', '{}')")
+    conn.execute("INSERT INTO decks VALUES (12345, '0. Slovene', 0, 0, x'')")
+    conn.execute(
+        "INSERT INTO notetypes VALUES (1000001, ?, 0, 0, x'')",
+        (SLOVENE_VOCAB_NOTETYPE_NAME,),
+    )
+    conn.executemany(
+        "INSERT INTO fields VALUES (?, ?, ?, x'')",
+        [(1000001, i, name) for i, name in enumerate(SLOVENE_VOCAB_FIELD_NAMES)],
+    )
+    conn.executemany(
+        "INSERT INTO templates VALUES (?, ?, ?, 0, 0, x'')",
+        [(1000001, 0, "Recognition"), (1000001, 1, "Production")],
+    )
+    conn.execute(
+        "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+        "VALUES (9001, 'test-guid', 1000001, 0, 0, '', 'banka\\x1fbank\\x1f\\x1f\\x1f', 'banka', 0, 0, '')",
+    )
+    conn.execute(
+        "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, lapses, data) "
+        "VALUES (90010, 9001, 12345, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+    )
+    conn.commit()
+    return conn
+
+
+def test_known_push_via_offline_writer_writes_review_card():
+    """KNOWN push through OfflineWriter lands as queue=2 review with max_ivl."""
+    db = SRSDatabase(":memory:")
+    unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus")
+    db.add_collocation(unit)
+    item = db.get_collocation("banka")
+    assert item is not None
+    guid = item.guid
+    rows, _ = db.list_collocations()
+    row_id = rows[0][0]
+    db.set_anki_ids(guid, 9001, {Direction.RECOGNITION: 90010})
+
+    max_ivl = 3650
+    due_at = datetime.combine(date.today() + timedelta(days=max_ivl), time(4, 0), tzinfo=UTC)
+    db.mark_known(row_id, due_at=due_at, stability=float(max_ivl), direction=Direction.RECOGNITION)
+
+    anki_conn = _make_anki_conn()
+    col_crt = anki_conn.execute("SELECT crt FROM col").fetchone()[0]
+    writer = OfflineWriter(anki_conn)
+
+    class _EmptyReader:
+        def get_note_records(self):
+            return []
+
+        def get_revlog_for_card(self, card_id, after_ms=0):
+            return []
+
+    AnkiSync(db=db, _reader=_EmptyReader(), _writer=writer, _anki_col_crt=col_crt).sync_push()
+
+    card = anki_conn.execute("SELECT * FROM cards WHERE id = 90010").fetchone()
+    assert card is not None, "card must exist in Anki"
+    assert card["queue"] == 2, f"expected queue=2 (review), got queue={card['queue']}"
+    assert card["type"] == 2, f"expected type=2 (review), got type={card['type']}"
+    days_since_crt = (date.today() - date.fromtimestamp(col_crt)).days
+    expected_due = days_since_crt + max_ivl
+    assert card["due"] == expected_due, f"expected due={expected_due}, got due={card['due']}"
+    assert card["ivl"] == max_ivl, f"expected ivl={max_ivl}, got ivl={card['ivl']}"

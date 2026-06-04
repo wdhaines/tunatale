@@ -1083,6 +1083,43 @@ class SRSDatabase:
             )
             self._commit(conn)
 
+    def mark_known(
+        self,
+        row_id: int,
+        due_at: datetime,
+        stability: float,
+        direction: Direction | None = None,
+    ) -> None:
+        """Set state to KNOWN with a far-future due_at and matched stability.
+
+        Sets dirty_fsrs=1 so the direction is picked up by sync_push.
+        Stamps introduced_at (COALESCE) if unset, preserving any prior stamp.
+        """
+        now_iso = datetime.now(UTC).isoformat()
+        due_at_iso = due_at.isoformat()
+        with self._get_conn() as conn:
+            if direction is None:
+                conn.execute(
+                    "UPDATE collocation_directions SET state = 'known', due_at = ?,"
+                    " stability = ?, dirty_fsrs = 1,"
+                    " introduced_at = COALESCE(introduced_at, ?)"
+                    " WHERE collocation_id = ?",
+                    (due_at_iso, stability, now_iso, row_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE collocation_directions SET state = 'known', due_at = ?,"
+                    " stability = ?, dirty_fsrs = 1,"
+                    " introduced_at = COALESCE(introduced_at, ?)"
+                    " WHERE collocation_id = ? AND direction = ?",
+                    (due_at_iso, stability, now_iso, row_id, direction.value),
+                )
+            conn.execute(
+                "UPDATE collocations SET updated_at = datetime('now') WHERE id = ?",
+                (row_id,),
+            )
+            self._commit(conn)
+
     def promote_to_learning(
         self,
         row_id: int,

@@ -6,6 +6,7 @@ import datetime
 import json
 import logging
 import re
+from datetime import UTC, time, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -897,6 +898,17 @@ async def set_item_state(item_id: int, body: SetStateRequest, request: Request):
         raise HTTPException(status_code=404, detail="Item not found")
     if body.state == "learning":
         db.promote_to_learning(item_id)
+    elif body.state == "known":
+        from app.srs.fsrs import stability_for_interval
+        from app.srs.queue_stats import resolve_fsrs_params, resolve_maximum_review_interval
+
+        max_ivl, _ = resolve_maximum_review_interval(db)
+        params, _ = resolve_fsrs_params(db)
+        dr = params.desired_retention
+        stability = stability_for_interval(max_ivl, dr)
+        due_date = datetime.date.today() + timedelta(days=max_ivl)
+        due_at = datetime.datetime.combine(due_date, time(4, 0), tzinfo=UTC)
+        db.mark_known(item_id, due_at=due_at, stability=stability)
     else:
         db.set_state_by_id(item_id, _STATE_MAP[body.state])
     row_id, item, lang = db.get_collocation_by_id(item_id)

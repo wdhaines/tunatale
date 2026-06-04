@@ -854,6 +854,74 @@ class TestDueQueries:
         for d in (Direction.RECOGNITION, Direction.PRODUCTION):
             assert item.directions[d].introduced_at == stamp
 
+    def test_mark_known_writes_far_future_schedule(self, srs_db):
+        """mark_known sets due_at to today + 36500, matched stability, dirty_fsrs."""
+
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        due_date = date.today() + timedelta(days=36500)
+        due_at = datetime.combine(due_date, time(4, 0), tzinfo=UTC)
+        srs_db.mark_known(row_id, due_at=due_at, stability=36500.0)
+
+        item = srs_db.get_collocation("banka")
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            ds = item.directions[d]
+            assert ds.state == SRSState.KNOWN
+            assert ds.due_at == due_at
+            assert abs(ds.stability - 36500.0) < 0.01
+            assert ds.dirty_fsrs is True
+
+    def test_mark_known_stamps_introduced_at(self, srs_db):
+        """A never-introduced card gets introduced_at stamped (COALESCE)."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        item = srs_db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].introduced_at is None
+
+        due_date = date.today() + timedelta(days=36500)
+        due_at = datetime.combine(due_date, time(4, 0), tzinfo=UTC)
+        srs_db.mark_known(row_id, due_at=due_at, stability=36500.0)
+
+        refreshed = srs_db.get_collocation("banka")
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            assert refreshed.directions[d].introduced_at is not None
+
+    def test_mark_known_preserves_existing_introduced_at(self, srs_db):
+        """introduced_at is a one-shot stamp: existing stamp is preserved."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        stamp = datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
+        with srs_db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET introduced_at=? WHERE collocation_id=?",
+                (stamp.isoformat(), row_id),
+            )
+            conn.commit()
+
+        due_date = date.today() + timedelta(days=36500)
+        due_at = datetime.combine(due_date, time(4, 0), tzinfo=UTC)
+        srs_db.mark_known(row_id, due_at=due_at, stability=36500.0)
+
+        refreshed = srs_db.get_collocation("banka")
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            assert refreshed.directions[d].introduced_at == stamp
+
+    def test_mark_known_targets_specific_direction(self, srs_db):
+        """When direction is provided, only that direction is marked."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        due_date = date.today() + timedelta(days=36500)
+        due_at = datetime.combine(due_date, time(4, 0), tzinfo=UTC)
+        srs_db.mark_known(row_id, due_at=due_at, stability=36500.0, direction=Direction.RECOGNITION)
+
+        item = srs_db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.KNOWN
+        assert item.directions[Direction.PRODUCTION].state != SRSState.KNOWN
+
     def test_get_due_items_excludes_buried_state(self, srs_db):
         """Buried directions must not appear in get_due_items even if due_date <= today."""
         today = date.today()

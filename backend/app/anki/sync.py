@@ -2203,7 +2203,7 @@ class AnkiSync:
             # anki_card_id earlier in the run and sync_create_new just minted a
             # fresh one, force_fsrs writes the TT-side stability/difficulty into
             # the new card's data JSON regardless of the global flag.
-            row_force_fsrs = force_fsrs or (guid, direction.value) in recovered
+            row_force_fsrs = force_fsrs or (guid, direction.value) in recovered or ds.state == SRSState.KNOWN
             days_str = str(max(0, (ds.due_at.date() - date.today()).days))
             if not dry_run:
                 # Snapshot Anki's pre-push card state for the anki_ahead

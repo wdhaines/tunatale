@@ -104,6 +104,7 @@ async def trigger_sync(request: Request, dry_run: bool = False):
                     refresh_fsrs_short_term_flag,
                     refresh_learning_steps,
                     refresh_load_balancer_enabled,
+                    refresh_maximum_review_interval,
                     refresh_review_settings,
                     warn_if_multi_deck_preset,
                 )
@@ -114,6 +115,7 @@ async def trigger_sync(request: Request, dry_run: bool = False):
                 refresh_desired_retention(db, ctx.conn, settings.anki_deck_name)
                 refresh_fsrs_params(db, ctx.conn, settings.anki_deck_name)
                 refresh_fsrs_short_term_flag(db, ctx.conn)
+                refresh_maximum_review_interval(db, ctx.conn, settings.anki_deck_name)
                 refresh_review_settings(db, ctx.conn, settings.anki_deck_name)
                 refresh_learning_steps(db, ctx.conn, settings.anki_deck_name)
                 refresh_load_balancer_enabled(db, ctx.conn)

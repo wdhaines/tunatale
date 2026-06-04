@@ -888,3 +888,95 @@ class TestResolveFSRSParams:
         # Without 'version' in cache, FSRSParams infers from weight count
         assert params.version == 5
         assert params.decay == 0.5
+
+
+class TestMaximumReviewInterval:
+    """Tests for maximum_review_interval reading and resolution."""
+
+    def test_read_maximum_review_interval_from_deck_config(self, tmp_path):
+        """Field 16 (VARINT uint32) is read from deck_config."""
+        from app.srs.queue_stats import _read_config_value_from_deck_config_table
+
+        blob = pb_varint_field(16, 36500)
+        conn = _make_deck_config_blob(tmp_path, "Test", blob)
+        result = _read_config_value_from_deck_config_table(conn, "Test", proto_field=16, wire_type=0)
+        conn.close()
+        assert result == 36500
+
+    def test_read_maximum_review_interval_absent_returns_none(self, tmp_path):
+        """No field 16 in blob → None."""
+        from app.srs.queue_stats import _read_config_value_from_deck_config_table
+
+        blob = pb_varint_field(9, 20)  # only new_per_day, no field 16
+        conn = _make_deck_config_blob(tmp_path, "Test", blob)
+        result = _read_config_value_from_deck_config_table(conn, "Test", proto_field=16, wire_type=0)
+        conn.close()
+        assert result is None
+
+    def test_resolve_maximum_review_interval_returns_cache(self, srs_db):
+        """When cache is set and fresh, returns the cached value."""
+        from app.srs.queue_stats import resolve_maximum_review_interval
+
+        srs_db.set_anki_state_cache("maximum_review_interval", "36500")
+        val, source = resolve_maximum_review_interval(srs_db)
+        assert val == 36500
+        assert source == "cache"
+
+    def test_resolve_maximum_review_interval_fallback_default(self, srs_db):
+        """No cache → returns hard default 36500."""
+        from app.srs.queue_stats import resolve_maximum_review_interval
+
+        val, source = resolve_maximum_review_interval(srs_db)
+        assert val == 36500
+        assert source == "default"
+
+    def test_resolve_maximum_review_interval_stale_cache(self, srs_db):
+        """Cache older than 30 days → falls back to default."""
+        from datetime import timedelta
+
+        from app.srs.queue_stats import resolve_maximum_review_interval
+
+        old_ts = (datetime.now(UTC) - timedelta(days=31)).strftime("%Y-%m-%d %H:%M:%S")
+        srs_db.set_anki_state_cache_raw("maximum_review_interval", "1000", old_ts)
+        val, source = resolve_maximum_review_interval(srs_db)
+        assert source == "default"
+
+    def test_resolve_maximum_review_interval_corrupted_cache(self, srs_db):
+        """Corrupted cache value (non-int) → falls back to default."""
+        from app.srs.queue_stats import resolve_maximum_review_interval
+
+        srs_db.set_anki_state_cache_raw("maximum_review_interval", "not_a_number", datetime.now(UTC).isoformat())
+        val, source = resolve_maximum_review_interval(srs_db)
+        assert source == "default"
+
+    def test_resolve_maximum_review_interval_no_db_creates_fresh(self):
+        """When db=None, creates a fresh in-memory DB and returns default."""
+        from unittest.mock import patch
+
+        from app.config import settings as app_settings
+        from app.srs.queue_stats import resolve_maximum_review_interval
+
+        with patch.object(app_settings, "database_url", "sqlite:///:memory:"):
+            val, source = resolve_maximum_review_interval(db=None)
+        assert val == 36500
+        assert source == "default"
+
+    def test_resolve_maximum_review_interval_no_db_fallback(self):
+        """When db=None and DB creation fails, returns default."""
+        from unittest.mock import patch
+
+        from app.srs.database import SRSDatabase
+        from app.srs.queue_stats import resolve_maximum_review_interval
+
+        call_count = 0
+
+        def _fail_init(self, db_path=":memory:"):
+            nonlocal call_count
+            call_count += 1
+            raise Exception("simulated failure")
+
+        with patch.object(SRSDatabase, "__init__", _fail_init):
+            val, source = resolve_maximum_review_interval(db=None)
+        assert call_count == 1, f"expected 1 __init__ call, got {call_count}"
+        assert val == 36500
+        assert source == "default"

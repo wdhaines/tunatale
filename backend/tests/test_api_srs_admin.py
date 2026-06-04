@@ -371,6 +371,29 @@ class TestSetState:
         assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
         assert item.directions[Direction.PRODUCTION].dirty_fsrs is True
 
+    async def test_set_state_to_known_far_future_due_at(self):
+        """KNOWN sets due_at = today + max_ivl with matched stability."""
+        from app.srs.fsrs import stability_for_interval
+
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/api/srs/items/{row_id}/state", json={"state": "known"})
+
+        assert response.status_code == 200
+        item = db.get_collocation("banka")
+        ds = item.directions[Direction.RECOGNITION]
+        assert ds.state == SRSState.KNOWN
+        # Default max_ivl is 36500, default dr is 0.9
+        expected_max_ivl = 36500
+        expected_due = date.today() + timedelta(days=expected_max_ivl)
+        assert ds.due_at.date() == expected_due
+        expected_stability = stability_for_interval(expected_max_ivl, 0.9)
+        assert abs(ds.stability - expected_stability) < 1.0
+
     async def test_set_state_to_ignored_maps_to_suspended(self):
         db = _db()
         db.add_collocation(_unit("banka", "bank"), language_code="sl")

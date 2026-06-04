@@ -363,6 +363,18 @@ def _next_interval(stability: float, desired_retention: float, decay: float = -0
     return max(1, min(_rust_round_half_away(interval), 36500))
 
 
+def stability_for_interval(target_interval: int, desired_retention: float, decay: float = -0.5) -> float:
+    """Inverse of _next_interval: return the stability that yields target_interval.
+
+    Algebraic inverse of ``_next_interval``, using f32 throughout for consistency:
+        stability = target_interval * factor / (dr^(1/decay) - 1)
+    """
+    dr = _F32(desired_retention)
+    d = _F32(decay)
+    factor = _fsrs_factor_f32(decay)
+    return float(_F32(target_interval) * factor / (np.power(dr, 1 / d) - 1))
+
+
 def _greater_than_last(interval: int, scheduled_days: int) -> int:
     """Anki's greater_than_last: returns scheduled_days + 1 if interval > scheduled_days else 0.
 
