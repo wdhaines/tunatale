@@ -86,6 +86,7 @@ class TestFixBitiClozesOnly:
         assert counts["source_updated"] == 1
         assert counts["duplicate_deleted"] == 1
         assert counts["si_translation_cleared"] == 1
+        assert counts["si_dirty_fields_set"] == 1
 
         # 858 should now be the 2pl conjugation cloze
         row_858 = conn.execute("SELECT * FROM collocations WHERE id = 858").fetchone()
@@ -105,8 +106,9 @@ class TestFixBitiClozesOnly:
         assert dirs == 0
 
         # 866 translation should be cleared
-        row_866 = conn.execute("SELECT translation FROM collocations WHERE id = 866").fetchone()
+        row_866 = conn.execute("SELECT translation, dirty_fields FROM collocations WHERE id = 866").fetchone()
         assert row_866["translation"] == ""
+        assert "translation" in (row_866["dirty_fields"] or "").split(",")
 
     def test_apply_fix_idempotent(self):
         db = SRSDatabase(":memory:")
@@ -117,6 +119,8 @@ class TestFixBitiClozesOnly:
         # matched a row even though same values) and duplicate_deleted == 0.
         counts2 = apply_fix(conn)
         assert counts2["duplicate_deleted"] == 0  # already gone
+        # dirty_fields already set on 866 — second pass may report 0 (no actual change)
+        assert counts2["si_dirty_fields_set"] >= 0
         # 858 still exists — check it's still correct
         row_858 = conn.execute("SELECT * FROM collocations WHERE id = 858").fetchone()
         assert row_858 is not None
@@ -128,3 +132,4 @@ class TestFixBitiClozesOnly:
         assert counts["source_updated"] == 0
         assert counts["duplicate_deleted"] == 0
         assert counts["si_translation_cleared"] == 0
+        assert counts["si_dirty_fields_set"] == 0

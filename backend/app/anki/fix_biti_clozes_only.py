@@ -13,7 +13,8 @@ What this does:
      Keeps lemma='biti', anki_note_id (Anki note stays linked).
   2. Collocation 868: deleted entirely (TT-only; anki_note_id IS NULL).
      Cascades: collocation_directions, tt_revlog rows.
-  3. Collocation 866 (si): clears translation field (was a stale copy of the grammar hint).
+  3. Collocation 866 (si): clears translation field (was a stale copy of the grammar hint)
+     and marks ``dirty_fields`` so sync_push propagates the empty value to Anki.
 
 Usage::
 
@@ -42,6 +43,12 @@ def plan_fix(tt_conn: sqlite3.Connection) -> dict:
     for cid in (SOURCE_ID, DUPLICATE_ID, SI_LEMMA_ID):
         row = tt_conn.execute("SELECT * FROM collocations WHERE id = ?", (cid,)).fetchone()
         result[str(cid)] = dict(row) if row else None
+
+    # Check if translation is already dirty — if so, no change needed
+    si_row = result.get(str(SI_LEMMA_ID))
+    if si_row:
+        dirty = (si_row.get("dirty_fields") or "").split(",")
+        result["si_translation_dirty"] = "translation" in dirty
 
     # Count directions + revlog for the duplicate
     if result.get(str(DUPLICATE_ID)):
@@ -93,6 +100,18 @@ def apply_fix(tt_conn: sqlite3.Connection) -> dict[str, int]:
     tt_conn.execute("UPDATE collocations SET translation = '' WHERE id = ?", (SI_LEMMA_ID,))
     counts["si_translation_cleared"] = tt_conn.execute("SELECT changes()").fetchone()[0]
 
+    # 6. Mark translation as dirty so sync_push sends the empty value to Anki
+    #    (push runs before pull, so Anki's stale translation gets overwritten
+    #    before pull can restore it).
+    existing = tt_conn.execute("SELECT dirty_fields FROM collocations WHERE id = ?", (SI_LEMMA_ID,)).fetchone()
+    current_dirty = (existing["dirty_fields"] or "") if existing else ""
+    dirty_set = {f for f in current_dirty.split(",") if f}
+    if "translation" not in dirty_set:
+        dirty_set.add("translation")
+    new_dirty = ",".join(sorted(dirty_set))
+    tt_conn.execute("UPDATE collocations SET dirty_fields = ? WHERE id = ?", (new_dirty, SI_LEMMA_ID))
+    counts["si_dirty_fields_set"] = tt_conn.execute("SELECT changes()").fetchone()[0]
+
     tt_conn.commit()
     return counts
 
@@ -116,10 +135,14 @@ def _print_plan(info: dict) -> None:  # pragma: no cover
     else:
         print("  Collocation 868: not found (nothing to delete)")
 
+    si_dirty = info.get("si_translation_dirty", False)
     if si_row and si_row.get("translation"):
         print(f"  Clear collocation 866 translation: {si_row['translation']!r} → ''")
+        print(f"    → Mark dirty_fields so sync_push propagates to Anki")
+    elif not si_dirty:
+        print(f"  Collocation 866: translation already empty, mark dirty for sync_push")
     else:
-        print("  Collocation 866: translation already empty (nothing to fix)")
+        print(f"  Collocation 866: translation already empty and dirty — nothing to fix")
 
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover
