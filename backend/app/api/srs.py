@@ -9,6 +9,7 @@ import re
 from datetime import UTC, time, timedelta
 from pathlib import Path
 
+import anyio
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 
@@ -520,7 +521,11 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
 
     db = request.app.state.srs_db
     today = date.today()
-    transcript = extract_transcript(lesson, db, _lemmatizer, today=today)
+    # extract_transcript runs the (classla) lemmatizer synchronously and can take
+    # seconds — especially right after restart before the warm-up finishes. Offload it
+    # to a worker thread so it doesn't block the event loop and stall every other
+    # in-flight request (the lesson page fires several API calls at once).
+    transcript = await anyio.to_thread.run_sync(extract_transcript, lesson, db, _lemmatizer, today)
 
     return {
         "lesson_id": lesson_id,
