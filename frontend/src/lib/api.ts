@@ -78,6 +78,7 @@ export interface WordToken {
   progress: number | null;
   inflectable: boolean;
   inflection_feature: string | null;
+  known_marked: boolean;
 }
 
 export interface CreateSRSItemRequest {
@@ -432,6 +433,10 @@ export class TunaTaleAPI {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ suspended, ...(direction ? { direction } : {}) }),
     });
+  }
+
+  async restoreKnown(id: number): Promise<SRSItemDetail> {
+    return this.request(`/api/srs/items/${id}/restore-known`, { method: "POST" });
   }
 
   async setSRSItemState(id: number, state: string): Promise<SRSItemDetail> {

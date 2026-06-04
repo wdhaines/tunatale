@@ -826,6 +826,39 @@ describe("TunaTaleAPI", () => {
       );
     });
 
+    it("restoreKnown calls POST /api/srs/items/:id/restore-known", async () => {
+      const item = {
+        id: 3,
+        text: "zdravo",
+        translation: "",
+        state: "learning" as const,
+        due_at: "2026-04-14",
+        stability: 1.0,
+        difficulty: 5.0,
+        reps: 0,
+        lapses: 0,
+        last_review: null,
+        language_code: "sl",
+      };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(item)));
+
+      const result = await api.restoreKnown(3);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/items/3/restore-known`,
+        expect.objectContaining({ method: "POST" }),
+      );
+      expect(result.state).toBe("learning");
+    });
+
+    it("restoreKnown throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Not Found")));
+
+      await expect(api.restoreKnown(999)).rejects.toThrow(
+        "POST /api/srs/items/999/restore-known: Not Found",
+      );
+    });
+
     it("setSRSItemState calls POST /api/srs/items/:id/state with state", async () => {
       const item = {
         id: 3,

@@ -19,6 +19,7 @@ export function makeWordToken(overrides: Partial<WordToken> = {}): WordToken {
     progress: null,
     inflectable: false,
     inflection_feature: null,
+    known_marked: false,
     ...overrides,
   };
 }

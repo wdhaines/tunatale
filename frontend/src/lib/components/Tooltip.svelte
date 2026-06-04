@@ -5,6 +5,7 @@
 	export interface TooltipActions {
 		onCreateInflection?: (word: WordToken, sentence: string) => Promise<void>;
 		onSetState?: (id: number, state: string) => Promise<void>;
+		onRestoreKnown?: (id: number) => Promise<void>;
 		onUntrack?: (id: number) => Promise<void>;
 		onUnignore?: (id: number) => Promise<void>;
 		onIgnoreLemma?: (lemma: string) => Promise<void>;
@@ -50,9 +51,18 @@
 	const showMarkKnown = $derived(
 		Boolean(
 			hasSrsItem &&
+				!word!.known_marked &&
 				word!.active_state !== 'unknown' &&
 				word!.active_state !== 'known' &&
 				word!.active_state !== 'suspended'
+		)
+	);
+
+	const showUnmarkKnown = $derived(
+		Boolean(
+			hasSrsItem &&
+				word!.known_marked &&
+				actions?.onRestoreKnown
 		)
 	);
 
@@ -66,7 +76,7 @@
 	);
 
 	const hasActions = $derived(
-		showCreateInflection || showIgnore || showIgnoreCardless || showUnignore || showUnignoreCardless || showMarkKnown || showResetNew
+		showCreateInflection || showIgnore || showIgnoreCardless || showUnignore || showUnignoreCardless || showMarkKnown || showUnmarkKnown || showResetNew
 	);
 
 	const hasContent = $derived(Boolean(translation || dueLabel || hasActions));
@@ -121,6 +131,13 @@
 							class="tt-btn"
 							onclick={() => actions!.onSetState!(word!.srs_item_id!, 'known')}
 						>Known</button>
+					{/if}
+					{#if showUnmarkKnown}
+						<button
+							type="button"
+							class="tt-btn"
+							onclick={() => actions!.onRestoreKnown!(word!.srs_item_id!)}
+						>Un-mark known</button>
 					{/if}
 					{#if showResetNew}
 						<button

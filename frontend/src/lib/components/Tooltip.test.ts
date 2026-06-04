@@ -135,6 +135,35 @@ describe("Tooltip", () => {
     expect(queryByRole("button", { name: /^known$/i })).toBeNull();
   });
 
+  it('shows "Un-mark known" (not "Known") when known_marked is true', () => {
+    const word = makeWordToken({ active_state: "learning", srs_item_id: 5, known_marked: true });
+    const actions = { onRestoreKnown: vi.fn() };
+    const { getByRole, queryByRole } = render(TooltipTest, {
+      props: { word, actions, childText: "test" },
+    });
+    expect(getByRole("button", { name: /un-mark known/i })).toBeTruthy();
+    expect(queryByRole("button", { name: /^known$/i })).toBeNull();
+  });
+
+  it('does NOT show "Un-mark known" when known_marked is false', () => {
+    const word = makeWordToken({ active_state: "learning", srs_item_id: 5, known_marked: false });
+    const actions = { onRestoreKnown: vi.fn() };
+    const { queryByRole } = render(TooltipTest, {
+      props: { word, actions, childText: "test" },
+    });
+    expect(queryByRole("button", { name: /un-mark known/i })).toBeNull();
+  });
+
+  it('calls onRestoreKnown with srs_item_id when "Un-mark known" clicked', async () => {
+    const word = makeWordToken({ active_state: "learning", srs_item_id: 10, known_marked: true });
+    const onRestoreKnown = vi.fn();
+    const { getByRole } = render(TooltipTest, {
+      props: { word, actions: { onRestoreKnown }, childText: "test" },
+    });
+    await getByRole("button", { name: /un-mark known/i }).click();
+    expect(onRestoreKnown).toHaveBeenCalledWith(10);
+  });
+
   it("shows Reset button for learning/review/relearning/known", () => {
     const word = makeWordToken({ active_state: "review", srs_item_id: 5 });
     const actions = { onSetState: vi.fn() };

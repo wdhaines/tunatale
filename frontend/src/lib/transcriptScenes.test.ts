@@ -21,6 +21,7 @@ function word(surface: string) {
     progress: null,
     inflectable: false,
     inflection_feature: null,
+    known_marked: false,
   };
 }
 

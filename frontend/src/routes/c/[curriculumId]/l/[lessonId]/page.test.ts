@@ -14,6 +14,7 @@ vi.mock("$lib/api", () => ({
     markAsListened: vi.fn(),
     createSRSItem: vi.fn(),
     setSRSItemState: vi.fn(),
+    restoreKnown: vi.fn(),
     suspendSRSItem: vi.fn(),
     untrackSRSItem: vi.fn(),
     createBaseCard: vi.fn(),
@@ -53,6 +54,7 @@ const mockSyncWithAnki = vi.mocked(api.syncWithAnki);
 const mockGenerateStory = vi.mocked(api.generateStory);
 const mockIgnoreLemma = vi.mocked(api.ignoreLemma);
 const mockUnignoreLemma = vi.mocked(api.unignoreLemma);
+const mockRestoreKnown = vi.mocked(api.restoreKnown);
 
 const curriculum = { id: "cid-1", topic: "Coffee", language_code: "sl", days: 3 };
 const lesson = {
@@ -335,6 +337,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
               progress: null,
               inflectable: false,
               inflection_feature: null,
+              known_marked: false,
               ...overrides,
             },
           ],
@@ -614,6 +617,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
               progress: null,
               inflectable: false,
               inflection_feature: null,
+              known_marked: false,
             },
             {
               surface: "dan",
@@ -633,6 +637,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
               progress: null,
               inflectable: false,
               inflection_feature: null,
+              known_marked: false,
             },
           ],
         },
@@ -696,6 +701,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
               progress: 0.8,
               inflectable: true,
               inflection_feature: "noun:acc:sg",
+              known_marked: false,
               ...overrides,
             },
           ],
@@ -766,6 +772,31 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await waitFor(() => {
         expect(mockSetSRSItemState).toHaveBeenCalledWith(7, "known");
       });
+    });
+
+    it('"Un-mark known" button calls restoreKnown and refetches transcript', async () => {
+      const t = makeInflectableTranscript({ known_marked: true });
+      mockRestoreKnown.mockResolvedValue({} as never);
+      mockGetTranscript.mockResolvedValue(t);
+      const { findByRole } = renderInflectable(t);
+
+      await fireEvent.click(await findByRole("button", { name: /un-mark known/i }));
+
+      await waitFor(() => {
+        expect(mockRestoreKnown).toHaveBeenCalledWith(7);
+        expect(mockGetTranscript).toHaveBeenCalledWith("l1");
+      });
+    });
+
+    it('shows error when restoreKnown throws', async () => {
+      const t = makeInflectableTranscript({ known_marked: true });
+      mockRestoreKnown.mockRejectedValue(new Error("restore boom"));
+      mockGetTranscript.mockResolvedValue(t);
+      const { findByRole, findByText } = renderInflectable(t);
+
+      await fireEvent.click(await findByRole("button", { name: /un-mark known/i }));
+
+      expect(await findByText("restore boom")).toBeTruthy();
     });
 
     it("Reset button asks for confirmation, then forgets in Anki when confirmed", async () => {
@@ -888,6 +919,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
               progress: null,
               inflectable: false,
               inflection_feature: null,
+              known_marked: false,
               ...overrides,
             },
           ],
@@ -987,6 +1019,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
               progress: null,
               inflectable: false,
               inflection_feature: null,
+              known_marked: false,
             },
             {
               surface: "mesta",
@@ -1006,6 +1039,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
               progress: null,
               inflectable: false,
               inflection_feature: null,
+              known_marked: false,
             },
           ],
         },
@@ -1086,6 +1120,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
                 progress: null,
                 inflectable: false,
                 inflection_feature: null,
+                known_marked: false,
               },
             ],
           },
@@ -1110,6 +1145,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
                 progress: null,
                 inflectable: false,
                 inflection_feature: null,
+                known_marked: false,
               },
               {
                 surface: "mesta",
@@ -1129,6 +1165,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
                 progress: null,
                 inflectable: false,
                 inflection_feature: null,
+                known_marked: false,
               },
             ],
           },

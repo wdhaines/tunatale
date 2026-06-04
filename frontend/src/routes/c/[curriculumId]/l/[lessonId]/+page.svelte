@@ -216,6 +216,15 @@
 			} catch (e) {
 				error = e instanceof Error ? e.message : String(e);
 			}
+		},
+		onRestoreKnown: async (id: number) => {
+			error = '';
+			try {
+				await api.restoreKnown(id);
+				transcript = await api.getLessonTranscript(data.lesson.id);
+			} catch (e) {
+				error = e instanceof Error ? e.message : String(e);
+			}
 		}
 	};
 
