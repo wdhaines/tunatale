@@ -39,6 +39,7 @@ class WordToken:
     progress: float | None = None  # compute_mastery_progress over the component set
     inflectable: bool = False  # surface!=lemma + A1 feature + base prod REVIEW/KNOWN + no existing cloze
     inflection_feature: str | None = None  # the A1 feature string when inflectable
+    known_marked: bool = False  # resolved item has a reversible "known" snapshot (db.is_known_marked)
 
 
 @dataclass
@@ -322,6 +323,8 @@ def extract_transcript(
                     db_translation if db_translation else (gloss_map.get(surface.lower()) or gloss_map.get(lemma))
                 )
 
+                known_marked_flag = resolved_item_id is not None and db.is_known_marked(resolved_item_id)
+
                 words.append(
                     WordToken(
                         surface=surface,
@@ -338,6 +341,7 @@ def extract_transcript(
                         progress=progress_val,
                         inflectable=inflectable_flag,
                         inflection_feature=inflection_feature_val,
+                        known_marked=known_marked_flag,
                     )
                 )
 

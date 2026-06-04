@@ -144,6 +144,7 @@ _DIR_COLUMNS = (
     "prior_stability",
     "introduced_at",
     "bury_kind",
+    "fsrs_force_next",
 )
 
 # States that should never surface in the due queue regardless of due_date.
@@ -432,7 +433,8 @@ class SRSDatabase:
                     prior_left = ?,
                     prior_stability = ?,
                     introduced_at = ?,
-                    bury_kind = ?
+                    bury_kind = ?,
+                    fsrs_force_next = ?
                 WHERE collocation_id = ? AND direction = ?
                 """,
                 (
@@ -456,6 +458,7 @@ class SRSDatabase:
                     state.prior_stability,
                     state.introduced_at.isoformat() if state.introduced_at else None,
                     state.bury_kind,
+                    1 if state.fsrs_force_next else 0,
                     row["id"],
                     direction.value,
                 ),
@@ -544,6 +547,7 @@ class SRSDatabase:
                 prior_stability=row["prior_stability"],
                 introduced_at=datetime.fromisoformat(introduced_at_raw) if introduced_at_raw else None,
                 bury_kind=row["bury_kind"] if "bury_kind" in row.keys() else None,  # noqa: SIM118
+                fsrs_force_next=bool(row["fsrs_force_next"]),
             )
         return directions
 
@@ -1102,13 +1106,32 @@ class SRSDatabase:
 
         Sets dirty_fsrs=1 so the direction is picked up by sync_push.
         Stamps introduced_at (COALESCE) if unset, preserving any prior stamp.
+
+        Snapshots the pre-known ``state``/``stability``/``due_at`` into the
+        ``known_prior_*`` columns so ``restore_known`` can exactly reverse the
+        mark. The CASE guards capture the *old* row values and only on entry
+        (``state != 'known'``), so a double-mark keeps the first (real)
+        snapshot rather than clobbering it with the inflated KNOWN values.
+        SQLite evaluates every SET RHS against the pre-update row, so reading
+        the old ``state``/``stability``/``due_at`` in the same statement is safe.
+
+        ``introduced_at`` is COALESCE-stamped here but NOT un-stamped by
+        ``restore_known``: a rare new→known→restore path leaves the word
+        "introduced". Accepted — restore targets review/known words in practice.
         """
         now_iso = datetime.now(UTC).isoformat()
         due_at_iso = due_at.isoformat()
+        snapshot_sql = (
+            " known_prior_state = CASE WHEN state != 'known' THEN state ELSE known_prior_state END,"
+            " known_prior_stability = CASE WHEN state != 'known' THEN stability ELSE known_prior_stability END,"
+            " known_prior_due_at = CASE WHEN state != 'known' THEN due_at ELSE known_prior_due_at END,"
+        )
         with self._get_conn() as conn:
             if direction is None:
                 conn.execute(
-                    "UPDATE collocation_directions SET state = 'known', due_at = ?,"
+                    "UPDATE collocation_directions SET"
+                    f"{snapshot_sql}"
+                    " state = 'known', due_at = ?,"
                     " stability = ?, dirty_fsrs = 1,"
                     " introduced_at = COALESCE(introduced_at, ?)"
                     " WHERE collocation_id = ?",
@@ -1116,7 +1139,9 @@ class SRSDatabase:
                 )
             else:
                 conn.execute(
-                    "UPDATE collocation_directions SET state = 'known', due_at = ?,"
+                    "UPDATE collocation_directions SET"
+                    f"{snapshot_sql}"
+                    " state = 'known', due_at = ?,"
                     " stability = ?, dirty_fsrs = 1,"
                     " introduced_at = COALESCE(introduced_at, ?)"
                     " WHERE collocation_id = ? AND direction = ?",
@@ -1127,6 +1152,61 @@ class SRSDatabase:
                 (row_id,),
             )
             self._commit(conn)
+
+    def restore_known(self, row_id: int, direction: Direction | None = None) -> None:
+        """Reverse ``mark_known``: restore the snapshotted pre-known schedule.
+
+        Writes ``known_prior_*`` back to the live ``state``/``stability``/
+        ``due_at`` columns, clears the snapshot, and sets ``dirty_fsrs=1`` +
+        ``fsrs_force_next=1``. The force flag makes the next sync_push
+        force-write the restored stability into Anki's ``cards.data`` — a
+        restored card is ``review``, which otherwise has no TT→Anki
+        stability-write signal and would be re-clobbered by the next
+        take-Anki-verbatim pull. Push runs before pull, so Anki is corrected
+        before the pull reads it (mirrors how KNOWN forces via ``state==KNOWN``).
+
+        No-op for any direction without a snapshot (``known_prior_state IS NULL``),
+        so calling it on a card that was never marked known leaves it untouched.
+        Does NOT un-stamp ``introduced_at`` (see ``mark_known``).
+        """
+        where_dir = "" if direction is None else " AND direction = ?"
+        params: list = [row_id]
+        if direction is not None:
+            params.append(direction.value)
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET"
+                " state = known_prior_state,"
+                " stability = known_prior_stability,"
+                " due_at = known_prior_due_at,"
+                " dirty_fsrs = 1,"
+                " fsrs_force_next = 1,"
+                " known_prior_state = NULL,"
+                " known_prior_stability = NULL,"
+                " known_prior_due_at = NULL"
+                " WHERE collocation_id = ? AND known_prior_state IS NOT NULL" + where_dir,
+                params,
+            )
+            conn.execute(
+                "UPDATE collocations SET updated_at = datetime('now') WHERE id = ?",
+                (row_id,),
+            )
+            self._commit(conn)
+
+    def is_known_marked(self, row_id: int) -> bool:
+        """True if any direction of this collocation has a known snapshot pending.
+
+        A snapshot is present iff the word is currently marked known (and thus
+        reversible via ``restore_known``). Drives the transcript's
+        ``known_marked`` flag and the popover's Mark/Un-mark toggle.
+        """
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT EXISTS(SELECT 1 FROM collocation_directions"
+                " WHERE collocation_id = ? AND known_prior_state IS NOT NULL)",
+                (row_id,),
+            ).fetchone()
+        return bool(row[0])
 
     def promote_to_learning(
         self,
@@ -1795,6 +1875,10 @@ class SRSDatabase:
                     prior_left=row["prior_left"],
                     prior_stability=row["prior_stability"],
                     bury_kind=row["bury_kind"],
+                    # Load-bearing for the push loop's row_force_fsrs decision —
+                    # without it a restored direction never force-writes its
+                    # stability to Anki (the same silent-False trap as bury_kind).
+                    fsrs_force_next=bool(row["fsrs_force_next"]),
                 )
                 result.append((row["guid"], d, ds))
         return result
@@ -1862,6 +1946,10 @@ class SRSDatabase:
                     prior_left=row["prior_left"],
                     prior_stability=row["prior_stability"],
                     bury_kind=row["bury_kind"],
+                    # fsrs_force_next is load-bearing here: the push loop reads it
+                    # off the list_recently_graded_clean DirectionState for the
+                    # row_force_fsrs decision. Same silent-False trap as bury_kind.
+                    fsrs_force_next=bool(row["fsrs_force_next"]),
                 )
                 result.append((row["guid"], d, ds))
         return result
@@ -1876,6 +1964,7 @@ class SRSDatabase:
                 """
                 UPDATE collocation_directions SET
                     dirty_fsrs = 0,
+                    fsrs_force_next = 0,
                     last_rating = NULL,
                     last_synced_at = ?,
                     prior_state = NULL,

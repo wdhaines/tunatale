@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 30
+        assert CURRENT_VERSION == 31
 
     def test_migrates_v27_to_v28_adds_lemma_key_column(self, tmp_path):
         """v28 adds collocations.lemma_key (space-joined lemma tuple for span matching)."""
@@ -1857,3 +1857,66 @@ class TestMigrateV12ToV13:
         # Idempotent.
         migrate_v29_to_v30(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 30
+
+
+class TestMigrateV30ToV31:
+    """Tests for v30→v31 (reversible-known snapshot + fsrs_force_next columns)."""
+
+    def _make_v30_conn(self):
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            CREATE TABLE collocation_directions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                collocation_id INTEGER NOT NULL,
+                direction TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'new',
+                stability REAL NOT NULL DEFAULT 1.0,
+                due_at TEXT,
+                reps INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        conn.execute("PRAGMA user_version = 30")
+        conn.commit()
+        return conn
+
+    def test_adds_snapshot_and_force_columns(self):
+        from app.srs.migrations import migrate_v30_to_v31
+
+        conn = self._make_v30_conn()
+        migrate_v30_to_v31(conn)
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
+        assert "known_prior_state" in cols
+        assert "known_prior_stability" in cols
+        assert "known_prior_due_at" in cols
+        assert "fsrs_force_next" in cols
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 31
+
+    def test_fsrs_force_next_defaults_to_zero(self):
+        from app.srs.migrations import migrate_v30_to_v31
+
+        conn = self._make_v30_conn()
+        conn.execute("INSERT INTO collocation_directions (collocation_id, direction) VALUES (1, 'recognition')")
+        conn.commit()
+        migrate_v30_to_v31(conn)
+        row = conn.execute(
+            "SELECT fsrs_force_next, known_prior_state, known_prior_stability, known_prior_due_at "
+            "FROM collocation_directions"
+        ).fetchone()
+        assert row["fsrs_force_next"] == 0
+        assert row["known_prior_state"] is None
+        assert row["known_prior_stability"] is None
+        assert row["known_prior_due_at"] is None
+
+    def test_idempotent_v30_to_v31(self):
+        from app.srs.migrations import migrate_v30_to_v31
+
+        conn = self._make_v30_conn()
+        migrate_v30_to_v31(conn)
+        migrate_v30_to_v31(conn)  # second call exercises the column-already-exists branches
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
+        assert "fsrs_force_next" in cols
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 31

@@ -13,7 +13,7 @@ from datetime import date
 from app.common.guid import compute_guid
 from app.srs.function_words import format_morphology_hint
 
-CURRENT_VERSION = 30
+CURRENT_VERSION = 31
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -909,6 +909,29 @@ def migrate_v29_to_v30(conn: sqlite3.Connection) -> None:
     _set_version(conn, 30)
 
 
+def migrate_v30_to_v31(conn: sqlite3.Connection) -> None:
+    """Add reversible-known snapshot columns + fsrs_force_next to collocation_directions.
+
+    Supports exactly-reversible "un-mark known". ``mark_known`` snapshots the
+    pre-known schedule (``known_prior_state``/``known_prior_stability``/
+    ``known_prior_due_at``) on entry; ``restore_known`` writes it back and sets
+    ``fsrs_force_next=1`` so the next sync_push force-writes the restored
+    stability into Anki's ``cards.data`` (a restored card is ``review``, which
+    otherwise lacks a TT→Anki stability-write signal and would be re-clobbered
+    by the next take-Anki-verbatim pull). All four are TT-only — no USN, no sync
+    to Anki.
+    """
+    for col, decl in (
+        ("known_prior_state", "TEXT"),
+        ("known_prior_stability", "REAL"),
+        ("known_prior_due_at", "TEXT"),
+        ("fsrs_force_next", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+        if not _column_exists(conn, "collocation_directions", col):
+            conn.execute(f"ALTER TABLE collocation_directions ADD COLUMN {col} {decl}")
+    _set_version(conn, 31)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -940,6 +963,7 @@ _MIGRATIONS = {
     27: migrate_v27_to_v28,
     28: migrate_v28_to_v29,
     29: migrate_v29_to_v30,
+    30: migrate_v30_to_v31,
 }
 
 

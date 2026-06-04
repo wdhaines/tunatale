@@ -88,6 +88,13 @@ class DirectionState:
     # grades). Used by `count_new_introduced_today` to mirror Anki's `newToday`
     # counter, which increments only on the actual first-grade event. Layer 26.
     introduced_at: datetime | None = None
+    # One-shot force flag: when set, sync_push force-writes this direction's
+    # stability/difficulty into Anki's cards.data (the `set_specific_value_of_card`
+    # path), even though the direction is in a non-KNOWN state. Set by
+    # `restore_known` so a restored (review-state) card's pre-known stability
+    # survives the next take-Anki-verbatim pull; cleared by `mark_direction_clean`
+    # after the push. TT-only — never synced to Anki.
+    fsrs_force_next: bool = False
 
 
 @dataclass(frozen=True)

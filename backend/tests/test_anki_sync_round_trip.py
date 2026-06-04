@@ -696,6 +696,79 @@ def test_known_push_persists_stability_to_card_data():
     assert card["usn"] == -1, "row must be marked dirty (usn=-1) for AnkiWeb"
 
 
+def test_restore_known_push_force_writes_restored_stability_to_card_data():
+    """Un-mark known: after restore, push force-writes the *restored* stability.
+
+    The whole point of reversible-known: restoring stability in TT alone does
+    not stick — the next take-Anki-verbatim pull would re-clobber it with Anki's
+    inflated cards.data.s. restore_known sets fsrs_force_next=1, and the push
+    loop's row_force_fsrs must honor it so the restored stability lands in Anki's
+    cards.data (proving it survives sync, not just TT). We use a restored
+    stability != the inflated value so the ivl/data override is OBSERVABLE.
+
+    Verifies via a REAL OfflineWriter against an in-memory collection (a
+    _FakeWriter would only prove the method was called — the stub bug hid behind
+    exactly that false-green twice).
+    """
+    import json
+
+    db = SRSDatabase(":memory:")
+    unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus")
+    db.add_collocation(unit)
+    item = db.get_collocation("banka")
+    assert item is not None
+    guid = item.guid
+    rows, _ = db.list_collocations()
+    row_id = rows[0][0]
+    db.set_anki_ids(guid, 9001, {Direction.RECOGNITION: 90010})
+
+    # Pre-known: a review card with a real schedule worth restoring. Re-fetch
+    # after set_anki_ids so the DirectionState carries the linked anki_card_id
+    # (update_direction would otherwise clobber it back to None).
+    item = db.get_collocation("banka")
+    restored_stability = 7.5
+    prior_due = datetime.combine(date.today() - timedelta(days=2), time(4, 0), tzinfo=UTC)
+    ds = item.directions[Direction.RECOGNITION]
+    ds.state = SRSState.REVIEW
+    ds.stability = restored_stability
+    ds.reps = 3
+    ds.due_at = prior_due
+    ds.last_review = datetime.now(UTC) - timedelta(days=2)
+    db.update_direction(guid, Direction.RECOGNITION, ds)
+
+    # Mark known (inflated), then un-mark known.
+    inflated = 24319.0
+    known_due = datetime.combine(date.today() + timedelta(days=36500), time(4, 0), tzinfo=UTC)
+    db.mark_known(row_id, due_at=known_due, stability=inflated, direction=Direction.RECOGNITION)
+    db.restore_known(row_id, direction=Direction.RECOGNITION)
+
+    anki_conn = _make_anki_conn()
+    col_crt = anki_conn.execute("SELECT crt FROM col").fetchone()[0]
+    writer = OfflineWriter(anki_conn)
+
+    class _EmptyReader:
+        def get_note_records(self):
+            return []
+
+        def get_revlog_for_card(self, card_id, after_ms=0):
+            return []
+
+    AnkiSync(db=db, _reader=_EmptyReader(), _writer=writer, _anki_col_crt=col_crt).sync_push()
+
+    card = anki_conn.execute("SELECT * FROM cards WHERE id = 90010").fetchone()
+    assert card is not None
+    data = json.loads(card["data"]) if card["data"] else {}
+    assert data.get("s") == restored_stability, f"expected restored data.s={restored_stability}, got {card['data']!r}"
+    assert card["ivl"] == round(restored_stability), f"expected ivl={round(restored_stability)}, got ivl={card['ivl']}"
+    assert card["usn"] == -1, "row must be marked dirty (usn=-1) for AnkiWeb"
+
+    # Force is one-shot: the direction is clean and the flag is cleared post-push.
+    reloaded = db.get_collocation("banka")
+    rec = reloaded.directions[Direction.RECOGNITION]
+    assert rec.fsrs_force_next is False
+    assert rec.dirty_fsrs is False
+
+
 def test_set_specific_value_of_card_rejects_disallowed_column():
     """Guard the dynamic column interpolation: unknown columns raise, not inject."""
     import pytest

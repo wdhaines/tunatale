@@ -569,6 +569,7 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
                         "progress": w.progress,
                         "inflectable": w.inflectable,
                         "inflection_feature": w.inflection_feature,
+                        "known_marked": w.known_marked,
                     }
                     for w in line.words
                 ],
@@ -932,6 +933,22 @@ async def set_item_state(item_id: int, body: SetStateRequest, request: Request):
         db.mark_known(item_id, due_at=due_at, stability=stability)
     else:
         db.set_state_by_id(item_id, _STATE_MAP[body.state])
+    row_id, item, lang = db.get_collocation_by_id(item_id)
+    return _item_to_dict(row_id, item, lang)
+
+
+@router.post("/items/{item_id}/restore-known", status_code=200)
+async def restore_known_item(item_id: int, request: Request):
+    """Reverse a "Mark known" — restore the snapshotted pre-known schedule.
+
+    Dedicated rather than overloading set_item_state: the "review"/"new" state
+    mappings there are label-only / full-reset and would be confusing here.
+    No-op (still 200) when the item has no known snapshot.
+    """
+    db = request.app.state.srs_db
+    if db.get_collocation_by_id(item_id) is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    db.restore_known(item_id)
     row_id, item, lang = db.get_collocation_by_id(item_id)
     return _item_to_dict(row_id, item, lang)
 

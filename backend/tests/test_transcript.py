@@ -271,6 +271,37 @@ class TestWordTokenEnrichment:
         result = extract_transcript(lesson, self.db, self.lemmatizer)
         assert result.dialogue_lines[0].words[0].translation == "bank"
 
+    def test_known_marked_false_for_unmarked_word(self):
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
+        self.db.add_collocation(unit, language_code="sl")
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].known_marked is False
+
+    def test_known_marked_true_after_mark_false_after_restore(self):
+        from datetime import date, time, timedelta
+
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
+        self.db.add_collocation(unit, language_code="sl")
+        rows, _ = self.db.list_collocations()
+        row_id = rows[0][0]
+        due_at = datetime.combine(date.today() + timedelta(days=36500), time(4, 0), tzinfo=UTC)
+        self.db.mark_known(row_id, due_at=due_at, stability=36500.0)
+
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].known_marked is True
+
+        self.db.restore_known(row_id)
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].known_marked is False
+
+    def test_known_marked_false_for_unknown_word(self):
+        """An unresolved word has no card, so known_marked stays False."""
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].known_marked is False
+
     def test_translation_from_gloss_map_when_no_db_entry(self):
         lesson = _make_lesson([("female-1", "banka")])
         lesson.generation_metadata = {"token_glosses": {"banka": "bank"}}

@@ -160,6 +160,25 @@ class TestCRUD:
         reloaded = srs_db.get_collocation("test_word")
         assert reloaded.directions[Direction.RECOGNITION].anki_due == 612
 
+    def test_update_direction_round_trips_fsrs_force_next(self, srs_db):
+        """update_direction then _load_directions round-trips fsrs_force_next.
+
+        Guards the bury_kind-incident surface: the flag must land in all of
+        _DIR_COLUMNS, the DirectionState field, the row→DirectionState
+        construction, and update_direction's writer — miss one and the force
+        silently reads back False.
+        """
+        unit = _unit("test_word", "test")
+        srs_db.add_collocation(unit, language_code="sl")
+        item = srs_db.get_collocation("test_word")
+        guid = item.guid
+        rec_dir = item.directions[Direction.RECOGNITION]
+        assert rec_dir.fsrs_force_next is False  # default
+        rec_dir.fsrs_force_next = True
+        srs_db.update_direction(guid, Direction.RECOGNITION, rec_dir)
+        reloaded = srs_db.get_collocation("test_word")
+        assert reloaded.directions[Direction.RECOGNITION].fsrs_force_next is True
+
     def test_add_collocation_cloze_creates_only_production_direction(self, srs_db):
         """Cloze card_type creates only production direction (no recognition)."""
         unit = SyntacticUnit(
@@ -921,6 +940,127 @@ class TestDueQueries:
         item = srs_db.get_collocation("banka")
         assert item.directions[Direction.RECOGNITION].state == SRSState.KNOWN
         assert item.directions[Direction.PRODUCTION].state != SRSState.KNOWN
+
+    def _snapshot_cols(self, srs_db, row_id, direction):
+        with srs_db._get_conn() as conn:
+            return conn.execute(
+                "SELECT known_prior_state, known_prior_stability, known_prior_due_at, fsrs_force_next "
+                "FROM collocation_directions WHERE collocation_id = ? AND direction = ?",
+                (row_id, direction.value),
+            ).fetchone()
+
+    def _set_review(self, srs_db, text, stability, due_at):
+        """Push a freshly-added collocation's recognition direction into review."""
+        item = srs_db.get_collocation(text)
+        ds = item.directions[Direction.RECOGNITION]
+        ds.state = SRSState.REVIEW
+        ds.stability = stability
+        ds.due_at = due_at
+        srs_db.update_direction(item.guid, Direction.RECOGNITION, ds)
+
+    def test_mark_known_snapshots_prior_schedule(self, srs_db):
+        """mark_known captures the pre-known state/stability/due_at on entry."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        prior_due = datetime(2026, 3, 1, 4, 0, tzinfo=UTC)
+        self._set_review(srs_db, "banka", 7.5, prior_due)
+
+        known_due = datetime.combine(date.today() + timedelta(days=36500), time(4, 0), tzinfo=UTC)
+        srs_db.mark_known(row_id, due_at=known_due, stability=36500.0, direction=Direction.RECOGNITION)
+
+        snap = self._snapshot_cols(srs_db, row_id, Direction.RECOGNITION)
+        assert snap["known_prior_state"] == "review"
+        assert abs(snap["known_prior_stability"] - 7.5) < 0.01
+        assert datetime.fromisoformat(snap["known_prior_due_at"]) == prior_due
+
+    def test_mark_known_double_mark_preserves_snapshot(self, srs_db):
+        """A second mark_known must NOT clobber the real snapshot with inflated values."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        prior_due = datetime(2026, 3, 1, 4, 0, tzinfo=UTC)
+        self._set_review(srs_db, "banka", 7.5, prior_due)
+
+        known_due = datetime.combine(date.today() + timedelta(days=36500), time(4, 0), tzinfo=UTC)
+        srs_db.mark_known(row_id, due_at=known_due, stability=36500.0, direction=Direction.RECOGNITION)
+        # Second mark while already known — snapshot must stay the first (real) values.
+        srs_db.mark_known(row_id, due_at=known_due, stability=36500.0, direction=Direction.RECOGNITION)
+
+        snap = self._snapshot_cols(srs_db, row_id, Direction.RECOGNITION)
+        assert snap["known_prior_state"] == "review"
+        assert abs(snap["known_prior_stability"] - 7.5) < 0.01
+        assert datetime.fromisoformat(snap["known_prior_due_at"]) == prior_due
+
+    def test_is_known_marked_true_after_mark_false_after_restore(self, srs_db):
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        assert srs_db.is_known_marked(row_id) is False
+
+        known_due = datetime.combine(date.today() + timedelta(days=36500), time(4, 0), tzinfo=UTC)
+        srs_db.mark_known(row_id, due_at=known_due, stability=36500.0)
+        assert srs_db.is_known_marked(row_id) is True
+
+        srs_db.restore_known(row_id)
+        assert srs_db.is_known_marked(row_id) is False
+
+    def test_restore_known_restores_schedule_and_sets_force(self, srs_db):
+        """restore_known writes the snapshot back, clears it, sets dirty + force."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        prior_due = datetime(2026, 3, 1, 4, 0, tzinfo=UTC)
+        self._set_review(srs_db, "banka", 7.5, prior_due)
+        known_due = datetime.combine(date.today() + timedelta(days=36500), time(4, 0), tzinfo=UTC)
+        srs_db.mark_known(row_id, due_at=known_due, stability=36500.0, direction=Direction.RECOGNITION)
+
+        srs_db.restore_known(row_id, direction=Direction.RECOGNITION)
+
+        item = srs_db.get_collocation("banka")
+        ds = item.directions[Direction.RECOGNITION]
+        assert ds.state == SRSState.REVIEW
+        assert abs(ds.stability - 7.5) < 0.01
+        assert ds.due_at == prior_due
+        assert ds.dirty_fsrs is True
+        assert ds.fsrs_force_next is True
+        # Snapshot cleared.
+        snap = self._snapshot_cols(srs_db, row_id, Direction.RECOGNITION)
+        assert snap["known_prior_state"] is None
+        assert snap["known_prior_stability"] is None
+        assert snap["known_prior_due_at"] is None
+
+    def test_restore_known_noop_without_snapshot(self, srs_db):
+        """restore_known on a card never marked known leaves state untouched."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        prior_due = datetime(2026, 3, 1, 4, 0, tzinfo=UTC)
+        self._set_review(srs_db, "banka", 7.5, prior_due)
+
+        srs_db.restore_known(row_id)
+
+        item = srs_db.get_collocation("banka")
+        ds = item.directions[Direction.RECOGNITION]
+        assert ds.state == SRSState.REVIEW
+        assert ds.fsrs_force_next is False
+
+    def test_mark_direction_clean_clears_fsrs_force_next(self, srs_db):
+        """The force flag is one-shot: mark_direction_clean drops it after push."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        item = srs_db.get_collocation("banka")
+        guid = item.guid
+        ds = item.directions[Direction.RECOGNITION]
+        ds.fsrs_force_next = True
+        ds.dirty_fsrs = True
+        srs_db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        srs_db.mark_direction_clean(guid, Direction.RECOGNITION)
+
+        reloaded = srs_db.get_collocation("banka")
+        rec = reloaded.directions[Direction.RECOGNITION]
+        assert rec.fsrs_force_next is False
+        assert rec.dirty_fsrs is False
 
     def test_get_due_items_excludes_buried_state(self, srs_db):
         """Buried directions must not appear in get_due_items even if due_date <= today."""
