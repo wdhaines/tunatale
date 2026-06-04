@@ -698,8 +698,39 @@ class OfflineWriter:
         self._conn.commit()
         return count
 
+    # Card columns the force_fsrs path is allowed to set directly. Restricting the
+    # set guards the dynamic column-name interpolation below against typos/injection.
+    _SETTABLE_CARD_COLS = frozenset({"data", "ivl", "factor", "due", "queue", "type", "reps", "lapses", "left"})
+
     def set_specific_value_of_card(self, card_id: int, keys: list[str], new_values: list[str]) -> None:
-        pass  # deferred to S3.7
+        """Write arbitrary card columns (used by the force_fsrs path to persist data/ivl/factor).
+
+        Mirrors set_due_date's write contract: stamps ``usn=-1`` and ``mod=now`` on the
+        row and bumps ``col.mod`` (never ``col.usn`` — Layer 61). Numeric-looking values
+        are coerced to int so INTEGER columns (ivl/factor/…) store integers; the JSON
+        ``data`` blob (non-numeric) stays text.
+        """
+        if not keys:
+            return
+        unknown = set(keys) - self._SETTABLE_CARD_COLS
+        if unknown:
+            raise ValueError(f"set_specific_value_of_card: disallowed card column(s) {sorted(unknown)}")
+
+        coerced: list[object] = []
+        for v in new_values:
+            try:
+                coerced.append(int(v))
+            except ValueError, TypeError:
+                coerced.append(v)
+
+        ts = int(_time.time())
+        set_clause = ", ".join(f"{k} = ?" for k in keys) + ", mod = ?, usn = -1"
+        self._conn.execute(
+            f"UPDATE cards SET {set_clause} WHERE id = ?",
+            (*coerced, ts, card_id),
+        )
+        self._bump_col(ts)
+        self._conn.commit()
 
     def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list) -> int:
         """Insert a new note + cards into the collection.

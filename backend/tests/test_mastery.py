@@ -48,10 +48,15 @@ class TestComponentMastery:
         assert val == 0.0
         assert val != 0.9
 
-    def test_last_review_none_returns_zero(self):
+    def test_review_mastery_ignores_missing_last_review(self):
+        """Stability-based mastery does not need last_review (a retrievability-era
+        relic). A high-stability REVIEW card with last_review=None — exactly what
+        mark_known produces — must read as mastered, not 0.0. Low stability still
+        floors at 0 via the log curve, not via a last_review guard."""
         from app.srs.mastery import component_mastery
 
-        assert component_mastery(_ds(state=SRSState.REVIEW, last_review=None)) == 0.0
+        assert component_mastery(_ds(state=SRSState.REVIEW, stability=1.0, last_review=None)) == 0.0
+        assert component_mastery(_ds(state=SRSState.REVIEW, stability=24317.0, last_review=None)) == 1.0
 
     def test_learning_returns_floor(self):
         from app.srs.mastery import component_mastery
@@ -66,10 +71,11 @@ class TestComponentMastery:
         assert component_mastery(ds) == 0.15
 
     def test_known_returns_1_0(self):
+        """KNOWN → 1.0 even with last_review=None, which is what mark_known leaves
+        (it sets state + stability but no review timestamp)."""
         from app.srs.mastery import component_mastery
 
-        ds = _ds(state=SRSState.KNOWN, last_review=datetime(2026, 6, 1, 4, 0, tzinfo=UTC))
-        assert component_mastery(ds) == 1.0
+        assert component_mastery(_ds(state=SRSState.KNOWN, last_review=None)) == 1.0
 
     def test_review_uses_log_stability(self):
         from app.srs.mastery import component_mastery

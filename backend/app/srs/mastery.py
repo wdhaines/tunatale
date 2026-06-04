@@ -30,11 +30,17 @@ _LEARNING_FLOOR = 0.15
 def component_mastery(ds: DirectionState) -> float:
     """Mastery of one component (a direction/card) ∈ [0,1].
 
-    NEW/never-reviewed → 0.0 (unlearned). LEARNING/RELEARNING → 0.15 fixed floor
-    (in-steps, not graduated). KNOWN → 1.0. REVIEW → log-normalized stability,
-    which is time-independent: a word keeps the same color between reviews.
+    NEW → 0.0 (unlearned). LEARNING/RELEARNING → 0.15 fixed floor (in-steps, not
+    graduated). KNOWN → 1.0. REVIEW → log-normalized stability, which is
+    time-independent: a word keeps the same color between reviews.
+
+    Mastery does NOT depend on ``last_review`` — a card marked KNOWN (via
+    ``mark_known``) carries high stability but no review timestamp, and must still
+    read as mastered. "Unlearned" is already captured by low stability (s≤1 day →
+    ``log10(1)=0``); a separate ``last_review is None`` guard (a relic of the
+    retrievability-based formula) would wrongly zero those high-stability cards.
     """
-    if ds.state == SRSState.NEW or ds.last_review is None:
+    if ds.state == SRSState.NEW:
         return 0.0
     if ds.state in (SRSState.LEARNING, SRSState.RELEARNING):
         return _LEARNING_FLOOR

@@ -646,3 +646,70 @@ def test_known_push_via_offline_writer_writes_review_card():
     expected_due = days_since_crt + max_ivl
     assert card["due"] == expected_due, f"expected due={expected_due}, got due={card['due']}"
     assert card["ivl"] == max_ivl, f"expected ivl={max_ivl}, got ivl={card['ivl']}"
+
+
+def test_known_push_persists_stability_to_card_data():
+    """The force_fsrs path must actually write data.s (and override ivl from stability).
+
+    Regression: OfflineWriter.set_specific_value_of_card was a no-op stub, so a KNOWN
+    push never wrote the matched stability — data.s stayed None and ivl kept the
+    set_due_date value. We use stability != max_ivl so the force_fsrs ivl override is
+    OBSERVABLE; the prior test set them equal, which masked the stub.
+    """
+    import json
+
+    db = SRSDatabase(":memory:")
+    unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus")
+    db.add_collocation(unit)
+    item = db.get_collocation("banka")
+    assert item is not None
+    guid = item.guid
+    rows, _ = db.list_collocations()
+    row_id = rows[0][0]
+    db.set_anki_ids(guid, 9001, {Direction.RECOGNITION: 90010})
+
+    max_ivl = 36500
+    stability = 24319.0  # deliberately != max_ivl so force_fsrs's ivl override is visible
+    due_at = datetime.combine(date.today() + timedelta(days=max_ivl), time(4, 0), tzinfo=UTC)
+    db.mark_known(row_id, due_at=due_at, stability=stability, direction=Direction.RECOGNITION)
+
+    anki_conn = _make_anki_conn()
+    col_crt = anki_conn.execute("SELECT crt FROM col").fetchone()[0]
+    writer = OfflineWriter(anki_conn)
+
+    class _EmptyReader:
+        def get_note_records(self):
+            return []
+
+        def get_revlog_for_card(self, card_id, after_ms=0):
+            return []
+
+    AnkiSync(db=db, _reader=_EmptyReader(), _writer=writer, _anki_col_crt=col_crt).sync_push()
+
+    card = anki_conn.execute("SELECT * FROM cards WHERE id = 90010").fetchone()
+    assert card is not None
+    data = json.loads(card["data"]) if card["data"] else {}
+    assert data.get("s") == stability, f"expected data.s={stability}, got data={card['data']!r}"
+    # force_fsrs runs after set_due_date and overrides ivl with round(stability)
+    assert card["ivl"] == round(stability), f"expected ivl={round(stability)}, got ivl={card['ivl']}"
+    assert card["queue"] == 2
+    assert card["usn"] == -1, "row must be marked dirty (usn=-1) for AnkiWeb"
+
+
+def test_set_specific_value_of_card_rejects_disallowed_column():
+    """Guard the dynamic column interpolation: unknown columns raise, not inject."""
+    import pytest
+
+    writer = OfflineWriter(_make_anki_conn())
+    with pytest.raises(ValueError, match="disallowed card column"):
+        writer.set_specific_value_of_card(90010, ["nid"], ["1"])
+
+
+def test_set_specific_value_of_card_empty_keys_is_noop():
+    """No keys → no write (row untouched, usn unchanged)."""
+    conn = _make_anki_conn()
+    writer = OfflineWriter(conn)
+    before = conn.execute("SELECT mod, usn FROM cards WHERE id = 90010").fetchone()
+    writer.set_specific_value_of_card(90010, [], [])
+    after = conn.execute("SELECT mod, usn FROM cards WHERE id = 90010").fetchone()
+    assert (after["mod"], after["usn"]) == (before["mod"], before["usn"])

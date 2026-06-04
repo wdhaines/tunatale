@@ -71,8 +71,10 @@
 		fire();
 	}
 
+	// KNOWN renders on the green end of the mastery ramp (its progress is ~1.0),
+	// NOT as a static gray — only unknown/suspended/ignored stay off the ramp.
 	const dynamicStyle = $derived(
-		word.active_state !== 'unknown' && word.active_state !== 'known' && word.active_state !== 'suspended' && word.active_state !== 'ignored'
+		word.active_state !== 'unknown' && word.active_state !== 'suspended' && word.active_state !== 'ignored'
 			? `color: ${masteryColor(word.progress ?? 0)};`
 			: ''
 	);
@@ -80,11 +82,9 @@
 	const colorClass = $derived(
 		word.active_state === 'unknown'
 			? 'word-unknown'
-			: word.active_state === 'known'
-				? 'word-known'
-				: word.active_state === 'suspended' || word.active_state === 'ignored'
-					? 'word-ignored'
-					: ''
+			: word.active_state === 'suspended' || word.active_state === 'ignored'
+				? 'word-ignored'
+				: ''
 	);
 
 	// Show tooltip when: not inside a collocation, OR alt-hover mode is active
@@ -137,9 +137,6 @@
 		color: #818cf8;
 		text-decoration: underline dotted;
 		text-underline-offset: 2px;
-	}
-	.word-known {
-		color: #9ca3af;
 	}
 	.word-ignored {
 		color: #9ca3af;

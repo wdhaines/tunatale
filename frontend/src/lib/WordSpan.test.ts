@@ -76,11 +76,14 @@ describe("WordSpan", () => {
       expect(getByRole("button").className).toContain("word-unknown");
     });
 
-    it("shows word-known class for known active_state", () => {
+    it("applies inline masteryColor style for known active_state (green, on the ramp)", () => {
       const { getByRole } = render(WordSpan, {
-        props: { word: makeWordToken({ active_state: "known" }) },
+        props: { word: makeWordToken({ active_state: "known", progress: 1 }) },
       });
-      expect(getByRole("button").className).toContain("word-known");
+      const el = getByRole("button");
+      // KNOWN is rendered on the green end of the mastery ramp, not the old static gray.
+      expect(el.getAttribute("style")).toContain("color:");
+      expect(el.className).not.toContain("word-known");
     });
 
     it("shows word-ignored class for suspended active_state", () => {
@@ -209,10 +212,12 @@ describe("WordSpan", () => {
 
     expect(getByRole("button").getAttribute("style")).toContain("color:");
 
-    await rerender({ word: makeWordToken({ active_state: "known" }) });
+    await rerender({ word: makeWordToken({ active_state: "ignored", srs_item_id: null }) });
 
     await waitFor(() => {
-      expect(getByRole("button").className).toContain("word-known");
+      // flips off the ramp: inline color cleared, static class applied
+      expect(getByRole("button").className).toContain("word-ignored");
+      expect(getByRole("button").getAttribute("style")).toBe("");
     });
   });
 
