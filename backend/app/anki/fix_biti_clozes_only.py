@@ -138,11 +138,11 @@ def _print_plan(info: dict) -> None:  # pragma: no cover
     si_dirty = info.get("si_translation_dirty", False)
     if si_row and si_row.get("translation"):
         print(f"  Clear collocation 866 translation: {si_row['translation']!r} → ''")
-        print(f"    → Mark dirty_fields so sync_push propagates to Anki")
+        print("    → Mark dirty_fields so sync_push propagates to Anki")
     elif not si_dirty:
-        print(f"  Collocation 866: translation already empty, mark dirty for sync_push")
+        print("  Collocation 866: translation already empty, mark dirty for sync_push")
     else:
-        print(f"  Collocation 866: translation already empty and dirty — nothing to fix")
+        print("  Collocation 866: translation already empty and dirty — nothing to fix")
 
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover
