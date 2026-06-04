@@ -55,6 +55,27 @@ class TestExtractTranscript:
         result = extract_transcript(lesson, self.db, self.lemmatizer)
         assert result.dialogue_lines[0].words[0].srs_state == "unknown"
 
+    def test_ignored_lemma_renders_ignored(self):
+        self.db.add_ignored_lemma("sl", "banka")
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        word = result.dialogue_lines[0].words[0]
+        assert word.srs_state == "ignored"
+        assert word.active_state == "ignored"
+        assert word.srs_item_id is None
+        assert word.progress is None
+        assert word.inflectable is False
+
+    def test_ignored_check_does_not_affect_known_words(self):
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
+        self.db.add_collocation(unit, language_code="sl")
+        self.db.add_ignored_lemma("sl", "banka")
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        word = result.dialogue_lines[0].words[0]
+        assert word.srs_state == "new"
+        assert word.active_state != "ignored"
+
     def test_known_word_has_correct_srs_state(self):
         unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
         self.db.add_collocation(unit, language_code="sl")

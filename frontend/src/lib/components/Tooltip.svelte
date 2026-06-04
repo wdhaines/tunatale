@@ -7,6 +7,8 @@
 		onSetState?: (id: number, state: string) => Promise<void>;
 		onUntrack?: (id: number) => Promise<void>;
 		onUnignore?: (id: number) => Promise<void>;
+		onIgnoreLemma?: (lemma: string) => Promise<void>;
+		onUnignoreLemma?: (lemma: string) => Promise<void>;
 	}
 
 	interface Props {
@@ -27,7 +29,8 @@
 		relearning: 'Relearning',
 		review: 'Review',
 		known: 'Known',
-		suspended: 'Suspended'
+		suspended: 'Suspended',
+		ignored: 'Ignored'
 	};
 
 	const stateLabel = $derived(state ? (STATE_LABELS[state] ?? state) : null);
@@ -44,8 +47,16 @@
 		)
 	);
 
+	const showIgnoreCardless = $derived(
+		Boolean(word && !hasSrsItem && word.active_state === 'unknown' && actions?.onIgnoreLemma)
+	);
+
 	const showUnignore = $derived(
 		Boolean(hasSrsItem && word!.active_state === 'suspended')
+	);
+
+	const showUnignoreCardless = $derived(
+		Boolean(word && !hasSrsItem && word.active_state === 'ignored' && actions?.onUnignoreLemma)
 	);
 
 	const showMarkKnown = $derived(
@@ -67,7 +78,7 @@
 	);
 
 	const hasActions = $derived(
-		showCreateInflection || showIgnore || showUnignore || showMarkKnown || showResetNew
+		showCreateInflection || showIgnore || showIgnoreCardless || showUnignore || showUnignoreCardless || showMarkKnown || showResetNew
 	);
 
 	const hasContent = $derived(Boolean(translation || stateLabel || hasActions));
@@ -95,11 +106,25 @@
 							onclick={() => actions!.onUnignore!(word!.srs_item_id!)}
 						>Un-ignore</button>
 					{/if}
+					{#if showUnignoreCardless}
+						<button
+							type="button"
+							class="tt-btn"
+							onclick={() => actions!.onUnignoreLemma!(word!.lemma)}
+						>Un-ignore</button>
+					{/if}
 					{#if showIgnore}
 						<button
 							type="button"
 							class="tt-btn"
 							onclick={() => actions!.onUntrack!(word!.srs_item_id!)}
+						>Ignore</button>
+					{/if}
+					{#if showIgnoreCardless}
+						<button
+							type="button"
+							class="tt-btn"
+							onclick={() => actions!.onIgnoreLemma!(word!.lemma)}
 						>Ignore</button>
 					{/if}
 					{#if showMarkKnown}

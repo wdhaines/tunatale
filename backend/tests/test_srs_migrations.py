@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 29
+        assert CURRENT_VERSION == 30
 
     def test_migrates_v27_to_v28_adds_lemma_key_column(self, tmp_path):
         """v28 adds collocations.lemma_key (space-joined lemma tuple for span matching)."""
@@ -1837,3 +1837,23 @@ class TestMigrateV12ToV13:
 
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute("INSERT INTO tt_revlog (id, collocation_id, direction) VALUES (1, 999, 'recognition')")
+
+    def test_migrates_v29_to_v30_creates_ignored_lemmas_table(self, tmp_path):
+        """v30 creates the ignored_lemmas table."""
+        import sqlite3
+
+        from app.srs.migrations import _set_version, migrate_v29_to_v30
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        _set_version(conn, 29)
+        migrate_v29_to_v30(conn)
+
+        # Table exists and accepts data
+        conn.execute("INSERT INTO ignored_lemmas (language_code, lemma) VALUES ('sl', 'beseda')")
+        row = conn.execute("SELECT language_code, lemma FROM ignored_lemmas").fetchone()
+        assert row == ("sl", "beseda")
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 30
+
+        # Idempotent.
+        migrate_v29_to_v30(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 30

@@ -3211,3 +3211,40 @@ class TestGetInflectionClozesForLemma:
     def test_empty_for_lemma_with_no_matches(self, srs_db):
         """A lemma with no items at all returns empty list."""
         assert srs_db.get_inflection_clozes_for_lemma("neobstojeci") == []
+
+
+class TestIgnoredLemmas:
+    def test_add_and_get(self, srs_db):
+        srs_db.add_ignored_lemma("sl", "Ana")
+        result = srs_db.get_ignored_lemmas("sl")
+        assert result == {"ana"}
+
+    def test_add_and_get_idempotent(self, srs_db):
+        srs_db.add_ignored_lemma("sl", "ana")
+        srs_db.add_ignored_lemma("sl", "ana")
+        result = srs_db.get_ignored_lemmas("sl")
+        assert result == {"ana"}
+
+    def test_add_lowercases(self, srs_db):
+        srs_db.add_ignored_lemma("sl", "AnA")
+        assert srs_db.get_ignored_lemmas("sl") == {"ana"}
+
+    def test_remove(self, srs_db):
+        srs_db.add_ignored_lemma("sl", "ana")
+        srs_db.remove_ignored_lemma("sl", "ana")
+        assert srs_db.get_ignored_lemmas("sl") == set()
+
+    def test_remove_idempotent(self, srs_db):
+        srs_db.remove_ignored_lemma("sl", "ana")
+        assert srs_db.get_ignored_lemmas("sl") == set()
+
+    def test_remove_lowercases(self, srs_db):
+        srs_db.add_ignored_lemma("sl", "ana")
+        srs_db.remove_ignored_lemma("sl", "AnA")
+        assert srs_db.get_ignored_lemmas("sl") == set()
+
+    def test_scoped_by_language(self, srs_db):
+        srs_db.add_ignored_lemma("sl", "ana")
+        srs_db.add_ignored_lemma("en", "the")
+        assert srs_db.get_ignored_lemmas("sl") == {"ana"}
+        assert srs_db.get_ignored_lemmas("en") == {"the"}

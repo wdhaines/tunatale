@@ -164,6 +164,24 @@
 			} catch (e) {
 				error = e instanceof Error ? e.message : String(e);
 			}
+		},
+		onIgnoreLemma: async (lemma: string) => {
+			error = '';
+			try {
+				await api.ignoreLemma(lemma, data.lesson.language_code);
+				transcript = await api.getLessonTranscript(data.lesson.id);
+			} catch (e) {
+				error = e instanceof Error ? e.message : String(e);
+			}
+		},
+		onUnignoreLemma: async (lemma: string) => {
+			error = '';
+			try {
+				await api.unignoreLemma(lemma, data.lesson.language_code);
+				transcript = await api.getLessonTranscript(data.lesson.id);
+			} catch (e) {
+				error = e instanceof Error ? e.message : String(e);
+			}
 		}
 	};
 

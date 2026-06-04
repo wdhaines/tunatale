@@ -51,6 +51,11 @@ class SetStateRequest(BaseModel):
     state: str  # "new" | "learning" | "known" | "ignored"
 
 
+class IgnoreLemmaRequest(BaseModel):
+    lemma: str
+    language_code: str
+
+
 # ── Generation models ────────────────────────────────────────────────────────
 
 

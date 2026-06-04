@@ -21,6 +21,8 @@ vi.mock("$lib/api", () => ({
     submitDrill: vi.fn(),
     syncWithAnki: vi.fn(),
     generateStory: vi.fn(),
+    ignoreLemma: vi.fn(),
+    unignoreLemma: vi.fn(),
     audioUrl: vi.fn((id: string) => `/api/audio/${id}`),
   },
 }));
@@ -48,6 +50,8 @@ const mockCreateInflectionCloze = vi.mocked(api.createInflectionCloze);
 const mockSubmitDrill = vi.mocked(api.submitDrill);
 const mockSyncWithAnki = vi.mocked(api.syncWithAnki);
 const mockGenerateStory = vi.mocked(api.generateStory);
+const mockIgnoreLemma = vi.mocked(api.ignoreLemma);
+const mockUnignoreLemma = vi.mocked(api.unignoreLemma);
 
 const curriculum = { id: "cid-1", topic: "Coffee", language_code: "sl", days: 3 };
 const lesson = {
@@ -438,6 +442,25 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       });
     });
 
+    it("ignored word (no card) does not call createBaseCard", async () => {
+      const t = makeTranscriptWithWord({
+        active_state: "ignored",
+        srs_item_id: null,
+      });
+      mockGetTranscript.mockResolvedValue(t);
+
+      const { findByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: t } },
+      });
+
+      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+
+      await waitFor(() => {
+        expect(mockCreateBaseCard).not.toHaveBeenCalled();
+        expect(mockSubmitDrill).not.toHaveBeenCalled();
+      });
+    });
+
     it("shows error when createBaseCard throws", async () => {
       const t = makeTranscriptWithWord({ active_state: "unknown" });
       mockCreateBaseCard.mockRejectedValue(new Error("base card failed"));
@@ -752,6 +775,104 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await fireEvent.click(await findByRole("button", { name: "Un-ignore" }));
 
       expect(await findByText("suspend boom")).toBeTruthy();
+    });
+
+    const makeCardlessWordTranscript = (overrides: Record<string, unknown> = {}) => ({
+      lesson_id: "l1",
+      key_phrases: [],
+      dialogue_lines: [
+        {
+          role: "Petra",
+          sentence: "Grem v Ljubljano",
+          words: [
+            {
+              surface: "banka",
+              lemma: "banka",
+              srs_state: "unknown",
+              srs_item_id: null,
+              translation: null,
+              collocation_span_id: null,
+              collocation_start: false,
+              collocation_srs_state: null,
+              collocation_lemma: null,
+              collocation_translation: null,
+              card_type: null,
+              active_state: "unknown",
+              active_direction: null,
+              is_due: false,
+              progress: null,
+              inflectable: false,
+              inflection_feature: null,
+              ...overrides,
+            },
+          ],
+        },
+      ],
+    });
+
+    const renderCardlessWord = (t: ReturnType<typeof makeCardlessWordTranscript>) => {
+      mockGetTranscript.mockResolvedValue(t);
+      return render(Page, { props: { data: { curriculum, lesson, audio, transcript: t } } });
+    };
+
+    it("Ignore on unknown word calls ignoreLemma", async () => {
+      const t = makeCardlessWordTranscript({ active_state: "unknown" });
+      mockIgnoreLemma.mockResolvedValue({ status: "ok" } as never);
+      mockGetTranscript.mockResolvedValue(t);
+
+      const { findByRole } = renderCardlessWord(t);
+
+      await fireEvent.click(await findByRole("button", { name: /ignore/i }));
+
+      await waitFor(() => {
+        expect(mockIgnoreLemma).toHaveBeenCalledWith("banka", "sl");
+        expect(mockGetTranscript).toHaveBeenCalledWith("l1");
+      });
+    });
+
+    it("Un-ignore on card-less ignored word calls unignoreLemma", async () => {
+      const t = makeCardlessWordTranscript({
+        srs_state: "ignored",
+        active_state: "ignored",
+      });
+      mockUnignoreLemma.mockResolvedValue({ status: "ok" } as never);
+      mockGetTranscript.mockResolvedValue(t);
+
+      const { findByRole } = renderCardlessWord(t);
+
+      await fireEvent.click(await findByRole("button", { name: /un-ignore/i }));
+
+      await waitFor(() => {
+        expect(mockUnignoreLemma).toHaveBeenCalledWith("banka", "sl");
+        expect(mockGetTranscript).toHaveBeenCalledWith("l1");
+      });
+    });
+
+    it("shows error when ignoreLemma throws", async () => {
+      const t = makeCardlessWordTranscript({ active_state: "unknown" });
+      mockIgnoreLemma.mockRejectedValue(new Error("ignore boom"));
+      mockGetTranscript.mockResolvedValue(t);
+
+      const { findByRole, findByText } = renderCardlessWord(t);
+
+      await fireEvent.click(await findByRole("button", { name: /ignore/i }));
+
+      expect(await findByText("ignore boom")).toBeTruthy();
+    });
+
+    it("shows error when unignoreLemma throws", async () => {
+      const t = makeCardlessWordTranscript({
+        srs_state: "ignored",
+        active_state: "ignored",
+      });
+      mockUnignoreLemma.mockRejectedValue(new Error("unignore boom"));
+      mockGetTranscript.mockResolvedValue(t);
+
+      const { findByRole, findByText } = renderCardlessWord(t);
+
+      await fireEvent.click(await findByRole("button", { name: /un-ignore/i }));
+
+      expect(await findByText("unignore boom")).toBeTruthy();
     });
   });
 

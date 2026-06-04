@@ -72,7 +72,7 @@
 	}
 
 	const dynamicStyle = $derived(
-		word.active_state !== 'unknown' && word.active_state !== 'known' && word.active_state !== 'suspended'
+		word.active_state !== 'unknown' && word.active_state !== 'known' && word.active_state !== 'suspended' && word.active_state !== 'ignored'
 			? `color: ${masteryColor(word.progress ?? 0)};`
 			: ''
 	);
@@ -82,7 +82,7 @@
 			? 'word-unknown'
 			: word.active_state === 'known'
 				? 'word-known'
-				: word.active_state === 'suspended'
+				: word.active_state === 'suspended' || word.active_state === 'ignored'
 					? 'word-ignored'
 					: ''
 	);

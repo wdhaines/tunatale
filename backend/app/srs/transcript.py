@@ -165,6 +165,8 @@ def extract_transcript(
     # Pre-load multi-word collocations for span detection
     raw_collocations = db.get_collocations_with_lemma_key(lesson.language_code, min_word_count=2)
     collocation_index = _build_collocation_index(db, raw_collocations, lemmatizer, lesson.language_code)
+    # Card-less ignore list
+    ignored_lemmas = db.get_ignored_lemmas(lesson.language_code)
 
     dialogue_lines: list[DialogueLine] = []
 
@@ -254,6 +256,13 @@ def extract_transcript(
                 progress_val: float | None = None
                 inflectable_flag: bool = False
                 inflection_feature_val: str | None = None
+
+                # Step 3b: Check card-less ignore list (inside the Step-3 unknown branch only)
+                if resolved_item is None and lemma.lower() in ignored_lemmas:
+                    srs_state = "ignored"
+                    active_state_val = "ignored"
+                    progress_val = None
+                    inflectable_flag = False
 
                 if resolved_item is not None:
                     from app.models.srs_item import SRSState as _SRSState

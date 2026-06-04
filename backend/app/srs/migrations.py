@@ -13,7 +13,7 @@ from datetime import date
 from app.common.guid import compute_guid
 from app.srs.function_words import format_morphology_hint
 
-CURRENT_VERSION = 29
+CURRENT_VERSION = 30
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -889,6 +889,26 @@ def migrate_v28_to_v29(conn: sqlite3.Connection) -> None:
     _set_version(conn, 29)
 
 
+def migrate_v29_to_v30(conn: sqlite3.Connection) -> None:
+    """Add ignored_lemmas table for card-less ignore list.
+
+    Stores lemmas the user has chosen to ignore that have no Anki card.
+    TT-only — no USN, no sync involvement.
+    """
+    if _table_exists(conn, "ignored_lemmas"):
+        _set_version(conn, 30)
+        return
+    conn.execute("""
+        CREATE TABLE ignored_lemmas (
+            language_code TEXT NOT NULL,
+            lemma TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (language_code, lemma)
+        )
+    """)
+    _set_version(conn, 30)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -919,6 +939,7 @@ _MIGRATIONS = {
     26: migrate_v26_to_v27,
     27: migrate_v27_to_v28,
     28: migrate_v28_to_v29,
+    29: migrate_v29_to_v30,
 }
 
 

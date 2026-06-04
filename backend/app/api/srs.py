@@ -17,6 +17,7 @@ from app.api.models import (
     CreateBaseCardRequest,
     CreateItemRequest,
     DrillRequest,
+    IgnoreLemmaRequest,
     InflectionClozeRequest,
     ListenRequest,
     SetStateRequest,
@@ -941,6 +942,20 @@ async def suspend_item(item_id: int, body: SuspendRequest, request: Request):
     db.set_suspended(item_id, body.suspended, direction=dir_enum)
     row_id, item, lang = db.get_collocation_by_id(item_id)
     return _item_to_dict(row_id, item, lang)
+
+
+@router.post("/ignored-lemmas", status_code=200)
+async def add_ignored_lemma(body: IgnoreLemmaRequest, request: Request):
+    db = request.app.state.srs_db
+    db.add_ignored_lemma(body.language_code, body.lemma)
+    return {"status": "ok"}
+
+
+@router.delete("/ignored-lemmas", status_code=200)
+async def remove_ignored_lemma(lemma: str, language_code: str, request: Request):
+    db = request.app.state.srs_db
+    db.remove_ignored_lemma(language_code, lemma)
+    return {"status": "ok"}
 
 
 _FNV_OFFSET_BASIS_64 = 0xCBF29CE484222325

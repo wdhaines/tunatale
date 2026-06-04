@@ -561,6 +561,45 @@ describe("TunaTaleAPI", () => {
         }),
       ).rejects.toThrow("POST /api/srs/items/base: Internal Server Error");
     });
+
+    it("ignoreLemma calls POST /api/srs/ignored-lemmas", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ status: "ok" })));
+
+      const result = await api.ignoreLemma("banka", "sl");
+
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/ignored-lemmas`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lemma: "banka", language_code: "sl" }),
+      });
+      expect(result.status).toBe("ok");
+    });
+
+    it("ignoreLemma throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail()));
+      await expect(api.ignoreLemma("banka", "sl")).rejects.toThrow(
+        "POST /api/srs/ignored-lemmas: Internal Server Error",
+      );
+    });
+
+    it("unignoreLemma calls DELETE /api/srs/ignored-lemmas", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ status: "ok" })));
+
+      const result = await api.unignoreLemma("banka", "sl");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/ignored-lemmas?lemma=banka&language_code=sl`,
+        { method: "DELETE" },
+      );
+      expect(result.status).toBe("ok");
+    });
+
+    it("unignoreLemma throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail()));
+      await expect(api.unignoreLemma("banka", "sl")).rejects.toThrow(
+        "DELETE /api/srs/ignored-lemmas?lemma=banka&language_code=sl: Internal Server Error",
+      );
+    });
   });
 
   describe("curriculum progress", () => {

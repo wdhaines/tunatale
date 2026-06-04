@@ -216,6 +216,60 @@ describe("Tooltip", () => {
     expect(onSetState).toHaveBeenCalledWith(10, "known");
   });
 
+  it('shows "Ignored" state label for ignored state', () => {
+    const { getByRole } = render(TooltipTest, {
+      props: { translation: null, state: "ignored", childText: "test" },
+    });
+    expect(getByRole("tooltip").textContent).toContain("Ignored");
+  });
+
+  it('shows "Ignore" button for unknown word when onIgnoreLemma is provided', () => {
+    const word = makeWordToken({ active_state: "unknown", srs_item_id: null });
+    const actions = { onIgnoreLemma: vi.fn() };
+    const { getByRole } = render(TooltipTest, {
+      props: { word, actions, childText: "test" },
+    });
+    expect(getByRole("button", { name: /ignore/i })).toBeTruthy();
+  });
+
+  it("calls onIgnoreLemma with lemma when Ignore clicked on unknown word", async () => {
+    const word = makeWordToken({ active_state: "unknown", srs_item_id: null, lemma: "banka" });
+    const onIgnoreLemma = vi.fn();
+    const { getByRole } = render(TooltipTest, {
+      props: { word, actions: { onIgnoreLemma }, childText: "test" },
+    });
+    await getByRole("button", { name: /ignore/i }).click();
+    expect(onIgnoreLemma).toHaveBeenCalledWith("banka");
+  });
+
+  it('shows "Un-ignore" button for card-less ignored word when onUnignoreLemma is provided', () => {
+    const word = makeWordToken({ active_state: "ignored", srs_item_id: null });
+    const actions = { onUnignoreLemma: vi.fn() };
+    const { getByRole } = render(TooltipTest, {
+      props: { word, actions, childText: "test" },
+    });
+    expect(getByRole("button", { name: /un-ignore/i })).toBeTruthy();
+  });
+
+  it("calls onUnignoreLemma with lemma when Un-ignore clicked on card-less ignored word", async () => {
+    const word = makeWordToken({ active_state: "ignored", srs_item_id: null, lemma: "banka" });
+    const onUnignoreLemma = vi.fn();
+    const { getByRole } = render(TooltipTest, {
+      props: { word, actions: { onUnignoreLemma }, childText: "test" },
+    });
+    await getByRole("button", { name: /un-ignore/i }).click();
+    expect(onUnignoreLemma).toHaveBeenCalledWith("banka");
+  });
+
+  it('does NOT show "Un-ignore" for unknown word', () => {
+    const word = makeWordToken({ active_state: "unknown", srs_item_id: null });
+    const actions = { onUnignoreLemma: vi.fn() };
+    const { queryByRole } = render(TooltipTest, {
+      props: { word, actions, childText: "test" },
+    });
+    expect(queryByRole("button", { name: /un-ignore/i })).toBeNull();
+  });
+
   it("calls onSetState with id and 'new' when Reset clicked", async () => {
     const word = makeWordToken({ active_state: "review", srs_item_id: 15 });
     const onSetState = vi.fn();

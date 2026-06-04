@@ -90,6 +90,22 @@ describe("WordSpan", () => {
       expect(getByRole("button").className).toContain("word-ignored");
     });
 
+    it("shows word-ignored class for ignored active_state", () => {
+      const { getByRole } = render(WordSpan, {
+        props: { word: makeWordToken({ active_state: "ignored", srs_item_id: null }) },
+      });
+      expect(getByRole("button").className).toContain("word-ignored");
+    });
+
+    it("does not apply masteryColor for ignored active_state", () => {
+      const { getByRole } = render(WordSpan, {
+        props: {
+          word: makeWordToken({ active_state: "ignored", progress: 0.5, srs_item_id: null }),
+        },
+      });
+      expect(getByRole("button").getAttribute("style")).toBe("");
+    });
+
     it("applies inline masteryColor style for new active_state (dynamic)", () => {
       const { getByRole } = render(WordSpan, {
         props: { word: makeWordToken({ active_state: "new", progress: 0.5 }) },

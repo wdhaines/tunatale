@@ -484,6 +484,21 @@ export class TunaTaleAPI {
     });
   }
 
+  async ignoreLemma(lemma: string, language_code: string): Promise<{ status: string }> {
+    return this.request("/api/srs/ignored-lemmas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lemma, language_code }),
+    });
+  }
+
+  async unignoreLemma(lemma: string, language_code: string): Promise<{ status: string }> {
+    return this.request(
+      `/api/srs/ignored-lemmas?lemma=${encodeURIComponent(lemma)}&language_code=${encodeURIComponent(language_code)}`,
+      { method: "DELETE" },
+    );
+  }
+
   async syncWithAnki(dryRun = false): Promise<AnkiSyncResult> {
     return this.request(`/api/anki/sync?dry_run=${dryRun}`, { method: "POST" });
   }
