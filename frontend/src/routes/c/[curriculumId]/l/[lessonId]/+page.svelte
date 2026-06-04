@@ -21,6 +21,9 @@
 	// untrack: intentionally snapshot load data as mutable local state
 	let audio: LessonAudio | null = $state(untrack(() => data.audio));
 	let transcript: TranscriptData | null = $state(untrack(() => data.transcript));
+	// Starts true when load didn't supply a transcript (production: we fetch it
+	// client-side below) so the section shows the spinner from first paint.
+	let transcriptLoading = $state(untrack(() => data.transcript === null));
 	let listenLoading = $state(false);
 	let listenResult: { registered: number } | null = $state(null);
 	let audioLoading = $state(false);
@@ -35,7 +38,29 @@
 	// lesson — otherwise audio/transcript show stale content after navigation.
 	$effect(() => {
 		audio = data.audio;
-		transcript = data.transcript;
+		const provided = data.transcript;
+		if (provided !== null) {
+			// Supplied by load (or passed directly in a test) — render it as-is.
+			transcript = provided;
+			return;
+		}
+		// Not preloaded: fetch client-side so the lesson shell renders immediately
+		// instead of blocking on the (classla-backed) transcript endpoint, which can
+		// take many seconds on a cold backend.
+		const lessonId = data.lesson.id;
+		transcript = null;
+		transcriptLoading = true;
+		error = '';
+		api.getLessonTranscript(lessonId)
+			.then((t) => {
+				transcript = t;
+			})
+			.catch((e) => {
+				error = e instanceof Error ? e.message : String(e);
+			})
+			.finally(() => {
+				transcriptLoading = false;
+			});
 	});
 
 	async function handleRenderAudio() {
@@ -262,8 +287,12 @@
 				onCreatePhrase={handleCreatePhrase}
 				tooltipActions={tooltipActions}
 			/>
+		{:else if transcriptLoading}
+			<p class="muted loading-transcript">
+				<span class="spinner" aria-hidden="true"></span> Loading transcript…
+			</p>
 		{:else}
-			<p class="muted">Transcript loading…</p>
+			<p class="muted">No transcript available.</p>
 		{/if}
 	</section>
 
@@ -333,6 +362,25 @@
 	.muted {
 		color: var(--color-muted);
 		font-size: 0.9rem;
+	}
+	.loading-transcript {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+	.spinner {
+		display: inline-block;
+		width: 1rem;
+		height: 1rem;
+		border: 2px solid var(--color-border);
+		border-top-color: var(--color-muted);
+		border-radius: 50%;
+		animation: spin 0.7s linear infinite;
+	}
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
 	}
 	.regenerate-section {
 		margin-top: 2rem;

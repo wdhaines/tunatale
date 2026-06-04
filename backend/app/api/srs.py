@@ -292,7 +292,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     balancer = build_live_load_balancer(db, now=datetime.datetime.now(datetime.UTC), col_crt=col_crt)
 
     # ── Word-level tracking from NATURAL_SPEED section ──────────────────
-    from app.models.lesson import SectionType, extract_sentence_translations_from_translated
+    from app.models.lesson import Section, SectionType, extract_sentence_translations_from_translated
 
     token_glosses: dict[str, str] = lesson.generation_metadata.get("token_glosses", {})
     sentence_translations: dict[str, str] = lesson.generation_metadata.get("sentence_translations", {})
@@ -319,8 +319,13 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # signal there (legacy behavior); classla supplies AUX/ADP/PRON/... and catches
     # the whole biti paradigm (ste/smo/so) without enumerating surfaces.
     surface_to_upos: dict[str, str] = {}
-    if natural_speed is not None:
-        for phrase in natural_speed.phrases:
+
+    def _analyze_phrases(section: Section) -> None:
+        # Runs the (classla) lemmatizer over the lesson's L2 phrases, filling the
+        # dicts above. Offloaded to a worker thread (below) so the blocking pipeline
+        # doesn't stall the event loop. The await suspends this coroutine until the
+        # thread finishes, so the shared-dict mutation has no concurrent access.
+        for phrase in section.phrases:
             if phrase.language_code != lesson.language_code:
                 continue
             surfaces = tokenize(phrase.text)
@@ -333,6 +338,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                     lemma_to_sentence[lemma] = phrase.text
                     lemma_to_first_surface[lemma] = surface
                 lemma_to_surfaces.setdefault(lemma, set()).add(surface)
+
+    if natural_speed is not None:
+        await anyio.to_thread.run_sync(_analyze_phrases, natural_speed)
 
     # ── Today window (mirrors count_new_introduced_today convention) ────
     local_tz = datetime.datetime.now().astimezone().tzinfo
@@ -799,7 +807,8 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
     # curated include-list is the sole signal). The surface is checked too — an
     # inflected function form (classla "sem" → lemma "biti") classifies via its
     # surface even when the dictionary lemma isn't itself a function word.
-    analyses = _lemmatizer.analyze_sentence(body.sentence, lang)
+    # Offload the (classla) lemmatizer off the event loop — see get_lesson_transcript.
+    analyses = await anyio.to_thread.run_sync(_lemmatizer.analyze_sentence, body.sentence, lang)
     upos = next((ta.upos for ta in analyses if ta.surface.casefold() == body.surface.casefold()), None)
     # Check both lemma and surface with the surface's upos (a single-word click).
     upos_map = {lemma.casefold(): upos, body.surface.casefold(): upos} if upos else None

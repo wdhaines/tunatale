@@ -35,6 +35,7 @@ vi.mock("$lib/stores/listened.svelte", () => ({
 }));
 
 import { api } from "$lib/api";
+import type { TranscriptData } from "$lib/api";
 import { listenedStore } from "$lib/stores/listened.svelte";
 import Page from "./+page.svelte";
 
@@ -77,6 +78,10 @@ const transcript = {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(listenedStore.has).mockReturnValue(false);
+  // When load supplies no transcript the component fetches it on mount. Default
+  // to a pending promise so null-transcript renders sit in the loading state
+  // without injecting content; tests that care override this.
+  mockGetTranscript.mockReturnValue(new Promise<TranscriptData>(() => {}));
 });
 
 describe("/c/[curriculumId]/l/[lessonId] page", () => {
@@ -149,11 +154,49 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(getByText("✓ Listened")).toBeTruthy();
   });
 
-  it("shows Transcript loading… when audio is loaded but transcript is null", () => {
-    const { getByText } = render(Page, {
+  it("shows a loading spinner while the transcript is being fetched", () => {
+    // load supplies no transcript (production path), so the component fetches it
+    // client-side; until that resolves, the spinner + label show.
+    const { getByText, container } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript: null } },
     });
-    expect(getByText("Transcript loading…")).toBeTruthy();
+    expect(getByText("Loading transcript…")).toBeTruthy();
+    expect(container.querySelector(".spinner")).toBeTruthy();
+  });
+
+  describe("client-side transcript fetch (no preload)", () => {
+    it("fetches and renders the transcript when load supplies none", async () => {
+      mockGetTranscript.mockResolvedValue(transcript);
+      const { findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: null } },
+      });
+      expect(await findByText("a coffee please")).toBeTruthy();
+      expect(mockGetTranscript).toHaveBeenCalledWith("l1");
+    });
+
+    it("shows 'No transcript available.' when the fetch resolves null", async () => {
+      mockGetTranscript.mockResolvedValue(null as never);
+      const { findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: null } },
+      });
+      expect(await findByText("No transcript available.")).toBeTruthy();
+    });
+
+    it("shows an error when the transcript fetch fails", async () => {
+      mockGetTranscript.mockRejectedValue(new Error("transcript boom"));
+      const { findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: null } },
+      });
+      expect(await findByText("transcript boom")).toBeTruthy();
+    });
+
+    it("stringifies a non-Error transcript fetch failure", async () => {
+      mockGetTranscript.mockRejectedValue("plain transcript error");
+      const { findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: null } },
+      });
+      expect(await findByText("plain transcript error")).toBeTruthy();
+    });
   });
 
   it("shows the transcript text before audio is rendered", () => {
