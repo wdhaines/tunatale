@@ -180,7 +180,7 @@ describe("WordSpan", () => {
     });
     const tooltip = container.querySelector('[role="tooltip"]');
     expect(tooltip).not.toBeNull();
-    expect(tooltip!.textContent).toContain("Learning");
+    expect(tooltip!.textContent).toContain("Not Due");
   });
 
   it("does not render tooltip when requireModifier=true and altHover=false", () => {

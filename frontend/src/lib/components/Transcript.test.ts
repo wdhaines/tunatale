@@ -430,7 +430,7 @@ describe("Transcript", () => {
         .closest(".tt-wrap")!
         .querySelector('[role="tooltip"]');
       expect(tooltip).not.toBeNull();
-      expect(tooltip!.textContent).toContain("Learning");
+      expect(tooltip!.textContent).toContain("Not Due");
     });
 
     it("Space key on collocation wrapper fires onCollocationStateChange", async () => {

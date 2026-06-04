@@ -92,7 +92,7 @@
 </script>
 
 {#if showTooltip}
-	<Tooltip translation={word.translation} state={word.srs_state} {word} {sentence} actions={tooltipActions}>
+	<Tooltip translation={word.translation} {word} {sentence} actions={tooltipActions}>
 		<span
 			class="word {colorClass}"
 			class:word-selected={selected}

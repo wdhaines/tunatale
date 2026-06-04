@@ -5,15 +5,14 @@
 	import type { TooltipActions } from './Tooltip.svelte';
 	interface Props {
 		translation?: string | null;
-		state?: string | null;
 		childText?: string;
 		word?: WordToken;
 		sentence?: string;
 		actions?: TooltipActions;
 	}
-	let { translation, state, childText = 'child', word, sentence, actions }: Props = $props();
+	let { translation, childText = 'child', word, sentence, actions }: Props = $props();
 </script>
 
-<Tooltip {translation} {state} {word} {sentence} {actions}>
+<Tooltip {translation} {word} {sentence} {actions}>
 	<span>{childText}</span>
 </Tooltip>

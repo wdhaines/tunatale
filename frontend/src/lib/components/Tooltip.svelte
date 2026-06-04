@@ -13,27 +13,15 @@
 
 	interface Props {
 		translation?: string | null;
-		state?: string | null;
 		children: Snippet;
 		word?: WordToken;
 		sentence?: string;
 		actions?: TooltipActions;
 	}
 
-	let { translation, state, children, word, sentence, actions }: Props = $props();
+	let { translation, children, word, sentence, actions }: Props = $props();
 
-	const STATE_LABELS: Record<string, string> = {
-		unknown: 'Unknown',
-		new: 'New',
-		learning: 'Learning',
-		relearning: 'Relearning',
-		review: 'Review',
-		known: 'Known',
-		suspended: 'Suspended',
-		ignored: 'Ignored'
-	};
-
-	const stateLabel = $derived(state ? (STATE_LABELS[state] ?? state) : null);
+	const dueLabel = $derived(word != null ? (word.is_due ? 'Due' : 'Not Due') : null);
 
 	const showCreateInflection = $derived(Boolean(word?.inflectable && actions?.onCreateInflection));
 
@@ -81,7 +69,7 @@
 		showCreateInflection || showIgnore || showIgnoreCardless || showUnignore || showUnignoreCardless || showMarkKnown || showResetNew
 	);
 
-	const hasContent = $derived(Boolean(translation || stateLabel || hasActions));
+	const hasContent = $derived(Boolean(translation || dueLabel || hasActions));
 </script>
 
 <span class="tt-wrap">
@@ -89,7 +77,7 @@
 	{#if hasContent}
 		<span class="tt" role="tooltip" aria-hidden="false">
 			{#if translation}<span class="tt-translation">{translation}</span>{/if}
-			{#if stateLabel}<span class="tt-state tt-state-{state}">{stateLabel}</span>{/if}
+			{#if dueLabel}<span class="tt-state tt-state-{word?.is_due ? 'due' : 'not-due'}">{dueLabel}</span>{/if}
 			{#if hasActions}
 				<span class="tt-actions">
 					{#if showCreateInflection}

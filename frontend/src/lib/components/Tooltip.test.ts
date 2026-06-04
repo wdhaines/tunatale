@@ -9,83 +9,65 @@ import { makeWordToken } from "$lib/../test/factories";
 describe("Tooltip", () => {
   it("renders the child content", () => {
     const { getByText } = render(TooltipTest, {
-      props: { translation: null, state: null, childText: "zdravo" },
+      props: { translation: null, childText: "zdravo" },
     });
     expect(getByText("zdravo")).toBeTruthy();
   });
 
   it("renders translation text when provided", () => {
     const { getByRole } = render(TooltipTest, {
-      props: { translation: "hello", state: null, childText: "zdravo" },
+      props: { translation: "hello", childText: "zdravo" },
     });
     const tooltip = getByRole("tooltip");
     expect(tooltip.textContent).toContain("hello");
   });
 
-  it('renders readable state label for "learning"', () => {
+  it('renders "Due" when word is due', () => {
+    const word = makeWordToken({ is_due: true, srs_item_id: 1 });
     const { getByRole } = render(TooltipTest, {
-      props: { translation: null, state: "learning", childText: "zdravo" },
+      props: { translation: null, word, childText: "zdravo" },
     });
-    const tooltip = getByRole("tooltip");
-    expect(tooltip.textContent).toContain("Learning");
+    expect(getByRole("tooltip").textContent).toContain("Due");
   });
 
-  it('renders readable state label for "new"', () => {
+  it('renders "Not Due" when word is not due', () => {
+    const word = makeWordToken({ is_due: false, srs_item_id: 1 });
     const { getByRole } = render(TooltipTest, {
-      props: { translation: null, state: "new", childText: "zdravo" },
+      props: { translation: null, word, childText: "zdravo" },
     });
-    expect(getByRole("tooltip").textContent).toContain("New");
+    expect(getByRole("tooltip").textContent).toContain("Not Due");
   });
 
-  it('renders readable state label for "review"', () => {
-    const { getByRole } = render(TooltipTest, {
-      props: { translation: null, state: "review", childText: "zdravo" },
+  it("does not render due label when word is not provided", () => {
+    const { queryByRole } = render(TooltipTest, {
+      props: { translation: "hello", childText: "zdravo" },
     });
-    expect(getByRole("tooltip").textContent).toContain("Review");
-  });
-
-  it('renders readable state label for "known"', () => {
-    const { getByRole } = render(TooltipTest, {
-      props: { translation: null, state: "known", childText: "zdravo" },
-    });
-    expect(getByRole("tooltip").textContent).toContain("Known");
-  });
-
-  it('renders readable state label for "suspended" as "Suspended"', () => {
-    const { getByRole } = render(TooltipTest, {
-      props: { translation: null, state: "suspended", childText: "zdravo" },
-    });
-    expect(getByRole("tooltip").textContent).toContain("Suspended");
+    const tooltip = queryByRole("tooltip");
+    expect(tooltip?.textContent).not.toContain("Due");
   });
 
   it("renders no tooltip when both translation and state are null and no actions apply", () => {
     const { queryByRole } = render(TooltipTest, {
-      props: { translation: null, state: null, childText: "zdravo" },
+      props: { translation: null, childText: "zdravo" },
     });
     expect(queryByRole("tooltip")).toBeNull();
   });
 
-  it("renders both translation and state label when both provided", () => {
+  it("renders both translation and due label when both provided", () => {
+    const word = makeWordToken({ is_due: true, srs_item_id: 1 });
     const { getByRole } = render(TooltipTest, {
-      props: { translation: "hello", state: "learning", childText: "zdravo" },
+      props: { translation: "hello", word, childText: "zdravo" },
     });
     const tooltip = getByRole("tooltip");
     expect(tooltip.textContent).toContain("hello");
-    expect(tooltip.textContent).toContain("Learning");
+    expect(tooltip.textContent).toContain("Due");
   });
 
   it('has role="tooltip" on the tooltip element', () => {
     const { getByRole } = render(TooltipTest, {
-      props: { translation: "hello", state: null, childText: "zdravo" },
+      props: { translation: "hello", childText: "zdravo" },
     });
     expect(getByRole("tooltip")).toBeTruthy();
-  });
-
-  it("falls back to raw state value when state is not in STATE_LABELS", () => {
-    const { getByRole } = render(TooltipTest, {
-      props: { translation: null, state: "exotic_state", childText: "zdravo" },
-    });
-    expect(getByRole("tooltip").textContent).toContain("exotic_state");
   });
 
   // --- Action buttons ---
@@ -214,13 +196,6 @@ describe("Tooltip", () => {
     });
     await getByRole("button", { name: /^known$/i }).click();
     expect(onSetState).toHaveBeenCalledWith(10, "known");
-  });
-
-  it('shows "Ignored" state label for ignored state', () => {
-    const { getByRole } = render(TooltipTest, {
-      props: { translation: null, state: "ignored", childText: "test" },
-    });
-    expect(getByRole("tooltip").textContent).toContain("Ignored");
   });
 
   it('shows "Ignore" button for unknown word when onIgnoreLemma is provided', () => {

@@ -386,7 +386,7 @@
 									{#if segment.type === 'collocation'}
 										<Tooltip
 											translation={altHeld ? null : segment.words[0].collocation_translation}
-											state={altHeld ? null : segment.words[0].collocation_srs_state}
+											word={segment.words[0]}
 										>
 											<span
 												class="collocation-span {collocationClassFor(segment.words[0].collocation_srs_state!)}"
