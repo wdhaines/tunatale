@@ -154,14 +154,14 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(getByText("✓ Listened")).toBeTruthy();
   });
 
-  it("shows a loading spinner while the transcript is being fetched", () => {
+  it("shows the plain transcript placeholder while the transcript is being fetched", () => {
     // load supplies no transcript (production path), so the component fetches it
-    // client-side; until that resolves, the spinner + label show.
-    const { getByText, container } = render(Page, {
+    // client-side; until that resolves, the plain placeholder (dialogue text with
+    // no word coloring) shows instead of a bare spinner.
+    const { getByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript: null } },
     });
-    expect(getByText("Loading transcript…")).toBeTruthy();
-    expect(container.querySelector(".spinner")).toBeTruthy();
+    expect(getByText(/Preparing word states/)).toBeTruthy();
   });
 
   describe("client-side transcript fetch (no preload)", () => {

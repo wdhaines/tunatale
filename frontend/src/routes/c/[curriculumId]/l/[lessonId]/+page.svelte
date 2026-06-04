@@ -6,6 +6,7 @@
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import AudioPlayer from '$lib/components/AudioPlayer.svelte';
 	import Transcript from '$lib/components/Transcript.svelte';
+	import TranscriptPlaceholder from '$lib/components/TranscriptPlaceholder.svelte';
 	import SyncButton from '$lib/components/SyncButton.svelte';
 	import type { PageData } from './$types';
 
@@ -296,9 +297,7 @@
 				tooltipActions={tooltipActions}
 			/>
 		{:else if transcriptLoading}
-			<p class="muted loading-transcript">
-				<span class="spinner" aria-hidden="true"></span> Loading transcript…
-			</p>
+			<TranscriptPlaceholder lesson={data.lesson} />
 		{:else}
 			<p class="muted">No transcript available.</p>
 		{/if}
@@ -370,25 +369,6 @@
 	.muted {
 		color: var(--color-muted);
 		font-size: 0.9rem;
-	}
-	.loading-transcript {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-	.spinner {
-		display: inline-block;
-		width: 1rem;
-		height: 1rem;
-		border: 2px solid var(--color-border);
-		border-top-color: var(--color-muted);
-		border-radius: 50%;
-		animation: spin 0.7s linear infinite;
-	}
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
 	}
 	.regenerate-section {
 		margin-top: 2rem;
