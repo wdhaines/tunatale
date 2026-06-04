@@ -1,5 +1,6 @@
 """FastAPI application for TunaTale language learning."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -32,6 +33,21 @@ logging.getLogger("app.audio.renderer").setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
+async def _warm_lemmatizer() -> None:
+    """Load the lemmatizer pipeline off the request path.
+
+    For ``lemmatizer_type=classla`` this loads the PyTorch/classla pipeline (~15s).
+    Run as a background task during ``lifespan`` so uvicorn binds the port immediately
+    instead of refusing every ``/api/*`` request until the model finishes loading. A
+    no-op-cost call for the default lowercase lemmatizer. Swallows its own errors so a
+    missing model degrades to on-demand loading rather than aborting startup.
+    """
+    try:
+        await anyio.to_thread.run_sync(get_lemmatizer().lemmatize, "hotel", "sl")
+    except Exception:
+        logger.warning("Lemmatizer warm-up failed — continuing with on-demand loading")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     real_client = LLMClient(groq_api_key=settings.groq_api_key, groq_model=settings.llm_model)
@@ -62,19 +78,20 @@ async def lifespan(app: FastAPI):
     )
     app.state.audio_dir = Path("output/audio")
 
-    # Warm the lemmatizer at startup so the first /listen or /transcript request
-    # doesn't pay the model-load cost. A no-op for the default lowercase
-    # lemmatizer; loads the classla pipeline up front when lemmatizer_type=classla.
-    # Offloaded to a thread (classla/PyTorch is blocking) and guarded with
-    # try/except so a missing-model error logs a warning but doesn't abort startup.
-    try:
-        await anyio.to_thread.run_sync(get_lemmatizer().lemmatize, "hotel", "sl")
-    except Exception:
-        logger.warning("Lemmatizer warm-up failed — continuing with on-demand loading")
+    # Warm the lemmatizer in the background so the first /listen or /transcript request
+    # doesn't pay the model-load cost. Critically, this must NOT be awaited before the
+    # yield: awaiting the classla pipeline load (~15s) here blocks uvicorn's startup
+    # event, so the port never binds and every frontend /api/* request is refused until
+    # "Done loading processors!". As a background task, the port binds immediately and
+    # classla still warms eagerly. A no-op for the default lowercase lemmatizer.
+    warmup_task = asyncio.create_task(_warm_lemmatizer())
 
     logger.info("TunaTale backend starting up")
     yield
 
+    # Let the warm-up settle on shutdown. _warm_lemmatizer swallows its own exceptions,
+    # so this never raises; by normal shutdown the pipeline is long since loaded.
+    await warmup_task
     srs_db.close()
     content_store.close()
     logger.info("TunaTale backend shutting down")
