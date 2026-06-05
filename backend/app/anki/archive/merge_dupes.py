@@ -31,15 +31,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from app.anki.notetype import (
+from app.anki.archive.notetype_builders import (
     SLOVENE_VOCAB_CSS,
-    SLOVENE_VOCAB_NOTETYPE_NAME,
     build_field_config,
     build_notetype_config,
     build_template_config,
     slovene_vocab_fields,
     slovene_vocab_templates,
 )
+from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
 from app.anki.safety import safe_open
 from app.anki.sqlite_reader import AnkiNote, fetch_notes_for_deck, find_deck_id
 from app.anki.sqlite_writer import check_anki_web_sync_active
