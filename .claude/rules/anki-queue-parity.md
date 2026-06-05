@@ -130,7 +130,7 @@ Walk this tree on a divergence report. Each leaf → mechanism that handles it; 
 
 **Duplicate TT collocations linked to same Anki note (Layer 35 cleanup):**
 - Two collocations sharing `anki_note_id` → "phantom direction" mis-classifications in `_merge_directions` (Layer 33). `sync_pull`'s `get_collocation_by_anki_note_id` returns FIRST cid SQLite finds → one gets live updates, other stays stale → Layer 33 sinks the stale one to bottom. Symptom: "card disappears from TT new-head though Anki shows it next."
-- Diagnostic: `SELECT anki_note_id, COUNT(*) FROM collocations WHERE anki_note_id IS NOT NULL GROUP BY anki_note_id HAVING COUNT(*) > 1`. Should be 0 (3 pairs merged in Layer 35: ulica, Bog, ura). If more appear, use `app/anki/dedupe_tt_collocations.py` pattern.
+- Diagnostic: `SELECT anki_note_id, COUNT(*) FROM collocations WHERE anki_note_id IS NOT NULL GROUP BY anki_note_id HAVING COUNT(*) > 1`. Should be 0 (3 pairs merged in Layer 35: ulica, Bog, ura). If more appear, use `app/anki/archive/dedupe_tt_collocations.py` pattern.
 - Architectural note: any new code path that creates a second collocation for an existing Anki note MUST also handle dedupe.
 
 **Queue head wrong (Anki=learning, TT=main, both have card):**

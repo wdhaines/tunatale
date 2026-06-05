@@ -77,10 +77,9 @@ addopts = "--cov=app --cov-report=term-missing"
 source = ["app"]
 branch = true
 omit = [
-    "app/anki/migrate_cloze_to_production.py",
-    "app/anki/dedup_tt_revlog.py",
-    "app/anki/diagnose_replay_match.py",
-    "app/anki/measure_stage3b_premise.py",
+    # Retired one-shot migration/repair/analysis scripts (already applied to the
+    # production collection, zero non-test references). See app/anki/archive/__init__.py.
+    "app/anki/archive/*",
     "app/srs/build_function_word_list.py",
 ]
 

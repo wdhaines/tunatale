@@ -38,7 +38,7 @@ To delete notes/cards while keeping AnkiWeb in sync, write a grave row instead o
 - `usn=-1` on every new grave row (client-side; the server rewrites it during sync).
 - Bump `col.mod` and set `col.usn=-1`. **Don't** touch `col.scm` — deletes are data-only, no full upload.
 
-Canonical pattern (mirror `app/anki/delete_phonology_demos.py` or `cleanup_function_word_notes.py`):
+Canonical pattern (mirror `app/anki/archive/delete_phonology_demos.py` or `archive/cleanup_function_word_notes.py`):
 
 ```python
 _GRAVE_KIND_CARD, _GRAVE_KIND_NOTE = 0, 1
@@ -79,7 +79,7 @@ Never call `sqlite3.connect` on `collection.anki2` directly. Use `app.anki.safet
 
 ## When building a new Anki migration
 
-- Add it under `backend/app/anki/`, following the shape of `backfill_guids.py` or `migrate_homonyms.py`.
+- Add it under `backend/app/anki/`, following the shape of `archive/backfill_guids.py` or `archive/migrate_homonyms.py`.
 - Tests under `backend/tests/test_anki_<name>.py` — build minimal in-memory DBs, no real `collection.anki2`.
 - If the migration bumps `col.scm`, the module docstring MUST point to this file.
 - TDD red-green always (see `.claude/rules/tdd.md`).

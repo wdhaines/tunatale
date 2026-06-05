@@ -87,6 +87,26 @@ class TestIdempotency:
             after = db.execute("SELECT COUNT(*) FROM collocation_directions").fetchone()[0]
         assert before == after == 10
 
+    def test_guid_edited_after_import_falls_back_to_anki_note_id(self, fake_anki_db, tmp_path):
+        """Re-import skips via anki_note_id when the stored guid no longer matches.
+
+        Mirrors "DisambigKey cleared or Slovene field edited after import": the TT
+        row's guid drifts from what the (unchanged) Anki note recomputes to, so the
+        guid lookup misses, but the anki_note_id fallback still finds the row and
+        skips it instead of minting a duplicate (import_seed.py:310-318).
+        """
+        _run(fake_anki_db, tmp_path)
+        db_path = str(tmp_path / "tunatale.db")
+        with closing(sqlite3.connect(db_path)) as db:
+            db.execute("UPDATE collocations SET guid = 'bogus-' || id")
+            db.commit()
+        result = _run(fake_anki_db, tmp_path)
+        assert result["new_parents"] == 0
+        assert result["skipped_guid_collisions"] == 5
+        with closing(sqlite3.connect(db_path)) as db:
+            count = db.execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
+        assert count == 5
+
 
 class TestNoAnkiMutation:
     def test_source_sha256_unchanged(self, fake_anki_db, tmp_path):
