@@ -64,11 +64,31 @@ class TestScoreHit:
         score = score_hit(hit, frozenset())
         assert score == pytest.approx(0.0)
 
-    def test_formula_matches_expected_value(self):
+    def test_formula_relevance_dominates_with_squashed_engagement(self):
+        # Relevance is weighted heavily (10 per overlapping tag); engagement is
+        # squashed into [0, 1) so it can only ever break ties, never dominate.
         hit = {"likes": 99, "views": 999, "tags": "tree, forest, nature"}
         tokens = frozenset({"tree", "nature"})
-        expected = 0.5 * math.log(100) + 0.3 * math.log(1000) + 2
+        eng_raw = 0.5 * math.log(100) + 0.3 * math.log(1000)
+        expected = 10.0 * 2 + eng_raw / (eng_raw + 1.0)
         assert score_hit(hit, tokens) == pytest.approx(expected)
+
+    def test_one_tag_overlap_beats_unlimited_engagement(self):
+        # A single on-topic tag must outrank any amount of likes/views.
+        on_topic = score_hit({"likes": 0, "views": 0, "tags": "court"}, frozenset({"court"}))
+        off_topic = score_hit({"likes": 10**9, "views": 10**9, "tags": "tennis"}, frozenset({"court"}))
+        assert on_topic > off_topic
+
+    def test_editors_choice_adds_bonus(self):
+        plain = score_hit({"likes": 5, "views": 10, "tags": "tree"}, frozenset({"tree"}))
+        chosen = score_hit({"likes": 5, "views": 10, "tags": "tree", "editors_choice": True}, frozenset({"tree"}))
+        assert chosen > plain
+
+    def test_engagement_is_bounded_below_one(self):
+        # Even with astronomically high engagement and no overlap, the score
+        # stays under 1.0 (the relevance floor for a single tag).
+        score = score_hit({"likes": 10**12, "views": 10**12, "tags": "x"}, frozenset())
+        assert score < 1.0
 
 
 # ── best_hit ──────────────────────────────────────────────────────────────────
@@ -101,6 +121,21 @@ class TestBestHit:
         v2 = {"likes": 9000, "views": 0, "tags": "", "imageType": "vector"}
         result = best_hit([v1, v2], "tree")
         assert result is v2
+
+    def test_on_topic_low_engagement_beats_off_topic_viral(self):
+        # The core fix: a relevant photo with almost no engagement must win over
+        # a wildly popular but off-topic one. (Old engagement-weighted formula
+        # picked the viral tennis shot for a "courtroom interior" query.)
+        on_topic = {"likes": 1, "views": 0, "tags": "courtroom, justice", "imageType": "photo"}
+        off_topic = {"likes": 99999, "views": 999999, "tags": "tennis, sport", "imageType": "photo"}
+        result = best_hit([off_topic, on_topic], "courtroom interior")
+        assert result is on_topic
+
+    def test_editors_choice_breaks_relevance_tie(self):
+        plain = {"likes": 5, "views": 10, "tags": "tree", "imageType": "photo"}
+        chosen = {"likes": 5, "views": 10, "tags": "tree", "imageType": "photo", "editors_choice": True}
+        result = best_hit([plain, chosen], "tree")
+        assert result is chosen
 
 
 # ── fetch_pixabay_image ───────────────────────────────────────────────────────
@@ -219,6 +254,50 @@ class TestFetchPixabayImage:
         assert result is not None
         _, _, url = result
         assert url == "https://cdn.pixabay.com/fresh.jpg"
+
+    def test_query_override_is_sent_verbatim(self):
+        captured: dict[str, str] = {}
+
+        class _CapturingTransport(httpx.BaseTransport):
+            def handle_request(self, request: httpx.Request) -> httpx.Response:
+                if "pixabay.com/api" in str(request.url):
+                    captured["q"] = request.url.params.get("q", "")
+                    return httpx.Response(
+                        200,
+                        json={
+                            "hits": [
+                                {
+                                    "likes": 1,
+                                    "views": 1,
+                                    "tags": "courtroom",
+                                    "imageType": "photo",
+                                    "webformatURL": "https://cdn.pixabay.com/c.jpg",
+                                }
+                            ]
+                        },
+                    )
+                return httpx.Response(200, content=b"img")
+
+        client = httpx.Client(transport=_CapturingTransport())
+        # "court" maps to "courtroom interior" via QUERY_MAP, but an explicit
+        # override must bypass build_query entirely.
+        result = fetch_pixabay_image("court", api_key="k", http_client=client, query="empty jail cell")
+        assert result is not None
+        assert captured["q"] == "empty jail cell"
+
+    def test_falsy_query_falls_back_to_build_query(self):
+        captured: dict[str, str] = {}
+
+        class _CapturingTransport(httpx.BaseTransport):
+            def handle_request(self, request: httpx.Request) -> httpx.Response:
+                if "pixabay.com/api" in str(request.url):
+                    captured["q"] = request.url.params.get("q", "")
+                    return httpx.Response(200, json={"hits": []})
+                return httpx.Response(200, content=b"img")
+
+        client = httpx.Client(transport=_CapturingTransport())
+        fetch_pixabay_image("wing", api_key="k", http_client=client, query=None)
+        assert captured["q"] == "bird wing"  # QUERY_MAP entry, not raw "wing"
 
     def test_returns_none_when_all_hits_in_used_urls(self):
         hits = [

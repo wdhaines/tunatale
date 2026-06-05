@@ -3434,3 +3434,29 @@ class TestLemmaAnalysisCache:
     def test_language_code_mismatch_is_miss(self, srs_db):
         srs_db.set_sentence_analysis("Dober dan", "sl", "test-v1", '[{"surface": "Dober", "lemma": "dober"}]')
         assert srs_db.get_sentence_analysis("Dober dan", "en", "test-v1") is None
+
+
+class TestImageQueryCache:
+    """Persistent per-word image-search-query cache: round-trips, misses, skip-sentinel."""
+
+    def test_miss_returns_none(self, srs_db):
+        assert srs_db.get_image_query("sodišče", "court", "img-v1") is None
+
+    def test_round_trip(self, srs_db):
+        srs_db.set_image_query("sodišče", "court", "img-v1", "courtroom interior")
+        assert srs_db.get_image_query("sodišče", "court", "img-v1") == "courtroom interior"
+
+    def test_empty_string_is_a_cached_skip_not_a_miss(self, srs_db):
+        # "" is the sentinel for "abstract word, no image"; it must round-trip
+        # as "" (distinct from a None miss) so we don't re-query every sync.
+        srs_db.set_image_query("zato", "therefore", "img-v1", "")
+        assert srs_db.get_image_query("zato", "therefore", "img-v1") == ""
+
+    def test_upsert_overwrites(self, srs_db):
+        srs_db.set_image_query("sodišče", "court", "img-v1", "tennis court")
+        srs_db.set_image_query("sodišče", "court", "img-v1", "courtroom interior")
+        assert srs_db.get_image_query("sodišče", "court", "img-v1") == "courtroom interior"
+
+    def test_model_version_mismatch_is_miss(self, srs_db):
+        srs_db.set_image_query("sodišče", "court", "img-v1", "courtroom interior")
+        assert srs_db.get_image_query("sodišče", "court", "img-v2") is None

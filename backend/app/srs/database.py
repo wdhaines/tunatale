@@ -132,6 +132,17 @@ CREATE TABLE IF NOT EXISTS lemma_analysis_cache (
 )
 """
 
+_CREATE_IMAGE_QUERY_CACHE = """
+CREATE TABLE IF NOT EXISTS image_query_cache (
+    word           TEXT NOT NULL,
+    english        TEXT NOT NULL,
+    model_version  TEXT NOT NULL,
+    query          TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    PRIMARY KEY (word, english, model_version)
+)
+"""
+
 # Columns on `collocation_directions` mapped onto a DirectionState.
 # due_date dropped in v25 — due_at is the single source of truth.
 _DIR_COLUMNS = (
@@ -222,6 +233,7 @@ class SRSDatabase:
         conn.execute(_CREATE_SYNC_CONFLICTS)
         conn.execute(_CREATE_ANKI_STATE_CACHE)
         conn.execute(_CREATE_LEMMA_ANALYSIS_CACHE)
+        conn.execute(_CREATE_IMAGE_QUERY_CACHE)
         conn.commit()
 
     @contextmanager
@@ -697,6 +709,30 @@ class SRSDatabase:
                 "INSERT OR REPLACE INTO lemma_analysis_cache (sentence, language_code, model_version, analyses_json, updated_at)"
                 " VALUES (?, ?, ?, ?, datetime('now'))",
                 (sentence, language_code, model_version, analyses_json),
+            )
+            self._commit(conn)
+
+    def get_image_query(self, word: str, english: str, model_version: str) -> str | None:
+        """Return the cached image-search query for a card, or None on miss.
+
+        An empty-string result is a *hit*, not a miss: it is the sentinel for
+        "this word is abstract, don't fetch an image". Callers must check
+        ``is not None`` rather than truthiness.
+        """
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT query FROM image_query_cache WHERE word = ? AND english = ? AND model_version = ?",
+                (word, english, model_version),
+            ).fetchone()
+        return row["query"] if row else None
+
+    def set_image_query(self, word: str, english: str, model_version: str, query: str) -> None:
+        """Upsert an image-search query (possibly the empty-string skip sentinel)."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO image_query_cache (word, english, model_version, query, updated_at)"
+                " VALUES (?, ?, ?, ?, datetime('now'))",
+                (word, english, model_version, query),
             )
             self._commit(conn)
 

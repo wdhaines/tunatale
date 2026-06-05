@@ -2525,7 +2525,13 @@ class AnkiSync:
             image_tag = ""
 
             if _media_fn is not None:
-                media = await _media_fn(word, english, used_image_urls=used_image_urls)
+                media = await _media_fn(
+                    word,
+                    english,
+                    source_sentence=item.syntactic_unit.source_sentence,
+                    grammar=item.syntactic_unit.grammar,
+                    used_image_urls=used_image_urls,
+                )
                 if media is not None and media.audio_bytes is not None:
                     prefix = "sl" if media.audio_source == "forvo" else "tts"
                     audio_filename = f"{_safe_stem(word, prefix)}.mp3"

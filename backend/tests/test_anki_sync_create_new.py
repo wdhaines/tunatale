@@ -177,15 +177,15 @@ class FakeCreateWriter:
         return [c[0] for c in self.calls]
 
 
-async def _no_media(word: str, english: str, *, used_image_urls: set[str]) -> MediaResult | None:
+async def _no_media(word: str, english: str, *, used_image_urls: set[str], **_kwargs) -> MediaResult | None:
     return None
 
 
-async def _forvo_media(word: str, english: str, *, used_image_urls: set[str]) -> MediaResult | None:
+async def _forvo_media(word: str, english: str, *, used_image_urls: set[str], **_kwargs) -> MediaResult | None:
     return MediaResult(audio_bytes=b"mp3_data", audio_source="forvo")
 
 
-async def _tts_media(word: str, english: str, *, used_image_urls: set[str]) -> MediaResult | None:
+async def _tts_media(word: str, english: str, *, used_image_urls: set[str], **_kwargs) -> MediaResult | None:
     return MediaResult(
         audio_bytes=b"tts_data",
         audio_source="tts",
@@ -194,7 +194,7 @@ async def _tts_media(word: str, english: str, *, used_image_urls: set[str]) -> M
     )
 
 
-async def _full_media(word: str, english: str, *, used_image_urls: set[str]) -> MediaResult | None:
+async def _full_media(word: str, english: str, *, used_image_urls: set[str], **_kwargs) -> MediaResult | None:
     url = f"https://cdn.pixabay.com/{english}.jpg"
     used_image_urls.add(url)
     return MediaResult(
@@ -1082,7 +1082,7 @@ class TestSyncCreateNew:
 
         received_used_urls: list[frozenset] = []
 
-        async def tracking_media(word, english, *, used_image_urls):
+        async def tracking_media(word, english, *, used_image_urls, **_kwargs):
             received_used_urls.append(frozenset(used_image_urls))
             url = f"https://cdn.pixabay.com/{english}.jpg"
             used_image_urls.add(url)

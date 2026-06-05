@@ -142,7 +142,7 @@ async def test_user_add_to_anki_e2e_with_anki_media():
     )
 
     # Simulate media generation
-    async def mock_media(word, english, *, used_image_urls=None):
+    async def mock_media(word, english, *, used_image_urls=None, **_kwargs):
         from app.anki.media.pipeline import MediaResult
 
         return MediaResult(

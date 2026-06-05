@@ -30,6 +30,7 @@ async def fetch_card_media(
     tts_voice: str = DEFAULT_VOICE,
     normalize: bool = True,
     used_image_urls: set[str] | None = None,
+    image_query: str | None = None,
     _forvo_fn: Callable[..., bytes | None] | None = None,
     _tts_fn: Callable[..., Awaitable[bytes | None]] | None = None,
     _pixabay_fn: Callable[..., Any] | None = None,
@@ -39,6 +40,11 @@ async def fetch_card_media(
 
     Tries Forvo first, falls back to edge-tts. Image from Pixabay.
     Pass used_image_urls (a shared set) across cards to prevent duplicate images.
+
+    ``image_query`` controls image selection (see ``query_llm`` contract):
+      * ``None`` — legacy: Pixabay derives the query from ``english``.
+      * ``""``   — skip the image entirely (abstract word, no depiction).
+      * non-empty — sent to Pixabay verbatim as a sense-disambiguated query.
     """
     forvo_fn = _forvo_fn or fetch_forvo_audio
     tts_fn = _tts_fn or generate_tts_audio
@@ -60,15 +66,18 @@ async def fetch_card_media(
     if result.audio_bytes is not None and normalize:
         result.audio_bytes = norm_fn(result.audio_bytes)
 
-    img = pixabay_fn(
-        english,
-        api_key=pixabay_key,
-        http_client=http_client,
-        used_urls=frozenset(used_image_urls) if used_image_urls is not None else frozenset(),
-    )
-    if img is not None:
-        result.image_bytes, result.image_ext, result.image_url = img
-        if used_image_urls is not None:
-            used_image_urls.add(result.image_url)
+    # image_query == "" is the explicit "abstract word, no image" skip sentinel.
+    if image_query != "":
+        img = pixabay_fn(
+            english,
+            api_key=pixabay_key,
+            http_client=http_client,
+            used_urls=frozenset(used_image_urls) if used_image_urls is not None else frozenset(),
+            query=image_query,
+        )
+        if img is not None:
+            result.image_bytes, result.image_ext, result.image_url = img
+            if used_image_urls is not None:
+                used_image_urls.add(result.image_url)
 
     return result
