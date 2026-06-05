@@ -58,7 +58,11 @@ async def synthesize_cloze_audios(
             kind="audio_tts_sentence",
             filename=sentence_filename,
             path=str(sentence_path),
-            anki_filename="",
+            # anki_filename must equal the filename Anki references in the cloze
+            # Back Extra ([sound:tts_sentence_…]). The sync's refresh_media
+            # reconciliation matches rows by anki_filename; an empty value never
+            # matches, so the row is collapsed on every sync (silent TTS loss).
+            anki_filename=sentence_filename,
             sha256=sha,
             size_bytes=size_bytes,
         )
@@ -85,7 +89,7 @@ async def synthesize_cloze_audios(
             kind="audio_tts",
             filename=word_filename,
             path=str(word_path),
-            anki_filename="",
+            anki_filename=word_filename,
             sha256=sha,
             size_bytes=size_bytes,
         )
