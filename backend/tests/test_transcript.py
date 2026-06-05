@@ -442,6 +442,34 @@ class TestWordTokenEnrichment:
         word = result.dialogue_lines[0].words[0]
         assert word.collocation_translation is None
 
+    def test_collocation_progress_computed_from_span_directions(self):
+        """Span tokens carry the collocation's mastery progress (red→green ramp).
+
+        A freshly-added (NEW) collocation has both directions NEW → component
+        mastery 0.0 each → progress 0.0 (a float, not None — proving the
+        directions were passed to compute_mastery_progress, not an empty set).
+        """
+        unit = SyntacticUnit(
+            text="kje je banka",
+            translation="where is the bank",
+            word_count=3,
+            difficulty=2,
+            source="llm",
+            lemma=None,
+        )
+        self.db.add_collocation(unit, language_code="sl")
+
+        lesson = _make_lesson([("female-1", "kje je banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        words = result.dialogue_lines[0].words
+        assert [w.collocation_progress for w in words] == [0.0, 0.0, 0.0]
+
+    def test_word_not_in_collocation_has_null_collocation_progress(self):
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        word = result.dialogue_lines[0].words[0]
+        assert word.collocation_progress is None
+
     def test_transcript_word_matches_existing_lowercase_card(self):
         """Sentence-initial 'Zdravo' matches existing 'zdravo' card via lemma lookup."""
         unit = SyntacticUnit(

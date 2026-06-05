@@ -5,6 +5,7 @@
 	import { api } from '$lib/api';
 	import type { LessonDetail, TranscriptData, WordToken } from '$lib/api';
 	import { buildScenes, fallbackScenes } from '$lib/transcriptScenes';
+	import { masteryBackgroundColor } from '$lib/mastery';
 
 	interface CreatePhraseArgs {
 		text: string;
@@ -249,12 +250,11 @@
 		showAddPhrase = false;
 	}
 
-	function collocationClassFor(state: string): string {
-		if (state === 'learning' || state === 'relearning') return 'coll-bg-learning';
-		if (state === 'review') return 'coll-bg-review';
-		if (state === 'known') return 'coll-bg-known';
-		if (state === 'suspended' || state === 'ignored') return 'coll-bg-ignored';
-		return 'coll-bg-new';
+	// A collocation's background tint tracks its mastery on the same red→green ramp
+	// as single words (its `collocation_progress`), EXCEPT suspended/ignored, which
+	// stay off the ramp (gray + strikethrough) — mirroring WordSpan's color logic.
+	function collocationOffRamp(state: string | null): boolean {
+		return state === 'suspended' || state === 'ignored';
 	}
 
 	function handleCollocationClick(segment: { words: WordToken[]; span_id: number }) {
@@ -384,12 +384,17 @@
 							>
 								{#each segments as segment, segIdx (segIdx)}
 									{#if segment.type === 'collocation'}
+										{@const collOffRamp = collocationOffRamp(segment.words[0].collocation_srs_state)}
 										<Tooltip
 											translation={altHeld ? null : segment.words[0].collocation_translation}
 											word={segment.words[0]}
 										>
 											<span
-												class="collocation-span {collocationClassFor(segment.words[0].collocation_srs_state!)}"
+												class="collocation-span"
+												class:coll-bg-ignored={collOffRamp}
+												style={collOffRamp
+													? ''
+													: `background-color: ${masteryBackgroundColor(segment.words[0].collocation_progress ?? 0)};`}
 												role="button"
 												tabindex="0"
 												onclick={() => handleCollocationClick(segment)}
@@ -691,18 +696,6 @@
 	.collocation-span:focus-visible {
 		outline: 2px solid var(--color-primary, #2563eb);
 		outline-offset: 2px;
-	}
-	.coll-bg-new {
-		background-color: rgba(37, 99, 235, 0.1);
-	}
-	.coll-bg-learning {
-		background-color: rgba(202, 138, 4, 0.15);
-	}
-	.coll-bg-review {
-		background-color: rgba(22, 163, 74, 0.12);
-	}
-	.coll-bg-known {
-		background-color: rgba(156, 163, 175, 0.15);
 	}
 	.coll-bg-ignored {
 		background-color: rgba(156, 163, 175, 0.15);

@@ -71,6 +71,10 @@ export interface WordToken {
   collocation_srs_state: string | null;
   collocation_lemma: string | null;
   collocation_translation: string | null;
+  // Optional: present only on collocation-span tokens; null/absent off-span.
+  // Optional (not required-with-null like the siblings) to spare ~40 inline test
+  // literals — the consumer reads `?? 0`.
+  collocation_progress?: number | null;
   card_type: string | null;
   active_state: string;
   active_direction: string | null;

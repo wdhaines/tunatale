@@ -567,6 +567,7 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
                         "collocation_srs_state": w.collocation_srs_state,
                         "collocation_lemma": w.collocation_lemma,
                         "collocation_translation": w.collocation_translation,
+                        "collocation_progress": w.collocation_progress,
                         "card_type": w.card_type,
                         "active_state": w.active_state,
                         "active_direction": w.active_direction,

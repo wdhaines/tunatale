@@ -339,12 +339,14 @@ describe("Transcript", () => {
       expect(onCollocationStateChange).not.toHaveBeenCalled();
     });
 
-    it("collocation wrapper has state-based background class", () => {
+    it("collocation wrapper tints its background by mastery (on-ramp state)", () => {
       const { container } = render(Transcript, {
         props: defaultProps({ transcript: transcriptWithCollocation }),
       });
       const span = container.querySelector(".collocation-span") as HTMLElement;
-      expect(span.className).toContain("coll-bg-learning");
+      // 'learning' is on the ramp; with no collocation_progress it defaults to 0 → faint red.
+      expect(span.getAttribute("style")).toContain("rgba(195, 34, 34, 0.15)");
+      expect(span.className).not.toContain("coll-bg-ignored");
     });
 
     it("collocation wrapper has role=button and is keyboard-reachable", () => {
@@ -508,7 +510,7 @@ describe("Transcript", () => {
   });
 
   describe("collocation background colors", () => {
-    function makeCollTranscript(state: string): TranscriptData {
+    function makeCollTranscript(state: string, progress: number | null = null): TranscriptData {
       return {
         lesson_id: "l1",
         key_phrases: [],
@@ -527,6 +529,7 @@ describe("Transcript", () => {
                 collocation_srs_state: state,
                 collocation_lemma: "dober dan",
                 collocation_translation: null,
+                collocation_progress: progress,
                 card_type: null,
                 active_state: "new",
                 active_direction: null,
@@ -547,6 +550,7 @@ describe("Transcript", () => {
                 collocation_srs_state: state,
                 collocation_lemma: "dober dan",
                 collocation_translation: null,
+                collocation_progress: progress,
                 card_type: null,
                 active_state: "new",
                 active_direction: null,
@@ -562,46 +566,54 @@ describe("Transcript", () => {
       };
     }
 
-    it("review state → coll-bg-review", () => {
+    it("on-ramp state (review) tints background by mastery progress", () => {
       const { container } = render(Transcript, {
-        props: defaultProps({ transcript: makeCollTranscript("review") }),
+        props: defaultProps({ transcript: makeCollTranscript("review", 1) }),
       });
-      expect(container.querySelector(".collocation-span")!.className).toContain("coll-bg-review");
+      const span = container.querySelector(".collocation-span") as HTMLElement;
+      expect(span.getAttribute("style")).toContain("rgba(34, 195, 34, 0.15)");
+      expect(span.className).not.toContain("coll-bg-ignored");
     });
 
-    it("known state → coll-bg-known", () => {
+    it("on-ramp state (known) tints background by mastery progress", () => {
       const { container } = render(Transcript, {
-        props: defaultProps({ transcript: makeCollTranscript("known") }),
+        props: defaultProps({ transcript: makeCollTranscript("known", 0.5) }),
       });
-      expect(container.querySelector(".collocation-span")!.className).toContain("coll-bg-known");
+      const span = container.querySelector(".collocation-span") as HTMLElement;
+      expect(span.getAttribute("style")).toContain("rgba(195, 195, 34, 0.15)");
     });
 
-    it("suspended state → coll-bg-ignored", () => {
+    it("on-ramp state (relearning) tints background by mastery progress", () => {
       const { container } = render(Transcript, {
-        props: defaultProps({ transcript: makeCollTranscript("suspended") }),
+        props: defaultProps({ transcript: makeCollTranscript("relearning", 0) }),
       });
-      expect(container.querySelector(".collocation-span")!.className).toContain("coll-bg-ignored");
+      const span = container.querySelector(".collocation-span") as HTMLElement;
+      expect(span.getAttribute("style")).toContain("rgba(195, 34, 34, 0.15)");
     });
 
-    it("ignored state → coll-bg-ignored", () => {
+    it("suspended state stays off the ramp → coll-bg-ignored, no inline tint", () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: makeCollTranscript("suspended", 0.9) }),
+      });
+      const span = container.querySelector(".collocation-span") as HTMLElement;
+      expect(span.className).toContain("coll-bg-ignored");
+      expect(span.getAttribute("style") ?? "").not.toContain("hsla");
+    });
+
+    it("ignored state stays off the ramp → coll-bg-ignored", () => {
       const { container } = render(Transcript, {
         props: defaultProps({ transcript: makeCollTranscript("ignored") }),
       });
       expect(container.querySelector(".collocation-span")!.className).toContain("coll-bg-ignored");
     });
 
-    it("relearning state → coll-bg-learning", () => {
+    it("unrecognized non-suspended state is treated as on-ramp (tinted, not gray)", () => {
       const { container } = render(Transcript, {
-        props: defaultProps({ transcript: makeCollTranscript("relearning") }),
+        props: defaultProps({ transcript: makeCollTranscript("exotic", 0) }),
       });
-      expect(container.querySelector(".collocation-span")!.className).toContain("coll-bg-learning");
-    });
-
-    it("unknown state → coll-bg-new (default)", () => {
-      const { container } = render(Transcript, {
-        props: defaultProps({ transcript: makeCollTranscript("exotic") }),
-      });
-      expect(container.querySelector(".collocation-span")!.className).toContain("coll-bg-new");
+      const span = container.querySelector(".collocation-span") as HTMLElement;
+      expect(span.className).not.toContain("coll-bg-ignored");
+      expect(span.getAttribute("style")).toContain("background-color");
     });
   });
 

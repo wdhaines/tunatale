@@ -31,6 +31,7 @@ class WordToken:
     collocation_srs_state: str | None = None  # SRS state of the enclosing collocation
     collocation_lemma: str | None = None  # canonical text of the enclosing collocation
     collocation_translation: str | None = None  # L1 translation of the enclosing collocation
+    collocation_progress: float | None = None  # mastery of the enclosing collocation (red→green ramp)
     # Phase 5 enrichment fields
     card_type: str | None = None  # resolved item's card_type; None if unknown
     active_state: str = "unknown"  # active direction's state.value; "unknown" if no card
@@ -130,7 +131,7 @@ def resolve_active_direction(item: object) -> Direction:
 
 
 def _is_due(ds: DirectionState, today: date) -> bool:
-    """True when the direction state is actionable (not known/suspended/unknown) and due."""
+    """True when the direction state is actionable (not new/known/suspended) and due."""
     # Match review-queue logic: exclude NEW (gated by daily cap, bury, etc.).
     if ds.state in (SRSState.NEW, SRSState.KNOWN, SRSState.SUSPENDED):
         return False
@@ -287,8 +288,6 @@ def extract_transcript(
                     inflectable_flag = False
 
                 if resolved_item is not None:
-                    from app.models.srs_item import SRSState as _SRSState
-
                     item = resolved_item
                     srs_state = item.state.value
                     card_type = item.syntactic_unit.card_type
@@ -305,7 +304,7 @@ def extract_transcript(
                         if feature_str and is_a1_morphology_feature(feature_str):
                             base_prod = item.directions.get(Direction.PRODUCTION)
                             base_prod_state = base_prod.state if base_prod is not None else None
-                            if base_prod_state in (_SRSState.REVIEW, _SRSState.KNOWN) and inflection_match is None:
+                            if base_prod_state in (SRSState.REVIEW, SRSState.KNOWN) and inflection_match is None:
                                 inflectable_flag = True
                                 inflection_feature_val = feature_str
 
@@ -351,7 +350,7 @@ def extract_transcript(
 
             # Annotate collocation spans
             span_annotations = match_spans(lemmas, collocation_index)
-            span_cache: dict[int, tuple[str, str, str | None]] = {}
+            span_cache: dict[int, tuple[str, str, str | None, float | None]] = {}
             for word, (span_id, is_start) in zip(words, span_annotations, strict=True):
                 word.collocation_span_id = span_id
                 word.collocation_start = is_start
@@ -364,9 +363,15 @@ def extract_transcript(
                         coll_item.state.value,
                         coll_item.syntactic_unit.text,
                         coll_item.syntactic_unit.translation or None,
+                        compute_mastery_progress(coll_item.directions.values()),
                     )
                     span_cache[span_id] = cached
-                word.collocation_srs_state, word.collocation_lemma, word.collocation_translation = cached
+                (
+                    word.collocation_srs_state,
+                    word.collocation_lemma,
+                    word.collocation_translation,
+                    word.collocation_progress,
+                ) = cached
 
             # Reconstruct with each token's surrounding punctuation, not the bare
             # surface join — the sentence is used as a card's source_sentence, and
