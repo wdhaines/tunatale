@@ -819,6 +819,59 @@ class TestSyncPush:
 
         assert db.get_dirty_fields(guid) == ""
 
+    def test_dirty_source_sentence_pushes_vocab_note_field(self):
+        """A vocab card with dirty source_sentence pushes its Note (example) field."""
+        db = _make_tt_db()
+        unit = SyntacticUnit(
+            text="imeti",
+            translation="have",
+            word_count=1,
+            difficulty=1,
+            source="user",
+            lemma="imeti",
+            source_sentence="Koliko časa imaš?",
+        )
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation("imeti")
+        guid = item.guid
+        db.set_anki_ids(guid, 8801, {Direction.RECOGNITION: 88010, Direction.PRODUCTION: 88011})
+        db.set_dirty_fields(guid, "source_sentence")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        call = next(c for c in writer.calls if c[0] == "update_note_fields")
+        assert call[1] == 8801
+        assert call[2]["Note"] == "Koliko časa imaš?"
+        assert db.get_dirty_fields(guid) == ""
+
+    def test_dirty_source_sentence_pushes_cloze_text_field(self):
+        """A cloze card with dirty source_sentence pushes its Text (front) field."""
+        db = _make_tt_db()
+        unit = SyntacticUnit(
+            text="koliko",
+            translation="how much",
+            word_count=1,
+            difficulty=1,
+            source="user",
+            lemma="koliko",
+            card_type="cloze",
+            source_sentence="{{c1::Koliko}} časa imaš?",
+        )
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation_by_lemma("koliko")
+        guid = item.guid
+        db.set_anki_ids(guid, 8802, {Direction.PRODUCTION: 88021})
+        db.set_dirty_fields(guid, "source_sentence")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        call = next(c for c in writer.calls if c[0] == "update_note_fields")
+        assert call[1] == 8802
+        assert call[2]["Text"] == "{{c1::Koliko}} časa imaš?"
+        assert db.get_dirty_fields(guid) == ""
+
     def test_dirty_cloze_sentence_translation_writes_back_extra(self):
         """Cloze card with dirty sentence_translation rebuilds Back Extra and pushes."""
         db = _make_tt_db()

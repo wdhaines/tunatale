@@ -2257,9 +2257,15 @@ class AnkiSync:
                     )
                     if sentence_audio and not dry_run:
                         _copy_tt_media_to_anki(self._writer, sentence_audio)
+                if "source_sentence" in dirty_set:
+                    # The cloze front (Anki "Text" field) is the clozed sentence.
+                    fields["Text"] = item.syntactic_unit.source_sentence or ""
             else:
                 if "translation" in dirty_set:
                     fields["English"] = item.syntactic_unit.translation
+                if "source_sentence" in dirty_set:
+                    # Vocab example sentence lives in the Anki "Note" field.
+                    fields["Note"] = item.syntactic_unit.source_sentence or ""
             if not fields:
                 continue
             if not dry_run:

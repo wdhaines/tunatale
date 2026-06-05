@@ -368,8 +368,16 @@ def extract_transcript(
                     span_cache[span_id] = cached
                 word.collocation_srs_state, word.collocation_lemma, word.collocation_translation = cached
 
+            # Reconstruct with each token's surrounding punctuation, not the bare
+            # surface join — the sentence is used as a card's source_sentence, and
+            # dropping punctuation produces clozes/examples like "Koliko časa imaš"
+            # missing the "?" and breaks exact sentence-translation lookups.
             dialogue_lines.append(
-                DialogueLine(role=phrase.role, words=words, sentence=" ".join(w.surface for w in words))
+                DialogueLine(
+                    role=phrase.role,
+                    words=words,
+                    sentence=" ".join(f"{w.prefix_punct}{w.surface}{w.suffix_punct}" for w in words),
+                )
             )
 
     return TranscriptData(

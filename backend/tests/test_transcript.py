@@ -55,6 +55,18 @@ class TestExtractTranscript:
         result = extract_transcript(lesson, self.db, self.lemmatizer)
         assert result.dialogue_lines[0].words[0].srs_state == "unknown"
 
+    def test_reconstructed_sentence_preserves_punctuation(self):
+        """The line sentence (used as card source_sentence) keeps punctuation,
+        not the bare surface join — e.g. 'Koliko časa imaš?' not '... imaš'."""
+        lesson = _make_lesson([("female-1", "Koliko časa imaš?")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].sentence == "Koliko časa imaš?"
+
+    def test_reconstructed_sentence_preserves_internal_punctuation(self):
+        lesson = _make_lesson([("female-1", "Zdravo, kje ste?")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].sentence == "Zdravo, kje ste?"
+
     def test_ignored_lemma_renders_ignored(self):
         self.db.add_ignored_lemma("sl", "banka")
         lesson = _make_lesson([("female-1", "banka")])
