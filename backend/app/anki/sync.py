@@ -220,6 +220,14 @@ def extract_cloze_translation(back_extra: str) -> str:
     m = _BACK_EXTRA_SENT.match(back_extra) or _BACK_EXTRA_TRANS.match(back_extra)
     if m:
         return m.group(1).strip()
+    # No leading <i>WORD</i> means there is no word-level translation. The
+    # bare-text fallback below exists only for legacy notes that stored the
+    # translation as plain text. A morphology cloze (e.g. biti) carries a
+    # grammar / sentence span but no <i> — HTML-stripping it here would leak the
+    # grammar hint ("biti, 3rd person singular") into the translation column on
+    # every sync_pull, so treat the word translation as empty.
+    if 'class="grammar"' in back_extra or 'class="st"' in back_extra:
+        return ""
     return extract_translation(back_extra)
 
 

@@ -297,6 +297,238 @@ class TestInflectionClozes:
         assert cloze.syntactic_unit.grammar == "biti, 2nd person plural"
         assert cloze.directions[Direction.PRODUCTION].state == SRSState.NEW
 
+    async def test_resolves_gloss_and_sentence_translation_from_lesson(self, api_app_state):
+        """lesson_id → word gloss (token_glosses) + sentence_translation (metadata)."""
+        from app.main import app
+        from app.models.lesson import Lesson
+
+        self._seed_base_learned(api_app_state)
+        store = app.state.content_store
+        lesson = Lesson(title="Day 1", language_code="sl", sections=[], key_phrases=[])
+        lesson.generation_metadata = {
+            "token_glosses": {"ljubljano": "Ljubljana"},
+            "sentence_translations": {"Grem v Ljubljano.": "I'm going to Ljubljana."},
+        }
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "Ljubljano",
+                    "lemma": "ljubljana",
+                    "feature": "noun:acc:sg",
+                    "sentence": "Grem v Ljubljano.",
+                    "language_code": "sl",
+                    "lesson_id": "lesson-1",
+                },
+            )
+        assert resp.status_code == 200
+
+        guid = compute_guid("Ljubljano", "sl", "morph:noun-acc-sg")
+        cloze = api_app_state.get_collocation_by_guid(guid)
+        assert cloze.syntactic_unit.translation == "Ljubljana"
+        assert cloze.syntactic_unit.source_sentence_translation == "I'm going to Ljubljana."
+        # The grammar hint stays in its own field — never the translation.
+        assert cloze.syntactic_unit.grammar == "ljubljana, accusative singular"
+
+    async def test_sentence_translation_matches_despite_punctuation(self, api_app_state):
+        """The transcript passes a punctuation-stripped sentence; lookup still matches."""
+        from app.main import app
+        from app.models.lesson import Lesson
+
+        self._seed_base_learned(api_app_state)
+        store = app.state.content_store
+        lesson = Lesson(title="Day 1", language_code="sl", sections=[], key_phrases=[])
+        lesson.generation_metadata = {
+            "sentence_translations": {"Grem v Ljubljano.": "I'm going to Ljubljana."},
+        }
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "Ljubljano",
+                    "lemma": "ljubljana",
+                    "feature": "noun:acc:sg",
+                    # No trailing period — as reconstructed from transcript surfaces.
+                    "sentence": "Grem v Ljubljano",
+                    "language_code": "sl",
+                    "lesson_id": "lesson-1",
+                },
+            )
+        assert resp.status_code == 200
+        guid = compute_guid("Ljubljano", "sl", "morph:noun-acc-sg")
+        cloze = api_app_state.get_collocation_by_guid(guid)
+        assert cloze.syntactic_unit.source_sentence_translation == "I'm going to Ljubljana."
+
+    async def test_body_translation_used_as_word_gloss(self, api_app_state):
+        """An explicit translation in the body becomes the word gloss."""
+        from app.main import app
+
+        self._seed_base_learned(api_app_state)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "Ljubljano",
+                    "lemma": "ljubljana",
+                    "feature": "noun:acc:sg",
+                    "sentence": "Grem v Ljubljano.",
+                    "language_code": "sl",
+                    "translation": "Ljubljana (city)",
+                },
+            )
+        assert resp.status_code == 200
+        guid = compute_guid("Ljubljano", "sl", "morph:noun-acc-sg")
+        cloze = api_app_state.get_collocation_by_guid(guid)
+        assert cloze.syntactic_unit.translation == "Ljubljana (city)"
+
+    async def test_body_translation_wins_over_lesson_gloss(self, api_app_state):
+        """Explicit body.translation is kept even when the lesson has a gloss."""
+        from app.main import app
+        from app.models.lesson import Lesson
+
+        self._seed_base_learned(api_app_state)
+        store = app.state.content_store
+        lesson = Lesson(title="Day 1", language_code="sl", sections=[], key_phrases=[])
+        lesson.generation_metadata = {"token_glosses": {"ljubljano": "auto-gloss"}}
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "Ljubljano",
+                    "lemma": "ljubljana",
+                    "feature": "noun:acc:sg",
+                    "sentence": "Grem v Ljubljano.",
+                    "language_code": "sl",
+                    "lesson_id": "lesson-1",
+                    "translation": "explicit",
+                },
+            )
+        assert resp.status_code == 200
+        guid = compute_guid("Ljubljano", "sl", "morph:noun-acc-sg")
+        cloze = api_app_state.get_collocation_by_guid(guid)
+        assert cloze.syntactic_unit.translation == "explicit"
+
+    async def test_gloss_falls_back_to_lemma_key(self, api_app_state):
+        """When token_glosses lacks the surface, the lemma key is used."""
+        from app.main import app
+        from app.models.lesson import Lesson
+
+        self._seed_base_learned(api_app_state)
+        store = app.state.content_store
+        lesson = Lesson(title="Day 1", language_code="sl", sections=[], key_phrases=[])
+        lesson.generation_metadata = {"token_glosses": {"ljubljana": "the city"}}
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "Ljubljano",
+                    "lemma": "ljubljana",
+                    "feature": "noun:acc:sg",
+                    "sentence": "Grem v Ljubljano.",
+                    "language_code": "sl",
+                    "lesson_id": "lesson-1",
+                },
+            )
+        assert resp.status_code == 200
+        guid = compute_guid("Ljubljano", "sl", "morph:noun-acc-sg")
+        cloze = api_app_state.get_collocation_by_guid(guid)
+        assert cloze.syntactic_unit.translation == "the city"
+
+    async def test_lesson_missing_leaves_translation_empty(self, api_app_state):
+        """lesson_id pointing at no stored lesson → no gloss/sentence resolution."""
+        from app.main import app
+
+        self._seed_base_learned(api_app_state)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "Ljubljano",
+                    "lemma": "ljubljana",
+                    "feature": "noun:acc:sg",
+                    "sentence": "Grem v Ljubljano.",
+                    "language_code": "sl",
+                    "lesson_id": "does-not-exist",
+                },
+            )
+        assert resp.status_code == 200
+        guid = compute_guid("Ljubljano", "sl", "morph:noun-acc-sg")
+        cloze = api_app_state.get_collocation_by_guid(guid)
+        assert cloze.syntactic_unit.translation == ""
+        assert cloze.syntactic_unit.source_sentence_translation == ""
+
+    async def test_sentence_translation_derived_from_translated_section(self, api_app_state):
+        """Sentence translation falls back to the TRANSLATED section when metadata lacks it."""
+        from app.main import app
+        from app.models.lesson import Lesson, Phrase, Section, SectionType
+
+        self._seed_base_learned(api_app_state)
+        store = app.state.content_store
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.TRANSLATED,
+                    phrases=[
+                        Phrase(text="Grem v Ljubljano.", voice_id="v", language_code="sl"),
+                        Phrase(text="I'm going to Ljubljana.", voice_id="v", language_code="en"),
+                    ],
+                )
+            ],
+            key_phrases=[],
+        )
+        lesson.generation_metadata = {}
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "Ljubljano",
+                    "lemma": "ljubljana",
+                    "feature": "noun:acc:sg",
+                    "sentence": "Grem v Ljubljano.",
+                    "language_code": "sl",
+                    "lesson_id": "lesson-1",
+                },
+            )
+        assert resp.status_code == 200
+        guid = compute_guid("Ljubljano", "sl", "morph:noun-acc-sg")
+        cloze = api_app_state.get_collocation_by_guid(guid)
+        assert cloze.syntactic_unit.source_sentence_translation == "I'm going to Ljubljana."
+
+    async def test_no_lesson_id_leaves_translation_empty(self, api_app_state):
+        """Backward compat: no lesson_id/translation → empty word gloss, hint in grammar only."""
+        from app.main import app
+
+        self._seed_base_learned(api_app_state)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "Ljubljano",
+                    "lemma": "ljubljana",
+                    "feature": "noun:acc:sg",
+                    "sentence": "Grem v Ljubljano.",
+                    "language_code": "sl",
+                },
+            )
+        assert resp.status_code == 200
+        guid = compute_guid("Ljubljano", "sl", "morph:noun-acc-sg")
+        cloze = api_app_state.get_collocation_by_guid(guid)
+        assert cloze.syntactic_unit.translation == ""
+        assert cloze.syntactic_unit.source_sentence_translation == ""
+        assert cloze.syntactic_unit.grammar == "ljubljana, accusative singular"
+
     async def test_biti_with_no_base_idempotent(self, api_app_state):
         """POST biti inflection cloze twice → exactly one row."""
         body = {

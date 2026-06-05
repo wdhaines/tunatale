@@ -15,7 +15,9 @@ from app.srs.function_words import (
     is_function_word_for,
     make_cloze_text,
     make_morphology_cloze_text,
+    normalize_sentence_key,
     ud_feats_to_tt_feature,
+    uncloze_text,
 )
 
 
@@ -150,6 +152,43 @@ class TestIsClozesOnlyVerb:
     def test_unknown_language_returns_false(self):
         assert is_clozes_only_verb("biti", "en") is False
         assert is_clozes_only_verb("biti", "zz") is False
+
+
+class TestUnclozeText:
+    def test_plain_cloze(self):
+        assert uncloze_text("knjiga, {{c1::ki}} je tam") == "knjiga, ki je tam"
+
+    def test_ending_blank_split(self):
+        assert uncloze_text("Grem v Ljubljan{{c1::o}}.") == "Grem v Ljubljano."
+
+    def test_cloze_with_hint(self):
+        assert uncloze_text("Zdravo {{c1::sem::biti, 1sg}} iz Ženeve") == "Zdravo sem iz Ženeve"
+
+    def test_multiple_clozes(self):
+        assert uncloze_text("To {{c1::je}} dobro {{c1::je}} fino") == "To je dobro je fino"
+
+    def test_no_cloze_passthrough(self):
+        assert uncloze_text("no cloze here") == "no cloze here"
+
+    def test_empty(self):
+        assert uncloze_text("") == ""
+
+
+class TestNormalizeSentenceKey:
+    def test_strips_internal_and_trailing_punctuation(self):
+        assert normalize_sentence_key("Zdravo, kje ste?") == "zdravo kje ste"
+
+    def test_unclozes_and_normalizes(self):
+        assert normalize_sentence_key("Zdravo kje {{c1::ste}}") == "zdravo kje ste"
+
+    def test_collapses_internal_period_between_sentences(self):
+        assert normalize_sentence_key("To je dobro. Center je zanimiv.") == "to je dobro center je zanimiv"
+
+    def test_preserves_accented_word_chars(self):
+        assert normalize_sentence_key("Zdravo, sem iz Ženeve.") == "zdravo sem iz ženeve"
+
+    def test_empty(self):
+        assert normalize_sentence_key("") == ""
 
 
 class TestMakeClozeText:

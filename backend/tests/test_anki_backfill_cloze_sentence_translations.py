@@ -105,6 +105,39 @@ class TestPlanBackfill:
         assert len(plan.cloze_updates) == 1
         assert plan.cloze_updates[0].new_sentence_translation == "Is it open every day?"
 
+    def test_matches_clozed_source_sentence_via_uncloze(self, tmp_path: Path):
+        """Morphology clozes store clozed source_sentence; matching un-clozes it first."""
+        db, store, _ = _seed(tmp_path)
+        _add_translated_lesson(store, "l1", [("Kje boste ostali?", "Where will you stay?")])
+        _add_cloze(db, text="boste", source_sentence="Kje {{c1::boste}} ostali")
+
+        plan = plan_backfill(db, store)
+
+        assert len(plan.cloze_updates) == 1
+        assert plan.cloze_updates[0].new_sentence_translation == "Where will you stay?"
+
+    def test_matches_ending_blank_cloze_via_uncloze(self, tmp_path: Path):
+        """Fluent-Forever ending-blank cloze (stem visible) un-clozes to the full word."""
+        db, store, _ = _seed(tmp_path)
+        _add_translated_lesson(store, "l1", [("Grem v Ljubljano.", "I'm going to Ljubljana.")])
+        _add_cloze(db, text="Ljubljano", source_sentence="Grem v Ljubljan{{c1::o}}.")
+
+        plan = plan_backfill(db, store)
+
+        assert len(plan.cloze_updates) == 1
+        assert plan.cloze_updates[0].new_sentence_translation == "I'm going to Ljubljana."
+
+    def test_matches_despite_internal_punctuation(self, tmp_path: Path):
+        """Cloze source_sentence lacking the lesson key's internal comma still matches."""
+        db, store, _ = _seed(tmp_path)
+        _add_translated_lesson(store, "l1", [("Zdravo, kje ste?", "Hello, where are you from?")])
+        _add_cloze(db, text="ste", source_sentence="Zdravo kje {{c1::ste}}")
+
+        plan = plan_backfill(db, store)
+
+        assert len(plan.cloze_updates) == 1
+        assert plan.cloze_updates[0].new_sentence_translation == "Hello, where are you from?"
+
     def test_skips_already_populated_cloze_rows(self, tmp_path: Path):
         db, store, _ = _seed(tmp_path)
         _add_translated_lesson(store, "l1", [("Kako si?", "How are you?")])

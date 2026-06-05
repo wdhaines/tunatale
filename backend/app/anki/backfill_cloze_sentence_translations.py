@@ -34,6 +34,7 @@ from pathlib import Path
 from app.config import settings
 from app.models.lesson import extract_sentence_translations_from_translated
 from app.srs.database import SRSDatabase
+from app.srs.function_words import normalize_sentence_key, uncloze_text
 from app.storage.store import ContentStore
 
 _TRAILING_PUNCT_RE = re.compile(r"[.?!,;:\s]+$")
@@ -83,8 +84,17 @@ def plan_backfill(db: SRSDatabase, store: ContentStore) -> BackfillPlan:
     plan = BackfillPlan()
 
     # Build merged sentence_translations across all lessons; first occurrence wins.
+    # `merged_match` is keyed by a punctuation/case-insensitive key so a cloze's
+    # punctuation-stripped source_sentence still matches the lesson's L2 key.
     merged_exact: dict[str, str] = {}
     merged_norm: dict[str, str] = {}
+    merged_match: dict[str, str] = {}
+
+    def _index(k: str, v: str) -> None:
+        merged_exact.setdefault(k, v)
+        merged_norm.setdefault(_norm(k), v)
+        merged_match.setdefault(normalize_sentence_key(k), v)
+
     for lesson_id, _curr, _day in _list_all_lessons(store):
         lesson = store.get_lesson(lesson_id)
         if lesson is None:
@@ -93,16 +103,14 @@ def plan_backfill(db: SRSDatabase, store: ContentStore) -> BackfillPlan:
         # over derived).
         existing_meta = lesson.generation_metadata.get("sentence_translations", {})
         for k, v in existing_meta.items():
-            merged_exact.setdefault(k, v)
-            merged_norm.setdefault(_norm(k), v)
+            _index(k, v)
         # Then derive from TRANSLATED section
         derived = extract_sentence_translations_from_translated(lesson)
         new_pairs: dict[str, str] = {}
         for k, v in derived.items():
             if k not in existing_meta:
                 new_pairs[k] = v
-            merged_exact.setdefault(k, v)
-            merged_norm.setdefault(_norm(k), v)
+            _index(k, v)
         if new_pairs:
             plan.lesson_updates.append(LessonUpdate(lesson_id=lesson_id, new_pairs=new_pairs))
 
@@ -114,7 +122,18 @@ def plan_backfill(db: SRSDatabase, store: ContentStore) -> BackfillPlan:
         ).fetchall()
     for row in rows:
         sent = row["source_sentence"] or ""
-        translation = merged_exact.get(sent) or merged_norm.get(_norm(sent), "")
+        # Morphology / function-word clozes store the *clozed* sentence
+        # (``Kje {{c1::boste}} ostali``); lesson translations are keyed by the
+        # raw sentence. Try the stored form first, then the un-clozed form.
+        translation = ""
+        for cand in (sent, uncloze_text(sent)):
+            translation = merged_exact.get(cand) or merged_norm.get(_norm(cand), "")
+            if translation:
+                break
+        # Last resort: punctuation/case-insensitive match (handles the cloze
+        # source_sentence dropping the lesson key's internal commas/periods).
+        if not translation:
+            translation = merged_match.get(normalize_sentence_key(sent), "")
         if translation:
             plan.cloze_updates.append(
                 ClozeUpdate(

@@ -467,6 +467,8 @@ export class TunaTaleAPI {
     feature: string;
     sentence: string;
     language_code: string;
+    lesson_id?: string;
+    translation?: string;
   }): Promise<{ id: number; was_created: boolean; item: SRSItemDetail }> {
     return this.request("/api/srs/inflection-clozes", {
       method: "POST",

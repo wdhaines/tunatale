@@ -56,6 +56,25 @@ class TestCreateBaseCard:
         assert coll.directions[Direction.RECOGNITION].state == SRSState.NEW
         assert coll.directions[Direction.PRODUCTION].state == SRSState.NEW
 
+    async def test_clozes_only_verb_rejected(self, api_app_state):
+        """A clozes-only verb (biti) has no base card — 409, no row created."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "boste",
+                    "lemma": "biti",
+                    "sentence": "Kje boste ostali?",
+                    "language_code": "sl",
+                    "translation": "you will be",
+                },
+            )
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"].lower()
+        assert "clozes-only" in detail or "no base card" in detail
+        assert api_app_state.get_collocation_by_guid(compute_guid("biti", "sl", "")) is None
+
     async def test_function_word_creates_cloze_base(self, api_app_state):
         """A function word (surface==lemma) → production-only cloze base."""
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -84,59 +103,39 @@ class TestCreateBaseCard:
         assert coll.anki_note_id is None
         assert coll.directions[Direction.PRODUCTION].state == SRSState.NEW
 
-    async def test_function_word_cloze_blanks_surface_not_lemma(self, api_app_state):
-        """surface 'sem' (function) / lemma 'biti' (content) → cloze keyed by lemma,
-        blanking the surface as it appeared (not the dictionary lemma)."""
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post(
-                "/api/srs/items/base",
-                json={
-                    "surface": "sem",
-                    "lemma": "biti",
-                    "sentence": "Jaz sem doma.",
-                    "language_code": "sl",
-                    "translation": "to be",
-                },
-            )
+    async def test_function_word_via_pos_blanks_surface_not_lemma(self, api_app_state, monkeypatch):
+        """A function word classified via its classla UPOS (PRON) → cloze base,
+        keyed by the lemma and blanking the surface as it appeared.
 
-        assert resp.status_code == 200
-        coll = api_app_state.get_collocation_by_guid(compute_guid("biti", "sl", ""))
-        assert coll.syntactic_unit.card_type == "cloze"
-        assert coll.syntactic_unit.text == "biti"
-        assert coll.syntactic_unit.source_sentence == "Jaz {{c1::sem}} doma."
-
-    async def test_function_word_via_pos_aux(self, api_app_state, monkeypatch):
-        """A biti form absent from the curated include list (ste) is classified as a
-        function word via its classla UPOS (AUX) → cloze base, not vocab.
-
-        Regression: under the lowercase lemmatizer (or before POS-first detection)
-        'ste' fell through to a standalone vocab card. With classla, 'ste' → lemma
-        'biti', upos AUX → cloze, keyed by the lemma and blanking the surface.
+        Uses a pronoun (surface 'ga' / lemma 'on') so the surface≠lemma blanking
+        branch is covered with a *non*-clozes-only word — biti is rejected outright
+        (see test_clozes_only_verb_rejected). Also exercises the upos-present path.
         """
         import app.api.srs as srs_mod
         from tests._helpers.lemmatizer import StubLemmatizer
 
         stub = StubLemmatizer()
-        stub.set_analysis("ste", "biti", upos="AUX")
+        stub.set_analysis("ga", "on", upos="PRON")
         monkeypatch.setattr(srs_mod, "_lemmatizer", stub)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 "/api/srs/items/base",
                 json={
-                    "surface": "ste",
-                    "lemma": "biti",
-                    "sentence": "Zdravo kje ste",
+                    "surface": "ga",
+                    "lemma": "on",
+                    "sentence": "Ona ga vidi",
                     "language_code": "sl",
-                    "translation": "to be",
+                    "translation": "him",
                 },
             )
 
         assert resp.status_code == 200
         assert resp.json()["item"]["card_type"] == "cloze"
-        coll = api_app_state.get_collocation_by_guid(compute_guid("biti", "sl", ""))
+        coll = api_app_state.get_collocation_by_guid(compute_guid("on", "sl", ""))
         assert coll.syntactic_unit.card_type == "cloze"
-        assert coll.syntactic_unit.source_sentence == "Zdravo kje {{c1::ste}}"
+        assert coll.syntactic_unit.text == "on"
+        assert coll.syntactic_unit.source_sentence == "Ona {{c1::ga}} vidi"
         assert coll.directions[Direction.PRODUCTION].state == SRSState.NEW
 
     async def test_idempotent_returns_existing(self, api_app_state):

@@ -39,6 +39,7 @@ from app.srs.function_words import (
     is_function_word_for,
     make_cloze_text,
     make_morphology_cloze_text,
+    normalize_sentence_key,
 )
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, lemmatize_surfaces_in_context, model_version_for
 from app.srs.queue_stats import (
@@ -813,6 +814,11 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
     lang = body.language_code
     lemma = body.lemma.casefold()
 
+    # Clozes-only verbs (e.g. biti) have no base card — only per-form conjugation
+    # clozes via /inflection-clozes. Reject so a click can't mint a spurious base.
+    if is_clozes_only_verb(lemma, lang):
+        raise HTTPException(status_code=409, detail="Clozes-only verb has no base card")
+
     # POS-first function-word detection: read the active surface's UPOS from the
     # sentence (classla → AUX for biti forms etc.; LowercaseLemmatizer → "" so the
     # curated include-list is the sole signal). The surface is checked too — an
@@ -1307,13 +1313,37 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
     if body.lemma.casefold() == body.surface.casefold():
         raise HTTPException(status_code=422, detail="Surface equals lemma — nothing to cloze")
 
-    # 3. Build + create (mirrors /listen morphology-cloze block)
+    # 3. Resolve word gloss + sentence translation from the lesson, mirroring
+    #    /listen. The grammar hint lives in its own `grammar` field — never the
+    #    translation — so it can't leak into the displayed L1 gloss.
+    word_translation = body.translation
+    sentence_translation = ""
+    if body.lesson_id:
+        from app.models.lesson import extract_sentence_translations_from_translated
+
+        lesson = request.app.state.content_store.get_lesson(body.lesson_id)
+        if lesson is not None:
+            token_glosses: dict[str, str] = lesson.generation_metadata.get("token_glosses", {})
+            sentence_translations: dict[str, str] = dict(lesson.generation_metadata.get("sentence_translations", {}))
+            for k, v in extract_sentence_translations_from_translated(lesson).items():
+                sentence_translations.setdefault(k, v)
+            sentence_translation = sentence_translations.get(body.sentence, "")
+            if not sentence_translation:
+                # The transcript passes a sentence reconstructed from surfaces,
+                # which drops the lesson key's internal punctuation. Fall back to
+                # a punctuation/case-insensitive match.
+                match_index = {normalize_sentence_key(k): v for k, v in sentence_translations.items()}
+                sentence_translation = match_index.get(normalize_sentence_key(body.sentence), "")
+            if not word_translation:
+                word_translation = token_glosses.get(body.surface.lower()) or token_glosses.get(body.lemma) or ""
+
+    # 4. Build + create (mirrors /listen morphology-cloze block)
     disambig = f"morph:{body.feature.replace(':', '-')}"
     cloze_sent = make_morphology_cloze_text(body.surface, body.lemma, body.feature, body.sentence)
     grammar_hint = format_morphology_hint(body.lemma, body.feature)
     unit = SyntacticUnit(
         text=body.surface,
-        translation="",
+        translation=word_translation,
         word_count=1,
         difficulty=1,
         source="llm",
@@ -1321,9 +1351,10 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
         disambig_key=disambig,
         card_type="cloze",
         source_sentence=cloze_sent,
+        source_sentence_translation=sentence_translation,
         grammar=grammar_hint,
     )
-    # 4-6. Persist + synthesize + serialize (always a cloze).
+    # 5. Persist + synthesize + serialize (always a cloze).
     return await _persist_new_card(
         db, unit, language_code, synthesize=True, audio_sentence=body.sentence, audio_word=body.surface
     )

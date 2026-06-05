@@ -87,6 +87,11 @@ class InflectionClozeRequest(BaseModel):
     feature: str
     sentence: str
     language_code: str
+    # Optional lesson context: resolves the word gloss + sentence translation
+    # from the lesson's generation_metadata (mirrors /listen). Omitted by older
+    # callers, in which case the cloze carries only its grammar hint.
+    lesson_id: str = ""
+    translation: str = ""
 
 
 class CreateBaseCardRequest(BaseModel):

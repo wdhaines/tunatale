@@ -157,7 +157,9 @@
 					lemma: word.lemma,
 					feature: word.inflection_feature!,
 					sentence,
-					language_code: data.lesson.language_code
+					language_code: data.lesson.language_code,
+					lesson_id: data.lesson.id,
+					translation: word.translation ?? ''
 				});
 				transcript = await api.getLessonTranscript(data.lesson.id);
 			} catch (e) {

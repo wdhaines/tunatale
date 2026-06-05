@@ -93,6 +93,39 @@ def is_clozes_only_verb(lemma: str, language_code: str) -> bool:
 
 
 _CLOZE_RE = re.compile(r"\{\{c1::")
+# Matches a full cloze deletion, capturing the answer text and discarding an
+# optional ``::hint`` suffix: ``{{c1::sem::biti, 1sg}}`` → ``sem``.
+_UNCLOZE_RE = re.compile(r"\{\{c\d+::(.*?)(?:::[^}]*)?\}\}")
+
+
+def uncloze_text(text: str) -> str:
+    """Strip cloze markup, leaving the answer text in place.
+
+    Inverse of :func:`make_cloze_text` / :func:`make_morphology_cloze_text` for
+    matching purposes. ``Grem v Ljubljan{{c1::o}}.`` → ``Grem v Ljubljano.``;
+    ``{{c1::sem::biti, 1sg}}`` → ``sem``. A string with no cloze passes through.
+    """
+    if not text:
+        return ""
+    return _UNCLOZE_RE.sub(r"\1", text)
+
+
+_NON_WORD_RE = re.compile(r"[^\w\s]", re.UNICODE)
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def normalize_sentence_key(text: str) -> str:
+    """Punctuation/case-insensitive key for matching a sentence to its translation.
+
+    Un-clozes, lowercases, drops punctuation, and collapses whitespace so a
+    cloze's stored (often punctuation-stripped) ``source_sentence`` matches the
+    lesson's original L2 sentence key. ``Zdravo kje {{c1::ste}}`` and
+    ``Zdravo, kje ste?`` both normalize to ``zdravo kje ste``. Accented word
+    characters (ž, č, š, …) are preserved.
+    """
+    s = uncloze_text(text).casefold()
+    s = _NON_WORD_RE.sub(" ", s)
+    return _WHITESPACE_RE.sub(" ", s).strip()
 
 
 def make_cloze_text(surface: str, source_sentence: str) -> str:

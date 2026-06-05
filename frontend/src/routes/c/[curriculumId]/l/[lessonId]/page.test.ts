@@ -744,6 +744,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
           feature: "noun:acc:sg",
           sentence: "Grem v Ljubljano",
           language_code: "sl",
+          lesson_id: "l1",
+          translation: "Ljubljana",
         });
         expect(mockGetTranscript).toHaveBeenCalledWith("l1");
       });
