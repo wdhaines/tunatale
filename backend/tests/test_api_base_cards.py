@@ -16,6 +16,16 @@ from httpx import ASGITransport, AsyncClient
 from app.common.guid import compute_guid
 from app.main import app
 from app.models.srs_item import Direction, SRSState
+from tests._helpers.lemmatizer import StubLemmatizer
+
+
+def _stub_verb(monkeypatch, surface: str, lemma: str) -> None:
+    """Force the create-base-card lemmatizer to classify *surface* as a VERB."""
+    import app.api.srs as srs_mod
+
+    stub = StubLemmatizer()
+    stub.set_analysis(surface, lemma, upos="VERB")
+    monkeypatch.setattr(srs_mod, "_lemmatizer", stub)
 
 
 class TestCreateBaseCard:
@@ -55,6 +65,73 @@ class TestCreateBaseCard:
         assert coll.anki_note_id is None
         assert coll.directions[Direction.RECOGNITION].state == SRSState.NEW
         assert coll.directions[Direction.PRODUCTION].state == SRSState.NEW
+
+    async def test_verb_base_card_reglossed_to_bare_form(self, api_app_state, monkeypatch):
+        """A verb → LLM re-glosses to the bare dictionary form (not the conjugation)."""
+        _stub_verb(monkeypatch, "pokazem", "pokazati")
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = "show"
+        app.state.llm = mock_llm
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "pokazem",
+                    "lemma": "pokazati",
+                    "sentence": "vam pokazem mesto",
+                    "language_code": "sl",
+                    "translation": "I will show",  # conjugated transcript gloss — must be overridden
+                },
+            )
+
+        assert resp.status_code == 200
+        coll = api_app_state.get_collocation_by_guid(compute_guid("pokazati", "sl", ""))
+        assert coll.syntactic_unit.translation == "show"
+        assert coll.syntactic_unit.card_type == "vocab"
+
+    async def test_verb_base_card_keeps_gloss_when_llm_returns_empty(self, api_app_state, monkeypatch):
+        """LLM failure/empty → keep the caller-provided gloss (fail-soft)."""
+        _stub_verb(monkeypatch, "pokazem", "pokazati")
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = ""
+        app.state.llm = mock_llm
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "pokazem",
+                    "lemma": "pokazati",
+                    "sentence": "vam pokazem mesto",
+                    "language_code": "sl",
+                    "translation": "I will show",
+                },
+            )
+
+        assert resp.status_code == 200
+        coll = api_app_state.get_collocation_by_guid(compute_guid("pokazati", "sl", ""))
+        assert coll.syntactic_unit.translation == "I will show"
+
+    async def test_verb_base_card_no_llm_keeps_gloss(self, api_app_state, monkeypatch):
+        """No LLM configured → keep the caller-provided gloss unchanged."""
+        _stub_verb(monkeypatch, "pokazem", "pokazati")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "pokazem",
+                    "lemma": "pokazati",
+                    "sentence": "vam pokazem mesto",
+                    "language_code": "sl",
+                    "translation": "I will show",
+                },
+            )
+
+        assert resp.status_code == 200
+        coll = api_app_state.get_collocation_by_guid(compute_guid("pokazati", "sl", ""))
+        assert coll.syntactic_unit.translation == "I will show"
 
     async def test_clozes_only_verb_rejected(self, api_app_state):
         """A clozes-only verb (biti) has no base card — 409, no row created."""

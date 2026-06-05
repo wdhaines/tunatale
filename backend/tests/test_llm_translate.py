@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.llm.translate import translate_term
+from app.llm.translate import generate_word_gloss, translate_term
 
 
 class TestTranslateTerm:
@@ -78,3 +78,58 @@ class TestTranslateTerm:
 
         result = await translate_term(mock_client, "kako si", "sl", "en")
         assert result == "how are you"
+
+
+class TestGenerateWordGloss:
+    """Tests for the part-of-speech-aware word gloss helper."""
+
+    @pytest.mark.asyncio
+    async def test_verb_lemma_uses_bare_form_prompt(self):
+        """A verb lemma (no feature) → prompt is the lemma + bare-form instruction."""
+        mock_client = AsyncMock()
+        mock_client.complete.return_value = "show"
+
+        result = await generate_word_gloss(
+            mock_client, surface="pokazem", lemma="pokazati", source_lang="sl", pos="VERB"
+        )
+        assert result == "show"
+        kwargs = mock_client.complete.call_args.kwargs
+        assert kwargs["prompt"] == "pokazati"
+        sp = kwargs["system_prompt"].lower()
+        assert "without" in sp and "to" in sp  # bare-form instruction
+
+    @pytest.mark.asyncio
+    async def test_inflection_feature_glosses_the_form(self):
+        """A morphology feature → prompt references the surface + feature/sentence."""
+        mock_client = AsyncMock()
+        mock_client.complete.return_value = "you will be"
+
+        result = await generate_word_gloss(
+            mock_client,
+            surface="boste",
+            lemma="biti",
+            source_lang="sl",
+            feature="verb:2pl",
+            sentence="Kje boste ostali",
+        )
+        assert result == "you will be"
+        kwargs = mock_client.complete.call_args.kwargs
+        assert "boste" in kwargs["prompt"]
+        assert "verb:2pl" in kwargs["prompt"]
+        assert "Kje boste ostali" in kwargs["prompt"]
+
+    @pytest.mark.asyncio
+    async def test_strips_whitespace(self):
+        mock_client = AsyncMock()
+        mock_client.complete.return_value = "  stay\n"
+        result = await generate_word_gloss(mock_client, surface="ostati", lemma="ostati", source_lang="sl", pos="VERB")
+        assert result == "stay"
+
+    @pytest.mark.asyncio
+    async def test_fail_soft_returns_empty_on_error(self):
+        mock_client = AsyncMock()
+        mock_client.complete.side_effect = Exception("LLM down")
+        result = await generate_word_gloss(
+            mock_client, surface="boste", lemma="biti", source_lang="sl", feature="verb:2pl"
+        )
+        assert result == ""

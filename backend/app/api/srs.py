@@ -28,7 +28,7 @@ from app.api.models import (
 )
 from app.audio.cloze_tts import synthesize_cloze_audios
 from app.common.guid import compute_guid
-from app.llm.translate import translate_term
+from app.llm.translate import generate_word_gloss, translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.feedback import rating_from_input
@@ -840,9 +840,21 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
         source_sentence = body.sentence
         card_type = "vocab"
 
+    # Verb base cards: the transcript gloss is the *conjugated* in-context meaning
+    # ("pokazem" → "I will show"). classla gives us the lemma + POS, but the
+    # English base meaning is a translation only the LLM can produce — re-gloss to
+    # the bare dictionary form ("show") to match the existing verb cards.
+    translation = body.translation
+    if upos == "VERB":
+        llm_client = getattr(request.app.state, "llm", None)
+        if llm_client is not None:
+            gloss = await generate_word_gloss(llm_client, surface=body.surface, lemma=lemma, source_lang=lang, pos=upos)
+            if gloss:
+                translation = gloss
+
     unit = SyntacticUnit(
         text=lemma,
-        translation=body.translation,
+        translation=translation,
         word_count=1,
         difficulty=1,
         source="user",
@@ -1336,6 +1348,24 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
                 sentence_translation = match_index.get(normalize_sentence_key(body.sentence), "")
             if not word_translation:
                 word_translation = token_glosses.get(body.surface.lower()) or token_glosses.get(body.lemma) or ""
+
+    # 3b. Prefer an LLM gloss of the specific inflected form — the token gloss is
+    #     the *base* meaning and biti forms have only the grammar hint, so neither
+    #     conveys the conjugation ("boste" → "you will be"). classla supplies the
+    #     lemma/feature; the LLM supplies the English. Fail-soft: keep the
+    #     resolved fallback when the LLM is absent or errors.
+    llm_client = getattr(request.app.state, "llm", None)
+    if llm_client is not None:
+        gloss = await generate_word_gloss(
+            llm_client,
+            surface=body.surface,
+            lemma=body.lemma,
+            source_lang=language_code,
+            feature=body.feature,
+            sentence=body.sentence,
+        )
+        if gloss:
+            word_translation = gloss
 
     # 4. Build + create (mirrors /listen morphology-cloze block)
     disambig = f"morph:{body.feature.replace(':', '-')}"

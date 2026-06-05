@@ -297,6 +297,57 @@ class TestInflectionClozes:
         assert cloze.syntactic_unit.grammar == "biti, 2nd person plural"
         assert cloze.directions[Direction.PRODUCTION].state == SRSState.NEW
 
+    async def test_llm_glosses_the_inflected_form(self, api_app_state):
+        """biti cloze → LLM gloss of the specific form becomes the translation."""
+        from app.main import app
+
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = "you will be"
+        app.state.llm = mock_llm
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "boste",
+                    "lemma": "biti",
+                    "feature": "verb:2pl",
+                    "sentence": "Kje boste ostali",
+                    "language_code": "sl",
+                },
+            )
+        assert resp.status_code == 200
+        guid = compute_guid("boste", "sl", "morph:verb-2pl")
+        cloze = api_app_state.get_collocation_by_guid(guid)
+        assert cloze.syntactic_unit.translation == "you will be"
+        # Grammar hint stays in its own field.
+        assert cloze.syntactic_unit.grammar == "biti, 2nd person plural"
+
+    async def test_llm_empty_gloss_keeps_fallback(self, api_app_state):
+        """LLM failure/empty → keep the body/token-gloss fallback (fail-soft)."""
+        from app.main import app
+
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = ""
+        app.state.llm = mock_llm
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "boste",
+                    "lemma": "biti",
+                    "feature": "verb:2pl",
+                    "sentence": "Kje boste ostali",
+                    "language_code": "sl",
+                    "translation": "fallback gloss",
+                },
+            )
+        assert resp.status_code == 200
+        guid = compute_guid("boste", "sl", "morph:verb-2pl")
+        cloze = api_app_state.get_collocation_by_guid(guid)
+        assert cloze.syntactic_unit.translation == "fallback gloss"
+
     async def test_resolves_gloss_and_sentence_translation_from_lesson(self, api_app_state):
         """lesson_id → word gloss (token_glosses) + sentence_translation (metadata)."""
         from app.main import app
