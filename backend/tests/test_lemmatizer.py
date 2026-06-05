@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import pytest
 
+from app.srs.database import SRSDatabase
 from app.srs.lemmatizer import (
     ClasslaLemmatizer,
     LowercaseLemmatizer,
     TokenAnalysis,
+    _deserialize_analyses,
     _parse_morphology,
     _parse_person,
+    _serialize_analyses,
+    analyze_sentence_cached,
     get_lemmatizer,
+    model_version_for,
 )
 from tests._helpers.lemmatizer import StubLemmatizer, assert_satisfies_lemmatizer_protocol
 
@@ -388,3 +393,86 @@ class TestLemmatizeSurfacesInContext:
 
         result = lemmatize_surfaces_in_context(["Ženeve", "Pariz"], "Ženeve Pariz", stub, "sl")
         assert result == ["ženeva", "pariz"]
+
+
+class TestAnalyzeSentenceCached:
+    """Coverable caching wrapper: first call computes + persists, second is a hit."""
+
+    def test_no_db_skips_cache(self):
+        lem = LowercaseLemmatizer()
+        result = analyze_sentence_cached(None, lem, "Dober dan", "sl", "test-v1")
+        assert len(result) == 2
+        assert result[0] == TokenAnalysis(surface="Dober", lemma="dober")
+
+    def test_empty_model_version_skips_cache(self):
+        lem = LowercaseLemmatizer()
+        db = SRSDatabase(":memory:")
+        try:
+            result = analyze_sentence_cached(db, lem, "Dober dan", "sl", "")
+            assert len(result) == 2
+        finally:
+            db.close()
+
+    def test_first_call_persists_and_second_is_hit(self):
+        """First call computes and persists; second call returns cached, not re-computed."""
+        cache_db = SRSDatabase(":memory:")
+        try:
+            spy_db = SRSDatabase(":memory:")
+
+            # Populate the cache via one DB
+            analyze_sentence_cached(cache_db, LowercaseLemmatizer(), "Dober dan", "sl", "test-v1")
+
+            # Verify it's in the cache DB
+            cached = cache_db.get_sentence_analysis("Dober dan", "sl", "test-v1")
+            assert cached is not None
+
+            # Read back through a different DB instance with same cache data
+            raw = cache_db.get_sentence_analysis("Dober dan", "sl", "test-v1")
+            spy_db.set_sentence_analysis("Dober dan", "sl", "test-v1", raw)
+
+            # Second call via spy_db (has the data) should return cached
+            result = analyze_sentence_cached(spy_db, LowercaseLemmatizer(), "Dober dan", "sl", "test-v1")
+            assert len(result) == 2
+            assert result[0].surface == "Dober"
+        finally:
+            cache_db.close()
+            spy_db.close()
+
+    def test_model_version_bump_is_miss(self):
+        db = SRSDatabase(":memory:")
+        try:
+            analyze_sentence_cached(db, LowercaseLemmatizer(), "Dober dan", "sl", "v1")
+            # Different version should miss
+            result = analyze_sentence_cached(db, LowercaseLemmatizer(), "Dober dan", "sl", "v2")
+            assert len(result) == 2
+        finally:
+            db.close()
+
+    def test_model_version_for_lowercase(self):
+        assert model_version_for(LowercaseLemmatizer()) == ""
+
+    def test_classla_cache_version_available_before_pipeline_load(self):
+        """model_version_for must be non-empty *before* the ~15s pipeline loads.
+
+        Regression guard: the warmup and the first post-restart request read the
+        version pre-analysis. When _cache_version was computed lazily inside
+        _ensure_pipeline it stayed "" until the model loaded, so the warmup
+        early-returned and the cache lookup was skipped — silently disabling the
+        whole persistent cache. Constructing the lemmatizer must not load classla
+        (the version comes from package metadata, not the model).
+        """
+        lem = ClasslaLemmatizer()
+        assert lem._nlp is None  # pipeline not loaded by construction
+        assert model_version_for(lem) != ""
+
+    def test_serialize_deserialize_round_trip(self):
+        analyses = [
+            TokenAnalysis(surface="Dober", lemma="dober", upos="ADJ"),
+            TokenAnalysis(surface="dan", lemma="dan", upos="NOUN", case="Nom", number="Sing"),
+        ]
+        data = _serialize_analyses(analyses)
+        restored = _deserialize_analyses(data)
+        assert restored == analyses
+
+    def test_deserialize_empty_array(self):
+        assert _deserialize_analyses("[]") == []

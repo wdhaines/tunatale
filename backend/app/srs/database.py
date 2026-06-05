@@ -121,6 +121,17 @@ CREATE TABLE IF NOT EXISTS anki_state_cache (
 )
 """
 
+_CREATE_LEMMA_ANALYSIS_CACHE = """
+CREATE TABLE IF NOT EXISTS lemma_analysis_cache (
+    sentence       TEXT NOT NULL,
+    language_code  TEXT NOT NULL,
+    model_version  TEXT NOT NULL,
+    analyses_json  TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    PRIMARY KEY (sentence, language_code, model_version)
+)
+"""
+
 # Columns on `collocation_directions` mapped onto a DirectionState.
 # due_date dropped in v25 — due_at is the single source of truth.
 _DIR_COLUMNS = (
@@ -210,6 +221,7 @@ class SRSDatabase:
         migrate(conn)
         conn.execute(_CREATE_SYNC_CONFLICTS)
         conn.execute(_CREATE_ANKI_STATE_CACHE)
+        conn.execute(_CREATE_LEMMA_ANALYSIS_CACHE)
         conn.commit()
 
     @contextmanager
@@ -667,6 +679,25 @@ class SRSDatabase:
         """Persist the precomputed lemma_key for a collocation (span-match cache)."""
         with self._get_conn() as conn:
             conn.execute("UPDATE collocations SET lemma_key = ? WHERE id = ?", (lemma_key, row_id))
+            self._commit(conn)
+
+    def get_sentence_analysis(self, sentence: str, language_code: str, model_version: str) -> str | None:
+        """Return cached analyses_json for a sentence, or None on miss."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT analyses_json FROM lemma_analysis_cache WHERE sentence = ? AND language_code = ? AND model_version = ?",
+                (sentence, language_code, model_version),
+            ).fetchone()
+        return row["analyses_json"] if row else None
+
+    def set_sentence_analysis(self, sentence: str, language_code: str, model_version: str, analyses_json: str) -> None:
+        """Upsert a sentence analysis into the persistent cache."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO lemma_analysis_cache (sentence, language_code, model_version, analyses_json, updated_at)"
+                " VALUES (?, ?, ?, ?, datetime('now'))",
+                (sentence, language_code, model_version, analyses_json),
+            )
             self._commit(conn)
 
     def get_due_collocations(

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, fields
 from functools import lru_cache
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from app.srs.database import SRSDatabase
 
 _logger = logging.getLogger(__name__)
 
@@ -53,6 +57,8 @@ class LowercaseLemmatizer:
     (e.g. classla for Slovene) for proper conjugation/declension collapsing.
     """
 
+    _cache_version: str = ""
+
     def lemmatize(self, word: str, language_code: str) -> str:
         return word.lower()
 
@@ -86,6 +92,18 @@ class ClasslaLemmatizer:  # pragma: no cover — requires classla/PyTorch; opt-i
     def __init__(self, language_code: str = "sl") -> None:
         self._language_code = language_code
         self._nlp: ClasslaPipeline | None = None
+        # Resolve the persistent-cache version eagerly (the package version is
+        # available without loading the ~15s model). Callers read this via
+        # model_version_for() *before* the first analyze; computing it lazily in
+        # _ensure_pipeline would leave it "" until the model loaded, defeating the
+        # startup warmup and the first post-restart request's cache lookup.
+        from importlib.metadata import PackageNotFoundError
+        from importlib.metadata import version as _pkg_ver
+
+        try:
+            self._cache_version: str = _pkg_ver("classla")
+        except PackageNotFoundError:
+            self._cache_version = "classla-unknown"
         # Lesson text is stable across requests; cache analyses by sentence so the
         # transcript endpoint doesn't re-run the NLP pipeline on every state-change
         # refetch (~3.6s → DB-only once warmed). Keyed by exact text, so edited
@@ -231,11 +249,61 @@ def get_lemmatizer() -> Lemmatizer:
     return LowercaseLemmatizer()
 
 
+# ── Persistent analysis cache ─────────────────────────────────────────────
+
+
+def model_version_for(lemmatizer: Lemmatizer) -> str:
+    """Return a version string for keying the sentence-analysis cache.
+
+    Expensive lemmatizers (``ClasslaLemmatizer``) set ``_cache_version`` to the
+    package version so a model upgrade invalidates stale rows. Cheap lemmatizers
+    return ``""`` and skip the DB round-trip.
+    """
+    return getattr(lemmatizer, "_cache_version", "")
+
+
+def _serialize_analyses(analyses: list[TokenAnalysis]) -> str:
+    return json.dumps([asdict(a) for a in analyses], ensure_ascii=False)
+
+
+def _deserialize_analyses(data: str) -> list[TokenAnalysis]:
+    return [TokenAnalysis(**{f.name: d.get(f.name, "") for f in fields(TokenAnalysis)}) for d in json.loads(data)]
+
+
+def analyze_sentence_cached(
+    db: SRSDatabase | None,
+    lemmatizer: Lemmatizer,
+    sentence: str,
+    language_code: str,
+    model_version: str = "",
+) -> list[TokenAnalysis]:
+    """Persistent sentence-analysis cache with on-demand compute.
+
+    When *db* and a non-empty *model_version* are provided, looks up
+    ``(sentence, language_code, model_version)`` in the DB. On miss, runs
+    ``lemmatizer.analyze_sentence`` and persists the result. Skips the DB entirely for
+    cheap lemmatizers (empty *model_version*).
+    """
+    if db is None or not model_version:
+        return lemmatizer.analyze_sentence(sentence, language_code)
+    cached = db.get_sentence_analysis(sentence, language_code, model_version)
+    if cached is not None:
+        return _deserialize_analyses(cached)
+    analyses = lemmatizer.analyze_sentence(sentence, language_code)
+    db.set_sentence_analysis(sentence, language_code, model_version, _serialize_analyses(analyses))
+    return analyses
+
+
+# ── Sentence-context surface lemmatization ────────────────────────────────
+
+
 def lemmatize_surfaces_in_context(
     surfaces: list[str],
     sentence: str,
     lemmatizer: Lemmatizer,
     language_code: str,
+    db: SRSDatabase | None = None,
+    model_version: str = "",
 ) -> list[str]:
     """Lemmatize each surface using its *sentence* context, with a single-word fallback.
 
@@ -256,12 +324,16 @@ def lemmatize_surfaces_in_context(
     ``lemma = front.lower()``). classla capitalizes proper-noun lemmas
     (``Ženeve`` → ``Ženeva``), which would otherwise miss the lowercase
     ``ženeva`` card on a case-sensitive ``lemma =`` lookup.
+
+    When *db* and *model_version* are provided the sentence analysis is routed through
+    the persistent ``lemma_analysis_cache`` table so the result survives restarts.
     """
     # note: this dict collapses on lowercase key. If the sentence contains multiple
     # surface forms that lowercase to the same key, the last analysis wins. This is
     # usually correct (same surface → same lemma) but can lose distinct lemmas when
     # genuinely different words share a lowercase form.
-    context = {ta.surface.lower(): ta.lemma.lower() for ta in lemmatizer.analyze_sentence(sentence, language_code)}
+    analysis = analyze_sentence_cached(db, lemmatizer, sentence, language_code, model_version)
+    context = {ta.surface.lower(): ta.lemma.lower() for ta in analysis}
     result: list[str] = []
     for surface in surfaces:
         key = surface.lower()

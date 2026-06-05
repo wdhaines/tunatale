@@ -788,7 +788,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       });
     });
 
-    it('shows error when restoreKnown throws', async () => {
+    it("shows error when restoreKnown throws", async () => {
       const t = makeInflectableTranscript({ known_marked: true });
       mockRestoreKnown.mockRejectedValue(new Error("restore boom"));
       mockGetTranscript.mockResolvedValue(t);

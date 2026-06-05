@@ -8,7 +8,7 @@ from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionTyp
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
-from app.srs.lemmatizer import LowercaseLemmatizer
+from app.srs.lemmatizer import LowercaseLemmatizer, TokenAnalysis, _serialize_analyses
 from app.srs.transcript import (
     TranscriptData,
     WordToken,
@@ -1284,3 +1284,55 @@ class TestBitiTranscriptSpecialCase:
         assert word.lemma == "hoditi"
         assert word.srs_state == "unknown"
         assert word.inflectable is False  # no base → gated
+
+
+class TestExtractTranscriptCaching:
+    """extract_transcript populates the persistent cache and reuses it on subsequent calls."""
+
+    def setup_method(self):
+        self.db = SRSDatabase(":memory:")
+        self.call_count = 0
+
+    class _CountingLemmatizer(LowercaseLemmatizer):
+        _cache_version = "test-v1"
+
+        def __init__(self, owner):
+            super().__init__()
+            self._owner = owner
+
+        def analyze_sentence(self, sentence: str, language_code: str) -> list:
+            self._owner.call_count += 1
+            return super().analyze_sentence(sentence, language_code)
+
+    def test_populates_and_reuses_cache(self):
+        lem = self._CountingLemmatizer(self)
+        lesson = _make_lesson([("female-1", "Dober dan"), ("male-1", "Kako si")])
+        today = date(2026, 6, 4)
+
+        # First call: both phrases miss cache → 2 lemmatizer invocations
+        result1 = extract_transcript(lesson, self.db, lem, today=today)
+        assert len(result1.dialogue_lines) == 2
+        assert self.call_count == 2
+
+        # Cache should have entries for both phrases
+        for text in ("Dober dan", "Kako si"):
+            cached = self.db.get_sentence_analysis(text, "sl", "test-v1")
+            assert cached is not None, f"Expected cache entry for {text}"
+
+        # Second call: both cache hits → 0 lemmatizer invocations
+        result2 = extract_transcript(lesson, self.db, lem, today=today)
+        assert len(result2.dialogue_lines) == 2
+        assert self.call_count == 2  # unchanged
+
+    def test_model_version_mismatch_re_analyzes(self):
+        lem = self._CountingLemmatizer(self)
+        lesson = _make_lesson([("female-1", "Dober dan")])
+        today = date(2026, 6, 4)
+
+        # Populate cache with a different model_version manually
+        self.db.set_sentence_analysis(
+            "Dober dan", "sl", "other-v1", _serialize_analyses([TokenAnalysis(surface="Dober", lemma="dober")])
+        )
+        # First call: version mismatch → 1 lemmatizer invocation
+        extract_transcript(lesson, self.db, lem, today=today)
+        assert self.call_count == 1

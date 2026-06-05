@@ -3414,3 +3414,23 @@ class TestIgnoredLemmas:
         srs_db.add_ignored_lemma("en", "the")
         assert srs_db.get_ignored_lemmas("sl") == {"ana"}
         assert srs_db.get_ignored_lemmas("en") == {"the"}
+
+
+class TestLemmaAnalysisCache:
+    """Persistent sentence-analysis cache round-trips, misses, and invalidation."""
+
+    def test_miss_returns_none(self, srs_db):
+        assert srs_db.get_sentence_analysis("Dober dan", "sl", "test-v1") is None
+
+    def test_round_trip(self, srs_db):
+        srs_db.set_sentence_analysis("Dober dan", "sl", "test-v1", '[{"surface": "Dober", "lemma": "dober"}]')
+        cached = srs_db.get_sentence_analysis("Dober dan", "sl", "test-v1")
+        assert cached == '[{"surface": "Dober", "lemma": "dober"}]'
+
+    def test_model_version_mismatch_is_miss(self, srs_db):
+        srs_db.set_sentence_analysis("Dober dan", "sl", "v1", '[{"surface": "Dober", "lemma": "dober"}]')
+        assert srs_db.get_sentence_analysis("Dober dan", "sl", "v2") is None
+
+    def test_language_code_mismatch_is_miss(self, srs_db):
+        srs_db.set_sentence_analysis("Dober dan", "sl", "test-v1", '[{"surface": "Dober", "lemma": "dober"}]')
+        assert srs_db.get_sentence_analysis("Dober dan", "en", "test-v1") is None

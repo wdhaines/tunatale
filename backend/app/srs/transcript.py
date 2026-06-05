@@ -10,7 +10,7 @@ from app.models.srs_item import Direction, DirectionState, SRSState
 from app.srs.collocation_matcher import match_spans
 from app.srs.database import SRSDatabase
 from app.srs.function_words import is_a1_morphology_feature, is_clozes_only_verb, ud_feats_to_tt_feature
-from app.srs.lemmatizer import Lemmatizer, lemmatize_surfaces_in_context
+from app.srs.lemmatizer import Lemmatizer, analyze_sentence_cached, lemmatize_surfaces_in_context, model_version_for
 from app.srs.mastery import compute_mastery_progress
 from app.srs.tokenizer import tokenize
 
@@ -182,6 +182,8 @@ def extract_transcript(
     collocation_index = _build_collocation_index(db, raw_collocations, lemmatizer, lesson.language_code)
     # Card-less ignore list
     ignored_lemmas = db.get_ignored_lemmas(lesson.language_code)
+    # Persistent cache key — empty for cheap lemmatizers (skips DB round-trip)
+    model_version = model_version_for(lemmatizer)
 
     dialogue_lines: list[DialogueLine] = []
 
@@ -196,14 +198,16 @@ def extract_transcript(
                 continue  # skip narrator/English lines
 
             surfaces = tokenize(phrase.text)
-            lemmas = lemmatize_surfaces_in_context(surfaces, phrase.text, lemmatizer, lesson.language_code)
+            lemmas = lemmatize_surfaces_in_context(
+                surfaces, phrase.text, lemmatizer, lesson.language_code, db, model_version
+            )
 
             # Extract punctuation from raw tokens for display
             raw_tokens = phrase.text.split()
             punct_pairs = _extract_punct_pairs(raw_tokens, surfaces)
 
             # Run lemmatizer analyze_sentence once per phrase for inflectable detection
-            phrase_analyses = lemmatizer.analyze_sentence(phrase.text, lesson.language_code)
+            phrase_analyses = analyze_sentence_cached(db, lemmatizer, phrase.text, lesson.language_code, model_version)
             analysis_by_surface: dict[str, object] = {}
             for ta in phrase_analyses:
                 analysis_by_surface[ta.surface.lower()] = ta

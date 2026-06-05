@@ -61,4 +61,33 @@ describe("TranscriptPlaceholder", () => {
     expect(queryByText("Key Phrases")).toBeFalsy();
     expect(queryByText("Dialogue")).toBeFalsy();
   });
+
+  it("renders scene headers from narrator L1 lines", () => {
+    const lessonWithScenes: LessonDetail = {
+      id: "l3",
+      day: 3,
+      title: "At the Hotel",
+      language_code: "sl",
+      sections: [
+        {
+          type: "natural_speed",
+          phrases: [
+            { text: "At the hotel", role: "narrator", language_code: "en", voice_id: "v1" },
+            { text: "Dober dan", role: "Petra", language_code: "sl", voice_id: "v2" },
+            { text: "Dober dan", role: "Marko", language_code: "sl", voice_id: "v3" },
+            { text: "In the lobby", role: "narrator", language_code: "en", voice_id: "v1" },
+            { text: "Kako si", role: "Petra", language_code: "sl", voice_id: "v2" },
+          ],
+        },
+      ],
+      key_phrases: [],
+    };
+
+    const { getByText } = render(TranscriptPlaceholder, { props: { lesson: lessonWithScenes } });
+    // Scene headers appear
+    expect(getByText("At the hotel")).toBeTruthy();
+    expect(getByText("In the lobby")).toBeTruthy();
+    // L2 lines still render grouped under scenes
+    expect(getByText("Kako si")).toBeTruthy();
+  });
 });

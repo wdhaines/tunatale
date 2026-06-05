@@ -1,20 +1,16 @@
 <script lang="ts">
 	import type { LessonDetail } from '$lib/api';
+	import { buildScenes } from '$lib/transcriptScenes';
 
 	interface Props {
 		lesson: LessonDetail;
 	}
 	let { lesson }: Props = $props();
 
-	// The natural-speed section holds the L2 dialogue. The enriched transcript
-	// (extract_transcript) filters to phrases in the lesson's language; mirror that
-	// so the placeholder shows the same lines the real transcript will — just as
-	// plain, uncolored, non-interactive text while word states are computed.
-	const dialogue = $derived(
-		(lesson.sections.find((s) => s.type === 'natural_speed')?.phrases ?? []).filter(
-			(p) => p.language_code === lesson.language_code
-		)
-	);
+	// Build scene structure from the lesson (with empty dialogueLines — no word
+	// tokens yet) so the placeholder shows scene headers + per-line dialogue
+	// matching the real transcript layout, just dimmed and non-interactive.
+	const scenes = $derived(buildScenes(lesson, []));
 </script>
 
 <div class="placeholder" aria-busy="true">
@@ -37,14 +33,19 @@
 		</div>
 	{/if}
 
-	{#if dialogue.length > 0}
+	{#if scenes.length > 0}
 		<div class="placeholder-section">
 			<h3>Dialogue</h3>
-			{#each dialogue as phrase, i (i)}
-				<div class="dialogue-line">
-					<span class="dialogue-role">{phrase.role}</span>
-					<span class="dialogue-words">{phrase.text}</span>
-				</div>
+			{#each scenes as scene, sceneIdx (sceneIdx)}
+				{#if scene.title}
+					<h4 class="scene-header">{scene.title}</h4>
+				{/if}
+				{#each scene.lines as line (line.transcriptIndex)}
+					<div class="dialogue-line">
+						<span class="dialogue-role">{line.role}</span>
+						<span class="dialogue-words">{line.naturalText}</span>
+					</div>
+				{/each}
 			{/each}
 		</div>
 	{/if}
@@ -107,6 +108,21 @@
 	.kp-translation {
 		color: var(--color-muted);
 		font-style: italic;
+	}
+	.scene-header {
+		margin: 1.25rem 0 0.5rem;
+		padding: 0.45rem 0.75rem;
+		font-size: 0.82rem;
+		font-weight: 600;
+		letter-spacing: 0.02em;
+		color: var(--color-primary, #2563eb);
+		background: rgba(37, 99, 235, 0.08);
+		border-left: 3px solid var(--color-primary, #2563eb);
+		border-radius: 0 4px 4px 0;
+		text-transform: uppercase;
+	}
+	.scene-header:first-of-type {
+		margin-top: 0.5rem;
 	}
 	.dialogue-line {
 		display: flex;

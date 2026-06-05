@@ -23,8 +23,9 @@ from app.generation.story import StoryGenerator  # noqa: E402
 from app.llm.cassette import CassetteLLMClient  # noqa: E402
 from app.llm.client import LLMClient  # noqa: E402
 from app.models.language import Language  # noqa: E402
+from app.models.lesson import SectionType  # noqa: E402
 from app.srs.database import SRSDatabase  # noqa: E402
-from app.srs.lemmatizer import get_lemmatizer  # noqa: E402
+from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for  # noqa: E402
 from app.storage.store import ContentStore  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
@@ -33,19 +34,47 @@ logging.getLogger("app.audio.renderer").setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
-async def _warm_lemmatizer() -> None:
-    """Load the lemmatizer pipeline off the request path.
+async def _warm_lemmatizer(srs_db: SRSDatabase, content_store: ContentStore) -> None:
+    """Fill the persistent sentence-analysis cache from stored lessons.
 
-    For ``lemmatizer_type=classla`` this loads the PyTorch/classla pipeline (~15s).
-    Run as a background task during ``lifespan`` so uvicorn binds the port immediately
-    instead of refusing every ``/api/*`` request until the model finishes loading. A
-    no-op-cost call for the default lowercase lemmatizer. Swallows its own errors so a
-    missing model degrades to on-demand loading rather than aborting startup.
+    Iterates every stored lesson's natural-speed L2 sentences through
+    ``analyze_sentence_cached``:
+    - **First run ever:** loads classla once, fills the persistent cache.
+    - **Every subsequent restart:** all cache hits → the model is never loaded at
+      startup → admin list and everything else are instant.
+
+    Runs as a background ``asyncio.create_task`` so uvicorn binds the port immediately.
+    Swallows its own errors so a missing model degrades to on-demand loading.
     """
     try:
-        await anyio.to_thread.run_sync(get_lemmatizer().lemmatize, "hotel", "sl")
+        lemmatizer = get_lemmatizer()
+        model_version = model_version_for(lemmatizer)
+        if not model_version:
+            return  # cheap lemmatizer; nothing to warm
+        lessons = content_store.list_lessons()
+        await anyio.to_thread.run_sync(_warm_from_lessons, lessons, srs_db, lemmatizer, model_version)
     except Exception:
         logger.warning("Lemmatizer warm-up failed — continuing with on-demand loading")
+
+
+def _warm_from_lessons(
+    lessons: list[tuple[str, str, int, object]],
+    srs_db: SRSDatabase,
+    lemmatizer: object,
+    model_version: str,
+) -> None:
+    """Synchronous helper: run every stored L2 sentence through the analysis cache."""
+    for _lesson_id, _curriculum_id, _day, lesson in lessons:
+        natural_speed = next(
+            (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
+            None,
+        )
+        if natural_speed is None:
+            continue
+        for phrase in natural_speed.phrases:
+            if phrase.language_code != lesson.language_code:
+                continue
+            analyze_sentence_cached(srs_db, lemmatizer, phrase.text, lesson.language_code, model_version)
 
 
 @asynccontextmanager
@@ -84,7 +113,7 @@ async def lifespan(app: FastAPI):
     # event, so the port never binds and every frontend /api/* request is refused until
     # "Done loading processors!". As a background task, the port binds immediately and
     # classla still warms eagerly. A no-op for the default lowercase lemmatizer.
-    warmup_task = asyncio.create_task(_warm_lemmatizer())
+    warmup_task = asyncio.create_task(_warm_lemmatizer(srs_db, content_store))
 
     logger.info("TunaTale backend starting up")
     yield

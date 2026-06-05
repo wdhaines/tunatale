@@ -40,7 +40,7 @@ from app.srs.function_words import (
     make_cloze_text,
     make_morphology_cloze_text,
 )
-from app.srs.lemmatizer import get_lemmatizer, lemmatize_surfaces_in_context
+from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, lemmatize_surfaces_in_context, model_version_for
 from app.srs.queue_stats import (
     advance_learning_cutoff,
     build_live_load_balancer,
@@ -321,6 +321,8 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # the whole biti paradigm (ste/smo/so) without enumerating surfaces.
     surface_to_upos: dict[str, str] = {}
 
+    model_version = model_version_for(_lemmatizer)
+
     def _analyze_phrases(section: Section) -> None:
         # Runs the (classla) lemmatizer over the lesson's L2 phrases, filling the
         # dicts above. Offloaded to a worker thread (below) so the blocking pipeline
@@ -330,8 +332,10 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             if phrase.language_code != lesson.language_code:
                 continue
             surfaces = tokenize(phrase.text)
-            phrase_lemmas = lemmatize_surfaces_in_context(surfaces, phrase.text, _lemmatizer, lesson.language_code)
-            for ta in _lemmatizer.analyze_sentence(phrase.text, lesson.language_code):
+            phrase_lemmas = lemmatize_surfaces_in_context(
+                surfaces, phrase.text, _lemmatizer, lesson.language_code, db, model_version
+            )
+            for ta in analyze_sentence_cached(db, _lemmatizer, phrase.text, lesson.language_code, model_version):
                 surface_to_upos.setdefault(ta.surface.casefold(), ta.upos)
             for surface, lemma in zip(surfaces, phrase_lemmas, strict=True):
                 unique_lemmas.add(lemma)
@@ -815,7 +819,8 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
     # inflected function form (classla "sem" → lemma "biti") classifies via its
     # surface even when the dictionary lemma isn't itself a function word.
     # Offload the (classla) lemmatizer off the event loop — see get_lesson_transcript.
-    analyses = await anyio.to_thread.run_sync(_lemmatizer.analyze_sentence, body.sentence, lang)
+    mv = model_version_for(_lemmatizer)
+    analyses = await anyio.to_thread.run_sync(analyze_sentence_cached, db, _lemmatizer, body.sentence, lang, mv)
     upos = next((ta.upos for ta in analyses if ta.surface.casefold() == body.surface.casefold()), None)
     # Check both lemma and surface with the surface's upos (a single-word click).
     upos_map = {lemma.casefold(): upos, body.surface.casefold(): upos} if upos else None

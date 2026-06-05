@@ -378,6 +378,7 @@ class TestStoryEndpoints:
         assert response.status_code == 404
 
     async def test_generate_story_returns_201(self, monkeypatch):
+        from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
 
         mock_lesson = Lesson(
@@ -412,6 +413,7 @@ class TestStoryEndpoints:
         )
         app.state.story_generator = mock_generator
         app.state.language = Language.slovene()
+        app.state.srs_db = SRSDatabase(":memory:")
 
         store = ContentStore(":memory:")
         curriculum_id = "test-curriculum-id"
@@ -431,6 +433,182 @@ class TestStoryEndpoints:
         assert "sections" in data
         # Verify lesson was persisted
         assert store.get_lesson(data["id"]) is not None
+        app.state.srs_db.close()
+
+    async def test_generate_story_no_srs_db_still_succeeds(self, monkeypatch):
+        """generate_story works when app.state has no srs_db (pre-warm is skipped)."""
+        from app.storage.store import ContentStore
+
+        mock_lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="Dober dan", voice_id="v1", language_code="sl", role="A")],
+                )
+            ],
+        )
+
+        mock_generator = AsyncMock()
+        mock_generator.generate = AsyncMock(return_value=mock_lesson)
+
+        mock_curriculum = Curriculum(
+            id="test-id",
+            topic="test",
+            language_code="sl",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(
+                    day=1,
+                    title="Day 1",
+                    focus="greetings",
+                    learning_objective="greet",
+                    story_guidance="greet each other",
+                    collocations=["dober dan"],
+                )
+            ],
+        )
+        app.state.story_generator = mock_generator
+        app.state.language = Language.slovene()
+
+        store = ContentStore(":memory:")
+        store.save_curriculum("cid", mock_curriculum)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/story/generate",
+                json={"curriculum_id": "cid", "day": 1, "strategy": "WIDER"},
+            )
+
+        assert response.status_code == 201
+        assert "id" in response.json()
+
+    async def test_prewarm_lesson_populates_cache(self, monkeypatch):
+        """_prewarm_lesson fills the lemma_analysis_cache for a lesson's L2 phrases."""
+        from app.api.generation import _prewarm_lesson
+        from app.srs.database import SRSDatabase
+        from app.srs.lemmatizer import LowercaseLemmatizer
+
+        lesson = Lesson(
+            title="Test",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text="Dober dan", voice_id="v1", language_code="sl", role="A"),
+                        Phrase(text="Kako si", voice_id="v1", language_code="sl", role="B"),
+                    ],
+                ),
+            ],
+        )
+
+        class _CachingLemmatizer(LowercaseLemmatizer):
+            _cache_version = "test-v1"
+
+        monkeypatch.setattr("app.api.generation.get_lemmatizer", lambda: _CachingLemmatizer())
+
+        srs_db = SRSDatabase(":memory:")
+        try:
+            await _prewarm_lesson(lesson, srs_db)
+
+            for text in ("Dober dan", "Kako si"):
+                cached = srs_db.get_sentence_analysis(text, "sl", "test-v1")
+                assert cached is not None, f"Expected cache entry for {text}"
+        finally:
+            srs_db.close()
+
+    async def test_prewarm_skips_cheap_lemmatizer(self, monkeypatch):
+        """_prewarm_lesson is a no-op for LowercaseLemmatizer (no _cache_version)."""
+        from app.api.generation import _prewarm_lesson
+        from app.srs.database import SRSDatabase
+        from app.srs.lemmatizer import LowercaseLemmatizer
+
+        lesson = Lesson(
+            title="Test",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="Dober dan", voice_id="v1", language_code="sl", role="A")],
+                ),
+            ],
+        )
+
+        call_count = 0
+
+        class _CountingLemmatizer(LowercaseLemmatizer):
+            def analyze_sentence(self, sentence, language_code):
+                nonlocal call_count
+                call_count += 1
+                return super().analyze_sentence(sentence, language_code)
+
+        monkeypatch.setattr("app.api.generation.get_lemmatizer", lambda: _CountingLemmatizer())
+
+        srs_db = SRSDatabase(":memory:")
+        try:
+            await _prewarm_lesson(lesson, srs_db)
+            # Cheap lemmatizer → no caching → no analyze_sentence calls (early return)
+            assert call_count == 0
+        finally:
+            srs_db.close()
+
+    async def test_prewarm_skips_no_natural_speed(self, monkeypatch):
+        """_prewarm_lesson returns early when lesson has no NATURAL_SPEED section (line 47)."""
+        from app.api.generation import _prewarm_lesson
+        from app.srs.database import SRSDatabase
+        from app.srs.lemmatizer import LowercaseLemmatizer
+
+        lesson = Lesson(
+            title="No NS",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.KEY_PHRASES,
+                    phrases=[Phrase(text="dober dan", voice_id="v1", language_code="sl")],
+                ),
+            ],
+        )
+
+        class _CachingLemmatizer(LowercaseLemmatizer):
+            _cache_version = "test-v1"
+
+        monkeypatch.setattr("app.api.generation.get_lemmatizer", lambda: _CachingLemmatizer())
+
+        srs_db = SRSDatabase(":memory:")
+        try:
+            await _prewarm_lesson(lesson, srs_db)  # should not raise
+        finally:
+            srs_db.close()
+
+    async def test_prewarm_swallows_exception(self, monkeypatch):
+        """_prewarm_lesson logs and swallows exceptions from get_lemmatizer (lines 52-53)."""
+        from app.api.generation import _prewarm_lesson
+        from app.srs.database import SRSDatabase
+
+        lesson = Lesson(
+            title="Test",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="Dober dan", voice_id="v1", language_code="sl", role="A")],
+                ),
+            ],
+        )
+
+        def _raise():
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr("app.api.generation.get_lemmatizer", _raise)
+
+        srs_db = SRSDatabase(":memory:")
+        try:
+            await _prewarm_lesson(lesson, srs_db)  # should not raise
+        finally:
+            srs_db.close()
 
 
 class TestSRSEndpoints:
@@ -1019,7 +1197,7 @@ class TestListenClozeIntegration:
         Regression: Phase 2b surface-blanking test now reflects the special-case."""
         import app.api.srs as srs_mod
 
-        def fake_lemmatize(surfaces, text, lemmatizer, language_code):
+        def fake_lemmatize(surfaces, text, lemmatizer, language_code, db=None, model_version=""):
             return ["biti" if s.lower() == "sem" else s.lower() for s in surfaces]
 
         monkeypatch.setattr(srs_mod, "lemmatize_surfaces_in_context", fake_lemmatize)
@@ -1126,7 +1304,7 @@ class TestListenClozeIntegration:
         import app.api.srs as srs_mod
         from app.models.syntactic_unit import SyntacticUnit
 
-        def fake_lemmatize(surfaces, text, lemmatizer, language_code):
+        def fake_lemmatize(surfaces, text, lemmatizer, language_code, db=None, model_version=""):
             return ["pozdrav" if s.lower() == "zdravo" else s.lower() for s in surfaces]
 
         monkeypatch.setattr(srs_mod, "lemmatize_surfaces_in_context", fake_lemmatize)
