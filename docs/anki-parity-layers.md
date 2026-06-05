@@ -1406,6 +1406,16 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 
 **Surfaced by.** 2026-06-01 — user reported "Anki has been introducing recognition before production, which is what I want"; confirmed against the binary (604/36) before inverting the parity test.
 
+---
+
+## Layer 66 — `/listen` no longer mints morphology clozes (Phase 4b)
+
+**Change.** Removed the morphology-cloze creation + analyzer-recall + `_ground_morphology_focus` from `mark_lesson_listened`; the A1-feature detector moved to `function_words.is_a1_morphology_feature` and now feeds the transcript's `inflectable` flag. Click-to-create (`POST /inflection-clozes`) is the sole inflection-mint path.
+
+**No queue-assembly / sort / FSRS change** — only fewer NEW cloze rows created on a content path; assembly, sibling-bury, R-sort untouched. `--run-oracle` goldens unchanged.
+
+**Files.** `app/api/srs.py`, `app/srs/function_words.py`, `app/srs/transcript.py`.
+
 ## Layer 67 — badge "today" window uses Anki's 4 AM local rollover, not local midnight
 
 **The bug.** Reported as "TunaTale shows 66 to review, Anki shows 73" (2026-06-02, Slovene deck). The six `database.py` "today" count/list helpers (`count_review_due_collocations`, `count_new_introduced_today`, `count_reviews_completed_today`, `count_new_available_collocations`, `list_anki_cards_graded_today`, `list_collocations_reviewed_today`) bucketed by **local midnight** (`datetime.combine(today, time(0), tzinfo=local_tz)`). Anki rolls the study day over at the configured `rollover` hour — **4 AM local** (the user's, and Anki's default). A direction graded in the `[midnight, 4 AM)` local window is "today" for TT but **"yesterday" for Anki**, so TT's "graded-today" sibling-bury fired on review-due siblings Anki had not yet buried. Exactly 7 dual-direction notes had a direction graded at 04:02–04:06 UTC (= 00:02–00:06 EDT) → TT undercounted 73 → 66. The reverse set (TT counts, Anki doesn't) was empty, confirming a single mechanism.

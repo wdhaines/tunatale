@@ -47,7 +47,7 @@
 		const sent = item.source_sentence!;
 		if (/\{\{c1::.+?\}\}/.test(sent)) {
 			return sent
-				.replace(/\{\{c1::(.+?)::(.+?)\}\}/g, (_m, _surface, hint) => `[${hint}]`)
+				.replace(/\{\{c1::(.+?)::(.+?)\}\}/g, () => '[...]')
 				.replace(/\{\{c1::(.+?)\}\}/g, () => '[...]');
 		}
 		const escaped = escapeRegex(item.text);

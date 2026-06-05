@@ -6,23 +6,8 @@ import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import AdminSRSPage from "./+page.svelte";
 
 vi.mock("$lib/api", () => {
-  const requestMock = vi.fn().mockResolvedValue({ enabled: false });
   return {
     api: {
-      request: requestMock,
-      getClozeSetting: vi.fn(async function (this: { request: typeof requestMock }) {
-        return this.request("/api/srs/settings/cloze");
-      }),
-      setClozeSetting: vi.fn(async function (
-        this: { request: typeof requestMock },
-        enabled: boolean,
-      ) {
-        return this.request("/api/srs/settings/cloze", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ enabled }),
-        });
-      }),
       listSRSItems: vi.fn(),
       updateSRSItem: vi.fn(),
       deleteSRSItem: vi.fn(),
@@ -186,8 +171,8 @@ describe("admin/srs/+page.svelte", () => {
     await findByText("a");
 
     const allCheckboxes = (await findAllByRole("checkbox")) as HTMLInputElement[];
-    // [0]=cloze flag, [1]=select-all header, [2+]=item rows
-    const itemCheckboxes = allCheckboxes.slice(2);
+    // [0]=select-all header, [1+]=item rows
+    const itemCheckboxes = allCheckboxes.slice(1);
     await fireEvent.click(itemCheckboxes[0]);
     await fireEvent.click(itemCheckboxes[1]);
 
@@ -303,9 +288,9 @@ describe("admin/srs/+page.svelte", () => {
     const { findAllByRole, findByText } = render(AdminSRSPage);
     await findByText("a");
 
-    // Header checkbox is the second checkbox ([1]); [0]=cloze flag
+    // Header checkbox is the first checkbox ([0]) now that the cloze flag is gone
     const allCheckboxes = (await findAllByRole("checkbox")) as HTMLInputElement[];
-    const headerCheckbox = allCheckboxes[1];
+    const headerCheckbox = allCheckboxes[0];
 
     await fireEvent.click(headerCheckbox);
 
@@ -419,9 +404,9 @@ describe("admin/srs/+page.svelte", () => {
     const { findAllByRole, findByText } = render(AdminSRSPage);
     await findByText("kruh");
 
-    // [0]=cloze flag, [1]=select-all header, [2+]=item rows
+    // [0]=select-all header, [1+]=item rows
     const checkboxes = (await findAllByRole("checkbox")) as HTMLInputElement[];
-    await fireEvent.click(checkboxes[2]);
+    await fireEvent.click(checkboxes[1]);
 
     await fireEvent.click(await findByText(/Delete selected/));
     await flushMicrotasks();
@@ -437,9 +422,9 @@ describe("admin/srs/+page.svelte", () => {
     const { findAllByRole, findByText } = render(AdminSRSPage);
     await findByText("sok");
 
-    // [0]=cloze flag, [1]=select-all header, [2+]=item rows
+    // [0]=select-all header, [1+]=item rows
     const checkboxes = (await findAllByRole("checkbox")) as HTMLInputElement[];
-    const itemBox = checkboxes[2];
+    const itemBox = checkboxes[1];
     // First click: add to selection
     await fireEvent.click(itemBox);
     expect(itemBox.checked).toBe(true);
@@ -534,9 +519,9 @@ describe("admin/srs/+page.svelte", () => {
     await findByText("a");
 
     const checkboxes = (await findAllByRole("checkbox")) as HTMLInputElement[];
-    // [0]=cloze flag, [1]=select-all header, [2+]=item rows
+    // [0]=select-all header, [1+]=item rows
+    await fireEvent.click(checkboxes[1]);
     await fireEvent.click(checkboxes[2]);
-    await fireEvent.click(checkboxes[3]);
 
     await fireEvent.click(await findByText(/Delete selected/));
 
@@ -615,16 +600,16 @@ describe("admin/srs/+page.svelte", () => {
     await findByText("a");
 
     const checkboxes = (await findAllByRole("checkbox")) as HTMLInputElement[];
-    // [0]=cloze flag, [1]=select-all header, [2+]=item rows
+    // [0]=select-all header, [1+]=item rows
     // Select both items individually
+    await fireEvent.click(checkboxes[1]);
     await fireEvent.click(checkboxes[2]);
-    await fireEvent.click(checkboxes[3]);
 
     // Verify "Delete selected" is visible (all selected)
     expect(await findByText(/Delete selected \(2\)/)).toBeTruthy();
 
     // Click header checkbox to deselect all
-    await fireEvent.click(checkboxes[1]);
+    await fireEvent.click(checkboxes[0]);
 
     await waitFor(() => {
       expect(queryByText(/Delete selected/)).toBeFalsy();
@@ -859,43 +844,5 @@ describe("admin/srs/+page.svelte", () => {
     await waitFor(() => {
       expect(btn.disabled).toBe(true);
     });
-  });
-
-  it("loads cloze setting on mount and renders feature flag checkbox", async () => {
-    vi.mocked(api.getClozeSetting).mockResolvedValue({ enabled: true });
-    const { getAllByRole, findByText } = render(AdminSRSPage);
-    expect(await findByText(/Function-word cloze cards/)).toBeTruthy();
-    await flushMicrotasks();
-    expect(api.getClozeSetting).toHaveBeenCalled();
-    const checkboxes = getAllByRole("checkbox") as HTMLInputElement[];
-    expect(checkboxes[0].checked).toBe(true);
-  });
-
-  it("toggling cloze checkbox calls setClozeSetting via request", async () => {
-    vi.mocked(api.getClozeSetting).mockResolvedValue({ enabled: true });
-    const { getAllByRole, findByText } = render(AdminSRSPage);
-    await findByText(/0 total/);
-    await flushMicrotasks();
-    const checkboxes = getAllByRole("checkbox") as HTMLInputElement[];
-    // Checkbox is checked (enabled: true from loadClozeSetting); clicking toggles off
-    await fireEvent.click(checkboxes[0]);
-    expect(api.setClozeSetting).toHaveBeenCalledWith(false);
-  });
-
-  it("shows error when getClozeSetting fails", async () => {
-    vi.mocked(api.getClozeSetting).mockRejectedValue(new Error("settings unavailable"));
-    const { findByText } = render(AdminSRSPage);
-    expect(await findByText("settings unavailable")).toBeTruthy();
-  });
-
-  it("shows error when setClozeSetting fails", async () => {
-    vi.mocked(api.getClozeSetting).mockResolvedValue({ enabled: false });
-    vi.mocked(api.setClozeSetting).mockRejectedValue(new Error("toggle failed"));
-    const { getAllByRole, findByText } = render(AdminSRSPage);
-    await findByText(/0 total/);
-    await flushMicrotasks();
-    const checkboxes = getAllByRole("checkbox") as HTMLInputElement[];
-    await fireEvent.click(checkboxes[0]);
-    expect(await findByText("toggle failed")).toBeTruthy();
   });
 });

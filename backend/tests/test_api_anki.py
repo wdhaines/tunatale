@@ -459,6 +459,85 @@ class TestAnkiStatusEndpoint:
         assert response.status_code == 200
         assert media_calls == ["voda"]
 
+    @patch("app.anki.import_seed.refresh_media_for_deck")
+    async def test_llm_image_query_threads_into_media_fetch(self, mock_refresh_media_for_deck, monkeypatch):
+        """The closure asks the LLM for a sense-aware query and forwards it to Pixabay."""
+        from app.config import settings
+
+        db = app.state.srs_db
+        db.add_collocation(
+            SyntacticUnit(
+                text="sodišče",
+                translation="court",
+                word_count=1,
+                difficulty=1,
+                source="corpus",
+                source_sentence="Šel je na sodišče.",
+                grammar="noun, neuter",
+            )
+        )
+
+        monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
+        monkeypatch.setattr(settings, "anki_collection_path", "/fake/collection.anki2")
+        monkeypatch.setattr(settings, "pixabay_api_key", "test-key")
+
+        conn = _make_minimal_anki_conn()
+        monkeypatch.setattr("app.anki.safety.safe_open", _make_fake_safe_open(conn))
+
+        class _FakeLLM:
+            def __init__(self) -> None:
+                self.prompts: list[str] = []
+
+            async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256):
+                self.prompts.append(prompt)
+                return "courtroom interior"
+
+        fake_llm = _FakeLLM()
+        monkeypatch.setattr(app.state, "llm", fake_llm, raising=False)
+
+        captured: list[str | None] = []
+
+        async def fake_fetch(word, english, *, pixabay_key, used_image_urls, image_query=None, **kw):
+            captured.append(image_query)
+            return None
+
+        monkeypatch.setattr("app.api.anki.fetch_card_media", fake_fetch)
+
+        class _FakeOW:
+            def __init__(self, *a, **kw):
+                pass
+
+            def create_note(self, deck, model, fields, tags):
+                return 9002
+
+            def get_cards_for_note(self, nid):
+                return {0: 90020, 1: 90021}
+
+            def store_media_file(self, fn, data):
+                pass
+
+            def find_notes(self, q):
+                return []
+
+        monkeypatch.setattr("app.anki.sync.OfflineWriter", _FakeOW)
+        monkeypatch.setattr(
+            "app.anki.sync.AnkiSync.sync_push", lambda self, dry_run=False, force_fsrs=False: PushReport()
+        )
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_pull", lambda self, dry_run=False: PullReport())
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post("/api/anki/sync")
+
+        assert response.status_code == 200
+        # The LLM was consulted with the card's context, and its query reached Pixabay.
+        assert captured == ["courtroom interior"]
+        assert "Šel je na sodišče." in fake_llm.prompts[0]
+        assert "noun, neuter" in fake_llm.prompts[0]
+        # And it was cached for next time.
+        from app.anki.media.query_llm import IMAGE_QUERY_MODEL_VERSION
+
+        assert db.get_image_query("sodišče", "court", IMAGE_QUERY_MODEL_VERSION) == "courtroom interior"
+
     @patch("app.srs.queue_stats.refresh_daily_review_cap")
     @patch("app.anki.import_seed.refresh_media_for_deck")
     async def test_sync_calls_refresh_daily_review_cap(

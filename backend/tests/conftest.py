@@ -45,20 +45,27 @@ def anki_prev_day_anchor(today: date) -> datetime:
 
 @pytest.fixture(autouse=True)
 def _settings_overrides(monkeypatch, tmp_path):
-    """Redirect every settings path that touches real user data to tmp_path so
-    tests never write to ~/.tunatale.
+    """Override settings that touch user data to tmp_path so tests never write to ~/.tunatale.
 
-    Backported to main after a full-suite run on a *main* checkout (which lacked
-    this fixture) wrote ~30 synthetic-collection backups into the real
-    ``~/.tunatale/anki-backups`` and the keep-30 retention cap pruned every real
-    17 MB snapshot. ``stage4-lemmatizer`` also pins ``lemmatizer_type`` here, but
-    main has no such config field, so that part is intentionally omitted.
+    Why it exists: a full-suite run on a checkout *without* this fixture wrote
+    ~30 synthetic-collection backups into the real ``~/.tunatale/anki-backups``
+    and the keep-30 retention cap pruned every real 17 MB snapshot.
+
+    Also pins the lemmatizer to the deterministic ``lowercase`` default so the
+    suite never depends on the developer's ``.env`` ``lemmatizer_type`` (a local
+    ``classla`` flag would change computed lemmas and break lemma-sensitive tests).
+    The module-level ``app.api.srs._lemmatizer`` is bound once at import, so it is
+    re-bound here too; tests that want a stub still monkeypatch it themselves.
     """
     from app.config import settings
+    from app.srs.lemmatizer import get_lemmatizer
 
     monkeypatch.setattr(settings, "anki_backup_dir", tmp_path / "anki-backups")
     monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'tunatale.db'}")
     monkeypatch.setattr(settings, "sync_log", tmp_path / "logs" / "sync.log")
+    monkeypatch.setattr(settings, "lemmatizer_type", "lowercase")
+    get_lemmatizer.cache_clear()
+    monkeypatch.setattr("app.api.srs._lemmatizer", get_lemmatizer())
 
 
 @pytest.fixture(autouse=True)
@@ -599,6 +606,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run @pytest.mark.oracle tests (spawns `uv run --with anki` subprocesses).",
     )
+    parser.addoption(
+        "--run-classla",
+        action="store_true",
+        default=False,
+        help="Run @pytest.mark.classla tests (exercises the real classla Slovene pipeline).",
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -606,15 +619,23 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "oracle: requires --run-oracle (drives Anki's scheduler via subprocess).",
     )
+    config.addinivalue_line(
+        "markers",
+        "classla: requires --run-classla (exercises the real classla Slovene pipeline).",
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if config.getoption("--run-oracle"):
-        return
-    skip_oracle = pytest.mark.skip(reason="--run-oracle not specified")
-    for item in items:
-        if "oracle" in item.keywords:
-            item.add_marker(skip_oracle)
+    if not config.getoption("--run-classla"):
+        skip_classla = pytest.mark.skip(reason="--run-classla not specified")
+        for item in items:
+            if "classla" in item.keywords:
+                item.add_marker(skip_classla)
+    if not config.getoption("--run-oracle"):
+        skip_oracle = pytest.mark.skip(reason="--run-oracle not specified")
+        for item in items:
+            if "oracle" in item.keywords:
+                item.add_marker(skip_oracle)
 
 
 @pytest.fixture

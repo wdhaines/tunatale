@@ -12,7 +12,14 @@ export default defineConfig({
 			timeout: 30000,
 			env: {
 				LLM_MODE: 'mock',
-				DATABASE_URL: 'sqlite:///./tunatale-test.db'
+				DATABASE_URL: 'sqlite:///./tunatale-test.db',
+				// E2E doesn't test lemmatization; force the fast lowercase lemmatizer
+				// so a local `lemmatizer_type=classla` in .env doesn't make the
+				// backend pay classla's ~26s model load and blow the webServer timeout.
+				// Key MUST be lowercase to match the .env key: main.py's load_dotenv()
+				// loads the lowercase `lemmatizer_type` from .env, and on case-sensitive
+				// Unix an uppercase `LEMMATIZER_TYPE` is a *different* key that .env wins over.
+				lemmatizer_type: 'lowercase'
 			}
 		},
 		{

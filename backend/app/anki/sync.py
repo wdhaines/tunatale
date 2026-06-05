@@ -220,6 +220,14 @@ def extract_cloze_translation(back_extra: str) -> str:
     m = _BACK_EXTRA_SENT.match(back_extra) or _BACK_EXTRA_TRANS.match(back_extra)
     if m:
         return m.group(1).strip()
+    # No leading <i>WORD</i> means there is no word-level translation. The
+    # bare-text fallback below exists only for legacy notes that stored the
+    # translation as plain text. A morphology cloze (e.g. biti) carries a
+    # grammar / sentence span but no <i> — HTML-stripping it here would leak the
+    # grammar hint ("biti, 3rd person singular") into the translation column on
+    # every sync_pull, so treat the word translation as empty.
+    if 'class="grammar"' in back_extra or 'class="st"' in back_extra:
+        return ""
     return extract_translation(back_extra)
 
 
@@ -233,11 +241,15 @@ def extract_cloze_sentence_translation(back_extra: str) -> str:
 
 
 def build_cloze_back_extra(
-    translation: str, sentence_translation: str, note: str = "", sentence_audio_filename: str | None = None
+    translation: str,
+    sentence_translation: str,
+    note: str = "",
+    grammar: str = "",
+    sentence_audio_filename: str | None = None,
 ) -> str:
     """Compose a Cloze note's `Back Extra` field from its parts.
 
-    Format: `<i>WORD</i><br><br><span class="st">SENTENCE</span><br><br>NOTE<br><br>[sound:filename]`,
+    Format: ``<i>WORD</i><br><br><span class="st">SENTENCE</span><br><br>NOTE<br><br><span class="grammar">GRAMMAR</span><br><br>[sound:filename]``,
     skipping any empty part. Single source of truth for both card creation
     (sync_create_new) and edit-push (sync_push).
     """
@@ -248,6 +260,8 @@ def build_cloze_back_extra(
         parts.append(f'<span class="st">{sentence_translation}</span>')
     if note:
         parts.append(note)
+    if grammar:
+        parts.append(f'<span class="grammar">{grammar}</span>')
     if sentence_audio_filename:
         parts.append(f"[sound:{sentence_audio_filename}]")
     return "<br><br>".join(parts)
@@ -539,6 +553,35 @@ class OfflineWriter:
         self._bump_col(ts)
         self._conn.commit()
 
+    def forget_card(self, card_id: int) -> None:
+        """Reset a card to NEW — Anki's "Forget".
+
+        Clears the schedule and FSRS memory so the card is genuinely new in
+        Anki, mirroring TT's ``reset_collocation``. sync_push calls this when a
+        TT reset marks a NEW-state direction dirty, so a reset in TunaTale
+        forgets the card in Anki too instead of silently diverging (Anki keeping
+        the graduated review while TT shows a fresh NEW card; 2026-06-04).
+
+        Places the card at the tail of the new queue (``MAX(due)+1`` over
+        existing new cards) and drops ``data`` to ``{}`` so it carries no FSRS
+        ``s``/``d`` — NULL-R, like any never-graded card.
+        """
+        ts = int(_time.time())
+        row = self._conn.execute("SELECT IFNULL(MAX(due), 0) FROM cards WHERE type = 0").fetchone()
+        new_due = int(row[0] or 0) + 1
+        self._conn.execute(
+            """
+            UPDATE cards
+            SET type = 0, queue = 0, due = ?, ivl = 0, factor = 0,
+                reps = 0, lapses = 0, odue = 0, odid = 0, data = '{}',
+                mod = ?, usn = -1
+            WHERE id = ?
+            """,
+            (new_due, ts, card_id),
+        )
+        self._bump_col(ts)
+        self._conn.commit()
+
     def get_current_card_state(self, card_id: int) -> dict | None:
         """Return Anki's current `queue`/`type`/`left` for the card, or None
         if the card doesn't exist. Used by sync_push (Fix 3) to skip writes
@@ -697,8 +740,39 @@ class OfflineWriter:
         self._conn.commit()
         return count
 
+    # Card columns the force_fsrs path is allowed to set directly. Restricting the
+    # set guards the dynamic column-name interpolation below against typos/injection.
+    _SETTABLE_CARD_COLS = frozenset({"data", "ivl", "factor", "due", "queue", "type", "reps", "lapses", "left"})
+
     def set_specific_value_of_card(self, card_id: int, keys: list[str], new_values: list[str]) -> None:
-        pass  # deferred to S3.7
+        """Write arbitrary card columns (used by the force_fsrs path to persist data/ivl/factor).
+
+        Mirrors set_due_date's write contract: stamps ``usn=-1`` and ``mod=now`` on the
+        row and bumps ``col.mod`` (never ``col.usn`` — Layer 61). Numeric-looking values
+        are coerced to int so INTEGER columns (ivl/factor/…) store integers; the JSON
+        ``data`` blob (non-numeric) stays text.
+        """
+        if not keys:
+            return
+        unknown = set(keys) - self._SETTABLE_CARD_COLS
+        if unknown:
+            raise ValueError(f"set_specific_value_of_card: disallowed card column(s) {sorted(unknown)}")
+
+        coerced: list[object] = []
+        for v in new_values:
+            try:
+                coerced.append(int(v))
+            except ValueError, TypeError:
+                coerced.append(v)
+
+        ts = int(_time.time())
+        set_clause = ", ".join(f"{k} = ?" for k in keys) + ", mod = ?, usn = -1"
+        self._conn.execute(
+            f"UPDATE cards SET {set_clause} WHERE id = ?",
+            (*coerced, ts, card_id),
+        )
+        self._bump_col(ts)
+        self._conn.commit()
 
     def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list) -> int:
         """Insert a new note + cards into the collection.
@@ -2172,19 +2246,26 @@ class AnkiSync:
             if item.syntactic_unit.card_type == "cloze":
                 # Cloze notes: any of {translation, sentence_translation, note, audio}
                 # dirty → rebuild Back Extra. Cloze has no separate "English" field.
-                if dirty_set & {"translation", "sentence_translation", "note", "audio"}:
+                if dirty_set & {"translation", "sentence_translation", "note", "grammar", "audio"}:
                     sentence_audio = self._db.get_sentence_audio_filename(coll_id)
                     fields["Back Extra"] = build_cloze_back_extra(
                         item.syntactic_unit.translation,
                         item.syntactic_unit.source_sentence_translation,
-                        item.syntactic_unit.note,
+                        note=item.syntactic_unit.note,
+                        grammar=item.syntactic_unit.grammar,
                         sentence_audio_filename=sentence_audio,
                     )
                     if sentence_audio and not dry_run:
                         _copy_tt_media_to_anki(self._writer, sentence_audio)
+                if "source_sentence" in dirty_set:
+                    # The cloze front (Anki "Text" field) is the clozed sentence.
+                    fields["Text"] = item.syntactic_unit.source_sentence or ""
             else:
                 if "translation" in dirty_set:
                     fields["English"] = item.syntactic_unit.translation
+                if "source_sentence" in dirty_set:
+                    # Vocab example sentence lives in the Anki "Note" field.
+                    fields["Note"] = item.syntactic_unit.source_sentence or ""
             if not fields:
                 continue
             if not dry_run:
@@ -2197,11 +2278,32 @@ class AnkiSync:
         for guid, direction, ds in self._db.list_dirty():
             if ds.anki_card_id is None:
                 continue
+            # Reset-to-new ("Forget"): a NEW-state dirty direction with no reps is
+            # a TunaTale reset (reset_collocation / set_state_by_id→NEW). Propagate
+            # it as an Anki forget rather than the default review-promoting
+            # set_due_date, so both apps agree the card is new. Push runs before
+            # pull, so once Anki is forgotten the subsequent pull reads queue=0 and
+            # keeps NEW. Skip recovered directions — orphan re-mint already rebuilds
+            # those fresh. Idempotent: no-op when Anki already has the card new.
+            if ds.state == SRSState.NEW and ds.reps == 0 and (guid, direction.value) not in recovered:
+                if not dry_run:
+                    anki_state_before = self._capture_anki_card_state(ds.anki_card_id)
+                    if anki_state_before is not None and anki_state_before["type"] != 0:
+                        self._writer.forget_card(ds.anki_card_id)
+                    self._db.mark_direction_clean(guid, direction)
+                report.directions_pushed += 1
+                continue
             # Recovery: when detect_and_reset_orphans cleared this direction's
             # anki_card_id earlier in the run and sync_create_new just minted a
             # fresh one, force_fsrs writes the TT-side stability/difficulty into
             # the new card's data JSON regardless of the global flag.
-            row_force_fsrs = force_fsrs or (guid, direction.value) in recovered
+            # ds.fsrs_force_next: a restored ("un-marked known") direction is in
+            # review state, so it lacks the ds.state==KNOWN force signal; the
+            # flag carries the force so its restored stability overwrites Anki's
+            # still-inflated cards.data before the next take-Anki-verbatim pull.
+            row_force_fsrs = (
+                force_fsrs or (guid, direction.value) in recovered or ds.state == SRSState.KNOWN or ds.fsrs_force_next
+            )
             days_str = str(max(0, (ds.due_at.date() - date.today()).days))
             if not dry_run:
                 # Snapshot Anki's pre-push card state for the anki_ahead
@@ -2365,6 +2467,13 @@ class AnkiSync:
         Returns a CreateNewReport with created/linked/skipped counters.
         """
         items = list(self._db.list_items_without_anki_note())
+
+        # Skip items whose directions are all suspended/buried — they were
+        # ignored via "Ignore" (untrack) before ever reaching Anki, or orphan
+        # recovery cleared their anki_note_id while they were suspended.
+        _FILTER_OUT = {SRSState.SUSPENDED, SRSState.BURIED}
+        items = [(g, i, c) for g, i, c in items if not all(ds.state in _FILTER_OUT for ds in i.directions.values())]
+
         if dry_run:
             return CreateNewReport(count=len(items))
 
@@ -2392,6 +2501,7 @@ class AnkiSync:
                 back_extra = build_cloze_back_extra(
                     item.syntactic_unit.translation,
                     item.syntactic_unit.source_sentence_translation,
+                    grammar=item.syntactic_unit.grammar,
                     sentence_audio_filename=sentence_audio,
                 )
                 try:
@@ -2421,7 +2531,13 @@ class AnkiSync:
             image_tag = ""
 
             if _media_fn is not None:
-                media = await _media_fn(word, english, used_image_urls=used_image_urls)
+                media = await _media_fn(
+                    word,
+                    english,
+                    source_sentence=item.syntactic_unit.source_sentence,
+                    grammar=item.syntactic_unit.grammar,
+                    used_image_urls=used_image_urls,
+                )
                 if media is not None and media.audio_bytes is not None:
                     prefix = "sl" if media.audio_source == "forvo" else "tts"
                     audio_filename = f"{_safe_stem(word, prefix)}.mp3"

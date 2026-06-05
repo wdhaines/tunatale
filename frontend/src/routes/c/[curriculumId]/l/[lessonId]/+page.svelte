@@ -6,6 +6,7 @@
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import AudioPlayer from '$lib/components/AudioPlayer.svelte';
 	import Transcript from '$lib/components/Transcript.svelte';
+	import TranscriptPlaceholder from '$lib/components/TranscriptPlaceholder.svelte';
 	import SyncButton from '$lib/components/SyncButton.svelte';
 	import type { PageData } from './$types';
 
@@ -18,20 +19,12 @@
 		translated: 'Translated'
 	};
 
-	const STATE_CYCLE: Record<string, string> = {
-		unknown: 'learning',
-		new: 'learning',
-		learning: 'known',
-		review: 'known',
-		relearning: 'known',
-		known: 'ignored',
-		ignored: 'new',
-		suspended: 'new'
-	};
-
 	// untrack: intentionally snapshot load data as mutable local state
 	let audio: LessonAudio | null = $state(untrack(() => data.audio));
 	let transcript: TranscriptData | null = $state(untrack(() => data.transcript));
+	// Starts true when load didn't supply a transcript (production: we fetch it
+	// client-side below) so the section shows the spinner from first paint.
+	let transcriptLoading = $state(untrack(() => data.transcript === null));
 	let listenLoading = $state(false);
 	let listenResult: { registered: number } | null = $state(null);
 	let audioLoading = $state(false);
@@ -40,15 +33,35 @@
 
 	let isListened = $derived(listenedStore.has(data.lesson.id));
 
-	// SvelteKit reuses this component when navigating between lessons on the same route
-	// (e.g. the Regenerate button's goto to the freshly-minted version), updating `data`
-	// in place. Re-snapshot the mutable local copies so the audio player and transcript
-	// follow the new lesson instead of staying frozen on the previous one. `data.audio`
-	// and `data.transcript` only change when the load function reruns (i.e. on navigation),
-	// so this never clobbers in-page edits made by the render/listen handlers.
+	// SvelteKit reuses this component on same-route param changes (e.g. the
+	// Regenerate button's goto, or lesson→lesson nav). The untracked local
+	// copies above must follow `data` instead of staying frozen on the prior
+	// lesson — otherwise audio/transcript show stale content after navigation.
 	$effect(() => {
 		audio = data.audio;
-		transcript = data.transcript;
+		const provided = data.transcript;
+		if (provided !== null) {
+			// Supplied by load (or passed directly in a test) — render it as-is.
+			transcript = provided;
+			return;
+		}
+		// Not preloaded: fetch client-side so the lesson shell renders immediately
+		// instead of blocking on the (classla-backed) transcript endpoint, which can
+		// take many seconds on a cold backend.
+		const lessonId = data.lesson.id;
+		transcript = null;
+		transcriptLoading = true;
+		error = '';
+		api.getLessonTranscript(lessonId)
+			.then((t) => {
+				transcript = t;
+			})
+			.catch((e) => {
+				error = e instanceof Error ? e.message : String(e);
+			})
+			.finally(() => {
+				transcriptLoading = false;
+			});
 	});
 
 	async function handleRenderAudio() {
@@ -98,39 +111,26 @@
 		}
 	}
 
-	async function handleStateChange(lemma: string, srs_item_id: number | null) {
+	async function handleWordClick(word: import('$lib/api').WordToken, lineIndex: number) {
 		error = '';
 		try {
-			let itemId = srs_item_id;
-			let currentState = 'new';
-
-			// `handleStateChange` is the `onStateChange` callback on <Transcript>,
-			// which only renders when `transcript` is truthy ({#if transcript} guards
-			// the mount). So transcript is non-null at the point this handler fires;
-			// the non-null assertion avoids a dead-defensive `?? []` branch.
-			for (const line of transcript!.dialogue_lines) {
-				const word = line.words.find((w) => w.lemma === lemma);
-				if (word) {
-					currentState = word.srs_state;
-					break;
-				}
-			}
-
-			const nextState = STATE_CYCLE[currentState] ?? 'learning';
-
-			if (itemId === null) {
-				const created = await api.createSRSItem({
-					text: lemma,
+			if (word.active_state === 'unknown') {
+				const sentence = transcript!.dialogue_lines[lineIndex]?.sentence ?? '';
+				await api.createBaseCard({
+					surface: word.surface,
+					lemma: word.lemma,
+					sentence,
 					language_code: data.lesson.language_code,
-					word_count: 1
+					translation: word.translation ?? ''
 				});
-				itemId = created.id;
-			}
-
-			if (nextState === 'ignored') {
-				await api.untrackSRSItem(itemId);
+			} else if (word.is_due && word.active_direction && word.srs_item_id != null) {
+				await api.submitDrill(
+					word.srs_item_id,
+					word.active_direction as 'recognition' | 'production',
+					'good'
+				);
 			} else {
-				await api.setSRSItemState(itemId, nextState);
+				return;
 			}
 			transcript = await api.getLessonTranscript(data.lesson.id);
 		} catch (e) {
@@ -138,24 +138,97 @@
 		}
 	}
 
-	async function handleCollocationStateChange(
-		_lemma: string,
-		span_id: number,
-		current_state: string
-	) {
+	async function handleCollocationStateChange(span_id: number) {
 		error = '';
 		try {
-			const nextState = STATE_CYCLE[current_state] ?? 'learning';
-			if (nextState === 'ignored') {
-				await api.untrackSRSItem(span_id);
-			} else {
-				await api.setSRSItemState(span_id, nextState);
-			}
+			await api.submitDrill(span_id, 'recognition', 'good');
 			transcript = await api.getLessonTranscript(data.lesson.id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		}
 	}
+
+	const tooltipActions = {
+		onCreateInflection: async (word: import('$lib/api').WordToken, sentence: string) => {
+			error = '';
+			try {
+				await api.createInflectionCloze({
+					surface: word.surface,
+					lemma: word.lemma,
+					feature: word.inflection_feature!,
+					sentence,
+					language_code: data.lesson.language_code,
+					lesson_id: data.lesson.id,
+					translation: word.translation ?? ''
+				});
+				transcript = await api.getLessonTranscript(data.lesson.id);
+			} catch (e) {
+				error = e instanceof Error ? e.message : String(e);
+			}
+		},
+		onSetState: async (id: number, state: string) => {
+			// Reset-to-new forgets the card in Anki too (re-learn from scratch),
+			// so confirm before discarding the schedule. Other states are label-only.
+			if (
+				state === 'new' &&
+				!confirm('Reset this word? It will be forgotten in Anki too and re-learned from scratch.')
+			) {
+				return;
+			}
+			error = '';
+			try {
+				await api.setSRSItemState(id, state);
+				transcript = await api.getLessonTranscript(data.lesson.id);
+			} catch (e) {
+				error = e instanceof Error ? e.message : String(e);
+			}
+		},
+		onUntrack: async (id: number) => {
+			error = '';
+			try {
+				await api.untrackSRSItem(id);
+				transcript = await api.getLessonTranscript(data.lesson.id);
+			} catch (e) {
+				error = e instanceof Error ? e.message : String(e);
+			}
+		},
+		onUnignore: async (id: number) => {
+			error = '';
+			try {
+				await api.suspendSRSItem(id, false);
+				transcript = await api.getLessonTranscript(data.lesson.id);
+			} catch (e) {
+				error = e instanceof Error ? e.message : String(e);
+			}
+		},
+		onIgnoreLemma: async (lemma: string) => {
+			error = '';
+			try {
+				await api.ignoreLemma(lemma, data.lesson.language_code);
+				transcript = await api.getLessonTranscript(data.lesson.id);
+			} catch (e) {
+				error = e instanceof Error ? e.message : String(e);
+			}
+		},
+		onUnignoreLemma: async (lemma: string) => {
+			error = '';
+			try {
+				await api.unignoreLemma(lemma, data.lesson.language_code);
+				transcript = await api.getLessonTranscript(data.lesson.id);
+			} catch (e) {
+				error = e instanceof Error ? e.message : String(e);
+			}
+		},
+		onRestoreKnown: async (id: number) => {
+			error = '';
+			try {
+				await api.restoreKnown(id);
+				transcript = await api.getLessonTranscript(data.lesson.id);
+			} catch (e) {
+				error = e instanceof Error ? e.message : String(e);
+			}
+		}
+	};
 
 	async function handleCreatePhrase({
 		text,
@@ -228,13 +301,16 @@
 				{listenLoading}
 				{listenResult}
 				{error}
-				onStateChange={handleStateChange}
+				onWordClick={handleWordClick}
 				onCollocationStateChange={handleCollocationStateChange}
 				onMarkListened={handleMarkListened}
 				onCreatePhrase={handleCreatePhrase}
+				tooltipActions={tooltipActions}
 			/>
+		{:else if transcriptLoading}
+			<TranscriptPlaceholder lesson={data.lesson} />
 		{:else}
-			<p class="muted">Transcript loading…</p>
+			<p class="muted">No transcript available.</p>
 		{/if}
 	</section>
 

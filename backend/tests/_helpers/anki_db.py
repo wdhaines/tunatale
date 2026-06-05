@@ -10,6 +10,7 @@ from tests._helpers.protobuf import encode_varint, pb_len_field, pb_varint_field
 
 FSRS5_WEIGHTS_FIELD = 5
 DESIRED_RETENTION_FIELD = 37  # per /tmp/anki-source/proto/anki/deck_config.proto:188
+MAX_REVIEW_INTERVAL_FIELD = 16  # uint32
 
 KNOWN_WEIGHTS: tuple[float, ...] = (
     0.1279,
@@ -34,9 +35,17 @@ KNOWN_WEIGHTS: tuple[float, ...] = (
 )
 
 
-def make_deck_config_blob(new_per_day: int, reviews_per_day: int = 200) -> bytes:
-    """Build a DeckConfig.Config protobuf blob with new_per_day at field 9 and reviews_per_day at field 10."""
-    return pb_varint_field(9, new_per_day) + pb_varint_field(10, reviews_per_day)
+def make_deck_config_blob(
+    new_per_day: int, reviews_per_day: int = 200, max_review_interval: int | None = None
+) -> bytes:
+    """Build a DeckConfig.Config protobuf blob with new_per_day at field 9 and reviews_per_day at field 10.
+
+    Optionally include max_review_interval at field 16.
+    """
+    blob = pb_varint_field(9, new_per_day) + pb_varint_field(10, reviews_per_day)
+    if max_review_interval is not None:
+        blob += pb_varint_field(16, max_review_interval)
+    return blob
 
 
 def make_deck_kind_blob(conf_id: int) -> bytes:
@@ -108,7 +117,10 @@ def make_anki_conn(
 
 
 def make_modern_anki_conn(
-    new_per_day: int = 20, deck_name: str = "0. Slovene", reviews_per_day: int = 200
+    new_per_day: int = 20,
+    deck_name: str = "0. Slovene",
+    reviews_per_day: int = 200,
+    max_review_interval: int | None = None,
 ) -> sqlite3.Connection:
     """Build a minimal in-memory collection.anki2 with modern deck_config/decks tables."""
     conn = sqlite3.connect(":memory:")
@@ -130,7 +142,7 @@ def make_modern_anki_conn(
     )
     conn.execute(
         "INSERT INTO deck_config VALUES (?, ?, 0, -1, ?)",
-        (config_id, "Slovene", make_deck_config_blob(new_per_day, reviews_per_day)),
+        (config_id, "Slovene", make_deck_config_blob(new_per_day, reviews_per_day, max_review_interval)),
     )
 
     conn.execute(

@@ -56,7 +56,7 @@ async def test_synthesize_writes_two_media_rows_and_files(monkeypatch, tmp_path)
 
     with db._get_conn() as conn:
         rows = conn.execute(
-            "SELECT kind, filename FROM media WHERE collocation_id = ? ORDER BY kind",
+            "SELECT kind, filename, anki_filename FROM media WHERE collocation_id = ? ORDER BY kind",
             (collocation_id,),
         ).fetchall()
 
@@ -68,6 +68,13 @@ async def test_synthesize_writes_two_media_rows_and_files(monkeypatch, tmp_path)
     expected_sentence_file = f"tts_sentence_{sentence_hash}.mp3"
     assert (tmp_path / expected_sentence_file).exists()
     assert (tmp_path / "tts_vsak.mp3").exists()
+
+    # anki_filename must equal the real filename (not "") so the sync's
+    # refresh_media reconciliation matches the [sound:] ref in Back Extra and
+    # keeps the row instead of collapsing it every sync.
+    by_kind = {r["kind"]: r for r in rows}
+    assert by_kind["audio_tts_sentence"]["anki_filename"] == expected_sentence_file
+    assert by_kind["audio_tts"]["anki_filename"] == "tts_vsak.mp3"
 
 
 async def test_synthesize_idempotent(monkeypatch, tmp_path):

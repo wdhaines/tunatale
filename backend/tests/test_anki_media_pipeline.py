@@ -24,7 +24,7 @@ def _make_fakes(
     async def fake_tts(text, *, voice=None):
         return tts_returns
 
-    def fake_pixabay(english, *, api_key, http_client=None, used_urls=frozenset()):
+    def fake_pixabay(english, *, api_key, http_client=None, used_urls=frozenset(), query=None):
         return pixabay_returns
 
     def fake_normalize(src_bytes, *, target_lufs=-23.0):
@@ -264,7 +264,7 @@ class TestFetchCardMedia:
         """The set is forwarded to the pixabay function as a frozenset."""
         received: list[frozenset] = []
 
-        def tracking_pixabay(english, *, api_key, http_client=None, used_urls=frozenset()):
+        def tracking_pixabay(english, *, api_key, http_client=None, used_urls=frozenset(), query=None):
             received.append(used_urls)
             return None
 
@@ -286,7 +286,7 @@ class TestFetchCardMedia:
         """When used_image_urls is None, pixabay receives an empty frozenset."""
         received: list[frozenset] = []
 
-        def tracking_pixabay(english, *, api_key, http_client=None, used_urls=frozenset()):
+        def tracking_pixabay(english, *, api_key, http_client=None, used_urls=frozenset(), query=None):
             received.append(used_urls)
             return None
 
@@ -301,3 +301,66 @@ class TestFetchCardMedia:
             _normalize_fn=norm_fn,
         )
         assert received[0] == frozenset()
+
+    # ── LLM image-query override ───────────────────────────────────────────────
+
+    async def test_image_query_override_forwarded_to_pixabay(self):
+        received: list[str | None] = []
+
+        def tracking_pixabay(english, *, api_key, http_client=None, used_urls=frozenset(), query=None):
+            received.append(query)
+            return (b"img", "jpg", _IMG_URL)
+
+        forvo_fn, tts_fn, _, norm_fn = _make_fakes(forvo_returns=b"audio")
+        await fetch_card_media(
+            "sodišče",
+            "court",
+            pixabay_key="key",
+            image_query="empty jail cell",
+            _forvo_fn=forvo_fn,
+            _tts_fn=tts_fn,
+            _pixabay_fn=tracking_pixabay,
+            _normalize_fn=norm_fn,
+        )
+        assert received == ["empty jail cell"]
+
+    async def test_empty_image_query_skips_pixabay_entirely(self):
+        called: list[str] = []
+
+        def tracking_pixabay(english, *, api_key, http_client=None, used_urls=frozenset(), query=None):
+            called.append(english)
+            return (b"img", "jpg", _IMG_URL)
+
+        forvo_fn, tts_fn, _, norm_fn = _make_fakes(forvo_returns=b"audio")
+        result = await fetch_card_media(
+            "zato",
+            "therefore",
+            pixabay_key="key",
+            image_query="",  # abstract-word skip sentinel
+            _forvo_fn=forvo_fn,
+            _tts_fn=tts_fn,
+            _pixabay_fn=tracking_pixabay,
+            _normalize_fn=norm_fn,
+        )
+        assert called == []
+        assert result.image_bytes is None
+        assert result.image_url is None
+
+    async def test_none_image_query_uses_legacy_path(self):
+        received: list[str | None] = []
+
+        def tracking_pixabay(english, *, api_key, http_client=None, used_urls=frozenset(), query=None):
+            received.append(query)
+            return None
+
+        forvo_fn, tts_fn, _, norm_fn = _make_fakes(forvo_returns=b"audio")
+        await fetch_card_media(
+            "voda",
+            "water",
+            pixabay_key="key",  # image_query omitted → defaults to None
+            _forvo_fn=forvo_fn,
+            _tts_fn=tts_fn,
+            _pixabay_fn=tracking_pixabay,
+            _normalize_fn=norm_fn,
+        )
+        assert received == [None]

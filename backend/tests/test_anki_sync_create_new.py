@@ -177,15 +177,15 @@ class FakeCreateWriter:
         return [c[0] for c in self.calls]
 
 
-async def _no_media(word: str, english: str, *, used_image_urls: set[str]) -> MediaResult | None:
+async def _no_media(word: str, english: str, *, used_image_urls: set[str], **_kwargs) -> MediaResult | None:
     return None
 
 
-async def _forvo_media(word: str, english: str, *, used_image_urls: set[str]) -> MediaResult | None:
+async def _forvo_media(word: str, english: str, *, used_image_urls: set[str], **_kwargs) -> MediaResult | None:
     return MediaResult(audio_bytes=b"mp3_data", audio_source="forvo")
 
 
-async def _tts_media(word: str, english: str, *, used_image_urls: set[str]) -> MediaResult | None:
+async def _tts_media(word: str, english: str, *, used_image_urls: set[str], **_kwargs) -> MediaResult | None:
     return MediaResult(
         audio_bytes=b"tts_data",
         audio_source="tts",
@@ -194,7 +194,7 @@ async def _tts_media(word: str, english: str, *, used_image_urls: set[str]) -> M
     )
 
 
-async def _full_media(word: str, english: str, *, used_image_urls: set[str]) -> MediaResult | None:
+async def _full_media(word: str, english: str, *, used_image_urls: set[str], **_kwargs) -> MediaResult | None:
     url = f"https://cdn.pixabay.com/{english}.jpg"
     used_image_urls.add(url)
     return MediaResult(
@@ -697,10 +697,10 @@ class TestSyncCreateNewRouting:
         assert Direction.PRODUCTION in item.directions
         assert Direction.RECOGNITION not in item.directions
 
-    async def test_sync_create_new_case_cloze_preserves_hint_in_anki_note(self):
-        """Morphology-cloze hint ({{c1::surface::hint}}) passes through to the Anki note's Text field."""
+    async def test_sync_create_new_case_cloze_with_grammar_hint(self):
+        """Morphology cloze writes plain {{c1::surface}} to Anki Text field, grammar hint to Back Extra."""
         db = _make_db()
-        from app.srs.function_words import make_morphology_cloze_text
+        from app.srs.function_words import format_morphology_hint, make_morphology_cloze_text
 
         morph_cloze_sentence = make_morphology_cloze_text(
             "Ljubljano",
@@ -708,6 +708,7 @@ class TestSyncCreateNewRouting:
             "noun:acc:sg",
             "Grem v Ljubljano s prijateljem.",
         )
+        grammar_hint = format_morphology_hint("ljubljana", "noun:acc:sg")
         unit = SyntacticUnit(
             text="Ljubljano",
             translation="Ljubljana",
@@ -719,6 +720,7 @@ class TestSyncCreateNewRouting:
             card_type="cloze",
             source_sentence=morph_cloze_sentence,
             source_sentence_translation="I'm going to Ljubljana with a friend.",
+            grammar=grammar_hint,
         )
         db.add_collocation(unit)
 
@@ -733,11 +735,13 @@ class TestSyncCreateNewRouting:
         note = notes[0]
         assert note["mid"] == 1000002  # Cloze notetype
         flds = note["flds"].split("\x1f")
-        assert flds[0] == "Grem v {{c1::Ljubljano::ljubljana, acc sg}} s prijateljem."
+        assert flds[0] == "Grem v Ljubljan{{c1::o}} s prijateljem."
 
-        # Back Extra contains translation and sentence translation
+        # Back Extra contains translation, sentence translation, and grammar hint
         assert "Ljubljana" in flds[1]
         assert "I'm going to Ljubljana with a friend." in flds[1]
+        assert "ljubljana, accusative singular" in flds[1]
+        assert 'class="grammar"' in flds[1]
 
         # Verify GUID stability — re-sync with cleared anki_note_id should link, not duplicate
         guid = db.get_collocation("Ljubljano").guid
@@ -750,6 +754,66 @@ class TestSyncCreateNewRouting:
         )
         assert report.created == 0
         assert report.linked == 1
+
+    async def test_skips_wholly_suspended_item(self):
+        """An item whose directions are ALL suspended is skipped.
+
+        Covers the orphan-resurrection bug: a synced-then-untracked item's
+        anki_note_id was cleared by orphan recovery, but sync_create_new must
+        not re-create a card for it.
+        """
+        db = _make_db()
+        guid = _add_item(db, "voda", "water")
+
+        row_id = db.get_collocation_id_by_guid(guid)
+        db.set_state_by_id(row_id, SRSState.SUSPENDED)
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        assert report.count == 0
+        assert report.created == 0
+        notes = anki_conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+        assert notes == 0
+
+    async def test_creates_note_for_partially_suspended_item(self):
+        """An item with one direction active and one suspended still gets a card."""
+        db = _make_db()
+        guid = _add_item(db, "voda", "water")
+
+        row_id = db.get_collocation_id_by_guid(guid)
+        db.set_state_by_id(row_id, SRSState.SUSPENDED, direction=Direction.PRODUCTION)
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        assert report.count == 1
+        assert report.created == 1
+        notes = anki_conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+        assert notes == 1
+
+    async def test_dry_run_excludes_wholly_suspended(self):
+        """dry_run count excludes wholly-suspended items."""
+        db = _make_db()
+        guid = _add_item(db, "voda", "water")
+        _add_item(db, "vino", "wine")
+
+        row_id = db.get_collocation_id_by_guid(guid)
+        db.set_state_by_id(row_id, SRSState.SUSPENDED)
+
+        writer = FakeCreateWriter()
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", dry_run=True
+        )
+
+        assert report.count == 1
+        assert "create_note" not in writer.action_names()
 
 
 # ── TestListItemsWithoutAnkiNote ──────────────────────────────────────────────
@@ -1018,7 +1082,7 @@ class TestSyncCreateNew:
 
         received_used_urls: list[frozenset] = []
 
-        async def tracking_media(word, english, *, used_image_urls):
+        async def tracking_media(word, english, *, used_image_urls, **_kwargs):
             received_used_urls.append(frozenset(used_image_urls))
             url = f"https://cdn.pixabay.com/{english}.jpg"
             used_image_urls.add(url)

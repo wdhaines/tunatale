@@ -141,6 +141,17 @@ class TestLessonStorage:
         store.save_lesson("l1", "c1", 1, lesson)
         assert store.get_all_token_glosses() == {}
 
+    def test_list_lessons_returns_all_with_ids(self, store):
+        """list_lessons yields (lesson_id, curriculum_id, day, Lesson) for every row."""
+        store.save_lesson("l1", "c1", 1, _make_lesson())
+        store.save_lesson("l2", "c1", 2, _make_lesson())
+        rows = store.list_lessons()
+        assert {(lid, cid, day) for lid, cid, day, _ in rows} == {("l1", "c1", 1), ("l2", "c1", 2)}
+        assert all(isinstance(lesson, Lesson) for _, _, _, lesson in rows)
+
+    def test_list_lessons_empty(self, store):
+        assert store.list_lessons() == []
+
 
 class TestAudioFileStorage:
     """Tests for audio file path save/get operations."""

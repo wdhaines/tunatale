@@ -295,7 +295,7 @@ describe("DrillCard", () => {
       expect(container.textContent).not.toContain("še");
     });
 
-    it("renders hint from {{c1::surface::hint}} in blank", async () => {
+    it("renders {{c1::surface::hint}} as [...] in blank", async () => {
       const onRate = vi.fn().mockResolvedValue(undefined);
       const item = makeSRSItemDetail({
         text: "Ljubljano",
@@ -305,10 +305,11 @@ describe("DrillCard", () => {
         source_sentence_translation: "I'm going to Ljubljana with a friend.",
       });
       const { container } = render(DrillCard, { item, direction: "production", onRate });
-      expect(container.textContent).toContain("[ljubljana, acc sg]");
+      expect(container.textContent).toContain("[...]");
       expect(container.textContent).toContain("Grem v");
       expect(container.textContent).toContain("s prijateljem.");
       expect(container.textContent).not.toContain("Ljubljano");
+      expect(container.textContent).not.toContain("ljubljana, acc sg");
     });
 
     it("renders surface from {{c1::surface::hint}} in answer", async () => {
@@ -380,7 +381,8 @@ describe("DrillCard", () => {
       const { container } = render(DrillCard, { item, direction: "production", onRate });
       expect(container.textContent).not.toContain("{{c1::");
       expect(container.textContent).not.toContain("sem");
-      const blanks = (container.textContent?.match(/\[biti, 1sg\]/g) || []).length;
+      expect(container.textContent).not.toContain("biti, 1sg");
+      const blanks = (container.textContent?.match(/\[\.\.\.\]/g) || []).length;
       expect(blanks).toBe(2);
     });
 
@@ -403,6 +405,26 @@ describe("DrillCard", () => {
       const marks = (container.innerHTML.match(/<mark class="cloze-answer">sem<\/mark>/g) || [])
         .length;
       expect(marks).toBe(2);
+    });
+
+    it("shows grammar hint on the answer side", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({
+        text: "sem",
+        translation: "to be (1sg)",
+        card_type: "cloze",
+        source_sentence: "Jaz {{c1::sem::biti, 1sg}} tu in {{c1::sem::biti, 1sg}} tam.",
+        source_sentence_translation: "I am here and am there.",
+        grammar: "biti, 1st person singular",
+      });
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "production",
+        onRate,
+      });
+      expect(container.textContent).not.toContain("biti, 1st person singular");
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      expect(container.textContent).toContain("biti, 1st person singular");
     });
   });
 

@@ -378,6 +378,7 @@ class TestStoryEndpoints:
         assert response.status_code == 404
 
     async def test_generate_story_returns_201(self, monkeypatch):
+        from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
 
         mock_lesson = Lesson(
@@ -412,6 +413,7 @@ class TestStoryEndpoints:
         )
         app.state.story_generator = mock_generator
         app.state.language = Language.slovene()
+        app.state.srs_db = SRSDatabase(":memory:")
 
         store = ContentStore(":memory:")
         curriculum_id = "test-curriculum-id"
@@ -431,6 +433,182 @@ class TestStoryEndpoints:
         assert "sections" in data
         # Verify lesson was persisted
         assert store.get_lesson(data["id"]) is not None
+        app.state.srs_db.close()
+
+    async def test_generate_story_no_srs_db_still_succeeds(self, monkeypatch):
+        """generate_story works when app.state has no srs_db (pre-warm is skipped)."""
+        from app.storage.store import ContentStore
+
+        mock_lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="Dober dan", voice_id="v1", language_code="sl", role="A")],
+                )
+            ],
+        )
+
+        mock_generator = AsyncMock()
+        mock_generator.generate = AsyncMock(return_value=mock_lesson)
+
+        mock_curriculum = Curriculum(
+            id="test-id",
+            topic="test",
+            language_code="sl",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(
+                    day=1,
+                    title="Day 1",
+                    focus="greetings",
+                    learning_objective="greet",
+                    story_guidance="greet each other",
+                    collocations=["dober dan"],
+                )
+            ],
+        )
+        app.state.story_generator = mock_generator
+        app.state.language = Language.slovene()
+
+        store = ContentStore(":memory:")
+        store.save_curriculum("cid", mock_curriculum)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/story/generate",
+                json={"curriculum_id": "cid", "day": 1, "strategy": "WIDER"},
+            )
+
+        assert response.status_code == 201
+        assert "id" in response.json()
+
+    async def test_prewarm_lesson_populates_cache(self, monkeypatch):
+        """_prewarm_lesson fills the lemma_analysis_cache for a lesson's L2 phrases."""
+        from app.api.generation import _prewarm_lesson
+        from app.srs.database import SRSDatabase
+        from app.srs.lemmatizer import LowercaseLemmatizer
+
+        lesson = Lesson(
+            title="Test",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text="Dober dan", voice_id="v1", language_code="sl", role="A"),
+                        Phrase(text="Kako si", voice_id="v1", language_code="sl", role="B"),
+                    ],
+                ),
+            ],
+        )
+
+        class _CachingLemmatizer(LowercaseLemmatizer):
+            _cache_version = "test-v1"
+
+        monkeypatch.setattr("app.api.generation.get_lemmatizer", lambda: _CachingLemmatizer())
+
+        srs_db = SRSDatabase(":memory:")
+        try:
+            await _prewarm_lesson(lesson, srs_db)
+
+            for text in ("Dober dan", "Kako si"):
+                cached = srs_db.get_sentence_analysis(text, "sl", "test-v1")
+                assert cached is not None, f"Expected cache entry for {text}"
+        finally:
+            srs_db.close()
+
+    async def test_prewarm_skips_cheap_lemmatizer(self, monkeypatch):
+        """_prewarm_lesson is a no-op for LowercaseLemmatizer (no _cache_version)."""
+        from app.api.generation import _prewarm_lesson
+        from app.srs.database import SRSDatabase
+        from app.srs.lemmatizer import LowercaseLemmatizer
+
+        lesson = Lesson(
+            title="Test",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="Dober dan", voice_id="v1", language_code="sl", role="A")],
+                ),
+            ],
+        )
+
+        call_count = 0
+
+        class _CountingLemmatizer(LowercaseLemmatizer):
+            def analyze_sentence(self, sentence, language_code):
+                nonlocal call_count
+                call_count += 1
+                return super().analyze_sentence(sentence, language_code)
+
+        monkeypatch.setattr("app.api.generation.get_lemmatizer", lambda: _CountingLemmatizer())
+
+        srs_db = SRSDatabase(":memory:")
+        try:
+            await _prewarm_lesson(lesson, srs_db)
+            # Cheap lemmatizer → no caching → no analyze_sentence calls (early return)
+            assert call_count == 0
+        finally:
+            srs_db.close()
+
+    async def test_prewarm_skips_no_natural_speed(self, monkeypatch):
+        """_prewarm_lesson returns early when lesson has no NATURAL_SPEED section (line 47)."""
+        from app.api.generation import _prewarm_lesson
+        from app.srs.database import SRSDatabase
+        from app.srs.lemmatizer import LowercaseLemmatizer
+
+        lesson = Lesson(
+            title="No NS",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.KEY_PHRASES,
+                    phrases=[Phrase(text="dober dan", voice_id="v1", language_code="sl")],
+                ),
+            ],
+        )
+
+        class _CachingLemmatizer(LowercaseLemmatizer):
+            _cache_version = "test-v1"
+
+        monkeypatch.setattr("app.api.generation.get_lemmatizer", lambda: _CachingLemmatizer())
+
+        srs_db = SRSDatabase(":memory:")
+        try:
+            await _prewarm_lesson(lesson, srs_db)  # should not raise
+        finally:
+            srs_db.close()
+
+    async def test_prewarm_swallows_exception(self, monkeypatch):
+        """_prewarm_lesson logs and swallows exceptions from get_lemmatizer (lines 52-53)."""
+        from app.api.generation import _prewarm_lesson
+        from app.srs.database import SRSDatabase
+
+        lesson = Lesson(
+            title="Test",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="Dober dan", voice_id="v1", language_code="sl", role="A")],
+                ),
+            ],
+        )
+
+        def _raise():
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr("app.api.generation.get_lemmatizer", _raise)
+
+        srs_db = SRSDatabase(":memory:")
+        try:
+            await _prewarm_lesson(lesson, srs_db)  # should not raise
+        finally:
+            srs_db.close()
 
 
 class TestSRSEndpoints:
@@ -567,7 +745,6 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -580,7 +757,7 @@ class TestSRSEndpoints:
         # kje and je appear in both phrases, but only first sentence stored
         kje = db.get_collocation_by_lemma("kje")
         assert kje is not None
-        assert kje.syntactic_unit.source_sentence == "Kje je banka?"
+        assert kje.syntactic_unit.source_sentence == "{{c1::Kje}} je banka?"
 
     async def test_listen_registers_collocations(self):
         from app.srs.database import SRSDatabase
@@ -602,7 +779,6 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -639,7 +815,6 @@ class TestSRSEndpoints:
             key_phrases=[KeyPhraseInfo(phrase="dober dan", translation="good day")],
         )
         db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -673,7 +848,6 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -717,7 +891,6 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -737,6 +910,55 @@ class TestSRSEndpoints:
         assert banka is not None
         assert banka.syntactic_unit.card_type == "vocab"
 
+    async def test_listen_surface_keyed_card_graded_not_duplicated(self, monkeypatch):
+        """A token whose lemma has no card but whose surface matches an existing
+        card (greeting 'dobrodošli' → lemma 'dobrodošel') grades the existing card
+        instead of spawning a 'dobrodošel' duplicate."""
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+        from app.srs.lemmatizer import TokenAnalysis
+        from app.storage.store import ContentStore
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="Dobrodošli", voice_id="female-1", language_code="sl", role="female-1")],
+                )
+            ],
+            key_phrases=[],
+        )
+        db = SRSDatabase(":memory:")
+        db.add_collocation(
+            SyntacticUnit(
+                text="dobrodošli",
+                translation="Welcome.",
+                word_count=1,
+                difficulty=1,
+                source="llm",
+                lemma="dobrodošli",
+            ),
+            language_code="sl",
+        )
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        stub = StubLemmatizer()
+        stub.set_sentence("Dobrodošli", [TokenAnalysis(surface="Dobrodošli", lemma="dobrodošel")])
+        monkeypatch.setattr("app.api.srs._lemmatizer", stub)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        assert response.status_code == 200
+        assert db.get_collocation_by_lemma("dobrodošel") is None
+        assert db.get_collocation_by_lemma("dobrodošli") is not None
+
     async def test_listen_key_phrases_translation_preserved(self):
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
@@ -749,7 +971,6 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -813,7 +1034,6 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -841,7 +1061,6 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -871,7 +1090,6 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -898,7 +1116,6 @@ class TestSRSEndpoints:
         )
 
         db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -923,7 +1140,6 @@ class TestListenClozeIntegration:
         self,
         phrase_text: str = "Kje je banka?",
         language_code: str = "sl",
-        cloze_enabled: bool = True,
     ):
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
@@ -947,8 +1163,6 @@ class TestListenClozeIntegration:
             key_phrases=[],
         )
         db = SRSDatabase(":memory:")
-        if cloze_enabled:
-            db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -959,7 +1173,7 @@ class TestListenClozeIntegration:
         """Created cloze rows have state='new', reps=0, introduced_at IS NULL."""
         from app.models.srs_item import Direction, SRSState
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
@@ -975,13 +1189,162 @@ class TestListenClozeIntegration:
         item_je = db.get_collocation_by_lemma("je")
         assert item_je is not None
         assert item_je.syntactic_unit.card_type == "cloze"
-        assert item_je.syntactic_unit.source_sentence == "Kje je banka?"
+        assert item_je.syntactic_unit.source_sentence == "Kje {{c1::je}} banka?"
+
+    async def test_listen_creates_no_cloze_for_biti_surface(self, monkeypatch):
+        """A biti surface (lemma "biti") is clozes-only — no base cloze created by /listen.
+        biti's per-person conjugation clozes are created by click, not auto.
+        Regression: Phase 2b surface-blanking test now reflects the special-case."""
+        import app.api.srs as srs_mod
+
+        def fake_lemmatize(surfaces, text, lemmatizer, language_code, db=None, model_version=""):
+            return ["biti" if s.lower() == "sem" else s.lower() for s in surfaces]
+
+        monkeypatch.setattr(srs_mod, "lemmatize_surfaces_in_context", fake_lemmatize)
+
+        db = await self._setup_lesson(phrase_text="Sem doma.")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        # No base cloze should be created for biti
+        item = db.get_collocation_by_lemma("biti")
+        assert item is None
+
+        # Other function words (e.g. "kje" if present) still get base clozes fine.
+        # In this lesson ("Sem doma."), there are no other function words — just verify
+        # no biti row was created regardless of surface.
+        with db._get_conn() as conn:
+            rows = conn.execute("SELECT * FROM collocations WHERE lemma = 'biti'").fetchall()
+        assert len(rows) == 0
+
+    async def test_listen_skips_biti_via_pos_aux(self, monkeypatch):
+        """A biti surface (ste → classla AUX) is a clozes-only verb — no base cloze
+        created by /listen. Without an analyzer 'ste' would fall through to
+        standalone vocab, but even with POS detection biti is skipped."""
+        import app.api.srs as srs_mod
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_analysis("ste", "biti", upos="AUX")
+        monkeypatch.setattr(srs_mod, "_lemmatizer", stub)
+        monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", AsyncMock())
+
+        db = await self._setup_lesson(phrase_text="Zdravo kje ste")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        # No base cloze for biti
+        item = db.get_collocation_by_lemma("biti")
+        assert item is None
+
+        # Other function words (kje) still get base clozes
+        item_kje = db.get_collocation_by_lemma("kje")
+        assert item_kje is not None
+        assert item_kje.syntactic_unit.card_type == "cloze"
+
+    async def test_listen_creates_no_base_cloze_for_biti(self, monkeypatch):
+        """A lesson with biti surfaces creates NO base cloze — only click-triggered
+        conjugation clozes. Regression for the biti clozes-only special case."""
+        import app.api.srs as srs_mod
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_lemma("ste", "biti")
+        stub.set_lemma("sem", "biti")
+        stub.set_analysis("ste", "biti", upos="AUX")
+        stub.set_analysis("sem", "biti", upos="AUX")
+        monkeypatch.setattr(srs_mod, "_lemmatizer", stub)
+        audio_mock = AsyncMock()
+        monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", audio_mock)
+
+        db = await self._setup_lesson(phrase_text="Sem doma, kje ste")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        # biti should have NO base cloze (card_type='cloze', lemma='biti', empty disambig)
+        with db._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM collocations WHERE lemma = 'biti' AND card_type = 'cloze' AND (disambig_key IS NULL OR disambig_key = '')"
+            ).fetchall()
+        assert len(rows) == 0, f"Expected no base cloze for biti, got {len(rows)}"
+
+        # Other function words in the lesson (kje) should still get their base clozes
+        with db._get_conn() as conn:
+            kje_row = conn.execute("SELECT * FROM collocations WHERE lemma = 'kje'").fetchone()
+        assert kje_row is not None
+
+    async def test_listen_cloze_audio_uses_surface_not_lemma(self, monkeypatch):
+        """The answer-word audio for a plain cloze is synthesized from the surface
+        that was blanked, not the dictionary lemma. Uses a non-biti function word
+        (biti is clozes-only and no longer creates a base cloze)."""
+        import app.api.srs as srs_mod
+
+        # Use a mock lemmatizer that diverges lemma from surface for a non-biti
+        # function word: "kje" maps to lemma "kje" (same), so we fake a different
+        # scenario: surface "Kje" (capitalized) maps to "kje"
+        audio_mock = AsyncMock()
+        monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", audio_mock)
+
+        await self._setup_lesson(phrase_text="Kje je banka?")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert resp.status_code == 200
+
+        # Cloze for kje — audio uses the surface that appears in the sentence
+        words = [call.args[3] for call in audio_mock.await_args_list]
+        assert "Kje" in words
+
+    async def test_listen_existing_cloze_surface_keyed(self, monkeypatch):
+        """A cloze card keyed by surface (not lemma) is found via the surface
+        fallback and does not crash on re-query — the id is carried from the
+        initial lookup rather than re-queried by lemma."""
+        import app.api.srs as srs_mod
+        from app.models.syntactic_unit import SyntacticUnit
+
+        def fake_lemmatize(surfaces, text, lemmatizer, language_code, db=None, model_version=""):
+            return ["pozdrav" if s.lower() == "zdravo" else s.lower() for s in surfaces]
+
+        monkeypatch.setattr(srs_mod, "lemmatize_surfaces_in_context", fake_lemmatize)
+        audio_mock = AsyncMock()
+        monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", audio_mock)
+
+        db = await self._setup_lesson(phrase_text="Zdravo svet")
+
+        # Pre-create a cloze card keyed by the surface form, not the lemma
+        pre_unit = SyntacticUnit(
+            text="zdravo",
+            translation="hello",
+            word_count=1,
+            difficulty=1,
+            source="test",
+            lemma="zdravo",
+            card_type="cloze",
+            source_sentence="Zdravo svet",
+        )
+        db.add_collocation(pre_unit, language_code="sl")
+        pre_id, _ = db.get_collocation_by_lemma_with_id("zdravo")
+        assert pre_id is not None
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+
+        # No new card was created for the dictionary lemma (surface-keyed one was reused)
+        assert db.get_collocation_by_lemma("pozdrav") is None
+
+        # Audio was synthesized for the pre-existing card, not a new one
+        assert audio_mock.await_args is not None
+        call_ids = [call.args[1] for call in audio_mock.await_args_list]
+        assert pre_id in call_ids
 
     async def test_listen_creates_vocab_for_unknown_content_word(self):
         """Unknown content-word lemma → vocab row, state='new', both directions present."""
         from app.models.srs_item import Direction, SRSState
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
@@ -998,7 +1361,7 @@ class TestListenClozeIntegration:
         """Pre-existing vocab with recognition state=LEARNING → grade recognition, production unchanged."""
         from app.models.srs_item import Direction, SRSState
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
@@ -1032,7 +1395,7 @@ class TestListenClozeIntegration:
 
         from app.models.srs_item import Direction, SRSState
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
@@ -1056,7 +1419,7 @@ class TestListenClozeIntegration:
 
         from app.models.srs_item import Direction, SRSState
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
@@ -1075,23 +1438,10 @@ class TestListenClozeIntegration:
         banka = db.get_collocation_by_lemma("banka")
         assert banka.directions[Direction.RECOGNITION].reps == 5  # unchanged
 
-    # ── Case-cloze tests ────────────────────────────────────────────────
-
-    async def _setup_case_cloze_lesson(
-        self,
-        phrase_text: str = "Grem v Ljubljano. Sem v hotelu.",
-        case_clozes_enabled: bool = True,
-        extra_morphology: list[dict] | None = None,
-    ):
+    async def test_listen_creates_no_morphology_clozes_after_phase_4b(self):
+        """Phase 4b: /listen on a lesson with inflected A1 surfaces creates zero morphology clozes."""
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
-
-        morphology_focus = [
-            {"lemma": "ljubljana", "surface": "Ljubljano", "feature": "noun:acc:sg", "gloss": "Ljubljana"},
-            {"lemma": "hotel", "surface": "hotelu", "feature": "noun:loc:sg", "gloss": "hotel"},
-        ]
-        if extra_morphology:
-            morphology_focus.extend(extra_morphology)
 
         lesson = Lesson(
             title="Day 1",
@@ -1101,7 +1451,7 @@ class TestListenClozeIntegration:
                     section_type=SectionType.NATURAL_SPEED,
                     phrases=[
                         Phrase(
-                            text=phrase_text,
+                            text="Grem v Ljubljano. Sem v hotelu.",
                             voice_id="female-1",
                             language_code="sl",
                             role="female-1",
@@ -1111,501 +1461,36 @@ class TestListenClozeIntegration:
             ],
             key_phrases=[],
             generation_metadata={
-                "token_glosses": {
-                    "grem": "I go",
-                    "v": "in/to",
-                    "ljubljana": "Ljubljana",
-                    "sem": "I am",
-                    "hotel": "hotel",
-                },
+                "token_glosses": {},
                 "sentence_translations": {
-                    phrase_text: "I'm going to Ljubljana. I'm at the hotel.",
+                    "Grem v Ljubljano. Sem v hotelu.": "I'm going to Ljubljana. I'm at the hotel."
                 },
-                "morphology_focus": morphology_focus,
-            },
-        )
-        db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
-        if case_clozes_enabled:
-            db.set_enable_case_clozes(True)
-        store = ContentStore(":memory:")
-        store.save_lesson("case-cloze-1", "curriculum-1", 1, lesson)
-        app.state.srs_db = db
-        app.state.content_store = store
-        return db
-
-    async def test_listen_creates_case_cloze_when_enabled(self):
-        """Inflected surface forms get morphology-cloze rows with disambig_key set."""
-        db = await self._setup_case_cloze_lesson(case_clozes_enabled=True)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-1"})
-        assert response.status_code == 200
-
-        # Vocab row for the content word (created by main loop from lemmatized surface)
-        item = db.get_collocation_by_lemma("ljubljano")
-        assert item is not None
-        assert item.syntactic_unit.card_type == "vocab"
-
-        # Morphology-cloze row for the inflected surface "Ljubljano" (Acc, Sing)
-        with db._get_conn() as conn:
-            row = conn.execute(
-                "SELECT text, lemma, disambig_key, card_type, source_sentence "
-                "FROM collocations WHERE text = ? AND disambig_key = ?",
-                ("Ljubljano", "morph:noun-acc-sg"),
-            ).fetchone()
-        assert row is not None, "Morphology-cloze row should exist"
-        assert row["lemma"] == "ljubljana"
-        assert row["card_type"] == "cloze"
-        assert row["disambig_key"] == "morph:noun-acc-sg"
-        assert row["source_sentence"] == "Grem v {{c1::Ljubljano::ljubljana, acc sg}}. Sem v hotelu."
-
-    async def test_listen_respects_case_cloze_toggle(self):
-        """Morphology-cloze creation is skipped when enable_case_clozes is False."""
-        db = await self._setup_case_cloze_lesson(case_clozes_enabled=False)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-1"})
-        assert response.status_code == 200
-
-        with db._get_conn() as conn:
-            row = conn.execute(
-                "SELECT text, disambig_key FROM collocations WHERE text = ? AND disambig_key = ?",
-                ("Ljubljano", "morph:noun-acc-sg"),
-            ).fetchone()
-        assert row is None, "Morphology-cloze row should NOT exist when toggle is off"
-
-    async def test_listen_case_cloze_is_idempotent(self):
-        """Second /listen with same lesson does not duplicate morphology-cloze rows."""
-        db = await self._setup_case_cloze_lesson(case_clozes_enabled=True)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            r1 = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-1"})
-            r2 = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-1"})
-        assert r1.status_code == 200
-        assert r2.status_code == 200
-
-        with db._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM collocations WHERE text = ? AND disambig_key = ?",
-                ("Ljubljano", "morph:noun-acc-sg"),
-            ).fetchall()
-        assert rows[0]["cnt"] == 1
-
-    async def test_listen_case_cloze_skips_degenerate_lemma_equals_surface(self):
-        """No morphology-cloze when generator reports lemma == surface (hint would reveal answer)."""
-        db = await self._setup_case_cloze_lesson(
-            phrase_text="Imam plačilno kartico.",
-            case_clozes_enabled=True,
-            extra_morphology=[
-                {"lemma": "kartico", "surface": "kartico", "feature": "noun:acc:sg", "gloss": "card"},
-            ],
-        )
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-1"})
-        assert response.status_code == 200
-
-        with db._get_conn() as conn:
-            row = conn.execute(
-                "SELECT text FROM collocations WHERE text = ? AND disambig_key = ?",
-                ("kartico", "morph:noun-acc-sg"),
-            ).fetchone()
-        assert row is None, "Degenerate lemma==surface entry must not create a morphology-cloze"
-
-    async def test_listen_case_cloze_respects_cap(self):
-        """At most max_morph_clozes (5) morphology-cloze rows are created per /listen."""
-        from app.srs.database import SRSDatabase
-        from app.storage.store import ContentStore
-
-        phrase = "Grem v Ljubljano, Avstrijo, trgovino, kavarno, postajo in restavracijo."
-        # Six non-degenerate accusatives (lemma != surface) → cap should clip to 5.
-        morphology = [
-            {"lemma": "ljubljana", "surface": "Ljubljano", "feature": "noun:acc:sg", "gloss": "Ljubljana"},
-            {"lemma": "avstrija", "surface": "Avstrijo", "feature": "noun:acc:sg", "gloss": "Austria"},
-            {"lemma": "trgovina", "surface": "trgovino", "feature": "noun:acc:sg", "gloss": "store"},
-            {"lemma": "kavarna", "surface": "kavarno", "feature": "noun:acc:sg", "gloss": "cafe"},
-            {"lemma": "postaja", "surface": "postajo", "feature": "noun:acc:sg", "gloss": "station"},
-            {
-                "lemma": "restavracija",
-                "surface": "restavracijo",
-                "feature": "noun:acc:sg",
-                "gloss": "restaurant",
-            },
-        ]
-        lesson = Lesson(
-            title="Day 1",
-            language_code="sl",
-            sections=[
-                Section(
-                    section_type=SectionType.NATURAL_SPEED,
-                    phrases=[
-                        Phrase(text=phrase, voice_id="female-1", language_code="sl", role="female-1"),
-                    ],
-                )
-            ],
-            key_phrases=[],
-            generation_metadata={
-                "token_glosses": {},
-                "sentence_translations": {},
-                "morphology_focus": morphology,
-            },
-        )
-        db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
-        db.set_enable_case_clozes(True)
-        store = ContentStore(":memory:")
-        store.save_lesson("case-cloze-cap", "curriculum-1", 1, lesson)
-        app.state.srs_db = db
-        app.state.content_store = store
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-cap"})
-        assert response.status_code == 200
-
-        with db._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'morph:%'",
-            ).fetchall()
-        assert rows[0]["cnt"] == 5, f"Expected 5 morphology-cloze rows, got {rows[0]['cnt']}"
-
-    async def test_listen_case_cloze_includes_verb_conjugation_of_function_word_lemma(self):
-        """Verb conjugations are drilled even when surface or lemma is in the function-word set.
-
-        `je`/`sem`/`si` are in the curated function-word list (they're high-frequency forms of
-        `biti`), but conjugation drills are exactly what we want — so the function-word filter
-        is intentionally not applied to morphology clozes.
-        """
-        from app.srs.database import SRSDatabase
-        from app.storage.store import ContentStore
-
-        phrase = "On je tu. Jaz sem doma."
-        morphology = [
-            {"lemma": "biti", "surface": "je", "feature": "verb:3sg", "gloss": "is"},
-            {"lemma": "biti", "surface": "sem", "feature": "verb:1sg", "gloss": "am"},
-        ]
-        lesson = Lesson(
-            title="Day 1",
-            language_code="sl",
-            sections=[
-                Section(
-                    section_type=SectionType.NATURAL_SPEED,
-                    phrases=[
-                        Phrase(text=phrase, voice_id="female-1", language_code="sl", role="female-1"),
-                    ],
-                )
-            ],
-            key_phrases=[],
-            generation_metadata={
-                "token_glosses": {"biti": "to be"},
-                "sentence_translations": {phrase: "He is here. I am at home."},
-                "morphology_focus": morphology,
-            },
-        )
-        db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
-        db.set_enable_case_clozes(True)
-        store = ContentStore(":memory:")
-        store.save_lesson("case-cloze-verb", "curriculum-1", 1, lesson)
-        app.state.srs_db = db
-        app.state.content_store = store
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-verb"})
-        assert response.status_code == 200
-
-        with db._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT text, disambig_key FROM collocations "
-                "WHERE card_type = 'cloze' AND disambig_key LIKE 'morph:verb-%' ORDER BY text",
-            ).fetchall()
-        assert len(rows) == 2, f"Expected 2 verb morphology-clozes, got {len(rows)}: {[dict(r) for r in rows]}"
-        assert {r["text"] for r in rows} == {"je", "sem"}
-        assert {r["disambig_key"] for r in rows} == {"morph:verb-3sg", "morph:verb-1sg"}
-
-    async def test_listen_case_cloze_skips_surface_not_found(self):
-        """morphology_focus entry whose surface isn't in any NATURAL_SPEED line is skipped."""
-        from app.srs.database import SRSDatabase
-        from app.storage.store import ContentStore
-
-        phrase = "Grem v Ljubljano s prijateljem."
-        morphology = [
-            {"lemma": "miza", "surface": "mize", "feature": "noun:acc:sg", "gloss": "table"},
-        ]
-        lesson = Lesson(
-            title="Day 1",
-            language_code="sl",
-            sections=[
-                Section(
-                    section_type=SectionType.NATURAL_SPEED,
-                    phrases=[
-                        Phrase(text=phrase, voice_id="female-1", language_code="sl", role="female-1"),
-                    ],
-                )
-            ],
-            key_phrases=[],
-            generation_metadata={
-                "token_glosses": {},
-                "sentence_translations": {},
-                "morphology_focus": morphology,
-            },
-        )
-        db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
-        db.set_enable_case_clozes(True)
-        store = ContentStore(":memory:")
-        store.save_lesson("case-cloze-nf", "curriculum-1", 1, lesson)
-        app.state.srs_db = db
-        app.state.content_store = store
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-nf"})
-        assert response.status_code == 200
-
-        with db._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'morph:%'",
-            ).fetchall()
-        assert rows[0]["cnt"] == 0, "No morphology-cloze should be created when surface is missing"
-
-    async def test_listen_case_cloze_skips_non_a1_features(self):
-        """Features outside the A1 whitelist (gen/dat/ins, adj non-nom) are skipped."""
-        from app.srs.database import SRSDatabase
-        from app.storage.store import ContentStore
-
-        phrase = "Nimam časa za prijatelje s knjigami."
-        morphology = [
-            {"lemma": "čas", "surface": "časa", "feature": "noun:gen:sg", "gloss": "time"},
-            {"lemma": "knjiga", "surface": "knjigami", "feature": "noun:ins:pl", "gloss": "books"},
-            {"lemma": "prijatelj", "surface": "prijatelje", "feature": "noun:acc:pl", "gloss": "friends"},
-        ]
-        lesson = Lesson(
-            title="Day 1",
-            language_code="sl",
-            sections=[
-                Section(
-                    section_type=SectionType.NATURAL_SPEED,
-                    phrases=[
-                        Phrase(text=phrase, voice_id="female-1", language_code="sl", role="female-1"),
-                    ],
-                )
-            ],
-            key_phrases=[],
-            generation_metadata={
-                "token_glosses": {},
-                "sentence_translations": {},
-                "morphology_focus": morphology,
-            },
-        )
-        db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
-        db.set_enable_case_clozes(True)
-        store = ContentStore(":memory:")
-        store.save_lesson("case-cloze-nona1", "curriculum-1", 1, lesson)
-        app.state.srs_db = db
-        app.state.content_store = store
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-nona1"})
-        assert response.status_code == 200
-
-        with db._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT text, disambig_key FROM collocations "
-                "WHERE card_type = 'cloze' AND disambig_key LIKE 'morph:%' ORDER BY text",
-            ).fetchall()
-        # Only the noun:acc:pl entry should pass the A1 whitelist.
-        assert [dict(r) for r in rows] == [{"text": "prijatelje", "disambig_key": "morph:noun-acc-pl"}]
-
-    async def test_listen_case_cloze_skips_empty_surface(self):
-        """morphology_focus entry with empty surface/lemma is skipped."""
-        from app.srs.database import SRSDatabase
-        from app.storage.store import ContentStore
-
-        phrase = "Grem v Ljubljano. Sem v hotelu."
-        morphology = [
-            {"lemma": "ljubljana", "surface": "Ljubljano", "feature": "noun:acc:sg", "gloss": "Ljubljana"},
-            {"lemma": "hotel", "surface": "hotelu", "feature": "noun:loc:sg", "gloss": "hotel"},
-            {"lemma": "miza", "surface": "", "feature": "noun:acc:sg", "gloss": "table"},
-            {"lemma": "", "surface": "kavo", "feature": "noun:acc:sg", "gloss": "coffee"},
-        ]
-        lesson = Lesson(
-            title="Day 1",
-            language_code="sl",
-            sections=[
-                Section(
-                    section_type=SectionType.NATURAL_SPEED,
-                    phrases=[
-                        Phrase(text=phrase, voice_id="female-1", language_code="sl", role="female-1"),
-                    ],
-                )
-            ],
-            key_phrases=[],
-            generation_metadata={
-                "token_glosses": {},
-                "sentence_translations": {},
-                "morphology_focus": morphology,
-            },
-        )
-        db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
-        db.set_enable_case_clozes(True)
-        store = ContentStore(":memory:")
-        store.save_lesson("case-cloze-emtpy", "curriculum-1", 1, lesson)
-        app.state.srs_db = db
-        app.state.content_store = store
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-emtpy"})
-        assert response.status_code == 200
-
-        with db._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'morph:%'",
-            ).fetchall()
-        assert rows[0]["cnt"] == 2, "Only the two complete entries should create morphology-cloze rows"
-
-    async def test_listen_tolerates_malformed_morphology_focus_entries(self):
-        """Malformed morphology_focus entries must not 500 /listen (regression).
-
-        The morphology_focus loop runs on every /listen for any lesson carrying the
-        metadata — independent of the case-clozes toggle — so a non-dict entry, a
-        null ``feature``, or a non-string ``feature`` (all reachable now that the
-        model-agnostic parser accepts looser non-JSON-mode model output) would
-        otherwise raise AttributeError. Valid entries beside the junk still create
-        their rows.
-        """
-        from app.srs.database import SRSDatabase
-        from app.storage.store import ContentStore
-
-        phrase = "Grem v Ljubljano. Sem v hotelu."
-        morphology = [
-            {"lemma": "ljubljana", "surface": "Ljubljano", "feature": "noun:acc:sg", "gloss": "Ljubljana"},
-            {"lemma": "hotel", "surface": "hotelu", "feature": None, "gloss": "hotel"},  # null feature
-            "not-a-dict",  # non-dict entry
-            {"lemma": "x", "surface": "y", "feature": ["noun:acc:sg"]},  # non-string feature
-        ]
-        lesson = Lesson(
-            title="Day 1",
-            language_code="sl",
-            sections=[
-                Section(
-                    section_type=SectionType.NATURAL_SPEED,
-                    phrases=[
-                        Phrase(text=phrase, voice_id="female-1", language_code="sl", role="female-1"),
-                    ],
-                )
-            ],
-            key_phrases=[],
-            generation_metadata={
-                "token_glosses": {},
-                "sentence_translations": {},
-                "morphology_focus": morphology,
-            },
-        )
-        db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
-        db.set_enable_case_clozes(True)
-        store = ContentStore(":memory:")
-        store.save_lesson("case-cloze-malformed", "curriculum-1", 1, lesson)
-        app.state.srs_db = db
-        app.state.content_store = store
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-malformed"})
-        assert response.status_code == 200
-
-        with db._get_conn() as conn:
-            cnt = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'morph:%'",
-            ).fetchone()["cnt"]
-        assert cnt == 1, "Only the single well-formed entry should create a morphology-cloze row"
-
-    async def test_listen_tolerates_non_list_morphology_focus(self):
-        """A non-list morphology_focus (model emits a bare string/dict) is ignored, not iterated char-by-char."""
-        from app.srs.database import SRSDatabase
-        from app.storage.store import ContentStore
-
-        lesson = Lesson(
-            title="Day 1",
-            language_code="sl",
-            sections=[
-                Section(
-                    section_type=SectionType.NATURAL_SPEED,
-                    phrases=[
-                        Phrase(text="Grem v Ljubljano.", voice_id="female-1", language_code="sl", role="female-1"),
-                    ],
-                )
-            ],
-            key_phrases=[],
-            generation_metadata={
-                "token_glosses": {},
-                "sentence_translations": {},
-                "morphology_focus": "noun:acc:sg",  # not a list
-            },
-        )
-        db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
-        db.set_enable_case_clozes(True)
-        store = ContentStore(":memory:")
-        store.save_lesson("case-cloze-nonlist", "curriculum-1", 1, lesson)
-        app.state.srs_db = db
-        app.state.content_store = store
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-nonlist"})
-        assert response.status_code == 200
-
-        with db._get_conn() as conn:
-            cnt = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'morph:%'",
-            ).fetchone()["cnt"]
-        assert cnt == 0, "A non-list morphology_focus produces no morphology-cloze rows"
-
-    async def test_listen_case_cloze_noop_without_natural_speed(self):
-        """No NATURAL_SPEED section → surface_to_analysis stays empty → no morphology-clozes."""
-        from app.srs.database import SRSDatabase
-        from app.storage.store import ContentStore
-
-        lesson = Lesson(
-            title="Day 1",
-            language_code="sl",
-            sections=[
-                Section(
-                    section_type=SectionType.TRANSLATED,
-                    phrases=[
-                        Phrase(text="Some text", voice_id="narrator", language_code="en", role="narrator"),
-                    ],
-                )
-            ],
-            key_phrases=[],
-            generation_metadata={
-                "token_glosses": {},
-                "sentence_translations": {},
                 "morphology_focus": [
-                    {"lemma": "miza", "surface": "mize", "feature": "noun:acc:sg", "gloss": "table"},
+                    {"lemma": "ljubljana", "surface": "Ljubljano", "feature": "noun:acc:sg", "gloss": "Ljubljana"},
                 ],
             },
         )
         db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
-        db.set_enable_case_clozes(True)
         store = ContentStore(":memory:")
-        store.save_lesson("case-cloze-no-ns", "curriculum-1", 1, lesson)
+        store.save_lesson("phase-4b-1", "curriculum-1", 1, lesson)
         app.state.srs_db = db
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "case-cloze-no-ns"})
+            response = await client.post("/api/srs/listen", json={"lesson_id": "phase-4b-1"})
         assert response.status_code == 200
 
         with db._get_conn() as conn:
             rows = conn.execute(
                 "SELECT COUNT(*) AS cnt FROM collocations WHERE card_type = 'cloze' AND disambig_key LIKE 'morph:%'",
             ).fetchall()
-        assert rows[0]["cnt"] == 0, "No morphology-cloze should be created without NATURAL_SPEED"
+        assert rows[0]["cnt"] == 0, "Phase 4b: /listen should create zero morphology clozes"
 
     async def test_listen_never_grades_production(self):
         """Pre-existing vocab with production state=LEARNING → /listen does not touch production."""
         from app.models.srs_item import Direction, SRSState
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
@@ -1634,7 +1519,7 @@ class TestListenClozeIntegration:
         """Pre-existing cloze row → /listen never grades it."""
         from app.models.srs_item import Direction, SRSState
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
@@ -1659,7 +1544,7 @@ class TestListenClozeIntegration:
         """Pre-existing vocab, recognition state=NEW → no grade."""
         from app.models.srs_item import Direction
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
@@ -1675,32 +1560,12 @@ class TestListenClozeIntegration:
         banka = db.get_collocation_by_lemma("banka")
         assert banka.directions[Direction.RECOGNITION].reps == rec_reps_before
 
-    async def test_listen_skips_function_word_when_flag_off(self):
-        """Function-word lemma + cloze flag off → skip. Content words still created."""
-        from app.models.srs_item import Direction, SRSState
-
-        db = await self._setup_lesson(cloze_enabled=False)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
-        assert response.status_code == 200
-
-        # Function words NOT created
-        assert db.get_collocation_by_lemma("kje") is None
-        assert db.get_collocation_by_lemma("je") is None
-
-        # Content word "banka" IS created as vocab
-        banka = db.get_collocation_by_lemma("banka")
-        assert banka is not None
-        assert banka.syntactic_unit.card_type == "vocab"
-        assert banka.directions[Direction.RECOGNITION].state == SRSState.NEW
-
     async def test_listen_skips_cloze_and_non_slovene_content_still_created(self):
-        """Non-Slovene lesson with cloze_enabled=False: content words created as vocab."""
+        """Non-Slovene lesson: content words created as vocab (no en function-word list)."""
 
         db = await self._setup_lesson(
             phrase_text="Where is the bank?",
             language_code="en",
-            cloze_enabled=False,
         )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
@@ -1719,7 +1584,7 @@ class TestListenClozeIntegration:
 
     async def test_listen_cloze_returns_card_type_and_source_sentence_via_api(self):
         """Cloze items expose card_type and source_sentence via the items API."""
-        await self._setup_lesson(cloze_enabled=True)
+        await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
@@ -1730,7 +1595,7 @@ class TestListenClozeIntegration:
         kje = items.get("kje")
         assert kje is not None
         assert kje["card_type"] == "cloze"
-        assert kje["source_sentence"] == "Kje je banka?"
+        assert kje["source_sentence"] == "{{c1::Kje}} je banka?"
 
         banka = items.get("banka")
         assert banka is not None
@@ -1740,7 +1605,7 @@ class TestListenClozeIntegration:
         """`_item_to_dict` for cloze items reads state from PRODUCTION."""
         from app.models.srs_item import Direction, SRSState
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
@@ -1760,7 +1625,7 @@ class TestListenClozeIntegration:
     async def test_listen_with_flag_on_still_registers_key_phrases(self):
         from app.storage.store import ContentStore
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         store: ContentStore = app.state.content_store
         lesson = store.get_lesson("lesson-1")
         assert lesson is not None
@@ -1791,7 +1656,7 @@ class TestListenClozeIntegration:
         from app.models.srs_item import Direction, SRSState
         from app.storage.store import ContentStore
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         store: ContentStore = app.state.content_store
         lesson = store.get_lesson("lesson-1")
         lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
@@ -1830,7 +1695,7 @@ class TestListenClozeIntegration:
         from app.models.srs_item import Direction, SRSState
         from app.storage.store import ContentStore
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         store: ContentStore = app.state.content_store
         lesson = store.get_lesson("lesson-1")
         lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
@@ -1860,7 +1725,7 @@ class TestListenClozeIntegration:
         from app.models.srs_item import Direction, SRSState
         from app.storage.store import ContentStore
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         store: ContentStore = app.state.content_store
         lesson = store.get_lesson("lesson-1")
         lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
@@ -1889,7 +1754,7 @@ class TestListenClozeIntegration:
         from app.models.srs_item import Direction
         from app.storage.store import ContentStore
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         store: ContentStore = app.state.content_store
         lesson = store.get_lesson("lesson-1")
         lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
@@ -1914,7 +1779,7 @@ class TestListenClozeIntegration:
         from app.models.srs_item import Direction, SRSState
         from app.storage.store import ContentStore
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         store: ContentStore = app.state.content_store
         lesson = store.get_lesson("lesson-1")
         lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
@@ -1941,7 +1806,7 @@ class TestListenClozeIntegration:
         """New cloze uses sentence_translations from lesson.generation_metadata."""
         from app.storage.store import ContentStore
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         store: ContentStore = app.state.content_store
         lesson = store.get_lesson("lesson-1")
         lesson.generation_metadata = {"sentence_translations": {"Kje je banka?": "Where is the bank?"}}
@@ -1958,7 +1823,7 @@ class TestListenClozeIntegration:
         """When metadata is missing, /listen falls back to deriving from TRANSLATED section."""
         from app.storage.store import ContentStore
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         store: ContentStore = app.state.content_store
         lesson = store.get_lesson("lesson-1")
         # No sentence_translations in metadata; emulate pre-Layer-N stored lesson
@@ -1985,7 +1850,7 @@ class TestListenClozeIntegration:
         """Existing cloze with empty sentence_translation gets populated and marked dirty."""
         from app.storage.store import ContentStore
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
@@ -2018,7 +1883,7 @@ class TestListenClozeIntegration:
         """Key phrase existing as cloze (defensive) → skip, no crash."""
         from app.storage.store import ContentStore
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         store: ContentStore = app.state.content_store
         lesson = store.get_lesson("lesson-1")
         lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
@@ -2043,7 +1908,7 @@ class TestListenClozeIntegration:
         """Key phrase existing without RECOGNITION direction (defensive) → skip, no crash."""
         from app.storage.store import ContentStore
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         store: ContentStore = app.state.content_store
         lesson = store.get_lesson("lesson-1")
         lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
@@ -2065,7 +1930,7 @@ class TestListenClozeIntegration:
 
     async def test_listen_skips_existing_cloze_with_populated_sentence_translation(self):
         """Existing cloze already has sentence_translation → no re-backfill, dirty_fields unchanged."""
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
@@ -2092,7 +1957,7 @@ class TestListenClozeIntegration:
         """Pre-existing vocab, recognition state=KNOWN → skip (no grade)."""
         from app.models.srs_item import Direction, SRSState
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
@@ -2114,7 +1979,7 @@ class TestListenClozeIntegration:
         """REVIEW state with last_review=None → eligible for grade (line 233)."""
         from app.models.srs_item import Direction, SRSState
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
@@ -2137,7 +2002,7 @@ class TestListenClozeIntegration:
         """SUSPENDED state → skip (not eligible for grade), covers fallthrough at line 238."""
         from app.models.srs_item import Direction, SRSState
 
-        db = await self._setup_lesson(cloze_enabled=True)
+        db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
@@ -2158,7 +2023,7 @@ class TestListenClozeIntegration:
     async def test_listen_skips_vocab_without_recognition_direction(self):
         """Line 314 via /listen: vocab card without RECOGNITION direction → skip (no crash)."""
 
-        db = await self._setup_lesson(phrase_text="testword", cloze_enabled=True)
+        db = await self._setup_lesson(phrase_text="testword")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
@@ -2171,6 +2036,73 @@ class TestListenClozeIntegration:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
+
+    async def test_listen_existing_cloze_audio_uses_raw_sentence(self, monkeypatch):
+        """Existing cloze audio backfill reads the raw sentence, not the pre-clozed
+        source_sentence (which contains {{c1::…}} markup under Phase-2b)."""
+        from datetime import date
+
+        import app.api.srs as srs_mod
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        db = SRSDatabase(":memory:")
+        app.state.srs_db = db
+
+        # Seed a cloze row with pre-clozed source_sentence (simulating Phase-2b
+        # storage) and no sentence audio.
+        cloze_unit = SyntacticUnit(
+            text="je",
+            translation="is",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="je",
+            card_type="cloze",
+            source_sentence="Kje {{c1::je}} banka?",
+        )
+        cloze_dir = {
+            Direction.PRODUCTION: DirectionState(
+                Direction.PRODUCTION,
+                date.today(),
+                state=SRSState.NEW,
+            )
+        }
+        db.upsert_by_guid(cloze_unit, "sl", cloze_dir)
+
+        audio_mock = AsyncMock()
+        monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", audio_mock)
+
+        store = ContentStore(":memory:")
+        app.state.content_store = store
+        app.state.language = None
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text="Kje je banka?", voice_id="female-1", language_code="sl", role="female-1"),
+                    ],
+                )
+            ],
+            key_phrases=[],
+        )
+        store.save_lesson("lesson-a", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-a"})
+        assert response.status_code == 200
+
+        assert len(audio_mock.await_args_list) > 0
+        for call in audio_mock.await_args_list:
+            sent = call.args[2]
+            assert isinstance(sent, str), f"sentence arg is not str: {sent!r}"
+            assert "{{c1" not in sent, f"sentence arg contains cloze markup: {sent!r}"
+            assert sent == "Kje je banka?"
 
 
 class TestListenGradeEligible:
@@ -2236,103 +2168,6 @@ class TestListenGradeEligible:
         today_end = today_start + timedelta(days=1)
         rec = item.directions.get(Direction.RECOGNITION)
         assert _listen_grade_eligible(rec, today_start, today_end) is False
-
-
-class TestClozeSetting:
-    """Tests for GET/PUT /api/srs/settings/cloze."""
-
-    async def test_get_cloze_setting_defaults_false(self):
-        from app.srs.database import SRSDatabase
-
-        db = SRSDatabase(":memory:")
-        app.state.srs_db = db
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/srs/settings/cloze")
-
-        assert response.status_code == 200
-        assert response.json() == {"enabled": False}
-
-    async def test_put_cloze_setting_enables(self):
-        from app.srs.database import SRSDatabase
-
-        db = SRSDatabase(":memory:")
-        app.state.srs_db = db
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.put(
-                "/api/srs/settings/cloze",
-                json={"enabled": True},
-            )
-
-            assert response.status_code == 200
-            assert response.json() == {"enabled": True}
-
-            # Subsequent GET returns True
-            get_response = await client.get("/api/srs/settings/cloze")
-            assert get_response.json() == {"enabled": True}
-
-    async def test_put_cloze_setting_validates_body(self):
-        from app.srs.database import SRSDatabase
-
-        db = SRSDatabase(":memory:")
-        app.state.srs_db = db
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.put(
-                "/api/srs/settings/cloze",
-                json={},
-            )
-
-        assert response.status_code == 422
-
-
-class TestCaseClozeSetting:
-    """Tests for GET/PUT /api/srs/settings/case-clozes."""
-
-    async def test_get_case_cloze_setting_defaults_false(self):
-        from app.srs.database import SRSDatabase
-
-        db = SRSDatabase(":memory:")
-        app.state.srs_db = db
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/srs/settings/case-clozes")
-
-        assert response.status_code == 200
-        assert response.json() == {"enabled": False}
-
-    async def test_put_case_cloze_setting_enables(self):
-        from app.srs.database import SRSDatabase
-
-        db = SRSDatabase(":memory:")
-        app.state.srs_db = db
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.put(
-                "/api/srs/settings/case-clozes",
-                json={"enabled": True},
-            )
-
-            assert response.status_code == 200
-            assert response.json() == {"enabled": True}
-
-            get_response = await client.get("/api/srs/settings/case-clozes")
-            assert get_response.json() == {"enabled": True}
-
-    async def test_put_case_cloze_setting_validates_body(self):
-        from app.srs.database import SRSDatabase
-
-        db = SRSDatabase(":memory:")
-        app.state.srs_db = db
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.put(
-                "/api/srs/settings/case-clozes",
-                json={},
-            )
-
-        assert response.status_code == 422
 
 
 class TestQueueStatsEndpoint:
@@ -3150,7 +2985,6 @@ class TestClozeTTSIntegration:
         )
 
         db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-ct", "curriculum-1", 1, lesson)
         app.state.srs_db = db
@@ -3180,7 +3014,6 @@ class TestClozeTTSIntegration:
         from app.srs.database import SRSDatabase
 
         db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
         app.state.srs_db = db
 
         # Cloze collocation
@@ -3242,7 +3075,7 @@ class TestClozeTTSIntegration:
             assert vi.get("audio_url") is not None, f"vocab {vi['text']} missing audio_url"
 
     async def test_listen_tolerates_synthesizer_error_new_cloze(self, monkeypatch):
-        """New cloze card (function-word and case-cloze) is created even if TTS fails."""
+        """New function-word cloze card is created even if TTS fails."""
         import app.api.srs as srs_mod
 
         async def _broken_synth(db, collocation_id, sentence, word):
@@ -3279,20 +3112,10 @@ class TestClozeTTSIntegration:
                 "sentence_translations": {
                     "Kje je banka v Ljubljani?": "Where is the bank in Ljubljana?",
                 },
-                "morphology_focus": [
-                    {
-                        "lemma": "ljubljana",
-                        "surface": "Ljubljani",
-                        "feature": "noun:loc:sg",
-                        "gloss": "Ljubljana",
-                    },
-                ],
             },
         )
 
         db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
-        db.set_enable_case_clozes(True)
 
         store = ContentStore(":memory:")
         store.save_lesson("lesson-ct2", "curriculum-1", 1, lesson)
@@ -3306,13 +3129,6 @@ class TestClozeTTSIntegration:
         # Function-word cloze card should still exist
         coll = db.get_collocation_by_lemma("kje")
         assert coll is not None
-        # Morphology-cloze row should also exist despite TTS failure
-        with db._get_conn() as conn:
-            row = conn.execute(
-                "SELECT text, disambig_key FROM collocations WHERE text = ? AND disambig_key = ?",
-                ("Ljubljani", "morph:noun-loc-sg"),
-            ).fetchone()
-        assert row is not None, "Morphology-cloze row should exist despite TTS failure"
 
     async def test_listen_tolerates_synthesizer_error_existing_cloze(self, monkeypatch):
         """Existing cloze card audio backfill failure doesn't crash the endpoint."""
@@ -3347,7 +3163,6 @@ class TestClozeTTSIntegration:
         )
 
         db = SRSDatabase(":memory:")
-        db.set_enable_cloze_cards(True)
         store = ContentStore(":memory:")
         store.save_lesson("lesson-ct3", "curriculum-1", 1, lesson)
         app.state.srs_db = db

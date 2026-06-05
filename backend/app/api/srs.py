@@ -6,16 +6,20 @@ import datetime
 import json
 import logging
 import re
+from datetime import UTC, time, timedelta
 from pathlib import Path
 
+import anyio
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 
 from app.api.models import (
     BulkDeleteRequest,
-    ClozeSettingRequest,
+    CreateBaseCardRequest,
     CreateItemRequest,
     DrillRequest,
+    IgnoreLemmaRequest,
+    InflectionClozeRequest,
     ListenRequest,
     SetStateRequest,
     SuspendRequest,
@@ -24,13 +28,20 @@ from app.api.models import (
 )
 from app.audio.cloze_tts import synthesize_cloze_audios
 from app.common.guid import compute_guid
-from app.llm.translate import translate_term
+from app.llm.translate import generate_word_gloss, translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, build_revlog_row, schedule
-from app.srs.function_words import is_function_word, make_morphology_cloze_text
-from app.srs.lemmatizer import LowercaseLemmatizer
+from app.srs.function_words import (
+    format_morphology_hint,
+    is_clozes_only_verb,
+    is_function_word_for,
+    make_cloze_text,
+    make_morphology_cloze_text,
+    normalize_sentence_key,
+)
+from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, lemmatize_surfaces_in_context, model_version_for
 from app.srs.queue_stats import (
     advance_learning_cutoff,
     build_live_load_balancer,
@@ -65,7 +76,7 @@ def _balancer_add(balancer: object | None, *, card_id: int | None, note_id: int 
 router = APIRouter(prefix="/api/srs", tags=["srs"])
 _MEDIA_DIR = Path(__file__).parent.parent.parent / "media"
 
-_lemmatizer = LowercaseLemmatizer()
+_lemmatizer = get_lemmatizer()
 
 _WORD_RATING_MAP: dict[str, Rating] = {
     "again": Rating.AGAIN,
@@ -73,21 +84,6 @@ _WORD_RATING_MAP: dict[str, Rating] = {
     "good": Rating.GOOD,
     "easy": Rating.EASY,
 }
-
-# A1-appropriate morphology features for morphology_focus -> cloze cards.
-# Verb conjugations (all persons/numbers) + noun nom/acc/loc + adj nom.
-# Excludes Gen/Dat/Ins (A2+ territory) and adj non-nom cases.
-_A1_MORPHOLOGY_PREFIXES: tuple[str, ...] = (
-    "verb:",
-    "noun:nom:",
-    "noun:acc:",
-    "noun:loc:",
-    "adj:nom:",
-)
-
-
-def _is_a1_morphology_feature(feature: str) -> bool:
-    return any(feature.startswith(p) for p in _A1_MORPHOLOGY_PREFIXES)
 
 
 def _direction_to_dict(ds: DirectionState) -> dict:
@@ -298,7 +294,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     balancer = build_live_load_balancer(db, now=datetime.datetime.now(datetime.UTC), col_crt=col_crt)
 
     # ── Word-level tracking from NATURAL_SPEED section ──────────────────
-    from app.models.lesson import SectionType, extract_sentence_translations_from_translated
+    from app.models.lesson import Section, SectionType, extract_sentence_translations_from_translated
 
     token_glosses: dict[str, str] = lesson.generation_metadata.get("token_glosses", {})
     sentence_translations: dict[str, str] = lesson.generation_metadata.get("sentence_translations", {})
@@ -316,47 +312,41 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
     unique_lemmas: set[str] = set()
     lemma_to_sentence: dict[str, str] = {}
-    if natural_speed is not None:
-        for phrase in natural_speed.phrases:
+    lemma_to_surfaces: dict[str, set[str]] = {}
+    # The surface as it first appeared, paired with lemma_to_sentence — used to
+    # blank the *surface* (not the dictionary lemma) in plain function-word clozes.
+    lemma_to_first_surface: dict[str, str] = {}
+    # Surface (casefolded) → classla UPOS, for POS-first function-word detection.
+    # Empty/"" under LowercaseLemmatizer, so the curated include-list is the only
+    # signal there (legacy behavior); classla supplies AUX/ADP/PRON/... and catches
+    # the whole biti paradigm (ste/smo/so) without enumerating surfaces.
+    surface_to_upos: dict[str, str] = {}
+
+    model_version = model_version_for(_lemmatizer)
+
+    def _analyze_phrases(section: Section) -> None:
+        # Runs the (classla) lemmatizer over the lesson's L2 phrases, filling the
+        # dicts above. Offloaded to a worker thread (below) so the blocking pipeline
+        # doesn't stall the event loop. The await suspends this coroutine until the
+        # thread finishes, so the shared-dict mutation has no concurrent access.
+        for phrase in section.phrases:
             if phrase.language_code != lesson.language_code:
                 continue
-            for surface in tokenize(phrase.text):
-                lemma = _lemmatizer.lemmatize(surface, lesson.language_code)
+            surfaces = tokenize(phrase.text)
+            phrase_lemmas = lemmatize_surfaces_in_context(
+                surfaces, phrase.text, _lemmatizer, lesson.language_code, db, model_version
+            )
+            for ta in analyze_sentence_cached(db, _lemmatizer, phrase.text, lesson.language_code, model_version):
+                surface_to_upos.setdefault(ta.surface.casefold(), ta.upos)
+            for surface, lemma in zip(surfaces, phrase_lemmas, strict=True):
                 unique_lemmas.add(lemma)
                 if lemma not in lemma_to_sentence:
                     lemma_to_sentence[lemma] = phrase.text
+                    lemma_to_first_surface[lemma] = surface
+                lemma_to_surfaces.setdefault(lemma, set()).add(surface)
 
-    # ── surface_to_analysis from generator output ────────────────────────
-    # The LLM (which sees full sentence context) emits a per-lesson
-    # morphology_focus list with feature tags like "verb:1sg", "noun:loc:sg",
-    # "adj:nom:f:sg". We accept entries whose surface appears verbatim in a
-    # NATURAL_SPEED line AND whose feature is in the A1 whitelist.
-    # Tolerate malformed shapes: looser (non-JSON-mode) models can emit a
-    # non-list container, non-dict entries, or null/non-string fields. This loop
-    # runs on every /listen regardless of the case-clozes toggle, so a junk entry
-    # must be skipped, not raise.
-    surface_to_analysis: dict[str, tuple[str, str]] = {}
-    surface_to_sentence: dict[str, str] = {}
-    raw_morphology_focus = lesson.generation_metadata.get("morphology_focus", [])
-    morphology_focus = raw_morphology_focus if isinstance(raw_morphology_focus, list) else []
-    for d in morphology_focus:
-        if not isinstance(d, dict):
-            continue
-        feature = str(d.get("feature") or "").strip().lower()
-        if not feature or not _is_a1_morphology_feature(feature):
-            continue
-        surface = str(d.get("surface") or "")
-        lemma = str(d.get("lemma") or "")
-        if not surface or not lemma:
-            continue
-        if natural_speed is not None:
-            for phrase in natural_speed.phrases:
-                if re.search(rf"\b{re.escape(surface)}\b", phrase.text, re.IGNORECASE):
-                    surface_to_analysis[surface] = (lemma, feature)
-                    surface_to_sentence[surface] = phrase.text
-                    break
-
-    cloze_enabled = lesson.language_code == "sl" and db.get_enable_cloze_cards()
+    if natural_speed is not None:
+        await anyio.to_thread.run_sync(_analyze_phrases, natural_speed)
 
     # ── Today window (mirrors count_new_introduced_today convention) ────
     local_tz = datetime.datetime.now().astimezone().tzinfo
@@ -368,15 +358,41 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     graded_count = 0
 
     for lemma in unique_lemmas:
-        is_func = is_function_word(lemma, lesson.language_code)
-        if is_func and not cloze_enabled:
-            continue
+        # Cloze cards are always on, for every language (no feature flag, no
+        # language gate — see ~/.claude/plans/word-learning-state-machine.md
+        # Phase 1). Whether a cloze is actually created is capability-driven:
+        # `is_func` is only true where a function-word config exists for the
+        # language, so non-Slovene content words still fall through to vocab.
+        # POS-first: each surface carries its UPOS (when an analyzer is present).
+        is_func = is_function_word_for(
+            lemma, lemma_to_surfaces.get(lemma, set()), lesson.language_code, surface_to_upos
+        )
 
-        existing = db.get_collocation_by_lemma(lemma)
+        res = db.get_collocation_by_lemma_with_id(lemma)
+        if res is None:
+            # A card may be keyed by its surface form (e.g. greeting "dobrodošli",
+            # whose dictionary lemma "dobrodošel" has no card) — grade it rather
+            # than spawning a duplicate.
+            for s in lemma_to_surfaces.get(lemma, set()):
+                if s.lower() != lemma:
+                    res = db.get_collocation_by_lemma_with_id(s.lower())
+                    if res is not None:
+                        break
+        existing_id, existing = res if res is not None else (None, None)
 
         if existing is None:
             # ── Create new row (cloze for function words, vocab for content words) ──
+            # Clozes-only verbs (e.g. biti) get no base card — only per-form
+            # conjugation clozes created by click. Skip entirely.
+            if is_func and is_clozes_only_verb(lemma, lesson.language_code):
+                continue
+
             sent = lemma_to_sentence.get(lemma, "")
+            # Cloze rows blank the surface as it appeared, not the dictionary lemma:
+            # the lemmatizer may map an inflected surface to a different lemma (classla
+            # "sem" → "biti") that isn't in the sentence. Store the cloze pre-built;
+            # sync's idempotent make_cloze_text passes it through. (Phase 2b.)
+            stored_sentence = make_cloze_text(lemma_to_first_surface.get(lemma, lemma), sent) if is_func else sent
             unit = SyntacticUnit(
                 text=lemma,
                 translation=token_glosses.get(lemma, ""),
@@ -385,7 +401,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 source="llm",
                 lemma=lemma,
                 card_type="cloze" if is_func else "vocab",
-                source_sentence=sent,
+                source_sentence=stored_sentence,
                 source_sentence_translation=sentence_translations.get(sent, ""),
             )
             db.add_collocation(unit, language_code=lesson.language_code)
@@ -393,7 +409,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 coll = db.get_collocation_by_lemma_with_id(lemma)
                 new_id, _ = coll
                 try:
-                    await synthesize_cloze_audios(db, new_id, sent, lemma)
+                    await synthesize_cloze_audios(db, new_id, sent, lemma_to_first_surface.get(lemma, lemma))
                 except Exception:
                     _logger.warning("Failed to synthesize cloze audio for %r", lemma)
             created_count += 1
@@ -405,17 +421,20 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 # sentence in Anki / TT review. Mark dirty so sync_push picks it
                 # up and rewrites Back Extra.
                 if not existing.syntactic_unit.source_sentence_translation:
-                    sent = existing.syntactic_unit.source_sentence or lemma_to_sentence.get(lemma, "")
+                    # Translations are keyed by the raw sentence; the stored
+                    # source_sentence may now be pre-clozed (Phase 2b), so use the raw
+                    # sentence from this lesson (lemma is always present in the loop).
+                    sent = lemma_to_sentence.get(lemma, "")
                     new_st = sentence_translations.get(sent, "")
                     if new_st:
                         db.set_sentence_translation_dirty(existing.guid, new_st)
-                # Try to generate missing audio for existing cloze rows
-                coll_with_id = db.get_collocation_by_lemma_with_id(lemma)
-                existing_id, existing_item = coll_with_id
-                src_sent = existing_item.syntactic_unit.source_sentence
-                if src_sent and not db.get_sentence_audio_filename(existing_id):
+                # Try to generate missing audio for existing cloze rows.
+                # Use the raw sentence (lemma_to_sentence) — the stored
+                # source_sentence contains {{c1::…}} markup under Phase-2b.
+                sent = lemma_to_sentence.get(lemma, "")
+                if sent and not db.get_sentence_audio_filename(existing_id):
                     try:
-                        await synthesize_cloze_audios(db, existing_id, src_sent, lemma)
+                        await synthesize_cloze_audios(db, existing_id, sent, lemma_to_first_surface.get(lemma, lemma))
                     except Exception:
                         _logger.warning("Failed to synthesize cloze audio for %r", lemma)
                 continue
@@ -455,49 +474,6 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                     balancer, card_id=prev_dir.anki_card_id, note_id=existing.anki_note_id, interval=row.interval
                 )
                 graded_count += 1
-
-    # ── Morphology-cloze creation (verb conjugations + A1 noun/adj forms) ──
-    # The enable_case_clozes toggle gates this pipeline (name kept for the DB
-    # column + settings endpoint; the feature now covers verb conjugations and
-    # noun/adj morphology more broadly, not just oblique cases).
-    # cloze_enabled already implies language_code == "sl" (set above).
-    morph_clozes_enabled = bool(cloze_enabled and db.get_enable_case_clozes())
-    if morph_clozes_enabled and surface_to_analysis:
-        morph_cloze_count = 0
-        max_morph_clozes = 5
-        for surface, (lemma, feature) in surface_to_analysis.items():
-            if morph_cloze_count >= max_morph_clozes:
-                break
-            if lemma.casefold() == surface.casefold():
-                # Degenerate hint: lemma == inflected surface, so the
-                # {{c1::surface::lemma, feature}} hint would reveal the answer.
-                # (Happens for nominative singular of many noun/adj paradigms.)
-                continue
-            disambig = f"morph:{feature.replace(':', '-')}"
-            sent = surface_to_sentence.get(surface, "")
-            cloze_sent = make_morphology_cloze_text(surface, lemma, feature, sent)
-            unit = SyntacticUnit(
-                text=surface,
-                translation=token_glosses.get(lemma, ""),
-                word_count=1,
-                difficulty=1,
-                source="llm",
-                lemma=lemma,
-                disambig_key=disambig,
-                card_type="cloze",
-                source_sentence=cloze_sent,
-                source_sentence_translation=sentence_translations.get(sent, ""),
-            )
-            was_created = db.add_collocation(unit, language_code=lesson.language_code)
-            if was_created:
-                try:
-                    guid = compute_guid(surface, lesson.language_code, disambig)
-                    coll_id = db.get_collocation_id_by_guid(guid)
-                    await synthesize_cloze_audios(db, coll_id, sent, surface)
-                except Exception:
-                    _logger.warning("Failed to synthesize morphology-cloze audio for %r", surface)
-                morph_cloze_count += 1
-                created_count += 1
 
     # ── Key phrase registration + auto-grade ────────────────────────────
     for kp in lesson.key_phrases:
@@ -555,13 +531,20 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
 @router.get("/lesson/{lesson_id}/transcript", status_code=200)
 async def get_lesson_transcript(lesson_id: str, request: Request):
+    from datetime import date
+
     store = request.app.state.content_store
     lesson = store.get_lesson(lesson_id)
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
 
     db = request.app.state.srs_db
-    transcript = extract_transcript(lesson, db, _lemmatizer)
+    today = date.today()
+    # extract_transcript runs the (classla) lemmatizer synchronously and can take
+    # seconds — especially right after restart before the warm-up finishes. Offload it
+    # to a worker thread so it doesn't block the event loop and stall every other
+    # in-flight request (the lesson page fires several API calls at once).
+    transcript = await anyio.to_thread.run_sync(extract_transcript, lesson, db, _lemmatizer, today)
 
     return {
         "lesson_id": lesson_id,
@@ -569,9 +552,12 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
         "dialogue_lines": [
             {
                 "role": line.role,
+                "sentence": line.sentence,
                 "words": [
                     {
                         "surface": w.surface,
+                        "prefix_punct": w.prefix_punct,
+                        "suffix_punct": w.suffix_punct,
                         "lemma": w.lemma,
                         "srs_state": w.srs_state,
                         "srs_item_id": w.srs_item_id,
@@ -581,6 +567,14 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
                         "collocation_srs_state": w.collocation_srs_state,
                         "collocation_lemma": w.collocation_lemma,
                         "collocation_translation": w.collocation_translation,
+                        "card_type": w.card_type,
+                        "active_state": w.active_state,
+                        "active_direction": w.active_direction,
+                        "is_due": w.is_due,
+                        "progress": w.progress,
+                        "inflectable": w.inflectable,
+                        "inflection_feature": w.inflection_feature,
+                        "known_marked": w.known_marked,
                     }
                     for w in line.words
                 ],
@@ -716,42 +710,17 @@ async def get_queue_stats(request: Request, response: Response):
     }
 
 
-# ── Cloze settings ────────────────────────────────────────────────────────────
-
-
-@router.get("/settings/cloze")
-async def get_cloze_setting(request: Request):
-    db = request.app.state.srs_db
-    return {"enabled": db.get_enable_cloze_cards()}
-
-
-@router.put("/settings/cloze")
-async def set_cloze_setting(body: ClozeSettingRequest, request: Request):
-    db = request.app.state.srs_db
-    db.set_enable_cloze_cards(body.enabled)
-    return {"enabled": body.enabled}
-
-
-@router.get("/settings/case-clozes")
-async def get_case_cloze_setting(request: Request):
-    db = request.app.state.srs_db
-    return {"enabled": db.get_enable_case_clozes()}
-
-
-@router.put("/settings/case-clozes")
-async def set_case_cloze_setting(body: ClozeSettingRequest, request: Request):
-    db = request.app.state.srs_db
-    db.set_enable_case_clozes(body.enabled)
-    return {"enabled": body.enabled}
-
-
 # ── Admin endpoints ────────────────────────────────────────────────────────────
 
 
-_VALID_USER_STATES = {"new", "learning", "known", "ignored"}
+_VALID_USER_STATES = {"new", "learning", "review", "known", "ignored"}
 _STATE_MAP = {
     "new": SRSState.NEW,
     "learning": SRSState.LEARNING,
+    # `set_state_by_id` only changes the state label, preserving stability /
+    # difficulty / due_at / reps — so cycling a card back to `review` restores
+    # its original FSRS schedule rather than fabricating one.
+    "review": SRSState.REVIEW,
     "known": SRSState.KNOWN,
     "ignored": SRSState.SUSPENDED,
 }
@@ -792,6 +761,110 @@ async def create_item(body: CreateItemRequest, request: Request):
         raise HTTPException(status_code=500, detail="Failed to retrieve created item")
     row_id, item, lang = rows[0]
     return _item_to_dict(row_id, item, lang)
+
+
+async def _persist_new_card(
+    db,
+    unit: SyntacticUnit,
+    language_code: str,
+    *,
+    synthesize: bool,
+    audio_sentence: str = "",
+    audio_word: str = "",
+) -> dict:
+    """Add a NEW collocation and return its ``{id, was_created, item}`` dict.
+
+    Shared persistence tail for the card-creating endpoints (``/items/base`` and
+    ``/inflection-clozes``): insert (idempotent by guid), look the id back up,
+    best-effort synthesize cloze audio when ``synthesize`` and the row is newly
+    created, then serialize. ``audio_sentence`` is the *raw* sentence (never the
+    pre-clozed ``source_sentence``) and ``audio_word`` the surface to voice.
+    """
+    was_created = db.add_collocation(unit, language_code=language_code)
+    guid = compute_guid(unit.text, language_code, unit.disambig_key or "")
+    coll_id = db.get_collocation_id_by_guid(guid)
+    if coll_id is None:  # pragma: no cover — defensive; add_collocation just inserted
+        raise HTTPException(status_code=500, detail="Failed to create collocation")
+
+    if synthesize and was_created:
+        try:
+            await synthesize_cloze_audios(db, coll_id, audio_sentence, audio_word)
+        except Exception:
+            _logger.warning("Failed to synthesize cloze audio for %r", unit.text)
+
+    result = db.get_collocation_by_id(coll_id)
+    if result is None:  # pragma: no cover — defensive; id came from get_collocation_id_by_guid
+        raise HTTPException(status_code=500, detail="Failed to retrieve created collocation")
+    _, item, _ = result
+    return {"id": coll_id, "was_created": was_created, "item": _item_to_dict(coll_id, item, language_code)}
+
+
+@router.post("/items/base", status_code=200)
+async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dict:
+    """Create a base card for an unknown clicked word (Phase 5, Part C / decision 8, C-a).
+
+    Branches by word type (the word-learning state machine):
+      - function word → production-only cloze (the *surface* blanked in the sentence)
+      - content word  → vocab (recognition + production)
+    Both created in NEW state. Idempotent by the base guid. Honors the
+    add_collocation card-adding contract (no Anki ids; sync_create_new mints +
+    links). No LLM auto-translate here — the caller passes the transcript gloss.
+    """
+    db = request.app.state.srs_db
+    lang = body.language_code
+    lemma = body.lemma.casefold()
+
+    # Clozes-only verbs (e.g. biti) have no base card — only per-form conjugation
+    # clozes via /inflection-clozes. Reject so a click can't mint a spurious base.
+    if is_clozes_only_verb(lemma, lang):
+        raise HTTPException(status_code=409, detail="Clozes-only verb has no base card")
+
+    # POS-first function-word detection: read the active surface's UPOS from the
+    # sentence (classla → AUX for biti forms etc.; LowercaseLemmatizer → "" so the
+    # curated include-list is the sole signal). The surface is checked too — an
+    # inflected function form (classla "sem" → lemma "biti") classifies via its
+    # surface even when the dictionary lemma isn't itself a function word.
+    # Offload the (classla) lemmatizer off the event loop — see get_lesson_transcript.
+    mv = model_version_for(_lemmatizer)
+    analyses = await anyio.to_thread.run_sync(analyze_sentence_cached, db, _lemmatizer, body.sentence, lang, mv)
+    upos = next((ta.upos for ta in analyses if ta.surface.casefold() == body.surface.casefold()), None)
+    # Check both lemma and surface with the surface's upos (a single-word click).
+    upos_map = {lemma.casefold(): upos, body.surface.casefold(): upos} if upos else None
+    is_func = is_function_word_for(lemma, {lemma, body.surface}, lang, upos_map)
+    if is_func:
+        # Blank the surface as it appeared, not the dictionary lemma (Phase 2b):
+        # the cloze must reference the word present in the stored sentence.
+        source_sentence = make_cloze_text(body.surface, body.sentence)
+        card_type = "cloze"
+    else:
+        source_sentence = body.sentence
+        card_type = "vocab"
+
+    # Verb base cards: the transcript gloss is the *conjugated* in-context meaning
+    # ("pokazem" → "I will show"). classla gives us the lemma + POS, but the
+    # English base meaning is a translation only the LLM can produce — re-gloss to
+    # the bare dictionary form ("show") to match the existing verb cards.
+    translation = body.translation
+    if upos == "VERB":
+        llm_client = getattr(request.app.state, "llm", None)
+        if llm_client is not None:
+            gloss = await generate_word_gloss(llm_client, surface=body.surface, lemma=lemma, source_lang=lang, pos=upos)
+            if gloss:
+                translation = gloss
+
+    unit = SyntacticUnit(
+        text=lemma,
+        translation=translation,
+        word_count=1,
+        difficulty=1,
+        source="user",
+        lemma=lemma,
+        card_type=card_type,
+        source_sentence=source_sentence,
+    )
+    return await _persist_new_card(
+        db, unit, lang, synthesize=is_func, audio_sentence=body.sentence, audio_word=body.surface
+    )
 
 
 @router.get("/items", status_code=200)
@@ -870,8 +943,35 @@ async def set_item_state(item_id: int, body: SetStateRequest, request: Request):
         raise HTTPException(status_code=404, detail="Item not found")
     if body.state == "learning":
         db.promote_to_learning(item_id)
+    elif body.state == "known":
+        from app.srs.fsrs import stability_for_interval
+        from app.srs.queue_stats import resolve_fsrs_params, resolve_maximum_review_interval
+
+        max_ivl, _ = resolve_maximum_review_interval(db)
+        params, _ = resolve_fsrs_params(db)
+        dr = params.desired_retention
+        stability = stability_for_interval(max_ivl, dr)
+        due_date = datetime.date.today() + timedelta(days=max_ivl)
+        due_at = datetime.datetime.combine(due_date, time(4, 0), tzinfo=UTC)
+        db.mark_known(item_id, due_at=due_at, stability=stability)
     else:
         db.set_state_by_id(item_id, _STATE_MAP[body.state])
+    row_id, item, lang = db.get_collocation_by_id(item_id)
+    return _item_to_dict(row_id, item, lang)
+
+
+@router.post("/items/{item_id}/restore-known", status_code=200)
+async def restore_known_item(item_id: int, request: Request):
+    """Reverse a "Mark known" — restore the snapshotted pre-known schedule.
+
+    Dedicated rather than overloading set_item_state: the "review"/"new" state
+    mappings there are label-only / full-reset and would be confusing here.
+    No-op (still 200) when the item has no known snapshot.
+    """
+    db = request.app.state.srs_db
+    if db.get_collocation_by_id(item_id) is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    db.restore_known(item_id)
     row_id, item, lang = db.get_collocation_by_id(item_id)
     return _item_to_dict(row_id, item, lang)
 
@@ -902,6 +1002,20 @@ async def suspend_item(item_id: int, body: SuspendRequest, request: Request):
     db.set_suspended(item_id, body.suspended, direction=dir_enum)
     row_id, item, lang = db.get_collocation_by_id(item_id)
     return _item_to_dict(row_id, item, lang)
+
+
+@router.post("/ignored-lemmas", status_code=200)
+async def add_ignored_lemma(body: IgnoreLemmaRequest, request: Request):
+    db = request.app.state.srs_db
+    db.add_ignored_lemma(body.language_code, body.lemma)
+    return {"status": "ok"}
+
+
+@router.delete("/ignored-lemmas", status_code=200)
+async def remove_ignored_lemma(lemma: str, language_code: str, request: Request):
+    db = request.app.state.srs_db
+    db.remove_ignored_lemma(language_code, lemma)
+    return {"status": "ok"}
 
 
 _FNV_OFFSET_BASIS_64 = 0xCBF29CE484222325
@@ -1184,6 +1298,96 @@ def build_and_freeze_main_queue(db) -> None:
     today = datetime.date.today()
     live_main = _compute_live_main(db)
     set_session_main_queue(db, today, [(t[0], t[3].value) for t in live_main])
+
+
+@router.post("/inflection-clozes", status_code=200)
+async def create_inflection_cloze(body: InflectionClozeRequest, request: Request) -> dict:
+    """Create one morphology cloze for an inflected surface (Phase 4a).
+
+    Gated on the lemma's base production being in REVIEW or KNOWN.
+    Idempotent by guid. Follows the add_collocation contract
+    (card_type=cloze, no Anki ids).
+    """
+    db = request.app.state.srs_db
+    language_code = body.language_code
+
+    # 1. Eligibility gate — base word production must be REVIEW/KNOWN.
+    #    Clozes-only verbs (e.g. biti) have no base card and are ungated.
+    if not is_clozes_only_verb(body.lemma, language_code):
+        base = db.get_collocation_by_lemma(body.lemma)
+        if base is None:
+            raise HTTPException(status_code=409, detail="Base word not yet learned")
+        prod = base.directions.get(Direction.PRODUCTION)
+        if prod is None or prod.state not in (SRSState.REVIEW, SRSState.KNOWN):
+            raise HTTPException(status_code=409, detail="Base word not yet learned")
+
+    # 2. Degenerate guard — surface == lemma reveals the answer
+    if body.lemma.casefold() == body.surface.casefold():
+        raise HTTPException(status_code=422, detail="Surface equals lemma — nothing to cloze")
+
+    # 3. Resolve word gloss + sentence translation from the lesson, mirroring
+    #    /listen. The grammar hint lives in its own `grammar` field — never the
+    #    translation — so it can't leak into the displayed L1 gloss.
+    word_translation = body.translation
+    sentence_translation = ""
+    if body.lesson_id:
+        from app.models.lesson import extract_sentence_translations_from_translated
+
+        lesson = request.app.state.content_store.get_lesson(body.lesson_id)
+        if lesson is not None:
+            token_glosses: dict[str, str] = lesson.generation_metadata.get("token_glosses", {})
+            sentence_translations: dict[str, str] = dict(lesson.generation_metadata.get("sentence_translations", {}))
+            for k, v in extract_sentence_translations_from_translated(lesson).items():
+                sentence_translations.setdefault(k, v)
+            sentence_translation = sentence_translations.get(body.sentence, "")
+            if not sentence_translation:
+                # The transcript passes a sentence reconstructed from surfaces,
+                # which drops the lesson key's internal punctuation. Fall back to
+                # a punctuation/case-insensitive match.
+                match_index = {normalize_sentence_key(k): v for k, v in sentence_translations.items()}
+                sentence_translation = match_index.get(normalize_sentence_key(body.sentence), "")
+            if not word_translation:
+                word_translation = token_glosses.get(body.surface.lower()) or token_glosses.get(body.lemma) or ""
+
+    # 3b. Prefer an LLM gloss of the specific inflected form — the token gloss is
+    #     the *base* meaning and biti forms have only the grammar hint, so neither
+    #     conveys the conjugation ("boste" → "you will be"). classla supplies the
+    #     lemma/feature; the LLM supplies the English. Fail-soft: keep the
+    #     resolved fallback when the LLM is absent or errors.
+    llm_client = getattr(request.app.state, "llm", None)
+    if llm_client is not None:
+        gloss = await generate_word_gloss(
+            llm_client,
+            surface=body.surface,
+            lemma=body.lemma,
+            source_lang=language_code,
+            feature=body.feature,
+            sentence=body.sentence,
+        )
+        if gloss:
+            word_translation = gloss
+
+    # 4. Build + create (mirrors /listen morphology-cloze block)
+    disambig = f"morph:{body.feature.replace(':', '-')}"
+    cloze_sent = make_morphology_cloze_text(body.surface, body.lemma, body.feature, body.sentence)
+    grammar_hint = format_morphology_hint(body.lemma, body.feature)
+    unit = SyntacticUnit(
+        text=body.surface,
+        translation=word_translation,
+        word_count=1,
+        difficulty=1,
+        source="llm",
+        lemma=body.lemma,
+        disambig_key=disambig,
+        card_type="cloze",
+        source_sentence=cloze_sent,
+        source_sentence_translation=sentence_translation,
+        grammar=grammar_hint,
+    )
+    # 5. Persist + synthesize + serialize (always a cloze).
+    return await _persist_new_card(
+        db, unit, language_code, synthesize=True, audio_sentence=body.sentence, audio_word=body.surface
+    )
 
 
 @router.get("/review-queue", status_code=200)

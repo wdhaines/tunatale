@@ -394,17 +394,33 @@ def build_query(english: str) -> str:
     return re.sub(r"\s*\(.*?\)", "", english).strip()
 
 
+_RELEVANCE_WEIGHT = 10.0
+_EDITORS_CHOICE_BONUS = 1.0
+
+
 def _tag_overlap(query_tokens: frozenset[str], tags_str: str) -> float:
     tag_words = {t.strip().lower() for t in tags_str.split(",") if t.strip()}
     return float(len(query_tokens & tag_words))
 
 
 def score_hit(hit: dict, query_tokens: frozenset[str]) -> float:
-    """Rank a Pixabay hit by engagement and query relevance."""
+    """Rank a Pixabay hit by query relevance first, engagement as a tiebreaker.
+
+    Tag overlap dominates: each query token that appears in the hit's tags is
+    worth ``_RELEVANCE_WEIGHT`` (10). Engagement (likes/views) is squashed into
+    ``[0, 1)`` so a single on-topic tag always outranks any amount of likes on an
+    off-topic photo — the old engagement-weighted formula routinely picked a
+    viral but irrelevant stock photo over the right one. ``editors_choice`` adds
+    a small bonus that only breaks ties within the same relevance tier.
+    """
     likes = hit.get("likes", 0) or 0
     views = hit.get("views", 0) or 0
     tags = hit.get("tags", "") or ""
-    return 0.5 * math.log(likes + 1) + 0.3 * math.log(views + 1) + _tag_overlap(query_tokens, tags)
+    overlap = _tag_overlap(query_tokens, tags)
+    engagement_raw = 0.5 * math.log(likes + 1) + 0.3 * math.log(views + 1)
+    engagement = engagement_raw / (engagement_raw + 1.0)  # squash to [0, 1)
+    editors = _EDITORS_CHOICE_BONUS if hit.get("editors_choice") or hit.get("editorsChoice") else 0.0
+    return _RELEVANCE_WEIGHT * overlap + editors + engagement
 
 
 def best_hit(hits: list[dict], query: str) -> dict | None:
@@ -423,12 +439,17 @@ def fetch_pixabay_image(
     api_key: str,
     http_client: httpx.Client | None = None,
     used_urls: frozenset[str] = frozenset(),
+    query: str | None = None,
 ) -> tuple[bytes, str, str] | None:
     """Fetch best-ranked Pixabay image. Returns (image_bytes, ext, url) or None.
 
     Hits whose webformatURL is in used_urls are excluded before ranking.
+
+    ``query`` overrides the search string: when a non-empty value is given it is
+    sent verbatim (e.g. an LLM-generated, sense-disambiguated query); otherwise
+    the legacy :func:`build_query` mapping derived from ``english`` is used.
     """
-    query = build_query(english)
+    query = query or build_query(english)
     owned = http_client is None
     client = http_client or httpx.Client()
     try:
@@ -439,7 +460,7 @@ def fetch_pixabay_image(
                 "q": query,
                 "image_type": "photo",
                 "safesearch": "true",
-                "per_page": 20,
+                "per_page": 50,
                 "min_width": 300,
             },
             timeout=10,

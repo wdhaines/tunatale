@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
 import uuid
 
+import anyio
 from fastapi import APIRouter, HTTPException, Request
 
 from app.api.models import GenerateStoryRequest
-from app.models.lesson import Lesson
+from app.models.lesson import Lesson, SectionType
 from app.models.strategy import ContentStrategy
+from app.srs.database import SRSDatabase
+from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for
+
+_logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/story", tags=["generation"])
 
@@ -18,6 +25,43 @@ def _slug(text: str) -> str:
     text = text.lower()
     text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
     return text[:50]
+
+
+async def _prewarm_lesson(lesson: Lesson, srs_db: SRSDatabase) -> None:
+    """Background pre-warm: cache a freshly generated lesson's sentences.
+
+    Runs the new lesson's natural-speed L2 sentences through
+    ``analyze_sentence_cached`` so the transcript view never triggers a
+    classla load for this content.
+    """
+    try:
+        lemmatizer = get_lemmatizer()
+        model_version = model_version_for(lemmatizer)
+        if not model_version:
+            return
+        natural_speed = next(
+            (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
+            None,
+        )
+        if natural_speed is None:
+            return
+        phrases = [(p.text, p.language_code) for p in natural_speed.phrases if p.language_code == lesson.language_code]
+        await anyio.to_thread.run_sync(
+            _prewarm_phrases, phrases, srs_db, lemmatizer, model_version, lesson.language_code
+        )
+    except Exception:
+        _logger.warning("Pre-warm failed for new lesson", exc_info=True)
+
+
+def _prewarm_phrases(
+    phrases: list[tuple[str, str]],
+    srs_db: SRSDatabase,
+    lemmatizer: object,
+    model_version: str,
+    language_code: str,
+) -> None:
+    for text, _ in phrases:
+        analyze_sentence_cached(srs_db, lemmatizer, text, language_code, model_version)
 
 
 @router.post("/generate", status_code=201)
@@ -45,6 +89,11 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
 
     lesson_id = f"{_slug(lesson.title)}-{uuid.uuid4().hex[:8]}"
     store.save_lesson(lesson_id, body.curriculum_id, body.day, lesson)
+
+    # Pre-warm the analysis cache off the request path
+    srs_db = getattr(request.app.state, "srs_db", None)
+    if srs_db is not None:
+        asyncio.create_task(_prewarm_lesson(lesson, srs_db))
 
     sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
     return {"id": lesson_id, "title": lesson.title, "sections": sections}

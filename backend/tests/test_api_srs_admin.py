@@ -371,6 +371,29 @@ class TestSetState:
         assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
         assert item.directions[Direction.PRODUCTION].dirty_fsrs is True
 
+    async def test_set_state_to_known_far_future_due_at(self):
+        """KNOWN sets due_at = today + max_ivl with matched stability."""
+        from app.srs.fsrs import stability_for_interval
+
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/api/srs/items/{row_id}/state", json={"state": "known"})
+
+        assert response.status_code == 200
+        item = db.get_collocation("banka")
+        ds = item.directions[Direction.RECOGNITION]
+        assert ds.state == SRSState.KNOWN
+        # Default max_ivl is 36500, default dr is 0.9
+        expected_max_ivl = 36500
+        expected_due = date.today() + timedelta(days=expected_max_ivl)
+        assert ds.due_at.date() == expected_due
+        expected_stability = stability_for_interval(expected_max_ivl, 0.9)
+        assert abs(ds.stability - expected_stability) < 1.0
+
     async def test_set_state_to_ignored_maps_to_suspended(self):
         db = _db()
         db.add_collocation(_unit("banka", "bank"), language_code="sl")
@@ -455,6 +478,56 @@ class TestSetState:
         assert "banka" not in due_texts
         item = db.get_collocation("banka")
         assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
+
+
+class TestRestoreKnown:
+    """Tests for POST /api/srs/items/{id}/restore-known."""
+
+    async def test_restore_known_reverses_mark(self):
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        item = db.get_collocation("banka")
+        # Pre-known: a review card worth restoring.
+        ds = item.directions[Direction.RECOGNITION]
+        ds.state = SRSState.REVIEW
+        ds.stability = 7.5
+        ds.due_at = datetime(2026, 3, 1, 4, 0, tzinfo=UTC)
+        db.update_direction(item.guid, Direction.RECOGNITION, ds)
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post(f"/api/srs/items/{row_id}/state", json={"state": "known"})
+            assert db.is_known_marked(row_id) is True
+
+            response = await client.post(f"/api/srs/items/{row_id}/restore-known")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["state"] == "review"
+        assert db.is_known_marked(row_id) is False
+        restored = db.get_collocation("banka").directions[Direction.RECOGNITION]
+        assert restored.state == SRSState.REVIEW
+        assert abs(restored.stability - 7.5) < 0.01
+        assert restored.dirty_fsrs is True
+        assert restored.fsrs_force_next is True
+
+    async def test_restore_known_noop_without_snapshot_returns_200(self):
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/api/srs/items/{row_id}/restore-known")
+
+        assert response.status_code == 200
+        assert db.is_known_marked(row_id) is False
+
+    async def test_restore_known_unknown_id_returns_404(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/items/9999/restore-known")
+        assert response.status_code == 404
 
 
 class TestUntrack:

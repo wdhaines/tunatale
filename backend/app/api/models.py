@@ -23,10 +23,6 @@ class TranslateRequest(BaseModel):
     language_code: str
 
 
-class ClozeSettingRequest(BaseModel):
-    enabled: bool
-
-
 class CreateItemRequest(BaseModel):
     text: str
     language_code: str
@@ -55,6 +51,11 @@ class SetStateRequest(BaseModel):
     state: str  # "new" | "learning" | "known" | "ignored"
 
 
+class IgnoreLemmaRequest(BaseModel):
+    lemma: str
+    language_code: str
+
+
 # ── Generation models ────────────────────────────────────────────────────────
 
 
@@ -78,3 +79,24 @@ class GenerateCurriculumRequest(BaseModel):
     topic: str
     cefr_level: str = "A2"
     num_days: int = 7
+
+
+class InflectionClozeRequest(BaseModel):
+    surface: str
+    lemma: str
+    feature: str
+    sentence: str
+    language_code: str
+    # Optional lesson context: resolves the word gloss + sentence translation
+    # from the lesson's generation_metadata (mirrors /listen). Omitted by older
+    # callers, in which case the cloze carries only its grammar hint.
+    lesson_id: str = ""
+    translation: str = ""
+
+
+class CreateBaseCardRequest(BaseModel):
+    surface: str
+    lemma: str
+    sentence: str
+    language_code: str
+    translation: str = ""

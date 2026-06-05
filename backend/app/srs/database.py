@@ -121,6 +121,28 @@ CREATE TABLE IF NOT EXISTS anki_state_cache (
 )
 """
 
+_CREATE_LEMMA_ANALYSIS_CACHE = """
+CREATE TABLE IF NOT EXISTS lemma_analysis_cache (
+    sentence       TEXT NOT NULL,
+    language_code  TEXT NOT NULL,
+    model_version  TEXT NOT NULL,
+    analyses_json  TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    PRIMARY KEY (sentence, language_code, model_version)
+)
+"""
+
+_CREATE_IMAGE_QUERY_CACHE = """
+CREATE TABLE IF NOT EXISTS image_query_cache (
+    word           TEXT NOT NULL,
+    english        TEXT NOT NULL,
+    model_version  TEXT NOT NULL,
+    query          TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    PRIMARY KEY (word, english, model_version)
+)
+"""
+
 # Columns on `collocation_directions` mapped onto a DirectionState.
 # due_date dropped in v25 — due_at is the single source of truth.
 _DIR_COLUMNS = (
@@ -144,10 +166,19 @@ _DIR_COLUMNS = (
     "prior_stability",
     "introduced_at",
     "bury_kind",
+    "fsrs_force_next",
 )
 
 # States that should never surface in the due queue regardless of due_date.
 _NON_REVIEWABLE_STATES = ("new", "suspended", "known", "buried")
+
+# Column assignments that return a direction to a pristine NEW card (no FSRS
+# history). Shared by `reset_collocation` and `set_state_by_id`'s NEW branch so
+# the "what NEW means" definition lives in one place. `due_at = ?` is bound to
+# today's 4 AM rollover by the caller (so the card reads due-today, not stuck).
+_NEW_RESET_SET = (
+    "state = 'new', stability = 1.0, fsrs_difficulty = 5.0, reps = 0, lapses = 0, due_at = ?, last_review = NULL"
+)
 # States that count as "in the learning bucket" (Anki queue=1 / queue=3).
 # Shared by get_learning_items (review queue) and count_learning (badge).
 _LEARNING_STATES = ("learning", "relearning")
@@ -201,6 +232,8 @@ class SRSDatabase:
         migrate(conn)
         conn.execute(_CREATE_SYNC_CONFLICTS)
         conn.execute(_CREATE_ANKI_STATE_CACHE)
+        conn.execute(_CREATE_LEMMA_ANALYSIS_CACHE)
+        conn.execute(_CREATE_IMAGE_QUERY_CACHE)
         conn.commit()
 
     @contextmanager
@@ -424,7 +457,8 @@ class SRSDatabase:
                     prior_left = ?,
                     prior_stability = ?,
                     introduced_at = ?,
-                    bury_kind = ?
+                    bury_kind = ?,
+                    fsrs_force_next = ?
                 WHERE collocation_id = ? AND direction = ?
                 """,
                 (
@@ -448,6 +482,7 @@ class SRSDatabase:
                     state.prior_stability,
                     state.introduced_at.isoformat() if state.introduced_at else None,
                     state.bury_kind,
+                    1 if state.fsrs_force_next else 0,
                     row["id"],
                     direction.value,
                 ),
@@ -536,6 +571,7 @@ class SRSDatabase:
                 prior_stability=row["prior_stability"],
                 introduced_at=datetime.fromisoformat(introduced_at_raw) if introduced_at_raw else None,
                 bury_kind=row["bury_kind"] if "bury_kind" in row.keys() else None,  # noqa: SIM118
+                fsrs_force_next=bool(row["fsrs_force_next"]),
             )
         return directions
 
@@ -617,17 +653,88 @@ class SRSDatabase:
                 return None
             return (row["id"], self._row_to_item(conn, row))
 
-    def get_collocations_for_language(
+    def get_inflection_clozes_for_lemma(self, lemma: str) -> list[tuple[int, SRSItem]]:
+        """All morphology (inflection) clozes for a lemma, hydrated with directions.
+
+        Inflection clozes are card_type='cloze' with a disambig_key like 'morph:%'
+        (set by the /listen morphology path and POST /inflection-clozes). This
+        deliberately EXCLUDES the lemma's plain function-word base cloze, which
+        has disambig_key NULL/empty.
+        Returns (collocation_id, SRSItem) per row; empty list if none.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM collocations WHERE lemma = ? AND card_type = 'cloze' AND disambig_key LIKE 'morph:%'",
+                (lemma,),
+            ).fetchall()
+            return [(row["id"], self._row_to_item(conn, row)) for row in rows]
+
+    def get_collocations_with_lemma_key(
         self,
         language_code: str,
         min_word_count: int = 2,
-    ) -> list[tuple[int, str]]:
+    ) -> list[tuple[int, str, str | None]]:
+        """Return (id, text, lemma_key) for collocations of at least min_word_count words.
+
+        lemma_key is the space-joined lemma tuple for multi-word span matching
+        (NULL until first computed). Read by transcript._build_collocation_index,
+        which lazily fills any NULL via set_lemma_key.
+        """
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT id, text FROM collocations WHERE language_code = ? AND word_count >= ?",
+                "SELECT id, text, lemma_key FROM collocations WHERE language_code = ? AND word_count >= ?",
                 (language_code, min_word_count),
             ).fetchall()
-        return [(row["id"], row["text"]) for row in rows]
+        return [(row["id"], row["text"], row["lemma_key"]) for row in rows]
+
+    def set_lemma_key(self, row_id: int, lemma_key: str) -> None:
+        """Persist the precomputed lemma_key for a collocation (span-match cache)."""
+        with self._get_conn() as conn:
+            conn.execute("UPDATE collocations SET lemma_key = ? WHERE id = ?", (lemma_key, row_id))
+            self._commit(conn)
+
+    def get_sentence_analysis(self, sentence: str, language_code: str, model_version: str) -> str | None:
+        """Return cached analyses_json for a sentence, or None on miss."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT analyses_json FROM lemma_analysis_cache WHERE sentence = ? AND language_code = ? AND model_version = ?",
+                (sentence, language_code, model_version),
+            ).fetchone()
+        return row["analyses_json"] if row else None
+
+    def set_sentence_analysis(self, sentence: str, language_code: str, model_version: str, analyses_json: str) -> None:
+        """Upsert a sentence analysis into the persistent cache."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO lemma_analysis_cache (sentence, language_code, model_version, analyses_json, updated_at)"
+                " VALUES (?, ?, ?, ?, datetime('now'))",
+                (sentence, language_code, model_version, analyses_json),
+            )
+            self._commit(conn)
+
+    def get_image_query(self, word: str, english: str, model_version: str) -> str | None:
+        """Return the cached image-search query for a card, or None on miss.
+
+        An empty-string result is a *hit*, not a miss: it is the sentinel for
+        "this word is abstract, don't fetch an image". Callers must check
+        ``is not None`` rather than truthiness.
+        """
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT query FROM image_query_cache WHERE word = ? AND english = ? AND model_version = ?",
+                (word, english, model_version),
+            ).fetchone()
+        return row["query"] if row else None
+
+    def set_image_query(self, word: str, english: str, model_version: str, query: str) -> None:
+        """Upsert an image-search query (possibly the empty-string skip sentinel)."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO image_query_cache (word, english, model_version, query, updated_at)"
+                " VALUES (?, ?, ?, ?, datetime('now'))",
+                (word, english, model_version, query),
+            )
+            self._commit(conn)
 
     def get_due_collocations(
         self,
@@ -969,23 +1076,22 @@ class SRSDatabase:
             return {"action": "suspended"}
 
     def reset_collocation(self, row_id: int, direction: Direction | None = None) -> None:
-        """Reset FSRS scheduling for one or both directions of a collocation."""
+        """Reset FSRS scheduling for one or both directions of a collocation.
+
+        ``dirty_fsrs = 1`` so the reset propagates to Anki on the next
+        ``sync_push`` (which forgets the card). Writing ``dirty_fsrs = 0`` left
+        the reset TT-local: Anki kept the graduated review while TT showed a
+        fresh NEW card — a permanent new-vs-review badge divergence that the
+        next pull silently clobbered (2026-06-04). Mirrors
+        ``set_state_by_id(NEW)``, which already marks dirty.
+        """
         today_due_at = datetime.combine(date.today(), time(4, 0), tzinfo=UTC).isoformat()
         if direction is None:
-            sql = (
-                "UPDATE collocation_directions SET "
-                "state = 'new', stability = 1.0, fsrs_difficulty = 5.0, "
-                "reps = 0, lapses = 0, due_at = ?, last_review = NULL, "
-                "dirty_fsrs = 0 "
-                "WHERE collocation_id = ?"
-            )
+            sql = f"UPDATE collocation_directions SET {_NEW_RESET_SET}, dirty_fsrs = 1 WHERE collocation_id = ?"
             params = (today_due_at, row_id)
         else:
             sql = (
-                "UPDATE collocation_directions SET "
-                "state = 'new', stability = 1.0, fsrs_difficulty = 5.0, "
-                "reps = 0, lapses = 0, due_at = ?, last_review = NULL, "
-                "dirty_fsrs = 0 "
+                f"UPDATE collocation_directions SET {_NEW_RESET_SET}, dirty_fsrs = 1 "
                 "WHERE collocation_id = ? AND direction = ?"
             )
             params = (today_due_at, row_id, direction.value)
@@ -1007,29 +1113,167 @@ class SRSDatabase:
     ) -> None:
         """Set the state of a collocation directly, bypassing FSRS scheduling.
 
-        When ``state == NEW`` we also clear ``introduced_at`` and ``prior_state``:
-        cycling a card back to NEW via the WordSpan word-click is a reset, and
-        leaving those columns stamped inflates ``count_new_introduced_today``.
+        For non-NEW states this is label-only: ``stability`` / ``difficulty`` /
+        ``due_at`` / ``reps`` are preserved, so cycling a card to ``review`` /
+        ``known`` restores its real schedule rather than fabricating one. When the
+        target state enters the review/learning flow (review / learning / relearning
+        / known) and the card was never introduced, ``introduced_at`` is stamped
+        (one-shot via ``COALESCE``, Layer 26) so ``count_new_introduced_today`` stays
+        consistent — a card leaving NEW must decrement the new quota. ``suspended``
+        is *not* an introduction, so it does not stamp.
+
+        ``state == NEW`` is a **full reset** (mirrors ``reset_collocation``): a NEW
+        card has no schedule, so leaving a graduated ``due_at`` / ``last_review`` /
+        ``reps`` / ``stability`` stamped makes the transcript render it red (mastery
+        keys off ``state == NEW``) yet read *not* due (``is_due`` keys off
+        ``due_at``) — the plain click then no-ops ("stuck reset"). Resetting the
+        schedule makes the card due today and re-learnable. NEW also clears
+        ``introduced_at`` / ``prior_state`` so ``count_new_introduced_today`` isn't
+        inflated.
         """
         dirty_clause = ", dirty_fsrs = 1" if mark_dirty else ""
-        reset_clause = ", introduced_at = NULL, prior_state = NULL" if state == SRSState.NEW else ""
+        if state == SRSState.NEW:
+            today_due_at = datetime.combine(date.today(), time(4, 0), tzinfo=UTC).isoformat()
+            set_clause = f"{_NEW_RESET_SET}{dirty_clause}, introduced_at = NULL, prior_state = NULL"
+            params_head: tuple[object, ...] = (today_due_at,)
+        elif state in (SRSState.LEARNING, SRSState.RELEARNING, SRSState.REVIEW, SRSState.KNOWN):
+            # Entering the review/learning flow: stamp introduced_at if unset so the
+            # new-introduced quota decrements (COALESCE keeps any prior stamp).
+            now_iso = datetime.now(UTC).isoformat()
+            set_clause = f"state = ?{dirty_clause}, introduced_at = COALESCE(introduced_at, ?)"
+            params_head = (state.value, now_iso)
+        else:
+            set_clause = f"state = ?{dirty_clause}"
+            params_head = (state.value,)
         with self._get_conn() as conn:
             if direction is None:
                 conn.execute(
-                    f"UPDATE collocation_directions SET state = ?{dirty_clause}{reset_clause} WHERE collocation_id = ?",
-                    (state.value, row_id),
+                    f"UPDATE collocation_directions SET {set_clause} WHERE collocation_id = ?",
+                    (*params_head, row_id),
                 )
             else:
                 conn.execute(
-                    f"UPDATE collocation_directions SET state = ?{dirty_clause}{reset_clause}"
-                    " WHERE collocation_id = ? AND direction = ?",
-                    (state.value, row_id, direction.value),
+                    f"UPDATE collocation_directions SET {set_clause} WHERE collocation_id = ? AND direction = ?",
+                    (*params_head, row_id, direction.value),
                 )
             conn.execute(
                 "UPDATE collocations SET updated_at = datetime('now') WHERE id = ?",
                 (row_id,),
             )
             self._commit(conn)
+
+    def mark_known(
+        self,
+        row_id: int,
+        due_at: datetime,
+        stability: float,
+        direction: Direction | None = None,
+    ) -> None:
+        """Set state to KNOWN with a far-future due_at and matched stability.
+
+        Sets dirty_fsrs=1 so the direction is picked up by sync_push.
+        Stamps introduced_at (COALESCE) if unset, preserving any prior stamp.
+
+        Snapshots the pre-known ``state``/``stability``/``due_at`` into the
+        ``known_prior_*`` columns so ``restore_known`` can exactly reverse the
+        mark. The CASE guards capture the *old* row values and only on entry
+        (``state != 'known'``), so a double-mark keeps the first (real)
+        snapshot rather than clobbering it with the inflated KNOWN values.
+        SQLite evaluates every SET RHS against the pre-update row, so reading
+        the old ``state``/``stability``/``due_at`` in the same statement is safe.
+
+        ``introduced_at`` is COALESCE-stamped here but NOT un-stamped by
+        ``restore_known``: a rare new→known→restore path leaves the word
+        "introduced". Accepted — restore targets review/known words in practice.
+        """
+        now_iso = datetime.now(UTC).isoformat()
+        due_at_iso = due_at.isoformat()
+        snapshot_sql = (
+            " known_prior_state = CASE WHEN state != 'known' THEN state ELSE known_prior_state END,"
+            " known_prior_stability = CASE WHEN state != 'known' THEN stability ELSE known_prior_stability END,"
+            " known_prior_due_at = CASE WHEN state != 'known' THEN due_at ELSE known_prior_due_at END,"
+        )
+        with self._get_conn() as conn:
+            if direction is None:
+                conn.execute(
+                    "UPDATE collocation_directions SET"
+                    f"{snapshot_sql}"
+                    " state = 'known', due_at = ?,"
+                    " stability = ?, dirty_fsrs = 1,"
+                    " introduced_at = COALESCE(introduced_at, ?)"
+                    " WHERE collocation_id = ?",
+                    (due_at_iso, stability, now_iso, row_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE collocation_directions SET"
+                    f"{snapshot_sql}"
+                    " state = 'known', due_at = ?,"
+                    " stability = ?, dirty_fsrs = 1,"
+                    " introduced_at = COALESCE(introduced_at, ?)"
+                    " WHERE collocation_id = ? AND direction = ?",
+                    (due_at_iso, stability, now_iso, row_id, direction.value),
+                )
+            conn.execute(
+                "UPDATE collocations SET updated_at = datetime('now') WHERE id = ?",
+                (row_id,),
+            )
+            self._commit(conn)
+
+    def restore_known(self, row_id: int, direction: Direction | None = None) -> None:
+        """Reverse ``mark_known``: restore the snapshotted pre-known schedule.
+
+        Writes ``known_prior_*`` back to the live ``state``/``stability``/
+        ``due_at`` columns, clears the snapshot, and sets ``dirty_fsrs=1`` +
+        ``fsrs_force_next=1``. The force flag makes the next sync_push
+        force-write the restored stability into Anki's ``cards.data`` — a
+        restored card is ``review``, which otherwise has no TT→Anki
+        stability-write signal and would be re-clobbered by the next
+        take-Anki-verbatim pull. Push runs before pull, so Anki is corrected
+        before the pull reads it (mirrors how KNOWN forces via ``state==KNOWN``).
+
+        No-op for any direction without a snapshot (``known_prior_state IS NULL``),
+        so calling it on a card that was never marked known leaves it untouched.
+        Does NOT un-stamp ``introduced_at`` (see ``mark_known``).
+        """
+        where_dir = "" if direction is None else " AND direction = ?"
+        params: list = [row_id]
+        if direction is not None:
+            params.append(direction.value)
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET"
+                " state = known_prior_state,"
+                " stability = known_prior_stability,"
+                " due_at = known_prior_due_at,"
+                " dirty_fsrs = 1,"
+                " fsrs_force_next = 1,"
+                " known_prior_state = NULL,"
+                " known_prior_stability = NULL,"
+                " known_prior_due_at = NULL"
+                " WHERE collocation_id = ? AND known_prior_state IS NOT NULL" + where_dir,
+                params,
+            )
+            conn.execute(
+                "UPDATE collocations SET updated_at = datetime('now') WHERE id = ?",
+                (row_id,),
+            )
+            self._commit(conn)
+
+    def is_known_marked(self, row_id: int) -> bool:
+        """True if any direction of this collocation has a known snapshot pending.
+
+        A snapshot is present iff the word is currently marked known (and thus
+        reversible via ``restore_known``). Drives the transcript's
+        ``known_marked`` flag and the popover's Mark/Un-mark toggle.
+        """
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT EXISTS(SELECT 1 FROM collocation_directions"
+                " WHERE collocation_id = ? AND known_prior_state IS NOT NULL)",
+                (row_id,),
+            ).fetchone()
+        return bool(row[0])
 
     def promote_to_learning(
         self,
@@ -1141,6 +1385,33 @@ class SRSDatabase:
                 (row_id,),
             )
             self._commit(conn)
+
+    def add_ignored_lemma(self, language_code: str, lemma: str) -> None:
+        """Add a lemma to the card-less ignore list (idempotent)."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO ignored_lemmas (language_code, lemma) VALUES (?, ?)",
+                (language_code, lemma.lower()),
+            )
+            self._commit(conn)
+
+    def remove_ignored_lemma(self, language_code: str, lemma: str) -> None:
+        """Remove a lemma from the card-less ignore list (idempotent)."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "DELETE FROM ignored_lemmas WHERE language_code = ? AND lemma = ?",
+                (language_code, lemma.lower()),
+            )
+            self._commit(conn)
+
+    def get_ignored_lemmas(self, language_code: str) -> set[str]:
+        """Return the set of ignored lemmas for a language."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT lemma FROM ignored_lemmas WHERE language_code = ?",
+                (language_code,),
+            ).fetchall()
+            return {r["lemma"] for r in rows}
 
     def list_collocations(
         self,
@@ -1671,6 +1942,10 @@ class SRSDatabase:
                     prior_left=row["prior_left"],
                     prior_stability=row["prior_stability"],
                     bury_kind=row["bury_kind"],
+                    # Load-bearing for the push loop's row_force_fsrs decision —
+                    # without it a restored direction never force-writes its
+                    # stability to Anki (the same silent-False trap as bury_kind).
+                    fsrs_force_next=bool(row["fsrs_force_next"]),
                 )
                 result.append((row["guid"], d, ds))
         return result
@@ -1738,6 +2013,10 @@ class SRSDatabase:
                     prior_left=row["prior_left"],
                     prior_stability=row["prior_stability"],
                     bury_kind=row["bury_kind"],
+                    # fsrs_force_next is load-bearing here: the push loop reads it
+                    # off the list_recently_graded_clean DirectionState for the
+                    # row_force_fsrs decision. Same silent-False trap as bury_kind.
+                    fsrs_force_next=bool(row["fsrs_force_next"]),
                 )
                 result.append((row["guid"], d, ds))
         return result
@@ -1752,6 +2031,7 @@ class SRSDatabase:
                 """
                 UPDATE collocation_directions SET
                     dirty_fsrs = 0,
+                    fsrs_force_next = 0,
                     last_rating = NULL,
                     last_synced_at = ?,
                     prior_state = NULL,
@@ -2047,16 +2327,6 @@ class SRSDatabase:
             conn.execute("DELETE FROM anki_state_cache WHERE key = ?", (key,))
             self._commit(conn)
 
-    def get_enable_cloze_cards(self) -> bool:
-        """Return the current cloze-cards flag (DB-backed, default False)."""
-        row = self.get_anki_state_cache("enable_cloze_cards")
-        if row is None:
-            return False
-        return row[0].lower() == "true"
-
-    def set_enable_cloze_cards(self, enabled: bool) -> None:
-        self.set_anki_state_cache("enable_cloze_cards", "true" if enabled else "false")
-
     def get_event_sync_pull_mode(self) -> str:
         """Return the sync_pull merge mode (Stage 3b): ``legacy`` / ``compare`` / ``new``.
 
@@ -2074,16 +2344,6 @@ class SRSDatabase:
         if mode not in _EVENT_SYNC_PULL_MODES:
             raise ValueError(f"event_sync_pull mode must be one of {sorted(_EVENT_SYNC_PULL_MODES)}, got {mode!r}")
         self.set_anki_state_cache("event_sync_pull", mode)
-
-    def get_enable_case_clozes(self) -> bool:
-        """Return the current case-clozes flag (DB-backed, default False)."""
-        row = self.get_anki_state_cache("enable_case_clozes")
-        if row is None:
-            return False
-        return row[0].lower() == "true"
-
-    def set_enable_case_clozes(self, enabled: bool) -> None:
-        self.set_anki_state_cache("enable_case_clozes", "true" if enabled else "false")
 
     def set_dirty_fields(self, guid: str, fields_str: str) -> None:
         """Set dirty_fields for the collocation identified by guid."""

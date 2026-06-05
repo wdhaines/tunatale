@@ -39,6 +39,7 @@ _BURY_NEW_FIELD = 27  # VARINT bool
 _BURY_REVIEW_FIELD = 28  # VARINT bool
 _NEW_SPREAD_FIELD = 30  # VARINT uint32 (0=mix, 1=after_reviews, 2=before_reviews)
 _DESIRED_RETENTION_FIELD = 37  # FIXED32 float — per /tmp/anki-source/proto/anki/deck_config.proto:188
+_MAX_REVIEW_INTERVAL_FIELD = 16  # VARINT uint32
 # Field 40 is historical_retention; pre-2026-05-16 code read 40 thinking it was desired_retention.
 
 # Protobuf wire types
@@ -958,3 +959,49 @@ def refresh_fsrs_short_term_flag(db: SRSDatabase, conn: sqlite3.Connection) -> N
     val = _read_fsrs_short_term_from_config_table(conn)
     if val is not None:
         db.set_anki_state_cache("fsrs_short_term_with_steps_enabled", "true" if val else "false")
+
+
+def _read_maximum_review_interval_from_anki(conn: sqlite3.Connection, deck_name: str) -> int | None:
+    """Return maximum_review_interval from Anki's deck config, or None if unavailable."""
+    return _read_config_value_from_deck_config_table(
+        conn, deck_name, proto_field=_MAX_REVIEW_INTERVAL_FIELD, wire_type=_WIRE_TYPE_VARINT
+    )
+
+
+def refresh_maximum_review_interval(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
+    """Read maximum_review_interval from collection.anki2 and write it to the cache."""
+    val = _read_maximum_review_interval_from_anki(conn, deck_name)
+    if val is not None:
+        db.set_anki_state_cache("maximum_review_interval", str(val))
+
+
+_DEFAULT_MAXIMUM_REVIEW_INTERVAL = 36500
+
+
+def resolve_maximum_review_interval(db: SRSDatabase | None = None) -> tuple[int, str]:
+    """Return (max_ivl, source) where source is 'cache' or 'default'.
+
+    Priority:
+    1. anki_state_cache (written during sync) — 'cache'
+    2. Hard default 36500 — 'default'
+    """
+    if db is None:
+        try:
+            from app.srs.database import SRSDatabase as _SRSDatabase
+
+            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        except Exception:
+            db = None
+
+    if db is not None:
+        row = db.get_anki_state_cache("maximum_review_interval")
+        if row is not None:
+            value_str, updated_at = row
+            try:
+                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                    return (int(value_str), "cache")
+            except ValueError, TypeError, OverflowError:
+                pass
+
+    return (_DEFAULT_MAXIMUM_REVIEW_INTERVAL, "default")

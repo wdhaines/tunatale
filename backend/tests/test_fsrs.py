@@ -1183,3 +1183,47 @@ class TestReviewDueAtRolloverConvention:
         # Should have graduated to REVIEW.
         assert new_dir.state == SRSState.REVIEW
         assert (new_dir.due_at.hour, new_dir.due_at.minute, new_dir.due_at.second) == (4, 0, 0)
+
+
+class TestStabilityForInterval:
+    """Tests for stability_for_interval — inverse of _next_interval."""
+
+    def test_round_trips_at_max_interval_default_decay(self):
+        """stability_for_interval(max_ivl, dr) → _next_interval returns max_ivl."""
+        from app.srs.fsrs import _next_interval, stability_for_interval
+
+        max_ivl = 36500
+        dr = 0.9
+        s = stability_for_interval(max_ivl, dr)
+        result = _next_interval(s, dr)
+        assert result == max_ivl
+
+    def test_round_trips_at_max_interval_fsrs6_decay(self):
+        """Round-trips with a FSRS-6 style decay value."""
+        from app.srs.fsrs import _next_interval, stability_for_interval
+
+        max_ivl = 36500
+        dr = 0.9
+        decay = 0.1542
+        s = stability_for_interval(max_ivl, dr, decay)
+        result = _next_interval(s, dr, decay)
+        assert result == max_ivl
+
+    def test_round_trips_at_various_intervals(self):
+        """Spot-check intervals: 365, 3650, 100000."""
+        from app.srs.fsrs import _next_interval, stability_for_interval
+
+        for ivl in [365, 3650, 100000]:
+            s = stability_for_interval(ivl, 0.9)
+            result = _next_interval(s, 0.9)
+            assert result == min(ivl, 36500)
+
+    def test_round_trips_with_different_desired_retention(self):
+        """Works with non-default desired retention (e.g. 0.85)."""
+        from app.srs.fsrs import _next_interval, stability_for_interval
+
+        max_ivl = 36500
+        dr = 0.85
+        s = stability_for_interval(max_ivl, dr)
+        result = _next_interval(s, dr)
+        assert result == max_ivl

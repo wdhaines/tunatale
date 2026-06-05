@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
+
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
-from app.models.srs_item import SRSState
+from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
-from app.srs.lemmatizer import LowercaseLemmatizer
-from app.srs.transcript import TranscriptData, WordToken, extract_transcript
+from app.srs.lemmatizer import LowercaseLemmatizer, TokenAnalysis, _serialize_analyses
+from app.srs.transcript import (
+    TranscriptData,
+    WordToken,
+    _extract_punct_pairs,
+    _is_due,
+    extract_transcript,
+    resolve_active_direction,
+)
 
 
 def _make_lesson(l2_phrases: list[tuple[str, str]] | None = None) -> Lesson:
@@ -46,12 +55,77 @@ class TestExtractTranscript:
         result = extract_transcript(lesson, self.db, self.lemmatizer)
         assert result.dialogue_lines[0].words[0].srs_state == "unknown"
 
+    def test_reconstructed_sentence_preserves_punctuation(self):
+        """The line sentence (used as card source_sentence) keeps punctuation,
+        not the bare surface join — e.g. 'Koliko časa imaš?' not '... imaš'."""
+        lesson = _make_lesson([("female-1", "Koliko časa imaš?")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].sentence == "Koliko časa imaš?"
+
+    def test_reconstructed_sentence_preserves_internal_punctuation(self):
+        lesson = _make_lesson([("female-1", "Zdravo, kje ste?")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].sentence == "Zdravo, kje ste?"
+
+    def test_ignored_lemma_renders_ignored(self):
+        self.db.add_ignored_lemma("sl", "banka")
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        word = result.dialogue_lines[0].words[0]
+        assert word.srs_state == "ignored"
+        assert word.active_state == "ignored"
+        assert word.srs_item_id is None
+        assert word.progress is None
+        assert word.inflectable is False
+
+    def test_ignored_check_does_not_affect_known_words(self):
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
+        self.db.add_collocation(unit, language_code="sl")
+        self.db.add_ignored_lemma("sl", "banka")
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        word = result.dialogue_lines[0].words[0]
+        assert word.srs_state == "new"
+        assert word.active_state != "ignored"
+
     def test_known_word_has_correct_srs_state(self):
         unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
         self.db.add_collocation(unit, language_code="sl")
         lesson = _make_lesson([("female-1", "banka")])
         result = extract_transcript(lesson, self.db, self.lemmatizer)
         assert result.dialogue_lines[0].words[0].srs_state == "new"
+
+    def test_surface_keyed_card_matched_via_surface_fallback(self):
+        """A card keyed by its surface/greeting form is matched even when the
+        lemmatizer reduces the token to a dictionary lemma with no card.
+
+        Regression: 'dobrodošli' (Welcome) is stored under lemma 'dobrodošli',
+        but classla lemmatizes it to 'dobrodošel' → it showed as unknown.
+        """
+        from app.srs.lemmatizer import TokenAnalysis
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        unit = SyntacticUnit(
+            text="dobrodošli",
+            translation="Welcome.",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="dobrodošli",
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        item = self.db.get_collocation("dobrodošli")
+        item.state = SRSState.REVIEW
+        self.db.update_collocation(item)
+
+        stub = StubLemmatizer()
+        stub.set_sentence("Dobrodošli", [TokenAnalysis(surface="Dobrodošli", lemma="dobrodošel")])
+
+        lesson = _make_lesson([("female-1", "Dobrodošli")])
+        result = extract_transcript(lesson, self.db, stub)
+        word = result.dialogue_lines[0].words[0]
+        assert word.srs_state == "review"
+        assert word.translation == "Welcome."
 
     def test_known_word_in_review_state(self):
         unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
@@ -115,6 +189,8 @@ class TestExtractTranscript:
         words = result.dialogue_lines[0].words
         assert words[0].surface == "Zdravo"
         assert words[0].lemma == "zdravo"
+        assert words[0].prefix_punct == ""
+        assert words[0].suffix_punct == ","
 
     def test_empty_lesson_no_natural_speed_section(self):
         lesson = Lesson(title="Empty", language_code="sl")
@@ -129,6 +205,8 @@ class TestExtractTranscript:
         assert len(words) == 3
         assert [w.surface for w in words] == ["Kje", "je", "banka"]
         assert [w.lemma for w in words] == ["kje", "je", "banka"]
+        assert [w.prefix_punct for w in words] == ["", "", ""]
+        assert [w.suffix_punct for w in words] == ["", "", "?"]
 
     def test_role_preserved_on_dialogue_line(self):
         lesson = _make_lesson([("male-1", "Zdravo.")])
@@ -143,6 +221,30 @@ class TestExtractTranscript:
         assert word.surface == "banka"
         assert word.lemma == "banka"
         assert word.srs_state == "unknown"
+
+    def test_reset_to_new_not_due_in_transcript(self):
+        """Reset→new: not bold in transcript (review-queue gates NEW intros)."""
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
+        self.db.add_collocation(unit, language_code="sl")
+        rows, _ = self.db.list_collocations()
+        row_id = rows[0][0]
+        future = datetime(2099, 1, 1, 4, 0, tzinfo=UTC)
+        with self.db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET state='review', due_at=?, last_review=?,"
+                " reps=2, stability=4.47 WHERE collocation_id=?",
+                (future.isoformat(), datetime(2026, 6, 2, tzinfo=UTC).isoformat(), row_id),
+            )
+            conn.commit()
+
+        self.db.set_state_by_id(row_id, SRSState.NEW)
+
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        word = result.dialogue_lines[0].words[0]
+        assert word.active_state == "new"
+        assert word.is_due is False  # review-queue gates NEW intros
+        assert word.progress == 0.0  # red on the ramp
 
 
 class TestWordTokenEnrichment:
@@ -174,6 +276,37 @@ class TestWordTokenEnrichment:
         lesson = _make_lesson([("female-1", "banka")])
         result = extract_transcript(lesson, self.db, self.lemmatizer)
         assert result.dialogue_lines[0].words[0].translation == "bank"
+
+    def test_known_marked_false_for_unmarked_word(self):
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
+        self.db.add_collocation(unit, language_code="sl")
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].known_marked is False
+
+    def test_known_marked_true_after_mark_false_after_restore(self):
+        from datetime import date, time, timedelta
+
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
+        self.db.add_collocation(unit, language_code="sl")
+        rows, _ = self.db.list_collocations()
+        row_id = rows[0][0]
+        due_at = datetime.combine(date.today() + timedelta(days=36500), time(4, 0), tzinfo=UTC)
+        self.db.mark_known(row_id, due_at=due_at, stability=36500.0)
+
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].known_marked is True
+
+        self.db.restore_known(row_id)
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].known_marked is False
+
+    def test_known_marked_false_for_unknown_word(self):
+        """An unresolved word has no card, so known_marked stays False."""
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].known_marked is False
 
     def test_translation_from_gloss_map_when_no_db_entry(self):
         lesson = _make_lesson([("female-1", "banka")])
@@ -322,3 +455,890 @@ class TestWordTokenEnrichment:
         assert word.lemma == "zdravo"
         assert word.srs_state == "new"
         assert word.srs_item_id is not None
+
+
+class TestResolveActiveDirection:
+    def test_cloze_returns_production(self):
+        item = SyntacticUnit(
+            text="je", translation="is", word_count=1, difficulty=1, source="llm", lemma="je", card_type="cloze"
+        )
+        from app.models.srs_item import SRSItem
+
+        srs = SRSItem(syntactic_unit=item)
+        assert resolve_active_direction(srs) == Direction.PRODUCTION
+
+    def test_vocab_recognition_not_review_returns_recognition(self):
+        item = SyntacticUnit(
+            text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka", card_type="vocab"
+        )
+        from app.models.srs_item import SRSItem
+
+        srs = SRSItem(syntactic_unit=item)
+        # NEW → recognition
+        assert resolve_active_direction(srs) == Direction.RECOGNITION
+
+    def test_vocab_recognition_review_returns_production(self):
+        item = SyntacticUnit(
+            text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka", card_type="vocab"
+        )
+        from app.models.srs_item import SRSItem
+
+        srs = SRSItem(syntactic_unit=item)
+        srs.directions[Direction.RECOGNITION].state = SRSState.REVIEW
+        assert resolve_active_direction(srs) == Direction.PRODUCTION
+
+    def test_vocab_both_review_returns_production(self):
+        item = SyntacticUnit(
+            text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka", card_type="vocab"
+        )
+        from app.models.srs_item import SRSItem
+
+        srs = SRSItem(syntactic_unit=item)
+        srs.directions[Direction.RECOGNITION].state = SRSState.REVIEW
+        srs.directions[Direction.PRODUCTION].state = SRSState.REVIEW
+        assert resolve_active_direction(srs) == Direction.PRODUCTION
+
+
+class TestResolveActiveDirectionDirect:
+    def test_non_srs_item_returns_production(self):
+        assert resolve_active_direction(object()) == Direction.PRODUCTION
+
+    def test_cloze_item_returns_production(self):
+        from app.models.srs_item import SRSItem
+        from app.models.syntactic_unit import SyntacticUnit
+
+        unit = SyntacticUnit(
+            text="je", translation="is", word_count=1, difficulty=1, source="llm", lemma="je", card_type="cloze"
+        )
+        item = SRSItem(syntactic_unit=unit)
+        assert resolve_active_direction(item) == Direction.PRODUCTION
+
+    def test_vocab_no_recognition_direction_returns_recognition(self):
+        from app.models.srs_item import SRSItem
+        from app.models.syntactic_unit import SyntacticUnit
+
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
+        item = SRSItem(syntactic_unit=unit)
+        rec = item.directions.get(Direction.RECOGNITION)
+        if rec is not None:
+            item.directions.pop(Direction.RECOGNITION)
+        assert resolve_active_direction(item) == Direction.RECOGNITION
+
+
+class TestIsDue:
+    def test_not_due_when_known(self):
+        ds = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.KNOWN, due_at=datetime(2024, 1, 1, tzinfo=UTC)
+        )
+        assert _is_due(ds, date(2026, 6, 1)) is False
+
+    def test_not_due_when_suspended(self):
+        ds = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.SUSPENDED, due_at=datetime(2024, 1, 1, tzinfo=UTC)
+        )
+        assert _is_due(ds, date(2026, 6, 1)) is False
+
+    def test_not_due_when_new_and_due_today(self):
+        ds = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.NEW, due_at=datetime(2026, 6, 1, tzinfo=UTC)
+        )
+        assert _is_due(ds, date(2026, 6, 1)) is False
+
+    def test_due_when_review_and_past_due(self):
+        ds = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.REVIEW, due_at=datetime(2024, 1, 1, tzinfo=UTC)
+        )
+        assert _is_due(ds, date(2026, 6, 1)) is True
+
+    def test_not_due_when_review_and_future_due(self):
+        ds = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.REVIEW, due_at=datetime(2026, 7, 1, tzinfo=UTC)
+        )
+        assert _is_due(ds, date(2026, 6, 1)) is False
+
+
+class TestTranscriptEnrichment:
+    def setup_method(self):
+        self.db = SRSDatabase(":memory:")
+        self.lemmatizer = LowercaseLemmatizer()
+        self.today = date(2026, 6, 1)
+        self.now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+
+    def _add_vocab(self, text: str, translation: str, lemma: str | None = None) -> int:
+        unit = SyntacticUnit(
+            text=text, translation=translation, word_count=1, difficulty=1, source="llm", lemma=lemma or text
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        return self.db.get_collocation_id_by_guid(unit.guid)
+
+    def test_unknown_token_has_defaults(self):
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.progress is None
+        assert word.active_state == "unknown"
+        assert word.inflectable is False
+        assert word.card_type is None
+        assert word.active_direction is None
+        assert word.is_due is False
+        assert word.inflection_feature is None
+
+    def test_vocab_recognition_not_review_active_direction_recognition(self):
+        self._add_vocab("banka", "bank", lemma="banka")
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.active_direction == "recognition"
+        assert word.active_state == "new"
+
+    def test_vocab_both_review_active_direction_production(self):
+        from app.models.srs_item import Direction, SRSState
+
+        self._add_vocab("banka", "bank", lemma="banka")
+        item = self.db.get_collocation("banka")
+        item.directions[Direction.RECOGNITION].state = SRSState.REVIEW
+        item.directions[Direction.PRODUCTION].state = SRSState.REVIEW
+        item.directions[Direction.RECOGNITION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        item.directions[Direction.PRODUCTION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        self.db.update_direction(item.guid, Direction.RECOGNITION, item.directions[Direction.RECOGNITION])
+        self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.active_direction == "production"
+        assert word.active_state == "review"
+
+    def test_cloze_base_active_direction_production(self):
+        unit = SyntacticUnit(
+            text="je",
+            translation="is",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="je",
+            card_type="cloze",
+            source_sentence="To je dobro.",
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        lesson = _make_lesson([("female-1", "To je dobro.")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        word = next(w for w in result.dialogue_lines[0].words if w.lemma == "je")
+        assert word.active_direction == "production"
+        assert word.card_type == "cloze"
+
+    def test_progress_reflects_components(self):
+        self._add_vocab("banka", "bank", lemma="banka")
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        # NEW → mastery is 0.0
+        assert word.progress == 0.0
+
+    def test_inflectable_true_for_a1_surface_differs_from_lemma_with_reviewed_base(self):
+        """Inflectable requires surface!=lemma, A1 feature, base production REVIEW/KNOWN, no existing cloze."""
+        from app.models.srs_item import Direction, SRSState
+
+        self._add_vocab("hoditi", "to walk", lemma="hoditi")
+        item = self.db.get_collocation("hoditi")
+        item.directions[Direction.PRODUCTION].state = SRSState.REVIEW
+        item.directions[Direction.RECOGNITION].state = SRSState.REVIEW
+        item.directions[Direction.PRODUCTION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        item.directions[Direction.RECOGNITION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        self.db.update_direction(item.guid, Direction.RECOGNITION, item.directions[Direction.RECOGNITION])
+        self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
+
+        lesson = _make_lesson([("female-1", "hodim")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        # LowercaseLemmatizer returns empty upos/case/number → ud_feats_to_tt_feature returns None
+        # So inflectable depends on having analysis data. With LowercaseLemmatizer, analysis returns
+        # empty strings → no feature → inflectable=False
+        assert word.inflectable is False  # not enough analysis data from LowercaseLemmatizer
+
+    def test_inflectable_false_when_surface_equals_lemma(self):
+        self._add_vocab("banka", "bank", lemma="banka")
+        item = self.db.get_collocation("banka")
+        item.directions[Direction.PRODUCTION].state = SRSState.REVIEW
+        self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.inflectable is False  # surface==lemma
+
+    def test_inflectable_false_when_inflection_cloze_already_exists(self):
+        """When an exact-surface inflection cloze exists, inflectable=False."""
+        from app.models.srs_item import Direction, SRSState
+
+        lemma = "lep"
+        self._add_vocab("lep", "nice", lemma=lemma)
+        item = self.db.get_collocation("lep")
+        item.directions[Direction.PRODUCTION].state = SRSState.REVIEW
+        self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
+
+        # Create an existing inflection cloze
+        unit = SyntacticUnit(
+            text="lepa",
+            translation="nice (fem)",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma=lemma,
+            disambig_key="morph:adj-nom-f-sg",
+            card_type="cloze",
+            source_sentence="Hiša je lepa.",
+        )
+        self.db.add_collocation(unit, language_code="sl")
+
+        lesson = _make_lesson([("female-1", "Hiša je lepa.")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        lepa_words = [w for w in result.dialogue_lines[0].words if w.surface == "lepa"]
+        for w in lepa_words:
+            assert w.inflectable is False  # cloze already exists
+
+    def test_same_lemma_twice_hits_cache(self):
+        """Two occurrences of the same lemma within one lesson hit inflection cache."""
+        self._add_vocab("banka", "bank", lemma="banka")
+        lesson = _make_lesson([("female-1", "Banka je v banki.")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        # Both "banka" tokens should resolve (lemma same either way)
+        words = result.dialogue_lines[0].words
+        banka_words = [w for w in words if w.lemma == "banka"]
+        assert len(banka_words) >= 1
+
+    def test_unknown_word_has_empty_components(self):
+        lesson = _make_lesson([("female-1", "xyznonexistent")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.progress is None
+        assert word.srs_state == "unknown"
+        assert word.active_state == "unknown"
+
+    def test_inflectable_path_with_analysis_data(self):
+        """Use a custom lemmatizer that returns analysis data to cover inflectable detection."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockLemmatizer:
+            def lemmatize(self, word: str, language_code: str) -> str:
+                if word == "hodim":
+                    return "hoditi"
+                return word.lower()
+
+            def analyze(self, word: str, language_code: str) -> tuple[str, str, str]:
+                if word == "hodim":
+                    return "hoditi", "", ""
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence: str, language_code: str) -> list:
+                if "hodim" in sentence:
+                    return [
+                        _TA(
+                            surface="hodim", lemma="hoditi", upos="VERB", case="", number="Sing", person="1", gender=""
+                        ),
+                    ]
+                return []
+
+        from app.models.srs_item import Direction, SRSState
+
+        self._add_vocab("hoditi", "to walk", lemma="hoditi")
+        item = self.db.get_collocation("hoditi")
+        item.directions[Direction.PRODUCTION].state = SRSState.REVIEW
+        item.directions[Direction.RECOGNITION].state = SRSState.REVIEW
+        item.directions[Direction.PRODUCTION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        item.directions[Direction.RECOGNITION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        self.db.update_direction(item.guid, Direction.RECOGNITION, item.directions[Direction.RECOGNITION])
+        self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
+
+        lesson = _make_lesson([("female-1", "hodim")])
+        result = extract_transcript(lesson, self.db, _MockLemmatizer(), today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        # Now lemmatizer maps "hodim" → "hoditi" → base found → inflectable detection runs
+        # ud_feats_to_tt_feature("VERB", "", "Sing", "1", "") → "verb:1sg" → is_a1_morphology_feature True
+        assert word.inflectable is True
+        assert word.inflection_feature == "verb:1sg"
+        assert word.srs_state != "unknown"
+
+    def test_inflection_cloze_exact_match_path(self):
+        """When an inflection cloze with exact surface match exists, it takes priority over the base."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockLemmatizer2:
+            def lemmatize(self, word: str, language_code: str) -> str:
+                if word == "lepa":
+                    return "lep"
+                return word.lower()
+
+            def analyze(self, word: str, language_code: str) -> tuple[str, str, str]:
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence: str, language_code: str) -> list:
+                if "lep" in sentence:
+                    return [
+                        _TA(
+                            surface="Lepa", lemma="lep", upos="ADJ", case="Nom", number="Sing", person="", gender="Fem"
+                        ),
+                        _TA(surface="je", lemma="je", upos="AUX", case="", number="", person="", gender=""),
+                        _TA(
+                            surface="lepa", lemma="lep", upos="ADJ", case="Nom", number="Sing", person="", gender="Fem"
+                        ),
+                    ]
+                return []
+
+        from app.models.srs_item import Direction, SRSState
+
+        self._add_vocab("lep", "nice", lemma="lep")
+        item = self.db.get_collocation("lep")
+        item.directions[Direction.PRODUCTION].state = SRSState.REVIEW
+        item.directions[Direction.RECOGNITION].state = SRSState.REVIEW
+        item.directions[Direction.PRODUCTION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        item.directions[Direction.RECOGNITION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        self.db.update_direction(item.guid, Direction.RECOGNITION, item.directions[Direction.RECOGNITION])
+        self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
+
+        # Create an inflection cloze with exact surface "lepa"
+        unit = SyntacticUnit(
+            text="lepa",
+            translation="nice (fem)",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="lep",
+            disambig_key="morph:adj-nom-f-sg",
+            card_type="cloze",
+            source_sentence="Lepa je lepa.",
+        )
+        self.db.add_collocation(unit, language_code="sl")
+
+        lesson = _make_lesson([("female-1", "Lepa je lepa.")])
+        result = extract_transcript(lesson, self.db, _MockLemmatizer2(), today=self.today)
+        words = result.dialogue_lines[0].words
+        lepa_words = [w for w in words if w.surface == "lepa"]
+        for w in lepa_words:
+            # Resolved as inflection cloze → card_type=cloze
+            assert w.card_type == "cloze"
+            assert w.inflectable is False  # already has the cloze
+            assert w.active_direction == "production"
+
+    def test_inflectable_else_branch_when_analysis_missing(self):
+        """Surface!=lemma but no analysis_by_surface entry → feature_str='' (line 242)."""
+
+        class _MockNoAnalysis:
+            def lemmatize(self, word, language_code):
+                return {"hodim": "hoditi"}.get(word, word.lower())
+
+            def analyze(self, word, language_code):
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence, language_code):
+                return []
+
+        from app.models.srs_item import Direction, SRSState
+
+        self._add_vocab("hoditi", "to walk", lemma="hoditi")
+        item = self.db.get_collocation("hoditi")
+        item.directions[Direction.PRODUCTION].state = SRSState.REVIEW
+        item.directions[Direction.RECOGNITION].state = SRSState.REVIEW
+        item.directions[Direction.PRODUCTION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        item.directions[Direction.RECOGNITION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        self.db.update_direction(item.guid, Direction.RECOGNITION, item.directions[Direction.RECOGNITION])
+        self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
+
+        lesson = _make_lesson([("female-1", "hodim")])
+        result = extract_transcript(lesson, self.db, _MockNoAnalysis(), today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        # analysis_by_surface is empty → ta=None → feature_str="" → no inflectable detection
+        assert word.inflectable is False
+        assert word.inflection_feature is None
+        assert word.srs_state != "unknown"
+
+    def test_inflection_cloze_with_reviewed_production_hits_inflectable_else_branch(self):
+        """When inflection cloze exists and its production is REVIEW/KNOWN, the
+        inflectable check's `inflection_match is not None` else branch is taken."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockLemmatizer3:
+            def lemmatize(self, word, language_code):
+                return {"Lepa": "lep", "lepa": "lep"}.get(word, word.lower())
+
+            def analyze(self, word, language_code):
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence, language_code):
+                return [
+                    _TA(surface="Lepa", lemma="lep", upos="ADJ", case="Nom", number="Sing", person="", gender="Fem"),
+                    _TA(surface="je", lemma="je", upos="AUX", case="", number="", person="", gender=""),
+                    _TA(surface="lepa", lemma="lep", upos="ADJ", case="Nom", number="Sing", person="", gender="Fem"),
+                ]
+
+        from app.models.srs_item import Direction, SRSState
+
+        self._add_vocab("lep", "nice", lemma="lep")
+        item = self.db.get_collocation("lep")
+        item.directions[Direction.PRODUCTION].state = SRSState.REVIEW
+        item.directions[Direction.RECOGNITION].state = SRSState.REVIEW
+        item.directions[Direction.PRODUCTION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        item.directions[Direction.RECOGNITION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        self.db.update_direction(item.guid, Direction.RECOGNITION, item.directions[Direction.RECOGNITION])
+        self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
+
+        # Create an inflection cloze with exact surface "lepa" AND set its PRODUCTION to REVIEW
+        unit = SyntacticUnit(
+            text="lepa",
+            translation="nice (fem)",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="lep",
+            disambig_key="morph:adj-nom-f-sg",
+            card_type="cloze",
+            source_sentence="Lepa je lepa.",
+        )
+        self.db.add_collocation(unit, language_code="sl")
+
+        # Set the cloze's production to REVIEW/KNOWN so the inner check is entered
+        ic_item = self.db.get_collocation("lepa")
+        if ic_item is not None:
+            ic_item.directions[Direction.PRODUCTION].state = SRSState.REVIEW
+            ic_item.directions[Direction.PRODUCTION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+            self.db.update_direction(ic_item.guid, Direction.PRODUCTION, ic_item.directions[Direction.PRODUCTION])
+
+        lesson = _make_lesson([("female-1", "Lepa je lepa.")])
+        result = extract_transcript(lesson, self.db, _MockLemmatizer3(), today=self.today)
+        lepa_words = [w for w in result.dialogue_lines[0].words if w.surface == "lepa"]
+        for w in lepa_words:
+            # Token resolved as cloze, but inflectable=False (else branch of inflection_match is None)
+            assert w.inflectable is False
+
+    def test_add_inflection_cloze_lowers_progress(self):
+        """Adding an inflection cloze component lowers the base token's progress."""
+        from app.models.srs_item import Direction, SRSState
+
+        self._add_vocab("delati", "to work", lemma="delati")
+        item = self.db.get_collocation("delati")
+        item.directions[Direction.RECOGNITION].state = SRSState.REVIEW
+        item.directions[Direction.PRODUCTION].state = SRSState.REVIEW
+        item.directions[Direction.RECOGNITION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        item.directions[Direction.PRODUCTION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        # Non-trivial stability so the base has positive mastery; otherwise the
+        # default stability=1.0 maps to log10(1)=0.0 and there's nothing to lower.
+        item.directions[Direction.RECOGNITION].stability = 50.0
+        item.directions[Direction.PRODUCTION].stability = 50.0
+        self.db.update_direction(item.guid, Direction.RECOGNITION, item.directions[Direction.RECOGNITION])
+        self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
+
+        lesson_no_inflection = _make_lesson([("female-1", "delati")])
+        result_no = extract_transcript(lesson_no_inflection, self.db, self.lemmatizer, today=self.today)
+        progress_without = result_no.dialogue_lines[0].words[0].progress
+
+        # Add an inflection cloze for this lemma (no last_review → mastery=0.0)
+        unit = SyntacticUnit(
+            text="delam",
+            translation="I work",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="delati",
+            disambig_key="morph:verb-1sg",
+            card_type="cloze",
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        ic_item = self.db.get_collocation("delam")
+        if ic_item is not None:
+            if Direction.PRODUCTION in ic_item.directions:
+                ic_item.directions[Direction.PRODUCTION].state = SRSState.REVIEW
+            self.db.update_direction(ic_item.guid, Direction.PRODUCTION, ic_item.directions[Direction.PRODUCTION])
+
+        lesson_with_inflection = _make_lesson([("female-1", "delati")])
+        result_with = extract_transcript(lesson_with_inflection, self.db, self.lemmatizer, today=self.today)
+        progress_with = result_with.dialogue_lines[0].words[0].progress
+        assert progress_with is not None
+        assert progress_without is not None
+        assert progress_with < progress_without
+
+    def test_repeated_lemma_triggers_one_base_lookup(self):
+        """N occurrences of the same lemma cause 1 DB lookup, not N (finding #6).
+
+        Regression: without a base_cache, each token calls
+        get_collocation_by_lemma_with_id per occurrence of its lemma.
+        """
+        self._add_vocab("banka", "bank", lemma="banka")
+        lesson = _make_lesson([("female-1", "banka banka banka")])
+
+        original_lookup = self.db.get_collocation_by_lemma_with_id
+        call_count = 0
+
+        def counting_lookup(lemma: str):
+            nonlocal call_count
+            call_count += 1
+            return original_lookup(lemma)
+
+        self.db.get_collocation_by_lemma_with_id = counting_lookup
+        extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        assert call_count == 1, f"expected 1 lookup, got {call_count}"
+
+
+class TestCollocationLemmaKey:
+    """Precompute + persist of collocations.lemma_key (review finding #4).
+
+    _build_collocation_index used to re-lemmatize every multi-word collocation on
+    every /transcript request. The lemma tuple is now stored as lemma_key and
+    reused; rows missing it are lemmatized once and persisted (self-healing
+    backfill), so the request path lemmatizes each collocation at most once ever.
+    """
+
+    def setup_method(self):
+        self.db = SRSDatabase(":memory:")
+        self.lemmatizer = LowercaseLemmatizer()
+
+    def _add_phrase(self, text: str) -> int:
+        self.db.add_collocation(
+            SyntacticUnit(text=text, translation="x", word_count=len(text.split()), difficulty=1, source="user"),
+            language_code="sl",
+        )
+        with self.db._get_conn() as conn:
+            return conn.execute("SELECT id FROM collocations WHERE text = ?", (text,)).fetchone()[0]
+
+    def test_build_collocation_lemma_key_joins_lemmas(self):
+        from app.srs.transcript import build_collocation_lemma_key
+
+        assert build_collocation_lemma_key("Dober Dan", self.lemmatizer, "sl") == "dober dan"
+
+    def test_build_index_lazily_persists_missing_key(self):
+        from app.srs.transcript import _build_collocation_index
+
+        coll_id = self._add_phrase("dober dan")
+        rows = self.db.get_collocations_with_lemma_key("sl", min_word_count=2)
+        assert rows == [(coll_id, "dober dan", None)]
+
+        index = _build_collocation_index(self.db, rows, self.lemmatizer, "sl")
+        assert index == {("dober", "dan"): coll_id}
+
+        # Persisted, so the next request reads the stored key.
+        assert self.db.get_collocations_with_lemma_key("sl", min_word_count=2) == [(coll_id, "dober dan", "dober dan")]
+
+    def test_build_index_uses_stored_key_without_lemmatizing(self):
+        from app.srs.transcript import _build_collocation_index
+
+        coll_id = self._add_phrase("dober dan")
+        self.db.set_lemma_key(coll_id, "dober dan")
+
+        class BoomLemmatizer:
+            def lemmatize(self, *a, **k):
+                raise AssertionError("must not lemmatize when lemma_key is stored")
+
+            def analyze_sentence(self, *a, **k):
+                raise AssertionError("must not analyze when lemma_key is stored")
+
+        rows = self.db.get_collocations_with_lemma_key("sl", min_word_count=2)
+        index = _build_collocation_index(self.db, rows, BoomLemmatizer(), "sl")
+        assert index == {("dober", "dan"): coll_id}
+
+
+class TestExtractPunctPairs:
+    """Tests for _extract_punct_pairs edge cases."""
+
+    def test_surface_not_found_returns_empty(self):
+        """When surface is not a substring of a raw token, both punct fields are empty."""
+        result = _extract_punct_pairs(["foo"], ["bar"])
+        assert result == [("", "")]
+
+
+class TestBitiTranscriptSpecialCase:
+    """Transcript resolution for biti (clozes-only verb)."""
+
+    def setup_method(self):
+        self.db = SRSDatabase(":memory:")
+        self.lemmatizer = LowercaseLemmatizer()
+        self.today = date(2026, 6, 4)
+
+    def test_biti_surface_unknown_is_inflectable_ungated(self):
+        """A biti surface with no cloze yet is inflectable=True, even without a base card."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockBitiLemmatizer:
+            def lemmatize(self, word, language_code):
+                return {"sem": "biti", "ste": "biti", "smo": "biti"}.get(word, word.lower())
+
+            def analyze(self, word, language_code):
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence, language_code):
+                tokens = sentence.split()
+                analyses = []
+                for t in tokens:
+                    t_lower = t.lower()
+                    if t_lower == "sem":
+                        analyses.append(
+                            _TA(surface=t, lemma="biti", upos="AUX", case="", number="Sing", person="1", gender="")
+                        )
+                    elif t_lower == "ste":
+                        analyses.append(
+                            _TA(surface=t, lemma="biti", upos="AUX", case="", number="Plur", person="2", gender="")
+                        )
+                    else:
+                        analyses.append(
+                            _TA(surface=t, lemma=t_lower, upos="", case="", number="", person="", gender="")
+                        )
+                return analyses
+
+        lesson = _make_lesson([("female-1", "Sem doma")])
+        result = extract_transcript(lesson, self.db, _MockBitiLemmatizer(), today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.surface == "Sem"
+        assert word.lemma == "biti"
+        assert word.srs_state == "unknown"
+        assert word.inflectable is True
+        assert word.inflection_feature == "verb:1sg"
+
+    def test_biti_surface_equals_lemma_no_inflectable(self):
+        """When biti surface == lemma (rare, but guards the branch)."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockLemmatizer:
+            def lemmatize(self, word, language_code):
+                return word.lower()
+
+            def analyze(self, word, language_code):
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence, language_code):
+                return [
+                    _TA(surface=t, lemma=t.lower(), upos="", case="", number="", person="", gender="")
+                    for t in sentence.split()
+                ]
+
+        # biti as base-form surface — unlikely in practice but tests the surface==lemma branch
+        lesson = _make_lesson([("female-1", "biti")])
+        result = extract_transcript(lesson, self.db, _MockLemmatizer(), today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.lemma == "biti"
+        assert word.inflectable is False  # surface==lemma
+
+    def test_biti_surface_no_analysis_no_inflectable(self):
+        """biti surface with no analysis_by_surface entry → feature_str='' → inflectable=False."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockNoAnalysis:
+            def lemmatize(self, word, language_code):
+                return {"ste": "biti"}.get(word, word.lower())
+
+            def analyze(self, word, language_code):
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence, language_code):
+                # Return analysis for "kje" only — "ste" is absent from the dict
+                return [
+                    _TA(surface="kje", lemma="kje", upos="ADV", case="", number="", person="", gender=""),
+                ]
+
+        lesson = _make_lesson([("female-1", "kje ste")])
+        result = extract_transcript(lesson, self.db, _MockNoAnalysis(), today=self.today)
+        # ste has no analysis → feature_str='' → inflectable stays False
+        ste_words = [w for w in result.dialogue_lines[0].words if w.surface == "ste"]
+        assert len(ste_words) == 1
+        assert ste_words[0].inflectable is False
+
+    def test_biti_surface_non_a1_feature_no_inflectable(self):
+        """biti surface with analysis but non-A1 feature → inflectable=False."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockNonA1:
+            def lemmatize(self, word, language_code):
+                return {"ste": "biti"}.get(word, word.lower())
+
+            def analyze(self, word, language_code):
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence, language_code):
+                tokens = sentence.split()
+                analyses = []
+                for t in tokens:
+                    t_lower = t.lower()
+                    if t_lower == "ste":
+                        # Return a non-A1 feature (missing number makes ud_feats_to_tt_feature return None)
+                        analyses.append(
+                            _TA(surface=t, lemma="biti", upos="AUX", case="", number="", person="2", gender="")
+                        )
+                    else:
+                        analyses.append(
+                            _TA(surface=t, lemma=t_lower, upos="", case="", number="", person="", gender="")
+                        )
+                return analyses
+
+        lesson = _make_lesson([("female-1", "ste")])
+        result = extract_transcript(lesson, self.db, _MockNonA1(), today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.lemma == "biti"
+        # ud_feats_to_tt_feature returns None for person=2, number="" → inflectable stays False
+        assert word.inflectable is False
+
+    def test_biti_surface_resolves_existing_inflection_cloze(self):
+        """A biti surface with an existing conjugation cloze resolves to that cloze."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockBitiLemmatizer2:
+            def lemmatize(self, word, language_code):
+                return {"ste": "biti"}.get(word, word.lower())
+
+            def analyze(self, word, language_code):
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence, language_code):
+                tokens = sentence.split()
+                analyses = []
+                for t in tokens:
+                    t_lower = t.lower()
+                    if t_lower == "ste":
+                        analyses.append(
+                            _TA(surface=t, lemma="biti", upos="AUX", case="", number="Plur", person="2", gender="")
+                        )
+                    else:
+                        analyses.append(
+                            _TA(surface=t, lemma=t_lower, upos="", case="", number="", person="", gender="")
+                        )
+                return analyses
+
+        # Create a conjugation cloze for "ste"
+        unit = SyntacticUnit(
+            text="ste",
+            translation="",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="biti",
+            disambig_key="morph:verb-2pl",
+            card_type="cloze",
+            source_sentence="Zdravo kje {{c1::ste}}",
+            grammar="biti, 2nd person plural",
+        )
+        self.db.add_collocation(unit, language_code="sl")
+
+        lesson = _make_lesson([("female-1", "Zdravo kje ste")])
+        result = extract_transcript(lesson, self.db, _MockBitiLemmatizer2(), today=self.today)
+        # Find the "ste" word
+        ste_words = [w for w in result.dialogue_lines[0].words if w.surface == "ste"]
+        assert len(ste_words) == 1
+        w = ste_words[0]
+        assert w.lemma == "biti"
+        assert w.card_type == "cloze"
+        assert w.inflectable is False  # already has the cloze
+        assert w.srs_state != "unknown"
+
+    def test_biti_surface_no_inflection_cloze_still_inflectable(self):
+        """biti surface with no exact cloze is inflectable=True ungated,
+        even when no base card exists at all."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockBitiLemmatizer3:
+            def lemmatize(self, word, language_code):
+                return {"smo": "biti"}.get(word, word.lower())
+
+            def analyze(self, word, language_code):
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence, language_code):
+                tokens = sentence.split()
+                analyses = []
+                for t in tokens:
+                    t_lower = t.lower()
+                    if t_lower == "smo":
+                        analyses.append(
+                            _TA(surface=t, lemma="biti", upos="AUX", case="", number="Plur", person="1", gender="")
+                        )
+                    else:
+                        analyses.append(
+                            _TA(surface=t, lemma=t_lower, upos="", case="", number="", person="", gender="")
+                        )
+                return analyses
+
+        lesson = _make_lesson([("female-1", "smo")])
+        result = extract_transcript(lesson, self.db, _MockBitiLemmatizer3(), today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.lemma == "biti"
+        assert word.srs_state == "unknown"
+        assert word.inflectable is True
+        assert word.inflection_feature == "verb:1pl"
+
+    def test_regular_verb_no_base_not_inflectable(self):
+        """Non-special verb with no base is NOT inflectable — still gated."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockRegularLemmatizer:
+            def lemmatize(self, word, language_code):
+                return {"hodim": "hoditi"}.get(word, word.lower())
+
+            def analyze(self, word, language_code):
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence, language_code):
+                tokens = sentence.split()
+                analyses = []
+                for t in tokens:
+                    t_lower = t.lower()
+                    if t_lower == "hodim":
+                        analyses.append(
+                            _TA(surface=t, lemma="hoditi", upos="VERB", case="", number="Sing", person="1", gender="")
+                        )
+                    else:
+                        analyses.append(
+                            _TA(surface=t, lemma=t_lower, upos="", case="", number="", person="", gender="")
+                        )
+                return analyses
+
+        lesson = _make_lesson([("female-1", "hodim")])
+        result = extract_transcript(lesson, self.db, _MockRegularLemmatizer(), today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.lemma == "hoditi"
+        assert word.srs_state == "unknown"
+        assert word.inflectable is False  # no base → gated
+
+
+class TestExtractTranscriptCaching:
+    """extract_transcript populates the persistent cache and reuses it on subsequent calls."""
+
+    def setup_method(self):
+        self.db = SRSDatabase(":memory:")
+        self.call_count = 0
+
+    class _CountingLemmatizer(LowercaseLemmatizer):
+        _cache_version = "test-v1"
+
+        def __init__(self, owner):
+            super().__init__()
+            self._owner = owner
+
+        def analyze_sentence(self, sentence: str, language_code: str) -> list:
+            self._owner.call_count += 1
+            return super().analyze_sentence(sentence, language_code)
+
+    def test_populates_and_reuses_cache(self):
+        lem = self._CountingLemmatizer(self)
+        lesson = _make_lesson([("female-1", "Dober dan"), ("male-1", "Kako si")])
+        today = date(2026, 6, 4)
+
+        # First call: both phrases miss cache → 2 lemmatizer invocations
+        result1 = extract_transcript(lesson, self.db, lem, today=today)
+        assert len(result1.dialogue_lines) == 2
+        assert self.call_count == 2
+
+        # Cache should have entries for both phrases
+        for text in ("Dober dan", "Kako si"):
+            cached = self.db.get_sentence_analysis(text, "sl", "test-v1")
+            assert cached is not None, f"Expected cache entry for {text}"
+
+        # Second call: both cache hits → 0 lemmatizer invocations
+        result2 = extract_transcript(lesson, self.db, lem, today=today)
+        assert len(result2.dialogue_lines) == 2
+        assert self.call_count == 2  # unchanged
+
+    def test_model_version_mismatch_re_analyzes(self):
+        lem = self._CountingLemmatizer(self)
+        lesson = _make_lesson([("female-1", "Dober dan")])
+        today = date(2026, 6, 4)
+
+        # Populate cache with a different model_version manually
+        self.db.set_sentence_analysis(
+            "Dober dan", "sl", "other-v1", _serialize_analyses([TokenAnalysis(surface="Dober", lemma="dober")])
+        )
+        # First call: version mismatch → 1 lemmatizer invocation
+        extract_transcript(lesson, self.db, lem, today=today)
+        assert self.call_count == 1

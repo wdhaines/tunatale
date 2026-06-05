@@ -119,6 +119,17 @@ class FakeReader:
         ("no_i_tag__fallback", "plain text", "plain text"),
         ("empty", "", ""),
         ("with_sound_tag__trailing_sound_stripped", "<i>x</i><br><br>extra<br><br>[sound:y.mp3]", "x"),
+        # A morphology cloze (e.g. biti) has no <i> word translation, only a
+        # grammar span. The bare-text fallback must NOT strip the span and
+        # return its text — that leaks "biti, 3rd person singular" into the
+        # translation column on every sync_pull.
+        ("grammar_only__no_leak", '<span class="grammar">biti, 3rd person singular</span>', ""),
+        (
+            "grammar_only_with_sound__no_leak",
+            '<span class="grammar">biti, 3rd person singular</span><br><br>[sound:y.mp3]',
+            "",
+        ),
+        ("st_span_only__no_leak", '<span class="st">It is open every day</span>', ""),
     ],
 )
 def test_extract_cloze_translation(label, back_extra, expected):

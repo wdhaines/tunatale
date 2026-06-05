@@ -480,6 +480,39 @@ class TestDesiredRetentionCache:
         assert db.get_anki_state_cache("desired_retention") is None
 
 
+class TestMaximumReviewIntervalCache:
+    """Tests for refresh/resolve of maximum_review_interval."""
+
+    def test_refresh_caches_value_from_modern_deck_config(self):
+        """refresh_maximum_review_interval reads field 16 and caches it."""
+        from app.srs.queue_stats import refresh_maximum_review_interval
+
+        db = SRSDatabase(":memory:")
+        conn = make_modern_anki_conn(new_per_day=20, max_review_interval=36500)
+        refresh_maximum_review_interval(db, conn, "0. Slovene")
+
+        row = db.get_anki_state_cache("maximum_review_interval")
+        assert row is not None
+        assert int(row[0]) == 36500
+
+    def test_refresh_writes_nothing_when_field_absent(self):
+        """No field 16 in the blob → cache untouched, resolver falls back to default."""
+        from app.srs.queue_stats import refresh_maximum_review_interval
+
+        db = SRSDatabase(":memory:")
+        conn = make_modern_anki_conn(new_per_day=20)  # no field 16
+        refresh_maximum_review_interval(db, conn, "0. Slovene")
+        assert db.get_anki_state_cache("maximum_review_interval") is None
+
+    def test_refresh_no_error_when_deck_missing(self):
+        from app.srs.queue_stats import refresh_maximum_review_interval
+
+        db = SRSDatabase(":memory:")
+        conn = make_modern_anki_conn(new_per_day=20, max_review_interval=36500)
+        refresh_maximum_review_interval(db, conn, "No Such Deck")  # must not raise
+        assert db.get_anki_state_cache("maximum_review_interval") is None
+
+
 class TestResolveFSRSParams:
     """Tests for resolve_fsrs_params() priority chain."""
 

@@ -1,16 +1,20 @@
-"""Generate a candidate function-word frozenset from a curriculum's lessons.
+"""Generate a candidate function-word ``include`` list from a curriculum's lessons.
 
 Usage:
     uv run python -m app.srs.build_function_word_list --curriculum-id <id>
 
-Prints a Python frozenset literal of casefolded tokens that occur frequently
-across NATURAL_SPEED phrases and pass cheap heuristics. The user reviews,
-strips obvious content words, and pastes the result into function_words.py.
+Prints (to stdout) a JSON array of casefolded tokens that occur frequently across
+NATURAL_SPEED phrases and pass cheap heuristics — review, strip obvious content
+words, and paste into the ``include`` field of
+``app/srs/data/function_words/<lang>.json``. A per-token frequency table is written
+to stderr. This proposes only the surface ``include`` list; the ``pos`` set
+(closed-class UPOS tags) is hand-maintained.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from collections import Counter
@@ -77,13 +81,19 @@ def main() -> None:
         if lesson_count >= 2 or count >= 4:
             candidates.append((token, count, lesson_count))
 
-    # Print as frozenset literal
-    print(f"# Generated 2026-05-12 from curriculum {args.curriculum_id!r} over {len(lesson_ids)} lessons.")
-    print("# Token  count  lessons")
-    print("SLOVENE_FUNCTION_WORDS: frozenset[str] = frozenset({")
+    # Frequency table + provenance → stderr (keeps stdout cleanly pasteable).
+    print(
+        f"# Candidate 'include' list from curriculum {args.curriculum_id!r} over "
+        f"{len(lesson_ids)} lessons. Review, strip content words, paste into the "
+        f"'include' field of app/srs/data/function_words/<lang>.json.",
+        file=sys.stderr,
+    )
+    print("# token  count  lessons", file=sys.stderr)
     for token, count, lesson_count in candidates:
-        print(f'    "{token}",    # {count} occurrences across {lesson_count} lessons')
-    print("})")
+        print(f"#   {token}  {count}  {lesson_count}", file=sys.stderr)
+
+    # Pasteable JSON 'include' array → stdout.
+    print(json.dumps([token for token, _count, _lc in candidates], ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

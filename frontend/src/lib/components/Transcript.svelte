@@ -1,6 +1,7 @@
 <script lang="ts">
 	import WordSpan from '$lib/WordSpan.svelte';
 	import Tooltip from './Tooltip.svelte';
+	import type { TooltipActions } from './Tooltip.svelte';
 	import { api } from '$lib/api';
 	import type { LessonDetail, TranscriptData, WordToken } from '$lib/api';
 	import { buildScenes, fallbackScenes } from '$lib/transcriptScenes';
@@ -24,10 +25,11 @@
 		listenLoading: boolean;
 		listenResult: { registered: number } | null;
 		error: string;
-		onStateChange?: (lemma: string, srs_item_id: number | null) => void;
-		onCollocationStateChange?: (lemma: string, span_id: number, current_state: string) => void;
+		onWordClick?: (word: WordToken, lineIndex: number) => void;
+		onCollocationStateChange?: (span_id: number) => void;
 		onMarkListened: () => void;
 		onCreatePhrase?: (args: CreatePhraseArgs) => void | Promise<void>;
+		tooltipActions?: TooltipActions;
 	}
 
 	let {
@@ -37,10 +39,11 @@
 		listenLoading,
 		listenResult,
 		error,
-		onStateChange,
+		onWordClick,
 		onCollocationStateChange,
 		onMarkListened,
-		onCreatePhrase
+		onCreatePhrase,
+		tooltipActions
 	}: Props = $props();
 
 	type WordSegment = { type: 'word'; word: WordToken } | { type: 'collocation'; words: WordToken[]; span_id: number };
@@ -255,12 +258,7 @@
 	}
 
 	function handleCollocationClick(segment: { words: WordToken[]; span_id: number }) {
-		const first = segment.words[0];
-		onCollocationStateChange?.(
-			first.collocation_lemma!,
-			segment.span_id,
-			first.collocation_srs_state!
-		);
+		onCollocationStateChange?.(segment.span_id);
 	}
 
 	function handleCollocationKeydown(
@@ -373,6 +371,7 @@
 				{#each scene.lines as line (line.transcriptIndex)}
 					{@const lineIndex = line.transcriptIndex}
 					{@const segments = groupIntoSegments(line.words)}
+					{@const lineSentence = transcript.dialogue_lines[lineIndex]?.sentence ?? ''}
 					<div class="dialogue-line">
 						<span class="dialogue-role">{line.role}</span>
 						<div class="dialogue-line-body">
@@ -387,7 +386,7 @@
 									{#if segment.type === 'collocation'}
 										<Tooltip
 											translation={altHeld ? null : segment.words[0].collocation_translation}
-											state={altHeld ? null : segment.words[0].collocation_srs_state}
+											word={segment.words[0]}
 										>
 											<span
 												class="collocation-span {collocationClassFor(segment.words[0].collocation_srs_state!)}"
@@ -400,7 +399,7 @@
 													{@const wIdx = wordIndexInLine(segments, segIdx, innerIdx)}
 													<WordSpan
 														word={cw}
-														{onStateChange}
+														onWordClick={onWordClick}
 														requireModifier={true}
 														altHover={altHeld}
 														lineIndex={lineIndex}
@@ -419,10 +418,12 @@
 										>
 											<WordSpan
 												word={segment.word}
-												{onStateChange}
+												onWordClick={onWordClick}
 												lineIndex={lineIndex}
 												wordIndex={wIdx}
 												selected={wordIsSelected(lineIndex, wIdx)}
+												sentence={lineSentence}
+												tooltipActions={tooltipActions}
 											/>
 										</span>
 									{/if}
@@ -663,7 +664,7 @@
 	.dialogue-words {
 		display: block;
 		line-height: 1.6;
-		user-select: none;
+		user-select: text;
 	}
 	.line-slow {
 		margin-top: 0.15rem;

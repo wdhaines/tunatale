@@ -4,6 +4,8 @@ AI-generated audio language curricula — Pimsleur-style listening with content 
 
 ## Developer Commands
 
+**⚠️ Must run `./test.sh` before every commit — the full suite must pass, or you DO NOT commit.**
+
 ```bash
 # Full suite (root): lint + format + pytest + svelte-check + vitest + playwright
 ./test.sh
@@ -26,7 +28,7 @@ cd frontend && bun run test:e2e                 # playwright
 
 Two main packages:
 
-- **`backend/`** — FastAPI app (`app/main.py`), Python 3.13, `uv` for deps
+- **`backend/`** — FastAPI app (`app/main.py`), Python 3.14, `uv` for deps
   - `app/anki/` — Anki collection reading & USN sync (use `safety.safe_open`, never raw sqlite3)
   - `app/api/` — FastAPI route modules
   - `app/audio/` — EdgeTTS + audio assembly pipeline

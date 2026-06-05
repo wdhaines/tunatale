@@ -19,6 +19,18 @@ dependencies = [
     "numpy>=2.0.0",
 ]
 
+# Opt-in Slovene morphological analyzer (sentence-aware lemmas + A1 morphology
+# features). Deliberately an *extra*, not a dependency-group: CI and the standard
+# dev setup both run `uv sync --all-groups`, which does NOT pull extras — so this
+# keeps PyTorch out of CI (the lemmatizer falls back to LowercaseLemmatizer when
+# classla is absent). Install it explicitly:
+#     uv sync --all-groups --extra classla
+# classla 2.2.1 pins torch<=2.6, but torch only ships cp314 wheels from 2.12; the
+# `[tool.uv] override-dependencies` below forces a 3.14-capable torch so the
+# resolve succeeds. See docs/walkthrough.md §22.2.
+[project.optional-dependencies]
+classla = ["classla==2.2.1"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
 
@@ -34,6 +46,13 @@ dev = [
     "anyio>=4.0.0",
     "fsrs-rs-python>=0.8.0",
 ]
+
+[tool.uv]
+# classla 2.2.1 pins torch<=2.6, which has no cp314 (Python 3.14) wheel — torch
+# only gained 3.14 support at 2.12. Override the pin so the `classla` extra
+# resolves on 3.14. Inert unless that extra is synced (torch isn't pulled
+# otherwise), so `uv sync --all-groups` stays PyTorch-free. See walkthrough §22.2.
+override-dependencies = ["torch==2.12.0"]
 
 [tool.ruff]
 target-version = "py314"
@@ -68,6 +87,12 @@ filterwarnings = [
     # loop teardown (pytest_asyncio/plugin.py) — plugin-internal, not a project leak.
     "default::ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
+    # Third-party file-handle leak: reldi_tokeniser (a classla tokenizer dependency) opens
+    # abbrev/punct files at import without closing them. Unfixable by us, and only present
+    # when the optional `classla` extra is installed locally (never in CI). Listed LAST so
+    # it takes precedence over default::ResourceWarning above (pytest inserts each filter
+    # at the front, so the final entry wins).
+    "ignore::ResourceWarning:reldi_tokeniser",
 ]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

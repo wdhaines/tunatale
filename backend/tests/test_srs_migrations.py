@@ -73,7 +73,99 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 27
+        assert CURRENT_VERSION == 31
+
+    def test_migrates_v27_to_v28_adds_lemma_key_column(self, tmp_path):
+        """v28 adds collocations.lemma_key (space-joined lemma tuple for span matching)."""
+        import sqlite3
+
+        from app.srs.migrations import _column_exists, _set_version, migrate_v27_to_v28
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.execute("CREATE TABLE collocations (id INTEGER PRIMARY KEY, text TEXT)")
+        _set_version(conn, 27)
+        assert not _column_exists(conn, "collocations", "lemma_key")
+
+        migrate_v27_to_v28(conn)
+
+        assert _column_exists(conn, "collocations", "lemma_key")
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 28
+
+        # Defaults to NULL (lazily populated at read/write time).
+        conn.execute("INSERT INTO collocations (id, text) VALUES (1, 'dober dan')")
+        assert conn.execute("SELECT lemma_key FROM collocations").fetchone()[0] is None
+
+        # Idempotent.
+        migrate_v27_to_v28(conn)
+        assert _column_exists(conn, "collocations", "lemma_key")
+
+    def test_migrates_v28_to_v29_backfills_inflection_grammar(self, tmp_path):
+        """v29 backfills the grammar column for inflection clozes with empty grammar."""
+        import sqlite3
+
+        from app.srs.migrations import _set_version, migrate_v28_to_v29
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.execute(
+            """CREATE TABLE collocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT UNIQUE NOT NULL,
+                lemma TEXT,
+                disambig_key TEXT NOT NULL DEFAULT '',
+                card_type TEXT DEFAULT 'vocab',
+                grammar TEXT DEFAULT ''
+            )"""
+        )
+        # Seed: inflection cloze with null grammar → should be backfilled
+        conn.execute(
+            "INSERT INTO collocations (text, lemma, disambig_key, card_type, grammar) "
+            "VALUES ('sem', 'biti', 'morph:verb-1sg', 'cloze', NULL)"
+        )
+        # Seed: inflection cloze with empty grammar → should be backfilled
+        conn.execute(
+            "INSERT INTO collocations (text, lemma, disambig_key, card_type, grammar) "
+            "VALUES ('mesto', 'mesto', 'morph:noun-acc-sg', 'cloze', '')"
+        )
+        # Seed: inflection cloze that already has grammar → should not be touched
+        conn.execute(
+            "INSERT INTO collocations (text, lemma, disambig_key, card_type, grammar) "
+            "VALUES ('psa', 'pes', 'morph:noun-acc-sg', 'cloze', 'pes, accusative singular')"
+        )
+        # Seed: non-inflection cloze (no morph:) → should not be touched
+        conn.execute(
+            "INSERT INTO collocations (text, lemma, disambig_key, card_type, grammar) "
+            "VALUES ('some text', NULL, '', 'cloze', NULL)"
+        )
+        # Seed: unrecognized morphology with null lemma → format_morphology_hint returns ""
+        conn.execute(
+            "INSERT INTO collocations (text, lemma, disambig_key, card_type, grammar) "
+            "VALUES ('xyz', NULL, 'morph:unknown', 'cloze', NULL)"
+        )
+        # Seed: vocab card (not cloze) → should not be touched
+        conn.execute(
+            "INSERT INTO collocations (text, lemma, disambig_key, card_type, grammar) "
+            "VALUES ('hiša', NULL, '', 'vocab', NULL)"
+        )
+
+        _set_version(conn, 28)
+        migrate_v28_to_v29(conn)
+
+        conn.row_factory = sqlite3.Row
+        rows = {
+            r["text"]: r["grammar"]
+            for r in conn.execute("SELECT text, grammar FROM collocations ORDER BY text").fetchall()
+        }
+        assert rows["sem"] == "biti, 1st person singular", f"got {rows['sem']!r}"
+        assert rows["mesto"] == "mesto, accusative singular", f"got {rows['mesto']!r}"
+        assert rows["psa"] == "pes, accusative singular", "existing grammar should be preserved"
+        assert rows["some text"] is None, "non-morph clozes should not be affected"
+        assert rows["hiša"] is None, "vocab cards should not be affected"
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 29
+
+        # Idempotent.
+        migrate_v28_to_v29(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 29
+        # (data already validated above)
 
     def test_migrates_v26_to_v27_adds_replay_shadow_columns(self, tmp_path):
         """v27 adds Stage-3b shadow columns (stability_replayed, fsrs_difficulty_replayed)."""
@@ -1745,3 +1837,86 @@ class TestMigrateV12ToV13:
 
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute("INSERT INTO tt_revlog (id, collocation_id, direction) VALUES (1, 999, 'recognition')")
+
+    def test_migrates_v29_to_v30_creates_ignored_lemmas_table(self, tmp_path):
+        """v30 creates the ignored_lemmas table."""
+        import sqlite3
+
+        from app.srs.migrations import _set_version, migrate_v29_to_v30
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        _set_version(conn, 29)
+        migrate_v29_to_v30(conn)
+
+        # Table exists and accepts data
+        conn.execute("INSERT INTO ignored_lemmas (language_code, lemma) VALUES ('sl', 'beseda')")
+        row = conn.execute("SELECT language_code, lemma FROM ignored_lemmas").fetchone()
+        assert row == ("sl", "beseda")
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 30
+
+        # Idempotent.
+        migrate_v29_to_v30(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 30
+
+
+class TestMigrateV30ToV31:
+    """Tests for v30→v31 (reversible-known snapshot + fsrs_force_next columns)."""
+
+    def _make_v30_conn(self):
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            CREATE TABLE collocation_directions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                collocation_id INTEGER NOT NULL,
+                direction TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'new',
+                stability REAL NOT NULL DEFAULT 1.0,
+                due_at TEXT,
+                reps INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        conn.execute("PRAGMA user_version = 30")
+        conn.commit()
+        return conn
+
+    def test_adds_snapshot_and_force_columns(self):
+        from app.srs.migrations import migrate_v30_to_v31
+
+        conn = self._make_v30_conn()
+        migrate_v30_to_v31(conn)
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
+        assert "known_prior_state" in cols
+        assert "known_prior_stability" in cols
+        assert "known_prior_due_at" in cols
+        assert "fsrs_force_next" in cols
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 31
+
+    def test_fsrs_force_next_defaults_to_zero(self):
+        from app.srs.migrations import migrate_v30_to_v31
+
+        conn = self._make_v30_conn()
+        conn.execute("INSERT INTO collocation_directions (collocation_id, direction) VALUES (1, 'recognition')")
+        conn.commit()
+        migrate_v30_to_v31(conn)
+        row = conn.execute(
+            "SELECT fsrs_force_next, known_prior_state, known_prior_stability, known_prior_due_at "
+            "FROM collocation_directions"
+        ).fetchone()
+        assert row["fsrs_force_next"] == 0
+        assert row["known_prior_state"] is None
+        assert row["known_prior_stability"] is None
+        assert row["known_prior_due_at"] is None
+
+    def test_idempotent_v30_to_v31(self):
+        from app.srs.migrations import migrate_v30_to_v31
+
+        conn = self._make_v30_conn()
+        migrate_v30_to_v31(conn)
+        migrate_v30_to_v31(conn)  # second call exercises the column-already-exists branches
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
+        assert "fsrs_force_next" in cols
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 31

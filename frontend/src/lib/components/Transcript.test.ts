@@ -32,6 +32,7 @@ const transcriptWithDialogue: TranscriptData = {
   dialogue_lines: [
     {
       role: "Petra",
+      sentence: "",
       words: [
         {
           surface: "zdravo",
@@ -44,6 +45,14 @@ const transcriptWithDialogue: TranscriptData = {
           collocation_srs_state: null,
           collocation_lemma: null,
           collocation_translation: null,
+          card_type: null,
+          active_state: "new",
+          active_direction: null,
+          is_due: false,
+          progress: null,
+          inflectable: false,
+          inflection_feature: null,
+          known_marked: false,
         },
       ],
     },
@@ -56,6 +65,7 @@ const transcriptWithCollocation: TranscriptData = {
   dialogue_lines: [
     {
       role: "Petra",
+      sentence: "",
       words: [
         {
           surface: "dober",
@@ -68,6 +78,14 @@ const transcriptWithCollocation: TranscriptData = {
           collocation_srs_state: "learning",
           collocation_lemma: "dober dan",
           collocation_translation: "good day",
+          card_type: null,
+          active_state: "new",
+          active_direction: null,
+          is_due: false,
+          progress: null,
+          inflectable: false,
+          inflection_feature: null,
+          known_marked: false,
         },
         {
           surface: "dan",
@@ -80,6 +98,14 @@ const transcriptWithCollocation: TranscriptData = {
           collocation_srs_state: "learning",
           collocation_lemma: "dober dan",
           collocation_translation: "good day",
+          card_type: null,
+          active_state: "new",
+          active_direction: null,
+          is_due: false,
+          progress: null,
+          inflectable: false,
+          inflection_feature: null,
+          known_marked: false,
         },
         {
           surface: "hvala",
@@ -92,6 +118,14 @@ const transcriptWithCollocation: TranscriptData = {
           collocation_srs_state: null,
           collocation_lemma: null,
           collocation_translation: null,
+          card_type: null,
+          active_state: "new",
+          active_direction: null,
+          is_due: false,
+          progress: null,
+          inflectable: false,
+          inflection_feature: null,
+          known_marked: false,
         },
       ],
     },
@@ -105,7 +139,7 @@ function defaultProps(overrides = {}) {
     listenLoading: false,
     listenResult: null,
     error: "",
-    onStateChange: vi.fn(),
+    onWordClick: vi.fn(),
     onMarkListened: vi.fn(),
     ...overrides,
   };
@@ -245,7 +279,7 @@ describe("Transcript", () => {
       });
       const span = container.querySelector(".collocation-span") as HTMLElement;
       await fireEvent.click(span);
-      expect(onCollocationStateChange).toHaveBeenCalledWith("dober dan", 99, "learning");
+      expect(onCollocationStateChange).toHaveBeenCalledWith(99);
     });
 
     it("Enter key on collocation wrapper fires onCollocationStateChange", async () => {
@@ -258,50 +292,50 @@ describe("Transcript", () => {
       });
       const span = container.querySelector(".collocation-span") as HTMLElement;
       await fireEvent.keyDown(span, { key: "Enter" });
-      expect(onCollocationStateChange).toHaveBeenCalledWith("dober dan", 99, "learning");
+      expect(onCollocationStateChange).toHaveBeenCalledWith(99);
     });
 
-    it("plain click inside collocation does not fire word-level onStateChange", async () => {
-      const onStateChange = vi.fn();
+    it("plain click inside collocation does not fire word-level onWordClick", async () => {
+      const onWordClick = vi.fn();
       const onCollocationStateChange = vi.fn();
       const { getByText } = render(Transcript, {
         props: defaultProps({
           transcript: transcriptWithCollocation,
-          onStateChange,
+          onWordClick,
           onCollocationStateChange,
         }),
       });
       await fireEvent.click(getByText("dober"));
-      expect(onStateChange).not.toHaveBeenCalled();
+      expect(onWordClick).not.toHaveBeenCalled();
       expect(onCollocationStateChange).toHaveBeenCalled();
     });
 
-    it("Alt+click inside collocation fires word-level onStateChange", async () => {
-      const onStateChange = vi.fn();
+    it("Alt+click inside collocation fires word-level onWordClick", async () => {
+      const onWordClick = vi.fn();
       const onCollocationStateChange = vi.fn();
       const { getByText } = render(Transcript, {
         props: defaultProps({
           transcript: transcriptWithCollocation,
-          onStateChange,
+          onWordClick,
           onCollocationStateChange,
         }),
       });
       await fireEvent.click(getByText("dober"), { altKey: true });
-      expect(onStateChange).toHaveBeenCalledWith("dober", null);
+      expect(onWordClick).toHaveBeenCalledWith(expect.objectContaining({ lemma: "dober" }), 0);
     });
 
-    it("plain click on word outside collocation fires word-level onStateChange", async () => {
-      const onStateChange = vi.fn();
+    it("plain click on word outside collocation fires word-level onWordClick", async () => {
+      const onWordClick = vi.fn();
       const onCollocationStateChange = vi.fn();
       const { getByText } = render(Transcript, {
         props: defaultProps({
           transcript: transcriptWithCollocation,
-          onStateChange,
+          onWordClick,
           onCollocationStateChange,
         }),
       });
       await fireEvent.click(getByText("hvala"));
-      expect(onStateChange).toHaveBeenCalledWith("hvala", null);
+      expect(onWordClick).toHaveBeenCalledWith(expect.objectContaining({ lemma: "hvala" }), 0);
       expect(onCollocationStateChange).not.toHaveBeenCalled();
     });
 
@@ -361,6 +395,14 @@ describe("Transcript", () => {
                 collocation_srs_state: "learning",
                 collocation_lemma: "dober dan",
                 collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
               },
               {
                 surface: "dan",
@@ -373,6 +415,14 @@ describe("Transcript", () => {
                 collocation_srs_state: "learning",
                 collocation_lemma: "dober dan",
                 collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
               },
             ],
           },
@@ -386,7 +436,7 @@ describe("Transcript", () => {
         .closest(".tt-wrap")!
         .querySelector('[role="tooltip"]');
       expect(tooltip).not.toBeNull();
-      expect(tooltip!.textContent).toContain("Learning");
+      expect(tooltip!.textContent).toContain("Not Due");
     });
 
     it("Space key on collocation wrapper fires onCollocationStateChange", async () => {
@@ -477,6 +527,14 @@ describe("Transcript", () => {
                 collocation_srs_state: state,
                 collocation_lemma: "dober dan",
                 collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
               },
               {
                 surface: "dan",
@@ -489,6 +547,14 @@ describe("Transcript", () => {
                 collocation_srs_state: state,
                 collocation_lemma: "dober dan",
                 collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
               },
             ],
           },
@@ -558,6 +624,14 @@ describe("Transcript", () => {
               collocation_srs_state: null,
               collocation_lemma: null,
               collocation_translation: null,
+              card_type: null,
+              active_state: "new",
+              active_direction: null,
+              is_due: false,
+              progress: null,
+              inflectable: false,
+              inflection_feature: null,
+              known_marked: false,
             },
             {
               surface: "mesta",
@@ -570,6 +644,14 @@ describe("Transcript", () => {
               collocation_srs_state: null,
               collocation_lemma: null,
               collocation_translation: null,
+              card_type: null,
+              active_state: "new",
+              active_direction: null,
+              is_due: false,
+              progress: null,
+              inflectable: false,
+              inflection_feature: null,
+              known_marked: false,
             },
             {
               surface: "hvala",
@@ -582,6 +664,14 @@ describe("Transcript", () => {
               collocation_srs_state: null,
               collocation_lemma: null,
               collocation_translation: null,
+              card_type: null,
+              active_state: "new",
+              active_direction: null,
+              is_due: false,
+              progress: null,
+              inflectable: false,
+              inflection_feature: null,
+              known_marked: false,
             },
           ],
         },
@@ -606,6 +696,14 @@ describe("Transcript", () => {
               collocation_srs_state: null,
               collocation_lemma: null,
               collocation_translation: null,
+              card_type: null,
+              active_state: "new",
+              active_direction: null,
+              is_due: false,
+              progress: null,
+              inflectable: false,
+              inflection_feature: null,
+              known_marked: false,
             },
             {
               surface: "mesta",
@@ -618,11 +716,20 @@ describe("Transcript", () => {
               collocation_srs_state: null,
               collocation_lemma: null,
               collocation_translation: null,
+              card_type: null,
+              active_state: "new",
+              active_direction: null,
+              is_due: false,
+              progress: null,
+              inflectable: false,
+              inflection_feature: null,
+              known_marked: false,
             },
           ],
         },
         {
           role: "Ana",
+          sentence: "",
           words: [
             {
               surface: "hvala",
@@ -635,6 +742,14 @@ describe("Transcript", () => {
               collocation_srs_state: null,
               collocation_lemma: null,
               collocation_translation: null,
+              card_type: null,
+              active_state: "new",
+              active_direction: null,
+              is_due: false,
+              progress: null,
+              inflectable: false,
+              inflection_feature: null,
+              known_marked: false,
             },
           ],
         },
@@ -754,6 +869,14 @@ describe("Transcript", () => {
                 collocation_srs_state: "new",
                 collocation_lemma: "centru mesta",
                 collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
               },
               {
                 surface: "mesta",
@@ -766,6 +889,14 @@ describe("Transcript", () => {
                 collocation_srs_state: "new",
                 collocation_lemma: "centru mesta",
                 collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
               },
               {
                 surface: "hvala",
@@ -778,6 +909,14 @@ describe("Transcript", () => {
                 collocation_srs_state: null,
                 collocation_lemma: null,
                 collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
               },
             ],
           },
@@ -965,6 +1104,7 @@ describe("Transcript", () => {
         dialogue_lines: [
           {
             role: "female-1",
+            sentence: "",
             words: [
               {
                 surface: "zdravo",
@@ -977,6 +1117,14 @@ describe("Transcript", () => {
                 collocation_srs_state: null,
                 collocation_lemma: null,
                 collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
               },
             ],
           },
@@ -1021,6 +1169,7 @@ describe("Transcript", () => {
         dialogue_lines: [
           {
             role: "female-1",
+            sentence: "",
             words: [
               {
                 surface: "zdravo",
@@ -1033,11 +1182,20 @@ describe("Transcript", () => {
                 collocation_srs_state: null,
                 collocation_lemma: null,
                 collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
               },
             ],
           },
           {
             role: "female-1",
+            sentence: "",
             words: [
               {
                 surface: "hvala",
@@ -1050,6 +1208,14 @@ describe("Transcript", () => {
                 collocation_srs_state: null,
                 collocation_lemma: null,
                 collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
               },
             ],
           },
@@ -1089,6 +1255,7 @@ describe("Transcript", () => {
         dialogue_lines: [
           {
             role: "female-1",
+            sentence: "",
             words: [
               {
                 surface: "zdravo",
@@ -1101,6 +1268,14 @@ describe("Transcript", () => {
                 collocation_srs_state: null,
                 collocation_lemma: null,
                 collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
               },
             ],
           },
@@ -1138,6 +1313,7 @@ describe("Transcript", () => {
         dialogue_lines: [
           {
             role: "female-1",
+            sentence: "",
             words: [
               {
                 surface: "zdravo",
@@ -1150,6 +1326,14 @@ describe("Transcript", () => {
                 collocation_srs_state: null,
                 collocation_lemma: null,
                 collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
               },
             ],
           },
@@ -1194,6 +1378,7 @@ describe("Transcript", () => {
         dialogue_lines: [
           {
             role: "female-1",
+            sentence: "",
             words: [
               {
                 surface: "zdravo",
@@ -1206,6 +1391,14 @@ describe("Transcript", () => {
                 collocation_srs_state: null,
                 collocation_lemma: null,
                 collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
               },
             ],
           },
@@ -1578,6 +1771,7 @@ describe("Transcript", () => {
       dialogue_lines: [
         {
           role: "A",
+          sentence: "",
           words: [
             {
               surface: "x",
@@ -1590,6 +1784,14 @@ describe("Transcript", () => {
               collocation_srs_state: null,
               collocation_lemma: null,
               collocation_translation: null,
+              card_type: null,
+              active_state: "new",
+              active_direction: null,
+              is_due: false,
+              progress: null,
+              inflectable: false,
+              inflection_feature: null,
+              known_marked: false,
             },
           ],
         },
@@ -1602,6 +1804,7 @@ describe("Transcript", () => {
       dialogue_lines: [
         {
           role: "A",
+          sentence: "",
           words: [
             {
               surface: "first",
@@ -1614,11 +1817,20 @@ describe("Transcript", () => {
               collocation_srs_state: null,
               collocation_lemma: null,
               collocation_translation: null,
+              card_type: null,
+              active_state: "new",
+              active_direction: null,
+              is_due: false,
+              progress: null,
+              inflectable: false,
+              inflection_feature: null,
+              known_marked: false,
             },
           ],
         },
         {
           role: "B",
+          sentence: "",
           words: [
             {
               surface: "second",
@@ -1631,6 +1843,14 @@ describe("Transcript", () => {
               collocation_srs_state: null,
               collocation_lemma: null,
               collocation_translation: null,
+              card_type: null,
+              active_state: "new",
+              active_direction: null,
+              is_due: false,
+              progress: null,
+              inflectable: false,
+              inflection_feature: null,
+              known_marked: false,
             },
           ],
         },
@@ -1698,6 +1918,14 @@ describe("Transcript", () => {
                 collocation_srs_state: null,
                 collocation_lemma: null,
                 collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
               },
               {
                 surface: "two",
@@ -1710,6 +1938,14 @@ describe("Transcript", () => {
                 collocation_srs_state: null,
                 collocation_lemma: null,
                 collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
               },
             ],
           },

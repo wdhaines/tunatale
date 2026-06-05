@@ -182,13 +182,27 @@ class TestEnsureForceFsrsAck:
 
 
 class TestOfflineWriterSetSpecificValue:
-    def test_noop_does_not_raise(self):
+    def test_writes_card_columns_and_marks_dirty(self):
         import sqlite3
 
         conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE cards (id INTEGER PRIMARY KEY, ivl INTEGER, factor INTEGER, data TEXT, mod INTEGER, usn INTEGER)"
+        )
+        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, mod INTEGER)")
+        conn.execute("INSERT INTO col VALUES (1, 0)")
+        conn.execute("INSERT INTO cards (id, ivl, factor, data, mod, usn) VALUES (12345, 0, 0, '', 0, 5)")
+
         writer = OfflineWriter(conn)
-        # Should not raise; S3.7 will implement offline FSRS write
-        writer.set_specific_value_of_card(12345, keys=["ivl", "factor"], new_values=["10", "2500"])
+        writer.set_specific_value_of_card(
+            12345, keys=["ivl", "factor", "data"], new_values=["10", "2500", '{"s": 10.5}']
+        )
+
+        row = conn.execute("SELECT ivl, factor, data, usn FROM cards WHERE id = 12345").fetchone()
+        assert row[0] == 10  # numeric string coerced to int (INTEGER column)
+        assert row[1] == 2500
+        assert row[2] == '{"s": 10.5}'  # JSON blob stays text
+        assert row[3] == -1  # marked dirty for AnkiWeb
 
 
 # ── TestSyncPushForceFsrs ────────────────────────────────────────────────────────

@@ -11,6 +11,8 @@ This walkthrough covers the production TunaTale codebase — the unified applica
 
 **Stage-3 Anki integration (PART 12 onward):** SRS items track two directions independently (RECOGNITION L2→L1 and PRODUCTION L1→L2), mirroring Anki's note/card model. The `app/anki/` package handles direct SQLite access to `collection.anki2` with a backup-and-lock safety envelope (`safe_open`), an offline-first sync engine (push → drain pending revlog → pull) that doesn't depend on AnkiConnect, and a media pipeline (Forvo + EdgeTTS fallback + Pixabay + ffmpeg LUFS normalization). Queue stats read FSRS-5 parameters from Anki's deck_config protobuf, cached in `anki_state_cache`. Frontend has a unified review queue, Anki-running status gating, a single Sync button, and an `/admin/srs` page. PARTs 18–21 cover the parity testing harness, the `tt_revlog` event log, the cloze pipeline, and the frontend toolchain that all support this.
 
+**The word-learning state machine (PART 22 onward):** the model shifted from a flat per-card list to a per-**lemma** state machine — `BASE (recognition → production) → INFLECTIONS` — built on a sentence-aware classla lemmatizer (PART 22), always-on cloze cards with Fluent-Forever ending-blanks (PART 23), and an A1-tuned `morphology_focus` generator (PART 24). PART 25 ties these together: introduction gates, per-lemma mastery coloring, and a fully interactive transcript where any word is a one-click entry into the learning loop. PART 26 covers the f32 FSRS migration and parity Layers 49–66; PART 27 the move toward event-sourced sync; PART 28 the documentation set.
+
 ## Architecture at a Glance
 
 ```
@@ -28,11 +30,11 @@ backend/
 │   ├── media/                # In-app media import (refresh Anki media into TT cache)
 │   ├── anki/                 # Direct sqlite access to collection.anki2 (safety/sync/media)
 │   │   └── media/            # Forvo + EdgeTTS fallback + Pixabay + ffmpeg normalize
-│   └── api/                  # FastAPI route modules (28 endpoints)
+│   └── api/                  # FastAPI route modules (36 endpoints)
 └── tests/
     ├── conftest.py           # Cassette + DB + ASGI fixtures
     ├── cassettes/            # Recorded LLM responses (JSON)
-    └── test_*.py             # 73 test files, ~1460 tests, ~99.95% branch coverage
+    └── test_*.py             # 124 test files, ~2650 tests, 100% branch coverage
 ```
 
 ---
@@ -6266,3 +6268,790 @@ The Svelte 5 compiler injects template fragments that v8 reports as uncovered "b
 `frontend/tests/coverage-gate.test.ts` pins every classification against empirical TunaTale cases — adding or changing a rule means updating both the heuristic and the test.
 
 Maintenance note (`.claude/rules/testing.md`): after any `svelte` / `@vitest/coverage-v8` bump, eyeball the gate's "dropped N phantom branch(es)" line (baseline 46 on 21 files). A >20% delta means either a new phantom shape the filter misses or real bugs misclassified as phantom — fix the heuristic, don't lower the threshold.
+
+---
+
+## PART 22: Sentence-Aware Lemmatizer
+
+PARTs 12–15 key every SRS card on a **lemma** — the dictionary form. The transcript view, the collocation matcher, and `/listen` all reduce surface words to lemmas before looking up cards. The default `LowercaseLemmatizer` just lowercases, which is wrong for an inflected language: Slovene `mize`, `mizo`, `mizi` are all the noun `miza`, and a lowercasing "lemmatizer" treats them as three different words. The lemma-as-unit choice in PART 25's word-learning state machine makes lemmatizer accuracy a **hard dependency** — so this part adds a real morphological analyzer behind the same Protocol.
+
+### 22.1 The Protocol Grew an `analyze_sentence`
+
+`app/srs/lemmatizer.py` defines the `Lemmatizer` Protocol. It used to expose just `lemmatize(word)`; it now also exposes `analyze(word) → (lemma, case, number)` and `analyze_sentence(sentence) → list[TokenAnalysis]`. The sentence method is the load-bearing one — Slovene lemmas are **POS-dependent and only resolvable in context**:
+
+```bash
+sed -n "230,264p" backend/app/srs/lemmatizer.py
+```
+
+```output
+def lemmatize_surfaces_in_context(
+    surfaces: list[str],
+    sentence: str,
+    lemmatizer: Lemmatizer,
+    language_code: str,
+) -> list[str]:
+    """Lemmatize each surface using its *sentence* context, with a single-word fallback.
+
+    Slovene lemmas are POS-dependent: classla reads the bare token ``dobro`` as the
+    adverb (lemma ``dobro``) and bare ``hotel`` as the verb ``hoteti`` — but ``dobro``
+    in *"Vse je dobro"* as the adjective (lemma ``dober``) and ``hotel`` in *"To je
+    hotel"* as the noun. Lemmatizing tokens in isolation therefore mis-keys them and
+    they never match the dictionary-form cards in the DB. We instead analyze the whole
+    *sentence* once and map each *surface* to its in-context lemma, falling back to
+    single-word ``lemmatize`` when a surface isn't found in the analysis (tokenization
+    or punctuation mismatch).
+
+    For ``LowercaseLemmatizer`` ``analyze_sentence`` is a per-token lowercasing, so the
+    result is identical to the old single-word path — this change is a no-op for the
+    default lemmatizer and only sharpens the real (classla) engine.
+
+    Lemmas are lowercased to match the card keyspace (``import_seed`` stores
+    ``lemma = front.lower()``). classla capitalizes proper-noun lemmas
+    (``Ženeve`` → ``Ženeva``), which would otherwise miss the lowercase
+    ``ženeva`` card on a case-sensitive ``lemma =`` lookup.
+    """
+    context = {ta.surface.lower(): ta.lemma.lower() for ta in lemmatizer.analyze_sentence(sentence, language_code)}
+    result: list[str] = []
+    for surface in surfaces:
+        key = surface.lower()
+        if key in context:
+            result.append(context[key])
+        else:
+            result.append(lemmatizer.lemmatize(surface, language_code).lower())
+    return result
+```
+
+`dobro` read as a bare token is the adverb (lemma `dobro`); in *"Vse je dobro"* it is the adjective `dober`. `hotel` alone is the verb `hoteti`; in *"To je hotel"* it is the noun. Lemmatizing tokens in isolation therefore mis-keys them and they never match the dictionary-form card in the DB. `lemmatize_surfaces_in_context` analyzes the whole *sentence* once, then maps each surface back to its in-context lemma, falling back to single-word `lemmatize` only when a surface isn't found in the analysis (tokenization/punctuation mismatch).
+
+For `LowercaseLemmatizer`, `analyze_sentence` is just per-token lowercasing, so the new path is a **no-op for the default** — it only sharpens the real engine. The lemmas are lowercased on the way out to match the card keyspace (`import_seed` stores `lemma = front.lower()`); classla capitalizes proper-noun lemmas (`Ženeve` → `Ženeva`), which would otherwise miss the lowercase `ženeva` card on a case-sensitive lookup (commit `0c26e23`).
+
+### 22.2 The classla Engine Is Opt-In and CI-Invisible
+
+`ClasslaLemmatizer` wraps CLASSLA-Stanza (a PyTorch pipeline for South Slavic languages). It is **never imported at module level** — the `classla` import lives inside `_ensure_pipeline()` and a `try/except ImportError` type alias — so CI, which doesn't install PyTorch, never touches it. The factory selects it only when the user opts in:
+
+```bash
+sed -n "206,227p" backend/app/srs/lemmatizer.py
+```
+
+```output
+@lru_cache(maxsize=1)
+def get_lemmatizer() -> Lemmatizer:
+    """Return a cached lemmatizer based on ``settings.lemmatizer_type``.
+
+    * ``"lowercase"`` (default) — ``LowercaseLemmatizer``
+    * ``"classla"`` — ``ClasslaLemmatizer``, falling back to ``LowercaseLemmatizer``
+      with a logged warning if classla is not importable.
+    """
+    from app.config import settings
+
+    lemmatizer_type = settings.lemmatizer_type
+    if lemmatizer_type == "classla":
+        try:
+            import classla  # noqa: F401 — check importability at factory time
+
+            return ClasslaLemmatizer()
+        except ImportError:
+            _logger.warning(
+                "classla not installed; falling back to LowercaseLemmatizer. "
+                "Install the opt-in extra: `uv sync --all-groups --extra classla` "
+                "(pins classla==2.2.1; the torch==2.12.0 override for Python 3.14 is "
+                "baked into pyproject.toml). Then set lemmatizer_type=classla. "
+                "See docs/walkthrough.md §22.2."
+            )
+    return LowercaseLemmatizer()
+```
+
+Configuration is one new setting, `lemmatizer_type` (`"lowercase"` default, `"classla"` opt-in), in `app/config.py`. Tests pin `lemmatizer_type=lowercase` explicitly (commit `ed8937e`) so a developer's local `.env` with the classla flag can't leak PyTorch into a CI-style run. Models live under `CLASSLA_RESOURCES_DIR` (default `~/classla_resources`); run `classla.download("sl")` once before first use — `Pipeline` does not reliably auto-fetch across classla versions. `ClasslaLemmatizer` caches `analyze_sentence` results **per exact sentence string** (commit `fa80ad1`) — lesson text is stable across requests, so the transcript endpoint's state-change refetches drop from ~3.6 s of NLP to a DB-only lookup once warmed.
+
+**Python 3.14 install caveat (verified 2026-06-02; made reproducible 2026-06-02).** The latest working classla (`2.2.1`) pins `torch<=2.6`, but torch `<=2.6` ships no 3.14 (`cp314`) wheel — torch only gained 3.14 support at `2.12`. So a bare `pip install classla` on 3.14 silently resolves to the ancient `classla==1.1.0`, which crashes on modern torch (PyTorch-2.6 `weights_only=True` → "Vector file is not provided"), and the factory returns a `ClasslaLemmatizer` that fails at first use rather than falling back. classla `2.2.1` is pure-Python, so the fix is to override its torch pin to a 3.14-capable build.
+
+This is now **declared, not ad-hoc.** classla is a `[project.optional-dependencies]` *extra* in `backend/pyproject.toml` (`classla = ["classla==2.2.1"]`), and `[tool.uv] override-dependencies = ["torch==2.12.0"]` forces the 3.14 torch over classla's `torch<=2.6` pin. Install it reproducibly:
+
+```bash
+cd backend && uv sync --all-groups --extra classla
+```
+
+It is an *extra*, not a `[dependency-groups]` group, on purpose: CI and the standard dev setup both run `uv sync --all-groups`, which does **not** pull extras — so PyTorch stays out of CI and the lemmatizer falls back to lowercase there. The override is inert unless the extra is synced (nothing else pulls torch). The model still lives under `CLASSLA_RESOURCES_DIR` (`~/classla_resources`); run `classla.download("sl")` once if it's absent. With this combo the pipeline produces correct lemmas on 3.14 (`hoteli → hoteti`, `smo → biti`, `ste → biti`). (The previous one-off `uv pip install "classla==2.2.1" --override <(echo "torch==2.12.0")` still works but isn't tracked in the lock, which is exactly why it vanished on the 3.13→3.14 upgrade.)
+
+### 22.3 What Was *Not* Built: Bulk Re-Lemmatization
+
+A migration that walked every existing collocation, re-lemmatized its text with classla, and **merged** rows that collapsed to the same lemma was written and then **reverted** (commits `f4bea32` → `a1ecf86`). It was unsafe by design: single-word re-lemmatization is exactly the POS-blind path §22.1 warns about, so it merged `neck` → `door` and `we` → `I`. The legacy deck has genuine surface-keyed duplicate bases (`čas` *and* `časa` as separate cards; `dobrodošli`/`dobrodošel`) that don't fit the lemma-as-unit model — but the resolution is to **dedupe one-at-a-time in Anki with review, or grandfather them**, never to bulk-merge in TT where a mis-lemmatization silently destroys an Anki-linked card.
+
+A smaller transcript-UI affordance landed alongside: lesson text became selectable and copyable (commit `e949cf6`), and the word-state cycle now keys off click-vs-drag distance rather than text selection (commit `4a99925`) so highlighting to copy doesn't accidentally toggle a card's state.
+
+---
+
+## PART 23: Cloze, Always On
+
+PART 20 described the cloze pipeline behind two feature flags (a global enable and a per-language gate). Both flags are **gone** (commit `9285c0b`). The user's decision: cloze is available for every language as it is added, with no checks. Creation is **capability-driven** — a cloze gets made when the language *has the capability* (a curated function-word list, or an inflection-aware lemmatizer), not when a flag is flipped. The two settings endpoints, their four DB getters/setters, the `ClozeSettingRequest` model, and the frontend toggle were all deleted outright (no constant-true dead branch left behind), and the OFF-behavior tests were removed.
+
+### 23.1 Two Kinds of Cloze
+
+`app/srs/function_words.py` (renamed in scope but same module) produces both cloze flavors. A **plain function-word cloze** blanks the whole word; `is_function_word` is the capability check — true only where a curated set exists (Slovene today):
+
+```bash
+sed -n "45,53p" backend/app/srs/function_words.py
+```
+
+```output
+def is_function_word(lemma: str, language_code: str) -> bool:
+    """Return True if *lemma* is a known function word in *language_code*.
+
+    Phase F scope: Slovene only (language_code == "sl").
+    Case-insensitive (casefold) lookup against the curated set.
+    """
+    if language_code == "sl":
+        return lemma.casefold() in SLOVENE_FUNCTION_WORDS
+    return False
+```
+
+The plain-cloze blank is built at listen time from the **surface as it appeared in the sentence**, not the dictionary lemma (commit `92140c5`): the cloze must reference the word actually present in the stored sentence, so `make_cloze_text(surface, sentence)` is what runs, keyed off the raw sentence for backfill. The answer-word audio likewise synthesizes the surface, not the lemma (commit `562edab`) — otherwise a learner clozing `sem` would hear `biti`.
+
+### 23.2 Fluent-Forever Ending-Blank for Morphology Clozes
+
+The second flavor — a **morphology cloze** — drills an inflected form. Blanking the entire word would make the card test recall of the whole token; instead, following Fluent Forever, only the **inflectional tail past the lemma↔surface common prefix** is blanked, leaving the stem visible (commit `2db9f6a`):
+
+```bash
+sed -n "85,157p" backend/app/srs/function_words.py
+```
+
+```output
+def _ending_blank_split(matched: str, lemma: str) -> tuple[str, str] | None:
+    """Split *matched* into (visible_stem, blanked_tail) for a Fluent-Forever cloze.
+
+    Computes the longest common prefix (LCP) of ``matched.casefold()`` and
+    ``lemma.casefold()``. If the LCP is at least 2 characters and shorter
+    than the full matched word, returns ``(matched[:n], matched[n:])`` so the
+    stem stays visible. Returns ``None`` for suppletive forms (LCP < 2) or
+    when *matched* is a prefix of *lemma* (no blankable tail).
+    """
+    cf_matched = matched.casefold()
+    cf_lemma = lemma.casefold()
+    n = 0
+    for a, b in zip(cf_matched, cf_lemma, strict=False):
+        if a == b:
+            n += 1
+        else:
+            break
+    if 2 <= n < len(matched):
+        return (matched[:n], matched[n:])
+    return None
+
+
+def _format_morphology_feature(feature: str) -> str:
+    """Turn a feature key into a concise hint label.
+
+    Examples:
+      ``verb:1sg``      -> ``1sg``
+      ``noun:loc:sg``   -> ``loc sg``
+      ``noun:nom:f:pl`` -> ``nom f pl``
+      ``adj:nom:m:sg``  -> ``nom m sg``
+
+    The POS prefix is dropped — the hint is shown alongside the lemma, which
+    already implies the part of speech. Returns ``""`` for empty/malformed.
+    """
+    if not feature or ":" not in feature:
+        return ""
+    return " ".join(p for p in feature.split(":")[1:] if p)
+
+
+def make_morphology_cloze_text(
+    surface: str,
+    lemma: str,
+    feature: str,
+    source_sentence: str,
+) -> str:
+    """Wrap ``surface`` with a hinted cloze: ``{{c1::sem::biti, 1sg}}``.
+
+    The hint (``::hint``) tells the learner which lemma + morphology to
+    produce. Anki renders the blank as ``[biti, 1sg]``.
+
+    Idempotent: already-clozed text passes through unchanged.
+    Returns empty string when ``source_sentence`` is empty.
+    """
+    if not source_sentence:
+        return ""
+    if not surface:
+        return source_sentence
+    if _CLOZE_RE.search(source_sentence):
+        return source_sentence
+    label = _format_morphology_feature(feature)
+    pattern = re.compile(rf"\b{re.escape(surface)}\b", re.IGNORECASE)
+
+    def _replacer(m: re.Match) -> str:
+        matched = m.group(0)
+        split = _ending_blank_split(matched, lemma)
+        if split is None:
+            hint = f"{lemma}, {label}" if label else lemma
+            return f"{{{{c1::{matched}::{hint}}}}}"
+        visible, tail = split
+        hint = label or lemma
+        return f"{visible}{{{{c1::{tail}::{hint}}}}}"
+
+    return pattern.sub(_replacer, source_sentence)
+```
+
+`_ending_blank_split` computes the longest common prefix of surface and lemma. If it is ≥2 chars and shorter than the whole word, the stem stays visible and only the tail is clozed: `Ljubljan{{c1::i::loc sg}}` rather than `{{c1::Ljubljani}}`. Suppletive forms (`biti`→`sem`, `iti`→`grem`) have LCP < 2, so the split returns `None` and the helper falls back to a whole-word blank with a `lemma, feature` hint (`{{c1::sem::biti, 1sg}}`). When the stem is already visible, the hint shows the **feature only** — the lemma is implied by the stem. `ud_feats_to_tt_feature` (bottom of the module) maps a classla UD analysis (`Case=Loc|Number=Sing`, `upos=NOUN`) to the TT feature string `noun:loc:sg`, returning `None` for combinations outside the A1 whitelist.
+
+---
+
+## PART 24: `morphology_focus` Generation
+
+A cloze can only be made for a form the lesson actually contains — **form coverage is the lesson generator's job, not the carder's**. So the story prompt was reframed from `declension_focus` (which steered toward oblique cases inappropriate for A1) to `morphology_focus` (commit `44c5699`), tuned to surface the forms an A1 learner should produce: verb conjugations and accusative/locative nouns.
+
+### 24.1 The Prompt Steers Toward Producible Forms
+
+The LLM builds the `morphology_focus` array last, scanning the dialogue lines it just wrote and tagging inflected words **already present** in them. Two steering rules raised the live card yield from 52% to 91%:
+
+```bash
+sed -n "134,168p" backend/app/generation/prompts.py
+```
+
+```output
+Build the "morphology_focus" array LAST by scanning the NATURAL_SPEED lines you wrote and tagging
+inflected words ALREADY PRESENT in them. Aim for 4-6 entries, **prioritizing verb conjugations**.
+
+Each entry becomes a fill-in-the-blank drill card: the learner sees the lemma + feature as a hint
+and must PRODUCE the inflected surface. **So the surface MUST differ from its dictionary form** —
+otherwise the hint gives away the answer and the entry is discarded (wasted slot). This rules out
+two things you might otherwise tag:
+- **Nominative-singular nouns** (`dan`, `grad`, `hotel`) — the dictionary form IS the nom sg, so
+  there's nothing to produce. Do NOT tag `noun:nom:*` unless the surface genuinely differs from the
+  lemma (e.g. plurals like `dnevi`, or feminine `hiša`→ still nom so skip). When in doubt, skip nom.
+- **Infinitives appearing as-is.**
+
+Therefore favor, in order: (1) **verb conjugations** (sem/si/je/imam/imaš/stane…), (2) **accusative
+and locative nouns** whose ending changes the word (`kavo`, `sobo`, `Ljubljani`, `hotelu`),
+(3) adjective agreement where the form changes (`lepa`, `lepo`).
+
+- Surface must be copied CHARACTER-FOR-CHARACTER from a NATURAL_SPEED line (same diacritics č/š/ž),
+  a SINGLE word, not invented.
+- Lemma is the dictionary form (verb infinitive, noun nom sg, adj masc nom sg) and MUST differ from
+  the surface — if they are equal, drop the entry.
+
+**Feature strings — use exactly these shapes:**
+- `verb:<p><n>` where p ∈ {{1,2,3}} and n ∈ {{sg,du,pl}}. E.g. `verb:1sg`, `verb:3pl`, `verb:1du`.
+  Tag every interesting form of biti/imeti/target verbs that varies the person.
+- `noun:<case>:<number>` for accusative or locative: `noun:acc:sg`, `noun:loc:pl`. (These are the
+  productive noun forms — prefer them over nominative.)
+- `noun:nom:<gender>:<number>` ONLY when the nom surface differs from the lemma (e.g. a plural
+  `noun:nom:m:pl` `dnevi`). Skip nom singulars whose form equals the dictionary form.
+- `adj:nom:<gender>:<number>`: `adj:nom:f:sg`, etc., when the form changes (`lepa`, `lepo`).
+
+**Allowed cases for A1: nom, acc, loc only.** Do NOT emit `noun:gen:*`, `noun:dat:*`, `noun:ins:*`,
+or `adj:` with any case other than `nom` — those are A2+ topics that don't belong in A1 drills.
+
+**Cases derive from the governing word, NOT English gloss:** `v/na/pri/o/po` + static location →
+`loc` (v Ljubljani); `v/na/čez/skozi` + motion → `acc` (grem v Ljubljano); direct object → `acc`.
+```
+
+The producible-form rule (commit `2902cd6`) discards any entry whose surface equals its lemma — a nominative-singular noun or a bare infinitive gives the answer away, so it is a wasted slot (the backend also drops degenerate `lemma == surface` clozes defensively, commit `35630cc`). The case rule (commit `1a19a7c`) derives case from the **governing word, not the English gloss**: `v/na/pri/o/po` + a static location → locative (`v Ljubljani`); `v/na/čez/skozi` + motion → accusative (`grem v Ljubljano`). Cases are whitelisted to nom/acc/loc — gen/dat/ins are A2+ and explicitly forbidden.
+
+### 24.2 Model-Agnostic JSON Parsing
+
+Steering experiments pushed against alternate Groq models, which exposed that the parser assumed clean JSON. Reasoning models (`qwen3`) wrap the answer in `<think>…</think>`; `gpt-oss` prepends prose like `**Lesson Title:** …`. `StoryGenerator._parse_json` (commit `8ba2117`) now strips `<think>` blocks and code fences, then tries the cleaned string and, failing that, the first balanced `{…}` span:
+
+```bash
+sed -n "137,157p" backend/app/generation/story.py
+```
+
+```output
+    def _parse_json(raw: str) -> dict:
+        # Model-agnostic: drop <think> reasoning, code fences, and any prose the model
+        # wraps around the JSON (gpt-oss prepends "**Lesson Title:** …"; others append
+        # commentary). Try the cleaned string, then the first balanced {…} span.
+        cleaned = _strip_fences(_THINK_RE.sub("", raw).strip())
+        candidates = [cleaned]
+        start, end = cleaned.find("{"), cleaned.rfind("}")
+        if start != -1 and end > start:
+            candidates.append(cleaned[start : end + 1])
+        last_error: json.JSONDecodeError | None = None
+        for candidate in candidates:
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError as e:
+                last_error = e
+        logger.error(
+            "LLM returned unparseable response (len=%d): %r",
+            len(cleaned),
+            cleaned[:500],
+        )
+        raise StoryGenerationError(f"LLM returned invalid JSON: {last_error}") from last_error
+```
+
+The model experiments themselves were dead ends — `gpt-oss-120b` returns prose-not-JSON and 400s on `json_object`, `qwen3-32b` 413s on payload size — so the default stays `llama-3.3-70b-versatile`, and the parser hardening is the durable win.
+
+A per-day **Regenerate** button (commit `b72e764`) wires this into the UI: it re-runs `generateStory` for one day against the current prompt, keeps existing cards, and lets new vocabulary and morphology drills flow in on the next listen + sync. The confirm dialog spells out exactly that contract so a regenerate never feels like it discards progress.
+
+---
+
+## PART 25: The Word-Learning State Machine
+
+PARTs 22–24 are the foundation; this part is the model they serve. Each **lemma** moves through a state machine — `BASE (recognition → production) → INFLECTIONS` — and not every lemma has every stage. Content words that inflect go recognition → production → inflections; invariant content words stop at production; **function words enter directly at production via the base cloze** (recognition of a preposition is meaningless). The full settled design and roadmap are in `~/.claude/plans/word-learning-state-machine.md`. The locked principle: **gates govern *introduction* only, never review** — once introduced, recognition, production, and every inflection cloze review in parallel.
+
+### 25.1 Phase 3 — Recognition Before Production (Layer 65)
+
+The first gate holds a vocab card's **production** direction out of the new-queue until its **recognition** sibling graduates past the learning arc. This is implemented as a `NOT EXISTS` clause appended to `get_new_items` for the production direction only:
+
+```bash
+sed -n "733,756p" backend/app/srs/database.py
+```
+
+```output
+        # Phase 3 introduction gate (TT-only): a PRODUCTION new card is not
+        # introducible until its recognition sibling has graduated past the
+        # learning arc (recognition state not in new/learning/relearning). This
+        # makes TT introduce recognition before production — which is what Anki
+        # does too: Anki is direction-agnostic and orders new cards by deck
+        # position, and `create_note` places the recognition card (ord 0) at a
+        # lower position than production (ord 1), so recognition surfaces first
+        # (empirically 604/36 across the user's paired notes — the prior
+        # "production-first" parity assumption was wrong). A cloze note has no
+        # recognition direction, so NOT EXISTS is true and it stays introducible.
+        # The recognition direction is never gated. See
+        # ~/.claude/plans/word-learning-state-machine.md Phase 3 and
+        # docs/anki-parity-layers.md.
+        gate = (
+            """
+                  AND NOT EXISTS (
+                    SELECT 1 FROM collocation_directions r
+                    WHERE r.collocation_id = c.id
+                      AND r.direction = 'recognition'
+                      AND r.state IN ('new', 'learning', 'relearning')
+                  )"""
+            if direction == Direction.PRODUCTION
+            else ""
+        )
+```
+
+This was initially scoped as a TT-only divergence (like `promote_to_learning`), but the binary proved it is **parity-restoring**: real Anki introduces recognition first, 604 vs 36 across the user's 640 paired notes, because Anki orders new cards by deck position and `create_note` places the recognition card (ord 0) below production (ord 1). TT's old production-first behavior was the bug. The fix inverted the stale Layer 28 production-first tests — verified empirically first, per rule 13 (trust the binary). Recognition is never gated; a cloze note has no recognition row so `NOT EXISTS` is trivially true and it stays introducible. No badge change — `count_new_available_collocations` was already consistent.
+
+### 25.2 Per-Lemma Mastery = Aggregated Retrievability
+
+The transcript colors each word by a per-lemma **mastery** gradient. Mastery is the *mean retrievability* over the lemma's whole component set — recognition, production, and every inflection cloze — because retrievability (R) is the dynamic "how well do you know this right now" quantity, where stability is not. `app/srs/mastery.py` is a pure module:
+
+```bash
+cat -n backend/app/srs/mastery.py
+```
+
+```output
+     1	"""Per-lemma mastery = aggregated retrievability over the learn-set (Phase 5)."""
+     2	
+     3	from __future__ import annotations
+     4	
+     5	from collections.abc import Iterable
+     6	from datetime import date, datetime
+     7	
+     8	from app.models.srs_item import DirectionState, SRSState
+     9	from app.srs.fsrs import compute_retrievability
+    10	
+    11	
+    12	def component_mastery(
+    13	    ds: DirectionState,
+    14	    today: date,
+    15	    now: datetime | None,
+    16	    col_crt: int | None,
+    17	    desired_retention: float = 0.9,
+    18	) -> float:
+    19	    """Mastery of one component (a direction/card) ∈ [0,1].
+    20	
+    21	    NEW/never-reviewed → 0.0 (unlearned). LEARNING/RELEARNING → 0.15 fixed floor
+    22	    (in-steps, not graduated). REVIEW → aggregated retrievability. KNOWN → 1.0.
+    23	    """
+    24	    if ds.state == SRSState.NEW or ds.last_review is None:
+    25	        return 0.0
+    26	    if ds.state in (SRSState.LEARNING, SRSState.RELEARNING):
+    27	        return 0.15
+    28	    if ds.state == SRSState.KNOWN:
+    29	        return 1.0
+    30	    return compute_retrievability(ds, today, now=now, desired_retention=desired_retention, col_crt=col_crt)
+    31	
+    32	
+    33	def compute_mastery_progress(
+    34	    directions: Iterable[DirectionState],
+    35	    today: date,
+    36	    now: datetime | None,
+    37	    col_crt: int | None,
+    38	    desired_retention: float = 0.9,
+    39	) -> float | None:
+    40	    """Mean component_mastery over the learn-set. SUSPENDED components excluded.
+    41	    None if the set is empty (→ caller renders as not-on-the-ramp).
+    42	    """
+    43	    ms = [
+    44	        component_mastery(d, today, now, col_crt, desired_retention)
+    45	        for d in directions
+    46	        if d.state != SRSState.SUSPENDED
+    47	    ]
+    48	    return sum(ms) / len(ms) if ms else None
+```
+
+The per-component carve-out matters: a NEW or never-reviewed component is `0.0`, **not** `compute_retrievability`'s 0.9 NEW fallback (that fallback is for queue placement, not mastery). LEARNING/RELEARNING is a fixed `0.15` floor so a freshly-stepped card doesn't flash green; only REVIEW uses live R; KNOWN is `1.0`. Adding an inflection adds an `m≈0` component, so mastering a new form *lightens* the lemma — an expandable end state, never "100% and done."
+
+The frontend maps that fraction to a red→green hue (`frontend/src/lib/mastery.ts`):
+
+```bash
+cat -n frontend/src/lib/mastery.ts
+```
+
+```output
+     1	/** Map a mastery fraction (0 = new, 1 = mastered) to a red→green hue.
+     2	 *  0 → red (hue 0), 0.5 → yellow (hue 60), 1 → green (hue 120). */
+     3	export function masteryColor(progress: number): string {
+     4	  const p = Math.max(0, Math.min(1, progress));
+     5	  const hue = p * 120;
+     6	  const lightness = 50 - p * 8;
+     7	  return `hsl(${hue}, 70%, ${lightness}%)`;
+     8	}
+```
+
+Lightness co-varies with progress (and due cards get an underline) as a red↔green colorblind hedge. Static states are off the ramp entirely: unknown is indigo, known/ignored are gray.
+
+### 25.3 The Transcript Serializer Resolves the Active Card
+
+`extract_transcript` (`app/srs/transcript.py`) now enriches every `WordToken` with seven Phase-5 fields: `card_type`, `active_state`, `active_direction`, `is_due`, `progress`, `inflectable`, and `inflection_feature`. Resolution is **inflection-first**: an exact-surface inflection cloze wins over the base card, which wins over "unknown." The active direction follows the state machine:
+
+```bash
+sed -n "77,94p" backend/app/srs/transcript.py
+```
+
+```output
+def resolve_active_direction(item: object) -> Direction:
+    """Return the active direction for a resolved SRSItem.
+
+    Cloze → PRODUCTION (only direction it has).
+    Vocab → RECOGNITION while rec.state != REVIEW; else PRODUCTION.
+    When both REVIEW, active = production.
+    """
+    from app.models.srs_item import SRSItem as _SRSItem
+
+    if not isinstance(item, _SRSItem):
+        return Direction.PRODUCTION
+    ct = item.syntactic_unit.card_type
+    if ct == "cloze":
+        return Direction.PRODUCTION
+    rec = item.directions.get(Direction.RECOGNITION)
+    if rec is None or rec.state != SRSState.REVIEW:
+        return Direction.RECOGNITION
+    return Direction.PRODUCTION
+```
+
+`progress` is `compute_mastery_progress` over the resolved component set; `inflectable` is true only when the surface differs from the lemma, the form is an A1 feature, the base production is REVIEW/KNOWN, and no cloze for that surface exists yet — i.e. exactly when clicking the word *could usefully* mint an inflection cloze. The serializer also reconstructs each `DialogueLine.sentence` from its surfaces, which the popover needs to build a cloze (a bug caught while finishing Phase 5: scene lines didn't carry the sentence, so popover-created cards had empty sentences).
+
+### 25.4 Phase 4 — Inflection Clozes Are Click-Only
+
+`/listen` **stopped** auto-minting morphology clozes (Layer 66, commit `6935e93`). The reasoning: a rare form that never gets clicked should never become a card — coverage is the generator's job (PART 24), and auto-minting on every listen flooded the deck. The sole mint path is now `POST /api/srs/inflection-clozes` (commit `f7abf4d`), called when the user clicks an inflected surface that appeared in a lesson:
+
+```bash
+sed -n "1182,1219p" backend/app/api/srs.py
+```
+
+```output
+@router.post("/inflection-clozes", status_code=200)
+async def create_inflection_cloze(body: InflectionClozeRequest, request: Request) -> dict:
+    """Create one morphology cloze for an inflected surface (Phase 4a).
+
+    Gated on the lemma's base production being in REVIEW or KNOWN.
+    Idempotent by guid. Follows the add_collocation contract
+    (card_type=cloze, no Anki ids).
+    """
+    db = request.app.state.srs_db
+    language_code = body.language_code
+
+    # 1. Eligibility gate — base word production must be REVIEW/KNOWN
+    base = db.get_collocation_by_lemma(body.lemma)
+    if base is None:
+        raise HTTPException(status_code=409, detail="Base word not yet learned")
+    prod = base.directions.get(Direction.PRODUCTION)
+    if prod is None or prod.state not in (SRSState.REVIEW, SRSState.KNOWN):
+        raise HTTPException(status_code=409, detail="Base word not yet learned")
+
+    # 2. Degenerate guard — surface == lemma reveals the answer
+    if body.lemma.casefold() == body.surface.casefold():
+        raise HTTPException(status_code=422, detail="Surface equals lemma — nothing to cloze")
+
+    # 3. Build + create (mirrors /listen morphology-cloze block)
+    disambig = f"morph:{body.feature.replace(':', '-')}"
+    cloze_sent = make_morphology_cloze_text(body.surface, body.lemma, body.feature, body.sentence)
+    unit = SyntacticUnit(
+        text=body.surface,
+        translation="",
+        word_count=1,
+        difficulty=1,
+        source="llm",
+        lemma=body.lemma,
+        disambig_key=disambig,
+        card_type="cloze",
+        source_sentence=cloze_sent,
+    )
+    was_created = db.add_collocation(unit, language_code=language_code)
+```
+
+The endpoint is gated on the base word's production being REVIEW/KNOWN (409 otherwise — you can't drill an inflection of a word you haven't learned), guards the degenerate `surface == lemma` case (422), is idempotent by guid, and follows the card-adding contract from `.claude/rules/anki-sync.md` (`card_type="cloze"`, no Anki ids — `sync_create_new` mints and links them).
+
+### 25.5 Phase 5 Part C — Click an Unknown Word to Create Its Base Card
+
+Clicking an *unknown* word creates its base card. `POST /api/srs/items/base` branches on word type — the heart of the state machine's entry rule:
+
+```bash
+sed -n "731,758p" backend/app/api/srs.py
+```
+
+```output
+@router.post("/items/base", status_code=200)
+async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dict:
+    """Create a base card for an unknown clicked word (Phase 5, Part C / decision 8, C-a).
+
+    Branches by word type (the word-learning state machine):
+      - function word → production-only cloze (the *surface* blanked in the sentence)
+      - content word  → vocab (recognition + production)
+    Both created in NEW state. Idempotent by the base guid. Honors the
+    add_collocation card-adding contract (no Anki ids; sync_create_new mints +
+    links). No LLM auto-translate here — the caller passes the transcript gloss.
+    """
+    db = request.app.state.srs_db
+    lang = body.language_code
+    lemma = body.lemma.casefold()
+
+    # Function-word detection is capability-driven: is_function_word is only true
+    # where a curated list exists (Slovene today). The surface is checked too — an
+    # inflected function form (classla "sem" → lemma "biti") is detected via the
+    # surface even when the dictionary lemma isn't itself a function word.
+    is_func = is_function_word(lemma, lang) or is_function_word(body.surface, lang)
+    if is_func:
+        # Blank the surface as it appeared, not the dictionary lemma (Phase 2b):
+        # the cloze must reference the word present in the stored sentence.
+        source_sentence = make_cloze_text(body.surface, body.sentence)
+        card_type = "cloze"
+    else:
+        source_sentence = body.sentence
+        card_type = "vocab"
+```
+
+A function word (detected via lemma *or* surface, so an inflected `sem`→`biti` is caught) enters as a **production-only cloze** with the surface blanked in its sentence; a content word enters as **vocab** (recognition + production). Both are created NEW, idempotent by the base guid `compute_guid(lemma, lang, "")`. There is no LLM auto-translate here — the caller passes the gloss already visible in the transcript. This reuses the same `/listen` base-create logic, keeping one definition of "what a base card is."
+
+### 25.6 Phase 5 Part D — The Transcript Becomes Interactive (Frontend)
+
+`WordSpan.svelte` renders the model. The static states (`unknown`/`known`/`ignored`) get a fixed class; everything dynamic gets the mastery hue and a due underline (the old hardcoded `STATE_CYCLE` is deleted):
+
+```bash
+sed -n "66,93p" frontend/src/lib/WordSpan.svelte
+```
+
+```output
+
+	const dynamicStyle = $derived(
+		word.active_state !== 'unknown' && word.active_state !== 'known' && word.active_state !== 'suspended'
+			? `color: ${masteryColor(word.progress ?? 0)};`
+			: ''
+	);
+
+	const colorClass = $derived(
+		word.active_state === 'unknown'
+			? 'word-unknown'
+			: word.active_state === 'known'
+				? 'word-known'
+				: word.active_state === 'suspended'
+					? 'word-ignored'
+					: ''
+	);
+
+	// Show tooltip when: not inside a collocation, OR alt-hover mode is active
+	const showTooltip = $derived(!requireModifier || altHover);
+</script>
+
+{#if showTooltip}
+	<Tooltip translation={word.translation} state={word.srs_state} {word} {sentence} actions={tooltipActions}>
+		<span
+			class="word {colorClass}"
+			class:word-selected={selected}
+			class:word-due={word.is_due}
+			style={dynamicStyle}
+```
+
+Clicks are routed by the lesson `+page.svelte`: clicking an **unknown** word calls `createBaseCard`; clicking a **due** word submits a Good grade on its `active_direction`; clicking a **terminal** (known/suspended) word is a no-op; and clicking inside a collocation reviews the collocation. A hover popover (`Tooltip.svelte`, made interactive with `pointer-events:auto` and a hover bridge) offers create-inflection plus ignore/known/new overrides — note the override set deliberately excludes lapse/restore, so it never touches FSRS scheduling state. The matching `api.ts` methods `createBaseCard` and `createInflectionCloze` complete the loop. This is **Phase 5 complete end-to-end** — every word in a lesson is now a one-click entry point into the learning state machine.
+
+---
+
+## PART 26: FSRS in f32 & Parity Layers 49–66
+
+PART 16 documented queue-parity Layers 24–31. The history has since reached Layer 66 (`docs/anki-parity-layers.md`). Most layers are narrow input-quality or formula-branch fixes; two are structural enough to call out here, and the rest are tabulated.
+
+### 26.1 Layer 59 — All FSRS Arithmetic Moved to f32
+
+`fsrs-rs` (Anki's Rust scheduler) computes stability and difficulty in `f32` end-to-end via Burn tensors. TT computed in Python `f64`, which drifts by single ULPs that, at 4-decimal storage precision, surface as false-positive compare-shadow divergences (the persistent ±0.0001 class). Layer 59 (commit `12338fa`) casts every operand and intermediate to `numpy.float32`, returning `f64` only at storage boundaries:
+
+```bash
+sed -n "18,40p" backend/app/srs/fsrs.py
+```
+
+```output
+# fsrs-rs (rslib/.../fsrs/model.rs) computes stability + difficulty in f32 end-to-end
+# via Burn tensors. TT mirrors that precision by casting all arithmetic operands and
+# intermediates to numpy.float32, returning Python f64 only at storage boundaries.
+# Without this, replays drift by single ULPs at 4-decimal storage precision
+# (~0.0001 at s≈100-200), surfacing as false-positive compare-shadow divergences.
+_F32 = np.float32
+
+
+def _w32(w: tuple[float, ...]) -> tuple:
+    """Cast a weights tuple to numpy.float32, matching how fsrs-rs holds parameters."""
+    return tuple(_F32(x) for x in w)
+
+
+@cache
+def _fsrs_factor_f32(decay: float) -> np.float32:
+    """fsrs-rs power-forgetting-curve factor ``exp(ln(0.9) / decay) - 1`` in f32.
+
+    Cached per distinct ``decay`` — in practice a 1-2 entry table (−0.5 for
+    FSRS-5, the learned ``w[20]`` for FSRS-6) — so the two numpy transcendental
+    calls don't repeat on every per-card retrievability/interval evaluation on
+    the queue-sort path. Bit-identical to the inline ``exp(ln(0.9)/_F32(decay))``.
+    """
+    return np.exp(np.log(_F32(0.9)) / _F32(decay)) - 1
+```
+
+Three things had to match Rust exactly, not just the precision: the power-forgetting-curve **factor** is `exp(ln(0.9)/decay) − 1` (not the FSRS-4 `19/81` constant), the `linear_damping` **operation order** in `_next_difficulty`, and Rust's `f32::round` being **half-away-from-zero**, not banker's rounding:
+
+```bash
+sed -n "102,106p" backend/app/srs/fsrs.py
+```
+
+```output
+def _rust_round_half_away(x: float) -> int:
+    """Mirror Rust's ``f32::round`` — half away from zero, not banker's rounding."""
+    if x >= 0:
+        return int(x + 0.5)
+    return -int(-x + 0.5)
+```
+
+This is pinned by `tests/test_parity_fsrs_f32.py` against `fsrs_rs_python.next_states` (the comparison is architecture-aware — x86 CI vs arm64 local can differ in the last bit, commits `2f47d45`/`b53f05d`/`10720c0`). The consequence for the soak: a `±0.0001` stability divergence is now a **regression signal**, not benign — the old floor guidance is retired (commits `168a5aa`/`ca79ea0`). Full detail in `docs/anki-parity-layers.md` Layer 59.
+
+### 26.2 Layers 53 + 55 — The FSRS Load Balancer
+
+The residual `due_at` divergence in the Stage-3b shadow turned out to be Anki's **FSRS load balancer** (Layer 53, finding), not a memory-state bug: when `loadBalancerEnabled` is set, Anki relocates each graded card's interval to a less-loaded day *within* the fuzz range, using a histogram of the whole collection's due dates. The signature is a stability that is bit-exact but a `due_at` off by ±1–2 days that lands *inside* TT's computed fuzz band. Layer 55 (commit `bb93471`) wired a bit-exact port into TT's live grade path so a TT-native grade matches Anki's relocation; `build_live_load_balancer` builds the histogram from TT state and threads it through `schedule()`. Synced cards were always correct (`sync_pull` reads the balanced `cards.due` directly). Full detail in `docs/anki-parity-layers.md` Layers 53 and 55.
+
+### 26.3 The Rest, Tabulated
+
+| Layer | What changed |
+|-------|--------------|
+| 49 | `schedule()` review `due_at` uses the col-day rollover-hour anchor, matching `sync_pull` |
+| 50 | Grade-time `days_elapsed` is an **integer col-day diff**, not a float |
+| 51 | Cascade floor + `scheduled_days` threaded into the fuzz minimum |
+| 52 | Graduation uses simple per-rating fuzz, not the passing-review cascade |
+| 53 | **Finding**: residual `due_at` divergence is the load balancer (§26.2) |
+| 54 | The col-day helpers are non-inverse **by design** — ground-truthed non-bug |
+| 55 | Load balancer wired into the live grade path (§26.2) |
+| 56 | Review badge buries siblings in **interday learning**, not just "graded today" |
+| 57 | Interday LEARNING→REVIEW graduation uses the **recall** formula, not short-term |
+| 58 | Revlog ingest reconciles against Anki's full revlog, not a wall-clock watermark |
+| 59 | FSRS arithmetic in f32 with fsrs-rs op order (§26.1) |
+| 60 | Revlog ingest dedup is **provenance-aware** (rapid same-ease Anki grades survive) |
+| 61 | `_bump_col` preserves `col.usn` — stops forcing AnkiWeb full syncs |
+| 62 | REVIEW + passing **same-day** grade uses FSRS short-term stability, not recall |
+| 63 | FSRS stability clamped to `[S_MIN, S_MAX]` like fsrs-rs `step` |
+| 64 | `new` badge mirrors Anki's new-sibling bury (`bury_new`) |
+| 65 | Production held until recognition graduates (§25.1) |
+| 66 | `/listen` no longer mints morphology clozes (§25.4) |
+
+Layers 57, 58, and 62 were all surfaced by the Stage-3b compare-shadow soak (PART 27) — live bugs that the anchored event-replay made visible before they reached a badge. Layer 61 is the one most worth re-reading before any sync write: clobbering `col.usn = -1` is invisible single-device but makes AnkiWeb demand a **full** sync the moment a second device advances the server USN (`.claude/rules/anki-sync.md`).
+
+---
+
+## PART 27: Stage 3b — Toward Event-Sourced Sync
+
+PART 19 left `tt_revlog` writing events but `sync_pull` still merging state field-by-field, with the endgame ("collapse the 9-branch field-merge into an event-replay") gated on an empirical measurement. That measurement ran (`docs/stage-3b-empirical-measurement.md`: ~87.6% practical match), and Stage 3b is now a **three-mode switch** that lets the new event-replay path run shadowed alongside the legacy merge before it ever takes over.
+
+### 27.1 The Three Modes
+
+A single `anki_state_cache` key, `event_sync_pull`, selects the merge strategy:
+
+```bash
+sed -n "128,132p" backend/app/srs/database.py
+```
+
+```output
+# Stage 3b sync_pull merge modes (anki_state_cache['event_sync_pull']):
+#   legacy  — the pre-Stage-3b 9-branch _pull_merge_direction (default)
+#   compare — run legacy + replay, write legacy authoritative + replay to shadow cols
+#   new     — collapsed FSRS branch: take Anki verbatim, forward-step as validator
+_EVENT_SYNC_PULL_MODES = frozenset({"legacy", "compare", "new"})
+```
+
+`legacy` is the pre-Stage-3b 9-branch merge. `compare` runs both: legacy stays authoritative and writes the card, while the incremental replay is written to **shadow columns** and any disagreement is recorded as a divergence — zero production risk, pure observation. `new` collapses the FSRS branch entirely: take Anki's state verbatim, with the forward-step replay acting only as a validator. The getter defaults to `legacy` and falls back to `legacy` on any unrecognized stored value, so a corrupt row can never silently route sync down an unimplemented path:
+
+```bash
+sed -n "2024,2041p" backend/app/srs/database.py
+```
+
+```output
+    def get_event_sync_pull_mode(self) -> str:
+        """Return the sync_pull merge mode (Stage 3b): ``legacy`` / ``compare`` / ``new``.
+
+        Defaults to ``legacy`` (the pre-Stage-3b 9-branch merge tree) when unset.
+        A corrupt/unrecognised stored value also falls back to ``legacy`` so a
+        bad row can never silently take sync_pull down an unimplemented path.
+        """
+        row = self.get_anki_state_cache("event_sync_pull")
+        if row is None or row[0] not in _EVENT_SYNC_PULL_MODES:
+            return "legacy"
+        return row[0]
+
+    def set_event_sync_pull_mode(self, mode: str) -> None:
+        """Persist the sync_pull merge mode; rejects anything but the 3 known modes."""
+        if mode not in _EVENT_SYNC_PULL_MODES:
+            raise ValueError(f"event_sync_pull mode must be one of {sorted(_EVENT_SYNC_PULL_MODES)}, got {mode!r}")
+        self.set_anki_state_cache("event_sync_pull", mode)
+
+```
+
+### 27.2 The Dispatch in `sync_pull`
+
+`compare` and `new` share one incremental forward-step replay; only the write target differs. `sync_pull` resolves the FSRS params and `col_crt` once at the top when either mode is active:
+
+```bash
+sed -n "1846,1858p" backend/app/anki/sync.py
+```
+
+```output
+        # Stage 3b: compare/new modes both run incremental replay alongside the
+        # legacy merge. Compare writes replay to shadow columns (legacy stays
+        # authoritative); new replaces authoritative FSRS state with replay-derived
+        # values (or Anki's on divergence). Resolve params/col_crt once.
+        event_mode = self._db.get_event_sync_pull_mode()
+        compare_params = None
+        compare_col_crt = None
+        if event_mode in ("compare", "new"):
+            from app.srs.queue_stats import resolve_fsrs_params
+
+            compare_params = resolve_fsrs_params(self._db)[0]
+            compare_col_crt = self._anki_col_crt
+
+```
+
+The replay is **incremental** — it forward-steps from the stored state through the events ingested this sync, rather than replaying from NEW every time (which would be O(history) per card per sync). Compare-mode writes the replayed stability/difficulty to shadow columns; `new`-mode records a `RecomputeDivergence` on `report.recompute_divergences` when its forward-step disagrees with Anki, so a real algorithmic gap surfaces in the sync report.
+
+### 27.3 What the Soak Found
+
+Running `compare` against the live deck across many syncs is the soak, and it earned its keep — three of PART 26's layers (57, 58, 62) are bugs it surfaced. Two findings are worth internalizing because they shaped the soak's health bar:
+
+- **Layer 58** (commit `3f848cd`): a replayed-stability divergence was **not** an FSRS bug — it was an *ingest gap*. A Good grade landed inside a 41-hour sync gap and was never ingested, so the replay was missing an event. The fix made ingest reconcile against Anki's full revlog (`get_tt_revlog_ids`) instead of trusting a `last_synced_at` watermark. The lesson: a replay divergence can mean "the replay is missing an input," not "the replay math is wrong."
+- **The difficulty floor washed to 0** (2026-05-30): a transient cohort of difficulty-only divergences came from a 2026-05-21 Check-Database/restore that re-stamped ~2333 revlog rows Anki never applied to `card.data` — proving Anki's `card.data` is **not** a pure replay of its revlog. As those cards were re-graded with clean rows, the cohort decayed 104 → 6 → 0.
+
+The soak's health bar is now **0 for both stability and difficulty** — the old "~104 benign floor" is retired. The classifier lives in `.claude/rules/anki-queue-parity.md`; the measurement procedure and decision gate are in `docs/stage-3b-empirical-measurement.md`. Live mode is still `compare`; the flip to `new` and the deletion of the legacy branch follow once the soak holds clean.
+
+---
+
+## PART 28: The Documentation Set
+
+The product gained a written identity. `README.md` is the pitch and the map; `docs/prd.md` is the product requirements doc. The pedagogy is grounded in a set of **influence docs**, each written to the same shape (claim → how TunaTale applies it → where it deliberately diverges):
+
+- `docs/pimsleur.md` — graduated-interval recall and the backward-buildup drill (PART 6's syllabification).
+- `docs/fluent-forever.md` — the ending-blank cloze (PART 23.2) and image-over-translation cards.
+- `docs/lingq.md` — known/unknown word tracking, the lineage of PART 25's transcript model.
+- `docs/refold.md` — comprehensible input and the listen-first loop (PART 15).
+- `docs/bdt.md` — Lampariello's bidirectional translation, the recognition↔production pairing.
+
+Two operational docs round it out: `docs/adding-a-language.md` (the plugin checklist — preprocessor, voice map, function-word list, lemmatizer) and `docs/anki-recovery.md` (disaster recovery for the user's primary Anki collection). `AGENTS.md` (this file, also `CLAUDE.md`) had its opening polished and absorbed the new-language and Anki-recovery pointers.
+
+This is where a new contributor — human or agent — should start: the influence docs explain *why* the system is shaped the way the preceding 27 parts describe.
+

@@ -11,8 +11,9 @@ import sqlite3
 from datetime import date
 
 from app.common.guid import compute_guid
+from app.srs.function_words import format_morphology_hint
 
-CURRENT_VERSION = 27
+CURRENT_VERSION = 31
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -839,6 +840,98 @@ def migrate_v26_to_v27(conn: sqlite3.Connection) -> None:
     _set_version(conn, 27)
 
 
+def migrate_v27_to_v28(conn: sqlite3.Connection) -> None:
+    """Add collocations.lemma_key — the space-joined lemma tuple used to match
+    multi-word collocation spans in the transcript.
+
+    Nullable; the column starts NULL on every row. It is populated lazily on
+    first read (``transcript._build_collocation_index`` computes + persists it)
+    and eagerly at the interactive add-phrase write site, so the request path
+    lemmatizes each collocation at most once ever instead of on every request.
+    A pure-SQL migration can't run the (runtime-configured) lemmatizer, so it
+    only adds the column — backfill is the read path's job.
+    """
+    if not _column_exists(conn, "collocations", "lemma_key"):
+        conn.execute("ALTER TABLE collocations ADD COLUMN lemma_key TEXT")
+    _set_version(conn, 28)
+
+
+def migrate_v28_to_v29(conn: sqlite3.Connection) -> None:
+    """Backfill the grammar column for existing inflection clozes.
+
+    Phase 4a inflection clozes stored the morphological hint in the cloze
+    markup (``{{c1::sem::biti, 1sg}}``). The grammar column was added as a
+    separate field later. This migration backfills grammar for any inflection
+    cloze where it's still empty by reconstructing the feature from the
+    ``disambig_key`` (``morph:noun-acc-sg`` → feature ``noun:acc:sg``).
+    """
+    saved_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, lemma, disambig_key FROM collocations
+            WHERE card_type = 'cloze'
+              AND disambig_key LIKE 'morph:%'
+              AND (grammar IS NULL OR grammar = '')
+            """
+        ).fetchall()
+        for row in rows:
+            feature = row["disambig_key"].replace("morph:", "", 1).replace("-", ":")
+            hint = format_morphology_hint(row["lemma"] or "", feature)
+            if hint:
+                conn.execute(
+                    "UPDATE collocations SET grammar = ? WHERE id = ?",
+                    (hint, row["id"]),
+                )
+    finally:
+        conn.row_factory = saved_factory
+    _set_version(conn, 29)
+
+
+def migrate_v29_to_v30(conn: sqlite3.Connection) -> None:
+    """Add ignored_lemmas table for card-less ignore list.
+
+    Stores lemmas the user has chosen to ignore that have no Anki card.
+    TT-only — no USN, no sync involvement.
+    """
+    if _table_exists(conn, "ignored_lemmas"):
+        _set_version(conn, 30)
+        return
+    conn.execute("""
+        CREATE TABLE ignored_lemmas (
+            language_code TEXT NOT NULL,
+            lemma TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (language_code, lemma)
+        )
+    """)
+    _set_version(conn, 30)
+
+
+def migrate_v30_to_v31(conn: sqlite3.Connection) -> None:
+    """Add reversible-known snapshot columns + fsrs_force_next to collocation_directions.
+
+    Supports exactly-reversible "un-mark known". ``mark_known`` snapshots the
+    pre-known schedule (``known_prior_state``/``known_prior_stability``/
+    ``known_prior_due_at``) on entry; ``restore_known`` writes it back and sets
+    ``fsrs_force_next=1`` so the next sync_push force-writes the restored
+    stability into Anki's ``cards.data`` (a restored card is ``review``, which
+    otherwise lacks a TT→Anki stability-write signal and would be re-clobbered
+    by the next take-Anki-verbatim pull). All four are TT-only — no USN, no sync
+    to Anki.
+    """
+    for col, decl in (
+        ("known_prior_state", "TEXT"),
+        ("known_prior_stability", "REAL"),
+        ("known_prior_due_at", "TEXT"),
+        ("fsrs_force_next", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+        if not _column_exists(conn, "collocation_directions", col):
+            conn.execute(f"ALTER TABLE collocation_directions ADD COLUMN {col} {decl}")
+    _set_version(conn, 31)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -867,6 +960,10 @@ _MIGRATIONS = {
     24: migrate_v24_to_v25,
     25: migrate_v25_to_v26,
     26: migrate_v26_to_v27,
+    27: migrate_v27_to_v28,
+    28: migrate_v28_to_v29,
+    29: migrate_v29_to_v30,
+    30: migrate_v30_to_v31,
 }
 
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 
 from app.anki.media.pipeline import fetch_card_media
+from app.anki.media.query_llm import generate_image_query
 
 router = APIRouter(prefix="/api/anki", tags=["anki"])
 
@@ -76,12 +77,23 @@ async def trigger_sync(request: Request, dry_run: bool = False):
             # this same sync invocation.
             sync.detect_and_reset_orphans()
 
-            async def _media_fn(word, english, *, used_image_urls):
+            llm = getattr(request.app.state, "llm", None)
+
+            async def _media_fn(word, english, *, used_image_urls, source_sentence="", grammar=""):
+                image_query = await generate_image_query(
+                    word,
+                    english,
+                    llm=llm,
+                    db=db,
+                    source_sentence=source_sentence,
+                    grammar=grammar,
+                )
                 return await fetch_card_media(
                     word,
                     english,
                     pixabay_key=settings.pixabay_api_key,
                     used_image_urls=used_image_urls,
+                    image_query=image_query,
                 )
 
             create_report = await sync.sync_create_new(
@@ -104,6 +116,7 @@ async def trigger_sync(request: Request, dry_run: bool = False):
                     refresh_fsrs_short_term_flag,
                     refresh_learning_steps,
                     refresh_load_balancer_enabled,
+                    refresh_maximum_review_interval,
                     refresh_review_settings,
                     warn_if_multi_deck_preset,
                 )
@@ -114,6 +127,7 @@ async def trigger_sync(request: Request, dry_run: bool = False):
                 refresh_desired_retention(db, ctx.conn, settings.anki_deck_name)
                 refresh_fsrs_params(db, ctx.conn, settings.anki_deck_name)
                 refresh_fsrs_short_term_flag(db, ctx.conn)
+                refresh_maximum_review_interval(db, ctx.conn, settings.anki_deck_name)
                 refresh_review_settings(db, ctx.conn, settings.anki_deck_name)
                 refresh_learning_steps(db, ctx.conn, settings.anki_deck_name)
                 refresh_load_balancer_enabled(db, ctx.conn)

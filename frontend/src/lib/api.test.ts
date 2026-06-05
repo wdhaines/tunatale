@@ -321,7 +321,20 @@ describe("TunaTaleAPI", () => {
         dialogue_lines: [
           {
             role: "female-1",
-            words: [{ surface: "Zdravo", lemma: "zdravo", srs_state: "unknown" }],
+            words: [
+              {
+                surface: "Zdravo",
+                lemma: "zdravo",
+                srs_state: "unknown",
+                card_type: null,
+                active_state: "unknown",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+              },
+            ],
           },
         ],
       };
@@ -440,6 +453,152 @@ describe("TunaTaleAPI", () => {
         expect.objectContaining({ method: "POST", body: JSON.stringify({ rating: "easy" }) }),
       );
       expect(result.new_due_at).toBe("2026-04-30");
+    });
+
+    it("createInflectionCloze calls POST /api/srs/inflection-clozes", async () => {
+      const mockResp = {
+        id: 1,
+        was_created: true,
+        item: {
+          id: 1,
+          text: "sem",
+          state: "new",
+          due_at: "",
+          stability: 1,
+          difficulty: 5,
+          reps: 0,
+          lapses: 0,
+          last_review: null,
+          language_code: "sl",
+        },
+      };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(mockResp)));
+
+      const body = {
+        surface: "sem",
+        lemma: "biti",
+        feature: "1sg-past",
+        sentence: "jaz sem bil",
+        language_code: "sl",
+      };
+      const result = await api.createInflectionCloze(body);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/inflection-clozes`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+      );
+      expect(result.id).toBe(1);
+      expect(result.was_created).toBe(true);
+      expect(result.item.text).toBe("sem");
+    });
+
+    it("createInflectionCloze throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail()));
+
+      await expect(
+        api.createInflectionCloze({
+          surface: "sem",
+          lemma: "biti",
+          feature: "1sg-past",
+          sentence: "jaz sem bil",
+          language_code: "sl",
+        }),
+      ).rejects.toThrow("POST /api/srs/inflection-clozes: Internal Server Error");
+    });
+
+    it("createBaseCard calls POST /api/srs/items/base", async () => {
+      const mockResp = {
+        id: 1,
+        was_created: true,
+        item: {
+          id: 1,
+          text: "zdravo",
+          state: "new",
+          due_at: "",
+          stability: 1,
+          difficulty: 5,
+          reps: 0,
+          lapses: 0,
+          last_review: null,
+          language_code: "sl",
+        },
+      };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(mockResp)));
+
+      const body = {
+        surface: "zdravo",
+        lemma: "zdravo",
+        sentence: "Zdravo, kako si?",
+        language_code: "sl",
+        translation: "hello",
+      };
+      const result = await api.createBaseCard(body);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/items/base`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+      );
+      expect(result.id).toBe(1);
+      expect(result.was_created).toBe(true);
+      expect(result.item.text).toBe("zdravo");
+    });
+
+    it("createBaseCard throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail()));
+
+      await expect(
+        api.createBaseCard({
+          surface: "zdravo",
+          lemma: "zdravo",
+          sentence: "Zdravo, kako si?",
+          language_code: "sl",
+        }),
+      ).rejects.toThrow("POST /api/srs/items/base: Internal Server Error");
+    });
+
+    it("ignoreLemma calls POST /api/srs/ignored-lemmas", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ status: "ok" })));
+
+      const result = await api.ignoreLemma("banka", "sl");
+
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/ignored-lemmas`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lemma: "banka", language_code: "sl" }),
+      });
+      expect(result.status).toBe("ok");
+    });
+
+    it("ignoreLemma throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail()));
+      await expect(api.ignoreLemma("banka", "sl")).rejects.toThrow(
+        "POST /api/srs/ignored-lemmas: Internal Server Error",
+      );
+    });
+
+    it("unignoreLemma calls DELETE /api/srs/ignored-lemmas", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ status: "ok" })));
+
+      const result = await api.unignoreLemma("banka", "sl");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/ignored-lemmas?lemma=banka&language_code=sl`,
+        { method: "DELETE" },
+      );
+      expect(result.status).toBe("ok");
+    });
+
+    it("unignoreLemma throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail()));
+      await expect(api.unignoreLemma("banka", "sl")).rejects.toThrow(
+        "DELETE /api/srs/ignored-lemmas?lemma=banka&language_code=sl: Internal Server Error",
+      );
     });
   });
 
@@ -667,28 +826,37 @@ describe("TunaTaleAPI", () => {
       );
     });
 
-    it("getClozeSetting calls GET /api/srs/settings/cloze", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ enabled: true })));
+    it("restoreKnown calls POST /api/srs/items/:id/restore-known", async () => {
+      const item = {
+        id: 3,
+        text: "zdravo",
+        translation: "",
+        state: "learning" as const,
+        due_at: "2026-04-14",
+        stability: 1.0,
+        difficulty: 5.0,
+        reps: 0,
+        lapses: 0,
+        last_review: null,
+        language_code: "sl",
+      };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(item)));
 
-      const result = await api.getClozeSetting();
-
-      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/settings/cloze`);
-      expect(result.enabled).toBe(true);
-    });
-
-    it("setClozeSetting calls PUT /api/srs/settings/cloze with enabled flag", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ enabled: false })));
-
-      const result = await api.setClozeSetting(false);
+      const result = await api.restoreKnown(3);
 
       expect(fetch).toHaveBeenCalledWith(
-        `${BASE}/api/srs/settings/cloze`,
-        expect.objectContaining({
-          method: "PUT",
-          body: JSON.stringify({ enabled: false }),
-        }),
+        `${BASE}/api/srs/items/3/restore-known`,
+        expect.objectContaining({ method: "POST" }),
       );
-      expect(result.enabled).toBe(false);
+      expect(result.state).toBe("learning");
+    });
+
+    it("restoreKnown throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Not Found")));
+
+      await expect(api.restoreKnown(999)).rejects.toThrow(
+        "POST /api/srs/items/999/restore-known: Not Found",
+      );
     });
 
     it("setSRSItemState calls POST /api/srs/items/:id/state with state", async () => {

@@ -14,6 +14,12 @@ def _unit(text: str = "dober dan", translation: str = "good day") -> SyntacticUn
     return SyntacticUnit(text=text, translation=translation, word_count=2, difficulty=1, source="corpus")
 
 
+def _id_for_text(srs_db, text: str) -> int:
+    """Resolve a collocation id by its ``text`` (``_unit`` leaves ``lemma`` unset)."""
+    with srs_db._get_conn() as conn:
+        return conn.execute("SELECT id FROM collocations WHERE text = ?", (text,)).fetchone()[0]
+
+
 class TestCRUD:
     """Tests for basic add/get/update collocation operations."""
 
@@ -153,6 +159,25 @@ class TestCRUD:
         # Reload and check
         reloaded = srs_db.get_collocation("test_word")
         assert reloaded.directions[Direction.RECOGNITION].anki_due == 612
+
+    def test_update_direction_round_trips_fsrs_force_next(self, srs_db):
+        """update_direction then _load_directions round-trips fsrs_force_next.
+
+        Guards the bury_kind-incident surface: the flag must land in all of
+        _DIR_COLUMNS, the DirectionState field, the row→DirectionState
+        construction, and update_direction's writer — miss one and the force
+        silently reads back False.
+        """
+        unit = _unit("test_word", "test")
+        srs_db.add_collocation(unit, language_code="sl")
+        item = srs_db.get_collocation("test_word")
+        guid = item.guid
+        rec_dir = item.directions[Direction.RECOGNITION]
+        assert rec_dir.fsrs_force_next is False  # default
+        rec_dir.fsrs_force_next = True
+        srs_db.update_direction(guid, Direction.RECOGNITION, rec_dir)
+        reloaded = srs_db.get_collocation("test_word")
+        assert reloaded.directions[Direction.RECOGNITION].fsrs_force_next is True
 
     def test_add_collocation_cloze_creates_only_production_direction(self, srs_db):
         """Cloze card_type creates only production direction (no recognition)."""
@@ -354,17 +379,6 @@ class TestCRUD:
         item.state = SRSState.LEARNING
         assert item.directions[Direction.PRODUCTION].state == SRSState.LEARNING
 
-    def test_get_enable_cloze_cards_defaults_false(self, srs_db):
-        """Fresh DB with no cache row returns False."""
-        assert srs_db.get_enable_cloze_cards() is False
-
-    def test_set_then_get_enable_cloze_cards(self, srs_db):
-        """Round-trip set/get for the cloze flag."""
-        srs_db.set_enable_cloze_cards(True)
-        assert srs_db.get_enable_cloze_cards() is True
-        srs_db.set_enable_cloze_cards(False)
-        assert srs_db.get_enable_cloze_cards() is False
-
     def test_event_sync_pull_mode_defaults_legacy(self, srs_db):
         """Fresh DB with no cache row returns the legacy sync_pull mode (Stage 3b step 1)."""
         assert srs_db.get_event_sync_pull_mode() == "legacy"
@@ -386,17 +400,6 @@ class TestCRUD:
         """A corrupt stored value falls back to legacy rather than crashing sync_pull."""
         srs_db.set_anki_state_cache("event_sync_pull", "garbage")
         assert srs_db.get_event_sync_pull_mode() == "legacy"
-
-    def test_get_enable_case_clozes_defaults_false(self, srs_db):
-        """Fresh DB with no cache row returns False."""
-        assert srs_db.get_enable_case_clozes() is False
-
-    def test_set_then_get_enable_case_clozes(self, srs_db):
-        """Round-trip set/get for the case-cloze flag."""
-        srs_db.set_enable_case_clozes(True)
-        assert srs_db.get_enable_case_clozes() is True
-        srs_db.set_enable_case_clozes(False)
-        assert srs_db.get_enable_case_clozes() is False
 
 
 class TestDueQueries:
@@ -738,6 +741,326 @@ class TestDueQueries:
         for d in (Direction.RECOGNITION, Direction.PRODUCTION):
             assert item.directions[d].state == SRSState.KNOWN
             assert item.directions[d].introduced_at == stamp
+
+    def test_set_state_by_id_to_new_resets_schedule(self, srs_db):
+        """Reset-to-NEW clears the FSRS schedule, not just the state label.
+
+        Regression (stuck reset): the popover "Reset" → set_state_by_id(NEW) used
+        to flip state='new' while preserving the card's graduated due_at /
+        last_review / reps / stability. The transcript then showed the card red
+        (mastery keys off state=NEW) but NOT due (is_due keys off the stale future
+        due_at), so a plain click hit the no-op branch — stuck red and unclickable.
+        A reset must yield a fresh NEW card: due today, no review history, so it is
+        re-learnable. Schedule columns mirror reset_collocation; dirty_fsrs stays
+        set so the reset syncs to Anki.
+        """
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        # Simulate a graduated card: future due_at + review history on both directions.
+        future = datetime(2099, 1, 1, 4, 0, tzinfo=UTC)
+        last = datetime(2026, 6, 2, 20, 59, tzinfo=UTC)
+        with srs_db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET state='review', due_at=?, last_review=?,"
+                " reps=2, lapses=1, stability=4.47, fsrs_difficulty=5.27 WHERE collocation_id=?",
+                (future.isoformat(), last.isoformat(), row_id),
+            )
+            conn.commit()
+
+        srs_db.set_state_by_id(row_id, SRSState.NEW)
+
+        item = srs_db.get_collocation("banka")
+        today_due = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            ds = item.directions[d]
+            assert ds.state == SRSState.NEW
+            assert ds.due_at == today_due  # due today → is_due True → clickable again
+            assert ds.last_review is None
+            assert ds.reps == 0
+            assert ds.lapses == 0
+            assert ds.stability == 1.0
+            assert ds.difficulty == 5.0
+            assert ds.introduced_at is None
+            assert ds.prior_state is None
+            assert ds.dirty_fsrs is True
+
+    def test_set_state_by_id_to_non_new_preserves_schedule(self, srs_db):
+        """Label-only states (review/known/…) must NOT reset the schedule (srs.py:685).
+
+        Guards the invariant that the NEW-reset path is the *only* one that touches
+        FSRS columns — cycling a card to `known`/`review` keeps its real schedule.
+        """
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        future = datetime(2099, 1, 1, 4, 0, tzinfo=UTC)
+        last = datetime(2026, 6, 2, 20, 59, tzinfo=UTC)
+        with srs_db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET state='review', due_at=?, last_review=?,"
+                " reps=2, lapses=1, stability=4.47 WHERE collocation_id=?",
+                (future.isoformat(), last.isoformat(), row_id),
+            )
+            conn.commit()
+        srs_db.set_state_by_id(row_id, SRSState.KNOWN)
+        item = srs_db.get_collocation("banka")
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            ds = item.directions[d]
+            assert ds.state == SRSState.KNOWN
+            assert ds.due_at == future
+            assert ds.last_review == last
+            assert ds.reps == 2
+            assert ds.stability == 4.47
+
+    def test_set_state_by_id_stamps_introduced_at_entering_review_flow(self, srs_db):
+        """A never-introduced NEW card forced into the review/learning flow must
+        stamp introduced_at so count_new_introduced_today stays consistent (finding #8).
+
+        Without the stamp the card leaves the new pool but the new-introduced quota
+        never decrements (introduced_at NULL → count_new_introduced_today ignores it),
+        and a review card with no FSRS history can surface with the quota miscounted.
+        """
+        today = date.today()
+        for state in (SRSState.REVIEW, SRSState.LEARNING, SRSState.KNOWN):
+            text = f"flow {state.value}"
+            srs_db.add_collocation(_unit(text, "x"), language_code="sl")
+            item = srs_db.get_collocation(text)
+            row_id = _id_for_text(srs_db, text)
+            # Fresh NEW card: no introduced_at yet.
+            assert item.directions[Direction.RECOGNITION].introduced_at is None
+
+            srs_db.set_state_by_id(row_id, state)
+
+            refreshed = srs_db.get_collocation(text)
+            for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+                assert refreshed.directions[d].state == state
+                assert refreshed.directions[d].introduced_at is not None
+        # Each of the three collocations counts once toward today's introductions.
+        assert srs_db.count_new_introduced_today(today) == 3
+
+    def test_set_state_by_id_suspended_does_not_stamp_introduced_at(self, srs_db):
+        """Suspending a never-introduced NEW card is not an introduction — leave
+        introduced_at NULL so it does not inflate count_new_introduced_today."""
+        today = date.today()
+        srs_db.add_collocation(_unit("paused", "x"), language_code="sl")
+        row_id = _id_for_text(srs_db, "paused")
+
+        srs_db.set_state_by_id(row_id, SRSState.SUSPENDED)
+
+        item = srs_db.get_collocation("paused")
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            assert item.directions[d].state == SRSState.SUSPENDED
+            assert item.directions[d].introduced_at is None
+        assert srs_db.count_new_introduced_today(today) == 0
+
+    def test_set_state_by_id_preserves_existing_introduced_at(self, srs_db):
+        """introduced_at is a one-shot stamp (Layer 26): a card already introduced
+        on a prior day keeps its original timestamp when re-stated, not today's."""
+        srs_db.add_collocation(_unit("already", "x"), language_code="sl")
+        row_id = _id_for_text(srs_db, "already")
+        stamp = datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
+        with srs_db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET introduced_at=? WHERE collocation_id=?",
+                (stamp.isoformat(), row_id),
+            )
+            conn.commit()
+
+        srs_db.set_state_by_id(row_id, SRSState.REVIEW)
+
+        item = srs_db.get_collocation("already")
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            assert item.directions[d].introduced_at == stamp
+
+    def test_mark_known_writes_far_future_schedule(self, srs_db):
+        """mark_known sets due_at to today + 36500, matched stability, dirty_fsrs."""
+
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        due_date = date.today() + timedelta(days=36500)
+        due_at = datetime.combine(due_date, time(4, 0), tzinfo=UTC)
+        srs_db.mark_known(row_id, due_at=due_at, stability=36500.0)
+
+        item = srs_db.get_collocation("banka")
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            ds = item.directions[d]
+            assert ds.state == SRSState.KNOWN
+            assert ds.due_at == due_at
+            assert abs(ds.stability - 36500.0) < 0.01
+            assert ds.dirty_fsrs is True
+
+    def test_mark_known_stamps_introduced_at(self, srs_db):
+        """A never-introduced card gets introduced_at stamped (COALESCE)."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        item = srs_db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].introduced_at is None
+
+        due_date = date.today() + timedelta(days=36500)
+        due_at = datetime.combine(due_date, time(4, 0), tzinfo=UTC)
+        srs_db.mark_known(row_id, due_at=due_at, stability=36500.0)
+
+        refreshed = srs_db.get_collocation("banka")
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            assert refreshed.directions[d].introduced_at is not None
+
+    def test_mark_known_preserves_existing_introduced_at(self, srs_db):
+        """introduced_at is a one-shot stamp: existing stamp is preserved."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        stamp = datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
+        with srs_db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET introduced_at=? WHERE collocation_id=?",
+                (stamp.isoformat(), row_id),
+            )
+            conn.commit()
+
+        due_date = date.today() + timedelta(days=36500)
+        due_at = datetime.combine(due_date, time(4, 0), tzinfo=UTC)
+        srs_db.mark_known(row_id, due_at=due_at, stability=36500.0)
+
+        refreshed = srs_db.get_collocation("banka")
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            assert refreshed.directions[d].introduced_at == stamp
+
+    def test_mark_known_targets_specific_direction(self, srs_db):
+        """When direction is provided, only that direction is marked."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        due_date = date.today() + timedelta(days=36500)
+        due_at = datetime.combine(due_date, time(4, 0), tzinfo=UTC)
+        srs_db.mark_known(row_id, due_at=due_at, stability=36500.0, direction=Direction.RECOGNITION)
+
+        item = srs_db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.KNOWN
+        assert item.directions[Direction.PRODUCTION].state != SRSState.KNOWN
+
+    def _snapshot_cols(self, srs_db, row_id, direction):
+        with srs_db._get_conn() as conn:
+            return conn.execute(
+                "SELECT known_prior_state, known_prior_stability, known_prior_due_at, fsrs_force_next "
+                "FROM collocation_directions WHERE collocation_id = ? AND direction = ?",
+                (row_id, direction.value),
+            ).fetchone()
+
+    def _set_review(self, srs_db, text, stability, due_at):
+        """Push a freshly-added collocation's recognition direction into review."""
+        item = srs_db.get_collocation(text)
+        ds = item.directions[Direction.RECOGNITION]
+        ds.state = SRSState.REVIEW
+        ds.stability = stability
+        ds.due_at = due_at
+        srs_db.update_direction(item.guid, Direction.RECOGNITION, ds)
+
+    def test_mark_known_snapshots_prior_schedule(self, srs_db):
+        """mark_known captures the pre-known state/stability/due_at on entry."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        prior_due = datetime(2026, 3, 1, 4, 0, tzinfo=UTC)
+        self._set_review(srs_db, "banka", 7.5, prior_due)
+
+        known_due = datetime.combine(date.today() + timedelta(days=36500), time(4, 0), tzinfo=UTC)
+        srs_db.mark_known(row_id, due_at=known_due, stability=36500.0, direction=Direction.RECOGNITION)
+
+        snap = self._snapshot_cols(srs_db, row_id, Direction.RECOGNITION)
+        assert snap["known_prior_state"] == "review"
+        assert abs(snap["known_prior_stability"] - 7.5) < 0.01
+        assert datetime.fromisoformat(snap["known_prior_due_at"]) == prior_due
+
+    def test_mark_known_double_mark_preserves_snapshot(self, srs_db):
+        """A second mark_known must NOT clobber the real snapshot with inflated values."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        prior_due = datetime(2026, 3, 1, 4, 0, tzinfo=UTC)
+        self._set_review(srs_db, "banka", 7.5, prior_due)
+
+        known_due = datetime.combine(date.today() + timedelta(days=36500), time(4, 0), tzinfo=UTC)
+        srs_db.mark_known(row_id, due_at=known_due, stability=36500.0, direction=Direction.RECOGNITION)
+        # Second mark while already known — snapshot must stay the first (real) values.
+        srs_db.mark_known(row_id, due_at=known_due, stability=36500.0, direction=Direction.RECOGNITION)
+
+        snap = self._snapshot_cols(srs_db, row_id, Direction.RECOGNITION)
+        assert snap["known_prior_state"] == "review"
+        assert abs(snap["known_prior_stability"] - 7.5) < 0.01
+        assert datetime.fromisoformat(snap["known_prior_due_at"]) == prior_due
+
+    def test_is_known_marked_true_after_mark_false_after_restore(self, srs_db):
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        assert srs_db.is_known_marked(row_id) is False
+
+        known_due = datetime.combine(date.today() + timedelta(days=36500), time(4, 0), tzinfo=UTC)
+        srs_db.mark_known(row_id, due_at=known_due, stability=36500.0)
+        assert srs_db.is_known_marked(row_id) is True
+
+        srs_db.restore_known(row_id)
+        assert srs_db.is_known_marked(row_id) is False
+
+    def test_restore_known_restores_schedule_and_sets_force(self, srs_db):
+        """restore_known writes the snapshot back, clears it, sets dirty + force."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        prior_due = datetime(2026, 3, 1, 4, 0, tzinfo=UTC)
+        self._set_review(srs_db, "banka", 7.5, prior_due)
+        known_due = datetime.combine(date.today() + timedelta(days=36500), time(4, 0), tzinfo=UTC)
+        srs_db.mark_known(row_id, due_at=known_due, stability=36500.0, direction=Direction.RECOGNITION)
+
+        srs_db.restore_known(row_id, direction=Direction.RECOGNITION)
+
+        item = srs_db.get_collocation("banka")
+        ds = item.directions[Direction.RECOGNITION]
+        assert ds.state == SRSState.REVIEW
+        assert abs(ds.stability - 7.5) < 0.01
+        assert ds.due_at == prior_due
+        assert ds.dirty_fsrs is True
+        assert ds.fsrs_force_next is True
+        # Snapshot cleared.
+        snap = self._snapshot_cols(srs_db, row_id, Direction.RECOGNITION)
+        assert snap["known_prior_state"] is None
+        assert snap["known_prior_stability"] is None
+        assert snap["known_prior_due_at"] is None
+
+    def test_restore_known_noop_without_snapshot(self, srs_db):
+        """restore_known on a card never marked known leaves state untouched."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        prior_due = datetime(2026, 3, 1, 4, 0, tzinfo=UTC)
+        self._set_review(srs_db, "banka", 7.5, prior_due)
+
+        srs_db.restore_known(row_id)
+
+        item = srs_db.get_collocation("banka")
+        ds = item.directions[Direction.RECOGNITION]
+        assert ds.state == SRSState.REVIEW
+        assert ds.fsrs_force_next is False
+
+    def test_mark_direction_clean_clears_fsrs_force_next(self, srs_db):
+        """The force flag is one-shot: mark_direction_clean drops it after push."""
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        item = srs_db.get_collocation("banka")
+        guid = item.guid
+        ds = item.directions[Direction.RECOGNITION]
+        ds.fsrs_force_next = True
+        ds.dirty_fsrs = True
+        srs_db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        srs_db.mark_direction_clean(guid, Direction.RECOGNITION)
+
+        reloaded = srs_db.get_collocation("banka")
+        rec = reloaded.directions[Direction.RECOGNITION]
+        assert rec.fsrs_force_next is False
+        assert rec.dirty_fsrs is False
 
     def test_get_due_items_excludes_buried_state(self, srs_db):
         """Buried directions must not appear in get_due_items even if due_date <= today."""
@@ -1481,6 +1804,32 @@ class TestAdminMutations:
         assert reset.state == SRSState.NEW
         assert reset.last_review is None
 
+    def test_reset_collocation_marks_dirty_for_anki_forget(self, srs_db):
+        """Reset must mark directions dirty so sync_push forgets the card in Anki.
+
+        Regression (2026-06-04): reset_collocation wrote dirty_fsrs=0, so a reset
+        never reached Anki — Anki kept the graduated review while TT showed a
+        fresh NEW card (a permanent new-vs-review badge divergence), and the next
+        pull (queue=2→REVIEW) silently clobbered the reset. Mirrors
+        set_state_by_id(NEW), which already marks dirty.
+        """
+        srs_db.add_collocation(_unit("hvala", "thank you"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        srs_db.reset_collocation(row_id)
+        item = srs_db.get_collocation("hvala")
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
+        assert item.directions[Direction.PRODUCTION].dirty_fsrs is True
+
+    def test_reset_collocation_single_direction_marks_only_that_dirty(self, srs_db):
+        srs_db.add_collocation(_unit("hvala", "thank you"), language_code="sl")
+        rows, _ = srs_db.list_collocations()
+        row_id = rows[0][0]
+        srs_db.reset_collocation(row_id, direction=Direction.PRODUCTION)
+        item = srs_db.get_collocation("hvala")
+        assert item.directions[Direction.PRODUCTION].dirty_fsrs is True
+        assert item.directions[Direction.RECOGNITION].dirty_fsrs is False
+
     def test_suspend_then_unsuspend_flow(self, srs_db):
         srs_db.add_collocation(_unit("lep", "nice"), language_code="sl")
         rows, _ = srs_db.list_collocations()
@@ -1561,6 +1910,8 @@ class TestUnsuspendRestoresState:
         ds = item.directions[Direction.RECOGNITION]
         assert ds.reps == 5
         assert ds.stability == 15.0
+        expected_due = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        assert ds.due_at == expected_due
 
     def test_unsuspend_nonexistent_direction_is_noop(self):
         db = SRSDatabase(":memory:")
@@ -2559,18 +2910,17 @@ class TestDatabaseURLParsing:
             assert "collocations" in table_names
         db.close()
 
-    def test_sqlite_url_with_relative_path(self, srs_db):
+    def test_sqlite_url_with_relative_path(self, srs_db, tmp_path):
         """Test that relative paths in sqlite:// URLs work correctly."""
         # srs_db fixture uses :memory: which doesn't test the path parsing
         # This test ensures the parsing logic works
         from app.srs.database import SRSDatabase
 
-        # Test with the actual format used in settings
-        url = "sqlite:///./tunatale.db"
+        db_path = tmp_path / "tunatale.db"
+        url = f"sqlite:///{db_path}"
         # Just verify it doesn't raise an error
         try:
             db = SRSDatabase(url)
-            # Try to connect
             with db._get_conn() as conn:
                 conn.execute("SELECT 1")
             db.close()
@@ -2876,3 +3226,237 @@ class TestRevlog:
         assert srs_db.has_revision_near(1, "recognition", 50200, 3, ignore_ids={99999})
         # Empty ignore set behaves like the default.
         assert srs_db.has_revision_near(1, "recognition", 50200, 3, ignore_ids=set())
+
+
+class TestGetInflectionClozesForLemma:
+    """get_inflection_clozes_for_lemma returns only morph clozes for a lemma."""
+
+    def test_returns_morph_clozes_with_hydrated_directions(self, srs_db):
+        """Two morph clozes for the same lemma are returned with directions."""
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="sem",
+                translation="I was",
+                word_count=1,
+                difficulty=1,
+                source="cloze",
+                lemma="biti",
+                disambig_key="morph:1sg-past",
+                source_sentence="jaz sem bil",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="si",
+                translation="you were",
+                word_count=1,
+                difficulty=1,
+                source="cloze",
+                lemma="biti",
+                disambig_key="morph:2sg-past",
+                source_sentence="ti si bil",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+
+        results = srs_db.get_inflection_clozes_for_lemma("biti")
+        assert len(results) == 2
+        texts = {item.syntactic_unit.text for _, item in results}
+        assert texts == {"sem", "si"}
+        for _, item in results:
+            # Hydration proof: production direction has state + stability populated
+            prod = item.directions.get(Direction.PRODUCTION)
+            assert prod is not None
+            assert prod.state == SRSState.NEW
+            assert prod.stability >= 1.0
+
+    def test_excludes_base_function_word_cloze(self, srs_db):
+        """A base cloze (disambig_key='') for the same lemma is not returned."""
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="sem",
+                translation="I was",
+                word_count=1,
+                difficulty=1,
+                source="cloze",
+                lemma="biti",
+                disambig_key="morph:1sg-past",
+                source_sentence="jaz sem bil",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="biti",
+                translation="to be",
+                word_count=1,
+                difficulty=1,
+                source="cloze",
+                lemma="biti",
+                source_sentence="biti ali ne biti",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+
+        results = srs_db.get_inflection_clozes_for_lemma("biti")
+        assert len(results) == 1
+        assert results[0][1].syntactic_unit.text == "sem"
+
+    def test_excludes_vocab_items(self, srs_db):
+        """A vocab item (card_type='vocab') for the same lemma is not returned."""
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="sem",
+                translation="I was",
+                word_count=1,
+                difficulty=1,
+                source="cloze",
+                lemma="biti",
+                disambig_key="morph:1sg-past",
+                source_sentence="jaz sem bil",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="bil",
+                translation="was",
+                word_count=1,
+                difficulty=1,
+                source="test",
+                lemma="biti",
+            ),
+            language_code="sl",
+        )
+
+        results = srs_db.get_inflection_clozes_for_lemma("biti")
+        assert len(results) == 1
+        assert results[0][1].syntactic_unit.text == "sem"
+
+    def test_excludes_other_lemma_morph_clozes(self, srs_db):
+        """A morph cloze for a different lemma is not returned."""
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="sem",
+                translation="I was",
+                word_count=1,
+                difficulty=1,
+                source="cloze",
+                lemma="biti",
+                disambig_key="morph:1sg-past",
+                source_sentence="jaz sem bil",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="bom",
+                translation="I will",
+                word_count=1,
+                difficulty=1,
+                source="cloze",
+                lemma="biti-future",
+                disambig_key="morph:1sg-fut",
+                source_sentence="jaz bom",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+
+        results = srs_db.get_inflection_clozes_for_lemma("biti")
+        assert len(results) == 1
+        assert results[0][1].syntactic_unit.text == "sem"
+
+    def test_empty_for_lemma_with_no_matches(self, srs_db):
+        """A lemma with no items at all returns empty list."""
+        assert srs_db.get_inflection_clozes_for_lemma("neobstojeci") == []
+
+
+class TestIgnoredLemmas:
+    def test_add_and_get(self, srs_db):
+        srs_db.add_ignored_lemma("sl", "Ana")
+        result = srs_db.get_ignored_lemmas("sl")
+        assert result == {"ana"}
+
+    def test_add_and_get_idempotent(self, srs_db):
+        srs_db.add_ignored_lemma("sl", "ana")
+        srs_db.add_ignored_lemma("sl", "ana")
+        result = srs_db.get_ignored_lemmas("sl")
+        assert result == {"ana"}
+
+    def test_add_lowercases(self, srs_db):
+        srs_db.add_ignored_lemma("sl", "AnA")
+        assert srs_db.get_ignored_lemmas("sl") == {"ana"}
+
+    def test_remove(self, srs_db):
+        srs_db.add_ignored_lemma("sl", "ana")
+        srs_db.remove_ignored_lemma("sl", "ana")
+        assert srs_db.get_ignored_lemmas("sl") == set()
+
+    def test_remove_idempotent(self, srs_db):
+        srs_db.remove_ignored_lemma("sl", "ana")
+        assert srs_db.get_ignored_lemmas("sl") == set()
+
+    def test_remove_lowercases(self, srs_db):
+        srs_db.add_ignored_lemma("sl", "ana")
+        srs_db.remove_ignored_lemma("sl", "AnA")
+        assert srs_db.get_ignored_lemmas("sl") == set()
+
+    def test_scoped_by_language(self, srs_db):
+        srs_db.add_ignored_lemma("sl", "ana")
+        srs_db.add_ignored_lemma("en", "the")
+        assert srs_db.get_ignored_lemmas("sl") == {"ana"}
+        assert srs_db.get_ignored_lemmas("en") == {"the"}
+
+
+class TestLemmaAnalysisCache:
+    """Persistent sentence-analysis cache round-trips, misses, and invalidation."""
+
+    def test_miss_returns_none(self, srs_db):
+        assert srs_db.get_sentence_analysis("Dober dan", "sl", "test-v1") is None
+
+    def test_round_trip(self, srs_db):
+        srs_db.set_sentence_analysis("Dober dan", "sl", "test-v1", '[{"surface": "Dober", "lemma": "dober"}]')
+        cached = srs_db.get_sentence_analysis("Dober dan", "sl", "test-v1")
+        assert cached == '[{"surface": "Dober", "lemma": "dober"}]'
+
+    def test_model_version_mismatch_is_miss(self, srs_db):
+        srs_db.set_sentence_analysis("Dober dan", "sl", "v1", '[{"surface": "Dober", "lemma": "dober"}]')
+        assert srs_db.get_sentence_analysis("Dober dan", "sl", "v2") is None
+
+    def test_language_code_mismatch_is_miss(self, srs_db):
+        srs_db.set_sentence_analysis("Dober dan", "sl", "test-v1", '[{"surface": "Dober", "lemma": "dober"}]')
+        assert srs_db.get_sentence_analysis("Dober dan", "en", "test-v1") is None
+
+
+class TestImageQueryCache:
+    """Persistent per-word image-search-query cache: round-trips, misses, skip-sentinel."""
+
+    def test_miss_returns_none(self, srs_db):
+        assert srs_db.get_image_query("sodišče", "court", "img-v1") is None
+
+    def test_round_trip(self, srs_db):
+        srs_db.set_image_query("sodišče", "court", "img-v1", "courtroom interior")
+        assert srs_db.get_image_query("sodišče", "court", "img-v1") == "courtroom interior"
+
+    def test_empty_string_is_a_cached_skip_not_a_miss(self, srs_db):
+        # "" is the sentinel for "abstract word, no image"; it must round-trip
+        # as "" (distinct from a None miss) so we don't re-query every sync.
+        srs_db.set_image_query("zato", "therefore", "img-v1", "")
+        assert srs_db.get_image_query("zato", "therefore", "img-v1") == ""
+
+    def test_upsert_overwrites(self, srs_db):
+        srs_db.set_image_query("sodišče", "court", "img-v1", "tennis court")
+        srs_db.set_image_query("sodišče", "court", "img-v1", "courtroom interior")
+        assert srs_db.get_image_query("sodišče", "court", "img-v1") == "courtroom interior"
+
+    def test_model_version_mismatch_is_miss(self, srs_db):
+        srs_db.set_image_query("sodišče", "court", "img-v1", "courtroom interior")
+        assert srs_db.get_image_query("sodišče", "court", "img-v2") is None

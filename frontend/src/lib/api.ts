@@ -60,6 +60,8 @@ export type WordRating = "hard" | "easy" | "again";
 
 export interface WordToken {
   surface: string;
+  prefix_punct?: string;
+  suffix_punct?: string;
   lemma: string;
   srs_state: string;
   srs_item_id: number | null;
@@ -69,6 +71,14 @@ export interface WordToken {
   collocation_srs_state: string | null;
   collocation_lemma: string | null;
   collocation_translation: string | null;
+  card_type: string | null;
+  active_state: string;
+  active_direction: string | null;
+  is_due: boolean;
+  progress: number | null;
+  inflectable: boolean;
+  inflection_feature: string | null;
+  known_marked: boolean;
 }
 
 export interface CreateSRSItemRequest {
@@ -83,6 +93,9 @@ export interface CreateSRSItemRequest {
 
 export interface DialogueLine {
   role: string;
+  // The backend always sends this (reconstructed from surfaces); optional here so
+  // test fixtures need not restate it. Consumers read it defensively (`?? ''`).
+  sentence?: string;
   words: WordToken[];
 }
 
@@ -422,6 +435,10 @@ export class TunaTaleAPI {
     });
   }
 
+  async restoreKnown(id: number): Promise<SRSItemDetail> {
+    return this.request(`/api/srs/items/${id}/restore-known`, { method: "POST" });
+  }
+
   async setSRSItemState(id: number, state: string): Promise<SRSItemDetail> {
     return this.request(`/api/srs/items/${id}/state`, {
       method: "POST",
@@ -444,6 +461,51 @@ export class TunaTaleAPI {
     return this.request(`/api/srs/items/${id}/untrack`, { method: "POST" });
   }
 
+  async createInflectionCloze(body: {
+    surface: string;
+    lemma: string;
+    feature: string;
+    sentence: string;
+    language_code: string;
+    lesson_id?: string;
+    translation?: string;
+  }): Promise<{ id: number; was_created: boolean; item: SRSItemDetail }> {
+    return this.request("/api/srs/inflection-clozes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async createBaseCard(body: {
+    surface: string;
+    lemma: string;
+    sentence: string;
+    language_code: string;
+    translation?: string;
+  }): Promise<{ id: number; was_created: boolean; item: SRSItemDetail }> {
+    return this.request("/api/srs/items/base", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async ignoreLemma(lemma: string, language_code: string): Promise<{ status: string }> {
+    return this.request("/api/srs/ignored-lemmas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lemma, language_code }),
+    });
+  }
+
+  async unignoreLemma(lemma: string, language_code: string): Promise<{ status: string }> {
+    return this.request(
+      `/api/srs/ignored-lemmas?lemma=${encodeURIComponent(lemma)}&language_code=${encodeURIComponent(language_code)}`,
+      { method: "DELETE" },
+    );
+  }
+
   async syncWithAnki(dryRun = false): Promise<AnkiSyncResult> {
     return this.request(`/api/anki/sync?dry_run=${dryRun}`, { method: "POST" });
   }
@@ -459,18 +521,6 @@ export class TunaTaleAPI {
     return this.request("/api/anki/sync-create-new", {
       method: "POST",
       body: JSON.stringify({ deck_name: deckName, model_name: modelName }),
-    });
-  }
-
-  async getClozeSetting(): Promise<{ enabled: boolean }> {
-    return this.request("/api/srs/settings/cloze");
-  }
-
-  async setClozeSetting(enabled: boolean): Promise<{ enabled: boolean }> {
-    return this.request("/api/srs/settings/cloze", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled }),
     });
   }
 }

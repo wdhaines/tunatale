@@ -14,6 +14,14 @@ function word(surface: string) {
     collocation_srs_state: null,
     collocation_lemma: null,
     collocation_translation: null,
+    card_type: null,
+    active_state: "new",
+    active_direction: null,
+    is_due: false,
+    progress: null,
+    inflectable: false,
+    inflection_feature: null,
+    known_marked: false,
   };
 }
 

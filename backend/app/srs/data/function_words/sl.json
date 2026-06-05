@@ -1,0 +1,10 @@
+{
+  "_comment": "Slovene function-word policy. POS-first: 'pos' lists the classla UPOS tags that count as function words (the primary signal when an analyzer is present) — this catches the whole biti AUX paradigm (sem/si/je/smo/ste/so) without enumerating surfaces, which is why 'biti' the lemma and ste/smo/so are deliberately NOT in 'include'. 'include' force-adds words POS misses or mistags: the open-class adverbs kje/kako/tam (UD ADV) and 'ni' (classla tags it VERB, not AUX). It is also the SOLE signal under the lowercase fallback (no analyzer -> upos empty). 'exclude' force-removes. 'clozes_only_verbs' lists suppletive/auxiliary verbs (biti) that produce only per-form conjugation clozes — no base card, ungated. 'include' seeded 2026-05-12 from curriculum 'arrival-in-ljubljana-5f8c0f52', manually curated (see build_function_word_list.py).",
+  "pos": ["ADP", "AUX", "CCONJ", "SCONJ", "PRON", "DET", "PART"],
+  "include": [
+    "je", "kje", "v", "kaj", "sem", "si", "da", "za", "tam", "na",
+    "kako", "ni", "se", "to", "vam", "z", "mi", "še", "pa", "ti", "po", "vi"
+  ],
+  "exclude": [],
+  "clozes_only_verbs": ["biti"]
+}

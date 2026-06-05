@@ -21,24 +21,6 @@
 	let error = $state<string | null>(null);
 	let queueStats = $state<QueueStats | null>(null);
 	let syncStatus = $state<string | null>(null);
-	let clozeEnabled = $state(false);
-
-	async function persistCloze() {
-		try {
-			await api.setClozeSetting(clozeEnabled);
-		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
-		}
-	}
-
-	async function loadClozeSetting() {
-		try {
-			const result = await api.getClozeSetting();
-			clozeEnabled = result.enabled;
-		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
-		}
-	}
 
 	function handleSyncResult(r: AnkiSyncResult) {
 		syncStatus =
@@ -157,7 +139,7 @@
 	}
 
 	async function resetItem(id: number) {
-		if (!confirm('Reset this item to new state?')) return;
+		if (!confirm('Reset this item? It will be forgotten in Anki too and re-learned from scratch.')) return;
 		try {
 			await api.resetSRSItem(id);
 			await loadItems();
@@ -203,7 +185,6 @@
 
 	onMount(() => {
 		loadItems();
-		loadClozeSetting();
 	});
 </script>
 
@@ -236,15 +217,6 @@
 	{#if syncStatus}
 		<p class="sync-status">{syncStatus}</p>
 	{/if}
-
-	<section class="feature-flags">
-		<h3>Feature flags</h3>
-		<label class="flag-row">
-			<input type="checkbox" bind:checked={clozeEnabled} onchange={persistCloze} />
-			<span class="flag-name">Function-word cloze cards (Phase F)</span>
-			<span class="flag-help">When on, /listen creates Anki Cloze cards for Slovene function words detected in NATURAL_SPEED phrases. Requires Anki's built-in Cloze notetype.</span>
-		</label>
-	</section>
 
 	{#if error}
 		<p class="error">{error}</p>
@@ -385,31 +357,6 @@
 	}
 	.anki-warning {
 		font-size: 0.85rem;
-		color: var(--color-muted);
-	}
-	.feature-flags {
-		margin-bottom: 1rem;
-		padding: 0.75rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
-		background: #fafafa;
-	}
-	.feature-flags h3 {
-		margin: 0 0 0.5rem;
-		font-size: 0.95rem;
-	}
-	.flag-row {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		cursor: pointer;
-	}
-	.flag-name {
-		font-weight: 500;
-		font-size: 0.9rem;
-	}
-	.flag-help {
-		font-size: 0.8rem;
 		color: var(--color-muted);
 	}
 	.table-wrap {
