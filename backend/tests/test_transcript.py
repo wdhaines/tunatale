@@ -222,14 +222,8 @@ class TestExtractTranscript:
         assert word.lemma == "banka"
         assert word.srs_state == "unknown"
 
-    def test_reset_to_new_makes_word_due_again(self):
-        """Regression (stuck reset): after Reset→new the word is clickable again.
-
-        A graduated card (future due_at) reset to NEW via the popover used to stay
-        not-due in the transcript (is_due False) → the plain click no-op'd and the
-        card was stuck red. set_state_by_id now full-resets the schedule, so the
-        reset word renders red (progress 0) AND due (is_due True) → re-learnable.
-        """
+    def test_reset_to_new_not_due_in_transcript(self):
+        """Reset→new: not bold in transcript (review-queue gates NEW intros)."""
         unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
         self.db.add_collocation(unit, language_code="sl")
         rows, _ = self.db.list_collocations()
@@ -249,7 +243,7 @@ class TestExtractTranscript:
         result = extract_transcript(lesson, self.db, self.lemmatizer)
         word = result.dialogue_lines[0].words[0]
         assert word.active_state == "new"
-        assert word.is_due is True  # ← was False (stuck) before the fix
+        assert word.is_due is False  # review-queue gates NEW intros
         assert word.progress == 0.0  # red on the ramp
 
 
@@ -544,11 +538,11 @@ class TestIsDue:
         )
         assert _is_due(ds, date(2026, 6, 1)) is False
 
-    def test_due_when_new_and_due_today(self):
+    def test_not_due_when_new_and_due_today(self):
         ds = DirectionState(
             direction=Direction.RECOGNITION, state=SRSState.NEW, due_at=datetime(2026, 6, 1, tzinfo=UTC)
         )
-        assert _is_due(ds, date(2026, 6, 1)) is True
+        assert _is_due(ds, date(2026, 6, 1)) is False
 
     def test_due_when_review_and_past_due(self):
         ds = DirectionState(

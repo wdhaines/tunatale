@@ -131,8 +131,8 @@ def resolve_active_direction(item: object) -> Direction:
 
 def _is_due(ds: DirectionState, today: date) -> bool:
     """True when the direction state is actionable (not known/suspended/unknown) and due."""
-    # NEW directions are intentionally due (gates govern introduction, not review).
-    if ds.state in (SRSState.KNOWN, SRSState.SUSPENDED):
+    # Match review-queue logic: exclude NEW (gated by daily cap, bury, etc.).
+    if ds.state in (SRSState.NEW, SRSState.KNOWN, SRSState.SUSPENDED):
         return False
     return ds.due_at.date() <= today
 
