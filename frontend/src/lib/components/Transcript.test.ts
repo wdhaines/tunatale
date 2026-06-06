@@ -358,6 +358,96 @@ describe("Transcript", () => {
       expect(span.getAttribute("tabindex")).toBe("0");
     });
 
+    it("suppresses the group tooltip and shows per-word tooltips while Alt is held", async () => {
+      const { container, queryByText } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptWithCollocation }),
+      });
+      const collSpan = container.querySelector(".collocation-span") as HTMLElement;
+      const outerWrap = collSpan.parentElement as HTMLElement;
+      // The group tooltip is the role=tooltip element that is a direct sibling of
+      // the collocation span (per-word tooltips are nested deeper, inside the span).
+      const groupTooltip = () =>
+        Array.from(outerWrap.children).find((el) => el.getAttribute("role") === "tooltip") ?? null;
+
+      // Default: the group tooltip element exists; per-word tooltips do not.
+      expect(groupTooltip()).not.toBeNull();
+      expect(queryByText("good")).toBeNull();
+
+      await fireEvent.keyDown(window, { key: "Alt" });
+
+      // Alt held: the whole group tooltip is gone (not just its translation), and the
+      // individual word tooltip ("good") appears — so only one popover shows.
+      expect(groupTooltip()).toBeNull();
+      expect(queryByText("good")).not.toBeNull();
+
+      await fireEvent.keyUp(window, { key: "Alt" });
+      expect(groupTooltip()).not.toBeNull();
+    });
+
+    it("forwards sentence + tooltipActions to collocation inner words, reactively", async () => {
+      const makeColl = (sentence: string): TranscriptData => ({
+        lesson_id: "l1",
+        key_phrases: [],
+        dialogue_lines: [
+          {
+            role: "Petra",
+            sentence,
+            words: [
+              {
+                ...transcriptWithCollocation.dialogue_lines[0].words[0],
+                surface: "centru",
+                lemma: "center",
+                translation: "center",
+                srs_item_id: 867,
+                active_state: "review",
+                inflectable: true,
+                inflection_feature: "noun:loc:sg",
+                collocation_lemma: "centru mesta",
+                collocation_translation: "city center",
+              },
+              {
+                ...transcriptWithCollocation.dialogue_lines[0].words[1],
+                surface: "mesta",
+                lemma: "mesto",
+                translation: "city",
+                srs_item_id: 260,
+                active_state: "review",
+                collocation_lemma: "centru mesta",
+                collocation_translation: "city center",
+              },
+            ],
+          },
+        ],
+      });
+      const onCreateInflection = vi.fn();
+      const { queryByText, getByText, rerender } = render(Transcript, {
+        props: defaultProps({
+          transcript: makeColl("v centru mesta"),
+          tooltipActions: { onCreateInflection },
+        }),
+      });
+      // Suppressed by default — the action button is not rendered yet.
+      expect(queryByText("Create inflection card")).toBeNull();
+
+      // The per-word sentence binding must track the line reactively.
+      await rerender(
+        defaultProps({
+          transcript: makeColl("blizu centra mesta"),
+          tooltipActions: { onCreateInflection },
+        }),
+      );
+
+      await fireEvent.keyDown(window, { key: "Alt" });
+
+      // With Alt held, the inner word's populated popover exposes its action,
+      // wired with the current line sentence.
+      await fireEvent.click(getByText("Create inflection card"));
+      expect(onCreateInflection).toHaveBeenCalledWith(
+        expect.objectContaining({ lemma: "center" }),
+        "blizu centra mesta",
+      );
+    });
+
     it("collocation wrapper has no title attribute", () => {
       const { container } = render(Transcript, {
         props: defaultProps({ transcript: transcriptWithCollocation }),

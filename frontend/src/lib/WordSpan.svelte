@@ -87,27 +87,20 @@
 				: ''
 	);
 
-	// Show tooltip when: not inside a collocation, OR alt-hover mode is active
+	// Show the popover when: not inside a collocation, OR alt-hover mode is active.
+	// The Tooltip wrapper is ALWAYS rendered (suppressed otherwise) so the DOM
+	// structure stays stable — toggling Alt over a collocation must not reflow the
+	// line (the prior if/else swap caused a visible spacing jump).
 	const showTooltip = $derived(!requireModifier || altHover);
 </script>
 
-{#if showTooltip}
-	<Tooltip translation={word.translation} {word} {sentence} actions={tooltipActions}>
-		<span
-			class="word {colorClass}"
-			class:word-selected={selected}
-			class:word-due={word.is_due}
-			style={dynamicStyle}
-			role="button"
-			tabindex="0"
-			data-line-index={lineIndex}
-			data-word-index={wordIndex}
-			onmousedown={handleMouseDown}
-			onclick={handleClick}
-			onkeydown={handleKeydown}
-		><span class="punct">{word.prefix_punct ?? ''}</span>{word.surface}<span class="punct">{word.suffix_punct ?? ''}</span></span>
-	</Tooltip>
-{:else}
+<Tooltip
+	translation={word.translation}
+	{word}
+	{sentence}
+	actions={tooltipActions}
+	suppressed={!showTooltip}
+>
 	<span
 		class="word {colorClass}"
 		class:word-selected={selected}
@@ -121,7 +114,7 @@
 		onclick={handleClick}
 		onkeydown={handleKeydown}
 	><span class="punct">{word.prefix_punct ?? ''}</span>{word.surface}<span class="punct">{word.suffix_punct ?? ''}</span></span>
-{/if}
+</Tooltip>
 
 <style>
 	.word {

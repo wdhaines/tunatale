@@ -9,10 +9,11 @@
 		word?: WordToken;
 		sentence?: string;
 		actions?: TooltipActions;
+		suppressed?: boolean;
 	}
-	let { translation, childText = 'child', word, sentence, actions }: Props = $props();
+	let { translation, childText = 'child', word, sentence, actions, suppressed = false }: Props = $props();
 </script>
 
-<Tooltip {translation} {word} {sentence} {actions}>
+<Tooltip {translation} {word} {sentence} {actions} {suppressed}>
 	<span>{childText}</span>
 </Tooltip>

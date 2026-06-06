@@ -18,9 +18,13 @@
 		word?: WordToken;
 		sentence?: string;
 		actions?: TooltipActions;
+		// When true, render the child but never the popover. Lets callers keep a
+		// stable DOM structure (no layout shift) while gating the popover on, e.g.,
+		// an Alt-held state — see WordSpan's collocation inner words.
+		suppressed?: boolean;
 	}
 
-	let { translation, children, word, sentence, actions }: Props = $props();
+	let { translation, children, word, sentence, actions, suppressed = false }: Props = $props();
 
 	const dueLabel = $derived(word != null ? (word.is_due ? 'Due' : 'Not Due') : null);
 
@@ -79,7 +83,7 @@
 		showCreateInflection || showIgnore || showIgnoreCardless || showUnignore || showUnignoreCardless || showMarkKnown || showUnmarkKnown || showResetNew
 	);
 
-	const hasContent = $derived(Boolean(translation || dueLabel || hasActions));
+	const hasContent = $derived(!suppressed && Boolean(translation || dueLabel || hasActions));
 </script>
 
 <span class="tt-wrap">

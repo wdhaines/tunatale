@@ -53,6 +53,16 @@ describe("Tooltip", () => {
     expect(queryByRole("tooltip")).toBeNull();
   });
 
+  it("renders no tooltip when suppressed, even though content would otherwise show", () => {
+    const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+    const { queryByRole, getByText } = render(TooltipTest, {
+      props: { translation: "hello", word, childText: "zdravo", suppressed: true },
+    });
+    // Child still renders (the word itself), but the popover is fully suppressed.
+    expect(getByText("zdravo")).toBeTruthy();
+    expect(queryByRole("tooltip")).toBeNull();
+  });
+
   it("renders both translation and due label when both provided", () => {
     const word = makeWordToken({ is_due: true, srs_item_id: 1 });
     const { getByRole } = render(TooltipTest, {

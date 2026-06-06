@@ -386,7 +386,8 @@
 									{#if segment.type === 'collocation'}
 										{@const collOffRamp = collocationOffRamp(segment.words[0].collocation_srs_state)}
 										<Tooltip
-											translation={altHeld ? null : segment.words[0].collocation_translation}
+											translation={segment.words[0].collocation_translation}
+											suppressed={altHeld}
 											word={segment.words[0]}
 										>
 											<span
@@ -410,6 +411,8 @@
 														lineIndex={lineIndex}
 														wordIndex={wIdx}
 														selected={wordIsSelected(lineIndex, wIdx)}
+														sentence={lineSentence}
+														tooltipActions={tooltipActions}
 													/>
 												{/each}
 											</span>
