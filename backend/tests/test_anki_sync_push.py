@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from datetime import UTC, date, datetime, time, timedelta
 
-import httpx
-
-from app.anki.anki_connect import AnkiConnectClient
 from app.anki.sync import (
     AnkiSync,
     OfflineWriter,
@@ -160,26 +156,6 @@ class FakeWriter:
 
     def action_names(self) -> list[str]:
         return [c[0] for c in self.calls]
-
-
-class RecordingTransport(httpx.BaseTransport):
-    """Records calls and returns success responses."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, dict]] = []
-
-    def handle_request(self, request):
-        body = json.loads(request.content)
-        action = body["action"]
-        params = body.get("params", {})
-        self.calls.append((action, params))
-        return httpx.Response(200, json={"result": None, "error": None})
-
-
-def _recording_client() -> tuple[AnkiConnectClient, RecordingTransport]:
-    transport = RecordingTransport()
-    client = AnkiConnectClient(http_client=httpx.Client(transport=transport))
-    return client, transport
 
 
 # ── TestListDirtyFieldEdits ────────────────────────────────────────────────────

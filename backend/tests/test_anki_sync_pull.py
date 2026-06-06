@@ -10,10 +10,8 @@ from datetime import UTC, date, datetime, time, timedelta
 from datetime import datetime as _dt
 from datetime import time as _time
 
-import httpx
 import pytest
 
-from app.anki.anki_connect import AnkiConnectClient
 from app.anki.sync import (
     AnkiSync,
     NoteRecord,
@@ -367,21 +365,6 @@ class TestOfflineReader:
 
 
 # ── Additional tests ──────────────────────────────────────────────────────────
-
-
-class DispatchTransport(httpx.BaseTransport):
-    def __init__(self, handlers: dict):
-        self._handlers = handlers
-
-    def handle_request(self, request):
-        body = json.loads(request.content)
-        action = body["action"]
-        result = self._handlers[action](body.get("params", {}))
-        return httpx.Response(200, json={"result": result, "error": None})
-
-
-def _online_client(handlers: dict) -> AnkiConnectClient:
-    return AnkiConnectClient(http_client=httpx.Client(transport=DispatchTransport(handlers)))
 
 
 # ── AnkiSync constructor ──────────────────────────────────────────────────────
