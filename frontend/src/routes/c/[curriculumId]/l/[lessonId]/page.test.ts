@@ -1387,7 +1387,18 @@ describe("load function for /c/[curriculumId]/l/[lessonId]", () => {
       });
     });
 
-    it("displays sync result after successful sync", async () => {
+    it("refreshes the transcript and shows a summary after a successful sync", async () => {
+      const before = {
+        lesson_id: "l1",
+        key_phrases: [{ phrase: "kavo prosim", translation: "BEFORE sync" }],
+        dialogue_lines: [],
+      };
+      const after = {
+        lesson_id: "l1",
+        key_phrases: [{ phrase: "kavo prosim", translation: "AFTER sync" }],
+        dialogue_lines: [],
+      };
+      mockGetTranscript.mockResolvedValue(after);
       mockSyncWithAnki.mockResolvedValue({
         mode: "full",
         created: 5,
@@ -1400,16 +1411,49 @@ describe("load function for /c/[curriculumId]/l/[lessonId]", () => {
         directions_pushed: 2,
         dry_run: false,
       });
-      const { getByText } = render(Page, {
-        props: { data: { curriculum, lesson, audio: null, transcript: null } },
+      const { getByText, findByText, queryByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: before } },
       });
 
-      const syncBtn = getByText("Sync with Anki");
-      await fireEvent.click(syncBtn);
+      expect(getByText("BEFORE sync")).toBeTruthy();
 
-      await waitFor(() => {
-        expect(getByText(/Mode: full/)).toBeTruthy();
+      await fireEvent.click(getByText("Sync with Anki"));
+
+      // Post-sync the transcript is re-fetched so due/known states reflect the sync.
+      expect(await findByText("AFTER sync")).toBeTruthy();
+      expect(queryByText("BEFORE sync")).toBeFalsy();
+      expect(mockGetTranscript).toHaveBeenCalledWith("l1");
+      // Parent renders its own summary (SyncButton's <pre> is suppressed once a
+      // callback is supplied), so sync feedback isn't lost.
+      expect(getByText(/Pulled 4 · Pushed 2 · Conflicts 0/)).toBeTruthy();
+    });
+
+    it("shows an error if the post-sync transcript refresh fails", async () => {
+      const before = {
+        lesson_id: "l1",
+        key_phrases: [{ phrase: "kavo prosim", translation: "BEFORE sync" }],
+        dialogue_lines: [],
+      };
+      mockGetTranscript.mockRejectedValue(new Error("refresh failed"));
+      mockSyncWithAnki.mockResolvedValue({
+        mode: "full",
+        created: 0,
+        linked: 0,
+        skipped: 0,
+        notes_pulled: 0,
+        directions_pulled: 0,
+        conflicts: 0,
+        notes_pushed: 0,
+        directions_pushed: 0,
+        dry_run: false,
       });
+      const { getByText, findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: before } },
+      });
+
+      await fireEvent.click(getByText("Sync with Anki"));
+
+      expect(await findByText("refresh failed")).toBeTruthy();
     });
 
     it("sets error when syncWithAnki fails", async () => {

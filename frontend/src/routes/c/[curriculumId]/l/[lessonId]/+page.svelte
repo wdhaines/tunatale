@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
-	import type { LessonAudio, TranscriptData } from '$lib/api';
+	import type { AnkiSyncResult, LessonAudio, TranscriptData } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import AudioPlayer from '$lib/components/AudioPlayer.svelte';
 	import Transcript from '$lib/components/Transcript.svelte';
@@ -29,6 +29,7 @@
 	let listenResult: { registered: number } | null = $state(null);
 	let audioLoading = $state(false);
 	let regenLoading = $state(false);
+	let syncStatus = $state('');
 	let error = $state('');
 
 	let isListened = $derived(listenedStore.has(data.lesson.id));
@@ -93,6 +94,20 @@
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
 			regenLoading = false;
+		}
+	}
+
+	// A sync changes per-word due/known states in the backend, but nothing else on
+	// this page tracks that. Re-fetch the transcript so the rendered states reflect
+	// the sync, and surface a short summary (SyncButton hides its own once a
+	// callback is supplied).
+	async function handleSyncResult(r: AnkiSyncResult) {
+		syncStatus = `Pulled ${r.directions_pulled} · Pushed ${r.directions_pushed} · Conflicts ${r.conflicts}`;
+		error = '';
+		try {
+			transcript = await api.getLessonTranscript(data.lesson.id);
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
 		}
 	}
 
@@ -282,7 +297,10 @@
 				{audioLoading ? 'Rendering…' : 'Render Audio'}
 			</button>
 		{/if}
-		<SyncButton />
+		<SyncButton onSyncResult={handleSyncResult} />
+		{#if syncStatus}
+			<p class="sync-status">{syncStatus}</p>
+		{/if}
 		{#if error}
 			<p class="error">{error}</p>
 		{/if}
@@ -369,6 +387,11 @@
 	}
 	.error {
 		color: var(--color-danger);
+		margin-top: 0.5rem;
+	}
+	.sync-status {
+		color: var(--color-muted);
+		font-size: 0.85rem;
 		margin-top: 0.5rem;
 	}
 	.transcript-section {
