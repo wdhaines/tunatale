@@ -131,9 +131,12 @@ def resolve_active_direction(item: object) -> Direction:
 
 
 def _is_due(ds: DirectionState, today: date) -> bool:
-    """True when the direction state is actionable (not new/known/suspended) and due."""
-    # Match review-queue logic: exclude NEW (gated by daily cap, bury, etc.).
-    if ds.state in (SRSState.NEW, SRSState.KNOWN, SRSState.SUSPENDED):
+    """True when the direction state is actionable (not new/known/suspended/buried) and due."""
+    # Match the review queue's non-reviewable set (database._NON_REVIEWABLE_STATES):
+    # NEW is gated by the daily cap; SUSPENDED/KNOWN are off the ramp; BURIED is
+    # sibling-deferred for the day. A buried card has due_at.date() == today but is
+    # NOT due — don't bold it.
+    if ds.state in (SRSState.NEW, SRSState.KNOWN, SRSState.SUSPENDED, SRSState.BURIED):
         return False
     return ds.due_at.date() <= today
 

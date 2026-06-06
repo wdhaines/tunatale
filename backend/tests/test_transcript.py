@@ -584,6 +584,15 @@ class TestIsDue:
         )
         assert _is_due(ds, date(2026, 6, 1)) is False
 
+    def test_not_due_when_buried_even_if_due_today(self):
+        # A sibling-buried card is deferred for the day and excluded from the
+        # review queue (database._NON_REVIEWABLE_STATES). The transcript must not
+        # bold it as due just because its due_at.date() is today.
+        ds = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.BURIED, due_at=datetime(2026, 6, 1, tzinfo=UTC)
+        )
+        assert _is_due(ds, date(2026, 6, 1)) is False
+
 
 class TestTranscriptEnrichment:
     def setup_method(self):
