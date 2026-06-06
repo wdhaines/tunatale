@@ -1,0 +1,231 @@
+"""Anki peer-sync orchestrator (anki-free core module).
+
+Drives the sync bracket:
+
+  1. ``sync_collection`` via driver (pull server → tt_collection)
+  2. ``sync.main()`` — TT's existing push/pull against tt_collection
+  3. ``sync_collection`` via driver (push tt_collection → server)
+
+Uses ``app.anki.sync_driver`` via subprocess for the anki-side operations.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+
+from app.config import settings
+
+# The driver imports `anki` (+ protobuf), which does NOT import on Python 3.14.
+# It is also self-contained (stdlib + anki only, no `app.*` imports), so we run it
+# isolated + project-free under a separate interpreter (settings.anki_subprocess_python)
+# and invoke it by file path rather than `-m app.anki.sync_driver`.
+_DRIVER_PATH = str(Path(__file__).with_name("sync_driver.py"))
+
+
+@dataclass
+class PeerSyncReport:
+    auth_success: bool = False
+    pull_required: int | None = None
+    pull_message: str = ""
+    tt_push_pull_exit: int | None = None
+    push_required: int | None = None
+    push_message: str = ""
+    dry_run: bool = False
+
+
+class PeerSyncError(Exception):
+    """Raised when a peer-sync step fails."""
+
+
+def _full_sync_required(required: int | None) -> bool:
+    """True if the server demands a full sync/upload/download.
+
+    Mirrors proto ``SyncCollectionResponse.ChangesRequired``: ``{0 NO_CHANGES,
+    1 NORMAL_SYNC}`` mean the incremental sync completed; ``{2 FULL_SYNC,
+    3 FULL_DOWNLOAD, 4 FULL_UPLOAD}`` all mean incremental did NOT happen and a
+    full operation is required — none of which we perform implicitly.
+    """
+    return required in (2, 3, 4)
+
+
+def _tt_settings():
+    """Clone settings with anki_collection_path pointing at tt_collection."""
+    return settings.model_copy(update={"anki_collection_path": settings.tt_collection_path})
+
+
+def _anki_with_spec() -> str:
+    """`--with` spec for the driver subprocess. Empty version → latest anki (a bare
+    ``anki==`` would be a malformed specifier)."""
+    version = settings.anki_pkg_version
+    return f"anki=={version}" if version else "anki"
+
+
+def _driver_cmd() -> list[str]:
+    """Command to run the anki driver subprocess: isolated, project-free, on an
+    anki-compatible interpreter (anki's protobuf can't import on 3.14)."""
+    return [
+        "uv",
+        "run",
+        "--isolated",
+        "--no-project",
+        "--python",
+        settings.anki_subprocess_python,
+        "--with",
+        _anki_with_spec(),
+        "python",
+        _DRIVER_PATH,
+    ]
+
+
+def _run_driver(command: dict, timeout: int = 120) -> dict:
+    """Run sync_driver subprocess with *command* JSON, return parsed result."""
+    proc = subprocess.run(
+        _driver_cmd(),
+        input=json.dumps(command),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+    )
+    try:
+        result = json.loads(proc.stdout)
+    except (json.JSONDecodeError, OSError) as e:
+        raise PeerSyncError(f"Driver output not valid JSON: {e}\nstderr: {proc.stderr}") from None
+
+    if "error" in result:
+        raise PeerSyncError(f"Driver error: {result['error']}")
+    return result
+
+
+def peer_sync(dry_run: bool = False) -> PeerSyncReport:
+    """Execute the full peer-sync bracket.
+
+    Returns a ``PeerSyncReport`` with per-step outcomes.
+    Raises ``PeerSyncError`` if any step fails.
+    """
+    report = PeerSyncReport(dry_run=dry_run)
+
+    try:
+        auth = _run_driver(
+            {
+                "op": "login",
+                "username": settings.sync_username,
+                "password": settings.sync_password,
+                "endpoint": settings.sync_endpoint,
+            }
+        )
+    except PeerSyncError as e:
+        raise PeerSyncError(f"Login failed: {e}") from None
+    report.auth_success = True
+
+    sync_out = _run_driver(
+        {
+            "op": "sync",
+            "collection_path": str(settings.tt_collection_path),
+            "auth": auth,
+        }
+    )
+    report.pull_required = sync_out.get("required")
+    report.pull_message = sync_out.get("server_message", "")
+
+    if _full_sync_required(sync_out.get("required")):
+        raise PeerSyncError(
+            f"Server requested FULL_SYNC (required={sync_out.get('required')}) on pull — aborting. "
+            f"Server message: {sync_out.get('server_message', '')}. "
+            "Run bootstrap first or check collection compatibility."
+        )
+
+    from app.anki.sync import main as tt_sync_main
+
+    report.tt_push_pull_exit = tt_sync_main(
+        argv=["--dry-run"] if dry_run else [],
+        _settings=_tt_settings(),
+    )
+    if report.tt_push_pull_exit != 0:
+        raise PeerSyncError(
+            f"TT sync against tt_collection failed (exit={report.tt_push_pull_exit}) — "
+            "aborting before push to avoid pushing a partially-synced collection."
+        )
+
+    if not dry_run:
+        push_out = _run_driver(
+            {
+                "op": "sync",
+                "collection_path": str(settings.tt_collection_path),
+                "auth": auth,
+            }
+        )
+        report.push_required = push_out.get("required")
+        report.push_message = push_out.get("server_message", "")
+        if _full_sync_required(push_out.get("required")):
+            raise PeerSyncError(
+                f"Server requested FULL_SYNC (required={push_out.get('required')}) on push — aborting. "
+                f"Server message: {push_out.get('server_message', '')}."
+            )
+
+    return report
+
+
+def bootstrap_collection() -> None:
+    """Bootstrap a TT-owned collection via full download from sync server.
+
+    Creates a minimal empty collection if *tt_collection_path* doesn't exist,
+    then overwrites it with the server's full collection. Safe to re-run on an
+    existing collection (re-downloads from server).
+    """
+    path = settings.tt_collection_path
+    needs_create = not path.exists()
+
+    auth = _run_driver(
+        {
+            "op": "login",
+            "username": settings.sync_username,
+            "password": settings.sync_password,
+            "endpoint": settings.sync_endpoint,
+        }
+    )
+
+    if needs_create:
+        _run_driver(
+            {
+                "op": "create_collection",
+                "collection_path": str(path),
+            }
+        )
+
+    _run_driver(
+        {
+            "op": "full_download",
+            "collection_path": str(path),
+            "auth": auth,
+        }
+    )
+
+
+def main_cli() -> None:
+    """CLI entry point: ``python -m app.anki.sync_orchestrator [--bootstrap]``."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="TunaTale Anki peer-sync orchestrator")
+    parser.add_argument("--bootstrap", action="store_true", help="Full-download from sync server")
+    parser.add_argument("--dry-run", action="store_true", help="Skip push to server")
+    args = parser.parse_args()
+
+    if args.bootstrap:
+        bootstrap_collection()
+        print("Bootstrap complete.")
+    else:
+        report = peer_sync(dry_run=args.dry_run)
+        print(
+            f"Pull: required={report.pull_required}, msg={report.pull_message}\n"
+            f"TT: exit={report.tt_push_pull_exit}\n"
+            f"Push: required={report.push_required}, msg={report.push_message}"
+        )
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main_cli()
