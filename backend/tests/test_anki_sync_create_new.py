@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, date, datetime, time
 
-import httpx
 import pytest
 
-from app.anki.anki_connect import AnkiConnectClient
 from app.anki.media.pipeline import MediaResult
 from app.anki.sync import (
     AnkiSync,
@@ -204,28 +201,6 @@ async def _full_media(word: str, english: str, *, used_image_urls: set[str], **_
         image_ext="jpg",
         image_url=url,
     )
-
-
-class FlexTransport(httpx.BaseTransport):
-    """Returns per-action results."""
-
-    def __init__(self, results: dict) -> None:
-        self.calls: list[tuple[str, dict]] = []
-        self._results = results
-
-    def handle_request(self, request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-        action = body["action"]
-        params = body.get("params", {})
-        self.calls.append((action, params))
-        result = self._results.get(action, None)
-        return httpx.Response(200, json={"result": result, "error": None})
-
-
-def _flex_client(results: dict) -> tuple[AnkiConnectClient, FlexTransport]:
-    transport = FlexTransport(results)
-    client = AnkiConnectClient(http_client=httpx.Client(transport=transport))
-    return client, transport
 
 
 def _make_cloze_collection_conn():
