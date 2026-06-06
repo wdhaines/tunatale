@@ -29,14 +29,29 @@ from tests.anki_oracle.synthetic_collection import (
 
 ORACLE_SCRIPT = Path(__file__).with_name("oracle.py")
 
-# `uv run --with anki` builds an ephemeral environment on first use. When many
-# pytest-xdist workers spawn oracle subprocesses simultaneously, the losers of
-# the env-build race can return empty/garbage stdout once before uv's cache is
-# warm. Retry a few times so a transient race never turns into a silently
-# skipped parity test (which would be lost coverage). A persistent failure
-# (anki genuinely unavailable) still falls through to pytest.skip.
+# `uv run --isolated --with anki` builds an ephemeral environment on first use.
+# When many pytest-xdist workers spawn oracle subprocesses simultaneously, the
+# losers of the env-build race can return empty/garbage stdout once before uv's
+# cache is warm. Retry a few times so a transient race never turns into a flake.
+# A *persistent* failure (anki genuinely unavailable) is a hard pytest.fail, NOT
+# a skip: under --run-oracle the caller intends to run the parity gate, and a skip
+# looks like a pass — which is exactly how this harness silently went dark from
+# the 2026-06-02 Python 3.14 bump (stale protobuf 4.21.2) until it was caught.
+# To intentionally run without the gate, omit --run-oracle.
 _ORACLE_MAX_ATTEMPTS = 4
 _ORACLE_RETRY_SLEEP_S = 0.5
+
+
+def _oracle_unavailable(last_error: str) -> None:
+    """Fail (never skip) when the oracle can't run under --run-oracle."""
+    pytest.fail(
+        f"--run-oracle was passed but the oracle harness did not produce a usable "
+        f"result after {_ORACLE_MAX_ATTEMPTS} attempts — failing instead of skipping "
+        f"so a broken anki subprocess can't masquerade as a pass.\n"
+        f"Last error: {last_error}\n"
+        f"To run the suite without the parity gate, omit --run-oracle "
+        f"(e.g. `cd backend && uv run pytest`)."
+    )
 
 
 class OracleResult:
@@ -65,10 +80,11 @@ class OracleResult:
 def run_oracle(collection_path: Path, operations: list[dict]) -> OracleResult:
     """Run the oracle subprocess and return structured results.
 
-    Calls ``pytest.skip()`` when the ``anki`` package is not available
-    (determined by the oracle script's JSON error response or a subprocess
-    failure). Transient invalid-JSON output (e.g. an env-build race across
-    parallel workers) is retried before skipping.
+    Transient invalid-JSON output (e.g. an env-build race across parallel
+    workers) is retried. A *persistent* failure — anki unavailable, uv missing,
+    timeout, or an error result — calls ``pytest.fail()``, NOT ``pytest.skip()``:
+    under --run-oracle the caller intends to run the parity gate, so an
+    unrunnable oracle is a failure, never a silent skip.
     """
     last_error = ""
     for attempt in range(_ORACLE_MAX_ATTEMPTS):
@@ -77,6 +93,15 @@ def run_oracle(collection_path: Path, operations: list[dict]) -> OracleResult:
                 [
                     "uv",
                     "run",
+                    # Isolated + project-free so we escape the project lock's stale
+                    # protobuf 4.21.2 (no cp314 wheel; dragged in by the classla+anki
+                    # extras), which makes `anki` unimportable under the project's 3.14
+                    # interpreter. A clean resolve pulls a working protobuf. oracle.py
+                    # is stdlib + anki only, so it runs fine without the project env.
+                    "--isolated",
+                    "--no-project",
+                    "--python",
+                    "3.14",
                     "--with",
                     "anki",
                     "python",
@@ -86,16 +111,22 @@ def run_oracle(collection_path: Path, operations: list[dict]) -> OracleResult:
                 input=json.dumps(operations),
                 capture_output=True,
                 text=True,
-                timeout=60,
+                # Generous: the first isolated `uv run --with anki` may build the
+                # ephemeral env from a cold cache; retries cover a mid-build timeout.
+                timeout=180,
                 env={
                     **os.environ,
                     "QT_QPA_PLATFORM": "offscreen",
                 },
             )
         except FileNotFoundError:
-            pytest.skip("`uv` not found on PATH — cannot run oracle tests.")
+            pytest.fail("--run-oracle was passed but `uv` is not on PATH — cannot run the oracle harness.")
         except subprocess.TimeoutExpired:
-            pytest.skip("Oracle subprocess timed out after 60s.")
+            last_error = "oracle subprocess timed out (env build or op too slow)"
+            if attempt < _ORACLE_MAX_ATTEMPTS - 1:
+                time.sleep(_ORACLE_RETRY_SLEEP_S)
+                continue
+            _oracle_unavailable(last_error)
 
         try:
             result = json.loads(proc.stdout)
@@ -106,15 +137,15 @@ def run_oracle(collection_path: Path, operations: list[dict]) -> OracleResult:
             if attempt < _ORACLE_MAX_ATTEMPTS - 1:
                 time.sleep(_ORACLE_RETRY_SLEEP_S)
                 continue
-            pytest.skip(last_error)
+            _oracle_unavailable(last_error)
 
         if "error" in result:
-            pytest.skip(f"Oracle not available: {result['error']}")
+            _oracle_unavailable(f"oracle returned an error: {result['error']}")
 
         return OracleResult(result)
 
-    # Unreachable: the loop either returns, skips, or exhausts retries (which
-    # also skips on the final attempt above).
+    # Unreachable: the loop either returns or fails (the final attempt calls
+    # _oracle_unavailable, which raises).
     raise AssertionError("run_oracle retry loop exited without result")  # pragma: no cover
 
 
