@@ -52,10 +52,19 @@ def _serialize_sync_output(output: Any) -> dict:
 
 
 def _make_auth(auth_dict: dict) -> Any:
-    """Build a SyncAuth protobuf from a dict."""
+    """Build a SyncAuth protobuf from a dict.
+
+    An empty endpoint is left UNSET (not ""): Anki treats endpoint="" as an invalid
+    *custom* server ("Invalid sync server specified"), whereas an unset endpoint means
+    "use the default AnkiWeb server" (and lets Anki resolve its shard). A non-empty
+    endpoint (self-host) is passed through.
+    """
     from anki.sync_pb2 import SyncAuth
 
-    return SyncAuth(hkey=auth_dict["hkey"], endpoint=auth_dict.get("endpoint", ""))
+    endpoint = auth_dict.get("endpoint") or ""
+    if endpoint:
+        return SyncAuth(hkey=auth_dict["hkey"], endpoint=endpoint)
+    return SyncAuth(hkey=auth_dict["hkey"])
 
 
 def _op_login(op: dict) -> dict:
@@ -88,8 +97,20 @@ def _op_full_download(op: dict) -> dict:
     auth = _make_auth(op["auth"])
     col = Collection(str(collection_path))
     try:
+        # Anki's real flow (qt/aqt/sync.py) runs the normal sync handshake FIRST: it
+        # negotiates server state and, for AnkiWeb, returns the sharded `new_endpoint`.
+        # Skipping it works on the lenient built-in server but AnkiWeb returns
+        # HTTP 400 "missing original size". On an empty local vs a populated server the
+        # handshake reports FULL_DOWNLOAD without pushing; we then force the download.
+        out = col.sync_collection(auth, sync_media=False)
+        if out.new_endpoint:
+            from anki.sync_pb2 import SyncAuth
+
+            auth = SyncAuth(hkey=auth.hkey, endpoint=out.new_endpoint)
+        # media disabled → server_usn=None (matches Anki: server_media_usn only when
+        # media syncing is enabled). upload=False is forced: we only ever pull here.
         col.full_upload_or_download(auth=auth, server_usn=None, upload=False)
-        return {"ok": True}
+        return {"ok": True, "required": out.required}
     finally:
         col.close()
 
