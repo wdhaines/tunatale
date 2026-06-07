@@ -14,9 +14,8 @@ vi.mock("$lib/api", () => {
       bulkDeleteSRSItems: vi.fn(),
       resetSRSItem: vi.fn(),
       suspendSRSItem: vi.fn(),
-      syncWithAnki: vi.fn(),
+      peerSync: vi.fn(),
       fetchQueueStats: vi.fn(),
-      fetchAnkiStatus: vi.fn(),
     },
   };
 });
@@ -28,9 +27,8 @@ const mockDelete = vi.mocked(api.deleteSRSItem);
 const mockBulkDelete = vi.mocked(api.bulkDeleteSRSItems);
 const mockReset = vi.mocked(api.resetSRSItem);
 const mockSuspend = vi.mocked(api.suspendSRSItem);
-const mockSyncWithAnki = vi.mocked(api.syncWithAnki);
+const mockPeerSync = vi.mocked(api.peerSync);
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
-const mockFetchAnkiStatus = vi.mocked(api.fetchAnkiStatus);
 import { makeSRSItemDetail } from "../../../test/factories";
 
 /** Yield to let pending microtasks (Svelte DOM updates) drain. */
@@ -50,7 +48,6 @@ beforeEach(() => {
     cap_source: "default",
     fsrs_source: "default",
   });
-  mockFetchAnkiStatus.mockResolvedValue({ anki_running: false, lock_acquirable: true });
 });
 
 describe("admin/srs/+page.svelte", () => {
@@ -534,62 +531,6 @@ describe("admin/srs/+page.svelte", () => {
     expect(await findByText("network failure string")).toBeTruthy();
   });
 
-  // ── Anki status button gating ─────────────────────────────────────────────
-
-  it("mounts and calls fetchAnkiStatus", async () => {
-    const { findByText } = render(AdminSRSPage);
-    await findByText(/0 total/);
-    await waitFor(() => {
-      expect(mockFetchAnkiStatus).toHaveBeenCalled();
-    });
-  });
-
-  it("Sync button is enabled when anki_running is false", async () => {
-    mockFetchAnkiStatus.mockResolvedValue({ anki_running: false, lock_acquirable: true });
-    const { findByText } = render(AdminSRSPage);
-    const btn = (await findByText("Sync with Anki")) as HTMLButtonElement;
-    await waitFor(() => {
-      expect(btn.disabled).toBe(false);
-    });
-  });
-
-  it("Sync button is disabled when anki_running is true", async () => {
-    mockFetchAnkiStatus.mockResolvedValue({ anki_running: true, lock_acquirable: false });
-    const { findByText } = render(AdminSRSPage);
-    const btn = (await findByText("Sync with Anki")) as HTMLButtonElement;
-    await waitFor(() => {
-      expect(btn.disabled).toBe(true);
-    });
-  });
-
-  it('shows "Close Anki to sync" when Anki is running', async () => {
-    mockFetchAnkiStatus.mockResolvedValue({ anki_running: true, lock_acquirable: false });
-    const { findByText } = render(AdminSRSPage);
-    expect(await findByText(/Close Anki to sync/)).toBeTruthy();
-  });
-
-  it("visibilitychange event triggers a re-fetch of Anki status", async () => {
-    const { findByText } = render(AdminSRSPage);
-    await findByText(/0 total/);
-    const callsBefore = mockFetchAnkiStatus.mock.calls.length;
-
-    document.dispatchEvent(new Event("visibilitychange"));
-
-    await waitFor(() => {
-      expect(mockFetchAnkiStatus.mock.calls.length).toBeGreaterThan(callsBefore);
-    });
-  });
-
-  it("shows 409 Close Anki error in syncStatus when sync rejects with that message", async () => {
-    mockFetchAnkiStatus.mockResolvedValue({ anki_running: false, lock_acquirable: true });
-    mockSyncWithAnki.mockRejectedValue(
-      new Error("Close Anki to sync — TunaTale needs exclusive access to collection.anki2."),
-    );
-    const { findByText } = render(AdminSRSPage);
-    await fireEvent.click(await findByText("Sync with Anki"));
-    expect(await findByText(/Close Anki to sync/)).toBeTruthy();
-  });
-
   it("clicking header checkbox when all items are selected deselects all", async () => {
     mockList.mockResolvedValue({
       items: [makeSRSItemDetail({ id: 1, text: "a" }), makeSRSItemDetail({ id: 2, text: "b" })],
@@ -651,108 +592,45 @@ describe("admin/srs/+page.svelte", () => {
     }
   });
 
-  // ── Sync with Anki ────────────────────────────────────────────────────────
+  // ── Sync to AnkiWeb (peer-sync) ───────────────────────────────────────────
 
-  it("renders Sync with Anki button", async () => {
+  const PEER_RESULT = {
+    auth_success: true,
+    pull_required: 0,
+    push_required: 1,
+    tt_push_pull_exit: 0,
+    dry_run: false,
+  };
+
+  it("renders the Sync to AnkiWeb button", async () => {
     const { findByText } = render(AdminSRSPage);
-    expect(await findByText("Sync with Anki")).toBeTruthy();
+    expect(await findByText("Sync to AnkiWeb")).toBeTruthy();
   });
 
-  it("clicking Sync with Anki calls syncWithAnki(false)", async () => {
-    mockSyncWithAnki.mockResolvedValue({
-      created: 0,
-      linked: 0,
-      skipped: 0,
-      notes_pulled: 5,
-      directions_pulled: 10,
-      conflicts: 0,
-      mode: "offline",
-      notes_pushed: 0,
-      directions_pushed: 0,
-      dry_run: false,
-    });
+  it("clicking Sync to AnkiWeb calls peerSync(false)", async () => {
+    mockPeerSync.mockResolvedValue(PEER_RESULT);
     const { findByText } = render(AdminSRSPage);
-    await fireEvent.click(await findByText("Sync with Anki"));
+    await fireEvent.click(await findByText("Sync to AnkiWeb"));
     await waitFor(() => {
-      expect(mockSyncWithAnki).toHaveBeenCalledWith(false);
+      expect(mockPeerSync).toHaveBeenCalledWith(false);
     });
   });
 
-  it("shows counts in status after successful sync", async () => {
-    mockSyncWithAnki.mockResolvedValue({
-      created: 2,
-      linked: 1,
-      skipped: 0,
-      notes_pulled: 7,
-      directions_pulled: 14,
-      conflicts: 0,
-      mode: "offline",
-      notes_pushed: 0,
-      directions_pushed: 0,
-      dry_run: false,
-    });
+  it("shows synced status after a successful peer sync", async () => {
+    mockPeerSync.mockResolvedValue(PEER_RESULT);
     const { findByText } = render(AdminSRSPage);
-    await fireEvent.click(await findByText("Sync with Anki"));
-    expect(await findByText(/Created 2/)).toBeTruthy();
-    expect(await findByText(/Pulled 14/)).toBeTruthy();
+    await fireEvent.click(await findByText("Sync to AnkiWeb"));
+    expect(await findByText("Synced with AnkiWeb")).toBeTruthy();
   });
 
-  it("shows conflict count when conflicts > 0", async () => {
-    mockSyncWithAnki.mockResolvedValue({
-      created: 0,
-      linked: 0,
-      skipped: 0,
-      notes_pulled: 3,
-      directions_pulled: 6,
-      conflicts: 2,
-      mode: "offline",
-      notes_pushed: 0,
-      directions_pushed: 0,
-      dry_run: false,
-    });
+  it("reloads items after a successful peer sync", async () => {
+    mockPeerSync.mockResolvedValue(PEER_RESULT);
     const { findByText } = render(AdminSRSPage);
-    await fireEvent.click(await findByText("Sync with Anki"));
-    expect(await findByText(/Conflicts 2/)).toBeTruthy();
-  });
-
-  it("shows error message when sync fails", async () => {
-    mockSyncWithAnki.mockRejectedValue(new Error("AnkiConnect unavailable"));
-    const { findByText } = render(AdminSRSPage);
-    await fireEvent.click(await findByText("Sync with Anki"));
-    expect(await findByText(/AnkiConnect unavailable/)).toBeTruthy();
-  });
-
-  it("re-fetches queueStats after successful sync", async () => {
-    mockSyncWithAnki.mockResolvedValue({
-      created: 0,
-      linked: 0,
-      skipped: 0,
-      notes_pulled: 3,
-      directions_pulled: 6,
-      conflicts: 0,
-      mode: "offline",
-      notes_pushed: 0,
-      directions_pushed: 0,
-      dry_run: false,
-    });
-    mockFetchQueueStats.mockResolvedValue({
-      new: 5,
-      learning: 3,
-      review: 2,
-      daily_new_cap: 30,
-      cap_source: "cache",
-      fsrs_source: "cache",
-    });
-
-    const { findByText } = render(AdminSRSPage);
-    // Wait for initial load
     await findByText(/0 total/);
-    const callsBefore = mockFetchQueueStats.mock.calls.length;
-
-    await fireEvent.click(await findByText("Sync with Anki"));
-
+    const callsBefore = mockList.mock.calls.length;
+    await fireEvent.click(await findByText("Sync to AnkiWeb"));
     await waitFor(() => {
-      expect(mockFetchQueueStats.mock.calls.length).toBeGreaterThan(callsBefore);
+      expect(mockList.mock.calls.length).toBeGreaterThan(callsBefore);
     });
   });
 
@@ -780,69 +658,5 @@ describe("admin/srs/+page.svelte", () => {
     await findByText(/0 total/);
     // No "X new · Y due today" stats line should appear
     expect(queryByText(/\d+ new · \d+ due today/)).toBeFalsy();
-  });
-
-  it("leaves button enabled when fetchAnkiStatus throws (non-fatal)", async () => {
-    mockFetchAnkiStatus.mockRejectedValue(new Error("status unavailable"));
-    const { findByText } = render(AdminSRSPage);
-    const btn = (await findByText("Sync with Anki")) as HTMLButtonElement;
-    await waitFor(() => {
-      expect(btn.disabled).toBe(false);
-    });
-  });
-
-  it("window.focus event triggers a re-fetch of Anki status", async () => {
-    const { findByText } = render(AdminSRSPage);
-    await findByText(/0 total/);
-    const callsBefore = mockFetchAnkiStatus.mock.calls.length;
-
-    window.dispatchEvent(new Event("focus"));
-
-    await waitFor(() => {
-      expect(mockFetchAnkiStatus.mock.calls.length).toBeGreaterThan(callsBefore);
-    });
-  });
-
-  it("clicking Sync re-polls status before calling syncWithAnki", async () => {
-    mockSyncWithAnki.mockResolvedValue({
-      created: 0,
-      linked: 0,
-      skipped: 0,
-      notes_pulled: 0,
-      directions_pulled: 0,
-      conflicts: 0,
-      mode: "offline",
-      notes_pushed: 0,
-      directions_pushed: 0,
-      dry_run: false,
-    });
-    const { findByText } = render(AdminSRSPage);
-    await findByText(/0 total/);
-    const callsBefore = mockFetchAnkiStatus.mock.calls.length;
-
-    await fireEvent.click(await findByText("Sync with Anki"));
-
-    await waitFor(() => {
-      // fetchAnkiStatus must be called again before (or during) the sync
-      expect(mockFetchAnkiStatus.mock.calls.length).toBeGreaterThan(callsBefore);
-    });
-  });
-
-  it("re-polls Anki status after sync error so button state reflects reality", async () => {
-    mockSyncWithAnki.mockRejectedValue(new Error("Close Anki to sync"));
-    mockFetchAnkiStatus
-      .mockResolvedValueOnce({ anki_running: false, lock_acquirable: true }) // initial mount
-      .mockResolvedValueOnce({ anki_running: false, lock_acquirable: true }) // pre-click
-      .mockResolvedValueOnce({ anki_running: true, lock_acquirable: false }); // post-error re-poll
-    const { findByText } = render(AdminSRSPage);
-    await findByText(/0 total/);
-
-    await fireEvent.click(await findByText("Sync with Anki"));
-
-    // After the 409-like error, status is re-polled and button must become disabled
-    const btn = (await findByText("Sync with Anki")) as HTMLButtonElement;
-    await waitFor(() => {
-      expect(btn.disabled).toBe(true);
-    });
   });
 });

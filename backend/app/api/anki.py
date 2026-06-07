@@ -182,6 +182,33 @@ async def trigger_sync(request: Request, dry_run: bool = False):
     }
 
 
+@router.post("/peer-sync", status_code=200)
+async def trigger_peer_sync(dry_run: bool = False):
+    """Sync TT's own collection to AnkiWeb (or a self-host server) as a peer.
+
+    Unlike ``/sync`` (which writes the user's local collection.anki2 and needs Anki
+    closed), this touches TT's own ``tt_collection`` and works with Anki open. Returns
+    409 with a user-facing message if peer-sync isn't configured (e.g. no credential in
+    the macOS Keychain) or if the server demands a full sync.
+    """
+    from fastapi.concurrency import run_in_threadpool
+
+    from app.anki.sync_orchestrator import PeerSyncError, peer_sync
+
+    try:
+        report = await run_in_threadpool(peer_sync, dry_run)
+    except PeerSyncError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None
+
+    return {
+        "auth_success": report.auth_success,
+        "pull_required": report.pull_required,
+        "push_required": report.push_required,
+        "tt_push_pull_exit": report.tt_push_pull_exit,
+        "dry_run": report.dry_run,
+    }
+
+
 @router.get("/status", status_code=200)
 def get_anki_status(request: Request):
     """Return whether Anki is currently running (i.e. collection.anki2 is locked)."""

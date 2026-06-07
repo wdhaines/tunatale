@@ -603,3 +603,52 @@ class TestAnkiStatusEndpoint:
 
         assert response.status_code == 200
         mock_refresh_daily_review_cap.assert_not_called()
+
+
+# ── POST /api/anki/peer-sync (AnkiWeb peer sync; works with Anki open) ─────────
+
+
+class TestPeerSync:
+    """POST /api/anki/peer-sync — drives app.anki.sync_orchestrator.peer_sync."""
+
+    async def test_returns_report(self):
+        from app.anki.sync_orchestrator import PeerSyncReport
+
+        report = PeerSyncReport(auth_success=True, pull_required=0, push_required=1, tt_push_pull_exit=0, dry_run=False)
+        with patch("app.anki.sync_orchestrator.peer_sync", return_value=report) as mock_ps:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                response = await c.post("/api/anki/peer-sync")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "auth_success": True,
+            "pull_required": 0,
+            "push_required": 1,
+            "tt_push_pull_exit": 0,
+            "dry_run": False,
+        }
+        mock_ps.assert_called_once_with(False)
+
+    async def test_forwards_dry_run(self):
+        from app.anki.sync_orchestrator import PeerSyncReport
+
+        with patch("app.anki.sync_orchestrator.peer_sync", return_value=PeerSyncReport(dry_run=True)) as mock_ps:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                response = await c.post("/api/anki/peer-sync?dry_run=true")
+
+        assert response.status_code == 200
+        assert response.json()["dry_run"] is True
+        mock_ps.assert_called_once_with(True)
+
+    async def test_409_on_peer_sync_error(self):
+        from app.anki.sync_orchestrator import PeerSyncError
+
+        with patch(
+            "app.anki.sync_orchestrator.peer_sync",
+            side_effect=PeerSyncError("No AnkiWeb password found."),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                response = await c.post("/api/anki/peer-sync")
+
+        assert response.status_code == 409
+        assert "No AnkiWeb password" in response.json()["detail"]

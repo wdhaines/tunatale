@@ -20,7 +20,7 @@ vi.mock("$lib/api", () => ({
     createBaseCard: vi.fn(),
     createInflectionCloze: vi.fn(),
     submitDrill: vi.fn(),
-    syncWithAnki: vi.fn(),
+    peerSync: vi.fn(),
     generateStory: vi.fn(),
     ignoreLemma: vi.fn(),
     unignoreLemma: vi.fn(),
@@ -50,7 +50,7 @@ const mockUntrackSRSItem = vi.mocked(api.untrackSRSItem);
 const mockCreateBaseCard = vi.mocked(api.createBaseCard);
 const mockCreateInflectionCloze = vi.mocked(api.createInflectionCloze);
 const mockSubmitDrill = vi.mocked(api.submitDrill);
-const mockSyncWithAnki = vi.mocked(api.syncWithAnki);
+const mockPeerSync = vi.mocked(api.peerSync);
 const mockGenerateStory = vi.mocked(api.generateStory);
 const mockIgnoreLemma = vi.mocked(api.ignoreLemma);
 const mockUnignoreLemma = vi.mocked(api.unignoreLemma);
@@ -1362,28 +1362,24 @@ describe("load function for /c/[curriculumId]/l/[lessonId]", () => {
   });
 
   describe("sync button", () => {
-    it("calls syncWithAnki on click", async () => {
-      mockSyncWithAnki.mockResolvedValue({
-        mode: "full",
-        created: 3,
-        linked: 0,
-        skipped: 1,
-        notes_pulled: 0,
-        directions_pulled: 0,
-        conflicts: 0,
-        notes_pushed: 2,
-        directions_pushed: 2,
-        dry_run: false,
-      });
+    const PEER_RESULT = {
+      auth_success: true,
+      pull_required: 0,
+      push_required: 1,
+      tt_push_pull_exit: 0,
+      dry_run: false,
+    };
+
+    it("calls peerSync on click", async () => {
+      mockPeerSync.mockResolvedValue(PEER_RESULT);
       const { getByText } = render(Page, {
         props: { data: { curriculum, lesson, audio: null, transcript: null } },
       });
 
-      const syncBtn = getByText("Sync with Anki");
-      await fireEvent.click(syncBtn);
+      await fireEvent.click(getByText("Sync to AnkiWeb"));
 
       await waitFor(() => {
-        expect(mockSyncWithAnki).toHaveBeenCalledWith(false);
+        expect(mockPeerSync).toHaveBeenCalledWith(false);
       });
     });
 
@@ -1399,71 +1395,64 @@ describe("load function for /c/[curriculumId]/l/[lessonId]", () => {
         dialogue_lines: [],
       };
       mockGetTranscript.mockResolvedValue(after);
-      mockSyncWithAnki.mockResolvedValue({
-        mode: "full",
-        created: 5,
-        linked: 2,
-        skipped: 1,
-        notes_pulled: 3,
-        directions_pulled: 4,
-        conflicts: 0,
-        notes_pushed: 2,
-        directions_pushed: 2,
-        dry_run: false,
-      });
+      mockPeerSync.mockResolvedValue(PEER_RESULT);
       const { getByText, findByText, queryByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript: before } },
       });
 
       expect(getByText("BEFORE sync")).toBeTruthy();
 
-      await fireEvent.click(getByText("Sync with Anki"));
+      await fireEvent.click(getByText("Sync to AnkiWeb"));
 
       // Post-sync the transcript is re-fetched so due/known states reflect the sync.
       expect(await findByText("AFTER sync")).toBeTruthy();
       expect(queryByText("BEFORE sync")).toBeFalsy();
       expect(mockGetTranscript).toHaveBeenCalledWith("l1");
-      // Parent renders its own summary (SyncButton's <pre> is suppressed once a
-      // callback is supplied), so sync feedback isn't lost.
-      expect(getByText(/Pulled 4 · Pushed 2 · Conflicts 0/)).toBeTruthy();
+      // Parent renders its own summary once a callback is supplied.
+      expect(getByText("Synced with AnkiWeb")).toBeTruthy();
     });
 
-    it("shows an error if the post-sync transcript refresh fails", async () => {
+    it("shows an error if the post-sync transcript refresh fails (Error)", async () => {
       const before = {
         lesson_id: "l1",
         key_phrases: [{ phrase: "kavo prosim", translation: "BEFORE sync" }],
         dialogue_lines: [],
       };
       mockGetTranscript.mockRejectedValue(new Error("refresh failed"));
-      mockSyncWithAnki.mockResolvedValue({
-        mode: "full",
-        created: 0,
-        linked: 0,
-        skipped: 0,
-        notes_pulled: 0,
-        directions_pulled: 0,
-        conflicts: 0,
-        notes_pushed: 0,
-        directions_pushed: 0,
-        dry_run: false,
-      });
+      mockPeerSync.mockResolvedValue(PEER_RESULT);
       const { getByText, findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript: before } },
       });
 
-      await fireEvent.click(getByText("Sync with Anki"));
+      await fireEvent.click(getByText("Sync to AnkiWeb"));
 
       expect(await findByText("refresh failed")).toBeTruthy();
     });
 
-    it("sets error when syncWithAnki fails", async () => {
-      mockSyncWithAnki.mockRejectedValue(new Error("Sync failed"));
+    it("stringifies a non-Error post-sync refresh failure", async () => {
+      const before = {
+        lesson_id: "l1",
+        key_phrases: [{ phrase: "kavo prosim", translation: "BEFORE sync" }],
+        dialogue_lines: [],
+      };
+      mockGetTranscript.mockRejectedValue("weird refresh failure");
+      mockPeerSync.mockResolvedValue(PEER_RESULT);
+      const { getByText, findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: before } },
+      });
+
+      await fireEvent.click(getByText("Sync to AnkiWeb"));
+
+      expect(await findByText("weird refresh failure")).toBeTruthy();
+    });
+
+    it("shows the SyncButton error when peerSync itself fails", async () => {
+      mockPeerSync.mockRejectedValue(new Error("Sync failed"));
       const { getByText, findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio: null, transcript: null } },
       });
 
-      const syncBtn = getByText("Sync with Anki");
-      await fireEvent.click(syncBtn);
+      await fireEvent.click(getByText("Sync to AnkiWeb"));
 
       expect(await findByText("Sync failed")).toBeTruthy();
     });

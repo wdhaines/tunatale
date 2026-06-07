@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
-	import type { AnkiSyncResult, LessonAudio, TranscriptData } from '$lib/api';
+	import type { LessonAudio, TranscriptData } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import AudioPlayer from '$lib/components/AudioPlayer.svelte';
 	import Transcript from '$lib/components/Transcript.svelte';
@@ -101,8 +101,8 @@
 	// this page tracks that. Re-fetch the transcript so the rendered states reflect
 	// the sync, and surface a short summary (SyncButton hides its own once a
 	// callback is supplied).
-	async function handleSyncResult(r: AnkiSyncResult) {
-		syncStatus = `Pulled ${r.directions_pulled} · Pushed ${r.directions_pushed} · Conflicts ${r.conflicts}`;
+	async function handleSyncResult() {
+		syncStatus = 'Synced with AnkiWeb';
 		error = '';
 		try {
 			transcript = await api.getLessonTranscript(data.lesson.id);

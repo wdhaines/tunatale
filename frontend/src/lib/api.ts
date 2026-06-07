@@ -231,6 +231,14 @@ export interface AnkiSyncResult {
   dry_run: boolean;
 }
 
+export interface PeerSyncResult {
+  auth_success: boolean;
+  pull_required: number | null;
+  push_required: number | null;
+  tt_push_pull_exit: number | null;
+  dry_run: boolean;
+}
+
 export interface AnkiStatusResult {
   anki_running: boolean;
   lock_acquirable: boolean;
@@ -512,6 +520,10 @@ export class TunaTaleAPI {
 
   async syncWithAnki(dryRun = false): Promise<AnkiSyncResult> {
     return this.request(`/api/anki/sync?dry_run=${dryRun}`, { method: "POST" });
+  }
+
+  async peerSync(dryRun = false): Promise<PeerSyncResult> {
+    return this.request(`/api/anki/peer-sync?dry_run=${dryRun}`, { method: "POST" });
   }
 
   async fetchAnkiStatus(): Promise<AnkiStatusResult> {

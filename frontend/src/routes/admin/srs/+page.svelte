@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import type { SRSItemDetail, SRSListParams, QueueStats, AnkiSyncResult } from '$lib/api';
+	import type { SRSItemDetail, SRSListParams, QueueStats } from '$lib/api';
 	import SyncButton from '$lib/components/SyncButton.svelte';
 
 	const PAGE_SIZE = 50;
@@ -22,10 +22,8 @@
 	let queueStats = $state<QueueStats | null>(null);
 	let syncStatus = $state<string | null>(null);
 
-	function handleSyncResult(r: AnkiSyncResult) {
-		syncStatus =
-			`Created ${r.created} · Linked ${r.linked} · Pulled ${r.directions_pulled} · Pushed ${r.directions_pushed}` +
-			(r.conflicts > 0 ? ` · Conflicts ${r.conflicts}` : '');
+	function handleSyncResult() {
+		syncStatus = 'Synced with AnkiWeb';
 		loadItems();
 	}
 
@@ -210,7 +208,7 @@
 				<button class="danger" onclick={bulkDelete}>Delete selected ({selected.size})</button>
 			{/if}
 			<button onclick={loadItems} title="Refresh">⟳</button>
-			<SyncButton variant="compact" onSyncResult={handleSyncResult} />
+			<SyncButton onSyncResult={handleSyncResult} />
 		</div>
 	</div>
 

@@ -957,6 +957,38 @@ describe("TunaTaleAPI", () => {
       );
     });
 
+    it("peerSync calls POST /api/anki/peer-sync?dry_run=false by default", async () => {
+      const payload = {
+        auth_success: true,
+        pull_required: 0,
+        push_required: 1,
+        tt_push_pull_exit: 0,
+        dry_run: false,
+      };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(payload)));
+
+      const result = await api.peerSync();
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/anki/peer-sync?dry_run=false`,
+        expect.objectContaining({ method: "POST" }),
+      );
+      expect(result.auth_success).toBe(true);
+      expect(result.push_required).toBe(1);
+      expect(result.dry_run).toBe(false);
+    });
+
+    it("peerSync forwards dryRun=true", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ dry_run: true })));
+
+      await api.peerSync(true);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/anki/peer-sync?dry_run=true`,
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+
     it("translateTerm calls POST /api/srs/translate with text and language_code", async () => {
       vi.stubGlobal(
         "fetch",
