@@ -612,6 +612,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run @pytest.mark.classla tests (exercises the real classla Slovene pipeline).",
     )
+    parser.addoption(
+        "--run-peer-sync",
+        action="store_true",
+        default=False,
+        help="Run @pytest.mark.peer_sync tests (requires self-host sync server).",
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -623,6 +629,10 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "classla: requires --run-classla (exercises the real classla Slovene pipeline).",
     )
+    config.addinivalue_line(
+        "markers",
+        "peer_sync: requires --run-peer-sync (drives Anki sync subprocess against a self-host server).",
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -631,6 +641,11 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         for item in items:
             if "classla" in item.keywords:
                 item.add_marker(skip_classla)
+    if not config.getoption("--run-peer-sync"):
+        skip_peer_sync = pytest.mark.skip(reason="--run-peer-sync not specified")
+        for item in items:
+            if "peer_sync" in item.keywords:
+                item.add_marker(skip_peer_sync)
     if not config.getoption("--run-oracle"):
         skip_oracle = pytest.mark.skip(reason="--run-oracle not specified")
         for item in items:

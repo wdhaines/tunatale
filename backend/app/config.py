@@ -27,6 +27,22 @@ class Settings(BaseSettings):
     # SYNC_SOAK heartbeat + one RECOMPUTE_DIVERGENCE line per divergence.
     sync_log: Path = Path("~/.tunatale/logs/sync.log").expanduser()
 
+    # Peer-sync (anki subprocess) config — see sync_orchestrator.py.
+    tt_collection_path: Path = Path("~/.tunatale/tt_collection.anki2").expanduser()
+    sync_enabled: bool = False
+    sync_endpoint: str = ""  # "" → AnkiWeb default; else self-host URL
+    sync_username: str = ""
+    sync_password: str = ""
+    # Optional pin for the sync subprocess (`uv run --with anki==X`). Empty → latest
+    # anki. Set to match your desktop Anki's sync-protocol version if a mismatch appears.
+    anki_pkg_version: str = ""
+    # Interpreter for the anki driver subprocess. It runs isolated + project-free
+    # (--no-project), which escapes the project lock's stale protobuf 4.21.2 (dragged in
+    # by the classla+anki extras; no cp314 wheel) — a clean resolve pulls a current
+    # protobuf that imports fine on 3.14. Pin to an older Python here only if a future
+    # anki/protobuf breaks on the latest.
+    anki_subprocess_python: str = "3.14"
+
     anki_connect_url: str = "http://127.0.0.1:8765"
     anki_model_name: str = ""
     forvo_api_key: str = ""

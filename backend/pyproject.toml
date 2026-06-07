@@ -29,6 +29,12 @@ dependencies = [
 # `[tool.uv] override-dependencies` below forces a 3.14-capable torch so the
 # resolve succeeds. See docs/walkthrough.md §22.2.
 [project.optional-dependencies]
+# Anki sync engine. Optional + sync-only: imported ONLY in app/anki/sync_driver.py,
+# which runs in a `uv run --with anki` subprocess. A no-sync user never installs it;
+# the default `uv sync --all-groups` does NOT pull it (extra, not group). The runtime
+# version is pinned via the `anki_pkg_version` setting (empty → latest), not here, so
+# this stays a valid specifier regardless of which desktop Anki the user runs.
+anki = ["anki"]
 classla = ["classla==2.2.1"]
 
 [tool.hatch.build.targets.wheel]
@@ -106,6 +112,7 @@ omit = [
     # production collection, zero non-test references). See app/anki/archive/__init__.py.
     "app/anki/archive/*",
     "app/srs/build_function_word_list.py",
+    "app/anki/sync_driver.py",
 ]
 
 [tool.coverage.report]
