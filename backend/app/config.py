@@ -32,7 +32,13 @@ class Settings(BaseSettings):
     sync_enabled: bool = False
     sync_endpoint: str = ""  # "" → AnkiWeb default; else self-host URL
     sync_username: str = ""
+    # AnkiWeb password. Prefer the macOS Keychain (see sync_keychain_service); this
+    # env/.env value is an override fallback and should normally stay EMPTY (plaintext).
     sync_password: str = ""
+    # macOS Keychain generic-password service the AnkiWeb password is stored under
+    # (account = sync_username). Store it with:
+    #   security add-generic-password -s tunatale-ankiweb -a <username> -w
+    sync_keychain_service: str = "tunatale-ankiweb"
     # Optional pin for the sync subprocess (`uv run --with anki==X`). Empty → latest
     # anki. Set to match your desktop Anki's sync-protocol version if a mismatch appears.
     anki_pkg_version: str = ""

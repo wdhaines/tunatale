@@ -101,6 +101,55 @@ def _run_driver(command: dict, timeout: int = 120) -> dict:
     return result
 
 
+def _keychain_password(service: str, account: str) -> str | None:
+    """Fetch a generic password from the macOS Keychain via the `security` CLI.
+
+    Returns None if absent or if `security`/Keychain is unavailable. The password is
+    never logged or echoed.
+    """
+    try:
+        proc = subprocess.run(
+            ["security", "find-generic-password", "-s", service, "-a", account, "-w"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except FileNotFoundError, subprocess.TimeoutExpired:
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
+def _resolve_sync_password() -> str:
+    """The AnkiWeb password: prefer ``settings.sync_password`` (env/.env override), else
+    the macOS Keychain (service=``sync_keychain_service``, account=``sync_username``).
+    Keeps the secret out of plaintext .env for recurring use."""
+    if settings.sync_password:
+        return settings.sync_password
+    pw = _keychain_password(settings.sync_keychain_service, settings.sync_username)
+    if not pw:
+        raise PeerSyncError(
+            "No AnkiWeb password found. Store it in the macOS Keychain:\n"
+            f"  security add-generic-password -s {settings.sync_keychain_service} "
+            f"-a {settings.sync_username or '<your-ankiweb-username>'} -w\n"
+            "(or set sync_password in backend/.env as a less-secure fallback)."
+        )
+    return pw
+
+
+def _login() -> dict:
+    """Authenticate to the sync server and return the serialized SyncAuth dict."""
+    return _run_driver(
+        {
+            "op": "login",
+            "username": settings.sync_username,
+            "password": _resolve_sync_password(),
+            "endpoint": settings.sync_endpoint,
+        }
+    )
+
+
 def peer_sync(dry_run: bool = False) -> PeerSyncReport:
     """Execute the full peer-sync bracket.
 
@@ -110,14 +159,7 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
     report = PeerSyncReport(dry_run=dry_run)
 
     try:
-        auth = _run_driver(
-            {
-                "op": "login",
-                "username": settings.sync_username,
-                "password": settings.sync_password,
-                "endpoint": settings.sync_endpoint,
-            }
-        )
+        auth = _login()
     except PeerSyncError as e:
         raise PeerSyncError(f"Login failed: {e}") from None
     report.auth_success = True
@@ -180,14 +222,7 @@ def bootstrap_collection() -> None:
     path = settings.tt_collection_path
     needs_create = not path.exists()
 
-    auth = _run_driver(
-        {
-            "op": "login",
-            "username": settings.sync_username,
-            "password": settings.sync_password,
-            "endpoint": settings.sync_endpoint,
-        }
-    )
+    auth = _login()
 
     if needs_create:
         _run_driver(

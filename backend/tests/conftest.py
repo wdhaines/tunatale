@@ -63,6 +63,9 @@ def _settings_overrides(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "anki_backup_dir", tmp_path / "anki-backups")
     monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'tunatale.db'}")
     monkeypatch.setattr(settings, "sync_log", tmp_path / "logs" / "sync.log")
+    # Non-empty so _resolve_sync_password short-circuits and tests never shell out to
+    # the real macOS Keychain. Tests of the Keychain path override this to "".
+    monkeypatch.setattr(settings, "sync_password", "test-sync-pw")
     monkeypatch.setattr(settings, "lemmatizer_type", "lowercase")
     get_lemmatizer.cache_clear()
     monkeypatch.setattr("app.api.srs._lemmatizer", get_lemmatizer())

@@ -295,3 +295,71 @@ class TestBootstrap:
         calls = [json.loads(c.kwargs["input"]) for c in mock_run.call_args_list]
         assert calls[0]["op"] == "login"
         assert calls[1]["op"] == "full_download"
+
+
+class TestSyncPassword:
+    def test_keychain_password_found(self):
+        from app.anki.sync_orchestrator import _keychain_password
+
+        with patch(
+            "app.anki.sync_orchestrator.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="hunter2\n", stderr=""),
+        ) as mock_run:
+            assert _keychain_password("svc", "acct") == "hunter2"
+        assert mock_run.call_args.args[0][0] == "security"
+
+    def test_keychain_password_not_found(self):
+        from app.anki.sync_orchestrator import _keychain_password
+
+        with patch(
+            "app.anki.sync_orchestrator.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=44, stdout="", stderr="not found"),
+        ):
+            assert _keychain_password("svc", "acct") is None
+
+    def test_keychain_password_empty_stdout(self):
+        from app.anki.sync_orchestrator import _keychain_password
+
+        with patch(
+            "app.anki.sync_orchestrator.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="\n", stderr=""),
+        ):
+            assert _keychain_password("svc", "acct") is None
+
+    def test_keychain_password_security_unavailable(self):
+        from app.anki.sync_orchestrator import _keychain_password
+
+        with patch("app.anki.sync_orchestrator.subprocess.run", side_effect=FileNotFoundError):
+            assert _keychain_password("svc", "acct") is None
+
+    def test_resolve_prefers_env_over_keychain(self):
+        from app.anki.sync_orchestrator import _resolve_sync_password
+
+        with (
+            patch.object(settings, "sync_password", "from-env"),
+            patch("app.anki.sync_orchestrator._keychain_password") as mock_kc,
+        ):
+            assert _resolve_sync_password() == "from-env"
+            mock_kc.assert_not_called()
+
+    def test_resolve_falls_back_to_keychain(self):
+        from app.anki.sync_orchestrator import _resolve_sync_password
+
+        with (
+            patch.object(settings, "sync_password", ""),
+            patch.object(settings, "sync_username", "me@example.com"),
+            patch.object(settings, "sync_keychain_service", "svc"),
+            patch("app.anki.sync_orchestrator._keychain_password", return_value="from-keychain") as mock_kc,
+        ):
+            assert _resolve_sync_password() == "from-keychain"
+            mock_kc.assert_called_once_with("svc", "me@example.com")
+
+    def test_resolve_missing_raises(self):
+        from app.anki.sync_orchestrator import _resolve_sync_password
+
+        with (
+            patch.object(settings, "sync_password", ""),
+            patch("app.anki.sync_orchestrator._keychain_password", return_value=None),
+            pytest.raises(PeerSyncError, match="No AnkiWeb password"),
+        ):
+            _resolve_sync_password()
