@@ -13,13 +13,15 @@ validated; if it fails, fall back to option-3-smoothed.
 Usage::
 
     # Terminal 1: start a self-host server (isolated 3.14 — anki's protobuf can't
-    # import under the project env; see app/anki/sync_driver.py).
-    SYNC_USER1=ttspike:spikepass SYNC_HOST=127.0.0.1 SYNC_PORT=8080 \\
+    # import under the project env; see app/anki/sync_driver.py). Pick any
+    # throwaway user/pass for the local server (this is not a real account):
+    SYNC_USER1="$USER:$PASS" SYNC_HOST=127.0.0.1 SYNC_PORT=8080 \\
       uv run --isolated --no-project --python 3.14 --with anki python -m anki.syncserver
 
-    # Terminal 2: run the gate (creds + endpoint via env → Settings)
-    cd backend && sync_endpoint=http://127.0.0.1:8080/ sync_username=ttspike \\
-      sync_password=spikepass uv run pytest tests/test_anki_peer_sync_selfhost.py \\
+    # Terminal 2: run the gate (creds + endpoint via env → Settings), reusing the
+    # same throwaway USER/PASS you chose above:
+    cd backend && sync_endpoint=http://127.0.0.1:8080/ sync_username="$USER" \\
+      sync_password="$PASS" uv run pytest tests/test_anki_peer_sync_selfhost.py \\
       --run-peer-sync --no-cov -v
 """
 
