@@ -221,6 +221,95 @@ class TestPeerSync:
             assert _anki_with_spec() == "anki==25.02"
 
 
+def _make_collection_with_curdeck(path, *, curdeck_usn: int, col_usn: int = 420) -> None:
+    """Minimal anki-shaped sqlite file: a `col` row (with `usn`) and a `config`
+    `curDeck` row at the given usn. Only the columns the guard reads are modelled."""
+    import sqlite3
+
+    con = sqlite3.connect(path)
+    try:
+        con.execute("CREATE TABLE col (usn INTEGER)")
+        con.execute("INSERT INTO col (usn) VALUES (?)", (col_usn,))
+        con.execute("CREATE TABLE config (key TEXT PRIMARY KEY, usn INTEGER, mtime_secs INTEGER, val BLOB)")
+        con.execute(
+            "INSERT INTO config (key, usn, mtime_secs, val) VALUES ('curDeck', ?, 1, ?)",
+            (curdeck_usn, b"1726348699710"),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def _read_curdeck_usn(path) -> int:
+    import sqlite3
+
+    con = sqlite3.connect(path)
+    try:
+        return con.execute("SELECT usn FROM config WHERE key='curDeck'").fetchone()[0]
+    finally:
+        con.close()
+
+
+class TestCurDeckSuppression:
+    """`curDeck` (the selected deck) is a natively-synced Anki config value. TT works
+    only the Slovene deck and must never assert a current-deck choice onto the user's
+    real devices, so peer-sync forces it non-dirty before the push (the user owns it)."""
+
+    def test_clears_dirty_curdeck(self, tmp_path):
+        """A dirty (usn=-1) curDeck is reset to col.usn so the push omits it."""
+        from app.anki.sync_orchestrator import _suppress_curdeck_push
+
+        col = tmp_path / "c.anki2"
+        _make_collection_with_curdeck(col, curdeck_usn=-1, col_usn=420)
+        _suppress_curdeck_push(col)
+        assert _read_curdeck_usn(col) == 420
+
+    def test_leaves_clean_curdeck_untouched(self, tmp_path):
+        """An already-synced (clean) curDeck is left exactly as-is — no needless write."""
+        from app.anki.sync_orchestrator import _suppress_curdeck_push
+
+        col = tmp_path / "c.anki2"
+        _make_collection_with_curdeck(col, curdeck_usn=419, col_usn=420)
+        _suppress_curdeck_push(col)
+        assert _read_curdeck_usn(col) == 419
+
+    def test_missing_collection_is_noop(self, tmp_path):
+        """No collection file → guard is a silent no-op (does not raise)."""
+        from app.anki.sync_orchestrator import _suppress_curdeck_push
+
+        _suppress_curdeck_push(tmp_path / "absent.anki2")
+
+    def test_peer_sync_suppresses_curdeck_before_push(self):
+        """End-to-end: peer_sync clears a dirty curDeck so it is never pushed."""
+        _make_collection_with_curdeck(settings.tt_collection_path, curdeck_usn=-1, col_usn=420)
+        with (
+            patch(
+                "app.anki.sync_orchestrator.subprocess.run",
+                side_effect=[
+                    _mock_run(AUTH_RESPONSE),
+                    _mock_run(NORMAL_SYNC),
+                    _mock_run(NO_CHANGE),
+                ],
+            ),
+            patch("app.anki.sync.main", return_value=0),
+        ):
+            peer_sync(dry_run=False)
+        assert _read_curdeck_usn(settings.tt_collection_path) == 420
+
+    def test_dry_run_skips_curdeck_suppression(self):
+        """dry_run never pushes, so the guard (push-only) does not fire."""
+        _make_collection_with_curdeck(settings.tt_collection_path, curdeck_usn=-1, col_usn=420)
+        with (
+            patch(
+                "app.anki.sync_orchestrator.subprocess.run",
+                side_effect=[_mock_run(AUTH_RESPONSE), _mock_run(NORMAL_SYNC)],
+            ),
+            patch("app.anki.sync.main", return_value=0),
+        ):
+            peer_sync(dry_run=True)
+        assert _read_curdeck_usn(settings.tt_collection_path) == -1
+
+
 class TestDriverInvalidJson:
     def test_non_json_output_raises(self):
         """Non-JSON driver output surfaces as PeerSyncError."""

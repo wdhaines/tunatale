@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -170,6 +171,32 @@ def _resolve_sync_password() -> str:
     return pw
 
 
+def _suppress_curdeck_push(collection_path: Path) -> None:
+    """Make TT's ``curDeck`` non-dirty so peer-sync never pushes it.
+
+    ``curDeck`` (the currently-selected deck) is a natively-synced Anki *config*
+    value. TT only ever works the Slovene deck and has no business asserting a
+    current-deck choice onto the user's real devices — whichever device the user
+    actually studied on owns it. TT's normal write path (``tt_sync_main``) never
+    touches ``config``, so in the steady state ``curDeck`` stays clean and isn't
+    pushed; but if ``sync_collection``'s config merge ever resolves in TT's favour
+    (TT's local ``curDeck`` mtime > server's) it marks the row dirty (``usn=-1``)
+    for the next push. We clear that here, leaving ``curDeck`` pull-only.
+
+    A clean row (``usn != -1``) is left untouched. No-op if the collection file or
+    the row is absent (e.g. dry-run never reaches this, and unit tests may have no
+    collection on disk).
+    """
+    if not collection_path.exists():
+        return
+    con = sqlite3.connect(collection_path)
+    try:
+        con.execute("UPDATE config SET usn = (SELECT usn FROM col) WHERE key = 'curDeck' AND usn = -1")
+        con.commit()
+    finally:
+        con.close()
+
+
 def _login() -> dict:
     """Authenticate to the sync server and return the serialized SyncAuth dict."""
     return _run_driver(
@@ -226,6 +253,8 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
         )
 
     if not dry_run:
+        # TT must never push the selected deck — the user's real devices own it.
+        _suppress_curdeck_push(settings.tt_collection_path)
         push_out = _run_driver(
             {
                 "op": "sync",
