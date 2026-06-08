@@ -435,78 +435,69 @@ class TestCurDeckMirror:
         assert _read_curdeck_val(settings.tt_collection_path) == SLOVENE_DECK
 
 
-def _make_tt_collection(path, *, col_mod: int, curdeck_val: bytes = NORWEGIAN_DECK) -> None:
-    """tt_collection with a `col` (for the mod chokepoint) and a `config` curDeck row."""
+def _make_tt_collection(path, *, pending: bool = False, curdeck_val: bytes = NORWEGIAN_DECK) -> None:
+    """tt_collection with the synced tables the push-pending probe reads + a curDeck row.
+    *pending* seeds a usn=-1 card (something to upload); otherwise the tables are clean."""
     import sqlite3
 
     con = sqlite3.connect(path)
     try:
-        con.execute("CREATE TABLE col (mod INTEGER)")
-        con.execute("INSERT INTO col (mod) VALUES (?)", (col_mod,))
+        for table in ("cards", "notes", "revlog", "graves"):
+            con.execute(f"CREATE TABLE {table} (id INTEGER, usn INTEGER)")
+            con.execute(f"INSERT INTO {table} (id, usn) VALUES (1, 5)")  # clean (already synced)
         con.execute("CREATE TABLE config (key TEXT PRIMARY KEY, usn INTEGER, mtime_secs INTEGER, val BLOB)")
         con.execute("INSERT INTO config (key, usn, mtime_secs, val) VALUES ('curDeck', -1, 1, ?)", (curdeck_val,))
+        if pending:
+            con.execute("INSERT INTO cards (id, usn) VALUES (2, -1)")  # a row awaiting push
         con.commit()
     finally:
         con.close()
 
 
-def _set_col_mod(path, mod: int) -> None:
-    import sqlite3
-
-    con = sqlite3.connect(path)
-    con.execute("UPDATE col SET mod = ?", (mod,))
-    con.commit()
-    con.close()
-
-
-class TestReadColMod:
-    def test_reads_mod(self, tmp_path):
-        from app.anki.sync_orchestrator import _read_col_mod
+class TestHasPendingPush:
+    def test_pending_row_is_true(self, tmp_path):
+        from app.anki.sync_orchestrator import _has_pending_push
 
         col = tmp_path / "tt.anki2"
-        _make_tt_collection(col, col_mod=1234)
-        assert _read_col_mod(col) == 1234
+        _make_tt_collection(col, pending=True)
+        assert _has_pending_push(col) is True
 
-    def test_missing_file_none(self, tmp_path):
-        from app.anki.sync_orchestrator import _read_col_mod
-
-        assert _read_col_mod(tmp_path / "absent.anki2") is None
-
-    def test_no_col_table_none(self, tmp_path):
-        """A collection without a `col` table → None (treated as unknown → don't skip)."""
-        from app.anki.sync_orchestrator import _read_col_mod
+    def test_clean_collection_is_false(self, tmp_path):
+        from app.anki.sync_orchestrator import _has_pending_push
 
         col = tmp_path / "tt.anki2"
-        _make_collection_with_curdeck(col, val=NORWEGIAN_DECK)  # config only, no col table
-        assert _read_col_mod(col) is None
+        _make_tt_collection(col, pending=False)
+        assert _has_pending_push(col) is False
 
-    def test_empty_col_table_none(self, tmp_path):
-        import sqlite3
+    def test_missing_file_is_true(self, tmp_path):
+        """Unknown → push (safe default)."""
+        from app.anki.sync_orchestrator import _has_pending_push
 
-        from app.anki.sync_orchestrator import _read_col_mod
+        assert _has_pending_push(tmp_path / "absent.anki2") is True
+
+    def test_unreadable_is_true(self, tmp_path):
+        """A collection missing the synced tables → push (safe default), never crash."""
+        from app.anki.sync_orchestrator import _has_pending_push
 
         col = tmp_path / "tt.anki2"
-        con = sqlite3.connect(col)
-        con.execute("CREATE TABLE col (mod INTEGER)")  # no rows
-        con.commit()
-        con.close()
-        assert _read_col_mod(col) is None
+        _make_collection_with_curdeck(col, val=NORWEGIAN_DECK)  # config only, no cards table
+        assert _has_pending_push(col) is True
 
 
 class TestSkipNoOpPush:
-    """~Half of syncs reconcile nothing; the push leg is then a pure no-op round-trip.
-    Skip it when col.mod (the mutation chokepoint) is unchanged across tt_sync_main."""
+    """Most syncs have nothing to upload (the user grades in Anki, not TT); the push leg
+    is then a pure 2–4s no-op round-trip. Skip it when no row is usn=-1 (pending push)."""
 
-    def test_skips_push_when_reconcile_unchanged(self):
-        """tt_sync_main writes nothing → col.mod unchanged → push leg is skipped."""
+    def test_skips_push_when_nothing_pending(self):
+        """Clean tt_collection (no usn=-1 rows) → push leg is skipped."""
         _make_collection_with_curdeck(settings.anki_collection_path, val=SLOVENE_DECK)
-        _make_tt_collection(settings.tt_collection_path, col_mod=1000)
+        _make_tt_collection(settings.tt_collection_path, pending=False)
         with (
             patch(
                 "app.anki.sync_orchestrator.subprocess.run",
                 side_effect=[_mock_run(AUTH_RESPONSE), _mock_run(NORMAL_SYNC)],  # login + pull only
             ) as mock_run,
-            patch("app.anki.sync.main", return_value=0),  # no write → mod stays 1000
+            patch("app.anki.sync.main", return_value=0),
         ):
             report = peer_sync(dry_run=False)
 
@@ -514,21 +505,16 @@ class TestSkipNoOpPush:
         assert report.push_required == 0
         assert report.push_message == "skipped: no local changes to push"
 
-    def test_pushes_when_reconcile_wrote(self):
-        """tt_sync_main bumps col.mod → there are changes → the push leg runs."""
+    def test_pushes_when_rows_pending(self):
+        """A usn=-1 row (a TT grade to upload) → the push leg runs."""
         _make_collection_with_curdeck(settings.anki_collection_path, val=SLOVENE_DECK)
-        _make_tt_collection(settings.tt_collection_path, col_mod=1000)
-
-        def _reconcile_and_bump(*_args, **_kwargs):
-            _set_col_mod(settings.tt_collection_path, 2000)  # simulate a self-heal write
-            return 0
-
+        _make_tt_collection(settings.tt_collection_path, pending=True)
         with (
             patch(
                 "app.anki.sync_orchestrator.subprocess.run",
                 side_effect=[_mock_run(AUTH_RESPONSE), _mock_run(NORMAL_SYNC), _mock_run(NO_CHANGE)],
             ) as mock_run,
-            patch("app.anki.sync.main", side_effect=_reconcile_and_bump),
+            patch("app.anki.sync.main", return_value=0),
         ):
             report = peer_sync(dry_run=False)
 
