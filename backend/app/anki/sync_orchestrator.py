@@ -25,6 +25,10 @@ from app.config import settings
 # and invoke it by file path rather than `-m app.anki.sync_driver`.
 _DRIVER_PATH = str(Path(__file__).with_name("sync_driver.py"))
 
+# backend/ — the directory the server runs from (start-dev.sh `cd backend`) and the
+# anchor for the default CWD-relative `sqlite:///./tunatale.db`. From app/anki/.
+_BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+
 
 @dataclass
 class PeerSyncReport:
@@ -52,9 +56,37 @@ def _full_sync_required(required: int | None) -> bool:
     return required in (2, 3, 4)
 
 
+def _absolute_sqlite_url(url: str) -> str | None:
+    """Anchor a CWD-relative on-disk sqlite URL to the backend dir.
+
+    Returns the absolute URL, or ``None`` (caller keeps the original) when the URL
+    is non-sqlite, in-memory (``:memory:``), or already absolute — only a relative
+    on-disk path is CWD-sensitive and needs anchoring.
+    """
+    prefix = "sqlite:///"
+    if not url.startswith(prefix):
+        return None
+    path = url[len(prefix) :]
+    if path.startswith(":") or os.path.isabs(path):
+        return None
+    return f"{prefix}{(_BACKEND_DIR / path).resolve()}"
+
+
 def _tt_settings():
-    """Clone settings with anki_collection_path pointing at tt_collection."""
-    return settings.model_copy(update={"anki_collection_path": settings.tt_collection_path})
+    """Clone settings: anki_collection_path → tt_collection, db path made absolute.
+
+    peer_sync runs inside the long-running server and re-invokes ``tt_sync_main``,
+    which builds its ``SRSDatabase`` from ``settings.database_url``. The default
+    ``sqlite:///./tunatale.db`` is CWD-relative: invoked from any CWD other than
+    backend/ (e.g. the orchestrator CLI from the repo root) it resolves to a
+    *different*, empty db — so the real db never gets pull-merged and the soak mode
+    mislabels as ``legacy``. Anchor it so the canonical db is opened regardless of CWD.
+    """
+    update = {"anki_collection_path": settings.tt_collection_path}
+    abs_url = _absolute_sqlite_url(settings.database_url)
+    if abs_url is not None:
+        update["database_url"] = abs_url
+    return settings.model_copy(update=update)
 
 
 def _anki_with_spec() -> str:

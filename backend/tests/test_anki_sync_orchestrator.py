@@ -178,6 +178,39 @@ class TestPeerSync:
         assert s.anki_collection_path == settings.tt_collection_path
         assert s.anki_collection_path != settings.anki_collection_path
 
+    def test_tt_settings_pins_relative_db_to_backend_dir(self, monkeypatch):
+        """A CWD-relative sqlite db is anchored to the backend dir.
+
+        peer_sync re-invokes tt_sync_main, which builds SRSDatabase from
+        settings.database_url. The default 'sqlite:///./tunatale.db' is
+        CWD-relative; invoked from any CWD other than backend/ it resolves to a
+        different, empty db (real db never pull-merged; soak mode mislabels as
+        'legacy'). _tt_settings must hand main() an absolute, CWD-independent path.
+        """
+        import os
+
+        from app.anki.sync_orchestrator import _tt_settings
+
+        monkeypatch.setattr(settings, "database_url", "sqlite:///./tunatale.db")
+        path = _tt_settings().database_url.removeprefix("sqlite:///")
+        assert os.path.isabs(path), f"expected absolute db path, got {path!r}"
+        assert path.endswith("/backend/tunatale.db")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "sqlite:////already/absolute/tunatale.db",  # already absolute
+            "sqlite:///:memory:",  # in-memory
+            "postgresql://localhost/tunatale",  # non-sqlite
+        ],
+    )
+    def test_tt_settings_leaves_cwd_independent_db_untouched(self, monkeypatch, url):
+        """Already-absolute, in-memory, and non-sqlite URLs are passed through verbatim."""
+        from app.anki.sync_orchestrator import _tt_settings
+
+        monkeypatch.setattr(settings, "database_url", url)
+        assert _tt_settings().database_url == url
+
     def test_anki_with_spec(self):
         """Empty version → bare 'anki' (never a malformed 'anki=='); set → pinned."""
         from app.anki.sync_orchestrator import _anki_with_spec
