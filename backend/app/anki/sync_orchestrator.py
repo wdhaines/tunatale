@@ -240,6 +240,32 @@ def _login() -> dict:
     )
 
 
+# AnkiWeb sync auth (the ``hkey``) is a long-lived session token. Anki authenticates
+# once and reuses it across every sync; re-logging in each time costs a whole driver
+# subprocess plus a deliberately-slow password round-trip. Cache it in the long-running
+# server process and only re-login on a miss or when a sync rejects it (see peer_sync).
+_AUTH_CACHE: dict | None = None
+
+
+def _get_auth(*, refresh: bool = False) -> dict:
+    """Return the cached sync auth, logging in on a miss or when *refresh* is set."""
+    global _AUTH_CACHE
+    if refresh or _AUTH_CACHE is None:
+        _AUTH_CACHE = _login()
+    return _AUTH_CACHE
+
+
+def _sync_leg(auth: dict) -> dict:
+    """Run one bidirectional ``sync_collection`` leg against tt_collection."""
+    return _run_driver(
+        {
+            "op": "sync",
+            "collection_path": str(settings.tt_collection_path),
+            "auth": auth,
+        }
+    )
+
+
 def peer_sync(dry_run: bool = False) -> PeerSyncReport:
     """Execute the full peer-sync bracket.
 
@@ -248,8 +274,9 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
     """
     report = PeerSyncReport(dry_run=dry_run)
 
+    had_cached_auth = _AUTH_CACHE is not None
     try:
-        auth = _login()
+        auth = _get_auth()
     except PeerSyncError as e:
         raise PeerSyncError(f"Login failed: {e}") from None
     report.auth_success = True
@@ -260,13 +287,17 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
     # collection holds and switches the user's deck out from under them.
     _mirror_real_curdeck_into_tt(settings.anki_collection_path, settings.tt_collection_path)
 
-    sync_out = _run_driver(
-        {
-            "op": "sync",
-            "collection_path": str(settings.tt_collection_path),
-            "auth": auth,
-        }
-    )
+    try:
+        sync_out = _sync_leg(auth)
+    except PeerSyncError:
+        # A cached hkey can go stale (password change, server invalidation). The pull
+        # leg runs before any TT write, so it's safe to re-login and retry once here.
+        # Only do so when the auth was cached — a *fresh* login that still fails isn't
+        # an expiry, so re-logging in won't help.
+        if not had_cached_auth:
+            raise
+        auth = _get_auth(refresh=True)
+        sync_out = _sync_leg(auth)
     report.pull_required = sync_out.get("required")
     report.pull_message = sync_out.get("server_message", "")
 
@@ -293,13 +324,7 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
         # The pull leg may have pulled the server's curDeck back into TT; re-mirror
         # the user's real selection so the push asserts the right deck, not a stale one.
         _mirror_real_curdeck_into_tt(settings.anki_collection_path, settings.tt_collection_path)
-        push_out = _run_driver(
-            {
-                "op": "sync",
-                "collection_path": str(settings.tt_collection_path),
-                "auth": auth,
-            }
-        )
+        push_out = _sync_leg(auth)
         report.push_required = push_out.get("required")
         report.push_message = push_out.get("server_message", "")
         if _full_sync_required(push_out.get("required")):

@@ -26,6 +26,24 @@ def _mock_run(data: dict) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(args=[], returncode=0, stdout=json.dumps(data), stderr="")
 
 
+@pytest.fixture(autouse=True)
+def _clear_auth_cache():
+    """The hkey cache is a process-global; reset it around every test so login
+    expectations (subprocess counts) don't leak between cases."""
+    import app.anki.sync_orchestrator as so
+
+    so._AUTH_CACHE = None
+    yield
+    so._AUTH_CACHE = None
+
+
+def _login_ops(mock_run) -> list[dict]:
+    """The parsed driver inputs whose op is 'login' (one per real authentication)."""
+    return [
+        payload for call in mock_run.call_args_list if (payload := json.loads(call.kwargs["input"]))["op"] == "login"
+    ]
+
+
 class TestPeerSync:
     def test_full_bracket(self):
         """Happy path: login → pull sync → TT sync → push sync."""
@@ -219,6 +237,73 @@ class TestPeerSync:
             assert _anki_with_spec() == "anki"
         with patch.object(settings, "anki_pkg_version", "25.02"):
             assert _anki_with_spec() == "anki==25.02"
+
+
+class TestAuthCache:
+    """The hkey is a long-lived session token: cache it across syncs (like Anki) and
+    only re-login on a miss or when a sync rejects a cached token."""
+
+    def test_auth_cached_across_syncs(self):
+        """A second peer_sync reuses the hkey — login runs once, not twice."""
+        with (
+            patch(
+                "app.anki.sync_orchestrator.subprocess.run",
+                side_effect=[
+                    _mock_run(AUTH_RESPONSE),  # login (first sync only)
+                    _mock_run(NORMAL_SYNC),  # pull #1
+                    _mock_run(NO_CHANGE),  # push #1
+                    _mock_run(NORMAL_SYNC),  # pull #2 (no login before it)
+                    _mock_run(NO_CHANGE),  # push #2
+                ],
+            ) as mock_run,
+            patch("app.anki.sync.main", return_value=0),
+        ):
+            peer_sync(dry_run=False)
+            peer_sync(dry_run=False)
+
+        assert len(_login_ops(mock_run)) == 1
+        assert mock_run.call_count == 5
+
+    def test_stale_cached_auth_relogins_and_retries(self):
+        """A cached hkey the server rejects on the pull → re-login + retry once."""
+        import app.anki.sync_orchestrator as so
+
+        so._AUTH_CACHE = AUTH_RESPONSE  # pre-warm the cache with a (now stale) token
+        with (
+            patch(
+                "app.anki.sync_orchestrator.subprocess.run",
+                side_effect=[
+                    _mock_run({"error": "auth failed"}),  # pull with stale hkey
+                    _mock_run(AUTH_RESPONSE),  # forced re-login
+                    _mock_run(NORMAL_SYNC),  # retried pull
+                    _mock_run(NO_CHANGE),  # push
+                ],
+            ) as mock_run,
+            patch("app.anki.sync.main", return_value=0),
+        ):
+            report = peer_sync(dry_run=False)
+
+        assert report.pull_required == 1
+        assert len(_login_ops(mock_run)) == 1  # exactly the refresh login
+        assert mock_run.call_count == 4
+
+    def test_fresh_auth_failure_not_retried(self):
+        """A pull failure on a *fresh* (uncached) login isn't an expiry → no retry."""
+        with (
+            patch(
+                "app.anki.sync_orchestrator.subprocess.run",
+                side_effect=[
+                    _mock_run(AUTH_RESPONSE),  # fresh login
+                    _mock_run({"error": "network down"}),  # pull fails
+                ],
+            ) as mock_run,
+            patch("app.anki.sync.main", return_value=0),
+            pytest.raises(PeerSyncError, match="network down"),
+        ):
+            peer_sync(dry_run=False)
+
+        assert len(_login_ops(mock_run)) == 1  # no second login
+        assert mock_run.call_count == 2
 
 
 SLOVENE_DECK = b"1"
