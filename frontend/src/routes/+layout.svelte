@@ -1,6 +1,7 @@
 <script lang="ts">
 	import favicon from '$lib/assets/favicon.svg';
 	import { page } from '$app/stores';
+	import SyncButton from '$lib/components/SyncButton.svelte';
 
 	let { children } = $props();
 </script>
@@ -11,9 +12,12 @@
 
 <nav class="global-nav">
 	<a href="/" class="brand">TunaTale</a>
-	<div class="nav-links">
-		<a href="/review" class:active={$page.url.pathname === '/review'}>Review</a>
-		<a href="/admin/srs" class:active={$page.url.pathname.startsWith('/admin')}>Admin</a>
+	<div class="nav-right">
+		<div class="nav-links">
+			<a href="/review" class:active={$page.url.pathname === '/review'}>Review</a>
+			<a href="/admin/srs" class:active={$page.url.pathname.startsWith('/admin')}>Admin</a>
+		</div>
+		<SyncButton />
 	</div>
 </nav>
 
@@ -33,6 +37,11 @@
 		font-size: 1.1rem;
 		color: var(--color-primary);
 		text-decoration: none;
+	}
+	.nav-right {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
 	}
 	.nav-links {
 		display: flex;

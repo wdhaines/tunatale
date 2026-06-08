@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { SRSItemDetail, SRSListParams, QueueStats } from '$lib/api';
-	import SyncButton from '$lib/components/SyncButton.svelte';
+	import { syncStore } from '$lib/stores/sync.svelte';
 
 	const PAGE_SIZE = 50;
 
@@ -181,6 +181,10 @@
 		});
 	}
 
+	$effect(() => {
+		if (syncStore.lastResult) handleSyncResult();
+	});
+
 	onMount(() => {
 		loadItems();
 	});
@@ -208,7 +212,6 @@
 				<button class="danger" onclick={bulkDelete}>Delete selected ({selected.size})</button>
 			{/if}
 			<button onclick={loadItems} title="Refresh">⟳</button>
-			<SyncButton onSyncResult={handleSyncResult} />
 		</div>
 	</div>
 

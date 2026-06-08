@@ -7,7 +7,7 @@
 	import AudioPlayer from '$lib/components/AudioPlayer.svelte';
 	import Transcript from '$lib/components/Transcript.svelte';
 	import TranscriptPlaceholder from '$lib/components/TranscriptPlaceholder.svelte';
-	import SyncButton from '$lib/components/SyncButton.svelte';
+	import { syncStore } from '$lib/stores/sync.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -110,6 +110,10 @@
 			error = e instanceof Error ? e.message : String(e);
 		}
 	}
+
+	$effect(() => {
+		if (syncStore.lastResult) handleSyncResult();
+	});
 
 	async function handleMarkListened() {
 		listenLoading = true;
@@ -297,7 +301,6 @@
 				{audioLoading ? 'Rendering…' : 'Render Audio'}
 			</button>
 		{/if}
-		<SyncButton onSyncResult={handleSyncResult} />
 		{#if syncStatus}
 			<p class="sync-status">{syncStatus}</p>
 		{/if}

@@ -14,7 +14,6 @@ vi.mock("$lib/api", () => {
       bulkDeleteSRSItems: vi.fn(),
       resetSRSItem: vi.fn(),
       suspendSRSItem: vi.fn(),
-      peerSync: vi.fn(),
       fetchQueueStats: vi.fn(),
     },
   };
@@ -27,8 +26,8 @@ const mockDelete = vi.mocked(api.deleteSRSItem);
 const mockBulkDelete = vi.mocked(api.bulkDeleteSRSItems);
 const mockReset = vi.mocked(api.resetSRSItem);
 const mockSuspend = vi.mocked(api.suspendSRSItem);
-const mockPeerSync = vi.mocked(api.peerSync);
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
+import { syncStore } from "$lib/stores/sync.svelte";
 import { makeSRSItemDetail } from "../../../test/factories";
 
 /** Yield to let pending microtasks (Svelte DOM updates) drain. */
@@ -39,6 +38,7 @@ function flushMicrotasks(): Promise<void> {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers();
+  syncStore.notify(null);
   mockList.mockResolvedValue({ items: [], total: 0 });
   mockFetchQueueStats.mockResolvedValue({
     new: 0,
@@ -592,7 +592,7 @@ describe("admin/srs/+page.svelte", () => {
     }
   });
 
-  // ── Sync to AnkiWeb (peer-sync) ───────────────────────────────────────────
+  // ── Sync via store notification ──────────────────────────────────────────
 
   const PEER_RESULT = {
     auth_success: true,
@@ -602,33 +602,17 @@ describe("admin/srs/+page.svelte", () => {
     dry_run: false,
   };
 
-  it("renders the Sync to AnkiWeb button", async () => {
-    const { findByText } = render(AdminSRSPage);
-    expect(await findByText("Sync to AnkiWeb")).toBeTruthy();
-  });
-
-  it("clicking Sync to AnkiWeb calls peerSync(false)", async () => {
-    mockPeerSync.mockResolvedValue(PEER_RESULT);
-    const { findByText } = render(AdminSRSPage);
-    await fireEvent.click(await findByText("Sync to AnkiWeb"));
-    await waitFor(() => {
-      expect(mockPeerSync).toHaveBeenCalledWith(false);
-    });
-  });
-
   it("shows synced status after a successful peer sync", async () => {
-    mockPeerSync.mockResolvedValue(PEER_RESULT);
     const { findByText } = render(AdminSRSPage);
-    await fireEvent.click(await findByText("Sync to AnkiWeb"));
+    syncStore.notify(PEER_RESULT);
     expect(await findByText("Synced with AnkiWeb")).toBeTruthy();
   });
 
   it("reloads items after a successful peer sync", async () => {
-    mockPeerSync.mockResolvedValue(PEER_RESULT);
     const { findByText } = render(AdminSRSPage);
     await findByText(/0 total/);
     const callsBefore = mockList.mock.calls.length;
-    await fireEvent.click(await findByText("Sync to AnkiWeb"));
+    syncStore.notify(PEER_RESULT);
     await waitFor(() => {
       expect(mockList.mock.calls.length).toBeGreaterThan(callsBefore);
     });

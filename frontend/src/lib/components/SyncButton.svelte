@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api';
 	import type { PeerSyncResult } from '$lib/api';
+	import { syncStore } from '$lib/stores/sync.svelte';
 
 	// Peer-sync with AnkiWeb (or a self-host server): TunaTale syncs its OWN
 	// collection, so Anki can stay open and changes reach AnkiDroid. (This replaced
@@ -22,6 +23,7 @@
 		try {
 			const result = await api.peerSync(false);
 			syncResult = result;
+			syncStore.notify(result);
 			if (onSyncResult) onSyncResult(result);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
