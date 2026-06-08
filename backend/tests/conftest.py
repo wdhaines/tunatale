@@ -64,8 +64,15 @@ def _settings_overrides(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'tunatale.db'}")
     monkeypatch.setattr(settings, "sync_log", tmp_path / "logs" / "sync.log")
     # Non-empty so _resolve_sync_password short-circuits and tests never shell out to
-    # the real macOS Keychain. Tests of the Keychain path override this to "".
-    monkeypatch.setattr(settings, "sync_password", "test-sync-pw")
+    # the real macOS Keychain. Tests of the Keychain path override this to "". The
+    # gated --run-peer-sync integration test provides a real throwaway password via
+    # the environment, so honour that when present rather than clobbering it.
+    # `... or "test-sync-pw"`, not a default arg: a blanked `.env` puts `sync_password=`
+    # (empty) into os.environ, and an empty value must still fall back to the dummy so
+    # _resolve_sync_password short-circuits (an empty value would shell out to the mocked
+    # `security` and consume a driver side-effect). Lowercase matches the Pydantic field
+    # and the other peer-sync env vars, so SIM112's uppercase rule doesn't fit.
+    monkeypatch.setattr(settings, "sync_password", os.environ.get("sync_password") or "test-sync-pw")  # noqa: SIM112
     monkeypatch.setattr(settings, "lemmatizer_type", "lowercase")
     get_lemmatizer.cache_clear()
     monkeypatch.setattr("app.api.srs._lemmatizer", get_lemmatizer())

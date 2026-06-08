@@ -167,3 +167,91 @@ class TestPeerSyncSelfHost:
         peer2_a = _driver({"op": "get_card", "collection_path": str(peer2_col), "card_id": card_a})
         assert tt_b["reps"] > 0, "TT did not receive peer2's grade of card B"
         assert peer2_a["reps"] > 0, "peer2 did not receive TT's grade of card A"
+
+    def test_tt_lapse_newer_than_remote_propagates(self, tmp_path: Path):
+        """Layer 69 at the integration level: a TT lapse (Again → relearning) graded
+        AFTER the card's last change on the server must propagate through peer_sync —
+        not be discarded in favour of the server's graduated (review) state. This is
+        the lapse-newer-than-remote case the fresh-grade convergence test missed.
+        """
+        import sqlite3
+        from datetime import UTC, datetime, timedelta
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+
+        tt_col = tmp_path / "tt_collection.anki2"
+        peer2_col = tmp_path / "peer2.anki2"
+        auth = _login()
+
+        # Seed one card in the TT deck, then force it to GRADUATED (review) with a mod
+        # one day in the past (older than the TT grade we make below).
+        _driver({"op": "create_collection", "collection_path": str(tt_col)})
+        add = _driver(
+            {
+                "op": "add_note",
+                "collection_path": str(tt_col),
+                "deck": settings.anki_deck_name,
+                "fields": ["lapse front", "lapse back"],
+            }
+        )
+        card_id = add["card_ids"][0]
+        note_id = add["note_id"]
+        old_mod = int(datetime.now(UTC).timestamp()) - 86400
+        conn = sqlite3.connect(str(tt_col))
+        conn.execute(
+            "UPDATE cards SET type=2, queue=2, ivl=10, due=100, reps=12, lapses=0, mod=?, "
+            'data=\'{"pos":1,"s":50.0,"d":5.0,"dr":0.9,"decay":0.5,"lrt":1}\' WHERE id=?',
+            (old_mod, card_id),
+        )
+        conn.commit()
+        conn.close()
+        _driver({"op": "full_upload", "collection_path": str(tt_col), "auth": auth})
+
+        _driver({"op": "create_collection", "collection_path": str(peer2_col)})
+        _driver({"op": "full_download", "collection_path": str(peer2_col), "auth": auth})
+
+        # In TT's DB: a collocation linked to that card, just graded "Again" (newer
+        # than old_mod) → relearning + dirty.
+        db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        try:
+            db.add_collocation(
+                SyntacticUnit(text="lapsetest", translation="lapse", word_count=1, difficulty=1, source="corpus")
+            )
+            guid = db.get_collocation("lapsetest").guid
+            db.set_anki_ids(guid, note_id, {Direction.PRODUCTION: card_id})
+            now = datetime.now(UTC)
+            db.update_direction(
+                guid,
+                Direction.PRODUCTION,
+                DirectionState(
+                    direction=Direction.PRODUCTION,
+                    state=SRSState.RELEARNING,
+                    left=1001,
+                    due_at=now + timedelta(minutes=10),
+                    reps=12,
+                    lapses=1,
+                    anki_card_id=card_id,
+                    dirty_fsrs=True,
+                    last_rating=1,
+                    last_review=now,
+                    prior_state=SRSState.REVIEW,
+                ),
+            )
+        finally:
+            db.close()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(settings, "tt_collection_path", tt_col)
+            report = peer_sync(dry_run=False)
+        assert report.tt_push_pull_exit == 0
+        _assert_incremental(report.pull_required, "lapse pull")
+        _assert_incremental(report.push_required, "lapse push")
+
+        # peer2 pulls; the card must now be RELEARNING (queue=1 / type=3), not the
+        # stale review (queue=2) it would be if the lapse had been discarded.
+        _driver({"op": "sync", "collection_path": str(peer2_col), "auth": auth})
+        peer2_card = _driver({"op": "get_card", "collection_path": str(peer2_col), "card_id": card_id})
+        assert peer2_card["queue"] == 1, f"lapse not propagated — peer2 card still {peer2_card}"
+        assert peer2_card["type"] == 3
