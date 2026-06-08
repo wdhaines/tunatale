@@ -1476,6 +1476,105 @@ class TestSyncPushGuardsAgainstAnkiAhead:
 
         assert any(c[0] == "set_learning_state" for c in writer.calls)
 
+    # ── Recency guard (Layer 69): a NEWER TT grade must not defer to Anki ──────
+
+    def test_push_relearning_when_tt_graded_after_anki(self):
+        """Regression (the 'Imam dovolj časa' loss): a TT lapse (review→relearning)
+        graded MORE RECENTLY than Anki's last change must push — not be discarded in
+        favour of Anki's stale graduated (queue=2) state."""
+        from datetime import datetime as _dt
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        tt_grade = _dt.now(UTC)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.RELEARNING,
+            left=1001,
+            due_at=tt_grade + timedelta(minutes=10),
+            reps=12,
+            anki_card_id=rec_cid,
+            dirty_fsrs=True,
+            last_rating=1,
+            last_review=tt_grade,
+            prior_state=SRSState.REVIEW,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        # Anki shows it graduated, but Anki's last change predates TT's grade.
+        writer.current_states[rec_cid] = {
+            "queue": 2,
+            "type": 2,
+            "left": 0,
+            "mod": int(tt_grade.timestamp()) - 3600,
+        }
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert any(c[0] == "set_learning_state" for c in writer.calls)
+        assert any(c[0] == "write_revlog" for c in writer.calls)
+
+    def test_push_defers_when_anki_graduated_and_newer_than_tt(self):
+        """The legitimate Fix-3 case, now recency-aware: Anki graduated AND changed
+        AFTER TT's grade (a genuinely stale TT view) → still defer."""
+        from datetime import datetime as _dt
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        tt_grade = _dt.now(UTC) - timedelta(hours=2)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.LEARNING,
+            left=1001,
+            due_at=tt_grade + timedelta(minutes=10),
+            reps=3,
+            anki_card_id=rec_cid,
+            dirty_fsrs=True,
+            last_rating=3,
+            last_review=tt_grade,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        writer.current_states[rec_cid] = {
+            "queue": 2,
+            "type": 2,
+            "left": 0,
+            "mod": int(_dt.now(UTC).timestamp()),  # Anki changed after TT's grade
+        }
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert not any(c[0] == "set_learning_state" for c in writer.calls)
+        assert not any(c[0] == "write_revlog" for c in writer.calls)
+
+    def test_push_defers_when_anki_graduated_and_mod_unknown(self):
+        """If Anki's `mod` isn't available, recency can't be established → keep the
+        conservative Fix-3 default (defer to Anki's graduation)."""
+        from datetime import datetime as _dt
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        tt_grade = _dt.now(UTC)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.RELEARNING,
+            left=1001,
+            due_at=tt_grade + timedelta(minutes=10),
+            reps=12,
+            anki_card_id=rec_cid,
+            dirty_fsrs=True,
+            last_rating=1,
+            last_review=tt_grade,
+            prior_state=SRSState.REVIEW,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        writer.current_states[rec_cid] = {"queue": 2, "type": 2, "left": 0}  # no mod
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert not any(c[0] == "set_learning_state" for c in writer.calls)
+
     def test_offline_writer_get_current_card_state_returns_queue_type_left(self):
         """OfflineWriter must expose Anki's current queue/type/left for the
         push-side guard. Reading goes through the writer's own connection
@@ -1489,7 +1588,7 @@ class TestSyncPushGuardsAgainstAnkiAhead:
         anki_conn.commit()
         writer = OfflineWriter(anki_conn)
         state = writer.get_current_card_state(90010)
-        assert state == {"queue": 1, "type": 1, "left": 1001}
+        assert state == {"queue": 1, "type": 1, "left": 1001, "mod": 0}
 
     def test_offline_writer_get_current_card_state_unknown_card_id(self):
         anki_conn = _make_anki_full_db()

@@ -583,17 +583,18 @@ class OfflineWriter:
         self._conn.commit()
 
     def get_current_card_state(self, card_id: int) -> dict | None:
-        """Return Anki's current `queue`/`type`/`left` for the card, or None
-        if the card doesn't exist. Used by sync_push (Fix 3) to skip writes
-        when Anki has more progress than TT for the same card.
+        """Return Anki's current `queue`/`type`/`left`/`mod` for the card, or None
+        if the card doesn't exist. Used by sync_push (Fix 3) to skip writes when Anki
+        has more progress than TT; `mod` (epoch secs of Anki's last change) lets the
+        recency guard avoid discarding a NEWER TT grade (Layer 69).
         """
         row = self._conn.execute(
-            "SELECT queue, type, IFNULL(left, 0) FROM cards WHERE id = ?",
+            "SELECT queue, type, IFNULL(left, 0), mod FROM cards WHERE id = ?",
             (card_id,),
         ).fetchone()
         if row is None:
             return None
-        return {"queue": row[0], "type": row[1], "left": row[2]}
+        return {"queue": row[0], "type": row[1], "left": row[2], "mod": row[3]}
 
     def set_learning_state(self, card_id: int, left: int, due_at: int, *, type_: int = 1) -> None:
         """Update a learning/relearning card's left, due, queue, type.
@@ -2334,6 +2335,16 @@ class AnkiSync:
                             anki_ahead = True  # graduated
                         elif anki_now["queue"] in (1, 3) and _anki_step_ahead(anki_now["left"], ds.left):
                             anki_ahead = True
+                        # Recency guard (Layer 69): "Anki is ahead" is a state-rank
+                        # heuristic and must not discard a TT grade that is NEWER than
+                        # Anki's last change. If TT graded after Anki's cards.mod
+                        # (epoch secs), TT is the newer authority — e.g. a fresh TT
+                        # lapse on a card Anki/AnkiWeb still shows graduated (the
+                        # 'Imam dovolj časa' loss). Push instead of deferring.
+                        if anki_ahead and ds.last_review is not None:
+                            anki_mod = anki_now.get("mod")
+                            if anki_mod is not None and ds.last_review.timestamp() > anki_mod:
+                                anki_ahead = False
 
                     if not anki_ahead:
                         # queue=1 for both; type=1 for LEARNING, type=3 for RELEARNING (lapse)
