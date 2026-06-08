@@ -435,6 +435,107 @@ class TestCurDeckMirror:
         assert _read_curdeck_val(settings.tt_collection_path) == SLOVENE_DECK
 
 
+def _make_tt_collection(path, *, col_mod: int, curdeck_val: bytes = NORWEGIAN_DECK) -> None:
+    """tt_collection with a `col` (for the mod chokepoint) and a `config` curDeck row."""
+    import sqlite3
+
+    con = sqlite3.connect(path)
+    try:
+        con.execute("CREATE TABLE col (mod INTEGER)")
+        con.execute("INSERT INTO col (mod) VALUES (?)", (col_mod,))
+        con.execute("CREATE TABLE config (key TEXT PRIMARY KEY, usn INTEGER, mtime_secs INTEGER, val BLOB)")
+        con.execute("INSERT INTO config (key, usn, mtime_secs, val) VALUES ('curDeck', -1, 1, ?)", (curdeck_val,))
+        con.commit()
+    finally:
+        con.close()
+
+
+def _set_col_mod(path, mod: int) -> None:
+    import sqlite3
+
+    con = sqlite3.connect(path)
+    con.execute("UPDATE col SET mod = ?", (mod,))
+    con.commit()
+    con.close()
+
+
+class TestReadColMod:
+    def test_reads_mod(self, tmp_path):
+        from app.anki.sync_orchestrator import _read_col_mod
+
+        col = tmp_path / "tt.anki2"
+        _make_tt_collection(col, col_mod=1234)
+        assert _read_col_mod(col) == 1234
+
+    def test_missing_file_none(self, tmp_path):
+        from app.anki.sync_orchestrator import _read_col_mod
+
+        assert _read_col_mod(tmp_path / "absent.anki2") is None
+
+    def test_no_col_table_none(self, tmp_path):
+        """A collection without a `col` table → None (treated as unknown → don't skip)."""
+        from app.anki.sync_orchestrator import _read_col_mod
+
+        col = tmp_path / "tt.anki2"
+        _make_collection_with_curdeck(col, val=NORWEGIAN_DECK)  # config only, no col table
+        assert _read_col_mod(col) is None
+
+    def test_empty_col_table_none(self, tmp_path):
+        import sqlite3
+
+        from app.anki.sync_orchestrator import _read_col_mod
+
+        col = tmp_path / "tt.anki2"
+        con = sqlite3.connect(col)
+        con.execute("CREATE TABLE col (mod INTEGER)")  # no rows
+        con.commit()
+        con.close()
+        assert _read_col_mod(col) is None
+
+
+class TestSkipNoOpPush:
+    """~Half of syncs reconcile nothing; the push leg is then a pure no-op round-trip.
+    Skip it when col.mod (the mutation chokepoint) is unchanged across tt_sync_main."""
+
+    def test_skips_push_when_reconcile_unchanged(self):
+        """tt_sync_main writes nothing → col.mod unchanged → push leg is skipped."""
+        _make_collection_with_curdeck(settings.anki_collection_path, val=SLOVENE_DECK)
+        _make_tt_collection(settings.tt_collection_path, col_mod=1000)
+        with (
+            patch(
+                "app.anki.sync_orchestrator.subprocess.run",
+                side_effect=[_mock_run(AUTH_RESPONSE), _mock_run(NORMAL_SYNC)],  # login + pull only
+            ) as mock_run,
+            patch("app.anki.sync.main", return_value=0),  # no write → mod stays 1000
+        ):
+            report = peer_sync(dry_run=False)
+
+        assert mock_run.call_count == 2  # the push subprocess never ran
+        assert report.push_required == 0
+        assert report.push_message == "skipped: no local changes to push"
+
+    def test_pushes_when_reconcile_wrote(self):
+        """tt_sync_main bumps col.mod → there are changes → the push leg runs."""
+        _make_collection_with_curdeck(settings.anki_collection_path, val=SLOVENE_DECK)
+        _make_tt_collection(settings.tt_collection_path, col_mod=1000)
+
+        def _reconcile_and_bump(*_args, **_kwargs):
+            _set_col_mod(settings.tt_collection_path, 2000)  # simulate a self-heal write
+            return 0
+
+        with (
+            patch(
+                "app.anki.sync_orchestrator.subprocess.run",
+                side_effect=[_mock_run(AUTH_RESPONSE), _mock_run(NORMAL_SYNC), _mock_run(NO_CHANGE)],
+            ) as mock_run,
+            patch("app.anki.sync.main", side_effect=_reconcile_and_bump),
+        ):
+            report = peer_sync(dry_run=False)
+
+        assert mock_run.call_count == 3  # push leg ran
+        assert report.push_message == "no changes"
+
+
 class TestDriverInvalidJson:
     def test_non_json_output_raises(self):
         """Non-JSON driver output surfaces as PeerSyncError."""

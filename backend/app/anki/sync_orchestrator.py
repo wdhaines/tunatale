@@ -205,6 +205,29 @@ def _read_real_curdeck(real_collection_path: Path) -> bytes | None:
     return row[0] if row else None
 
 
+def _read_col_mod(collection_path: Path) -> int | None:
+    """Read ``col.mod`` from TT's own collection (the single mutation chokepoint).
+
+    Every tt_sync write bumps ``col.mod`` via ``_bump_col``, so comparing it across
+    ``tt_sync_main`` tells us whether the reconcile changed anything — and thus
+    whether the push leg has anything to send. Plain (not ``mode=ro``) connection:
+    tt_collection is TT-owned and never held open by the Anki GUI, and a bare
+    ``mode=ro`` can trip on a leftover ``-wal`` sidecar. Returns ``None`` (caller
+    treats it as "unknown → don't skip the push") if unreadable.
+    """
+    if not collection_path.exists():
+        return None
+    try:
+        con = sqlite3.connect(collection_path)
+        try:
+            row = con.execute("SELECT mod FROM col").fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return None
+    return row[0] if row else None
+
+
 def _mirror_real_curdeck_into_tt(real_collection_path: Path, tt_collection_path: Path) -> None:
     """Set TT's ``curDeck`` to the user's real Anki selection before a sync.
 
@@ -310,6 +333,9 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
 
     from app.anki.sync import main as tt_sync_main
 
+    # Baseline before the reconcile so we can tell whether it wrote anything (below).
+    mod_before_reconcile = _read_col_mod(settings.tt_collection_path)
+
     report.tt_push_pull_exit = tt_sync_main(
         argv=["--dry-run"] if dry_run else [],
         _settings=_tt_settings(),
@@ -321,17 +347,27 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
         )
 
     if not dry_run:
-        # The pull leg may have pulled the server's curDeck back into TT; re-mirror
-        # the user's real selection so the push asserts the right deck, not a stale one.
-        _mirror_real_curdeck_into_tt(settings.anki_collection_path, settings.tt_collection_path)
-        push_out = _sync_leg(auth)
-        report.push_required = push_out.get("required")
-        report.push_message = push_out.get("server_message", "")
-        if _full_sync_required(push_out.get("required")):
-            raise PeerSyncError(
-                f"Server requested FULL_SYNC (required={push_out.get('required')}) on push — aborting. "
-                f"Server message: {push_out.get('server_message', '')}."
-            )
+        # Skip the push round-trip when the reconcile changed nothing: the pull leg
+        # already synced TT's state (config included) to the server, so a push would
+        # be a pure no-op handshake — ~half of syncs in practice. col.mod is the
+        # single mutation chokepoint (every tt_sync write bumps it); only skip on a
+        # confident read of an unchanged mod, otherwise push to be safe.
+        mod_after_reconcile = _read_col_mod(settings.tt_collection_path)
+        if mod_before_reconcile is not None and mod_after_reconcile == mod_before_reconcile:
+            report.push_required = 0
+            report.push_message = "skipped: no local changes to push"
+        else:
+            # The pull leg may have pulled the server's curDeck back into TT; re-mirror
+            # the user's real selection so the push asserts the right deck, not a stale one.
+            _mirror_real_curdeck_into_tt(settings.anki_collection_path, settings.tt_collection_path)
+            push_out = _sync_leg(auth)
+            report.push_required = push_out.get("required")
+            report.push_message = push_out.get("server_message", "")
+            if _full_sync_required(push_out.get("required")):
+                raise PeerSyncError(
+                    f"Server requested FULL_SYNC (required={push_out.get('required')}) on push — aborting. "
+                    f"Server message: {push_out.get('server_message', '')}."
+                )
 
     return report
 
