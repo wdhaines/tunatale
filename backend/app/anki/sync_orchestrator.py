@@ -15,6 +15,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -171,27 +172,57 @@ def _resolve_sync_password() -> str:
     return pw
 
 
-def _suppress_curdeck_push(collection_path: Path) -> None:
-    """Make TT's ``curDeck`` non-dirty so peer-sync never pushes it.
+def _read_real_curdeck(real_collection_path: Path) -> bytes | None:
+    """Read the live ``curDeck`` blob from the user's *real* Anki collection.
 
     ``curDeck`` (the currently-selected deck) is a natively-synced Anki *config*
-    value. TT only ever works the Slovene deck and has no business asserting a
-    current-deck choice onto the user's real devices — whichever device the user
-    actually studied on owns it. TT's normal write path (``tt_sync_main``) never
-    touches ``config``, so in the steady state ``curDeck`` stays clean and isn't
-    pushed; but if ``sync_collection``'s config merge ever resolves in TT's favour
-    (TT's local ``curDeck`` mtime > server's) it marks the row dirty (``usn=-1``)
-    for the next push. We clear that here, leaving ``curDeck`` pull-only.
+    value, and Anki uploads the **entire** config blob unconditionally on every
+    sync (``rslib`` ``changed_config`` → ``get_all_config``; no per-key usn/mtime
+    gating). So TT cannot avoid pushing ``curDeck`` — it can only push the *right*
+    value. We mirror the user's real selection so TT stays faithful instead of
+    re-asserting whatever stale deck its own collection happens to hold.
 
-    A clean row (``usn != -1``) is left untouched. No-op if the collection file or
-    the row is absent (e.g. dry-run never reaches this, and unit tests may have no
-    collection on disk).
+    Read-only via ``mode=ro`` (NOT ``immutable=1``, NOT a file copy): Anki keeps the
+    collection in WAL mode while open, and only a real read-only connection to the
+    original file sees committed WAL data — ``immutable=1`` or copying the bare
+    ``.anki2`` reads a stale checkpoint. ``safe_open`` is unusable here: its Gate-1
+    lock probe aborts when Anki is running, but peer-sync's whole premise is that
+    Anki stays open, and this is a single-row read, not a mutation.
+
+    Returns ``None`` (caller leaves TT's ``curDeck`` untouched) if the collection
+    or row is absent or unreadable — a deck-mirroring hiccup must never break sync.
     """
-    if not collection_path.exists():
-        return
-    con = sqlite3.connect(collection_path)
+    if not real_collection_path.exists():
+        return None
     try:
-        con.execute("UPDATE config SET usn = (SELECT usn FROM col) WHERE key = 'curDeck' AND usn = -1")
+        con = sqlite3.connect(f"file:{real_collection_path}?mode=ro", uri=True)
+        try:
+            row = con.execute("SELECT val FROM config WHERE key = 'curDeck'").fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return None
+    return row[0] if row else None
+
+
+def _mirror_real_curdeck_into_tt(real_collection_path: Path, tt_collection_path: Path) -> None:
+    """Set TT's ``curDeck`` to the user's real Anki selection before a sync.
+
+    Makes a peer-sync faithful: TT asserts whatever deck the user actually has
+    selected rather than imposing one, so it never switches the user's deck out
+    from under them. No-op if either collection or the source value is unavailable.
+    See :func:`_read_real_curdeck` for why the whole-config-blob upload forces this
+    value-mirroring approach rather than excluding ``curDeck`` from the push.
+    """
+    val = _read_real_curdeck(real_collection_path)
+    if val is None or not tt_collection_path.exists():
+        return
+    con = sqlite3.connect(tt_collection_path)
+    try:
+        con.execute(
+            "UPDATE config SET val = ?, mtime_secs = ? WHERE key = 'curDeck'",
+            (val, int(time.time())),
+        )
         con.commit()
     finally:
         con.close()
@@ -223,6 +254,12 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
         raise PeerSyncError(f"Login failed: {e}") from None
     report.auth_success = True
 
+    # Anki uploads the whole config blob on every sync — including the pull leg, which
+    # is itself a bidirectional sync_collection — so mirror the user's real selected
+    # deck before each leg. Without this TT re-asserts whatever curDeck its own
+    # collection holds and switches the user's deck out from under them.
+    _mirror_real_curdeck_into_tt(settings.anki_collection_path, settings.tt_collection_path)
+
     sync_out = _run_driver(
         {
             "op": "sync",
@@ -253,8 +290,9 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
         )
 
     if not dry_run:
-        # TT must never push the selected deck — the user's real devices own it.
-        _suppress_curdeck_push(settings.tt_collection_path)
+        # The pull leg may have pulled the server's curDeck back into TT; re-mirror
+        # the user's real selection so the push asserts the right deck, not a stale one.
+        _mirror_real_curdeck_into_tt(settings.anki_collection_path, settings.tt_collection_path)
         push_out = _run_driver(
             {
                 "op": "sync",

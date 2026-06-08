@@ -62,9 +62,11 @@ def _settings_overrides(monkeypatch, tmp_path):
 
     monkeypatch.setattr(settings, "anki_backup_dir", tmp_path / "anki-backups")
     monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'tunatale.db'}")
-    # Peer-sync touches TT's own collection; pin it to tmp_path so no test (e.g. the
-    # curDeck-suppression guard) can read or mutate the real ~/.tunatale/tt_collection.anki2.
+    # Peer-sync touches TT's own collection and reads the user's real collection (for
+    # curDeck mirroring); pin both to tmp_path so no test reads or mutates the real
+    # ~/.tunatale/tt_collection.anki2 or ~/Library/.../collection.anki2.
     monkeypatch.setattr(settings, "tt_collection_path", tmp_path / "tt_collection.anki2")
+    monkeypatch.setattr(settings, "anki_collection_path", tmp_path / "collection.anki2")
     monkeypatch.setattr(settings, "sync_log", tmp_path / "logs" / "sync.log")
     # Non-empty so _resolve_sync_password short-circuits and tests never shell out to
     # the real macOS Keychain. Tests of the Keychain path override this to "". The
