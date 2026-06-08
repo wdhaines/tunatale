@@ -265,6 +265,48 @@ class TestOfflineReader:
         target = next(c for r in records for c in r.cards if c.anki_card_id == cid)
         assert target.fsrs_known is True
 
+    def test_last_review_falls_back_to_revlog_for_learning_card(self, fake_anki_db):
+        """A relearning card (queue=1) has no day-level FSRS last_review and, when its
+        Anki `data` has no `lrt` (the biti-cloze cohort, `data={}`), would be left
+        last_review=NULL. It must instead fall back to its latest revlog timestamp so a
+        just-graded lapse isn't left without a review time."""
+        conn = sqlite3.connect(str(fake_anki_db))
+        cid = conn.execute("SELECT id FROM cards LIMIT 1").fetchone()[0]
+        conn.execute("UPDATE cards SET queue=1, type=3, data='{}' WHERE id=?", (cid,))
+        conn.execute("INSERT INTO revlog VALUES (?, ?, 0, 1, -600, 1, 0, 1200, 1)", (1_700_000_500_000, cid))
+        conn.commit()
+        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        conn.close()
+        target = next(c for r in records for c in r.cards if c.anki_card_id == cid)
+        assert target.last_review == datetime.fromtimestamp(1_700_000_500_000 / 1000, tz=UTC)
+
+    def test_last_review_prefers_fsrs_lrt_over_revlog(self, fake_anki_db):
+        """When Anki's `data` carries `lrt`, that wins — the revlog fallback only
+        fills in when the FSRS last-review is genuinely absent (the lrt-authoritative
+        R-asc ordering must not be disturbed)."""
+        conn = sqlite3.connect(str(fake_anki_db))
+        cid = conn.execute("SELECT id FROM cards LIMIT 1").fetchone()[0]
+        conn.execute("UPDATE cards SET data=? WHERE id=?", (json.dumps({"s": 7.5, "d": 5.2, "lrt": 1779293316}), cid))
+        conn.execute("INSERT INTO revlog VALUES (?, ?, 0, 3, 10, 1, 2500, 1200, 1)", (1_700_000_500_000, cid))
+        conn.commit()
+        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        conn.close()
+        target = next(c for r in records for c in r.cards if c.anki_card_id == cid)
+        assert target.last_review == datetime.fromtimestamp(1779293316, tz=UTC)
+
+    def test_last_review_none_for_learning_card_without_revlog(self, fake_anki_db):
+        """A learning card with no FSRS last-review and no revlog → last_review stays
+        None (nothing to fall back to)."""
+        conn = sqlite3.connect(str(fake_anki_db))
+        cid = conn.execute("SELECT id FROM cards LIMIT 1").fetchone()[0]
+        conn.execute("UPDATE cards SET queue=1, type=3, data='{}' WHERE id=?", (cid,))
+        conn.execute("DELETE FROM revlog WHERE cid=?", (cid,))
+        conn.commit()
+        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        conn.close()
+        target = next(c for r in records for c in r.cards if c.anki_card_id == cid)
+        assert target.last_review is None
+
     def test_note_record_fields(self, fake_anki_db):
         """NoteRecord exposes anki_note_id, anki_guid, mod."""
         conn = sqlite3.connect(str(fake_anki_db))

@@ -279,6 +279,11 @@ def extract_cloze_note(back_extra: str) -> str:
     return ""
 
 
+def _ms_to_datetime(ms: int | None) -> datetime | None:
+    """Convert an epoch-milliseconds revlog id to a UTC datetime (None passes through)."""
+    return datetime.fromtimestamp(ms / 1000, tz=UTC) if ms is not None else None
+
+
 def _local_today_4am(now: datetime | None = None) -> datetime:
     """Return the datetime of today's 4 AM rollover in local timezone.
 
@@ -394,7 +399,11 @@ class OfflineReader:
                     due_at=c.fsrs_state.due_at,
                     anki_due=c.fsrs_state.anki_due,
                     anki_card_mod=c.mod,
-                    last_review=c.fsrs_state.last_review,
+                    # Learning/relearning cards (queue=1) have no day-level FSRS
+                    # last_review, and a `data={}`/no-`lrt` card (the biti-cloze
+                    # cohort) has none from data either — fall back to the latest
+                    # revlog timestamp so a just-graded card is never left NULL.
+                    last_review=c.fsrs_state.last_review or _ms_to_datetime(last_revlog_ms.get(c.id)),
                     last_review_ms=last_revlog_ms.get(c.id),
                     first_review_ms=first_revlog_ms.get(c.id),
                     left=c.fsrs_state.left,
