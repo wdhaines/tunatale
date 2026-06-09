@@ -28,8 +28,8 @@ test('review flow: seed items, drill through queue, complete', async ({ page, re
 	await expect(page.getByText('3').first()).toBeVisible({ timeout: 10000 });
 	await expect(page.getByText('0').first()).toBeVisible();
 
-	// Click the Review link in the main content (not the nav)
-	await page.getByRole('main').getByRole('link', { name: 'Review' }).click();
+	// Review lives in the global nav now
+	await page.locator('nav').getByRole('link', { name: 'Review' }).click();
 	await expect(page).toHaveURL('/review');
 	// Check for Anki-style widget on review page: "3 + 0 + 0"
 	await expect(page.getByText('3').first()).toBeVisible({ timeout: 10000 });

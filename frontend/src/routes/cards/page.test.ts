@@ -1,9 +1,9 @@
 /**
- * Component tests for the /admin/srs +page.svelte route.
+ * Component tests for the /cards +page.svelte route.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
-import AdminSRSPage from "./+page.svelte";
+import CardsPage from "./+page.svelte";
 
 vi.mock("$lib/api", () => {
   return {
@@ -28,7 +28,7 @@ const mockReset = vi.mocked(api.resetSRSItem);
 const mockSuspend = vi.mocked(api.suspendSRSItem);
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 import { syncStore } from "$lib/stores/sync.svelte";
-import { makeSRSItemDetail } from "../../../test/factories";
+import { makeSRSItemDetail } from "../../test/factories";
 
 /** Yield to let pending microtasks (Svelte DOM updates) drain. */
 function flushMicrotasks(): Promise<void> {
@@ -50,7 +50,7 @@ beforeEach(() => {
   });
 });
 
-describe("admin/srs/+page.svelte", () => {
+describe("cards/+page.svelte", () => {
   it("renders rows returned from listSRSItems", async () => {
     mockList.mockResolvedValue({
       items: [
@@ -59,7 +59,7 @@ describe("admin/srs/+page.svelte", () => {
       ],
       total: 2,
     });
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     expect(await findByText("zdravo")).toBeTruthy();
     expect(await findByText("hvala")).toBeTruthy();
   });
@@ -69,7 +69,7 @@ describe("admin/srs/+page.svelte", () => {
       items: [makeSRSItemDetail({ id: 1, text: "Bog", due_at: "2026-09-15T04:00:00+00:00" })],
       total: 1,
     });
-    const { findByText, queryByText } = render(AdminSRSPage);
+    const { findByText, queryByText } = render(CardsPage);
     await findByText("Bog");
     // Raw ISO must NOT appear in the rendered output
     expect(queryByText(/2026-09-15T04:00:00/)).toBeFalsy();
@@ -82,7 +82,7 @@ describe("admin/srs/+page.svelte", () => {
       items: [makeSRSItemDetail({ id: 1, text: "empty_due", due_at: "" })],
       total: 1,
     });
-    const { findByText, container } = render(AdminSRSPage);
+    const { findByText, container } = render(CardsPage);
     await findByText("empty_due");
     // Empty due should not render any obvious text for the due column
     expect(container.textContent).not.toContain("Invalid Date");
@@ -93,14 +93,14 @@ describe("admin/srs/+page.svelte", () => {
       items: [makeSRSItemDetail({ id: 1, text: "bad_date", due_at: "not-a-date" })],
       total: 1,
     });
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("bad_date");
     expect(await findByText("not-a-date")).toBeTruthy();
   });
 
   it("typing in search re-queries after debounce", async () => {
     mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: "zdravo" })], total: 1 });
-    const { getByPlaceholderText } = render(AdminSRSPage);
+    const { getByPlaceholderText } = render(CardsPage);
     const input = getByPlaceholderText(/Search/);
 
     await fireEvent.input(input, { target: { value: "zdr" } });
@@ -116,7 +116,7 @@ describe("admin/srs/+page.svelte", () => {
 
   it("clicking column header flips sort order", async () => {
     mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: "a" })], total: 1 });
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
 
     // Wait for initial load
     await findByText("a");
@@ -135,7 +135,7 @@ describe("admin/srs/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockUpdate.mockResolvedValue({ ...item, text: "Zdravo!", translation: "Hello!" });
 
-    const { findByText, getAllByRole } = render(AdminSRSPage);
+    const { findByText, getAllByRole } = render(CardsPage);
     await findByText("zdravo");
 
     const editBtn = await findByText("Edit");
@@ -164,7 +164,7 @@ describe("admin/srs/+page.svelte", () => {
     mockBulkDelete.mockResolvedValue({ deleted: 2 });
     vi.stubGlobal("confirm", () => true);
 
-    const { findAllByRole, findByText } = render(AdminSRSPage);
+    const { findAllByRole, findByText } = render(CardsPage);
     await findByText("a");
 
     const allCheckboxes = (await findAllByRole("checkbox")) as HTMLInputElement[];
@@ -187,7 +187,7 @@ describe("admin/srs/+page.svelte", () => {
     mockDelete.mockResolvedValue({ status: "deleted" });
     vi.stubGlobal("confirm", () => true);
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("lep");
 
     const deleteBtn = await findByText("Delete");
@@ -203,7 +203,7 @@ describe("admin/srs/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockSuspend.mockResolvedValue({ ...item, state: "suspended" });
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("lep");
 
     const suspendBtn = await findByText("Suspend");
@@ -220,7 +220,7 @@ describe("admin/srs/+page.svelte", () => {
     mockReset.mockResolvedValue({ ...item, state: "new", reps: 0 });
     vi.stubGlobal("confirm", () => true);
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("kava");
 
     const resetBtn = await findByText("Reset");
@@ -237,7 +237,7 @@ describe("admin/srs/+page.svelte", () => {
     mockReset.mockRejectedValue(new Error("reset failed"));
     vi.stubGlobal("confirm", () => true);
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("kava");
 
     await fireEvent.click(await findByText("Reset"));
@@ -250,7 +250,7 @@ describe("admin/srs/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockSuspend.mockRejectedValue(new Error("suspend failed"));
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("voda");
 
     await fireEvent.click(await findByText("Suspend"));
@@ -262,7 +262,7 @@ describe("admin/srs/+page.svelte", () => {
     const item = makeSRSItemDetail({ id: 5, text: "miza" });
     mockList.mockResolvedValue({ items: [item], total: 1 });
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("miza");
 
     await fireEvent.click(await findByText("Edit"));
@@ -282,7 +282,7 @@ describe("admin/srs/+page.svelte", () => {
       total: 2,
     });
 
-    const { findAllByRole, findByText } = render(AdminSRSPage);
+    const { findAllByRole, findByText } = render(CardsPage);
     await findByText("a");
 
     // Header checkbox is the first checkbox ([0]) now that the cloze flag is gone
@@ -300,7 +300,7 @@ describe("admin/srs/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockUpdate.mockRejectedValue("plain update error");
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("vino");
 
     await fireEvent.click(await findByText("Edit"));
@@ -315,7 +315,7 @@ describe("admin/srs/+page.svelte", () => {
     mockDelete.mockRejectedValue("plain delete error");
     vi.stubGlobal("confirm", () => true);
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("sir");
 
     await fireEvent.click(await findByText("Delete"));
@@ -327,7 +327,7 @@ describe("admin/srs/+page.svelte", () => {
     // Covers the truthy branch of `e instanceof Error ? e.message : String(e)` in loadItems.
     mockList.mockRejectedValue(new Error("list failed (Error instance)"));
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
 
     expect(await findByText("list failed (Error instance)")).toBeTruthy();
   });
@@ -338,7 +338,7 @@ describe("admin/srs/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockUpdate.mockRejectedValue(new Error("save failed (Error instance)"));
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("voda");
 
     await fireEvent.click(await findByText("Edit"));
@@ -354,7 +354,7 @@ describe("admin/srs/+page.svelte", () => {
     mockDelete.mockRejectedValue(new Error("delete failed (Error instance)"));
     vi.stubGlobal("confirm", () => true);
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("sol");
 
     await fireEvent.click(await findByText("Delete"));
@@ -368,7 +368,7 @@ describe("admin/srs/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     vi.stubGlobal("confirm", () => false);
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("mleko");
 
     await fireEvent.click(await findByText("Delete"));
@@ -383,7 +383,7 @@ describe("admin/srs/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     vi.stubGlobal("confirm", () => false);
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("čaj");
 
     await fireEvent.click(await findByText("Reset"));
@@ -398,7 +398,7 @@ describe("admin/srs/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     vi.stubGlobal("confirm", () => false);
 
-    const { findAllByRole, findByText } = render(AdminSRSPage);
+    const { findAllByRole, findByText } = render(CardsPage);
     await findByText("kruh");
 
     // [0]=select-all header, [1+]=item rows
@@ -416,7 +416,7 @@ describe("admin/srs/+page.svelte", () => {
     const item = makeSRSItemDetail({ id: 40, text: "sok" });
     mockList.mockResolvedValue({ items: [item], total: 1 });
 
-    const { findAllByRole, findByText } = render(AdminSRSPage);
+    const { findAllByRole, findByText } = render(CardsPage);
     await findByText("sok");
 
     // [0]=select-all header, [1+]=item rows
@@ -435,7 +435,7 @@ describe("admin/srs/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockSuspend.mockResolvedValue({ ...item, state: "new" });
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("kava");
 
     const unsuspendBtn = await findByText("Unsuspend");
@@ -449,7 +449,7 @@ describe("admin/srs/+page.svelte", () => {
   it("clicking same sort column twice flips order from asc to desc then back to asc", async () => {
     mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: "a" })], total: 1 });
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("a");
 
     const textHeader = await findByText(/^text/);
@@ -474,7 +474,7 @@ describe("admin/srs/+page.svelte", () => {
   it("clicking a different sort column changes sort to that column", async () => {
     mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: "a" })], total: 1 });
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("a");
 
     const callsBefore = mockList.mock.calls.length;
@@ -492,7 +492,7 @@ describe("admin/srs/+page.svelte", () => {
   it("changing state filter triggers reload with state param", async () => {
     mockList.mockResolvedValue({ items: [], total: 0 });
 
-    const { findByDisplayValue } = render(AdminSRSPage);
+    const { findByDisplayValue } = render(CardsPage);
     const select = await findByDisplayValue("All states");
 
     await fireEvent.change(select, { target: { value: "review" } });
@@ -512,7 +512,7 @@ describe("admin/srs/+page.svelte", () => {
     mockBulkDelete.mockRejectedValue(new Error("bulk delete failed"));
     vi.stubGlobal("confirm", () => true);
 
-    const { findAllByRole, findByText } = render(AdminSRSPage);
+    const { findAllByRole, findByText } = render(CardsPage);
     await findByText("a");
 
     const checkboxes = (await findAllByRole("checkbox")) as HTMLInputElement[];
@@ -527,7 +527,7 @@ describe("admin/srs/+page.svelte", () => {
 
   it("shows stringified error when listSRSItems throws a non-Error", async () => {
     mockList.mockRejectedValue("network failure string");
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     expect(await findByText("network failure string")).toBeTruthy();
   });
 
@@ -537,7 +537,7 @@ describe("admin/srs/+page.svelte", () => {
       total: 2,
     });
 
-    const { findByText, findAllByRole, queryByText } = render(AdminSRSPage);
+    const { findByText, findAllByRole, queryByText } = render(CardsPage);
     await findByText("a");
 
     const checkboxes = (await findAllByRole("checkbox")) as HTMLInputElement[];
@@ -561,7 +561,7 @@ describe("admin/srs/+page.svelte", () => {
     // total > PAGE_SIZE (50) to enable next button
     mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: "a" })], total: 100 });
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("page 1 / 2");
 
     await fireEvent.click(await findByText("next ▶"));
@@ -580,7 +580,7 @@ describe("admin/srs/+page.svelte", () => {
   it("clicking state, due, and reps sort columns each trigger a reload", async () => {
     mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: "a" })], total: 1 });
 
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText("a");
 
     for (const col of ["state", "due", "reps"]) {
@@ -603,13 +603,13 @@ describe("admin/srs/+page.svelte", () => {
   };
 
   it("shows synced status after a successful peer sync", async () => {
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     syncStore.notify(PEER_RESULT);
     expect(await findByText("Synced with AnkiWeb")).toBeTruthy();
   });
 
   it("reloads items after a successful peer sync", async () => {
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     await findByText(/0 total/);
     const callsBefore = mockList.mock.calls.length;
     syncStore.notify(PEER_RESULT);
@@ -629,7 +629,7 @@ describe("admin/srs/+page.svelte", () => {
       cap_source: "cache",
       fsrs_source: "cache",
     });
-    const { findByText } = render(AdminSRSPage);
+    const { findByText } = render(CardsPage);
     expect(await findByText(/12 new/)).toBeTruthy();
     expect(await findByText(/8 learning/)).toBeTruthy();
     expect(await findByText(/39 review/)).toBeTruthy();
@@ -637,7 +637,7 @@ describe("admin/srs/+page.svelte", () => {
 
   it("renders without stats line when fetchQueueStats rejects", async () => {
     mockFetchQueueStats.mockRejectedValue(new Error("AnkiConnect down"));
-    const { findByText, queryByText } = render(AdminSRSPage);
+    const { findByText, queryByText } = render(CardsPage);
     // Page still loads items fine
     await findByText(/0 total/);
     // No "X new · Y due today" stats line should appear

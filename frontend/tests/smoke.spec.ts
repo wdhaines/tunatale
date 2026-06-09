@@ -11,7 +11,9 @@ test('home page loads', async ({ page }) => {
 	await page.goto('/');
 	await expect(page.getByRole('link', { name: 'TunaTale' })).toBeVisible();
 	await expect(page.locator('nav').getByRole('link', { name: 'Review' })).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Generate' })).toBeDisabled();
+	// Library home: the generate form opens from "+ New curriculum" (disclosure
+	// behavior is covered in unit tests; here we just smoke-test that home renders).
+	await expect(page.getByRole('button', { name: '+ New curriculum' })).toBeVisible();
 });
 
 test('frontend proxies /api to backend', async ({ request }) => {
@@ -27,6 +29,12 @@ test('generate curriculum flow', async ({ page, request }) => {
 	test.skip(!health.ok(), 'Backend not available');
 
 	await page.goto('/');
+	// Wait for client hydration before interacting — the nav review-count badge is
+	// rendered only after the layout's onMount fetch, so its presence means the
+	// page is interactive and the disclosure click won't be dropped pre-hydration.
+	await expect(page.locator('.review-badge')).toBeVisible({ timeout: 10000 });
+	await page.getByRole('button', { name: '+ New curriculum' }).click();
+	await expect(page.getByPlaceholder('e.g. ordering coffee in Ljubljana')).toBeVisible();
 	await page.getByPlaceholder('e.g. ordering coffee in Ljubljana').fill('ordering coffee');
 	await expect(page.getByRole('button', { name: 'Generate' })).toBeEnabled();
 	await page.getByRole('button', { name: 'Generate' }).click();

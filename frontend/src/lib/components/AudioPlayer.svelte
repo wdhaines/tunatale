@@ -41,10 +41,16 @@
 
 <style>
 	.audio-section {
-		margin-top: 2rem;
+		margin-top: 1.5rem;
+		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
-		padding: 1rem;
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-sm);
+		padding: 1.25rem;
+	}
+	h2 {
+		margin-top: 0;
+		font-size: 1.1rem;
 	}
 	audio {
 		width: 100%;
@@ -53,10 +59,13 @@
 		margin-top: 1rem;
 	}
 	.download-all-btn {
-		display: inline-block;
-		padding: 0.5rem 1.25rem;
+		display: block;
+		text-align: center;
+		min-height: 44px;
+		line-height: 44px;
+		padding: 0 1.25rem;
 		background: var(--color-primary);
-		color: white;
+		color: var(--color-on-primary);
 		border-radius: 4px;
 		text-decoration: none;
 		font-size: 0.9rem;
@@ -82,7 +91,7 @@
 	.section-dl-btn {
 		padding: 0.4rem 0.9rem;
 		background: var(--color-secondary);
-		color: white;
+		color: var(--color-on-primary);
 		border-radius: 4px;
 		text-decoration: none;
 		font-size: 0.85rem;
@@ -91,13 +100,13 @@
 		filter: brightness(0.85);
 	}
 
-	@media (max-width: 640px) {
+	@media (min-width: 641px) {
 		.download-all-btn {
-			display: block;
-			text-align: center;
-			min-height: 44px;
-			line-height: 44px;
-			padding: 0 1.25rem;
+			display: inline-block;
+			min-height: 0;
+			line-height: normal;
+			padding: 0.5rem 1.25rem;
+			text-align: left;
 		}
 	}
 </style>

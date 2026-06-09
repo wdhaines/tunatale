@@ -73,23 +73,35 @@
 
 <style>
 	.input-section {
-		margin-top: 2rem;
+		margin-bottom: 1.25rem;
+		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
-		padding: 1rem;
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-sm);
+		padding: 1.25rem;
+	}
+	h2 {
+		margin-top: 0;
+		font-size: 1.1rem;
 	}
 	label {
 		display: block;
-		margin-bottom: 0.5rem;
+		margin-bottom: 0.75rem;
+		font-size: 0.9rem;
+		font-weight: 600;
 	}
 	input,
 	select {
 		display: block;
-		margin-top: 0.25rem;
+		margin-top: 0.3rem;
 		width: 100%;
-		padding: 0.4rem;
+		padding: 0.5rem 0.6rem;
 		border: 1px solid var(--color-border);
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
+		background: var(--color-surface);
+		color: var(--color-text);
+		font-weight: 400;
+		box-sizing: border-box;
 	}
 	.cefr-hint {
 		display: block;
@@ -99,12 +111,17 @@
 	}
 	button {
 		margin-top: 0.75rem;
-		padding: 0.5rem 1.25rem;
+		padding: 0.55rem 1.4rem;
 		background: var(--color-primary);
-		color: white;
+		color: var(--color-on-primary);
 		border: none;
-		border-radius: 4px;
+		border-radius: var(--radius-pill);
+		font-weight: 600;
 		cursor: pointer;
+		transition: background 0.15s ease;
+	}
+	button:not(:disabled):hover {
+		background: var(--color-primary-hover);
 	}
 	button:disabled {
 		opacity: 0.5;

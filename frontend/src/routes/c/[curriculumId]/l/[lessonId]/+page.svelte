@@ -350,24 +350,31 @@
 <style>
 	main {
 		max-width: 700px;
-		margin: 2rem auto;
-		font-family: system-ui, sans-serif;
+		margin: 1.5rem auto;
 		padding: 0 1rem;
 	}
 	h1 a {
-		color: inherit;
-		font-size: 1rem;
+		color: var(--color-muted);
+		font-size: 0.9rem;
+		font-weight: 600;
 		text-decoration: none;
-		opacity: 0.7;
 	}
 	h1 a:hover {
-		opacity: 1;
+		color: var(--color-primary);
 	}
 	.lesson-header {
-		margin-top: 2rem;
+		margin-top: 1rem;
+		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
-		padding: 1rem;
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-sm);
+		padding: 1.25rem;
+	}
+	.lesson-header h2 {
+		margin-top: 0;
+		font-size: 1.4rem;
+		font-weight: 800;
+		letter-spacing: -0.01em;
 	}
 	.lesson-header ul {
 		padding-left: 1.25rem;
@@ -377,12 +384,17 @@
 	}
 	button {
 		margin-top: 0.75rem;
-		padding: 0.5rem 1.25rem;
+		padding: 0.55rem 1.4rem;
 		background: var(--color-primary);
-		color: white;
+		color: var(--color-on-primary);
 		border: none;
-		border-radius: 4px;
+		border-radius: var(--radius-pill);
+		font-weight: 600;
 		cursor: pointer;
+		transition: background 0.15s ease;
+	}
+	button:not(:disabled):hover {
+		background: var(--color-primary-hover);
 	}
 	button:disabled {
 		opacity: 0.5;
@@ -398,24 +410,31 @@
 		margin-top: 0.5rem;
 	}
 	.transcript-section {
-		margin-top: 2rem;
+		margin-top: 1.25rem;
+		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
-		padding: 1rem;
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-sm);
+		padding: 1.25rem;
 	}
 	.muted {
 		color: var(--color-muted);
 		font-size: 0.9rem;
 	}
 	.regenerate-section {
-		margin-top: 2rem;
+		margin-top: 1.25rem;
+		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
-		padding: 1rem;
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-sm);
+		padding: 1.25rem;
 	}
 	.regen-btn {
 		background: transparent;
 		color: var(--color-danger);
 		border: 1px solid var(--color-danger);
+	}
+	.regen-btn:not(:disabled):hover {
+		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
 	}
 </style>

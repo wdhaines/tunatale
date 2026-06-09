@@ -2,14 +2,13 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import CurriculumForm from '$lib/components/CurriculumForm.svelte';
-	import QueueStatsWidget from '$lib/components/QueueStatsWidget.svelte';
-	import type { CurriculumSummary, QueueStats } from '$lib/api';
+	import type { CurriculumSummary } from '$lib/api';
 	import { api } from '$lib/api';
 
 	let curricula: Array<{ id: string; topic: string; created_at: string }> = $state([]);
 	let listLoading = $state(true);
 	let listError = $state('');
-	let queueStats = $state<QueueStats | null>(null);
+	let showForm = $state(false);
 
 	onMount(async () => {
 		try {
@@ -19,27 +18,6 @@
 		} finally {
 			listLoading = false;
 		}
-		// Load queue stats independently — don't block the page on failure
-		try {
-			queueStats = await api.fetchQueueStats();
-		} catch {
-			// silently ignore — button shows plain "Review"
-		}
-	});
-
-	// Refresh queue stats when returning from /review
-	$effect(() => {
-		const onFocus = async () => {
-			try {
-				queueStats = await api.fetchQueueStats();
-			} catch {
-				// silently ignore
-			}
-		};
-		window.addEventListener('focus', onFocus);
-		return () => {
-			window.removeEventListener('focus', onFocus);
-		};
 	});
 
 	function formatDate(iso: string): string {
@@ -47,137 +25,162 @@
 	}
 
 	async function handleGenerate(curriculum: CurriculumSummary) {
-		curricula = [{ id: curriculum.id, topic: curriculum.topic, created_at: new Date().toISOString() }, ...curricula];
+		curricula = [
+			{ id: curriculum.id, topic: curriculum.topic, created_at: new Date().toISOString() },
+			...curricula
+		];
 		await goto(`/c/${curriculum.id}`);
 	}
 </script>
 
 <main>
-	<p class="tagline">AI-powered language learning — Slovene</p>
-
-	<CurriculumForm onGenerate={handleGenerate} />
-
-	<section class="review-section">
-		<h2>Review</h2>
-		<div class="review-links">
-			<a href="/review" class="review-btn">Review</a>
-		{#if queueStats}
-			<QueueStatsWidget stats={queueStats} />
-		{/if}
+	<header class="page-head">
+		<div>
+			<h1>Lessons</h1>
+			<p class="tagline">AI-powered Slovene, tuned to what you know.</p>
 		</div>
-	</section>
+		<button class="new-btn" onclick={() => (showForm = !showForm)} aria-expanded={showForm}>
+			{showForm ? 'Cancel' : '+ New curriculum'}
+		</button>
+	</header>
 
-	<section class="recent-section">
-		<h2>Recent Curricula</h2>
-		{#if listLoading}
-			<p class="muted">Loading…</p>
-		{:else if listError}
-			<p class="error">{listError}</p>
-		{:else if curricula.length === 0}
-			<p class="muted">No curricula yet — generate one above.</p>
-		{:else}
-			<ul>
-				{#each curricula as c (c.id)}
-					<li>
-					<a href="/c/{c.id}">{c.topic}</a>
-					<span class="meta">{formatDate(c.created_at)}</span>
+	{#if showForm}
+		<CurriculumForm onGenerate={handleGenerate} />
+	{/if}
+
+	{#if listLoading}
+		<p class="muted">Loading…</p>
+	{:else if listError}
+		<p class="error">{listError}</p>
+	{:else if curricula.length === 0}
+		<div class="empty card">
+			<p class="muted">No curricula yet.</p>
+			<p class="muted small">Use “+ New curriculum” above to generate your first one.</p>
+		</div>
+	{:else}
+		<ul class="library">
+			{#each curricula as c (c.id)}
+				<li>
+					<a class="curric-card card" href="/c/{c.id}">
+						<span class="topic">{c.topic}</span>
+						<span class="meta">{formatDate(c.created_at)}</span>
+					</a>
 				</li>
-				{/each}
-			</ul>
-		{/if}
-	</section>
+			{/each}
+		</ul>
+	{/if}
 </main>
 
 <style>
 	main {
-		max-width: 700px;
-		margin: 2rem auto;
-		font-family: system-ui, sans-serif;
+		max-width: 760px;
+		margin: 1rem auto;
 		padding: 0 1rem;
+	}
+	.page-head {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.75rem;
+		margin-bottom: 1.25rem;
+	}
+	h1 {
+		margin: 0;
+		font-size: 1.9rem;
+		font-weight: 800;
+		letter-spacing: -0.02em;
 	}
 	.tagline {
 		color: var(--color-muted);
-		margin-top: 0.25rem;
+		margin: 0.25rem 0 0;
+		font-size: 0.95rem;
 	}
-	.review-section {
-		margin-top: 2rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
-		padding: 1rem;
-	}
-	.review-section h2 {
-		margin: 0 0 0.5rem;
-		font-size: 1rem;
-	}
-	.review-links {
-		display: flex;
-		gap: 0.75rem;
-		flex-wrap: wrap;
-	}
-	.review-btn {
-		display: inline-block;
-		padding: 0.5rem 1rem;
+	.new-btn {
+		flex-shrink: 0;
+		align-self: flex-start;
+		padding: 0.55rem 1rem;
 		background: var(--color-primary);
-		color: white;
-		text-decoration: none;
-		border-radius: 4px;
+		color: var(--color-on-primary);
+		border: none;
+		border-radius: var(--radius-pill);
 		font-size: 0.9rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.15s ease, transform 0.1s ease;
 	}
-	.review-btn:hover {
-		opacity: 0.85;
+	.new-btn:hover {
+		background: var(--color-primary-hover);
 	}
-	.recent-section {
-		margin-top: 2rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
-		padding: 1rem;
+	.new-btn:active {
+		transform: translateY(1px);
 	}
-	.recent-section h2 {
-		margin: 0 0 0.5rem;
-		font-size: 1rem;
-	}
-	.recent-section ul {
+	.library {
 		list-style: none;
 		margin: 0;
 		padding: 0;
+		display: grid;
+		gap: 0.75rem;
 	}
-	.recent-section li {
-		padding: 0.3rem 0;
-		border-bottom: 1px solid var(--color-border);
-	}
-	.recent-section li:last-child {
-		border-bottom: none;
-	}
-	.recent-section a {
-		color: var(--color-primary);
+	.curric-card {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		padding: 1rem 1.25rem;
 		text-decoration: none;
+		color: var(--color-text);
+		transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
 	}
-	.recent-section a:hover {
-		text-decoration: underline;
+	.curric-card:hover {
+		border-color: var(--color-primary);
+		box-shadow: var(--shadow);
+		transform: translateY(-1px);
+	}
+	.topic {
+		font-size: 1.05rem;
+		font-weight: 600;
 	}
 	.meta {
 		color: var(--color-muted);
 		font-size: 0.8rem;
-		margin-left: 0.5rem;
+		flex-shrink: 0;
+	}
+	.empty {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.75rem;
+		text-align: center;
+		padding: 2.5rem 1.25rem;
+	}
+	.empty .muted {
+		margin: 0;
 	}
 	.muted {
 		color: var(--color-muted);
-		font-size: 0.9rem;
-		margin: 0;
+		font-size: 0.95rem;
+	}
+	.muted.small {
+		font-size: 0.85rem;
 	}
 	.error {
 		color: var(--color-danger);
 		margin: 0;
 	}
 
-	@media (max-width: 640px) {
-		.recent-section li {
-			display: flex;
-			flex-direction: column;
-			gap: 0.15rem;
+	@media (min-width: 641px) {
+		main {
+			margin: 2rem auto;
 		}
-		.meta {
-			margin-left: 0;
+		.page-head {
+			flex-direction: row;
+			justify-content: space-between;
+			gap: 1rem;
+		}
+		.curric-card {
+			flex-direction: row;
+			align-items: baseline;
+			justify-content: space-between;
+			gap: 1rem;
 		}
 	}
 </style>

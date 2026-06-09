@@ -624,7 +624,8 @@
 	}
 	.key-phrases-list li {
 		display: flex;
-		justify-content: space-between;
+		flex-direction: column;
+		gap: 0.1rem;
 		padding: 0.25rem 0;
 		border-bottom: 1px solid var(--color-border);
 	}
@@ -652,7 +653,8 @@
 	}
 	.dialogue-line {
 		display: flex;
-		gap: 0.75rem;
+		flex-direction: column;
+		gap: 0.15rem;
 		padding: 0.3rem 0;
 		border-bottom: 1px solid var(--color-border);
 		font-size: 0.95rem;
@@ -664,7 +666,8 @@
 	}
 	.dialogue-role {
 		color: var(--color-primary);
-		min-width: 6rem;
+		min-width: unset;
+		font-weight: 600;
 		font-size: 0.85rem;
 		padding-top: 0.1rem;
 		flex-shrink: 0;
@@ -828,18 +831,19 @@
 		cursor: not-allowed;
 	}
 
-	@media (max-width: 640px) {
+	@media (min-width: 641px) {
 		.dialogue-line {
-			flex-direction: column;
-			gap: 0.15rem;
+			flex-direction: row;
+			gap: 0.75rem;
 		}
 		.dialogue-role {
-			min-width: unset;
-			font-weight: 600;
+			min-width: 6rem;
+			font-weight: 400;
 		}
 		.key-phrases-list li {
-			flex-direction: column;
-			gap: 0.1rem;
+			flex-direction: row;
+			justify-content: space-between;
+			gap: 0;
 		}
 	}
 </style>

@@ -151,34 +151,42 @@
 <style>
 	.drill-card {
 		text-align: center;
-		padding: 2rem 1rem;
+		padding: 0.75rem;
 	}
 	.main-text {
-		font-size: 2rem;
+		font-size: 1.5rem;
 		font-weight: bold;
-		margin-bottom: 1rem;
+		margin-bottom: 0.5rem;
 	}
 	.prompt-image {
-		max-width: 240px;
-		max-height: 240px;
+		max-width: 100%;
+		max-height: 32vh;
+		max-height: 32dvh;
+		width: auto;
+		height: auto;
+		object-fit: contain;
 		border-radius: 8px;
-		margin-bottom: 1rem;
+		margin-bottom: 0.5rem;
 	}
 	.answer-divider {
 		border: none;
 		border-top: 1px solid var(--color-border, #ccc);
-		margin: 1.5rem 0;
+		margin: 0.75rem 0;
 	}
 	.answer-image {
-		max-width: 240px;
-		max-height: 240px;
+		max-width: 100%;
+		max-height: 32vh;
+		max-height: 32dvh;
+		width: auto;
+		height: auto;
+		object-fit: contain;
 		border-radius: 8px;
-		margin-bottom: 1rem;
+		margin-bottom: 0.5rem;
 	}
 	.answer-text {
-		font-size: 1.25rem;
+		font-size: 1.1rem;
 		color: var(--color-muted);
-		margin-bottom: 0.75rem;
+		margin-bottom: 0.4rem;
 	}
 	.slovene {
 		/* Semantic hook for per-language typography — currently inherits .main-text */
@@ -214,7 +222,7 @@
 		cursor: pointer;
 		font-size: 1rem;
 		color: var(--color-bg, #fff);
-		margin-bottom: 0.75rem;
+		margin-bottom: 0.4rem;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
@@ -222,10 +230,10 @@
 	.word-audio-btn {
 		background: var(--color-primary);
 		border: 1px solid var(--color-primary);
-		border-radius: 4px;
+		border-radius: var(--radius-pill);
 		cursor: pointer;
 		font-size: 0.85rem;
-		color: #fff;
+		color: var(--color-on-primary);
 		margin-bottom: 0.75rem;
 		padding: 0.25rem 0.6rem;
 		display: inline-flex;
@@ -235,7 +243,7 @@
 	.ratings {
 		display: flex;
 		justify-content: center;
-		gap: 0.75rem;
+		gap: 0.5rem;
 		flex-wrap: wrap;
 		margin-top: 1rem;
 	}
@@ -243,26 +251,39 @@
 		margin-top: 0.75rem;
 		padding: 0.5rem 1.25rem;
 		background: var(--color-primary);
-		color: white;
+		color: var(--color-on-primary);
 		border: none;
-		border-radius: 4px;
+		border-radius: var(--radius-pill);
+		font-weight: 600;
 		cursor: pointer;
 	}
+	/* Mobile-first: ratings are a 2-up grid with big touch targets; images are
+	   capped by viewport height (not a fixed px box) so they shrink on short
+	   screens and never push the buttons off-screen, whatever the aspect ratio. */
 	.ratings button {
 		margin-top: 0;
+		flex: 1 1 calc(50% - 0.5rem);
+		min-height: 44px;
+		font-size: 1rem;
 	}
 	.btn-again { background: var(--color-danger); }
 	.btn-hard  { background: var(--color-warning); }
 	.btn-good  { background: var(--color-success); }
 	.btn-easy  { background: var(--color-primary); }
 
-	@media (max-width: 640px) {
-		.main-text { font-size: 1.5rem; }
-		.ratings { gap: 0.5rem; }
-		.ratings button {
-			flex: 1 1 calc(50% - 0.5rem);
-			min-height: 44px;
-			font-size: 1rem;
+	@media (min-width: 641px) {
+		.drill-card { padding: 2rem 1rem; }
+		.main-text { font-size: 2rem; margin-bottom: 1rem; }
+		.prompt-image,
+		.answer-image {
+			max-width: 240px;
+			max-height: 240px;
+			margin-bottom: 1rem;
 		}
+		.answer-divider { margin: 1.5rem 0; }
+		.answer-text { font-size: 1.25rem; margin-bottom: 0.75rem; }
+		.play-btn { margin-bottom: 0.75rem; }
+		.ratings { gap: 0.75rem; }
+		.ratings button { flex: 0 1 auto; }
 	}
 </style>

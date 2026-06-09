@@ -108,17 +108,26 @@
 <style>
 	main {
 		max-width: 700px;
-		margin: 2rem auto;
-		font-family: system-ui, sans-serif;
+		margin: 0.5rem auto;
 		padding: 0 1rem;
 	}
+	h1 {
+		font-size: 1.3rem;
+		font-weight: 800;
+		letter-spacing: -0.01em;
+		margin: 0.3rem 0 0.5rem;
+	}
 	.card-section {
+		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-sm);
 	}
 	.done {
+		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-sm);
 		padding: 2rem;
 		text-align: center;
 	}
@@ -132,7 +141,7 @@
 		border-radius: 4px;
 		background: var(--color-border);
 		color: var(--color-muted);
-		margin-bottom: 0.5rem;
+		margin-bottom: 0.35rem;
 	}
 	.error {
 		color: var(--color-danger);
@@ -140,17 +149,28 @@
 	.stats {
 		color: var(--color-muted);
 		font-size: 0.9rem;
-		margin-bottom: 0.5rem;
+		margin-bottom: 0.35rem;
 	}
 	.source {
 		color: var(--color-muted);
 		font-size: 0.8rem;
 	}
-	.badge.state-new { background: #e0f2fe; color: #0369a1; }
-	.badge.state-learning { background: #fef3c7; color: #d97706; }
-	.badge.state-review { background: #d1fae5; color: #059669; }
-	.badge.state-relearning { background: #fce7f3; color: #db2777; }
-	.badge.state-suspended { background: #f3f4f6; color: #6b7280; }
-	.badge.state-buried { background: #f3f4f6; color: #6b7280; }
-	.badge.state-known { background: #ede9fe; color: #7c3aed; }
+	/* State chips: tinted with the palette tokens so they cohere and adapt to
+	   light/dark (was a set of fixed pastels). */
+	.badge.state-new { background: color-mix(in srgb, var(--color-info) 16%, transparent); color: var(--color-info); }
+	.badge.state-learning { background: color-mix(in srgb, var(--color-warning) 18%, transparent); color: var(--color-warning); }
+	.badge.state-review { background: color-mix(in srgb, var(--color-success) 16%, transparent); color: var(--color-success); }
+	.badge.state-relearning { background: color-mix(in srgb, var(--color-danger) 16%, transparent); color: var(--color-danger); }
+	.badge.state-suspended { background: var(--color-surface-2); color: var(--color-muted); }
+	.badge.state-buried { background: var(--color-surface-2); color: var(--color-muted); }
+	.badge.state-known { background: color-mix(in srgb, var(--color-accent) 22%, transparent); color: var(--color-accent); }
+
+	/* Mobile keeps the card compact so Good/Easy fit without scrolling; desktop
+	   has room to breathe. */
+	@media (min-width: 641px) {
+		main { margin: 2rem auto; }
+		h1 { font-size: 1.9rem; margin: 0.5rem 0 0.75rem; }
+		.stats { margin-bottom: 0.5rem; }
+		.badge { margin-bottom: 0.5rem; }
+	}
 </style>

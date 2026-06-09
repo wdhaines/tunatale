@@ -12,21 +12,20 @@
 	main {
 		max-width: 700px;
 		margin: 4rem auto;
-		font-family: system-ui, sans-serif;
 		padding: 0 1rem;
 		text-align: center;
 	}
 	h1 {
-		font-size: 4rem;
+		font-size: 2.5rem;
 		color: var(--color-muted);
 	}
 	a {
 		color: var(--color-primary);
 	}
 
-	@media (max-width: 640px) {
+	@media (min-width: 641px) {
 		h1 {
-			font-size: 2.5rem;
+			font-size: 4rem;
 		}
 	}
 </style>

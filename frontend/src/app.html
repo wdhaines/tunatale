@@ -3,6 +3,23 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      // Apply the saved theme before first paint to avoid a flash. Mirrors
+      // $lib/stores/theme.svelte.ts (which re-syncs and follows OS changes).
+      (function () {
+        try {
+          var p = localStorage.getItem('theme');
+          var dark =
+            p === 'dark' ||
+            ((p === 'system' || !p) && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          var root = document.documentElement;
+          root.dataset.theme = dark ? 'dark' : 'light';
+          root.style.colorScheme = dark ? 'dark' : 'light';
+        } catch (e) {
+          /* localStorage/matchMedia unavailable — fall back to CSS defaults */
+        }
+      })();
+    </script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

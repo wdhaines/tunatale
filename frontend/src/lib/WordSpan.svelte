@@ -142,7 +142,9 @@
 		background-color: rgba(99, 102, 241, 0.2);
 	}
 	.punct {
-		color: #000;
+		/* Neutral foreground so punctuation stays uncolored even when the word
+		   carries a mastery-ramp color — and legible in dark mode (was #000). */
+		color: var(--color-text);
 		font-weight: normal;
 	}
 </style>

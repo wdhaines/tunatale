@@ -192,7 +192,7 @@
 
 <main>
 	<div class="toolbar">
-		<h1>SRS Admin <span class="muted">· {total} total{#if queueStats} · {queueStats.new} new · {queueStats.learning} learning · {queueStats.review} review{/if}</span></h1>
+		<h1>Cards <span class="muted">· {total} total{#if queueStats} · {queueStats.new} new · {queueStats.learning} learning · {queueStats.review} review{/if}</span></h1>
 		<div class="controls">
 			<input
 				type="search"
@@ -290,11 +290,13 @@
 	main {
 		max-width: 1100px;
 		margin: 0 auto;
-		padding: 1.5rem;
+		padding: 1rem;
 	}
 	h1 {
 		margin: 0 0 0.5rem;
-		font-size: 1.4rem;
+		font-size: 1.3rem;
+		font-weight: 800;
+		letter-spacing: -0.01em;
 	}
 	.muted {
 		color: var(--color-muted);
@@ -302,9 +304,8 @@
 	}
 	.toolbar {
 		display: flex;
-		align-items: flex-start;
-		gap: 1rem;
-		flex-wrap: wrap;
+		flex-direction: column;
+		gap: 0.5rem;
 		margin-bottom: 1rem;
 	}
 	.controls {
@@ -312,31 +313,37 @@
 		gap: 0.5rem;
 		flex-wrap: wrap;
 		align-items: center;
-		margin-left: auto;
+		width: 100%;
 	}
 	input[type='search'] {
-		padding: 0.35rem 0.6rem;
+		padding: 0.4rem 0.7rem;
 		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
+		border-radius: var(--radius-pill);
+		background: var(--color-surface);
+		color: var(--color-text);
 		font-size: 0.9rem;
-		min-width: 180px;
+		flex: 1;
 	}
 	select {
-		padding: 0.35rem 0.5rem;
+		padding: 0.4rem 0.6rem;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius);
+		background: var(--color-surface);
+		color: var(--color-text);
 		font-size: 0.9rem;
 	}
 	button {
-		padding: 0.3rem 0.7rem;
+		padding: 0.35rem 0.75rem;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius);
-		background: #fff;
+		background: var(--color-surface);
+		color: var(--color-text);
 		cursor: pointer;
 		font-size: 0.85rem;
+		transition: background 0.12s ease, border-color 0.12s ease;
 	}
 	button:hover {
-		background: #f0f0f0;
+		background: var(--color-surface-2);
 	}
 	button:disabled {
 		opacity: 0.4;
@@ -347,7 +354,7 @@
 		color: var(--color-danger);
 	}
 	button.danger:hover {
-		background: #fff0f0;
+		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
 	}
 	.error {
 		color: var(--color-danger);
@@ -360,38 +367,40 @@
 		font-size: 0.85rem;
 		color: var(--color-muted);
 	}
+	/* Mobile-first: rows render as stacked cards; the shared grid table is layered
+	   on at the desktop breakpoint below. */
 	.table-wrap {
-		display: grid;
-		grid-template-columns: 2rem 1fr 1fr 7rem 7rem 4rem auto;
+		display: block;
 		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
+		border-radius: var(--radius-lg);
 		overflow: hidden;
-		background: #fff;
+		background: var(--color-surface);
+		box-shadow: var(--shadow-sm);
 	}
 	.table-wrap > p {
-		grid-column: 1 / -1;
 		margin: 0;
 		padding: 0.5rem 0.75rem;
 	}
 	.row {
-		display: grid;
-		grid-template-columns: subgrid;
-		grid-column: 1 / -1;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.5rem 0.75rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+		padding: 0.75rem;
+		position: relative;
 		border-bottom: 1px solid var(--color-border);
 	}
 	.row:last-child {
 		border-bottom: none;
 	}
+	/* Column header row is meaningless in the stacked-card layout */
 	.row.header {
-		background: #f5f5f5;
+		display: none;
+		background: var(--color-surface-2);
 		font-weight: 600;
 		font-size: 0.85rem;
 	}
 	.row.editing {
-		background: #fffde7;
+		background: var(--color-highlight);
 	}
 	.sort-btn {
 		appearance: none;
@@ -408,10 +417,16 @@
 		display: block;
 		width: 100%;
 	}
-	.row.header .col-actions { justify-self: start; }
-	.col-check { justify-self: center; }
-	.col-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }
-	.col-text, .col-trans { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; }
+	/* Checkbox pinned to the card's top-right on mobile */
+	.col-check {
+		position: absolute;
+		top: 0.75rem;
+		right: 0.75rem;
+	}
+	.col-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; padding-top: 0.25rem; }
+	.col-actions button { min-height: 44px; flex: 1; }
+	.col-text, .col-trans { white-space: normal; overflow: visible; font-size: 0.95rem; }
+	.col-trans { color: var(--color-muted); font-style: italic; }
 	.col-state { font-size: 0.8rem; }
 	.col-due, .col-reps { font-size: 0.8rem; color: var(--color-muted); }
 	.col-due { white-space: nowrap; }
@@ -426,86 +441,45 @@
 		justify-content: center;
 		font-size: 0.9rem;
 	}
+	.pagination button { min-height: 44px; padding: 0.5rem 1rem; }
 	.row.editing input {
 		width: 100%;
 		padding: 0.25rem 0.4rem;
 		border: 1px solid var(--color-border);
 		border-radius: 4px;
+		background: var(--color-surface);
+		color: var(--color-text);
 		font-size: 0.85rem;
 	}
 
-	@media (max-width: 640px) {
-		main {
-			padding: 1rem;
-		}
-		h1 {
-			font-size: 1.2rem;
-		}
-		.toolbar {
-			flex-direction: column;
-			gap: 0.5rem;
-		}
-		.controls {
-			margin-left: 0;
-			width: 100%;
-		}
-		input[type='search'] {
-			min-width: unset;
-			flex: 1;
-		}
+	@media (min-width: 641px) {
+		main { padding: 1.5rem; }
+		h1 { font-size: 1.6rem; }
+		.toolbar { flex-direction: row; align-items: flex-start; flex-wrap: wrap; gap: 1rem; }
+		.controls { margin-left: auto; width: auto; }
+		input[type='search'] { min-width: 180px; flex: 0 1 auto; }
 
-		/* Drop shared grid on mobile so rows render as cards */
 		.table-wrap {
-			display: block;
+			display: grid;
+			grid-template-columns: 2rem 1fr 1fr 7rem 7rem 4rem auto;
 		}
-
-		/* Hide column header row — not meaningful in card layout */
-		.row.header {
-			display: none;
-		}
-
-		/* Convert each data row from grid to vertical card */
+		.table-wrap > p { grid-column: 1 / -1; }
 		.row {
-			display: flex;
-			flex-direction: column;
-			gap: 0.35rem;
-			padding: 0.75rem;
-			position: relative;
+			display: grid;
+			grid-template-columns: subgrid;
+			grid-column: 1 / -1;
+			align-items: center;
+			gap: 0.5rem;
+			padding: 0.5rem 0.75rem;
+			position: static;
 		}
-
-		/* Checkbox pinned to top-right corner of card */
-		.col-check {
-			position: absolute;
-			top: 0.75rem;
-			right: 0.75rem;
-			justify-self: unset;
-		}
-
-		/* Allow full text to show (no truncation in card layout) */
-		.col-text,
-		.col-trans {
-			white-space: normal;
-			overflow: visible;
-			font-size: 0.95rem;
-		}
-		.col-trans {
-			color: var(--color-muted);
-			font-style: italic;
-		}
-
-		/* Action buttons: share the row, touch-friendly height */
-		.col-actions {
-			padding-top: 0.25rem;
-		}
-		.col-actions button {
-			min-height: 44px;
-			flex: 1;
-		}
-
-		/* Pagination: bigger tap targets */
-		.pagination button {
-			min-height: 44px;
-			padding: 0.5rem 1rem;
-		}
+		.row.header { display: grid; }
+		.row.header .col-actions { justify-self: start; }
+		.col-check { position: static; justify-self: center; top: auto; right: auto; }
+		.col-text, .col-trans { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; }
+		.col-trans { color: inherit; font-style: normal; }
+		.col-actions { padding-top: 0; }
+		.col-actions button { min-height: 0; flex: 0 1 auto; }
+		.pagination button { min-height: 0; padding: 0.3rem 0.7rem; }
 	}
 </style>

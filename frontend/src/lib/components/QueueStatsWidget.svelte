@@ -18,11 +18,11 @@
 	}
 
 	.new {
-		color: #0369a1;
+		color: var(--color-info);
 	}
 
 	.learning {
-		color: #dc2626;
+		color: var(--color-warning);
 	}
 
 	.underlined {
@@ -31,11 +31,11 @@
 	}
 
 	.review {
-		color: #059669;
+		color: var(--color-success);
 	}
 
 	.separator {
-		color: #64748b;
+		color: var(--color-muted);
 		margin: 0 2px;
 	}
 </style>

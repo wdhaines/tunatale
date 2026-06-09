@@ -3,6 +3,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
+import { tick } from "svelte";
 
 vi.mock("$lib/api", () => ({
   api: {
@@ -65,6 +66,24 @@ describe("SyncButton", () => {
     const { getByText, findByText } = render(SyncButton);
     await fireEvent.click(getByText("Sync to AnkiWeb"));
     await findByText("Synced with AnkiWeb");
+  });
+
+  it("auto-dismisses the success confirmation after the flash delay", async () => {
+    vi.useFakeTimers();
+    try {
+      mockPeerSync.mockResolvedValue(RESULT);
+      const { getByText, queryByText } = render(SyncButton);
+      await fireEvent.click(getByText("Sync to AnkiWeb"));
+      await vi.advanceTimersByTimeAsync(0);
+      await tick();
+      expect(queryByText("Synced with AnkiWeb")).not.toBeNull();
+
+      await vi.advanceTimersByTimeAsync(4000);
+      await tick();
+      expect(queryByText("Synced with AnkiWeb")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("sets error when peerSync fails with Error instance", async () => {

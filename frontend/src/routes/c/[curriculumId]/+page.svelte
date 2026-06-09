@@ -36,7 +36,8 @@
 </script>
 
 <main>
-	<section class="curriculum-section">
+	<a class="back" href="/">← Lessons</a>
+	<section class="curriculum-section card">
 		<h2>{data.curriculum.topic}</h2>
 		<p class="meta">{data.curriculum.days} days · {data.curriculum.language_code.toUpperCase()}</p>
 		<DayPicker curriculum={data.curriculum} onSelectDay={handleSelectDay} {progress} />
@@ -49,15 +50,28 @@
 <style>
 	main {
 		max-width: 700px;
-		margin: 2rem auto;
-		font-family: system-ui, sans-serif;
+		margin: 1.5rem auto;
 		padding: 0 1rem;
 	}
+	.back {
+		display: inline-block;
+		margin-bottom: 1rem;
+		color: var(--color-muted);
+		text-decoration: none;
+		font-size: 0.9rem;
+		font-weight: 600;
+	}
+	.back:hover {
+		color: var(--color-primary);
+	}
 	.curriculum-section {
-		margin-top: 2rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
-		padding: 1rem;
+		padding: 1.5rem;
+	}
+	.curriculum-section h2 {
+		margin-top: 0;
+		font-size: 1.5rem;
+		font-weight: 800;
+		letter-spacing: -0.01em;
 	}
 	.meta {
 		color: var(--color-muted);

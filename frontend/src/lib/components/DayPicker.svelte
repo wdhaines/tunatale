@@ -53,27 +53,34 @@
 	}
 	.day-btn {
 		padding: 0.5rem 1.25rem;
-		color: white;
+		color: var(--color-on-primary);
 		border: none;
-		border-radius: 4px;
+		border-radius: var(--radius-pill);
 		cursor: pointer;
 		min-width: 5rem;
+		font-weight: 600;
+		font-size: 0.9rem;
+		transition: transform 0.1s ease, box-shadow 0.15s ease, background 0.15s ease;
+	}
+	.day-btn:not(:disabled):hover {
+		box-shadow: var(--shadow-sm);
+		transform: translateY(-1px);
 	}
 	.day-btn:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
 	}
 	.state-empty {
-		background: white;
+		background: var(--color-surface);
 		color: var(--color-primary);
 		border: 2px solid var(--color-primary);
 	}
 	.state-generated {
 		background: var(--color-primary);
-		color: white;
+		color: var(--color-on-primary);
 	}
 	.state-listened {
 		background: var(--color-success);
-		color: white;
+		color: var(--color-on-primary);
 	}
 </style>
