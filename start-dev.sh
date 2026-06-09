@@ -62,6 +62,20 @@ echo ""
 echo "  Backend API:  http://localhost:8000"
 echo "  API Docs:     http://localhost:8000/docs"
 echo "  Frontend:     http://localhost:5173"
+
+# When started with TT_REMOTE=1, the frontend binds all interfaces (see
+# frontend/vite.config.ts). Print the Tailscale URL so the phone can reach it.
+if [ "$TT_REMOTE" = "1" ]; then
+    TS_BIN="$(command -v tailscale 2>/dev/null)"
+    [ -z "$TS_BIN" ] && [ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ] \
+        && TS_BIN="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+    if [ -n "$TS_BIN" ]; then
+        TS_HOST="$("$TS_BIN" status --json 2>/dev/null \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('Self',{}).get('DNSName','').rstrip('.'))" 2>/dev/null)"
+        [ -z "$TS_HOST" ] && TS_HOST="$("$TS_BIN" ip -4 2>/dev/null | head -1)"
+        [ -n "$TS_HOST" ] && echo "  Phone (tailnet): http://${TS_HOST}:5173"
+    fi
+fi
 echo ""
 echo "Press Ctrl+C to stop all servers"
 echo ""

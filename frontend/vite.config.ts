@@ -1,9 +1,20 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vitest/config';
 
+// When TT_REMOTE=1, expose the dev server beyond localhost so a Tailscale-connected
+// phone can reach it. Off by default, so plain `bun run dev` and the Vitest run
+// (which shares this config) are unaffected.
+const remote = process.env.TT_REMOTE === '1';
+
 export default defineConfig({
 	plugins: [sveltekit()],
 	server: {
+		// `host: true` binds all interfaces (incl. the Tailscale address).
+		// `allowedHosts: ['.ts.net']` lets Vite's host check accept the Mac's
+		// MagicDNS hostname (it otherwise rejects non-IP/non-localhost Host
+		// headers); the suffix match is scoped to Tailscale MagicDNS only.
+		host: remote ? true : undefined,
+		allowedHosts: remote ? ['.ts.net'] : undefined,
 		proxy: {
 			'/api': `http://localhost:${process.env.API_PORT ?? 8000}`
 		}
