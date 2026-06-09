@@ -697,3 +697,87 @@ class TestSyncPassword:
             pytest.raises(PeerSyncError, match="No AnkiWeb password"),
         ):
             _resolve_sync_password()
+
+
+class TestPeerSyncTiming:
+    """Per-leg wall-time instrumentation on the peer-sync bracket.
+
+    These let us catch an occasional slow sync after the fact (which leg hung)
+    from ``sync.log`` instead of trying to reproduce the conditions live.
+    """
+
+    def _full_bracket(self):
+        """Run a happy-path peer_sync with all three driver legs mocked."""
+        return patch(
+            "app.anki.sync_orchestrator.subprocess.run",
+            side_effect=[
+                _mock_run(AUTH_RESPONSE),
+                _mock_run(NORMAL_SYNC),
+                _mock_run(NO_CHANGE),
+            ],
+        ), patch("app.anki.sync.main", return_value=0)
+
+    def test_records_one_timing_per_leg(self):
+        """A full (non-dry) sync times every leg plus the total.
+
+        tt_collection doesn't exist under tmp_path, so ``_has_pending_push``
+        returns True and the push legs run.
+        """
+        run_ctx, tt_ctx = self._full_bracket()
+        with run_ctx, tt_ctx:
+            report = peer_sync(dry_run=False)
+
+        assert set(report.timings) == {
+            "auth",
+            "mirror_pre",
+            "pull",
+            "reconcile",
+            "pending_check",
+            "mirror_pre_push",
+            "push",
+            "total",
+        }
+        assert all(v >= 0 for v in report.timings.values())
+        # total brackets the whole bracket, so it's >= any single leg.
+        for label, secs in report.timings.items():
+            if label != "total":
+                assert report.timings["total"] >= secs - 1e-6
+
+    def test_dry_run_skips_push_leg_timings(self):
+        """dry_run has no pending-check / mirror_pre_push / push legs."""
+        with (
+            patch(
+                "app.anki.sync_orchestrator.subprocess.run",
+                side_effect=[_mock_run(AUTH_RESPONSE), _mock_run(NORMAL_SYNC)],
+            ),
+            patch("app.anki.sync.main", return_value=0),
+        ):
+            report = peer_sync(dry_run=True)
+
+        assert set(report.timings) == {"auth", "mirror_pre", "pull", "reconcile", "total"}
+
+    def test_writes_timing_log_line(self):
+        """A greppable PEER_SYNC_TIMING line is appended to settings.sync_log."""
+        run_ctx, tt_ctx = self._full_bracket()
+        with run_ctx, tt_ctx:
+            peer_sync(dry_run=False)
+
+        log = settings.sync_log.read_text()
+        assert "PEER_SYNC_TIMING" in log
+        assert "dry_run=False" in log
+        for field_name in ("auth=", "mirror_pre=", "pull=", "reconcile=", "push=", "total="):
+            assert field_name in log, f"missing {field_name} in {log!r}"
+
+    def test_no_timing_log_on_pull_abort(self):
+        """A full-sync abort raises before any timing line is written."""
+        with (
+            patch(
+                "app.anki.sync_orchestrator.subprocess.run",
+                side_effect=[_mock_run(AUTH_RESPONSE), _mock_run(FULL_SYNC)],
+            ),
+            patch("app.anki.sync.main"),
+            pytest.raises(PeerSyncError, match="FULL_SYNC"),
+        ):
+            peer_sync(dry_run=False)
+
+        assert not settings.sync_log.exists()

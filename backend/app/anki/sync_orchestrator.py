@@ -16,7 +16,8 @@ import os
 import sqlite3
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from app.config import settings
@@ -41,6 +42,10 @@ class PeerSyncReport:
     push_required: int | None = None
     push_message: str = ""
     dry_run: bool = False
+    # Per-leg wall times (seconds), keyed by leg name. Populated by peer_sync and
+    # logged as a PEER_SYNC_TIMING line so an occasional slow sync can be diagnosed
+    # from sync.log after the fact rather than reproduced live.
+    timings: dict[str, float] = field(default_factory=dict)
 
 
 class PeerSyncError(Exception):
@@ -303,20 +308,26 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
     Raises ``PeerSyncError`` if any step fails.
     """
     report = PeerSyncReport(dry_run=dry_run)
+    t_start = time.perf_counter()
 
     had_cached_auth = _AUTH_CACHE is not None
+    t0 = time.perf_counter()
     try:
         auth = _get_auth()
     except PeerSyncError as e:
         raise PeerSyncError(f"Login failed: {e}") from None
+    report.timings["auth"] = time.perf_counter() - t0
     report.auth_success = True
 
     # Anki uploads the whole config blob on every sync — including the pull leg, which
     # is itself a bidirectional sync_collection — so mirror the user's real selected
     # deck before each leg. Without this TT re-asserts whatever curDeck its own
     # collection holds and switches the user's deck out from under them.
+    t0 = time.perf_counter()
     _mirror_real_curdeck_into_tt(settings.anki_collection_path, settings.tt_collection_path)
+    report.timings["mirror_pre"] = time.perf_counter() - t0
 
+    t0 = time.perf_counter()
     try:
         sync_out = _sync_leg(auth)
     except PeerSyncError:
@@ -328,6 +339,7 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
             raise
         auth = _get_auth(refresh=True)
         sync_out = _sync_leg(auth)
+    report.timings["pull"] = time.perf_counter() - t0
     report.pull_required = sync_out.get("required")
     report.pull_message = sync_out.get("server_message", "")
 
@@ -340,10 +352,12 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
 
     from app.anki.sync import main as tt_sync_main
 
+    t0 = time.perf_counter()
     report.tt_push_pull_exit = tt_sync_main(
         argv=["--dry-run"] if dry_run else [],
         _settings=_tt_settings(),
     )
+    report.timings["reconcile"] = time.perf_counter() - t0
     if report.tt_push_pull_exit != 0:
         raise PeerSyncError(
             f"TT sync against tt_collection failed (exit={report.tt_push_pull_exit}) — "
@@ -355,14 +369,21 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
         # synced TT's state (config included) to the server, so with no pending rows the
         # push would be a pure 2–4s AnkiWeb no-op. Profiled as the common case — the user
         # usually grades in Anki, not TT, so the reconcile writes nothing pushable.
-        if not _has_pending_push(settings.tt_collection_path):
+        t0 = time.perf_counter()
+        has_pending = _has_pending_push(settings.tt_collection_path)
+        report.timings["pending_check"] = time.perf_counter() - t0
+        if not has_pending:
             report.push_required = 0
             report.push_message = "skipped: no local changes to push"
         else:
             # The pull leg may have pulled the server's curDeck back into TT; re-mirror
             # the user's real selection so the push asserts the right deck, not a stale one.
+            t0 = time.perf_counter()
             _mirror_real_curdeck_into_tt(settings.anki_collection_path, settings.tt_collection_path)
+            report.timings["mirror_pre_push"] = time.perf_counter() - t0
+            t0 = time.perf_counter()
             push_out = _sync_leg(auth)
+            report.timings["push"] = time.perf_counter() - t0
             report.push_required = push_out.get("required")
             report.push_message = push_out.get("server_message", "")
             if _full_sync_required(push_out.get("required")):
@@ -371,7 +392,25 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
                     f"Server message: {push_out.get('server_message', '')}."
                 )
 
+    report.timings["total"] = time.perf_counter() - t_start
+    _write_peer_sync_timing_log(settings.sync_log, report)
     return report
+
+
+def _write_peer_sync_timing_log(path: Path, report: PeerSyncReport) -> None:
+    """Append one greppable ``PEER_SYNC_TIMING`` line per successful peer-sync.
+
+    Per-leg wall times (auth / mirror_pre / pull / reconcile / pending_check /
+    mirror_pre_push / push / total) let us diagnose an occasional slow sync from
+    ``~/.tunatale/logs/sync.log`` after the fact — i.e. *which* leg hung — instead
+    of trying to reproduce the conditions live. Written only on the success path
+    (an aborting sync raises a visible error that already names the failing leg).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().isoformat(timespec="seconds")
+    legs = " ".join(f"{name}={secs:.2f}" for name, secs in report.timings.items())
+    with open(path, "a") as f:
+        f.write(f"{ts} PEER_SYNC_TIMING dry_run={report.dry_run} {legs}\n")
 
 
 def bootstrap_collection() -> None:
