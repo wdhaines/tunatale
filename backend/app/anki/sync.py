@@ -2915,6 +2915,24 @@ def main(
                 f"{len(pull.conflicts)} conflicts, "
                 f"{len(pull.recompute_divergences)} recompute divergences"
             )
+            # Anki→TT media propagation: pull the (media-synced) note fields from
+            # tt_collection into TT's own media table + backend/media, so an image
+            # swapped in Anki shows up in TunaTale. Peer path only (media_dir set);
+            # source = where the pulled media lives, dest = _MEDIA_DIR (frontend).
+            if not args.dry_run and _media_dir is not None:
+                from app.anki.import_seed import refresh_media_from_conn
+
+                media = refresh_media_from_conn(
+                    ctx.conn,
+                    deck_name=_s.anki_deck_name,
+                    anki_media_path=_media_dir,
+                    media_dir=_MEDIA_DIR,
+                    db=db,
+                )
+                print(
+                    f"Media: {media['new_media']} new, {media['updated_media']} updated, "
+                    f"{media['collapsed_media']} collapsed"
+                )
             print(f"Push: {push.notes_pushed} notes, {push.directions_pushed} directions")
             return 0
     except OrphanThresholdExceededError as e:

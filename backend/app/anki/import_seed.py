@@ -158,23 +158,42 @@ def refresh_media_for_deck(
     if media_dir is None:
         media_dir = settings.media_dir
 
-    results: dict[str, Any] = {
-        "new_media": 0,
-        "updated_media": 0,
-        "unchanged_media": 0,
-        "collapsed_media": 0,
-    }
-
     with safe_open(anki_collection_path, backup_dir=anki_backup_dir) as ctx:
-        deck_id = find_deck_id(ctx.conn, deck_name)
-        if deck_id is None:
-            return results
+        db = SRSDatabase(tunatale_db_path)
+        return refresh_media_from_conn(
+            ctx.conn,
+            deck_name=deck_name,
+            anki_media_path=anki_media_path,
+            media_dir=media_dir,
+            db=db,
+        )
 
-        notes = fetch_notes_for_deck(ctx.conn, deck_id)
 
-    db = SRSDatabase(tunatale_db_path)
+def refresh_media_from_conn(
+    conn,
+    *,
+    deck_name: str,
+    anki_media_path: Path,
+    media_dir: Path,
+    db: SRSDatabase,
+) -> dict[str, Any]:
+    """Refresh TT media for every linked note in `deck_name`, reading note fields
+    from an already-open collection `conn`.
+
+    The Anki→TT media-propagation engine, shared by ``refresh_media_for_deck``
+    (real collection.anki2, needs Anki closed) and the peer-sync reconcile
+    (``tt_collection``, Anki-open-safe). Copies from ``anki_media_path`` (where the
+    collection's media lives) into ``media_dir`` (TT's frontend-served dir) and
+    updates the TT ``media`` table — so an image swapped in Anki shows up in TT.
+    """
+    results: dict[str, Any] = {"new_media": 0, "updated_media": 0, "unchanged_media": 0, "collapsed_media": 0}
+
+    deck_id = find_deck_id(conn, deck_name)
+    if deck_id is None:
+        return results
+    notes = fetch_notes_for_deck(conn, deck_id)
+
     linked = db.list_linked_anki_note_ids()
-
     for note in notes:
         coll_id = linked.get(note.id)
         if coll_id is None:

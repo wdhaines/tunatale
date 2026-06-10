@@ -979,3 +979,27 @@ def test_refresh_media_for_deck_skips_unlinked_notes(fake_anki_db, tmp_path):
 
     assert isinstance(result, dict)
     assert result["new_media"] == 0
+
+
+class TestRefreshMediaFromConn:
+    def test_missing_deck_returns_zero_counts(self):
+        """deck not found in the collection → early return, no media work."""
+        from pathlib import Path
+
+        from app.anki.import_seed import refresh_media_from_conn
+        from app.srs.database import SRSDatabase
+        from tests.test_anki_sync_create_new import _make_dual_collection_conn
+
+        conn = _make_dual_collection_conn()
+        db = SRSDatabase(":memory:")
+        try:
+            res = refresh_media_from_conn(
+                conn,
+                deck_name="No Such Deck",
+                anki_media_path=Path("/nonexistent"),
+                media_dir=Path("/nonexistent"),
+                db=db,
+            )
+        finally:
+            db.close()
+        assert res == {"new_media": 0, "updated_media": 0, "unchanged_media": 0, "collapsed_media": 0}

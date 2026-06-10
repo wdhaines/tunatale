@@ -216,6 +216,12 @@ class TestMainDelegatesToRunFullSync:
 
         spy = AsyncMock(return_value=(CreateNewReport(), PushReport(), PullReport()))
         monkeypatch.setattr("app.anki.sync.run_full_sync", spy)
+        # This test isolates forwarding to run_full_sync/OfflineWriter; no-op the
+        # real Anki→TT media refresh (the minimal conn has no decks/cards tables).
+        monkeypatch.setattr(
+            "app.anki.import_seed.refresh_media_from_conn",
+            lambda *a, **k: {"new_media": 0, "updated_media": 0, "collapsed_media": 0},
+        )
         captured_media_dir = {}
         real_writer = __import__("app.anki.sync", fromlist=["OfflineWriter"]).OfflineWriter
 
@@ -348,6 +354,72 @@ class TestMainCreateNew:
         assert exit_code == 0
         assert tt_db.get_collocation("oprostiti").anki_note_id is not None
         assert len(anki_conn.execute("SELECT id FROM notes").fetchall()) == 1
+
+    def test_main_propagates_anki_image_swap_to_tt(self, tmp_path, monkeypatch):
+        """Anki→TT: a changed <img> ref on a linked note in tt_collection updates TT's
+        media row + copies the new file into backend/media, so an image swapped in
+        Anki shows up in TunaTale (the pull-direction media gap)."""
+        import app.anki.sync as sync_mod
+        from app.models.srs_item import Direction
+        from app.models.syntactic_unit import SyntacticUnit
+        from tests.test_anki_sync_create_new import _make_dual_collection_conn
+
+        anki_conn = _make_dual_collection_conn()
+        note_id = 5555
+        # tt_collection note (linked) whose Image field now points at newimg.jpg.
+        fields = ["oprostiti", "forgive", "", '<img src="newimg.jpg">', "", "", ""]
+        anki_conn.execute(
+            "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+            "VALUES (?, 'g-opr', 1000001, 0, 0, '', ?, 'oprostiti', 0, 0, '')",
+            (note_id, "\x1f".join(fields)),
+        )
+        anki_conn.execute("INSERT INTO cards (id, nid, did, ord) VALUES (?, ?, 12345, 0)", (note_id * 10, note_id))
+        anki_conn.commit()
+
+        # The new image lives in the (pulled) Anki media dir = main's _media_dir.
+        src_media = tmp_path / "collection.media"
+        src_media.mkdir()
+        (src_media / "newimg.jpg").write_bytes(b"NEWIMAGE")
+
+        tt_db = SRSDatabase(":memory:")
+        tt_db.add_collocation(
+            SyntacticUnit(text="oprostiti", translation="forgive", word_count=1, difficulty=1, source="user")
+        )
+        guid = tt_db.get_collocation("oprostiti").guid
+        coll_id = tt_db.get_collocation_id_by_guid(guid)
+        tt_db.set_anki_ids(guid, note_id, {Direction.RECOGNITION: note_id * 10})
+        # Stale TT image row (the old image) — should be replaced by the swap.
+        tt_db.add_media(coll_id, "image", "oldimg.jpg", "media/oldimg.jpg", "oldimg.jpg", "oldsha", 3)
+
+        class FakeSettings:
+            anki_collection_path = "unused"
+            anki_deck_name = "0. Slovene"
+            anki_model_name = "Slovene Vocabulary"
+            database_url = "sqlite:///:memory:"
+
+        @contextmanager
+        def fake_safe_open(path, mode):
+            yield type("Ctx", (), {"conn": anki_conn})()
+
+        monkeypatch.setattr(
+            "app.anki.sync.AnkiSync.sync_push", lambda self, dry_run=False, force_fsrs=False: PushReport()
+        )
+        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_pull", lambda self, dry_run=False: PullReport())
+        _patch_all_refreshes(monkeypatch)
+
+        exit_code = main(
+            argv=[],
+            _settings=FakeSettings(),
+            _safe_open_fn=fake_safe_open,
+            _sync_log_path=tmp_path / "sync.log",
+            _db=tt_db,
+            _media_dir=src_media,
+        )
+
+        assert exit_code == 0
+        # TT media row now points at the swapped image, and the file is in backend/media.
+        assert tt_db.get_image_filename(coll_id) == "newimg.jpg"
+        assert (sync_mod._MEDIA_DIR / "newimg.jpg").read_bytes() == b"NEWIMAGE"
 
     def test_main_dry_run_does_not_create_notes(self, tmp_path, monkeypatch):
         """Dry run reports the count but writes no Anki note and leaves TT unlinked."""
