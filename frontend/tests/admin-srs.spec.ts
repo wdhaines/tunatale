@@ -17,12 +17,12 @@ test('cards: search filters list, suspend toggles state', async ({ page, request
 	await expect(page.getByText('eden').first()).toBeVisible({ timeout: 10000 });
 
 	// Search (debounced 250ms) narrows the list to matching rows only
-	await page.getByPlaceholder('Search text or translation…').fill('dva');
+	await page.getByPlaceholder('Search cards').fill('dva');
 	await expect(page.getByText('dva').first()).toBeVisible({ timeout: 5000 });
 	await expect(page.getByText('eden')).not.toBeVisible();
 
 	// Clear search — all items reload
-	await page.getByPlaceholder('Search text or translation…').fill('');
+	await page.getByPlaceholder('Search cards').fill('');
 	await expect(page.getByText('eden').first()).toBeVisible({ timeout: 5000 });
 
 	// Find the eden row and suspend it

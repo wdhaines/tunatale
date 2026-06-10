@@ -160,6 +160,23 @@ describe("QueueStatsWidget", () => {
     expect(reviewSpan?.classList.contains("underlined")).toBe(true);
   });
 
+  it("exposes a composed title and aria-label describing the counts", () => {
+    const stats: QueueStats = {
+      new: 0,
+      learning: 9,
+      review: 35,
+      daily_new_cap: 30,
+      cap_source: "default",
+      fsrs_source: "default",
+    };
+
+    const { container } = render(QueueStatsWidget, { stats });
+
+    const widget = container.querySelector(".queue-stats");
+    expect(widget?.getAttribute("title")).toBe("0 new · 9 learning · 35 review");
+    expect(widget?.getAttribute("aria-label")).toBe("0 new · 9 learning · 35 review");
+  });
+
   it("underlines nothing when currentState is null", () => {
     const stats: QueueStats = {
       new: 30,

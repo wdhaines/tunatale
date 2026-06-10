@@ -59,8 +59,9 @@ describe("Lessons library (home)", () => {
     expect(
       (getByRole("link", { name: /At the Airport/ }) as HTMLAnchorElement).getAttribute("href"),
     ).toBe("/c/slug-def456");
-    // Date should be displayed
-    expect(await findByText(/4\/10\/2026|Apr(il)? 10/i)).toBeTruthy();
+    // Date should be displayed in an unambiguous "Apr 10, 2026" format
+    expect(await findByText("Apr 10, 2026")).toBeTruthy();
+    expect(await findByText("Apr 7, 2026")).toBeTruthy();
   });
 
   it("shows empty state when no curricula", async () => {

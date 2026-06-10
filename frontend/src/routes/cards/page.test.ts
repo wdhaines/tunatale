@@ -98,6 +98,28 @@ describe("cards/+page.svelte", () => {
     expect(await findByText("not-a-date")).toBeTruthy();
   });
 
+  it("strips [sound:...] tags from displayed text and translation", async () => {
+    mockList.mockResolvedValue({
+      items: [
+        makeSRSItemDetail({
+          id: 1,
+          text: "[sound:sl_zdravo.mp3]zdravo",
+          translation: "[sound:x.mp3]Hello",
+        }),
+      ],
+      total: 1,
+    });
+    const { findByText, queryByText } = render(CardsPage);
+    expect(await findByText("Hello")).toBeTruthy();
+    expect(await findByText("zdravo")).toBeTruthy();
+    expect(queryByText(/\[sound:/)).toBeFalsy();
+  });
+
+  it("uses 'Search cards' as the search input placeholder", () => {
+    const { getByPlaceholderText } = render(CardsPage);
+    expect(getByPlaceholderText("Search cards")).toBeTruthy();
+  });
+
   it("typing in search re-queries after debounce", async () => {
     mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: "zdravo" })], total: 1 });
     const { getByPlaceholderText } = render(CardsPage);

@@ -238,26 +238,26 @@
 	:global(:root[data-theme='dark']) {
 		/* Detective Noir (dark) */
 		--color-primary: #3a82bd;
-			--color-primary-hover: #4a90c9;
-			--color-on-primary: #ffffff;
-			--color-accent: #e0b04a;
-			--color-brand: #e0675c;
-			--color-success: #2f9d88;
-			--color-warning: #c08a3a;
-			--color-danger: #cf5a52;
-			--color-info: #5c9bd1;
-			--color-secondary: #9faaa9;
+		--color-primary-hover: #4a90c9;
+		--color-on-primary: #ffffff;
+		--color-accent: #e0b04a;
+		--color-brand: #e0675c;
+		--color-success: #2f9d88;
+		--color-warning: #c08a3a;
+		--color-danger: #cf5a52;
+		--color-info: #5c9bd1;
+		--color-secondary: #9faaa9;
 
-			--color-bg: #11212e;
-			--color-surface: #182f3c;
-			--color-surface-2: #21404d;
-			--color-text: #efe6d2;
-			--color-muted: #9faaa9;
-			--color-border: #2b4856;
-			--color-highlight: #43391e;
+		--color-bg: #11212e;
+		--color-surface: #182f3c;
+		--color-surface-2: #21404d;
+		--color-text: #efe6d2;
+		--color-muted: #9faaa9;
+		--color-border: #2b4856;
+		--color-highlight: #43391e;
 
-			--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.25);
-			--shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+		--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.25);
+		--shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
 	}
 
 	/* ─────────────────────────  Global base  ───────────────────────── */

@@ -169,6 +169,10 @@
 
 	const totalPages = $derived(Math.max(1, Math.ceil(total / PAGE_SIZE)));
 
+	function stripSoundTags(value: string): string {
+		return value.replace(/\[sound:[^\]]*\]/g, '');
+	}
+
 	function formatDue(iso: string | null | undefined): string {
 		if (!iso) return '';
 		const d = new Date(iso);
@@ -196,7 +200,7 @@
 		<div class="controls">
 			<input
 				type="search"
-				placeholder="Search text or translation…"
+				placeholder="Search cards"
 				bind:value={search}
 				oninput={onSearchInput}
 			/>
@@ -260,8 +264,8 @@
 						<span class="col-check">
 							<input type="checkbox" checked={selected.has(item.id)} onchange={() => toggleSelect(item.id)} />
 						</span>
-						<span class="col-text">{item.text}</span>
-						<span class="col-trans">{item.translation}</span>
+						<span class="col-text">{stripSoundTags(item.text)}</span>
+						<span class="col-trans">{stripSoundTags(item.translation)}</span>
 						<span class="col-state state-{item.state}">{item.state}</span>
 						<span class="col-due">{formatDue(item.due_at)}</span>
 						<span class="col-reps">{item.reps}</span>

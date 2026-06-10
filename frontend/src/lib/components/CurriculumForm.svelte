@@ -124,7 +124,10 @@
 		background: var(--color-primary-hover);
 	}
 	button:disabled {
-		opacity: 0.5;
+		background: var(--color-surface-2);
+		color: var(--color-muted);
+		border: 1px solid var(--color-border);
+		opacity: 1;
 		cursor: not-allowed;
 	}
 	.error {

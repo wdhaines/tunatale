@@ -2,9 +2,11 @@
 	import type { QueueStats } from '$lib/api';
 
 	let { stats, currentState = null }: { stats: QueueStats; currentState?: string | null } = $props();
+
+	const summary = $derived(`${stats.new} new · ${stats.learning} learning · ${stats.review} review`);
 </script>
 
-<span class="queue-stats">
+<span class="queue-stats" title={summary} aria-label={summary}>
 	<span class="new" class:underlined={currentState === 'new'}>{stats.new}</span>
 	<span class="separator">+</span>
 	<span class="learning" class:underlined={currentState === 'learning' || currentState === 'relearning'}>{stats.learning}</span>
