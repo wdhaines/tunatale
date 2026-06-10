@@ -569,4 +569,281 @@ describe("DrillCard", () => {
       expect(container.querySelector('button[aria-label="Play audio"]')).toBeNull();
     });
   });
+
+  describe("keyboard shortcuts", () => {
+    it("Space reveals the card when not yet revealed", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole, queryByRole } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+      });
+      await findByRole("button", { name: "Show" });
+      await fireEvent.keyDown(window, { key: " " });
+      expect(await findByRole("button", { name: "Good" })).toBeTruthy();
+      expect(queryByRole("button", { name: "Show" })).toBeNull();
+    });
+
+    it("Enter reveals the card when not yet revealed", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole } = render(DrillCard, { item, direction: "recognition", onRate });
+      await findByRole("button", { name: "Show" });
+      await fireEvent.keyDown(window, { key: "Enter" });
+      expect(await findByRole("button", { name: "Good" })).toBeTruthy();
+    });
+
+    it("preventDefault is called for Space so the page does not scroll", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole } = render(DrillCard, { item, direction: "recognition", onRate });
+      await findByRole("button", { name: "Show" });
+      const event = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
+      window.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    });
+
+    it("ignores keydown when event.repeat is true (no reveal)", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole, queryByRole } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+      });
+      await findByRole("button", { name: "Show" });
+      await fireEvent.keyDown(window, { key: " ", repeat: true });
+      expect(queryByRole("button", { name: "Show" })).toBeTruthy();
+    });
+
+    it("ignores keydown with metaKey/ctrlKey/altKey held", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole } = render(DrillCard, { item, direction: "recognition", onRate });
+      await findByRole("button", { name: "Show" });
+      await fireEvent.keyDown(window, { key: " ", metaKey: true });
+      await fireEvent.keyDown(window, { key: " ", ctrlKey: true });
+      await fireEvent.keyDown(window, { key: " ", altKey: true });
+      expect(await findByRole("button", { name: "Show" })).toBeTruthy();
+    });
+
+    it("ignores keydown when target is an input element", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+      });
+      await findByRole("button", { name: "Show" });
+
+      const input = document.createElement("input");
+      container.appendChild(input);
+      input.focus();
+      await fireEvent.keyDown(input, { key: " " });
+
+      expect(await findByRole("button", { name: "Show" })).toBeTruthy();
+      input.remove();
+    });
+
+    it("ignores keydown when target is a textarea element", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+      });
+      await findByRole("button", { name: "Show" });
+
+      const textarea = document.createElement("textarea");
+      container.appendChild(textarea);
+      textarea.focus();
+      await fireEvent.keyDown(textarea, { key: " " });
+
+      expect(await findByRole("button", { name: "Show" })).toBeTruthy();
+      textarea.remove();
+    });
+
+    it("ignores keydown when target is a select element", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+      });
+      await findByRole("button", { name: "Show" });
+
+      const select = document.createElement("select");
+      container.appendChild(select);
+      select.focus();
+      await fireEvent.keyDown(select, { key: " " });
+
+      expect(await findByRole("button", { name: "Show" })).toBeTruthy();
+      select.remove();
+    });
+
+    it("ignores keydown when target is contenteditable", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+      });
+      await findByRole("button", { name: "Show" });
+
+      const editable = document.createElement("div");
+      editable.setAttribute("contenteditable", "true");
+      editable.tabIndex = 0;
+      container.appendChild(editable);
+      editable.focus();
+      await fireEvent.keyDown(editable, { key: " " });
+
+      expect(await findByRole("button", { name: "Show" })).toBeTruthy();
+      editable.remove();
+    });
+
+    it("ignores other keys when not revealed", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole } = render(DrillCard, { item, direction: "recognition", onRate });
+      await findByRole("button", { name: "Show" });
+      await fireEvent.keyDown(window, { key: "1" });
+      expect(await findByRole("button", { name: "Show" })).toBeTruthy();
+    });
+
+    it("'1' grades again after reveal", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole } = render(DrillCard, { item, direction: "recognition", onRate });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      await fireEvent.keyDown(window, { key: "1" });
+      expect(onRate).toHaveBeenCalledWith("again", expect.any(Number));
+    });
+
+    it("'2' grades hard after reveal", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole } = render(DrillCard, { item, direction: "recognition", onRate });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      await fireEvent.keyDown(window, { key: "2" });
+      expect(onRate).toHaveBeenCalledWith("hard", expect.any(Number));
+    });
+
+    it("'3' grades good after reveal", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole } = render(DrillCard, { item, direction: "recognition", onRate });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      await fireEvent.keyDown(window, { key: "3" });
+      expect(onRate).toHaveBeenCalledWith("good", expect.any(Number));
+    });
+
+    it("'4' grades easy after reveal", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole } = render(DrillCard, { item, direction: "recognition", onRate });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      await fireEvent.keyDown(window, { key: "4" });
+      expect(onRate).toHaveBeenCalledWith("easy", expect.any(Number));
+    });
+
+    it("Space grades good after reveal (Anki convention)", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole } = render(DrillCard, { item, direction: "recognition", onRate });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      await fireEvent.keyDown(window, { key: " " });
+      expect(onRate).toHaveBeenCalledWith("good", expect.any(Number));
+    });
+
+    it("Enter grades good after reveal (Anki convention)", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole } = render(DrillCard, { item, direction: "recognition", onRate });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      await fireEvent.keyDown(window, { key: "Enter" });
+      expect(onRate).toHaveBeenCalledWith("good", expect.any(Number));
+    });
+
+    it("ignores unrelated keys after reveal (no grading)", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole } = render(DrillCard, { item, direction: "recognition", onRate });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      await fireEvent.keyDown(window, { key: "5" });
+      expect(onRate).not.toHaveBeenCalled();
+    });
+
+    it("ignores grade keys while a grade is in flight (keyboard path)", async () => {
+      let resolveRate: () => void = () => {};
+      const onRate = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveRate = resolve;
+          }),
+      );
+      const item = makeSRSItemDetail({});
+      const { findByRole } = render(DrillCard, { item, direction: "recognition", onRate });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      await fireEvent.keyDown(window, { key: "3" });
+      await fireEvent.keyDown(window, { key: "1" });
+      expect(onRate).toHaveBeenCalledTimes(1);
+      resolveRate();
+    });
+
+    it("ignores a second button click while a grade is in flight", async () => {
+      let resolveRate: () => void = () => {};
+      const onRate = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveRate = resolve;
+          }),
+      );
+      const item = makeSRSItemDetail({});
+      const { findByRole } = render(DrillCard, { item, direction: "recognition", onRate });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      await fireEvent.click(await findByRole("button", { name: "Good" }));
+      await fireEvent.click(await findByRole("button", { name: "Again" }));
+      expect(onRate).toHaveBeenCalledTimes(1);
+      resolveRate();
+    });
+  });
+
+  describe("answer hierarchy on reveal", () => {
+    it("shows a keyboard hint inside the card", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { container, findByRole } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+      });
+      await findByRole("button", { name: "Show" });
+      expect(container.textContent).toContain("Space to flip");
+      expect(container.textContent).toContain("1–4 to grade");
+    });
+
+    it("de-emphasizes the prompt image once revealed (revealed class on prompt container)", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({
+        text: "izgubiti",
+        translation: "lose",
+        image_url: "/api/media/izgubiti.jpg",
+      });
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "production",
+        onRate,
+      });
+      const prompt = container.querySelector(".prompt");
+      expect(prompt?.classList.contains("revealed")).toBe(false);
+
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      expect(prompt?.classList.contains("revealed")).toBe(true);
+    });
+  });
 });

@@ -14,6 +14,7 @@
 	} = $props();
 
 	let revealed = $state(false);
+	let inFlight = $state(false);
 	let audioEl: HTMLAudioElement | undefined = $state();
 	let wordAudioEl: HTMLAudioElement | undefined = $state();
 	const startedAt = performance.now();
@@ -23,8 +24,55 @@
 	}
 
 	async function rate(r: Rating) {
-		const elapsed = Math.min(60000, Math.round(performance.now() - startedAt));
-		await onRate(r, elapsed);
+		if (inFlight) return;
+		inFlight = true;
+		try {
+			const elapsed = Math.min(60000, Math.round(performance.now() - startedAt));
+			await onRate(r, elapsed);
+		} finally {
+			inFlight = false;
+		}
+	}
+
+	const RATING_KEYS: Record<string, Rating> = {
+		'1': 'again',
+		'2': 'hard',
+		'3': 'good',
+		'4': 'easy'
+	};
+
+	const TYPING_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
+
+	function isTypingTarget(target: EventTarget | null): boolean {
+		if (!(target instanceof HTMLElement)) return false;
+		if (TYPING_TAGS.has(target.tagName)) return true;
+		return target.getAttribute('contenteditable') === 'true';
+	}
+
+	function handleKeyDown(event: KeyboardEvent) {
+		if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
+		if (isTypingTarget(event.target)) return;
+		if (inFlight) return;
+
+		if (!revealed) {
+			if (event.key === ' ' || event.key === 'Enter') {
+				event.preventDefault();
+				show();
+			}
+			return;
+		}
+
+		if (event.key === ' ' || event.key === 'Enter') {
+			event.preventDefault();
+			rate('good');
+			return;
+		}
+
+		const rating = RATING_KEYS[event.key];
+		if (rating) {
+			event.preventDefault();
+			rate(rating);
+		}
 	}
 
 	function playAudio() {
@@ -74,8 +122,10 @@
 	}
 </script>
 
+<svelte:window onkeydown={handleKeyDown} />
+
 <div class="drill-card">
-	<div class="prompt">
+	<div class="prompt" class:revealed>
 		{#if direction === 'recognition'}
 			{#if item.audio_url}
 				<audio bind:this={audioEl} src={item.audio_url} autoplay preload="auto"></audio>
@@ -146,6 +196,7 @@
 	{:else}
 		<button onclick={show}>Show</button>
 	{/if}
+	<p class="key-hint">Space to flip · 1–4 to grade</p>
 </div>
 
 <style>
@@ -167,6 +218,14 @@
 		object-fit: contain;
 		border-radius: 8px;
 		margin-bottom: 0.5rem;
+		transition: max-height 0.2s ease, opacity 0.2s ease;
+	}
+	/* Once revealed, the answer text is the focus — shrink and fade the prompt
+	   image so it stops dominating the card. */
+	.prompt.revealed .prompt-image {
+		max-height: 18vh;
+		max-height: 18dvh;
+		opacity: 0.6;
 	}
 	.answer-divider {
 		border: none;
@@ -184,9 +243,17 @@
 		margin-bottom: 0.5rem;
 	}
 	.answer-text {
-		font-size: 1.1rem;
+		font-size: 1rem;
 		color: var(--color-muted);
 		margin-bottom: 0.4rem;
+	}
+	/* The first answer line is the primary answer (e.g. the target word) — make
+	   it the visually dominant element on the revealed card. */
+	.answer-text:first-of-type {
+		font-size: 1.5rem;
+		font-weight: bold;
+		color: var(--color-text);
+		margin-bottom: 0.5rem;
 	}
 	.slovene {
 		/* Semantic hook for per-language typography — currently inherits .main-text */
@@ -271,6 +338,18 @@
 	.btn-good  { background: var(--color-success); }
 	.btn-easy  { background: var(--color-primary); }
 
+	.key-hint {
+		margin: 0.75rem 0 0;
+		font-size: 0.75rem;
+		color: var(--color-muted);
+	}
+	/* Touch-primary devices have no keyboard, so the hint is just clutter. */
+	@media (hover: none) {
+		.key-hint {
+			display: none;
+		}
+	}
+
 	@media (min-width: 641px) {
 		.drill-card { padding: 2rem 1rem; }
 		.main-text { font-size: 2rem; margin-bottom: 1rem; }
@@ -281,7 +360,9 @@
 			margin-bottom: 1rem;
 		}
 		.answer-divider { margin: 1.5rem 0; }
-		.answer-text { font-size: 1.25rem; margin-bottom: 0.75rem; }
+		.answer-text { font-size: 1.1rem; margin-bottom: 0.75rem; }
+		.answer-text:first-of-type { font-size: 1.75rem; margin-bottom: 0.75rem; }
+		.prompt.revealed .prompt-image { max-height: 120px; }
 		.play-btn { margin-bottom: 0.75rem; }
 		.ratings { gap: 0.75rem; }
 		.ratings button { flex: 0 1 auto; }
