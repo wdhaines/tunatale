@@ -14,6 +14,7 @@ vi.mock("$lib/api", () => ({
   api: {
     listCurricula: vi.fn(),
     generateCurriculum: vi.fn(),
+    getCurriculumProgress: vi.fn(),
   },
 }));
 
@@ -23,15 +24,25 @@ vi.mock("$lib/storage", () => ({
   loadFormPreferences: vi.fn().mockReturnValue(null),
 }));
 
+// Mock $lib/stores/listened.svelte — same signal the lesson page uses
+vi.mock("$lib/stores/listened.svelte", () => ({
+  listenedStore: { has: vi.fn().mockReturnValue(false) },
+}));
+
 import { api } from "$lib/api";
+import { listenedStore } from "$lib/stores/listened.svelte";
 const mockListCurricula = vi.mocked(api.listCurricula);
 const mockGenerate = vi.mocked(api.generateCurriculum);
+const mockGetCurriculumProgress = vi.mocked(api.getCurriculumProgress);
+const mockListenedHas = vi.mocked(listenedStore.has);
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockListCurricula.mockResolvedValue([
     { id: "x", topic: "test", created_at: "2026-01-01 00:00:00" },
   ]);
+  mockGetCurriculumProgress.mockResolvedValue([]);
+  mockListenedHas.mockReturnValue(false);
 });
 
 describe("Lessons library (home)", () => {
@@ -80,6 +91,109 @@ describe("Lessons library (home)", () => {
     mockListCurricula.mockRejectedValue("boom");
     const { findByText } = render(Page);
     expect(await findByText("boom")).toBeTruthy();
+  });
+});
+
+describe("Per-curriculum progress", () => {
+  it("shows 'M of N days listened' and links Continue to the first unlistened day", async () => {
+    mockListCurricula.mockResolvedValue([
+      { id: "slug-abc123", topic: "Ordering Coffee", created_at: "2026-04-10 12:00:00" },
+    ]);
+    mockGetCurriculumProgress.mockResolvedValue([
+      { day: 1, lesson_id: "lesson-1" },
+      { day: 2, lesson_id: "lesson-2" },
+      { day: 3, lesson_id: "lesson-3" },
+      { day: 4, lesson_id: "lesson-4" },
+      { day: 5, lesson_id: "lesson-5" },
+      { day: 6, lesson_id: "lesson-6" },
+      { day: 7, lesson_id: "lesson-7" },
+    ]);
+    mockListenedHas.mockImplementation((id: string) =>
+      ["lesson-1", "lesson-2", "lesson-3"].includes(id),
+    );
+
+    const { findByText, getByRole } = render(Page);
+
+    expect(await findByText("3 of 7 days listened")).toBeTruthy();
+    const continueLink = getByRole("link", { name: /Continue/ }) as HTMLAnchorElement;
+    expect(continueLink.textContent).toContain("Continue");
+    expect(continueLink.textContent).toContain("Day 4");
+    expect(continueLink.getAttribute("href")).toBe("/c/slug-abc123/l/lesson-4");
+  });
+
+  it("shows 'All N days listened ✓' and a Revisit link to the last day when fully listened", async () => {
+    mockListCurricula.mockResolvedValue([
+      { id: "slug-abc123", topic: "Ordering Coffee", created_at: "2026-04-10 12:00:00" },
+    ]);
+    mockGetCurriculumProgress.mockResolvedValue([
+      { day: 1, lesson_id: "lesson-1" },
+      { day: 2, lesson_id: "lesson-2" },
+      { day: 3, lesson_id: "lesson-3" },
+    ]);
+    mockListenedHas.mockReturnValue(true);
+
+    const { findByText, getByRole } = render(Page);
+
+    expect(await findByText("3 of 3 days listened")).toBeTruthy();
+    expect(await findByText("All 3 days listened ✓")).toBeTruthy();
+    const revisitLink = getByRole("link", { name: /Revisit/ }) as HTMLAnchorElement;
+    expect(revisitLink.textContent).toContain("Revisit");
+    expect(revisitLink.textContent).toContain("Day 3");
+    expect(revisitLink.getAttribute("href")).toBe("/c/slug-abc123/l/lesson-3");
+  });
+
+  it("renders a plain card with no progress UI when fetchCurriculumProgress fails", async () => {
+    mockListCurricula.mockResolvedValue([
+      { id: "slug-abc123", topic: "Ordering Coffee", created_at: "2026-04-10 12:00:00" },
+    ]);
+    mockGetCurriculumProgress.mockRejectedValue(new Error("boom"));
+
+    const { findByText, queryByText, queryByRole } = render(Page);
+
+    expect(await findByText("Ordering Coffee")).toBeTruthy();
+    expect(queryByText(/days listened/)).toBeNull();
+    expect(queryByRole("link", { name: /Continue/ })).toBeNull();
+    expect(queryByRole("link", { name: /Revisit/ })).toBeNull();
+  });
+
+  it("renders a plain card with no progress UI when a curriculum has zero days", async () => {
+    mockListCurricula.mockResolvedValue([
+      { id: "slug-abc123", topic: "Ordering Coffee", created_at: "2026-04-10 12:00:00" },
+    ]);
+    mockGetCurriculumProgress.mockResolvedValue([]);
+
+    const { findByText, queryByText, queryByRole } = render(Page);
+
+    expect(await findByText("Ordering Coffee")).toBeTruthy();
+    expect(queryByText(/days listened/)).toBeNull();
+    expect(queryByRole("link", { name: /Continue/ })).toBeNull();
+  });
+
+  it("computes independent progress for multiple curricula", async () => {
+    mockListCurricula.mockResolvedValue([
+      { id: "curric-a", topic: "Ordering Coffee", created_at: "2026-04-10 12:00:00" },
+      { id: "curric-b", topic: "At the Airport", created_at: "2026-04-07 08:30:00" },
+    ]);
+    mockGetCurriculumProgress.mockImplementation(async (id: string) => {
+      if (id === "curric-a") {
+        return [
+          { day: 1, lesson_id: "a-lesson-1" },
+          { day: 2, lesson_id: "a-lesson-2" },
+        ];
+      }
+      return [
+        { day: 1, lesson_id: "b-lesson-1" },
+        { day: 2, lesson_id: "b-lesson-2" },
+        { day: 3, lesson_id: "b-lesson-3" },
+        { day: 4, lesson_id: "b-lesson-4" },
+      ];
+    });
+    mockListenedHas.mockImplementation((id: string) => id === "a-lesson-1" || id === "b-lesson-1");
+
+    const { findByText } = render(Page);
+
+    expect(await findByText("1 of 2 days listened")).toBeTruthy();
+    expect(await findByText("1 of 4 days listened")).toBeTruthy();
   });
 });
 
