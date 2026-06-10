@@ -136,6 +136,8 @@ This cycle addresses the finding that immediate L2 audio exposure without prepar
 - Same SRS backend and content generation, different prompts for content creation
 - Combined lesson control and help mechanisms accessible via icons or target-language phrases
 
+> **Refined design:** these modes have been broken into concrete learner postures (Review / Listen / Read / Generate / Produce) with per-mode decisions in `docs/learning-modes.md`. Read mode is the first build target.
+
 ## 8. Technical Feasibility
 
 ### 8.1 Simplified Implementation Approach

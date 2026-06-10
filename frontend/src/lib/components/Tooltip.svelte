@@ -26,6 +26,53 @@
 
 	let { translation, children, word, sentence, actions, suppressed = false }: Props = $props();
 
+	let open = $state(false);
+
+	// A *long-press* opens the popover (so a touch user can reach the per-word
+	// actions); a plain *tap* falls through to the word's own grade handler. This
+	// avoids the tap-to-grade-also-toggles-the-tooltip conflict: pressing a word
+	// grades it, holding it reveals its actions without grading.
+	const LONG_PRESS_MS = 450;
+	let pressTimer: ReturnType<typeof setTimeout> | null = null;
+	let longPressed = false;
+
+	function startPress() {
+		longPressed = false;
+		pressTimer = setTimeout(() => {
+			open = true;
+			longPressed = true;
+			pressTimer = null;
+		}, LONG_PRESS_MS);
+	}
+
+	function cancelPress() {
+		if (pressTimer !== null) {
+			clearTimeout(pressTimer);
+			pressTimer = null;
+		}
+	}
+
+	// Swallow the click a long-press would otherwise fire (capture phase, before
+	// the inner word/collocation grade handler), so holding never grades.
+	function suppressClickAfterLongPress(e: MouseEvent) {
+		if (longPressed) {
+			e.stopPropagation();
+			e.preventDefault();
+			longPressed = false;
+		}
+	}
+
+	// Click-outside: close when tapping anywhere outside the tooltip wrapper
+	$effect(() => {
+		if (!open) return;
+		function handleOutside(e: MouseEvent) {
+			const el = e.target as HTMLElement;
+			if (!el.closest('.tt-wrap')) open = false;
+		}
+		document.addEventListener('mousedown', handleOutside);
+		return () => document.removeEventListener('mousedown', handleOutside);
+	});
+
 	const dueLabel = $derived(word != null ? (word.is_due ? 'Due' : 'Not Due') : null);
 
 	const showCreateInflection = $derived(Boolean(word?.inflectable && actions?.onCreateInflection));
@@ -86,10 +133,19 @@
 	const hasContent = $derived(!suppressed && Boolean(translation || dueLabel || hasActions));
 </script>
 
-<span class="tt-wrap">
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+<span
+	class="tt-wrap"
+	class:open
+	onpointerdown={startPress}
+	onpointerup={cancelPress}
+	onpointerleave={cancelPress}
+	onpointermove={cancelPress}
+	onclickcapture={suppressClickAfterLongPress}
+>
 	{@render children()}
 	{#if hasContent}
-		<span class="tt" role="tooltip" aria-hidden="false">
+		<span class="tt" role="tooltip" aria-hidden="false" onclick={(e) => e.stopPropagation()}>
 			{#if translation}<span class="tt-translation">{translation}</span>{/if}
 			{#if dueLabel}<span class="tt-state tt-state-{word?.is_due ? 'due' : 'not-due'}">{dueLabel}</span>{/if}
 			{#if hasActions}
@@ -178,7 +234,8 @@
 		transition: opacity 0.1s;
 	}
 	.tt-wrap:hover > .tt,
-	.tt-wrap:focus-within > .tt {
+	.tt-wrap:focus-within > .tt,
+	.tt-wrap.open > .tt {
 		opacity: 1;
 		pointer-events: auto;
 	}

@@ -10,10 +10,20 @@
 		sentence?: string;
 		actions?: TooltipActions;
 		suppressed?: boolean;
+		onChildClick?: () => void;
 	}
-	let { translation, childText = 'child', word, sentence, actions, suppressed = false }: Props = $props();
+	let {
+		translation,
+		childText = 'child',
+		word,
+		sentence,
+		actions,
+		suppressed = false,
+		onChildClick
+	}: Props = $props();
 </script>
 
 <Tooltip {translation} {word} {sentence} {actions} {suppressed}>
-	<span>{childText}</span>
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<span onclick={onChildClick}>{childText}</span>
 </Tooltip>

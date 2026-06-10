@@ -14,6 +14,7 @@
 		selected?: boolean;
 		sentence?: string;
 		tooltipActions?: TooltipActions;
+		showGloss?: boolean;
 	}
 
 	let {
@@ -25,7 +26,8 @@
 		wordIndex,
 		selected = false,
 		sentence,
-		tooltipActions
+		tooltipActions,
+		showGloss = false
 	}: Props = $props();
 
 	function fire() {
@@ -102,18 +104,26 @@
 	suppressed={!showTooltip}
 >
 	<span
-		class="word {colorClass}"
-		class:word-selected={selected}
-		class:word-due={word.is_due}
-		style={dynamicStyle}
-		role="button"
-		tabindex="0"
-		data-line-index={lineIndex}
-		data-word-index={wordIndex}
-		onmousedown={handleMouseDown}
-		onclick={handleClick}
-		onkeydown={handleKeydown}
-	><span class="punct">{word.prefix_punct ?? ''}</span>{word.surface}<span class="punct">{word.suffix_punct ?? ''}</span></span>
+		class="word-wrapper"
+		class:word-wrapper-gloss={showGloss && word.translation}
+	>
+		<span
+			class="word {colorClass}"
+			class:word-selected={selected}
+			class:word-due={word.is_due}
+			style={dynamicStyle}
+			role="button"
+			tabindex="0"
+			data-line-index={lineIndex}
+			data-word-index={wordIndex}
+			onmousedown={handleMouseDown}
+			onclick={handleClick}
+			onkeydown={handleKeydown}
+		><span class="punct">{word.prefix_punct ?? ''}</span>{word.surface}<span class="punct">{word.suffix_punct ?? ''}</span></span>
+		{#if showGloss && word.translation}
+			<span class="word-gloss">{word.translation}</span>
+		{/if}
+	</span>
 </Tooltip>
 
 <style>
@@ -140,6 +150,21 @@
 	}
 	.word-selected {
 		background-color: rgba(99, 102, 241, 0.2);
+	}
+	.word-wrapper {
+		display: inline-flex;
+		flex-direction: column;
+		align-items: center;
+		vertical-align: top;
+	}
+	.word-wrapper-gloss {
+		margin-bottom: 1.1rem;
+	}
+	.word-gloss {
+		font-size: 0.7rem;
+		color: var(--color-muted, #6b7280);
+		line-height: 1.1;
+		white-space: nowrap;
 	}
 	.punct {
 		/* Neutral foreground so punctuation stays uncolored even when the word

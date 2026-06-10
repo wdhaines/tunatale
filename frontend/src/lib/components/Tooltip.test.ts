@@ -2,7 +2,8 @@
  * Tests for Tooltip.svelte — interactive hover popover.
  */
 import { describe, it, expect, vi } from "vitest";
-import { render } from "@testing-library/svelte";
+import { render, fireEvent } from "@testing-library/svelte";
+import { tick } from "svelte";
 import TooltipTest from "./TooltipTest.svelte";
 import { makeWordToken } from "$lib/../test/factories";
 
@@ -292,5 +293,122 @@ describe("Tooltip", () => {
     });
     await getByRole("button", { name: /^reset$/i }).click();
     expect(onSetState).toHaveBeenCalledWith(15, "new");
+  });
+
+  describe("long-press to open / tap to grade", () => {
+    it("tooltip is hidden by default (no hover/press)", () => {
+      const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+      const { container } = render(TooltipTest, {
+        props: { translation: "hello", word, childText: "zdravo" },
+      });
+      const wrap = container.querySelector(".tt-wrap")!;
+      expect(wrap.className).not.toContain("open");
+    });
+
+    it("a plain tap does NOT open the tooltip and lets the grade click through", async () => {
+      const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+      const onChildClick = vi.fn();
+      const { getByText, container } = render(TooltipTest, {
+        props: { translation: "hello", word, childText: "tap-me", onChildClick },
+      });
+      const child = getByText("tap-me");
+      const wrap = container.querySelector(".tt-wrap")!;
+
+      await fireEvent.pointerDown(child);
+      await fireEvent.pointerUp(child);
+      await fireEvent.click(child);
+
+      expect(wrap.className).not.toContain("open");
+      expect(onChildClick).toHaveBeenCalledTimes(1);
+    });
+
+    it("a long-press opens the tooltip and suppresses the grade click", async () => {
+      vi.useFakeTimers();
+      try {
+        const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+        const onChildClick = vi.fn();
+        const { getByText, container } = render(TooltipTest, {
+          props: { translation: "hello", word, childText: "hold-me", onChildClick },
+        });
+        const child = getByText("hold-me");
+        const wrap = container.querySelector(".tt-wrap")!;
+
+        await fireEvent.pointerDown(child);
+        vi.advanceTimersByTime(500);
+        await tick();
+        expect(wrap.className).toContain("open");
+
+        // The click a long-press fires on release must be swallowed (no grade).
+        await fireEvent.pointerUp(child);
+        await fireEvent.click(child);
+        expect(onChildClick).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("pointer movement cancels the long-press (no open)", async () => {
+      vi.useFakeTimers();
+      try {
+        const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+        const { getByText, container } = render(TooltipTest, {
+          props: { translation: "hello", word, childText: "drag-me" },
+        });
+        const child = getByText("drag-me");
+        const wrap = container.querySelector(".tt-wrap")!;
+
+        await fireEvent.pointerDown(child);
+        await fireEvent.pointerMove(child);
+        vi.advanceTimersByTime(500);
+
+        expect(wrap.className).not.toContain("open");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("click-outside closes an open tooltip", async () => {
+      vi.useFakeTimers();
+      try {
+        const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+        const { getByText, container } = render(TooltipTest, {
+          props: { translation: "hello", word, childText: "hold-me" },
+        });
+        const child = getByText("hold-me");
+        const wrap = container.querySelector(".tt-wrap")!;
+
+        await fireEvent.pointerDown(child);
+        vi.advanceTimersByTime(500);
+        await tick();
+        expect(wrap.className).toContain("open");
+
+        await fireEvent.mouseDown(document.body);
+        expect(wrap.className).not.toContain("open");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("mousedown inside the open tooltip does NOT close it", async () => {
+      vi.useFakeTimers();
+      try {
+        const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+        const { getByText, container } = render(TooltipTest, {
+          props: { translation: "hello", word, childText: "hold-me" },
+        });
+        const child = getByText("hold-me");
+        const wrap = container.querySelector(".tt-wrap")!;
+
+        await fireEvent.pointerDown(child);
+        vi.advanceTimersByTime(500);
+        await tick();
+        expect(wrap.className).toContain("open");
+
+        await fireEvent.mouseDown(child);
+        expect(wrap.className).toContain("open");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

@@ -95,6 +95,49 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(getByText("Render Audio")).toBeTruthy();
   });
 
+  it("renders lesson title as the primary h1 heading", () => {
+    const { getByRole } = render(Page, {
+      props: { data: { curriculum, lesson, audio: null, transcript: null } },
+    });
+    expect(getByRole("heading", { level: 1, name: /Day 1: Coffee/ })).toBeTruthy();
+  });
+
+  it("does not render the back-link as a heading", () => {
+    const { container } = render(Page, {
+      props: { data: { curriculum, lesson, audio: null, transcript: null } },
+    });
+    // The back-link is a plain anchor, not inside any heading
+    const backLink = container.querySelector('a[href="/c/cid-1"]');
+    expect(backLink).toBeTruthy();
+    expect(backLink!.closest("h1, h2, h3, h4, h5, h6")).toBeNull();
+  });
+
+  it("defaults to Read mode with transcript visible", () => {
+    const { getByText, queryByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio: null, transcript } },
+    });
+    expect(getByText("a coffee please")).toBeTruthy();
+    expect(queryByText("Mark as Listened")).toBeFalsy();
+  });
+
+  it("switches to Listen mode showing listen action", () => {
+    const { getByText, queryByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio: null, transcript } },
+    });
+    fireEvent.click(getByText("Listen"));
+    expect(queryByText("a coffee please")).toBeFalsy();
+    expect(getByText("Mark as Listened")).toBeTruthy();
+  });
+
+  it("toggles back to Read mode after switching to Listen", () => {
+    const { getByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio: null, transcript } },
+    });
+    fireEvent.click(getByText("Listen"));
+    fireEvent.click(getByText("Read"));
+    expect(getByText("a coffee please")).toBeTruthy();
+  });
+
   it("shows AudioPlayer when audio is pre-loaded", () => {
     const { queryByText, container } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript: null } },
@@ -135,9 +178,10 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     mockMarkAsListened.mockResolvedValue({ status: "ok", registered: 3 });
     mockGetTranscript.mockResolvedValue(transcript);
 
-    const { findByText } = render(Page, {
+    const { findByText, getByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
     });
+    await fireEvent.click(getByText("Listen"));
     const btn = await findByText("Mark as Listened");
     await fireEvent.click(btn);
 
@@ -153,6 +197,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     const { getByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
     });
+    fireEvent.click(getByText("Listen"));
     expect(getByText("✓ Listened")).toBeTruthy();
   });
 
@@ -253,9 +298,10 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     mockMarkAsListened.mockRejectedValue(new Error("listen failed"));
     mockGetTranscript.mockResolvedValue(transcript);
 
-    const { findByText } = render(Page, {
+    const { findByText, getByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
     });
+    await fireEvent.click(getByText("Listen"));
     await fireEvent.click(await findByText("Mark as Listened"));
 
     expect(await findByText("listen failed")).toBeTruthy();
@@ -265,12 +311,56 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     mockMarkAsListened.mockRejectedValue("plain listen error");
     mockGetTranscript.mockResolvedValue(transcript);
 
-    const { findByText } = render(Page, {
+    const { findByText, getByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
     });
+    await fireEvent.click(getByText("Listen"));
     await fireEvent.click(await findByText("Mark as Listened"));
 
     expect(await findByText("plain listen error")).toBeTruthy();
+  });
+
+  it("shows listen confirmation with plural words after markAsListened", async () => {
+    mockMarkAsListened.mockResolvedValue({ status: "ok", registered: 3 });
+    mockGetTranscript.mockResolvedValue(transcript);
+
+    const { findByText, getByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+    await fireEvent.click(getByText("Listen"));
+    await fireEvent.click(await findByText("Mark as Listened"));
+
+    expect(await findByText(/3.*words tracked/i)).toBeTruthy();
+  });
+
+  it("shows singular '1 word tracked' when registered is 1", async () => {
+    mockMarkAsListened.mockResolvedValue({ status: "ok", registered: 1 });
+    mockGetTranscript.mockResolvedValue(transcript);
+
+    const { findByText, getByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+    await fireEvent.click(getByText("Listen"));
+    await fireEvent.click(await findByText("Mark as Listened"));
+
+    expect(await findByText(/1 word tracked/i)).toBeTruthy();
+  });
+
+  it("hides listen confirmation when error is set after markAsListened", async () => {
+    mockMarkAsListened.mockResolvedValue({ status: "ok", registered: 3 });
+    // The transcript refresh after markAsListened fails → error is set, which
+    // should suppress the confirmation that was set by the successful listen.
+    mockGetTranscript.mockRejectedValueOnce(new Error("refresh failed"));
+
+    const { queryByText, getByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+    await fireEvent.click(getByText("Listen"));
+    await fireEvent.click(getByText("Mark as Listened"));
+
+    await vi.waitFor(() => {
+      expect(queryByText(/words tracked/i)).toBeFalsy();
+    });
   });
 
   it("shows plural phrases label when a section has more than one phrase", () => {

@@ -19,6 +19,8 @@
 		translated: 'Translated'
 	};
 
+	let mode = $state<'read' | 'listen'>('read');
+
 	// untrack: intentionally snapshot load data as mutable local state
 	let audio: LessonAudio | null = $state(untrack(() => data.audio));
 	let transcript: TranscriptData | null = $state(untrack(() => data.transcript));
@@ -286,15 +288,20 @@
 </script>
 
 <main>
-	<h1><a href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a></h1>
+	<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
 
-	<section class="lesson-header">
-		<h2>{data.lesson.title}</h2>
-		<ul>
+	<section class="card">
+		<h1>{data.lesson.title}</h1>
+		<p class="section-meta">
 			{#each data.lesson.sections as section, i (i)}
-				<li>{SECTION_TITLES[section.type] ?? section.type} — {section.phrases.length} phrase{section.phrases.length === 1 ? '' : 's'}</li>
+				{SECTION_TITLES[section.type] ?? section.type} — {section.phrases.length} phrase{section.phrases.length === 1 ? '' : 's'}{i < data.lesson.sections.length - 1 ? ' · ' : ''}
 			{/each}
-		</ul>
+		</p>
+
+		<div class="toggle-pill">
+			<button class:active={mode === 'read'} onclick={() => mode = 'read'}>Read</button>
+			<button class:active={mode === 'listen'} onclick={() => mode = 'listen'}>Listen</button>
+		</div>
 
 		{#if !audio}
 			<button onclick={handleRenderAudio} disabled={audioLoading}>
@@ -313,29 +320,44 @@
 		<AudioPlayer {audio} />
 	{/if}
 
-	<section class="transcript-section">
-		{#if transcript}
-			<Transcript
-				{transcript}
-				lesson={data.lesson}
-				{isListened}
-				{listenLoading}
-				{listenResult}
-				{error}
-				onWordClick={handleWordClick}
-				onCollocationStateChange={handleCollocationStateChange}
-				onMarkListened={handleMarkListened}
-				onCreatePhrase={handleCreatePhrase}
-				tooltipActions={tooltipActions}
-			/>
-		{:else if transcriptLoading}
-			<TranscriptPlaceholder lesson={data.lesson} />
-		{:else}
-			<p class="muted">No transcript available.</p>
-		{/if}
-	</section>
+	{#if mode === 'read'}
+		<section class="card">
+			{#if transcript}
+				<Transcript
+					{transcript}
+					lesson={data.lesson}
+					onWordClick={handleWordClick}
+					onCollocationStateChange={handleCollocationStateChange}
+					onCreatePhrase={handleCreatePhrase}
+					tooltipActions={tooltipActions}
+				/>
+			{:else if transcriptLoading}
+				<TranscriptPlaceholder lesson={data.lesson} />
+			{:else}
+				<p class="muted">No transcript available.</p>
+			{/if}
+		</section>
+	{:else}
+		<section class="card listen-card">
+			<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened} disabled={listenLoading}>
+				{#if listenLoading}
+					Registering…
+				{:else if isListened}
+					✓ Listened
+				{:else}
+					Mark as Listened
+				{/if}
+			</button>
+			{#if listenResult && !error}
+				<p class="listen-confirmation">
+					{listenResult.registered}
+					{listenResult.registered === 1 ? 'word' : 'words'} tracked in SRS
+				</p>
+			{/if}
+		</section>
+	{/if}
 
-	<section class="regenerate-section">
+	<section class="card">
 		<p class="muted">
 			Regenerating rewrites this day's dialogue with the current prompt (better declension &amp;
 			conjugation coverage). Existing cards stay; new vocabulary and morphology drills are added when
@@ -352,33 +374,28 @@
 		max-width: 700px;
 		margin: 1.5rem auto;
 		padding: 0 1rem;
+		display: flex;
+		flex-direction: column;
+		gap: 1.25rem;
 	}
-	h1 a {
+	.breadcrumb {
+		display: inline-block;
 		color: var(--color-muted);
 		font-size: 0.9rem;
 		font-weight: 600;
 		text-decoration: none;
 	}
-	h1 a:hover {
+	.breadcrumb:hover {
 		color: var(--color-primary);
 	}
-	.lesson-header {
-		margin-top: 1rem;
-		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-lg);
-		box-shadow: var(--shadow-sm);
-		padding: 1.25rem;
-	}
-	.lesson-header h2 {
+	h1 {
 		margin-top: 0;
 		font-size: 1.4rem;
 		font-weight: 800;
 		letter-spacing: -0.01em;
 	}
-	.lesson-header ul {
-		padding-left: 1.25rem;
-		margin: 0.5rem 0;
+	.section-meta {
+		margin: 0.5rem 0 0;
 		font-size: 0.9rem;
 		color: var(--color-muted);
 	}
@@ -409,25 +426,9 @@
 		font-size: 0.85rem;
 		margin-top: 0.5rem;
 	}
-	.transcript-section {
-		margin-top: 1.25rem;
-		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-lg);
-		box-shadow: var(--shadow-sm);
-		padding: 1.25rem;
-	}
 	.muted {
 		color: var(--color-muted);
 		font-size: 0.9rem;
-	}
-	.regenerate-section {
-		margin-top: 1.25rem;
-		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-lg);
-		box-shadow: var(--shadow-sm);
-		padding: 1.25rem;
 	}
 	.regen-btn {
 		background: transparent;
@@ -436,5 +437,62 @@
 	}
 	.regen-btn:not(:disabled):hover {
 		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+	}
+	.toggle-pill {
+		display: flex;
+		gap: 0;
+		margin-top: 0.75rem;
+		background: var(--color-surface-2);
+		border-radius: var(--radius-pill);
+		padding: 2px;
+		width: fit-content;
+	}
+	.toggle-pill button {
+		margin: 0;
+		padding: 0.35rem 1rem;
+		border: none;
+		border-radius: var(--radius-pill);
+		background: transparent;
+		color: var(--color-muted);
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.15s ease, color 0.15s ease;
+	}
+	.toggle-pill button.active {
+		background: var(--color-bg, #fff);
+		color: var(--color-text);
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+	}
+	.toggle-pill button:not(.active):hover {
+		color: var(--color-text);
+	}
+	.listen-card {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 1.5rem;
+	}
+	.listen-btn {
+		padding: 0.5rem 1.25rem;
+		background: var(--color-primary);
+		color: var(--color-on-primary);
+		border: none;
+		border-radius: var(--radius-pill);
+		cursor: pointer;
+		font-weight: 600;
+	}
+	.listen-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.listen-btn.listened {
+		background: var(--color-success);
+	}
+	.listen-confirmation {
+		color: var(--color-success);
+		font-size: 0.85rem;
+		margin: 0;
 	}
 </style>

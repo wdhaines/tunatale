@@ -135,39 +135,12 @@ const transcriptWithCollocation: TranscriptData = {
 function defaultProps(overrides = {}) {
   return {
     transcript: baseTranscript,
-    isListened: false,
-    listenLoading: false,
-    listenResult: null,
-    error: "",
     onWordClick: vi.fn(),
-    onMarkListened: vi.fn(),
     ...overrides,
   };
 }
 
 describe("Transcript", () => {
-  it("renders Mark as Listened button", () => {
-    const { getByText } = render(Transcript, { props: defaultProps() });
-    expect(getByText("Mark as Listened")).toBeTruthy();
-  });
-
-  it("shows ✓ Listened when isListened is true", () => {
-    const { getByText } = render(Transcript, { props: defaultProps({ isListened: true }) });
-    expect(getByText("✓ Listened")).toBeTruthy();
-  });
-
-  it("shows Registering… when listenLoading is true", () => {
-    const { getByText } = render(Transcript, { props: defaultProps({ listenLoading: true }) });
-    expect(getByText("Registering…")).toBeTruthy();
-  });
-
-  it("calls onMarkListened when button is clicked", async () => {
-    const onMarkListened = vi.fn();
-    const { getByText } = render(Transcript, { props: defaultProps({ onMarkListened }) });
-    await fireEvent.click(getByText("Mark as Listened"));
-    expect(onMarkListened).toHaveBeenCalled();
-  });
-
   it("renders key phrases when present", () => {
     const { getByText } = render(Transcript, {
       props: defaultProps({ transcript: transcriptWithPhrases }),
@@ -193,50 +166,6 @@ describe("Transcript", () => {
   it("does not render Dialogue section when empty", () => {
     const { queryByText } = render(Transcript, { props: defaultProps() });
     expect(queryByText("Dialogue")).toBeFalsy();
-  });
-
-  it("shows listen confirmation when listenResult is set and no error", () => {
-    const { getByText } = render(Transcript, {
-      props: defaultProps({ listenResult: { registered: 3 }, error: "" }),
-    });
-    expect(getByText(/3.*words tracked/i)).toBeTruthy();
-  });
-
-  it("shows singular word when registered is 1", () => {
-    const { getByText } = render(Transcript, {
-      props: defaultProps({ listenResult: { registered: 1 }, error: "" }),
-    });
-    expect(getByText(/1 word tracked/i)).toBeTruthy();
-  });
-
-  it("hides listen confirmation when error is set", () => {
-    const { queryByText } = render(Transcript, {
-      props: defaultProps({ listenResult: { registered: 3 }, error: "something went wrong" }),
-    });
-    expect(queryByText(/words tracked/i)).toBeFalsy();
-  });
-
-  it("shows listen confirmation after listenResult changes from null to non-null (reactive update)", async () => {
-    const { rerender, queryByText } = render(Transcript, {
-      props: defaultProps({ listenResult: null }),
-    });
-    expect(queryByText(/words tracked/i)).toBeFalsy();
-
-    await rerender(defaultProps({ listenResult: { registered: 2 }, error: "" }));
-
-    await waitFor(() => {
-      expect(queryByText(/2.*words tracked/i)).toBeTruthy();
-    });
-  });
-
-  it("shows singular word after listenResult changes to registered=1", async () => {
-    const { rerender, findByText } = render(Transcript, {
-      props: defaultProps({ listenResult: null }),
-    });
-
-    await rerender(defaultProps({ listenResult: { registered: 1 }, error: "" }));
-
-    expect(await findByText(/1 word tracked/i)).toBeTruthy();
   });
 
   it("wraps collocation tokens in a collocation-span container", () => {
@@ -1452,7 +1381,50 @@ describe("Transcript", () => {
       expect(container.querySelector(".line-slow")!.textContent).toContain("zdra...vo");
     });
 
-    it("progressive disclosure: translation text hidden by default, shown when Translation toggle is enabled", async () => {
+    it("progressive disclosure: per-word gloss hidden by default, shown when Gloss toggle is enabled", async () => {
+      const transcriptData: TranscriptData = {
+        lesson_id: "l1",
+        key_phrases: [],
+        dialogue_lines: [
+          {
+            role: "female-1",
+            sentence: "",
+            words: [
+              {
+                surface: "zdravo",
+                lemma: "zdravo",
+                srs_state: "new",
+                srs_item_id: null,
+                translation: "hello",
+                collocation_span_id: null,
+                collocation_start: false,
+                collocation_srs_state: null,
+                collocation_lemma: null,
+                collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
+              },
+            ],
+          },
+        ],
+      };
+      const { container, getByText } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptData }),
+      });
+      expect(container.querySelector(".word-gloss")).toBeNull();
+      await fireEvent.click(getByText("Gloss"));
+      const gloss = container.querySelector(".word-gloss");
+      expect(gloss).not.toBeNull();
+      expect(gloss!.textContent).toContain("hello");
+    });
+
+    it("progressive disclosure: interlinear L1 hidden by default, shown when Interlinear toggle is enabled", async () => {
       const lesson: LessonDetail = {
         id: "l1",
         day: 1,
@@ -1469,7 +1441,7 @@ describe("Transcript", () => {
             type: "translated",
             phrases: [
               { text: "zdravo", role: "female-1", language_code: "sl", voice_id: "v" },
-              { text: "Hello", role: "narrator", language_code: "en", voice_id: "v" },
+              { text: "hello there", role: "narrator", language_code: "en", voice_id: "v" },
             ],
           },
         ],
@@ -1509,17 +1481,14 @@ describe("Transcript", () => {
       const { container, getByText, queryByText } = render(Transcript, {
         props: defaultProps({ transcript: transcriptData, lesson }),
       });
-      expect(queryByText("Hello")).toBeFalsy();
-      await fireEvent.click(getByText("Translation"));
-      expect(container.querySelector(".line-translation")).not.toBeNull();
-      expect(container.querySelector(".line-translation")!.textContent).toContain("Hello");
-    });
-
-    it("mark-listened bar is rendered inside a sticky footer", () => {
-      const { container } = render(Transcript, { props: defaultProps() });
-      const footer = container.querySelector(".listen-footer");
-      expect(footer).not.toBeNull();
-      expect(footer!.querySelector(".listen-btn")).not.toBeNull();
+      // Interlinear L1 not shown by default
+      expect(queryByText("hello there")).toBeFalsy();
+      expect(container.querySelector(".line-interlinear")).toBeNull();
+      // Toggle Interlinear
+      await fireEvent.click(getByText("Interlinear"));
+      const interlinear = container.querySelector(".line-interlinear");
+      expect(interlinear).not.toBeNull();
+      expect(interlinear!.textContent).toContain("hello there");
     });
 
     it("translation input can be updated and is included in onCreatePhrase call", async () => {

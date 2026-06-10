@@ -9,7 +9,7 @@
 	let { audio }: Props = $props();
 </script>
 
-<section class="audio-section">
+<section class="card">
 	<h2>Audio Player</h2>
 	<audio controls src={api.audioUrl(audio.audio_id)}>
 		Your browser does not support the audio element.
@@ -40,14 +40,6 @@
 </section>
 
 <style>
-	.audio-section {
-		margin-top: 1.5rem;
-		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-lg);
-		box-shadow: var(--shadow-sm);
-		padding: 1.25rem;
-	}
 	h2 {
 		margin-top: 0;
 		font-size: 1.1rem;

@@ -22,13 +22,8 @@
 	interface Props {
 		transcript: TranscriptData;
 		lesson?: LessonDetail;
-		isListened: boolean;
-		listenLoading: boolean;
-		listenResult: { registered: number } | null;
-		error: string;
 		onWordClick?: (word: WordToken, lineIndex: number) => void;
 		onCollocationStateChange?: (span_id: number) => void;
-		onMarkListened: () => void;
 		onCreatePhrase?: (args: CreatePhraseArgs) => void | Promise<void>;
 		tooltipActions?: TooltipActions;
 	}
@@ -36,13 +31,8 @@
 	let {
 		transcript,
 		lesson,
-		isListened,
-		listenLoading,
-		listenResult,
-		error,
 		onWordClick,
 		onCollocationStateChange,
-		onMarkListened,
 		onCreatePhrase,
 		tooltipActions
 	}: Props = $props();
@@ -68,7 +58,10 @@
 
 	// Progressive-disclosure toggles for variations
 	let showSlow = $state(false);
-	let showTranslation = $state(false);
+	let showGloss = $state(false);
+	// Interlinear: the whole-line L1 translation under each L2 line (BDT-style,
+	// cover-one-side reading). Distinct from per-word Gloss.
+	let showInterlinear = $state(false);
 
 	function resetSelection() {
 		selection = null;
@@ -353,10 +346,17 @@
 					<button
 						type="button"
 						class="toggle-pill"
-						class:active={showTranslation}
-						aria-pressed={showTranslation}
-						onclick={() => (showTranslation = !showTranslation)}
-					>Translation</button>
+						class:active={showGloss}
+						aria-pressed={showGloss}
+						onclick={() => (showGloss = !showGloss)}
+					>Gloss</button>
+					<button
+						type="button"
+						class="toggle-pill"
+						class:active={showInterlinear}
+						aria-pressed={showInterlinear}
+						onclick={() => (showInterlinear = !showInterlinear)}
+					>Interlinear</button>
 				</div>
 			</div>
 
@@ -432,6 +432,7 @@
 												selected={wordIsSelected(lineIndex, wIdx)}
 												sentence={lineSentence}
 												tooltipActions={tooltipActions}
+												{showGloss}
 											/>
 										</span>
 									{/if}
@@ -440,8 +441,8 @@
 							{#if showSlow && line.slowText}
 								<div class="line-slow">{line.slowText}</div>
 							{/if}
-							{#if showTranslation && line.translatedText}
-								<div class="line-translation">{line.translatedText}</div>
+							{#if showInterlinear && line.translatedText}
+								<div class="line-interlinear">{line.translatedText}</div>
 							{/if}
 						</div>
 					</div>
@@ -497,69 +498,12 @@
 		{/if}
 	</div>
 
-	<div class="listen-footer">
-		<button
-			class="listen-btn"
-			class:listened={isListened}
-			onclick={onMarkListened}
-			disabled={listenLoading}
-		>
-			{#if listenLoading}
-				Registering…
-			{:else if isListened}
-				✓ Listened
-			{:else}
-				Mark as Listened
-			{/if}
-		</button>
-
-		{#if listenResult && !error}
-			<p class="listen-confirmation">
-				{listenResult.registered}
-				{listenResult.registered === 1 ? 'word' : 'words'} tracked in SRS
-			</p>
-		{/if}
-	</div>
 </div>
 
 <style>
 	.transcript-wrapper {
 		margin-top: 1.25rem;
 		position: relative;
-	}
-	.listen-footer {
-		position: sticky;
-		bottom: 0;
-		margin-top: 1.25rem;
-		padding: 0.75rem 1rem;
-		background: var(--color-bg, #fff);
-		border-top: 1px solid var(--color-border);
-		z-index: 5;
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.75rem;
-		box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.03);
-	}
-	.listen-btn {
-		padding: 0.5rem 1.25rem;
-		background: var(--color-primary);
-		color: white;
-		border: none;
-		border-radius: 4px;
-		cursor: pointer;
-	}
-	.listen-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-	.listen-btn.listened {
-		background: var(--color-success);
-	}
-	.listen-confirmation {
-		color: var(--color-success);
-		font-size: 0.85rem;
-		margin: 0;
 	}
 	.transcript-section {
 		margin-bottom: 1.25rem;
@@ -610,12 +554,13 @@
 		background: transparent;
 		border: 1px solid var(--color-primary, #2563eb);
 		color: var(--color-primary, #2563eb);
-		border-radius: 3px;
+		border-radius: var(--radius-pill);
 		cursor: pointer;
 		margin-bottom: 0.5rem;
 	}
 	.new-phrase-btn:hover {
-		background: rgba(37, 99, 235, 0.08);
+		background: var(--color-primary-hover);
+		color: var(--color-on-primary);
 	}
 	.key-phrases-list {
 		list-style: none;
@@ -683,10 +628,14 @@
 		font-size: 0.85rem;
 		font-style: italic;
 	}
-	.line-translation {
-		margin-top: 0.15rem;
-		color: var(--color-muted, #6b7280);
-		font-size: 0.85rem;
+	/* Interlinear L1 reads as a deliberate pair under the L2 line: indented and
+	   accented so the eye groups it with the sentence above (cover-one-side). */
+	.line-interlinear {
+		margin-top: 0.2rem;
+		padding-left: 0.6rem;
+		border-left: 2px solid var(--color-border);
+		color: var(--color-secondary, #5c6672);
+		font-size: 0.9rem;
 	}
 	.collocation-span {
 		display: inline;
@@ -745,9 +694,9 @@
 	.confirm-create {
 		padding: 0.2rem 0.6rem;
 		background: var(--color-primary, #2563eb);
-		color: white;
+		color: var(--color-on-primary, #fff);
 		border: none;
-		border-radius: 3px;
+		border-radius: var(--radius-pill);
 		cursor: pointer;
 		font-size: 0.8rem;
 	}
@@ -755,7 +704,7 @@
 		padding: 0.2rem 0.6rem;
 		background: transparent;
 		border: 1px solid var(--color-muted, #9ca3af);
-		border-radius: 3px;
+		border-radius: var(--radius-pill);
 		cursor: pointer;
 		font-size: 0.8rem;
 	}
@@ -775,7 +724,7 @@
 		padding: 0.3rem 0.75rem;
 		background: transparent;
 		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 4px;
+		border-radius: var(--radius-pill);
 		cursor: pointer;
 		color: var(--color-muted, #6b7280);
 	}
@@ -807,9 +756,9 @@
 	.add-phrase-create {
 		padding: 0.2rem 0.6rem;
 		background: var(--color-primary, #2563eb);
-		color: white;
+		color: var(--color-on-primary, #fff);
 		border: none;
-		border-radius: 3px;
+		border-radius: var(--radius-pill);
 		cursor: pointer;
 		font-size: 0.8rem;
 	}

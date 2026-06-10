@@ -38,7 +38,7 @@ The spacing between (4) and (5) is the critical move: it has to be long enough t
 | 1. Intensive analysis | Lesson playback + transcript with word-status coloring (PART 15.3). Same shape: audio-anchored text. | ✅ |
 | 2. Phonetic analysis | IPA field on the Slovene Vocabulary notetype + Forvo audio per word. **No prosody annotation, no pitch contours.** TT punts on prosody to the user's separate phonics deck. | ⚠️ Partial |
 | 3. Smart review (varied modalities) | KEY_PHRASES → NATURAL_SPEED → SLOW_SPEED → TRANSLATED (PART 6, also `docs/pimsleur.md`). The varied-modality *spirit* is there; the *cycle order* differs. | ⚠️ Different shape |
-| 4. Direct translation L2 → L1 | Transcript translation button + the TRANSLATED section (every L2 line followed by narrator L1). User reads / hears the translation; doesn't *produce* it. | ⚠️ Reception only |
+| 4. Direct translation L2 → L1 | Transcript translation button + the TRANSLATED section (every L2 line followed by narrator L1). User reads / hears the translation; doesn't *produce* it. **Read mode v1 adds a toggleable *interlinear* L2↔L1 display (cover-one-side, no typing) as the reading-side seed of the BDT loop — see `docs/learning-modes.md`.** | ⚠️ Reception only (interlinear display landing in Read v1) |
 | 5. Reverse translation L1 → L2 (oral) | Production-direction SRS cards (PRODUCTION L1→L2): the front is `{{Image}}` only, the back is L2 + audio. User mentally produces L2 from a semantic prompt. **But it's per-word, not per-passage, and there's no oral-output check.** | ⚠️ Per-word, not passage |
 | 6. Reverse translation L1 → L2 (written) | **Not implemented.** No write-your-L2 flow exists. | ❌ |
 
@@ -94,6 +94,7 @@ If the user (this repo's owner) extracts concrete prescriptions from the paid co
 
 ## Cross-references
 
+- `docs/learning-modes.md` — where BDT lands in the mode map: the **interlinear display** is in Read v1; the **typed translate-back loop** (type L1 → compare → write-back L2 → match) is deferred to Read phase 2 / Produce mode ("Phase G" above).
 - `docs/prd.md` §7.3 (implicit SRS) — adjacent territory. BDT's reverse-translation could supply *explicit* production signal the way `/listen` supplies implicit reception signal.
 - `docs/pimsleur.md` — the four-section lesson is the existing varied-modality scaffold; BDT's step 3 would overlap heavily.
 - `docs/lingq.md` — sibling input-side influence. LingQ is high-throughput / low-depth; BDT is the opposite. TT today is closer to LingQ.

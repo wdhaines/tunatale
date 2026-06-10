@@ -165,6 +165,31 @@ describe("WordSpan", () => {
     expect(getByRole("button").getAttribute("title")).toBeNull();
   });
 
+  describe("interlinear gloss (showGloss)", () => {
+    it("does not render word-gloss by default", () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ translation: "hello" }) },
+      });
+      expect(container.querySelector(".word-gloss")).toBeNull();
+    });
+
+    it("renders word-gloss when showGloss is true and word has translation", () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ translation: "hello" }), showGloss: true },
+      });
+      const gloss = container.querySelector(".word-gloss");
+      expect(gloss).not.toBeNull();
+      expect(gloss!.textContent).toBe("hello");
+    });
+
+    it("does not render word-gloss when showGloss is true but translation is null", () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ translation: null }), showGloss: true },
+      });
+      expect(container.querySelector(".word-gloss")).toBeNull();
+    });
+  });
+
   it("shows translation text in tooltip element", () => {
     const { container } = render(WordSpan, {
       props: { word: makeWordToken({ translation: "hello", srs_state: "new" }) },
