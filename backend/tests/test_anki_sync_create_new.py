@@ -585,6 +585,46 @@ class TestSyncCreateNewRouting:
         assert (sync_mod._MEDIA_DIR / aud).read_bytes() == b"mp3_data"
         assert (sync_mod._MEDIA_DIR / img).read_bytes() == b"img_data"
 
+    async def test_sync_create_new_reuses_existing_tt_media(self, tmp_path):
+        """A card completed at add time (image + audio already in TT) must NOT be
+        re-fetched at sync — sync attaches the existing media. Without this a card
+        would get a second, different Pixabay image and Anki↔TT would diverge."""
+        import app.anki.sync as sync_mod
+
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        coll_id = db.get_collocation_id_by_guid(db.get_collocation("voda").guid)
+
+        # Pre-store the add-time media (what generate_vocab_media writes at /items).
+        (sync_mod._MEDIA_DIR / "sl_voda.mp3").write_bytes(b"addtime-aud")
+        (sync_mod._MEDIA_DIR / "img_water.jpg").write_bytes(b"addtime-img")
+        db.add_media(coll_id, "audio_forvo", "sl_voda.mp3", "media/sl_voda.mp3", "sl_voda.mp3", "s", 11)
+        db.add_media(coll_id, "image", "img_water.jpg", "media/img_water.jpg", "img_water.jpg", "s", 11)
+
+        called = False
+
+        async def _spy_media(*_a, **_k):  # must NOT be invoked
+            nonlocal called
+            called = True
+            return MediaResult(audio_bytes=b"OTHER", audio_source="forvo", image_bytes=b"OTHER", image_ext="jpg")
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn, media_dir=tmp_path)
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", _media_fn=_spy_media
+        )
+
+        assert called is False, "media_fn was called despite existing TT media"
+        # No duplicate media rows — still exactly the add-time filenames.
+        assert db.get_audio_filename(coll_id) == "sl_voda.mp3"
+        assert db.get_image_filename(coll_id) == "img_water.jpg"
+        # The note references the reused filenames and the bytes were copied to Anki.
+        flds = anki_conn.execute("SELECT n.flds FROM notes n").fetchone()["flds"]
+        assert "[sound:sl_voda.mp3]" in flds
+        assert '<img src="img_water.jpg">' in flds
+        assert (tmp_path / "sl_voda.mp3").read_bytes() == b"addtime-aud"
+        assert (tmp_path / "img_water.jpg").read_bytes() == b"addtime-img"
+
     async def test_sync_create_new_mixed_batch(self):
         """One vocab + one cloze in the same batch: both land correctly."""
         db = _make_db()

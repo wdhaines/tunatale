@@ -73,13 +73,21 @@ def _settings_overrides(monkeypatch, tmp_path):
     # no-ops in tests.
     monkeypatch.setattr(settings, "anki_media_path", tmp_path / "collection.media")
     monkeypatch.setattr(settings, "sync_log", tmp_path / "logs" / "sync.log")
-    # TT's canonical media dir (served by the frontend; written by sync media gen).
-    # Pin to tmp so tests never write the real backend/media. Hardcoded module
-    # constants, so patch both the writer (sync) and server (srs) views.
+    # Add-time vocab media (POST /items, /listen, base cards) reads this key to
+    # decide whether to fetch image+audio. A developer's real ``.env`` key would
+    # otherwise make card-creating endpoint tests hit Pixabay/Forvo live. Pin
+    # empty so generation no-ops by default; tests that exercise it set the key
+    # and inject the fetch/query functions (see test_vocab_media_endpoints.py).
+    monkeypatch.setattr(settings, "pixabay_api_key", "")
+    # TT's canonical media dir (served by the frontend; written by sync media gen
+    # and the add-time vocab_media path). Pin to tmp so tests never write the real
+    # backend/media. Hardcoded module constants, so patch every module's view:
+    # the writer (sync), the server (srs), and the add-time store (vocab_media).
     tt_media = tmp_path / "tt-media"
     tt_media.mkdir(exist_ok=True)
     monkeypatch.setattr("app.anki.sync._MEDIA_DIR", tt_media)
     monkeypatch.setattr("app.api.srs._MEDIA_DIR", tt_media)
+    monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tt_media)
     # Model-name discovery caches to ~/.tunatale/anki_model_name.txt. Pin to tmp so
     # tests neither read a developer's real cache (masking failures — the file is
     # absent on CI) nor write the real one.

@@ -167,6 +167,36 @@ def _triples_to_dicts(db, triples: list[tuple[int, SRSItem, str]]) -> list[dict]
     return result
 
 
+async def _generate_add_time_media(
+    db, llm, coll_id: int, unit: SyntacticUnit, *, used_image_urls: set[str] | None = None
+) -> None:
+    """Fetch image + word audio for a freshly-created vocab card, inline.
+
+    So a card the user creates in TunaTale is complete in /review immediately —
+    not blank until its first sync (the nasvidenje gap). Cloze cards are skipped
+    (they get sentence audio via ``synthesize_cloze_audios``), and the underlying
+    ``generate_vocab_media`` no-ops when no Pixabay key is configured. Best-effort:
+    never raises, so a media hiccup can't fail card creation. ``sync_create_new``
+    reuses whatever this stores rather than re-fetching.
+    """
+    if unit.card_type == "cloze":
+        return
+    from app.anki.media.vocab_media import generate_vocab_media
+    from app.config import settings
+
+    await generate_vocab_media(
+        db,
+        coll_id,
+        unit.text,
+        unit.translation,
+        llm=llm,
+        pixabay_key=settings.pixabay_api_key,
+        source_sentence=unit.source_sentence or "",
+        grammar=unit.grammar or "",
+        used_image_urls=used_image_urls,
+    )
+
+
 @router.get("/due", status_code=200)
 async def get_due_collocations(request: Request, direction: str = "recognition"):
     db = request.app.state.srs_db
@@ -289,6 +319,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
     db = request.app.state.srs_db
     col_crt = resolve_col_crt(db)
+    llm = getattr(request.app.state, "llm", None)
+    # One shared set across this request so two new words don't pick the same image.
+    used_image_urls: set[str] = set()
     # One session balancer for the whole request; each grade below feeds itself
     # back via _balancer_add so later grades in this lesson see earlier ones.
     balancer = build_live_load_balancer(db, now=datetime.datetime.now(datetime.UTC), col_crt=col_crt)
@@ -412,6 +445,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                     await synthesize_cloze_audios(db, new_id, sent, lemma_to_first_surface.get(lemma, lemma))
                 except Exception:
                     _logger.warning("Failed to synthesize cloze audio for %r", lemma)
+            else:
+                # Mirror the cloze sibling above: the row was just inserted, so
+                # the lookup always resolves. Complete the vocab card inline.
+                new_id, _ = db.get_collocation_by_lemma_with_id(lemma)
+                await _generate_add_time_media(db, llm, new_id, unit, used_image_urls=used_image_urls)
             created_count += 1
         else:
             # ── Existing row — skip cloze, grade recognition for eligible vocab ──
@@ -487,6 +525,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 source="llm",
             )
             db.add_collocation(unit, language_code=lesson.language_code)
+            # Just inserted, so the guid always resolves. Complete the card inline.
+            kp_id = db.get_collocation_id_by_guid(
+                compute_guid(unit.text, lesson.language_code, unit.disambig_key or "")
+            )
+            await _generate_add_time_media(db, llm, kp_id, unit, used_image_urls=used_image_urls)
             created_count += 1
         else:
             if existing.syntactic_unit.card_type == "cloze":
@@ -761,7 +804,15 @@ async def create_item(body: CreateItemRequest, request: Request):
     if not rows:
         raise HTTPException(status_code=500, detail="Failed to retrieve created item")
     row_id, item, lang = rows[0]
-    return _item_to_dict(row_id, item, lang)
+    # Complete the card now (image + audio) so it renders in /review without a
+    # sync — the user added it in TunaTale; it shouldn't depend on Anki.
+    llm = getattr(request.app.state, "llm", None)
+    await _generate_add_time_media(db, llm, row_id, unit)
+    img = db.get_image_filename(row_id)
+    image_url = f"/api/srs/media/{img}" if img else None
+    aud = db.get_audio_filename(row_id)
+    audio_url = f"/api/srs/media/{aud}" if aud else None
+    return _item_to_dict(row_id, item, lang, image_url, audio_url)
 
 
 async def _persist_new_card(
@@ -772,6 +823,7 @@ async def _persist_new_card(
     synthesize: bool,
     audio_sentence: str = "",
     audio_word: str = "",
+    llm=None,
 ) -> dict:
     """Add a NEW collocation and return its ``{id, was_created, item}`` dict.
 
@@ -779,7 +831,9 @@ async def _persist_new_card(
     ``/inflection-clozes``): insert (idempotent by guid), look the id back up,
     best-effort synthesize cloze audio when ``synthesize`` and the row is newly
     created, then serialize. ``audio_sentence`` is the *raw* sentence (never the
-    pre-clozed ``source_sentence``) and ``audio_word`` the surface to voice.
+    pre-clozed ``source_sentence``) and ``audio_word`` the surface to voice. For a
+    newly-created *vocab* base card, fetch image + word audio inline so it's
+    complete in /review without a sync (no-op for cloze / missing Pixabay key).
     """
     was_created = db.add_collocation(unit, language_code=language_code)
     guid = compute_guid(unit.text, language_code, unit.disambig_key or "")
@@ -793,11 +847,22 @@ async def _persist_new_card(
         except Exception:
             _logger.warning("Failed to synthesize cloze audio for %r", unit.text)
 
+    if was_created:
+        await _generate_add_time_media(db, llm, coll_id, unit)
+
     result = db.get_collocation_by_id(coll_id)
     if result is None:  # pragma: no cover — defensive; id came from get_collocation_id_by_guid
         raise HTTPException(status_code=500, detail="Failed to retrieve created collocation")
     _, item, _ = result
-    return {"id": coll_id, "was_created": was_created, "item": _item_to_dict(coll_id, item, language_code)}
+    img = db.get_image_filename(coll_id)
+    image_url = f"/api/srs/media/{img}" if img else None
+    aud = db.get_audio_filename(coll_id)
+    audio_url = f"/api/srs/media/{aud}" if aud else None
+    return {
+        "id": coll_id,
+        "was_created": was_created,
+        "item": _item_to_dict(coll_id, item, language_code, image_url, audio_url),
+    }
 
 
 @router.post("/items/base", status_code=200)
@@ -864,7 +929,13 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
         source_sentence=source_sentence,
     )
     return await _persist_new_card(
-        db, unit, lang, synthesize=is_func, audio_sentence=body.sentence, audio_word=body.surface
+        db,
+        unit,
+        lang,
+        synthesize=is_func,
+        audio_sentence=body.sentence,
+        audio_word=body.surface,
+        llm=getattr(request.app.state, "llm", None),
     )
 
 

@@ -13,6 +13,12 @@ export default defineConfig({
 			env: {
 				LLM_MODE: 'mock',
 				DATABASE_URL: 'sqlite:///./tunatale-test.db',
+				// Add-time vocab media (POST /items, /listen) fetches image+audio when
+				// a Pixabay key is set. E2E seeds cards via those endpoints, so a real
+				// key in .env makes the suite hit Pixabay/Forvo live (slow, flaky).
+				// Empty it so seeding stays offline. load_dotenv(override=False) keeps
+				// this preset value; key is uppercase to match the .env's PIXABAY_API_KEY.
+				PIXABAY_API_KEY: '',
 				// E2E doesn't test lemmatization; force the fast lowercase lemmatizer
 				// so a local `lemmatizer_type=classla` in .env doesn't make the
 				// backend pay classla's ~26s model load and blow the webServer timeout.

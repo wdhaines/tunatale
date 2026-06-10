@@ -16,6 +16,8 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
+from app.anki.media.vocab_media import safe_stem as _safe_stem
+from app.anki.media.vocab_media import store_tt_media as _store_tt_media
 from app.anki.protobuf_wire import (
     compute_anki_day_index,
     find_varint_field,
@@ -46,37 +48,6 @@ _MEDIA_DIR = Path(__file__).parent.parent.parent / "media"
 # forward-step replay and Anki's cards.data. Matches the strict threshold in
 # app/anki/measure_stage3b_premise.py (lines 369/377).
 _FSRS_REPLAY_TOLERANCE = 0.01
-
-
-def _safe_stem(word: str, prefix: str) -> str:
-    """Sanitize word for use as a media filename stem: keep letters/digits/underscores."""
-    sanitized = re.sub(r"[^\w\s]", "", word).replace(" ", "_")
-    return f"{prefix}_{sanitized}"
-
-
-def _store_tt_media(db, coll_id: int, kind: str, filename: str, data: bytes) -> None:
-    """Write media to TT's canonical media dir (served by the frontend at
-    ``/api/srs/media/{filename}``) and record the media row.
-
-    Media generated *during sync* (the create-time media_fn) only ever reached
-    Anki's collection.media + the note's [sound:]/<img> tags — so it rendered in
-    Anki but was absent (or, if a row pointed at the wrong dir, broken) in TT.
-    This mirrors what ``/listen`` does at add time so sync-generated media renders
-    in TT too.
-    """
-    import hashlib
-
-    _MEDIA_DIR.mkdir(parents=True, exist_ok=True)
-    (_MEDIA_DIR / filename).write_bytes(data)
-    db.add_media(
-        coll_id,
-        kind,
-        filename,
-        f"media/{filename}",
-        filename,
-        hashlib.sha256(data).hexdigest(),
-        len(data),
-    )
 
 
 def _copy_tt_media_to_anki(writer: OfflineWriter, filename: str) -> None:
@@ -2585,7 +2556,17 @@ class AnkiSync:
             audio_tag = ""
             image_tag = ""
 
-            if _media_fn is not None:
+            # Reuse media already generated at card-creation time — the add-time
+            # paths (POST /items, /listen, base/key-phrase) now fetch image+audio
+            # inline (app.anki.media.vocab_media), so a card is complete in TT
+            # before it ever syncs. Only *fetch* here for cards that still have no
+            # TT media (legacy rows, seed imports, Anki-originated notes). This is
+            # what keeps a card from getting a second, different Pixabay image.
+            existing_audio = self._db.get_audio_filename(coll_id)
+            existing_image = self._db.get_image_filename(coll_id)
+
+            media = None
+            if _media_fn is not None and (existing_audio is None or existing_image is None):
                 media = await _media_fn(
                     word,
                     english,
@@ -2593,20 +2574,28 @@ class AnkiSync:
                     grammar=item.syntactic_unit.grammar,
                     used_image_urls=used_image_urls,
                 )
-                if media is not None and media.audio_bytes is not None:
-                    prefix = "sl" if media.audio_source == "forvo" else "tts"
-                    audio_filename = f"{_safe_stem(word, prefix)}.mp3"
-                    self._writer.store_media_file(audio_filename, media.audio_bytes)
-                    audio_tag = f"[sound:{audio_filename}]"
-                    _store_tt_media(
-                        self._db, coll_id, f"audio_{media.audio_source or 'tts'}", audio_filename, media.audio_bytes
-                    )
-                if media is not None and media.image_bytes is not None:
-                    ext = media.image_ext or "jpg"
-                    img_filename = f"{_safe_stem(english, 'img')}.{ext}"
-                    self._writer.store_media_file(img_filename, media.image_bytes)
-                    image_tag = f'<img src="{img_filename}">'
-                    _store_tt_media(self._db, coll_id, "image", img_filename, media.image_bytes)
+
+            if existing_audio is not None:
+                _copy_tt_media_to_anki(self._writer, existing_audio)
+                audio_tag = f"[sound:{existing_audio}]"
+            elif media is not None and media.audio_bytes is not None:
+                prefix = "sl" if media.audio_source == "forvo" else "tts"
+                audio_filename = f"{_safe_stem(word, prefix)}.mp3"
+                self._writer.store_media_file(audio_filename, media.audio_bytes)
+                audio_tag = f"[sound:{audio_filename}]"
+                _store_tt_media(
+                    self._db, coll_id, f"audio_{media.audio_source or 'tts'}", audio_filename, media.audio_bytes
+                )
+
+            if existing_image is not None:
+                _copy_tt_media_to_anki(self._writer, existing_image)
+                image_tag = f'<img src="{existing_image}">'
+            elif media is not None and media.image_bytes is not None:
+                ext = media.image_ext or "jpg"
+                img_filename = f"{_safe_stem(english, 'img')}.{ext}"
+                self._writer.store_media_file(img_filename, media.image_bytes)
+                image_tag = f'<img src="{img_filename}">'
+                _store_tt_media(self._db, coll_id, "image", img_filename, media.image_bytes)
 
             fields = {
                 "Slovene": word,
