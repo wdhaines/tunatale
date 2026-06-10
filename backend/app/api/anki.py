@@ -22,6 +22,34 @@ def _refresh_media() -> dict:
     return refresh_media_for_deck()
 
 
+def _build_media_fn(llm, db):
+    """Build the create-time media generator (LLM image query → Pixabay/TTS fetch).
+
+    Shared by both sync entry points (legacy /sync and peer-sync) so TT-added
+    cards get audio + images regardless of which path mints them.
+    """
+    from app.config import settings
+
+    async def _media_fn(word, english, *, used_image_urls, source_sentence="", grammar=""):
+        image_query = await generate_image_query(
+            word,
+            english,
+            llm=llm,
+            db=db,
+            source_sentence=source_sentence,
+            grammar=grammar,
+        )
+        return await fetch_card_media(
+            word,
+            english,
+            pixabay_key=settings.pixabay_api_key,
+            used_image_urls=used_image_urls,
+            image_query=image_query,
+        )
+
+    return _media_fn
+
+
 @router.post("/sync", status_code=200)
 async def trigger_sync(request: Request, dry_run: bool = False):
     """Unified create-new + push + drain + pull sync using direct sqlite access.
@@ -71,23 +99,6 @@ async def trigger_sync(request: Request, dry_run: bool = False):
 
             llm = getattr(request.app.state, "llm", None)
 
-            async def _media_fn(word, english, *, used_image_urls, source_sentence="", grammar=""):
-                image_query = await generate_image_query(
-                    word,
-                    english,
-                    llm=llm,
-                    db=db,
-                    source_sentence=source_sentence,
-                    grammar=grammar,
-                )
-                return await fetch_card_media(
-                    word,
-                    english,
-                    pixabay_key=settings.pixabay_api_key,
-                    used_image_urls=used_image_urls,
-                    image_query=image_query,
-                )
-
             # The single canonical sync sequence (orphans → create → push → pull
             # → refresh-all → soak), shared with the peer-sync reconcile so the
             # two entry points can never diverge. See run_full_sync.
@@ -98,7 +109,7 @@ async def trigger_sync(request: Request, dry_run: bool = False):
                 deck_name=settings.anki_deck_name,
                 model_name=model_name,
                 sync_log_path=settings.sync_log,
-                media_fn=_media_fn,
+                media_fn=_build_media_fn(llm, db),
                 dry_run=dry_run,
             )
 
@@ -140,20 +151,27 @@ async def trigger_sync(request: Request, dry_run: bool = False):
 
 
 @router.post("/peer-sync", status_code=200)
-async def trigger_peer_sync(dry_run: bool = False):
+async def trigger_peer_sync(request: Request, dry_run: bool = False):
     """Sync TT's own collection to AnkiWeb (or a self-host server) as a peer.
 
     Unlike ``/sync`` (which writes the user's local collection.anki2 and needs Anki
     closed), this touches TT's own ``tt_collection`` and works with Anki open. Returns
     409 with a user-facing message if peer-sync isn't configured (e.g. no credential in
     the macOS Keychain) or if the server demands a full sync.
+
+    Generates media (audio/images) for any TT-added cards via the same media
+    generator the legacy /sync uses, so they reach AnkiWeb with media attached.
     """
     from fastapi.concurrency import run_in_threadpool
 
     from app.anki.sync_orchestrator import PeerSyncError, peer_sync
 
+    db = request.app.state.srs_db
+    llm = getattr(request.app.state, "llm", None)
+    media_fn = _build_media_fn(llm, db)
+
     try:
-        report = await run_in_threadpool(peer_sync, dry_run)
+        report = await run_in_threadpool(lambda: peer_sync(dry_run, media_fn=media_fn))
     except PeerSyncError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
 

@@ -67,6 +67,11 @@ def _settings_overrides(monkeypatch, tmp_path):
     # ~/.tunatale/tt_collection.anki2 or ~/Library/.../collection.anki2.
     monkeypatch.setattr(settings, "tt_collection_path", tmp_path / "tt_collection.anki2")
     monkeypatch.setattr(settings, "anki_collection_path", tmp_path / "collection.anki2")
+    # Media-dir resolution / symlink (peer-sync media push) reads this and would
+    # otherwise touch the real ~/Library/.../collection.media. Pin to a tmp path
+    # that does not exist, so _resolve_media_dir falls back and _ensure_tt_media_linked
+    # no-ops in tests.
+    monkeypatch.setattr(settings, "anki_media_path", tmp_path / "collection.media")
     monkeypatch.setattr(settings, "sync_log", tmp_path / "logs" / "sync.log")
     # Non-empty so _resolve_sync_password short-circuits and tests never shell out to
     # the real macOS Keychain. Tests of the Keychain path override this to "". The

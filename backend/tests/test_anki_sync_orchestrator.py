@@ -61,7 +61,7 @@ class TestPeerSync:
             report = peer_sync(dry_run=False)
 
         assert mock_run.call_count == 3
-        mock_tt.assert_called_once_with(argv=[], _settings=ANY)
+        mock_tt.assert_called_once_with(argv=[], _settings=ANY, _media_fn=ANY, _media_dir=ANY)
         actual_settings = mock_tt.call_args.kwargs["_settings"]
         assert actual_settings.anki_collection_path == settings.tt_collection_path
         assert report.auth_success
@@ -84,7 +84,7 @@ class TestPeerSync:
             report = peer_sync(dry_run=True)
 
         assert mock_run.call_count == 2
-        mock_tt.assert_called_once_with(argv=["--dry-run"], _settings=ANY)
+        mock_tt.assert_called_once_with(argv=["--dry-run"], _settings=ANY, _media_fn=ANY, _media_dir=ANY)
         assert report.dry_run
 
     @pytest.mark.parametrize("full", [FULL_SYNC, FULL_DOWNLOAD, FULL_UPLOAD])
@@ -781,3 +781,75 @@ class TestPeerSyncTiming:
             peer_sync(dry_run=False)
 
         assert not settings.sync_log.exists()
+
+
+class TestMediaDirResolution:
+    """Peer-path media dir resolution + the tt_collection.media → real symlink.
+
+    "No duplicate library, use Anki's dir if it's around, ours if not" — see the
+    media-sync design dialogue. The symlink is what lets our driver's media sync
+    (which operates on tt_collection's own media dir) push from the real library.
+    """
+
+    def _cfg(self, monkeypatch, real, tt_col):
+        from app.anki import sync_orchestrator as so
+
+        monkeypatch.setattr(so.settings, "anki_media_path", real)
+        monkeypatch.setattr(so.settings, "tt_collection_path", tt_col)
+        return so
+
+    def test_resolve_prefers_real_when_present(self, tmp_path, monkeypatch):
+        real = tmp_path / "real.media"
+        real.mkdir()
+        so = self._cfg(monkeypatch, real, tmp_path / "tt_collection.anki2")
+        assert so._resolve_media_dir() == real
+
+    def test_resolve_falls_back_to_tt_media_when_anki_absent(self, tmp_path, monkeypatch):
+        so = self._cfg(monkeypatch, tmp_path / "nope.media", tmp_path / "tt_collection.anki2")
+        assert so._resolve_media_dir() == tmp_path / "tt_collection.media"
+
+    def test_ensure_link_noop_when_anki_absent(self, tmp_path, monkeypatch):
+        so = self._cfg(monkeypatch, tmp_path / "nope.media", tmp_path / "tt_collection.anki2")
+        so._ensure_tt_media_linked()
+        assert not (tmp_path / "tt_collection.media").exists()
+
+    def test_ensure_link_creates_symlink_when_tt_media_absent(self, tmp_path, monkeypatch):
+        real = tmp_path / "real.media"
+        real.mkdir()
+        so = self._cfg(monkeypatch, real, tmp_path / "tt_collection.anki2")
+        so._ensure_tt_media_linked()
+        link = tmp_path / "tt_collection.media"
+        assert link.is_symlink()
+        assert link.resolve() == real.resolve()
+
+    def test_ensure_link_replaces_empty_tt_media_dir(self, tmp_path, monkeypatch):
+        real = tmp_path / "real.media"
+        real.mkdir()
+        so = self._cfg(monkeypatch, real, tmp_path / "tt_collection.anki2")
+        (tmp_path / "tt_collection.media").mkdir()
+        so._ensure_tt_media_linked()
+        assert (tmp_path / "tt_collection.media").is_symlink()
+
+    def test_ensure_link_idempotent_when_already_symlinked(self, tmp_path, monkeypatch):
+        real = tmp_path / "real.media"
+        real.mkdir()
+        so = self._cfg(monkeypatch, real, tmp_path / "tt_collection.anki2")
+        link = tmp_path / "tt_collection.media"
+        link.symlink_to(real, target_is_directory=True)
+        so._ensure_tt_media_linked()
+        assert link.is_symlink()
+
+    def test_ensure_link_preserves_nonempty_tt_media_dir(self, tmp_path, monkeypatch, caplog):
+        import logging
+
+        real = tmp_path / "real.media"
+        real.mkdir()
+        so = self._cfg(monkeypatch, real, tmp_path / "tt_collection.anki2")
+        ttm = tmp_path / "tt_collection.media"
+        ttm.mkdir()
+        (ttm / "keep.mp3").write_bytes(b"x")
+        with caplog.at_level(logging.WARNING):
+            so._ensure_tt_media_linked()
+        assert not ttm.is_symlink()
+        assert (ttm / "keep.mp3").exists()
+        assert "non-empty real dir" in caplog.text

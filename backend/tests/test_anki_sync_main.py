@@ -201,8 +201,57 @@ class TestMainDelegatesToRunFullSync:
 
         assert exit_code == 0
         assert spy.await_count == 1
-        # Peer reconcile passes no media generator (no LLM in this path).
+        # Default (CLI) call passes no media generator.
         assert spy.await_args.kwargs["media_fn"] is None
+
+    def test_main_forwards_media_fn_and_media_dir(self, tmp_path, monkeypatch):
+        """When peer_sync supplies a media generator + media dir, main() threads
+        them into run_full_sync / OfflineWriter (so peer-sync'd cards get media)."""
+        from unittest.mock import AsyncMock
+
+        anki_conn = sqlite3.connect(":memory:")
+        anki_conn.execute("CREATE TABLE col (ver INTEGER, crt INTEGER)")
+        anki_conn.execute("INSERT INTO col VALUES (18, 0)")
+        anki_conn.commit()
+
+        spy = AsyncMock(return_value=(CreateNewReport(), PushReport(), PullReport()))
+        monkeypatch.setattr("app.anki.sync.run_full_sync", spy)
+        captured_media_dir = {}
+        real_writer = __import__("app.anki.sync", fromlist=["OfflineWriter"]).OfflineWriter
+
+        def _spy_writer(conn, media_dir=None):
+            captured_media_dir["v"] = media_dir
+            return real_writer(conn, media_dir=media_dir)
+
+        monkeypatch.setattr("app.anki.sync.OfflineWriter", _spy_writer)
+
+        tt_db = SRSDatabase(":memory:")
+        sentinel_fn = object()
+        media_dir = tmp_path / "collection.media"
+
+        class FakeSettings:
+            anki_collection_path = "unused"
+            anki_deck_name = "0. Slovene"
+            anki_model_name = "Slovene Vocabulary"
+            database_url = "sqlite:///:memory:"
+
+        @contextmanager
+        def fake_safe_open(path, mode):
+            yield type("Ctx", (), {"conn": anki_conn})()
+
+        exit_code = main(
+            argv=[],
+            _settings=FakeSettings(),
+            _safe_open_fn=fake_safe_open,
+            _sync_log_path=tmp_path / "sync.log",
+            _db=tt_db,
+            _media_dir=media_dir,
+            _media_fn=sentinel_fn,
+        )
+
+        assert exit_code == 0
+        assert spy.await_args.kwargs["media_fn"] is sentinel_fn
+        assert captured_media_dir["v"] == media_dir
 
 
 class TestMainCreateNew:

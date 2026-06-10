@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -652,7 +652,8 @@ class TestPeerSync:
             "tt_push_pull_exit": 0,
             "dry_run": False,
         }
-        mock_ps.assert_called_once_with(False)
+        # Endpoint now threads a media generator so peer-sync'd new cards get media.
+        mock_ps.assert_called_once_with(False, media_fn=ANY)
 
     async def test_forwards_dry_run(self):
         from app.anki.sync_orchestrator import PeerSyncReport
@@ -663,7 +664,7 @@ class TestPeerSync:
 
         assert response.status_code == 200
         assert response.json()["dry_run"] is True
-        mock_ps.assert_called_once_with(True)
+        mock_ps.assert_called_once_with(True, media_fn=ANY)
 
     async def test_409_on_peer_sync_error(self):
         from app.anki.sync_orchestrator import PeerSyncError

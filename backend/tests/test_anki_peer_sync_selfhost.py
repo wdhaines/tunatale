@@ -332,3 +332,129 @@ class TestPeerSyncSelfHost:
         finally:
             peer2.close()
         assert any("{{c1::" in f for f in flds), f"TT-added cloze note never reached the server — peer2 notes: {flds}"
+
+    def test_tt_card_media_reaches_server_through_peer_sync(self, tmp_path: Path, monkeypatch):
+        """End-to-end media: a TT-added cloze card's sentence audio must be copied
+        into the collection's media dir by the reconcile and uploaded by the
+        media-enabled push leg, reaching another device. Exercises the FULL
+        peer_sync bracket carrying media (not just the driver)."""
+
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+
+        tt_col = tmp_path / "tt_collection.anki2"
+        peer2_col = tmp_path / "peer2.anki2"
+        auth = _login()
+
+        # TT's source media dir holds the generated sentence audio.
+        tt_media_src = tmp_path / "tt_media_src"
+        tt_media_src.mkdir()
+        (tt_media_src / "sentence_xyz.mp3").write_bytes(b"ID3-fake-audio-bytes")
+        monkeypatch.setattr("app.anki.sync._MEDIA_DIR", tt_media_src)
+
+        # Baseline (also creates the TT deck create_cloze_note needs), mirror to peer2.
+        _driver({"op": "create_collection", "collection_path": str(tt_col)})
+        _driver(
+            {
+                "op": "add_note",
+                "collection_path": str(tt_col),
+                "deck": settings.anki_deck_name,
+                "fields": ["baseline front", "baseline back"],
+            }
+        )
+        _driver({"op": "full_upload", "collection_path": str(tt_col), "auth": auth})
+        _driver({"op": "create_collection", "collection_path": str(peer2_col)})
+        _driver({"op": "full_download", "collection_path": str(peer2_col), "auth": auth})
+
+        # TT originates a cloze card WITH a sentence-audio media row.
+        db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        try:
+            db.add_collocation(
+                SyntacticUnit(
+                    text="bom",
+                    translation="",
+                    word_count=1,
+                    difficulty=1,
+                    source="llm",
+                    lemma="bom",
+                    source_sentence="Jutri bom šel domov.",
+                    card_type="cloze",
+                )
+            )
+            coll_id = db.get_collocation_id_by_guid(db.get_collocation("bom").guid)
+            db.add_media(
+                coll_id,
+                "audio_tts_sentence",
+                "sentence_xyz.mp3",
+                str(tt_media_src / "sentence_xyz.mp3"),
+                "sentence_xyz.mp3",
+                "deadbeef",
+                20,
+            )
+        finally:
+            db.close()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(settings, "tt_collection_path", tt_col)
+            report = peer_sync(dry_run=False)
+        assert report.tt_push_pull_exit == 0
+        _assert_incremental(report.push_required, "media push")
+
+        # Another device pulls WITH media → must physically have the audio file.
+        _driver({"op": "sync", "collection_path": str(peer2_col), "auth": auth, "sync_media": True})
+        present = _driver(
+            {"op": "media_present", "collection_path": str(peer2_col), "media_filename": "sentence_xyz.mp3"}
+        )
+        assert present["present"], f"sentence audio did NOT reach peer2 through peer_sync — {present}"
+
+
+@pytest.mark.peer_sync
+class TestPeerSyncMediaDriver:
+    """Driver-level media sync: `sync_collection(sync_media=True)` + `sync_media()`
+    + poll moves a file peer → AnkiWeb → peer. The narrower layer beneath the full
+    peer_sync media e2e (test_tt_card_media_reaches_server_through_peer_sync); kept
+    as a focused regression guard for the driver's media trigger + poll loop.
+
+    Gated on --run-peer-sync + a reachable THROWAWAY self-host server (never real
+    AnkiWeb).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _check_preconditions(self):
+        if not _server_reachable():
+            pytest.skip("Sync server not reachable — start it with `python -m anki.syncserver`")
+
+    def test_media_round_trips_via_driver_sync(self, tmp_path: Path):
+        tt_col = tmp_path / "tt.anki2"
+        peer2_col = tmp_path / "peer2.anki2"
+        auth = _login()
+
+        # Baseline: A has one media note; upload + mirror to peer2.
+        _driver({"op": "create_collection", "collection_path": str(tt_col)})
+        _driver(
+            {
+                "op": "add_media_note",
+                "collection_path": str(tt_col),
+                "media_filename": "baseline.mp3",
+                "media_hex": "01",
+            }
+        )
+        _driver({"op": "full_upload", "collection_path": str(tt_col), "auth": auth})
+        _driver({"op": "create_collection", "collection_path": str(peer2_col)})
+        _driver({"op": "full_download", "collection_path": str(peer2_col), "auth": auth})
+
+        # A adds a NEW media note → our media-enabled sync should push the file.
+        _driver(
+            {"op": "add_media_note", "collection_path": str(tt_col), "media_filename": "newcard.mp3", "media_hex": "02"}
+        )
+        push = _driver({"op": "sync", "collection_path": str(tt_col), "auth": auth, "sync_media": True})
+        _assert_incremental(push.get("required"), "media push")
+        assert push["media"]["completed"], f"media push errored: {push['media']}"
+        assert push["media"]["saw_active"], (
+            f"media sync never went active — sync_media()+poll is NOT the right trigger; block={push['media']}"
+        )
+
+        # peer2 pulls with media → must now physically have newcard.mp3.
+        _driver({"op": "sync", "collection_path": str(peer2_col), "auth": auth, "sync_media": True})
+        present = _driver({"op": "media_present", "collection_path": str(peer2_col), "media_filename": "newcard.mp3"})
+        assert present["present"], "newcard.mp3 did NOT reach peer2 via media sync"

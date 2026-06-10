@@ -12,6 +12,7 @@ Uses ``app.anki.sync_driver`` via subprocess for the anki-side operations.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import subprocess
@@ -31,6 +32,54 @@ _DRIVER_PATH = str(Path(__file__).with_name("sync_driver.py"))
 # backend/ — the directory the server runs from (start-dev.sh `cd backend`) and the
 # anchor for the default CWD-relative `sqlite:///./tunatale.db`. From app/anki/.
 _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+
+
+logger = logging.getLogger(__name__)
+
+
+def _tt_media_dir() -> Path:
+    """tt_collection's own media folder (anki derives ``<stem>.media``)."""
+    return settings.tt_collection_path.with_suffix(".media")
+
+
+def _resolve_media_dir() -> Path:
+    """Where TT writes generated media on the peer path.
+
+    Use the real Anki ``collection.media`` when it exists — one physical library,
+    no duplicate (the user's requirement). Fall back to tt_collection's own media
+    folder when Anki isn't installed, where it's the sole copy.
+    """
+    real = settings.anki_media_path
+    return real if real.exists() else _tt_media_dir()
+
+
+def _ensure_tt_media_linked() -> None:
+    """Point tt_collection's media dir at the real Anki library via symlink.
+
+    The driver's media sync operates on tt_collection's OWN media dir
+    (``<stem>.media``). For our sync to *push* media that lives in the real
+    ``collection.media``, that dir must be the same physical folder — hence the
+    symlink. No-op when Anki isn't installed (tt keeps its own dir as the sole
+    copy) or when the link already exists. Never clobbers a non-empty real dir,
+    so we don't destroy media a prior TT-only setup accumulated there.
+    """
+    real = settings.anki_media_path
+    if not real.exists():
+        return
+    tt_media = _tt_media_dir()
+    if tt_media.is_symlink():
+        return  # idempotent — already linked
+    if tt_media.exists() and any(tt_media.iterdir()):
+        logger.warning(
+            "tt_collection.media (%s) is a non-empty real dir; leaving it as-is rather than "
+            "replacing with a symlink to %s. Media push will use the local dir.",
+            tt_media,
+            real,
+        )
+        return
+    if tt_media.exists():
+        tt_media.rmdir()  # empty dir → safe to replace with the link
+    tt_media.symlink_to(real, target_is_directory=True)
 
 
 @dataclass
@@ -290,18 +339,23 @@ def _get_auth(*, refresh: bool = False) -> dict:
     return _AUTH_CACHE
 
 
-def _sync_leg(auth: dict) -> dict:
-    """Run one bidirectional ``sync_collection`` leg against tt_collection."""
+def _sync_leg(auth: dict, *, sync_media: bool = False) -> dict:
+    """Run one bidirectional ``sync_collection`` leg against tt_collection.
+
+    ``sync_media=True`` also runs anki's media sync (and waits for it) so
+    TT-generated media reaches AnkiWeb and other devices.
+    """
     return _run_driver(
         {
             "op": "sync",
             "collection_path": str(settings.tt_collection_path),
             "auth": auth,
+            "sync_media": sync_media,
         }
     )
 
 
-def peer_sync(dry_run: bool = False) -> PeerSyncReport:
+def peer_sync(dry_run: bool = False, *, media_fn=None) -> PeerSyncReport:
     """Execute the full peer-sync bracket.
 
     Returns a ``PeerSyncReport`` with per-step outcomes.
@@ -318,6 +372,10 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
         raise PeerSyncError(f"Login failed: {e}") from None
     report.timings["auth"] = time.perf_counter() - t0
     report.auth_success = True
+
+    # Point tt_collection's media dir at the real Anki library (when present) so
+    # generated media lands in one place and the push leg's media sync uploads it.
+    _ensure_tt_media_linked()
 
     # Anki uploads the whole config blob on every sync — including the pull leg, which
     # is itself a bidirectional sync_collection — so mirror the user's real selected
@@ -356,6 +414,8 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
     report.tt_push_pull_exit = tt_sync_main(
         argv=["--dry-run"] if dry_run else [],
         _settings=_tt_settings(),
+        _media_fn=media_fn,
+        _media_dir=_resolve_media_dir(),
     )
     report.timings["reconcile"] = time.perf_counter() - t0
     if report.tt_push_pull_exit != 0:
@@ -381,8 +441,11 @@ def peer_sync(dry_run: bool = False) -> PeerSyncReport:
             t0 = time.perf_counter()
             _mirror_real_curdeck_into_tt(settings.anki_collection_path, settings.tt_collection_path)
             report.timings["mirror_pre_push"] = time.perf_counter() - t0
+            # Media-enabled push: uploads any media the reconcile generated for
+            # new TT cards. Aligned with the pending-rows gate — new cards (which
+            # carry the new media) are exactly what makes the push run.
             t0 = time.perf_counter()
-            push_out = _sync_leg(auth)
+            push_out = _sync_leg(auth, sync_media=True)
             report.timings["push"] = time.perf_counter() - t0
             report.push_required = push_out.get("required")
             report.push_message = push_out.get("server_message", "")

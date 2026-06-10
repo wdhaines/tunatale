@@ -81,13 +81,63 @@ def _op_login(op: dict) -> dict:
             col.close()
 
 
+def _await_media_sync(col, timeout_s: float = 120.0, poll_s: float = 0.2) -> dict:
+    """Poll media_sync_status().active until the background media sync finishes.
+
+    Returns observability for the spike: whether we ever saw active=True (proves
+    the sync actually started), poll count, elapsed seconds, and any error (the
+    status call throws if media sync failed). Does NOT close col — caller owns it.
+    """
+    start = time.time()
+    deadline = start + timeout_s
+    polls = 0
+    saw_active = False
+    error: str | None = None
+    while time.time() < deadline:
+        try:
+            status = col.media_sync_status()
+        except Exception as e:  # media_sync_status throws on a failed media sync
+            error = str(e)
+            break
+        polls += 1
+        if status.active:
+            saw_active = True
+        elif saw_active:
+            break  # was active, now done
+        elif polls > 5:
+            break  # never went active after a few polls → nothing to sync (or didn't start)
+        time.sleep(poll_s)
+    return {
+        "completed": error is None,
+        "saw_active": saw_active,
+        "polls": polls,
+        "elapsed_s": round(time.time() - start, 3),
+        "error": error,
+        "timed_out": time.time() >= deadline,
+    }
+
+
 def _op_sync(op: dict) -> dict:
     collection_path = op["collection_path"]
     auth = _make_auth(op["auth"])
+    sync_media = op.get("sync_media", False)
     col = Collection(str(collection_path))
     try:
-        output = col.sync_collection(auth, sync_media=False)
-        return _serialize_sync_output(output)
+        output = col.sync_collection(auth, sync_media=sync_media)
+        result = _serialize_sync_output(output)
+        if sync_media:
+            # The sync_media flag on sync_collection negotiates the media handshake;
+            # the actual file transfer is the explicit sync_media() call, which runs
+            # in a background thread we poll to completion. (Spike hypothesis — the
+            # observability in _await_media_sync tells us if this is the right trigger.)
+            auth_media = auth
+            if output.new_endpoint:
+                from anki.sync_pb2 import SyncAuth
+
+                auth_media = SyncAuth(hkey=auth.hkey, endpoint=output.new_endpoint)
+            col.sync_media(auth_media)
+            result["media"] = _await_media_sync(col)
+        return result
     finally:
         col.close()
 
@@ -196,6 +246,39 @@ def _op_get_card(op: dict) -> dict:
         col.close()
 
 
+def _op_add_media_note(op: dict) -> dict:
+    """Add a note that references a media file, registering the file via the
+    proper media API (so anki marks it for upload). Spike helper."""
+    collection_path = op["collection_path"]
+    col = Collection(str(collection_path))
+    try:
+        fname = op["media_filename"]
+        data = bytes.fromhex(op.get("media_hex", "deadbeef"))
+        stored = col.media.write_data(fname, data)  # registers + returns final name
+        notetype = col.models.by_name(op.get("notetype", "Basic"))
+        note = col.new_note(notetype)
+        note.fields[0] = op.get("front", "media front")
+        note.fields[1] = op.get("back", f"[sound:{stored}]")
+        deck_id = col.decks.id(op.get("deck", "Default"))
+        col.add_note(note, deck_id)
+        return {"note_id": note.id, "media_filename": stored, "media_dir": col.media.dir()}
+    finally:
+        col.close()
+
+
+def _op_media_present(op: dict) -> dict:
+    """Report whether a media filename exists locally + total media count. Spike helper."""
+    collection_path = op["collection_path"]
+    col = Collection(str(collection_path))
+    try:
+        fname = op["media_filename"]
+        media_dir = Path(col.media.dir())
+        count = sum(1 for _ in media_dir.iterdir()) if media_dir.exists() else 0
+        return {"present": col.media.have(fname), "media_count": count, "media_dir": str(media_dir)}
+    finally:
+        col.close()
+
+
 def _op_create_collection(op: dict) -> dict:
     """Create a minimal empty collection at the given path."""
     collection_path = Path(op["collection_path"])
@@ -215,6 +298,8 @@ _OPERATIONS: dict[str, Any] = {
     "full_download": _op_full_download,
     "full_upload": _op_full_upload,
     "add_note": _op_add_note,
+    "add_media_note": _op_add_media_note,
+    "media_present": _op_media_present,
     "answer_card": _op_answer_card,
     "get_card": _op_get_card,
 }

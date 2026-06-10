@@ -2805,6 +2805,8 @@ def main(
     _force_fsrs_ack_path: Path | None = None,
     _sync_log_path: Path | None = None,
     _db=None,
+    _media_dir: Path | None = None,
+    _media_fn=None,
 ) -> int:
     import argparse
     import sys
@@ -2844,7 +2846,7 @@ def main(
             col_ver = col_row[0]
             col_crt = col_row[1]
             reader = OfflineReader(ctx.conn, _s.anki_deck_name)
-            writer = OfflineWriter(ctx.conn)
+            writer = OfflineWriter(ctx.conn, media_dir=_media_dir)
             sync = AnkiSync(
                 db=db,
                 _reader=reader,
@@ -2870,7 +2872,7 @@ def main(
                     deck_name=_s.anki_deck_name,
                     model_name=model_name,
                     sync_log_path=_sync_log,
-                    media_fn=None,
+                    media_fn=_media_fn,
                     dry_run=args.dry_run,
                     force_fsrs=args.force_fsrs,
                 )
