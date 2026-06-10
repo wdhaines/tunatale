@@ -80,6 +80,10 @@ def _settings_overrides(monkeypatch, tmp_path):
     tt_media.mkdir(exist_ok=True)
     monkeypatch.setattr("app.anki.sync._MEDIA_DIR", tt_media)
     monkeypatch.setattr("app.api.srs._MEDIA_DIR", tt_media)
+    # Model-name discovery caches to ~/.tunatale/anki_model_name.txt. Pin to tmp so
+    # tests neither read a developer's real cache (masking failures — the file is
+    # absent on CI) nor write the real one.
+    monkeypatch.setattr("app.anki.model_discovery._CACHE_PATH", tmp_path / "anki_model_name.txt")
     # Non-empty so _resolve_sync_password short-circuits and tests never shell out to
     # the real macOS Keychain. Tests of the Keychain path override this to "". The
     # gated --run-peer-sync integration test provides a real throwaway password via

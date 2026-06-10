@@ -386,9 +386,14 @@ class TestMainCreateNew:
         assert len(anki_conn.execute("SELECT id FROM notes").fetchall()) == 0
 
     def test_main_discovers_model_name_when_unset(self, tmp_path, monkeypatch):
-        """When anki_model_name is empty, main() discovers it from the collection."""
+        """When anki_model_name is empty, main() discovers it (here via the model-name
+        cache). _CACHE_PATH is pinned to tmp by conftest, so seed it explicitly rather
+        than depending on a real ~/.tunatale/anki_model_name.txt (absent on CI)."""
+        import app.anki.model_discovery as md
         from app.models.syntactic_unit import SyntacticUnit
         from tests.test_anki_sync_create_new import _make_dual_collection_conn
+
+        md._CACHE_PATH.write_text("Slovene Vocabulary\n")
 
         anki_conn = _make_dual_collection_conn()
         tt_db = SRSDatabase(":memory:")
