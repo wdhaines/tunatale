@@ -84,6 +84,19 @@ Never call `sqlite3.connect` on `collection.anki2` directly. Use `app.anki.safet
 - If the migration bumps `col.scm`, the module docstring MUST point to this file.
 - TDD red-green always (see `.claude/rules/tdd.md`).
 
+## One sync sequence — never fork the phase list (the b0a4b8a class)
+
+There is exactly **one** definition of "the steps a sync runs": `run_full_sync` in `app/anki/sync.py`. It does `detect_and_reset_orphans → sync_create_new → sync_push → sync_pull → (every `refresh_*` deck-config sync + multi-deck warn + soak heartbeat)`. **Both** sync entry points call it:
+
+- **`POST /api/anki/sync`** (`app/api/anki.py`) — closed-collection sync; supplies an LLM/image `media_fn`.
+- **`peer_sync` → `main`** (`sync_orchestrator.py` → `sync.py:main`) — the path the UI Sync button actually uses; passes `media_fn=None`.
+
+The **only** legitimate per-caller difference is `media_fn`. Everything else lives in `run_full_sync`.
+
+**Do NOT inline a sync phase into one entry point.** A second entry point that runs a *different subset* of phases is the `b0a4b8a` regression: when the Sync button was repointed from `/api/anki/sync` to `peer_sync`, the peer reconcile (`main`) ran only `push`+`pull`, silently dropping **`sync_create_new`** (TT-added cards never reached Anki) **and every `refresh_*`** (Anki-side FSRS-param / desired-retention / daily-cap / load-balancer changes never reached TT). Unit tests + the 100% coverage gate did not catch it: each function was green in isolation, and the orchestrator tests `patch("app.anki.sync.main")`, so nothing crossed the seam.
+
+New sync phase? Add it to `run_full_sync`, not to a call site. The phase list is pinned by `tests/test_anki_sync_main.py::TestRunFullSync` (asserts the full ordered phase set, incl. all `refresh_*` by name) plus delegation tests on both entry points; the create-through-peer-sync round-trip has a `--run-peer-sync` e2e in `test_anki_peer_sync_selfhost.py`. If you add a phase and only `TestRunFullSync` needs updating, you did it right; if you found yourself editing an entry point's body, stop and move it into the helper.
+
 ## When building a new UI that adds cards
 
 Any UI that originates cards in TT (the `/listen` lesson flow, a future LingQ-style unknown-word marker, manual add forms, etc.) must drop its rows into the same shape `sync_create_new` expects, or sync will skip them / mis-link them.

@@ -36,7 +36,7 @@ async def trigger_sync(request: Request, dry_run: bool = False):
         OfflineReader,
         OfflineWriter,
         OrphanThresholdExceededError,
-        _write_sync_soak_log,
+        run_full_sync,
     )
     from app.config import settings
 
@@ -69,14 +69,6 @@ async def trigger_sync(request: Request, dry_run: bool = False):
                 _anki_col_crt=col_crt,
             )
 
-            # Self-healing: detect TT rows that point at Anki cards/notes that
-            # no longer exist (deleted from Anki, lost to a force-full-download,
-            # etc). Reset those pointers so sync_create_new recreates them, and
-            # arm `_recovered_directions` so sync_push force_fsrs the rebuild.
-            # Must run BEFORE create_new and push for the recovery to land in
-            # this same sync invocation.
-            sync.detect_and_reset_orphans()
-
             llm = getattr(request.app.state, "llm", None)
 
             async def _media_fn(word, english, *, used_image_urls, source_sentence="", grammar=""):
@@ -96,54 +88,19 @@ async def trigger_sync(request: Request, dry_run: bool = False):
                     image_query=image_query,
                 )
 
-            create_report = await sync.sync_create_new(
+            # The single canonical sync sequence (orphans → create → push → pull
+            # → refresh-all → soak), shared with the peer-sync reconcile so the
+            # two entry points can never diverge. See run_full_sync.
+            create_report, push_report, pull_report = await run_full_sync(
+                sync,
+                ctx.conn,
+                db,
                 deck_name=settings.anki_deck_name,
                 model_name=model_name,
+                sync_log_path=settings.sync_log,
+                media_fn=_media_fn,
                 dry_run=dry_run,
-                _media_fn=_media_fn,
             )
-            push_report = sync.sync_push(dry_run=dry_run)
-            pull_report = sync.sync_pull(dry_run=dry_run)
-
-            if not dry_run:
-                from app.srs.queue_stats import (
-                    refresh_col_crt,
-                    refresh_daily_new_cap,
-                    refresh_daily_review_cap,
-                    refresh_desired_retention,
-                    refresh_easy_days,
-                    refresh_fsrs_params,
-                    refresh_fsrs_short_term_flag,
-                    refresh_learning_steps,
-                    refresh_load_balancer_enabled,
-                    refresh_maximum_review_interval,
-                    refresh_review_settings,
-                    warn_if_multi_deck_preset,
-                )
-
-                refresh_col_crt(db, ctx.conn)
-                refresh_daily_new_cap(db, ctx.conn, settings.anki_deck_name)
-                refresh_daily_review_cap(db, ctx.conn, settings.anki_deck_name)
-                refresh_desired_retention(db, ctx.conn, settings.anki_deck_name)
-                refresh_fsrs_params(db, ctx.conn, settings.anki_deck_name)
-                refresh_fsrs_short_term_flag(db, ctx.conn)
-                refresh_maximum_review_interval(db, ctx.conn, settings.anki_deck_name)
-                refresh_review_settings(db, ctx.conn, settings.anki_deck_name)
-                refresh_learning_steps(db, ctx.conn, settings.anki_deck_name)
-                refresh_load_balancer_enabled(db, ctx.conn)
-                refresh_easy_days(db, ctx.conn, settings.anki_deck_name)
-                warn_if_multi_deck_preset(ctx.conn, settings.anki_deck_name)
-
-                # Durable soak heartbeat for the new-mode roll-out. The CLI
-                # (`sync.main`) already writes this; the API path is what the user
-                # actually triggers, so without this the recompute_divergences
-                # signal scrolls off in the response and is never persisted.
-                _write_sync_soak_log(
-                    settings.sync_log,
-                    event_mode=db.get_event_sync_pull_mode(),
-                    pull=pull_report,
-                    push=push_report,
-                )
 
     except AnkiRunningError as exc:
         raise HTTPException(

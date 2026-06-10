@@ -6,13 +6,336 @@ import sqlite3
 from contextlib import contextmanager
 
 from app.anki.sync import (
+    CreateNewReport,
     PullReport,
     PushReport,
     RecomputeDivergence,
     _write_sync_soak_log,
     main,
+    run_full_sync,
 )
 from app.srs.database import SRSDatabase
+
+# The complete phase list run_full_sync must execute on every non-dry sync.
+# Pinned here so dropping any one phase from one entry point (the b0a4b8a
+# regression: the peer-sync button silently lost create_new + every refresh_*)
+# turns a test red instead of shipping a stale-config / unsynced-card sync.
+_REFRESH_FUNCS = [
+    "refresh_col_crt",
+    "refresh_daily_new_cap",
+    "refresh_daily_review_cap",
+    "refresh_desired_retention",
+    "refresh_fsrs_params",
+    "refresh_fsrs_short_term_flag",
+    "refresh_maximum_review_interval",
+    "refresh_review_settings",
+    "refresh_learning_steps",
+    "refresh_load_balancer_enabled",
+    "refresh_easy_days",
+    "warn_if_multi_deck_preset",
+]
+
+
+def _patch_all_refreshes(monkeypatch):
+    """No-op every deck-config refresh so synthetic in-memory collections (which
+    lack a full deck_config schema) can exercise main()/run_full_sync end-to-end
+    without a realistic config blob. The refresh phase-list is pinned separately
+    by TestRunFullSync — these tests assert other phases."""
+    for name in _REFRESH_FUNCS:
+        monkeypatch.setattr(f"app.srs.queue_stats.{name}", lambda *a, **k: None)
+
+
+class TestRunFullSync:
+    """run_full_sync is the SINGLE canonical TT↔Anki sync sequence. Both entry
+    points (the closed-collection /api/anki/sync endpoint and the peer-sync
+    reconcile via main) must delegate to it, so no path can drop a phase."""
+
+    def _make_spy_sync(self, calls):
+        from unittest.mock import MagicMock
+
+        sync = MagicMock()
+        sync.detect_and_reset_orphans = MagicMock(side_effect=lambda: calls.append("orphans"))
+
+        async def _create(**kwargs):
+            calls.append("create")
+            return CreateNewReport()
+
+        sync.sync_create_new = _create
+        sync.sync_push = MagicMock(side_effect=lambda **kw: (calls.append("push"), PushReport())[1])
+        sync.sync_pull = MagicMock(side_effect=lambda **kw: (calls.append("pull"), PullReport())[1])
+        return sync
+
+    def _patch_refreshes(self, monkeypatch, recorder):
+        for name in _REFRESH_FUNCS:
+            monkeypatch.setattr(
+                f"app.srs.queue_stats.{name}",
+                lambda *a, _n=name, **k: recorder.append(_n),
+            )
+
+    async def test_runs_every_phase_in_order_when_not_dry_run(self, monkeypatch, tmp_path):
+        from unittest.mock import MagicMock
+
+        calls: list[str] = []
+        refreshed: list[str] = []
+        sync = self._make_spy_sync(calls)
+        self._patch_refreshes(monkeypatch, refreshed)
+        monkeypatch.setattr("app.anki.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
+
+        db = MagicMock()
+        db.get_event_sync_pull_mode.return_value = "new"
+
+        create, push, pull = await run_full_sync(
+            sync,
+            MagicMock(),
+            db,
+            deck_name="0. Slovene",
+            model_name="Slovene Vocabulary",
+            sync_log_path=tmp_path / "sync.log",
+            dry_run=False,
+        )
+
+        # Core phases run in the create→push→pull order, soak last.
+        assert calls == ["orphans", "create", "push", "pull", "soak"]
+        # Every deck-config refresh fired — this is the gap that bit the peer path.
+        assert set(refreshed) == set(_REFRESH_FUNCS)
+        assert isinstance(create, CreateNewReport)
+        assert isinstance(push, PushReport)
+        assert isinstance(pull, PullReport)
+
+    async def test_dry_run_skips_refresh_and_soak_but_still_syncs(self, monkeypatch, tmp_path):
+        from unittest.mock import MagicMock
+
+        calls: list[str] = []
+        refreshed: list[str] = []
+        sync = self._make_spy_sync(calls)
+        self._patch_refreshes(monkeypatch, refreshed)
+        monkeypatch.setattr("app.anki.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
+
+        db = MagicMock()
+        db.get_event_sync_pull_mode.return_value = "new"
+
+        await run_full_sync(
+            sync,
+            MagicMock(),
+            db,
+            deck_name="0. Slovene",
+            model_name="Slovene Vocabulary",
+            sync_log_path=tmp_path / "sync.log",
+            dry_run=True,
+        )
+
+        assert calls == ["orphans", "create", "push", "pull"]
+        assert refreshed == []
+
+    async def test_passes_media_fn_and_force_fsrs_through(self, monkeypatch, tmp_path):
+        from unittest.mock import MagicMock
+
+        captured = {}
+        sync = MagicMock()
+        sync.detect_and_reset_orphans = MagicMock()
+
+        async def _create(**kwargs):
+            captured["media_fn"] = kwargs.get("_media_fn")
+            return CreateNewReport()
+
+        sync.sync_create_new = _create
+        sync.sync_push = MagicMock(side_effect=lambda **kw: captured.update(force=kw.get("force_fsrs")) or PushReport())
+        sync.sync_pull = MagicMock(return_value=PullReport())
+        self._patch_refreshes(monkeypatch, [])
+        monkeypatch.setattr("app.anki.sync._write_sync_soak_log", lambda *a, **k: None)
+
+        sentinel = object()
+        db = MagicMock()
+        db.get_event_sync_pull_mode.return_value = "new"
+
+        await run_full_sync(
+            sync,
+            MagicMock(),
+            db,
+            deck_name="D",
+            model_name="M",
+            sync_log_path=tmp_path / "sync.log",
+            media_fn=sentinel,
+            force_fsrs=True,
+            dry_run=False,
+        )
+
+        assert captured["media_fn"] is sentinel
+        assert captured["force"] is True
+
+
+class TestMainDelegatesToRunFullSync:
+    """main() (the peer-sync reconcile) must route through run_full_sync, not a
+    bespoke subset of phases."""
+
+    def test_main_calls_run_full_sync(self, tmp_path, monkeypatch):
+        from unittest.mock import AsyncMock
+
+        anki_conn = sqlite3.connect(":memory:")
+        anki_conn.execute("CREATE TABLE col (ver INTEGER, crt INTEGER)")
+        anki_conn.execute("INSERT INTO col VALUES (18, 0)")
+        anki_conn.commit()
+
+        spy = AsyncMock(return_value=(CreateNewReport(), PushReport(), PullReport()))
+        monkeypatch.setattr("app.anki.sync.run_full_sync", spy)
+
+        tt_db = SRSDatabase(":memory:")
+
+        class FakeSettings:
+            anki_collection_path = "unused"
+            anki_deck_name = "0. Slovene"
+            anki_model_name = "Slovene Vocabulary"
+            database_url = "sqlite:///:memory:"
+
+        @contextmanager
+        def fake_safe_open(path, mode):
+            yield type("Ctx", (), {"conn": anki_conn})()
+
+        exit_code = main(
+            argv=[],
+            _settings=FakeSettings(),
+            _safe_open_fn=fake_safe_open,
+            _sync_log_path=tmp_path / "sync.log",
+            _db=tt_db,
+        )
+
+        assert exit_code == 0
+        assert spy.await_count == 1
+        # Peer reconcile passes no media generator (no LLM in this path).
+        assert spy.await_args.kwargs["media_fn"] is None
+
+
+class TestMainCreateNew:
+    """main() (the peer-sync reconcile path) must mint Anki notes for TT
+    collocations that have no anki_note_id yet — otherwise TT-originated cards
+    never reach Anki (only the legacy /api/anki/sync endpoint ran create_new).
+    """
+
+    def _fake_settings(self):
+        class FakeSettings:
+            anki_collection_path = "unused"
+            anki_deck_name = "0. Slovene"
+            anki_model_name = "Slovene Vocabulary"
+            database_url = "sqlite:///:memory:"
+
+        return FakeSettings()
+
+    def test_main_creates_anki_notes_for_unlinked_collocations(self, tmp_path, monkeypatch):
+        """A NEW collocation with anki_note_id IS NULL is linked + minted by main()."""
+        from app.models.syntactic_unit import SyntacticUnit
+        from tests.test_anki_sync_create_new import _make_dual_collection_conn
+
+        anki_conn = _make_dual_collection_conn()
+        tt_db = SRSDatabase(":memory:")
+        tt_db.add_collocation(
+            SyntacticUnit(text="oprostiti", translation="to excuse", word_count=1, difficulty=1, source="user")
+        )
+        assert tt_db.get_collocation("oprostiti").anki_note_id is None
+
+        @contextmanager
+        def fake_safe_open(path, mode):
+            yield type("Ctx", (), {"conn": anki_conn})()
+
+        # Isolate the create-new behavior from the heavy push/pull/refresh machinery.
+        monkeypatch.setattr(
+            "app.anki.sync.AnkiSync.sync_push",
+            lambda self, dry_run=False, force_fsrs=False: PushReport(),
+        )
+        monkeypatch.setattr(
+            "app.anki.sync.AnkiSync.sync_pull",
+            lambda self, dry_run=False: PullReport(),
+        )
+        _patch_all_refreshes(monkeypatch)
+
+        exit_code = main(
+            argv=[],
+            _settings=self._fake_settings(),
+            _safe_open_fn=fake_safe_open,
+            _sync_log_path=tmp_path / "sync.log",
+            _db=tt_db,
+        )
+
+        assert exit_code == 0
+        assert tt_db.get_collocation("oprostiti").anki_note_id is not None
+        assert len(anki_conn.execute("SELECT id FROM notes").fetchall()) == 1
+
+    def test_main_dry_run_does_not_create_notes(self, tmp_path, monkeypatch):
+        """Dry run reports the count but writes no Anki note and leaves TT unlinked."""
+        from app.models.syntactic_unit import SyntacticUnit
+        from tests.test_anki_sync_create_new import _make_dual_collection_conn
+
+        anki_conn = _make_dual_collection_conn()
+        tt_db = SRSDatabase(":memory:")
+        tt_db.add_collocation(
+            SyntacticUnit(text="oprostiti", translation="to excuse", word_count=1, difficulty=1, source="user")
+        )
+
+        @contextmanager
+        def fake_safe_open(path, mode):
+            yield type("Ctx", (), {"conn": anki_conn})()
+
+        monkeypatch.setattr(
+            "app.anki.sync.AnkiSync.sync_push",
+            lambda self, dry_run=False, force_fsrs=False: PushReport(),
+        )
+        monkeypatch.setattr(
+            "app.anki.sync.AnkiSync.sync_pull",
+            lambda self, dry_run=False: PullReport(),
+        )
+
+        exit_code = main(
+            argv=["--dry-run"],
+            _settings=self._fake_settings(),
+            _safe_open_fn=fake_safe_open,
+            _sync_log_path=tmp_path / "sync.log",
+            _db=tt_db,
+        )
+
+        assert exit_code == 0
+        assert tt_db.get_collocation("oprostiti").anki_note_id is None
+        assert len(anki_conn.execute("SELECT id FROM notes").fetchall()) == 0
+
+    def test_main_discovers_model_name_when_unset(self, tmp_path, monkeypatch):
+        """When anki_model_name is empty, main() discovers it from the collection."""
+        from app.models.syntactic_unit import SyntacticUnit
+        from tests.test_anki_sync_create_new import _make_dual_collection_conn
+
+        anki_conn = _make_dual_collection_conn()
+        tt_db = SRSDatabase(":memory:")
+        tt_db.add_collocation(
+            SyntacticUnit(text="oprostiti", translation="to excuse", word_count=1, difficulty=1, source="user")
+        )
+
+        class FakeSettings:
+            anki_collection_path = "unused"
+            anki_deck_name = "0. Slovene"
+            anki_model_name = ""
+            database_url = "sqlite:///:memory:"
+
+        @contextmanager
+        def fake_safe_open(path, mode):
+            yield type("Ctx", (), {"conn": anki_conn})()
+
+        monkeypatch.setattr(
+            "app.anki.sync.AnkiSync.sync_push",
+            lambda self, dry_run=False, force_fsrs=False: PushReport(),
+        )
+        monkeypatch.setattr(
+            "app.anki.sync.AnkiSync.sync_pull",
+            lambda self, dry_run=False: PullReport(),
+        )
+        _patch_all_refreshes(monkeypatch)
+
+        exit_code = main(
+            argv=[],
+            _settings=FakeSettings(),
+            _safe_open_fn=fake_safe_open,
+            _sync_log_path=tmp_path / "sync.log",
+            _db=tt_db,
+        )
+
+        assert exit_code == 0
+        assert tt_db.get_collocation("oprostiti").anki_note_id is not None
 
 
 class TestMain:
@@ -180,6 +503,7 @@ class TestSyncSoakLog:
             "app.anki.sync.AnkiSync.sync_pull",
             lambda self, dry_run=False: PullReport(directions_updated=4),
         )
+        _patch_all_refreshes(monkeypatch)
 
         log_path = tmp_path / "logs" / "sync.log"
         exit_code = main(

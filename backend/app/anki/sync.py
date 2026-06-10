@@ -2709,6 +2709,94 @@ def _write_sync_soak_log(
         f.write("\n".join(lines) + "\n")
 
 
+async def run_full_sync(
+    sync: AnkiSync,
+    conn,
+    db,
+    *,
+    deck_name: str,
+    model_name: str,
+    sync_log_path: Path,
+    media_fn=None,
+    dry_run: bool = False,
+    force_fsrs: bool = False,
+) -> tuple[CreateNewReport, PushReport, PullReport]:
+    """The single canonical TT↔Anki sync sequence.
+
+    BOTH sync entry points call this: the closed-collection ``/api/anki/sync``
+    endpoint (Anki must be closed; ``media_fn`` supplies LLM/image media) and the
+    peer-sync reconcile (``peer_sync`` → ``main``; ``media_fn=None``). The ONLY
+    legitimate per-caller difference is the media generator. Everything else —
+    orphan recovery, note creation, push, pull, every deck-config refresh, the
+    soak heartbeat — lives here so neither path can silently drop a phase.
+
+    Do **not** inline a sync phase into one caller. A second entry point that
+    runs a different subset of phases is the b0a4b8a regression: the peer-sync
+    button dropped ``sync_create_new`` (TT-added cards never reached Anki) AND
+    every ``refresh_*`` (Anki-side FSRS-param / retention / daily-cap changes
+    never reached TT). New phases go here, not at a call site.
+
+    ``detect_and_reset_orphans`` runs unconditionally (it only resets stale TT
+    pointers so create/push can rebuild). create/push/pull honor ``dry_run``;
+    the refresh block + soak log run only on a real (non-dry) sync.
+    """
+    # Self-healing: reset TT rows pointing at Anki cards/notes that no longer
+    # exist, so sync_create_new recreates them and sync_push force_fsrs the
+    # rebuild. Must run BEFORE create_new and push to land in this same sync.
+    sync.detect_and_reset_orphans()
+
+    create_report = await sync.sync_create_new(
+        deck_name=deck_name,
+        model_name=model_name,
+        dry_run=dry_run,
+        _media_fn=media_fn,
+    )
+    push_report = sync.sync_push(dry_run=dry_run, force_fsrs=force_fsrs)
+    pull_report = sync.sync_pull(dry_run=dry_run)
+
+    if not dry_run:
+        from app.srs.queue_stats import (
+            refresh_col_crt,
+            refresh_daily_new_cap,
+            refresh_daily_review_cap,
+            refresh_desired_retention,
+            refresh_easy_days,
+            refresh_fsrs_params,
+            refresh_fsrs_short_term_flag,
+            refresh_learning_steps,
+            refresh_load_balancer_enabled,
+            refresh_maximum_review_interval,
+            refresh_review_settings,
+            warn_if_multi_deck_preset,
+        )
+
+        # Pull Anki-side deck-config changes into the TT cache. Each is a no-op
+        # when the relevant config is absent, so it's safe on a minimal/peer
+        # collection. Mirrors the per-day caps, retention, FSRS params, learning
+        # steps and load-balancer toggle the queue-parity machinery depends on.
+        refresh_col_crt(db, conn)
+        refresh_daily_new_cap(db, conn, deck_name)
+        refresh_daily_review_cap(db, conn, deck_name)
+        refresh_desired_retention(db, conn, deck_name)
+        refresh_fsrs_params(db, conn, deck_name)
+        refresh_fsrs_short_term_flag(db, conn)
+        refresh_maximum_review_interval(db, conn, deck_name)
+        refresh_review_settings(db, conn, deck_name)
+        refresh_learning_steps(db, conn, deck_name)
+        refresh_load_balancer_enabled(db, conn)
+        refresh_easy_days(db, conn, deck_name)
+        warn_if_multi_deck_preset(conn, deck_name)
+
+        _write_sync_soak_log(
+            sync_log_path,
+            event_mode=db.get_event_sync_pull_mode(),
+            pull=pull_report,
+            push=push_report,
+        )
+
+    return create_report, push_report, pull_report
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -2764,8 +2852,32 @@ def main(
                 _anki_col_ver=col_ver,
                 _anki_col_crt=col_crt,
             )
-            push = sync.sync_push(dry_run=args.dry_run, force_fsrs=args.force_fsrs)
-            pull = sync.sync_pull(dry_run=args.dry_run)
+            # Run the single canonical sync sequence (orphans → create → push →
+            # pull → refresh-all → soak). The peer-sync reconcile path must run
+            # exactly the phases the legacy endpoint does — see run_full_sync.
+            import asyncio
+
+            from app.anki import model_discovery
+
+            model_name = _s.anki_model_name or model_discovery.get_or_discover_model_name_offline(
+                ctx.conn, _s.anki_deck_name
+            )
+            create, push, pull = asyncio.run(
+                run_full_sync(
+                    sync,
+                    ctx.conn,
+                    db,
+                    deck_name=_s.anki_deck_name,
+                    model_name=model_name,
+                    sync_log_path=_sync_log,
+                    media_fn=None,
+                    dry_run=args.dry_run,
+                    force_fsrs=args.force_fsrs,
+                )
+            )
+            print(
+                f"Create: {create.created} created, {create.linked} linked, {create.notes_created_from_anki} from Anki"
+            )
             print(
                 f"Pull: {pull.notes_updated} notes updated, "
                 f"{pull.directions_updated} directions, "
@@ -2773,13 +2885,6 @@ def main(
                 f"{len(pull.recompute_divergences)} recompute divergences"
             )
             print(f"Push: {push.notes_pushed} notes, {push.directions_pushed} directions")
-            if not args.dry_run:
-                _write_sync_soak_log(
-                    _sync_log,
-                    event_mode=db.get_event_sync_pull_mode(),
-                    pull=pull,
-                    push=push,
-                )
             return 0
     except RuntimeError as e:
         print(f"Error opening collection: {e}", file=sys.stderr)

@@ -131,6 +131,31 @@ class TestSyncOfflineEndpoint:
         assert "push_dirs=3" in soak
 
     @patch("app.anki.import_seed.refresh_media_for_deck")
+    async def test_delegates_to_run_full_sync_with_media_fn(self, mock_refresh_media_for_deck, monkeypatch):
+        """The endpoint must route through the shared run_full_sync (so it can't
+        drop a phase) and supply an LLM media generator — the one legitimate
+        difference from the peer-sync reconcile, which passes media_fn=None."""
+        from unittest.mock import AsyncMock
+
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "anki_model_name", "Slovene Vocabulary")
+        monkeypatch.setattr(settings, "anki_collection_path", "/fake/collection.anki2")
+
+        conn = _make_minimal_anki_conn()
+        monkeypatch.setattr("app.anki.safety.safe_open", _make_fake_safe_open(conn))
+
+        spy = AsyncMock(return_value=(CreateNewReport(created=1), PushReport(), PullReport()))
+        monkeypatch.setattr("app.anki.sync.run_full_sync", spy)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post("/api/anki/sync")
+
+        assert response.status_code == 200
+        assert spy.await_count == 1
+        assert spy.await_args.kwargs["media_fn"] is not None
+
+    @patch("app.anki.import_seed.refresh_media_for_deck")
     async def test_passes_col_crt_to_anki_sync(self, mock_refresh_media_for_deck, monkeypatch):
         """Layer 4 regression: sync_push needs col.crt to compute the day_index
         used by bump_deck_new_today. The /api/anki/sync route must read col.crt

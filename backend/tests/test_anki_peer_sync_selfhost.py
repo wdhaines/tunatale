@@ -255,3 +255,80 @@ class TestPeerSyncSelfHost:
         peer2_card = _driver({"op": "get_card", "collection_path": str(peer2_col), "card_id": card_id})
         assert peer2_card["queue"] == 1, f"lapse not propagated — peer2 card still {peer2_card}"
         assert peer2_card["type"] == 3
+
+    def test_tt_added_card_reaches_server_through_peer_sync(self, tmp_path: Path):
+        """End-to-end guard for the b0a4b8a regression: a card *originated in TT*
+        (no anki_note_id) must be minted into tt_collection by the peer-sync
+        reconcile (peer_sync → main → run_full_sync → sync_create_new) and pushed
+        to the server — reaching another device. Uses a cloze card so it rides
+        Anki's built-in Cloze notetype (no custom-notetype provisioning needed);
+        the create path through run_full_sync is identical regardless of type.
+        """
+        import sqlite3
+
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+
+        tt_col = tmp_path / "tt_collection.anki2"
+        peer2_col = tmp_path / "peer2.anki2"
+        auth = _login()
+
+        # Baseline: create tt_col and a note in the TT deck (this also creates the
+        # deck create_cloze_note needs), upload as the server baseline.
+        _driver({"op": "create_collection", "collection_path": str(tt_col)})
+        _driver(
+            {
+                "op": "add_note",
+                "collection_path": str(tt_col),
+                "deck": settings.anki_deck_name,
+                "fields": ["baseline front", "baseline back"],
+            }
+        )
+        _driver({"op": "full_upload", "collection_path": str(tt_col), "auth": auth})
+
+        _driver({"op": "create_collection", "collection_path": str(peer2_col)})
+        _driver({"op": "full_download", "collection_path": str(peer2_col), "auth": auth})
+
+        # TT originates a cloze card — no Anki ids; sync_create_new must mint it.
+        db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        try:
+            db.add_collocation(
+                SyntacticUnit(
+                    text="bom",
+                    translation="",
+                    word_count=1,
+                    difficulty=1,
+                    source="llm",
+                    lemma="bom",
+                    source_sentence="Jutri bom šel domov.",
+                    card_type="cloze",
+                )
+            )
+            assert db.get_collocation("bom").anki_note_id is None
+        finally:
+            db.close()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(settings, "tt_collection_path", tt_col)
+            report = peer_sync(dry_run=False)
+        assert report.tt_push_pull_exit == 0
+        _assert_incremental(report.pull_required, "create-new pull")
+        _assert_incremental(report.push_required, "create-new push")
+
+        # TT side: the collocation is now linked (sync_create_new wrote the ids).
+        db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        try:
+            assert db.get_collocation("bom").anki_note_id is not None, (
+                "peer-sync reconcile did not mint the TT-added card (run_full_sync dropped create_new)"
+            )
+        finally:
+            db.close()
+
+        # Server side: another device pulls and now has the cloze note.
+        _driver({"op": "sync", "collection_path": str(peer2_col), "auth": auth})
+        peer2 = sqlite3.connect(str(peer2_col))
+        try:
+            flds = [r[0] for r in peer2.execute("SELECT flds FROM notes").fetchall()]
+        finally:
+            peer2.close()
+        assert any("{{c1::" in f for f in flds), f"TT-added cloze note never reached the server — peer2 notes: {flds}"
