@@ -8,14 +8,15 @@ map, so they get the worst-quality query — and an ambiguous gloss ("court",
 
 This module asks the project's existing LLM (Groq via ``app.state.llm``) for a
 concrete, depictable, sense-disambiguated query, using the context the card
-already carries (example sentence + grammar). Abstract/function words yield the
-empty-string skip sentinel so no random photo is fetched. Results are cached
+already carries (example sentence + grammar). Every production card should get
+an image — even abstract words get a best-effort representative query, and a
+human fixes a bad one rather than the pipeline skipping it. Results are cached
 per-word in ``image_query_cache`` (one LLM call per new word, never per render),
 mirroring the persistent lemma-analysis cache.
 
-Resilience contract — three outcomes:
-  * non-empty ``str`` → use this query
-  * ``""``           → skip the image (abstract word)
+Resilience contract — two outcomes:
+  * non-empty ``str`` → use this query (the LLM's best concrete depiction, or the
+                        English gloss as a best-effort fallback — never skip)
   * ``None``         → no opinion; caller falls back to ``build_query`` (LLM
                        unavailable or failed — never block card creation on it)
 """
@@ -29,7 +30,7 @@ from typing import Protocol
 logger = logging.getLogger(__name__)
 
 # Bump when the prompt or target model changes so the cache invalidates.
-IMAGE_QUERY_MODEL_VERSION = "img-query-v1"
+IMAGE_QUERY_MODEL_VERSION = "img-query-v2"
 
 IMAGE_QUERY_SYSTEM_PROMPT = (
     "You write short image-search queries for a stock-photo site to illustrate a "
@@ -38,10 +39,11 @@ IMAGE_QUERY_SYSTEM_PROMPT = (
     "CONCRETE, photographable object or scene that depicts the word's meaning in "
     "that sense. Prefer literal, everyday depictions a stock-photo library would "
     "actually have, and use the example sentence to pick the right sense of an "
-    "ambiguous word. If the word is abstract, grammatical, or a function word that "
-    "no single photo can depict (pronouns, conjunctions, prepositions, or concepts "
-    "like 'maybe', 'become', 'reason', 'very'), reply with exactly NONE. Reply with "
-    "only the query words or NONE — no quotes, no punctuation, no explanation."
+    "ambiguous word. Even for an abstract, grammatical, or function word, give your "
+    "best representative concrete scene (e.g. 'forgive' -> two people hugging; "
+    "'because' -> falling dominoes; 'very' -> giant size comparison): every card "
+    "should get an image, and a human will refine it later. Reply with only the "
+    "query words — no quotes, no punctuation, no explanation, never NONE."
 )
 
 _LABEL_RE = re.compile(r"^(?:image\s+)?(?:search\s+)?query\s*[:\-]\s*", re.IGNORECASE)
@@ -103,10 +105,13 @@ async def generate_image_query(
     model_version: str = IMAGE_QUERY_MODEL_VERSION,
 ) -> str | None:
     """Return a sense-aware Pixabay query for a card. See module docstring contract."""
+    # Best-effort fallback so every card gets an image attempt — never skip. The
+    # English gloss is a usable Pixabay query when the LLM gives nothing concrete.
+    fallback = english.strip()
     if db is not None:
         cached = db.get_image_query(word, english, model_version)
         if cached is not None:
-            return cached
+            return cached or fallback or None
     if llm is None:
         return None
     prompt = build_image_query_prompt(word, english, source_sentence=source_sentence, grammar=grammar)
@@ -115,7 +120,7 @@ async def generate_image_query(
     except Exception as exc:  # noqa: BLE001 — never block card creation on the LLM
         logger.warning("image query generation failed for %r: %s", word, exc)
         return None
-    query = parse_image_query_response(raw)
+    query = parse_image_query_response(raw) or fallback
     if db is not None:
         db.set_image_query(word, english, model_version, query)
-    return query
+    return query or None

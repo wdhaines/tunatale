@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import sys
 
 from app.anki.safety import safe_open
 from app.anki.sync import OfflineWriter, _safe_stem
@@ -30,6 +31,7 @@ CIDS = [882, 883, 884]
 
 
 async def main() -> None:
+    cids = [int(a) for a in sys.argv[1:]] or CIDS
     _ensure_tt_media_linked()
     media_dir = _resolve_media_dir()
     print(f"media_dir = {media_dir}  (exists={media_dir.exists()})")
@@ -41,7 +43,7 @@ async def main() -> None:
 
     with safe_open(settings.tt_collection_path, mode="rw") as ctx:
         writer = OfflineWriter(ctx.conn, media_dir=media_dir)
-        for cid in CIDS:
+        for cid in cids:
             rec = db.get_collocation_by_id(cid)
             if rec is None:
                 print(f"cid={cid}: NOT FOUND, skipping")

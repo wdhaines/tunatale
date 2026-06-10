@@ -101,11 +101,14 @@ class TestGenerateImageQuery:
         assert result == "courtroom interior"
         assert llm.prompts == []
 
-    async def test_cache_hit_empty_string_is_honored_as_skip(self, srs_db):
+    async def test_cache_hit_empty_string_falls_back_to_gloss(self, srs_db):
+        # New contract: never skip — a blank cached query falls back to the English
+        # gloss (best-effort image) rather than returning "" (no image). Every
+        # production card should get an image attempt; a human fixes a bad one.
         srs_db.set_image_query("zato", "therefore", IMAGE_QUERY_MODEL_VERSION, "")
         llm = _FakeLLM(response="should not be used")
         result = await generate_image_query("zato", "therefore", llm=llm, db=srs_db)
-        assert result == ""
+        assert result == "therefore"
         assert llm.prompts == []
 
     async def test_cache_miss_calls_llm_parses_and_stores(self, srs_db):
@@ -116,11 +119,13 @@ class TestGenerateImageQuery:
         # persisted for next time
         assert srs_db.get_image_query("sodišče", "court", IMAGE_QUERY_MODEL_VERSION) == "courtroom interior"
 
-    async def test_llm_none_response_caches_skip_sentinel(self, srs_db):
+    async def test_llm_blank_response_falls_back_to_gloss(self, srs_db):
+        # The LLM may still return an unusable reply for a hard word; we don't skip —
+        # we fall back to the English gloss so the card still gets an image attempt.
         llm = _FakeLLM(response="NONE")
         result = await generate_image_query("zato", "therefore", llm=llm, db=srs_db)
-        assert result == ""
-        assert srs_db.get_image_query("zato", "therefore", IMAGE_QUERY_MODEL_VERSION) == ""
+        assert result == "therefore"
+        assert srs_db.get_image_query("zato", "therefore", IMAGE_QUERY_MODEL_VERSION) == "therefore"
 
     async def test_llm_failure_returns_none_and_does_not_cache(self, srs_db):
         from app.llm.client import LLMError
