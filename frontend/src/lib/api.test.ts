@@ -921,42 +921,6 @@ describe("TunaTaleAPI", () => {
       );
     });
 
-    it("syncWithAnki calls POST /api/anki/sync?dry_run=false by default", async () => {
-      const payload = {
-        created: 2,
-        linked: 1,
-        skipped: 0,
-        notes_pulled: 10,
-        directions_pulled: 20,
-        conflicts: 0,
-        notes_pushed: 1,
-        directions_pushed: 3,
-        dry_run: false,
-      };
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(payload)));
-
-      const result = await api.syncWithAnki();
-
-      expect(fetch).toHaveBeenCalledWith(
-        `${BASE}/api/anki/sync?dry_run=false`,
-        expect.objectContaining({ method: "POST" }),
-      );
-      expect(result.created).toBe(2);
-      expect(result.directions_pulled).toBe(20);
-      expect(result.dry_run).toBe(false);
-    });
-
-    it("syncWithAnki forwards dryRun=true", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ dry_run: true })));
-
-      await api.syncWithAnki(true);
-
-      expect(fetch).toHaveBeenCalledWith(
-        `${BASE}/api/anki/sync?dry_run=true`,
-        expect.objectContaining({ method: "POST" }),
-      );
-    });
-
     it("peerSync calls POST /api/anki/peer-sync?dry_run=false by default", async () => {
       const payload = {
         auth_success: true,
@@ -1049,50 +1013,6 @@ describe("TunaTaleAPI", () => {
     it("throws on non-ok response", async () => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Service Unavailable")));
       await expect(api.fetchReviewQueue()).rejects.toThrow("Service Unavailable");
-    });
-  });
-
-  describe("fetchAnkiStatus", () => {
-    it("calls GET /api/anki/status and returns {anki_running, lock_acquirable}", async () => {
-      const payload = { anki_running: false, lock_acquirable: true };
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(payload)));
-
-      const result = await api.fetchAnkiStatus();
-
-      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/anki/status`);
-      expect(result.anki_running).toBe(false);
-      expect(result.lock_acquirable).toBe(true);
-    });
-
-    it("throws on non-ok response", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Service Unavailable")));
-      await expect(api.fetchAnkiStatus()).rejects.toThrow("Service Unavailable");
-    });
-  });
-
-  describe("syncCreateNew", () => {
-    it("calls POST /api/anki/sync-create-new with deck and model names", async () => {
-      const payload = { created: 5, updated: 0, skipped: 2 };
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(payload)));
-
-      const result = await api.syncCreateNew("0. Slovene", "Slovene Vocabulary");
-
-      expect(fetch).toHaveBeenCalledWith(
-        `${BASE}/api/anki/sync-create-new`,
-        expect.objectContaining({
-          method: "POST",
-          body: JSON.stringify({ deck_name: "0. Slovene", model_name: "Slovene Vocabulary" }),
-        }),
-      );
-      expect(result.created).toBe(5);
-      expect(result.skipped).toBe(2);
-    });
-
-    it("throws on non-ok response", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Sync failed")));
-      await expect(api.syncCreateNew("Deck", "Model")).rejects.toThrow(
-        "POST /api/anki/sync-create-new: Sync failed",
-      );
     });
   });
 });
