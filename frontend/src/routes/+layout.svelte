@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import favicon from '$lib/assets/favicon.svg';
+	import favicon from '$lib/assets/favicon.png';
+	import logo from '$lib/assets/logo.png';
 	import { page } from '$app/stores';
 	import { api } from '$lib/api';
 	import type { QueueStats } from '$lib/api';
@@ -59,7 +60,7 @@
 </svelte:head>
 
 <nav class="global-nav">
-	<a href="/" class="brand">TunaTale</a>
+	<a href="/" class="brand"><img class="brand-mark" src={logo} alt="" />TunaTale</a>
 	<div class="nav-links">
 		<span class="review-group">
 			<a href="/review" class="nav-link" class:active={onReview}>Review</a>
@@ -99,11 +100,19 @@
 		border-bottom: 1px solid var(--color-border);
 	}
 	.brand {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
 		font-weight: 800;
 		font-size: 1.05rem;
 		letter-spacing: -0.01em;
 		color: var(--color-brand);
 		text-decoration: none;
+	}
+	.brand-mark {
+		width: 28px;
+		height: 28px;
+		display: block;
 	}
 	.nav-actions {
 		margin-left: auto;

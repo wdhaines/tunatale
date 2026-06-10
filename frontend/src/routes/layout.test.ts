@@ -87,6 +87,15 @@ describe("root +layout.svelte", () => {
     );
   });
 
+  it("renders the logo mark inside the brand link", () => {
+    const { getByRole } = renderLayout();
+    const brand = getByRole("link", { name: "TunaTale" });
+    const mark = brand.querySelector("img.brand-mark") as HTMLImageElement;
+    expect(mark).toBeTruthy();
+    // Decorative: the brand's accessible name stays the wordmark text.
+    expect(mark.getAttribute("alt")).toBe("");
+  });
+
   it("renders the Sync to AnkiWeb button in the global nav", () => {
     const { getByText } = renderLayout();
     expect(getByText("Sync to AnkiWeb")).toBeTruthy();
