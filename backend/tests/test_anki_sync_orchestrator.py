@@ -188,6 +188,29 @@ class TestPeerSync:
         assert pull_input["auth"] == AUTH_RESPONSE
         assert push_input["auth"] == AUTH_RESPONSE
 
+    def test_pull_leg_is_media_enabled(self):
+        """Regression: media must sync on the PULL leg (the always-run bidirectional
+        sync_collection), not only the conditional push leg. The pull leg pushes
+        dirty collection rows first → has_pending clears → the push leg (and its
+        media sync) is skipped → media files stranded on the client. Found doing a
+        real backfill: note-field updates reached AnkiWeb but the media did not."""
+        with (
+            patch(
+                "app.anki.sync_orchestrator.subprocess.run",
+                side_effect=[
+                    _mock_run(AUTH_RESPONSE),
+                    _mock_run(NORMAL_SYNC),
+                    _mock_run(NO_CHANGE),
+                ],
+            ) as mock_run,
+            patch("app.anki.sync.main", return_value=0),
+        ):
+            peer_sync(dry_run=False)
+
+        pull_input = json.loads(mock_run.call_args_list[1].kwargs["input"])
+        assert pull_input["op"] == "sync"
+        assert pull_input["sync_media"] is True, "pull leg must be media-enabled or media strands"
+
     def test_tt_settings_retargets_path(self):
         """_tt_settings clones settings with anki_collection_path = tt_collection_path."""
         from app.anki.sync_orchestrator import _tt_settings

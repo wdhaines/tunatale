@@ -385,9 +385,15 @@ def peer_sync(dry_run: bool = False, *, media_fn=None) -> PeerSyncReport:
     _mirror_real_curdeck_into_tt(settings.anki_collection_path, settings.tt_collection_path)
     report.timings["mirror_pre"] = time.perf_counter() - t0
 
+    # Media-enabled: the "pull" leg is a *bidirectional* sync_collection that also
+    # pushes any dirty collection rows, so it's the leg that always runs and is where
+    # media must sync. (Media only on the conditional push leg strands files: this
+    # leg pushes the rows first, clearing has_pending, so the push leg — and its
+    # media sync — gets skipped.) The push leg stays media-enabled too, to cover
+    # media generated during the reconcile (those are new pending rows).
     t0 = time.perf_counter()
     try:
-        sync_out = _sync_leg(auth)
+        sync_out = _sync_leg(auth, sync_media=True)
     except PeerSyncError:
         # A cached hkey can go stale (password change, server invalidation). The pull
         # leg runs before any TT write, so it's safe to re-login and retry once here.
@@ -396,7 +402,7 @@ def peer_sync(dry_run: bool = False, *, media_fn=None) -> PeerSyncReport:
         if not had_cached_auth:
             raise
         auth = _get_auth(refresh=True)
-        sync_out = _sync_leg(auth)
+        sync_out = _sync_leg(auth, sync_media=True)
     report.timings["pull"] = time.perf_counter() - t0
     report.pull_required = sync_out.get("required")
     report.pull_message = sync_out.get("server_message", "")
