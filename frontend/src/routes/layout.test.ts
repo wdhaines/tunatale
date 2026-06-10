@@ -26,6 +26,7 @@ vi.mock("$lib/api", () => ({
 
 import { api } from "$lib/api";
 import { syncStore } from "$lib/stores/sync.svelte";
+import { queueStatsStore } from "$lib/stores/queueStats.svelte";
 import { themeStore } from "$lib/stores/theme.svelte";
 import Layout from "./+layout.svelte";
 
@@ -51,6 +52,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   nav.pathname = "/";
   syncStore.notify(null);
+  queueStatsStore.set(null); // the badge reads a shared singleton — reset per test
   // jsdom lacks matchMedia; the layout's theme init() needs it.
   (window as unknown as { matchMedia: unknown }).matchMedia = vi.fn(() => ({
     matches: false,
@@ -165,6 +167,32 @@ describe("root +layout.svelte", () => {
     expect(await findByText("2")).toBeTruthy();
     expect(await findByText("3")).toBeTruthy();
     expect(container.querySelector(".review-badge")).not.toBeNull();
+  });
+
+  it("badge updates live when the shared store changes (e.g. a grade on /review)", async () => {
+    mockFetchQueueStats.mockResolvedValue({
+      new: 5,
+      learning: 2,
+      review: 3,
+      daily_new_cap: 20,
+      cap_source: "cache",
+      fsrs_source: "cache",
+    });
+    const { findByText } = renderLayout();
+    await findByText("5");
+
+    // The /review page writes the shared store on every grade; the nav must
+    // reflect it without waiting for a focus event.
+    queueStatsStore.set({
+      new: 4,
+      learning: 2,
+      review: 3,
+      daily_new_cap: 20,
+      cap_source: "cache",
+      fsrs_source: "cache",
+    });
+
+    expect(await findByText("4")).toBeTruthy();
   });
 
   it("renders no badge when fetchQueueStats rejects", async () => {

@@ -3,11 +3,10 @@
 	import favicon from '$lib/assets/favicon.png';
 	import logo from '$lib/assets/logo.png';
 	import { page } from '$app/stores';
-	import { api } from '$lib/api';
-	import type { QueueStats } from '$lib/api';
 	import SyncButton from '$lib/components/SyncButton.svelte';
 	import QueueStatsWidget from '$lib/components/QueueStatsWidget.svelte';
 	import { syncStore } from '$lib/stores/sync.svelte';
+	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
 
 	let { children } = $props();
@@ -21,32 +20,24 @@
 				: { icon: '🌙', label: 'Dark' }
 	);
 
-	let stats = $state<QueueStats | null>(null);
-
 	// The review counts live in the nav (Anki-style) so they're visible from every
-	// page. /queue-stats reads Anki's collection live, so refresh on focus and after
-	// a sync. Failures degrade silently — the badge just doesn't render.
-	async function refreshStats() {
-		try {
-			stats = await api.fetchQueueStats();
-		} catch {
-			// keep last-known (or none) — badge is non-critical chrome
-		}
-	}
-
+	// page. They come from a shared store so a grade on /review updates the nav
+	// badge live (not just on the next focus). /queue-stats reads Anki's collection
+	// live, so we also refresh on focus and after a sync. Failures degrade silently
+	// — the badge just doesn't render.
 	onMount(() => {
 		themeStore.init();
-		refreshStats();
+		queueStatsStore.refresh();
 	});
 
 	$effect(() => {
-		const onFocus = () => refreshStats();
+		const onFocus = () => queueStatsStore.refresh();
 		window.addEventListener('focus', onFocus);
 		return () => window.removeEventListener('focus', onFocus);
 	});
 
 	$effect(() => {
-		if (syncStore.lastResult) refreshStats();
+		if (syncStore.lastResult) queueStatsStore.refresh();
 	});
 
 	const path = $derived($page.url.pathname);
@@ -64,8 +55,8 @@
 	<div class="nav-links">
 		<span class="review-group">
 			<a href="/review" class="nav-link" class:active={onReview}>Review</a>
-			{#if stats}
-				<span class="review-badge"><QueueStatsWidget {stats} /></span>
+			{#if queueStatsStore.stats}
+				<span class="review-badge"><QueueStatsWidget stats={queueStatsStore.stats} /></span>
 			{/if}
 		</span>
 		<a href="/" class="nav-link" class:active={onLessons}>Lessons</a>

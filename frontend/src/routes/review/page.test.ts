@@ -28,6 +28,7 @@ vi.mock("$lib/api", () => ({
 }));
 
 import { api } from "$lib/api";
+import type { ReviewQueueItem } from "$lib/api";
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 const mockFetchReviewQueue = vi.mocked(api.fetchReviewQueue);
 const mockSubmitDrill = vi.mocked(api.submitDrill);
@@ -158,6 +159,38 @@ describe("review/+page.svelte", () => {
     await fireEvent.click(await findByRole("button", { name: "Good" }));
     expect(await findByRole("button", { name: "Show" })).toBeTruthy();
     expect(queryByRole("button", { name: "Good" })).toBeNull();
+  });
+
+  it("keeps the just-graded card in place until the next card loads (no prompt flash)", async () => {
+    // Regression: `reviewed` drives the {#key} that resets the DrillCard. If it
+    // bumps before the refetch resolves, the card is torn down and rebuilt with
+    // the *old* item in its unrevealed state (prompt image jumps back to full
+    // size) for the whole network round-trip — a visible flash. The grade must
+    // refetch first, then re-key once, so the graded card stays put until the
+    // next card is ready.
+    const item = makeReviewQueueItem({
+      id: 1,
+      text: "okno",
+      translation: "window",
+      direction: "recognition",
+    });
+    let resolveSecond!: (value: { queue: ReviewQueueItem[] }) => void;
+    const pendingSecond = new Promise<{ queue: ReviewQueueItem[] }>((resolve) => {
+      resolveSecond = resolve;
+    });
+    mockFetchReviewQueue
+      .mockResolvedValueOnce({ queue: [item] })
+      .mockReturnValueOnce(pendingSecond);
+    const { findByRole, queryByRole } = render(ReviewPage);
+    await fireEvent.click(await findByRole("button", { name: "Show" }));
+    await fireEvent.click(await findByRole("button", { name: "Good" }));
+
+    // Refetch is still in flight: the graded card stays revealed (rating buttons
+    // visible), not re-keyed back to an unrevealed "Show" prompt.
+    expect(await findByRole("button", { name: "Good" })).toBeTruthy();
+    expect(queryByRole("button", { name: "Show" })).toBeNull();
+
+    resolveSecond({ queue: [] });
   });
 
   it("shows done when server returns empty queue after rating", async () => {

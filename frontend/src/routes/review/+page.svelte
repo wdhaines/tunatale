@@ -5,6 +5,7 @@
 	import QueueStatsWidget from '$lib/components/QueueStatsWidget.svelte';
 	import type { ReviewQueueItem } from '$lib/api';
 	import DrillCard from '$lib/components/DrillCard.svelte';
+	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
 
 	type QueueItem = { item: ReviewQueueItem; direction: 'recognition' | 'production' };
 
@@ -28,6 +29,8 @@
 				api.fetchReviewQueue({ sessionStart }),
 			]);
 			stats = queueStats;
+			// Share with the nav badge so it tracks every grade live, not just on focus.
+			queueStatsStore.set(queueStats);
 			queue = queueData.queue.map(item => ({ item, direction: item.direction }));
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -64,8 +67,14 @@
 			error = e instanceof Error ? e.message : String(e);
 			return;
 		}
-		reviewed += 1;
+		// Refetch BEFORE re-keying the DrillCard. `reviewed` drives the {#key}, so
+		// bumping it first would tear down and rebuild the card with the *old* item
+		// in its unrevealed state (prompt image jumps back to full size) for the
+		// whole network round-trip, then swap to the next card — a visible flash.
+		// Refetching first means the just-graded card stays put until the next card
+		// is ready, then a single clean swap.
 		await refreshFromServer();
+		reviewed += 1;
 	}
 </script>
 
