@@ -21,6 +21,7 @@
 	let error = $state<string | null>(null);
 	let queueStats = $state<QueueStats | null>(null);
 	let syncStatus = $state<string | null>(null);
+	let openMenuId = $state<number | null>(null);
 
 	function handleSyncResult() {
 		syncStatus = 'Synced with AnkiWeb';
@@ -106,7 +107,36 @@
 		}
 	}
 
+	function toggleMenu(id: number) {
+		openMenuId = openMenuId === id ? null : id;
+	}
+
+	function closeMenu() {
+		openMenuId = null;
+	}
+
+	function handleDocumentClick(e: MouseEvent) {
+		const target = e.target as HTMLElement;
+		if (target.closest('.actions-menu')) return;
+		closeMenu();
+	}
+
+	function handleDocumentKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') closeMenu();
+	}
+
+	$effect(() => {
+		if (openMenuId === null) return;
+		document.addEventListener('click', handleDocumentClick);
+		document.addEventListener('keydown', handleDocumentKeydown);
+		return () => {
+			document.removeEventListener('click', handleDocumentClick);
+			document.removeEventListener('keydown', handleDocumentKeydown);
+		};
+	});
+
 	function startEdit(item: SRSItemDetail) {
+		closeMenu();
 		editingId = item.id;
 		editText = item.text;
 		editTranslation = item.translation;
@@ -269,13 +299,27 @@
 						<span class="col-state state-{item.state}">{item.state}</span>
 						<span class="col-due">{formatDue(item.due_at)}</span>
 						<span class="col-reps">{item.reps}</span>
-						<span class="col-actions">
-							<button onclick={() => startEdit(item)}>Edit</button>
-							<button onclick={() => resetItem(item.id)}>Reset</button>
-							<button onclick={() => toggleSuspend(item)}>
-								{item.state === 'suspended' ? 'Unsuspend' : 'Suspend'}
+						<span class="col-actions actions-menu">
+							<button
+								class="actions-trigger"
+								aria-label="Actions for {stripSoundTags(item.text)}"
+								aria-haspopup="menu"
+								aria-expanded={openMenuId === item.id}
+								onclick={() => toggleMenu(item.id)}
+							>
+								⋯
 							</button>
-							<button class="danger" onclick={() => deleteItem(item.id)}>Delete</button>
+							{#if openMenuId === item.id}
+								<div class="menu" role="menu">
+									<button role="menuitem" onclick={() => startEdit(item)}>Edit</button>
+									<button role="menuitem" onclick={() => { closeMenu(); resetItem(item.id); }}>Reset</button>
+									<button role="menuitem" onclick={() => { closeMenu(); toggleSuspend(item); }}>
+										{item.state === 'suspended' ? 'Unsuspend' : 'Suspend'}
+									</button>
+									<div class="menu-divider"></div>
+									<button role="menuitem" class="danger" onclick={() => { closeMenu(); deleteItem(item.id); }}>Delete</button>
+								</div>
+							{/if}
 						</span>
 					</div>
 				{/if}
@@ -429,6 +473,55 @@
 	}
 	.col-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; padding-top: 0.25rem; }
 	.col-actions button { min-height: 44px; flex: 1; }
+	.actions-menu {
+		position: relative;
+		justify-content: flex-end;
+		flex-wrap: nowrap;
+	}
+	.actions-trigger {
+		flex: 0 0 auto;
+		min-width: 44px;
+		font-size: 1.1rem;
+		line-height: 1;
+		font-weight: 700;
+	}
+	.menu {
+		position: absolute;
+		top: calc(100% + 0.25rem);
+		right: 0;
+		z-index: 10;
+		display: flex;
+		flex-direction: column;
+		min-width: 9rem;
+		padding: 0.25rem;
+		gap: 0.15rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		background: var(--color-surface);
+		box-shadow: var(--shadow);
+	}
+	.menu button[role='menuitem'] {
+		min-height: 44px;
+		flex: 0 0 auto;
+		width: 100%;
+		text-align: left;
+		border: none;
+		background: transparent;
+	}
+	.menu button[role='menuitem']:hover {
+		background: var(--color-surface-2);
+	}
+	.menu button[role='menuitem'].danger {
+		color: var(--color-danger);
+	}
+	.menu button[role='menuitem'].danger:hover {
+		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+	}
+	.menu-divider {
+		height: 1px;
+		margin: 0.2rem 0.25rem;
+		background: var(--color-border);
+	}
 	.col-text, .col-trans { white-space: normal; overflow: visible; font-size: 0.95rem; }
 	.col-trans { color: var(--color-muted); font-style: italic; }
 	.col-state { font-size: 0.8rem; }

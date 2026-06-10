@@ -25,11 +25,13 @@ test('cards: search filters list, suspend toggles state', async ({ page, request
 	await page.getByPlaceholder('Search cards').fill('');
 	await expect(page.getByText('eden').first()).toBeVisible({ timeout: 5000 });
 
-	// Find the eden row and suspend it
+	// Find the eden row, open its actions menu, and suspend it
 	const edenRow = page.locator('.row').filter({ hasText: 'eden' });
-	await edenRow.getByRole('button', { name: 'Suspend' }).click();
+	await edenRow.getByRole('button', { name: /^Actions for eden/ }).click();
+	await edenRow.getByRole('menuitem', { name: 'Suspend' }).click();
 
-	// After suspend: button flips to Unsuspend and state badge shows 'suspended'
-	await expect(edenRow.getByRole('button', { name: 'Unsuspend' })).toBeVisible({ timeout: 5000 });
+	// After suspend: state badge shows 'suspended', and the menu now offers Unsuspend
 	await expect(edenRow.locator('.state-suspended')).toBeVisible();
+	await edenRow.getByRole('button', { name: /^Actions for eden/ }).click();
+	await expect(edenRow.getByRole('menuitem', { name: 'Unsuspend' })).toBeVisible({ timeout: 5000 });
 });

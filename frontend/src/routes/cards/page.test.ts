@@ -5,6 +5,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import CardsPage from "./+page.svelte";
 
+/** Open the row-actions overflow menu for the row whose text is `itemText`. */
+async function openRowMenu(
+  findByLabelText: (text: RegExp | string) => Promise<HTMLElement>,
+  itemText: string,
+) {
+  const trigger = await findByLabelText(new RegExp(`^Actions for ${itemText}`));
+  await fireEvent.click(trigger);
+  return trigger;
+}
+
 vi.mock("$lib/api", () => {
   return {
     api: {
@@ -157,9 +167,10 @@ describe("cards/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockUpdate.mockResolvedValue({ ...item, text: "Zdravo!", translation: "Hello!" });
 
-    const { findByText, getAllByRole } = render(CardsPage);
+    const { findByText, findByLabelText, getAllByRole } = render(CardsPage);
     await findByText("zdravo");
 
+    await openRowMenu(findByLabelText, "zdravo");
     const editBtn = await findByText("Edit");
     await fireEvent.click(editBtn);
 
@@ -209,9 +220,10 @@ describe("cards/+page.svelte", () => {
     mockDelete.mockResolvedValue({ status: "deleted" });
     vi.stubGlobal("confirm", () => true);
 
-    const { findByText } = render(CardsPage);
+    const { findByText, findByLabelText } = render(CardsPage);
     await findByText("lep");
 
+    await openRowMenu(findByLabelText, "lep");
     const deleteBtn = await findByText("Delete");
     await fireEvent.click(deleteBtn);
 
@@ -225,9 +237,10 @@ describe("cards/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockSuspend.mockResolvedValue({ ...item, state: "suspended" });
 
-    const { findByText } = render(CardsPage);
+    const { findByText, findByLabelText } = render(CardsPage);
     await findByText("lep");
 
+    await openRowMenu(findByLabelText, "lep");
     const suspendBtn = await findByText("Suspend");
     await fireEvent.click(suspendBtn);
 
@@ -242,9 +255,10 @@ describe("cards/+page.svelte", () => {
     mockReset.mockResolvedValue({ ...item, state: "new", reps: 0 });
     vi.stubGlobal("confirm", () => true);
 
-    const { findByText } = render(CardsPage);
+    const { findByText, findByLabelText } = render(CardsPage);
     await findByText("kava");
 
+    await openRowMenu(findByLabelText, "kava");
     const resetBtn = await findByText("Reset");
     await fireEvent.click(resetBtn);
 
@@ -259,9 +273,10 @@ describe("cards/+page.svelte", () => {
     mockReset.mockRejectedValue(new Error("reset failed"));
     vi.stubGlobal("confirm", () => true);
 
-    const { findByText } = render(CardsPage);
+    const { findByText, findByLabelText } = render(CardsPage);
     await findByText("kava");
 
+    await openRowMenu(findByLabelText, "kava");
     await fireEvent.click(await findByText("Reset"));
 
     expect(await findByText("reset failed")).toBeTruthy();
@@ -272,9 +287,10 @@ describe("cards/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockSuspend.mockRejectedValue(new Error("suspend failed"));
 
-    const { findByText } = render(CardsPage);
+    const { findByText, findByLabelText } = render(CardsPage);
     await findByText("voda");
 
+    await openRowMenu(findByLabelText, "voda");
     await fireEvent.click(await findByText("Suspend"));
 
     expect(await findByText("suspend failed")).toBeTruthy();
@@ -284,9 +300,10 @@ describe("cards/+page.svelte", () => {
     const item = makeSRSItemDetail({ id: 5, text: "miza" });
     mockList.mockResolvedValue({ items: [item], total: 1 });
 
-    const { findByText } = render(CardsPage);
+    const { findByText, findByLabelText } = render(CardsPage);
     await findByText("miza");
 
+    await openRowMenu(findByLabelText, "miza");
     await fireEvent.click(await findByText("Edit"));
     // Edit row should be open (Save/Cancel visible)
     expect(await findByText("Cancel")).toBeTruthy();
@@ -322,9 +339,10 @@ describe("cards/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockUpdate.mockRejectedValue("plain update error");
 
-    const { findByText } = render(CardsPage);
+    const { findByText, findByLabelText } = render(CardsPage);
     await findByText("vino");
 
+    await openRowMenu(findByLabelText, "vino");
     await fireEvent.click(await findByText("Edit"));
     await fireEvent.click(await findByText("Save"));
 
@@ -337,9 +355,10 @@ describe("cards/+page.svelte", () => {
     mockDelete.mockRejectedValue("plain delete error");
     vi.stubGlobal("confirm", () => true);
 
-    const { findByText } = render(CardsPage);
+    const { findByText, findByLabelText } = render(CardsPage);
     await findByText("sir");
 
+    await openRowMenu(findByLabelText, "sir");
     await fireEvent.click(await findByText("Delete"));
 
     expect(await findByText("plain delete error")).toBeTruthy();
@@ -360,9 +379,10 @@ describe("cards/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockUpdate.mockRejectedValue(new Error("save failed (Error instance)"));
 
-    const { findByText } = render(CardsPage);
+    const { findByText, findByLabelText } = render(CardsPage);
     await findByText("voda");
 
+    await openRowMenu(findByLabelText, "voda");
     await fireEvent.click(await findByText("Edit"));
     await fireEvent.click(await findByText("Save"));
 
@@ -376,9 +396,10 @@ describe("cards/+page.svelte", () => {
     mockDelete.mockRejectedValue(new Error("delete failed (Error instance)"));
     vi.stubGlobal("confirm", () => true);
 
-    const { findByText } = render(CardsPage);
+    const { findByText, findByLabelText } = render(CardsPage);
     await findByText("sol");
 
+    await openRowMenu(findByLabelText, "sol");
     await fireEvent.click(await findByText("Delete"));
 
     expect(await findByText("delete failed (Error instance)")).toBeTruthy();
@@ -390,9 +411,10 @@ describe("cards/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     vi.stubGlobal("confirm", () => false);
 
-    const { findByText } = render(CardsPage);
+    const { findByText, findByLabelText } = render(CardsPage);
     await findByText("mleko");
 
+    await openRowMenu(findByLabelText, "mleko");
     await fireEvent.click(await findByText("Delete"));
     await flushMicrotasks();
 
@@ -405,9 +427,10 @@ describe("cards/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     vi.stubGlobal("confirm", () => false);
 
-    const { findByText } = render(CardsPage);
+    const { findByText, findByLabelText } = render(CardsPage);
     await findByText("čaj");
 
+    await openRowMenu(findByLabelText, "čaj");
     await fireEvent.click(await findByText("Reset"));
     await flushMicrotasks();
 
@@ -457,9 +480,10 @@ describe("cards/+page.svelte", () => {
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockSuspend.mockResolvedValue({ ...item, state: "new" });
 
-    const { findByText } = render(CardsPage);
+    const { findByText, findByLabelText } = render(CardsPage);
     await findByText("kava");
 
+    await openRowMenu(findByLabelText, "kava");
     const unsuspendBtn = await findByText("Unsuspend");
     await fireEvent.click(unsuspendBtn);
 
@@ -664,5 +688,170 @@ describe("cards/+page.svelte", () => {
     await findByText(/0 total/);
     // No "X new · Y due today" stats line should appear
     expect(queryByText(/\d+ new · \d+ due today/)).toBeFalsy();
+  });
+
+  // ── row-actions overflow menu ──────────────────────────────────────────────
+
+  describe("row actions overflow menu", () => {
+    it("renders a single '⋯' actions trigger per row instead of four buttons", async () => {
+      const item = makeSRSItemDetail({ id: 1, text: "zdravo" });
+      mockList.mockResolvedValue({ items: [item], total: 1 });
+
+      const { findByText, queryByText, findByLabelText } = render(CardsPage);
+      await findByText("zdravo");
+
+      expect(await findByLabelText("Actions for zdravo")).toBeTruthy();
+      // The four actions are no longer directly visible as row buttons
+      expect(queryByText("Edit")).toBeFalsy();
+      expect(queryByText("Reset")).toBeFalsy();
+      expect(queryByText("Suspend")).toBeFalsy();
+      expect(queryByText("Delete")).toBeFalsy();
+    });
+
+    it("clicking the trigger opens a menu with aria-expanded=true and the four actions", async () => {
+      const item = makeSRSItemDetail({ id: 1, text: "zdravo", state: "review" });
+      mockList.mockResolvedValue({ items: [item], total: 1 });
+
+      const { findByText, findByLabelText, getByRole } = render(CardsPage);
+      await findByText("zdravo");
+
+      const trigger = await findByLabelText("Actions for zdravo");
+      expect(trigger.getAttribute("aria-haspopup")).toBe("menu");
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+
+      await fireEvent.click(trigger);
+
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
+      const menu = getByRole("menu");
+      expect(menu).toBeTruthy();
+      expect(await findByText("Edit")).toBeTruthy();
+      expect(await findByText("Reset")).toBeTruthy();
+      expect(await findByText("Suspend")).toBeTruthy();
+      expect(await findByText("Delete")).toBeTruthy();
+    });
+
+    it("clicking the trigger again closes the menu (toggle)", async () => {
+      const item = makeSRSItemDetail({ id: 1, text: "zdravo" });
+      mockList.mockResolvedValue({ items: [item], total: 1 });
+
+      const { findByText, findByLabelText, queryByRole } = render(CardsPage);
+      await findByText("zdravo");
+
+      const trigger = await findByLabelText("Actions for zdravo");
+      await fireEvent.click(trigger);
+      expect(queryByRole("menu")).toBeTruthy();
+
+      await fireEvent.click(trigger);
+      expect(queryByRole("menu")).toBeFalsy();
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("pressing Escape closes the open menu", async () => {
+      const item = makeSRSItemDetail({ id: 1, text: "zdravo" });
+      mockList.mockResolvedValue({ items: [item], total: 1 });
+
+      const { findByText, findByLabelText, queryByRole } = render(CardsPage);
+      await findByText("zdravo");
+
+      const trigger = await findByLabelText("Actions for zdravo");
+      await fireEvent.click(trigger);
+      expect(queryByRole("menu")).toBeTruthy();
+
+      await fireEvent.keyDown(document, { key: "Escape" });
+
+      expect(queryByRole("menu")).toBeFalsy();
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("clicking outside the menu closes it", async () => {
+      const item = makeSRSItemDetail({ id: 1, text: "zdravo" });
+      mockList.mockResolvedValue({ items: [item], total: 1 });
+
+      const { findByText, findByLabelText, queryByRole } = render(CardsPage);
+      await findByText("zdravo");
+
+      const trigger = await findByLabelText("Actions for zdravo");
+      await fireEvent.click(trigger);
+      expect(queryByRole("menu")).toBeTruthy();
+
+      await fireEvent.click(document.body);
+
+      expect(queryByRole("menu")).toBeFalsy();
+    });
+
+    it("opening another row's menu closes the first row's menu", async () => {
+      mockList.mockResolvedValue({
+        items: [
+          makeSRSItemDetail({ id: 1, text: "zdravo" }),
+          makeSRSItemDetail({ id: 2, text: "hvala" }),
+        ],
+        total: 2,
+      });
+
+      const { findByText, findByLabelText, queryByRole, getAllByRole } = render(CardsPage);
+      await findByText("zdravo");
+
+      const triggerA = await findByLabelText("Actions for zdravo");
+      const triggerB = await findByLabelText("Actions for hvala");
+
+      await fireEvent.click(triggerA);
+      expect(queryByRole("menu")).toBeTruthy();
+      expect(triggerA.getAttribute("aria-expanded")).toBe("true");
+
+      await fireEvent.click(triggerB);
+
+      // Only one menu should be open at a time
+      expect(getAllByRole("menu")).toHaveLength(1);
+      expect(triggerA.getAttribute("aria-expanded")).toBe("false");
+      expect(triggerB.getAttribute("aria-expanded")).toBe("true");
+    });
+
+    it("selecting Edit from the menu closes the menu and enters edit mode", async () => {
+      const item = makeSRSItemDetail({ id: 1, text: "zdravo", translation: "hello" });
+      mockList.mockResolvedValue({ items: [item], total: 1 });
+
+      const { findByText, findByLabelText, queryByRole } = render(CardsPage);
+      await findByText("zdravo");
+
+      await openRowMenu(findByLabelText, "zdravo");
+      await fireEvent.click(await findByText("Edit"));
+
+      // Menu is closed once edit mode is entered
+      expect(queryByRole("menu")).toBeFalsy();
+      // Edit row is open (Save/Cancel visible)
+      expect(await findByText("Save")).toBeTruthy();
+      expect(await findByText("Cancel")).toBeTruthy();
+    });
+
+    it("Delete menu item is styled with the danger color and separated by a divider", async () => {
+      const item = makeSRSItemDetail({ id: 1, text: "zdravo" });
+      mockList.mockResolvedValue({ items: [item], total: 1 });
+
+      const { findByText, findByLabelText } = render(CardsPage);
+      await findByText("zdravo");
+
+      await openRowMenu(findByLabelText, "zdravo");
+      const deleteItem = await findByText("Delete");
+      expect(deleteItem.className).toContain("danger");
+
+      // A divider element should precede the danger item within the menu
+      const menu = deleteItem.closest('[role="menu"]')!;
+      expect(menu.querySelector(".menu-divider")).toBeTruthy();
+    });
+
+    it("menu items are real buttons with role=menuitem", async () => {
+      const item = makeSRSItemDetail({ id: 1, text: "zdravo", state: "review" });
+      mockList.mockResolvedValue({ items: [item], total: 1 });
+
+      const { findByText, findByLabelText, getAllByRole } = render(CardsPage);
+      await findByText("zdravo");
+
+      await openRowMenu(findByLabelText, "zdravo");
+      const menuItems = getAllByRole("menuitem");
+      expect(menuItems).toHaveLength(4);
+      for (const mi of menuItems) {
+        expect(mi.tagName).toBe("BUTTON");
+      }
+    });
   });
 });
