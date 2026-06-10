@@ -16,11 +16,10 @@ AnkiWeb. Idempotent-ish: re-running regenerates + overwrites the same fields.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import sys
 
 from app.anki.safety import safe_open
-from app.anki.sync import OfflineWriter, _safe_stem
+from app.anki.sync import OfflineWriter, _safe_stem, _store_tt_media
 from app.anki.sync_orchestrator import _ensure_tt_media_linked, _resolve_media_dir
 from app.api.anki import _build_media_fn
 from app.config import settings
@@ -67,31 +66,15 @@ async def main() -> None:
             if media is not None and media.audio_bytes is not None:
                 prefix = "sl" if media.audio_source == "forvo" else "tts"
                 audio_filename = f"{_safe_stem(su.text, prefix)}.mp3"
-                writer.store_media_file(audio_filename, media.audio_bytes)
+                writer.store_media_file(audio_filename, media.audio_bytes)  # Anki collection.media
                 audio_tag = f"[sound:{audio_filename}]"
-                db.add_media(
-                    cid,
-                    f"audio_{media.audio_source or 'tts'}",
-                    audio_filename,
-                    str(media_dir / audio_filename),
-                    audio_filename,
-                    hashlib.sha256(media.audio_bytes).hexdigest(),
-                    len(media.audio_bytes),
-                )
+                _store_tt_media(db, cid, f"audio_{media.audio_source or 'tts'}", audio_filename, media.audio_bytes)
             if media is not None and media.image_bytes is not None:
                 ext = media.image_ext or "jpg"
                 img_filename = f"{_safe_stem(su.translation, 'img')}.{ext}"
-                writer.store_media_file(img_filename, media.image_bytes)
+                writer.store_media_file(img_filename, media.image_bytes)  # Anki collection.media
                 image_tag = f'<img src="{img_filename}">'
-                db.add_media(
-                    cid,
-                    "image",
-                    img_filename,
-                    str(media_dir / img_filename),
-                    img_filename,
-                    hashlib.sha256(media.image_bytes).hexdigest(),
-                    len(media.image_bytes),
-                )
+                _store_tt_media(db, cid, "image", img_filename, media.image_bytes)
 
             writer.update_note_fields(note_id, {"Audio": audio_tag, "Image": image_tag})
             print(f"cid={cid} ({su.text}): audio={bool(audio_tag)} image={bool(image_tag)} note_id={note_id}")

@@ -515,13 +515,16 @@ class TestSyncCreateNewRouting:
         item = db.get_collocation_by_lemma("še")
         assert item is not None
         coll_id = db.get_collocation_by_lemma_with_id("še")[0]
-        # Seed audio media row + file
-        (tmp_path / "tts_sentence_abc.mp3").write_bytes(b"fake-mp3")
+        # Seed the audio media row + the source file in TT's media dir (where
+        # _copy_tt_media_to_anki reads from — conftest pins _MEDIA_DIR to tmp).
+        import app.anki.sync as sync_mod
+
+        (sync_mod._MEDIA_DIR / "tts_sentence_abc.mp3").write_bytes(b"fake-mp3")
         db.add_media(
             collocation_id=coll_id,
             kind="audio_tts_sentence",
             filename="tts_sentence_abc.mp3",
-            path=str(tmp_path / "tts_sentence_abc.mp3"),
+            path="media/tts_sentence_abc.mp3",
             anki_filename="",
             sha256="abc",
             size_bytes=8,
@@ -537,6 +540,8 @@ class TestSyncCreateNewRouting:
         assert len(notes) == 1
         flds = notes[0][0].split("\x1f")
         assert "[sound:tts_sentence_abc.mp3]" in flds[1]
+        # The file was actually copied from TT's media dir into Anki's media dir.
+        assert (tmp_path / "tts_sentence_abc.mp3").read_bytes() == b"fake-mp3"
 
     async def test_sync_create_new_routes_vocab_items_to_create_note(self):
         """Vocab items go through existing create_note path."""
@@ -555,6 +560,30 @@ class TestSyncCreateNewRouting:
         assert note["mid"] == 1000001  # Slovene Vocabulary notetype
         flds = note["flds"].split("\x1f")
         assert flds[0] == "voda"
+
+    async def test_sync_create_new_vocab_media_lands_in_tt_dir_and_row(self):
+        """Sync-generated vocab media must also land in TT's media dir + a media row
+        so the frontend serves it — not only Anki's collection.media. Regression for
+        'image works in Anki but is broken/absent in TunaTale'."""
+        import app.anki.sync as sync_mod
+
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        coll_id = db.get_collocation_id_by_guid(db.get_collocation("voda").guid)
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", _media_fn=_full_media
+        )
+
+        # Media rows recorded (the frontend resolves image_url/audio_url from these).
+        aud = db.get_audio_filename(coll_id)
+        img = db.get_image_filename(coll_id)
+        assert aud and img, f"no TT media rows: audio={aud} image={img}"
+        # Files written to TT's canonical media dir (conftest pins _MEDIA_DIR to tmp).
+        assert (sync_mod._MEDIA_DIR / aud).read_bytes() == b"mp3_data"
+        assert (sync_mod._MEDIA_DIR / img).read_bytes() == b"img_data"
 
     async def test_sync_create_new_mixed_batch(self):
         """One vocab + one cloze in the same batch: both land correctly."""

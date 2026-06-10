@@ -54,6 +54,31 @@ def _safe_stem(word: str, prefix: str) -> str:
     return f"{prefix}_{sanitized}"
 
 
+def _store_tt_media(db, coll_id: int, kind: str, filename: str, data: bytes) -> None:
+    """Write media to TT's canonical media dir (served by the frontend at
+    ``/api/srs/media/{filename}``) and record the media row.
+
+    Media generated *during sync* (the create-time media_fn) only ever reached
+    Anki's collection.media + the note's [sound:]/<img> tags — so it rendered in
+    Anki but was absent (or, if a row pointed at the wrong dir, broken) in TT.
+    This mirrors what ``/listen`` does at add time so sync-generated media renders
+    in TT too.
+    """
+    import hashlib
+
+    _MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    (_MEDIA_DIR / filename).write_bytes(data)
+    db.add_media(
+        coll_id,
+        kind,
+        filename,
+        f"media/{filename}",
+        filename,
+        hashlib.sha256(data).hexdigest(),
+        len(data),
+    )
+
+
 def _copy_tt_media_to_anki(writer: OfflineWriter, filename: str) -> None:
     """Copy a media file from TT's media dir into Anki's collection.media via the writer.
 
@@ -2573,11 +2598,15 @@ class AnkiSync:
                     audio_filename = f"{_safe_stem(word, prefix)}.mp3"
                     self._writer.store_media_file(audio_filename, media.audio_bytes)
                     audio_tag = f"[sound:{audio_filename}]"
+                    _store_tt_media(
+                        self._db, coll_id, f"audio_{media.audio_source or 'tts'}", audio_filename, media.audio_bytes
+                    )
                 if media is not None and media.image_bytes is not None:
                     ext = media.image_ext or "jpg"
                     img_filename = f"{_safe_stem(english, 'img')}.{ext}"
                     self._writer.store_media_file(img_filename, media.image_bytes)
                     image_tag = f'<img src="{img_filename}">'
+                    _store_tt_media(self._db, coll_id, "image", img_filename, media.image_bytes)
 
             fields = {
                 "Slovene": word,
@@ -2888,6 +2917,13 @@ def main(
             )
             print(f"Push: {push.notes_pushed} notes, {push.directions_pushed} directions")
             return 0
+    except OrphanThresholdExceededError as e:
+        # run_full_sync runs detect_and_reset_orphans on this path; its threshold
+        # guard raises a plain Exception (not RuntimeError). Return non-zero so the
+        # caller (peer_sync) aborts cleanly with a PeerSyncError instead of letting
+        # an uncaught exception surface as a 500.
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
     except RuntimeError as e:
         print(f"Error opening collection: {e}", file=sys.stderr)
         return 1

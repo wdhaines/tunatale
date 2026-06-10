@@ -254,6 +254,47 @@ class TestMainDelegatesToRunFullSync:
         assert captured_media_dir["v"] == media_dir
 
 
+class TestMainOrphanThreshold:
+    """main() must return non-zero (not raise) when the orphan-threshold guard
+    trips, so peer_sync aborts with a clean PeerSyncError instead of a 500.
+    Regression: OrphanThresholdExceededError is a plain Exception, and main()
+    only caught RuntimeError — and run_full_sync now runs orphan detection on
+    the peer path, exposing it."""
+
+    def test_orphan_threshold_returns_1_not_raises(self, tmp_path, monkeypatch):
+        from app.anki.sync import OrphanThresholdExceededError
+
+        anki_conn = sqlite3.connect(":memory:")
+        anki_conn.execute("CREATE TABLE col (ver INTEGER, crt INTEGER)")
+        anki_conn.execute("INSERT INTO col VALUES (18, 0)")
+        anki_conn.commit()
+        tt_db = SRSDatabase(":memory:")
+
+        def _raise(self):
+            raise OrphanThresholdExceededError("too many orphans — aborting")
+
+        monkeypatch.setattr("app.anki.sync.AnkiSync.detect_and_reset_orphans", _raise)
+
+        class FakeSettings:
+            anki_collection_path = "unused"
+            anki_deck_name = "0. Slovene"
+            anki_model_name = "Slovene Vocabulary"
+            database_url = "sqlite:///:memory:"
+
+        @contextmanager
+        def fake_safe_open(path, mode):
+            yield type("Ctx", (), {"conn": anki_conn})()
+
+        exit_code = main(
+            argv=[],
+            _settings=FakeSettings(),
+            _safe_open_fn=fake_safe_open,
+            _sync_log_path=tmp_path / "sync.log",
+            _db=tt_db,
+        )
+        assert exit_code == 1
+
+
 class TestMainCreateNew:
     """main() (the peer-sync reconcile path) must mint Anki notes for TT
     collocations that have no anki_note_id yet — otherwise TT-originated cards

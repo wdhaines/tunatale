@@ -73,6 +73,13 @@ def _settings_overrides(monkeypatch, tmp_path):
     # no-ops in tests.
     monkeypatch.setattr(settings, "anki_media_path", tmp_path / "collection.media")
     monkeypatch.setattr(settings, "sync_log", tmp_path / "logs" / "sync.log")
+    # TT's canonical media dir (served by the frontend; written by sync media gen).
+    # Pin to tmp so tests never write the real backend/media. Hardcoded module
+    # constants, so patch both the writer (sync) and server (srs) views.
+    tt_media = tmp_path / "tt-media"
+    tt_media.mkdir(exist_ok=True)
+    monkeypatch.setattr("app.anki.sync._MEDIA_DIR", tt_media)
+    monkeypatch.setattr("app.api.srs._MEDIA_DIR", tt_media)
     # Non-empty so _resolve_sync_password short-circuits and tests never shell out to
     # the real macOS Keychain. Tests of the Keychain path override this to "". The
     # gated --run-peer-sync integration test provides a real throwaway password via
