@@ -156,11 +156,13 @@ describe("Transcript", () => {
   });
 
   it("renders dialogue lines when present", () => {
-    const { getByText } = render(Transcript, {
+    const { getByText, container } = render(Transcript, {
       props: defaultProps({ transcript: transcriptWithDialogue }),
     });
     expect(getByText("Dialogue")).toBeTruthy();
-    expect(getByText("Petra")).toBeTruthy();
+    const chip = container.querySelector(".dialogue-role-chip") as HTMLElement;
+    expect(chip).toBeTruthy();
+    expect(chip.getAttribute("title")).toBe("Petra");
   });
 
   it("does not render Dialogue section when empty", () => {
@@ -2054,6 +2056,190 @@ describe("Transcript", () => {
       await fireEvent.click(translateBtn);
 
       expect(vi.mocked(api.translateTerm)).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Dialogue help disclosure", () => {
+    it("renders a '?' help toggle next to the Dialogue heading, closed by default", () => {
+      const { container, queryByText } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptWithDialogue }),
+      });
+      const helpToggle = container.querySelector(".help-toggle") as HTMLButtonElement;
+      expect(helpToggle).toBeTruthy();
+      expect(helpToggle.getAttribute("aria-label")).toBe("How to use the transcript");
+      expect(helpToggle.getAttribute("aria-expanded")).toBe("false");
+      expect(container.querySelector(".help-panel")).toBeFalsy();
+      // The old permanently-visible instruction wall is gone.
+      expect(queryByText(/Drag to create a phrase/)).toBeFalsy();
+    });
+
+    it("clicking the '?' toggle opens the help panel with instructions and a mastery legend", async () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptWithDialogue }),
+      });
+      const helpToggle = container.querySelector(".help-toggle") as HTMLButtonElement;
+      await fireEvent.click(helpToggle);
+
+      expect(helpToggle.getAttribute("aria-expanded")).toBe("true");
+      const panel = container.querySelector(".help-panel");
+      expect(panel).toBeTruthy();
+      expect(panel!.textContent).toContain("Drag to create a phrase");
+      expect(panel!.textContent).toContain("+ New phrase");
+      expect(panel!.textContent).toContain("Alt+click");
+
+      // Mastery legend: New → Learning → Known, plus Unknown.
+      const legend = panel!.querySelector(".help-legend") as HTMLElement;
+      expect(legend.textContent).toContain("New");
+      expect(legend.textContent).toContain("Learning");
+      expect(legend.textContent).toContain("Known");
+      expect(legend.textContent).toContain("Unknown");
+
+      // Legend swatches reuse WordSpan's actual ramp/off-ramp classes.
+      const swatches = panel!.querySelectorAll(".legend-swatch");
+      expect(swatches.length).toBeGreaterThanOrEqual(4);
+      const unknownSwatch = panel!.querySelector(".legend-swatch.word-unknown");
+      expect(unknownSwatch).toBeTruthy();
+    });
+
+    it("clicking the '?' toggle again closes the help panel", async () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptWithDialogue }),
+      });
+      const helpToggle = container.querySelector(".help-toggle") as HTMLButtonElement;
+      await fireEvent.click(helpToggle);
+      expect(container.querySelector(".help-panel")).toBeTruthy();
+
+      await fireEvent.click(helpToggle);
+      expect(helpToggle.getAttribute("aria-expanded")).toBe("false");
+      expect(container.querySelector(".help-panel")).toBeFalsy();
+    });
+
+    it("selectionMode shows the contextual hint inline instead of the help panel toggle text", async () => {
+      const { getByText, queryByText } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptWithDialogue }),
+      });
+      await fireEvent.click(getByText("+ New phrase"));
+      expect(getByText("Tap first word, then last word to set phrase range.")).toBeTruthy();
+      // The instruction wall stays hidden behind '?' even in selection mode.
+      expect(queryByText(/Drag to create a phrase/)).toBeFalsy();
+    });
+  });
+
+  describe("speaker label chips", () => {
+    const transcriptTwoSpeakers: TranscriptData = {
+      lesson_id: "l1",
+      key_phrases: [],
+      dialogue_lines: [
+        {
+          role: "female-1",
+          sentence: "",
+          words: [
+            {
+              surface: "zdravo",
+              lemma: "zdravo",
+              srs_state: "new",
+              srs_item_id: null,
+              translation: null,
+              collocation_span_id: null,
+              collocation_start: false,
+              collocation_srs_state: null,
+              collocation_lemma: null,
+              collocation_translation: null,
+              card_type: null,
+              active_state: "new",
+              active_direction: null,
+              is_due: false,
+              progress: null,
+              inflectable: false,
+              inflection_feature: null,
+              known_marked: false,
+            },
+          ],
+        },
+        {
+          role: "male-1",
+          sentence: "",
+          words: [
+            {
+              surface: "hvala",
+              lemma: "hvala",
+              srs_state: "new",
+              srs_item_id: null,
+              translation: null,
+              collocation_span_id: null,
+              collocation_start: false,
+              collocation_srs_state: null,
+              collocation_lemma: null,
+              collocation_translation: null,
+              card_type: null,
+              active_state: "new",
+              active_direction: null,
+              is_due: false,
+              progress: null,
+              inflectable: false,
+              inflection_feature: null,
+              known_marked: false,
+            },
+          ],
+        },
+        {
+          role: "female-1",
+          sentence: "",
+          words: [
+            {
+              surface: "prosim",
+              lemma: "prosim",
+              srs_state: "new",
+              srs_item_id: null,
+              translation: null,
+              collocation_span_id: null,
+              collocation_start: false,
+              collocation_srs_state: null,
+              collocation_lemma: null,
+              collocation_translation: null,
+              card_type: null,
+              active_state: "new",
+              active_direction: null,
+              is_due: false,
+              progress: null,
+              inflectable: false,
+              inflection_feature: null,
+              known_marked: false,
+            },
+          ],
+        },
+      ],
+    };
+
+    it("maps distinct roles to letters A, B in order of first appearance, with raw role in title", () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptTwoSpeakers }),
+      });
+      const chips = container.querySelectorAll(".dialogue-role-chip");
+      expect(chips.length).toBe(3);
+      expect(chips[0].textContent?.trim()).toBe("A");
+      expect(chips[0].getAttribute("title")).toBe("female-1");
+      expect(chips[1].textContent?.trim()).toBe("B");
+      expect(chips[1].getAttribute("title")).toBe("male-1");
+    });
+
+    it("the same role maps to the same letter on a later line", () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptTwoSpeakers }),
+      });
+      const chips = container.querySelectorAll(".dialogue-role-chip");
+      expect(chips[2].textContent?.trim()).toBe("A");
+      expect(chips[2].getAttribute("title")).toBe("female-1");
+    });
+
+    it("speaker chips carry distinct accent classes per speaker", () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptTwoSpeakers }),
+      });
+      const chips = container.querySelectorAll(".dialogue-role-chip");
+      const classA = chips[0].className;
+      const classB = chips[1].className;
+      expect(classA).not.toBe(classB);
     });
   });
 });

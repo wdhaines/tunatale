@@ -5,7 +5,7 @@
 	import { api } from '$lib/api';
 	import type { LessonDetail, TranscriptData, WordToken } from '$lib/api';
 	import { buildScenes, fallbackScenes } from '$lib/transcriptScenes';
-	import { masteryBackgroundColor } from '$lib/mastery';
+	import { masteryBackgroundColor, masteryColor } from '$lib/mastery';
 
 	interface CreatePhraseArgs {
 		text: string;
@@ -62,6 +62,35 @@
 	// Interlinear: the whole-line L1 translation under each L2 line (BDT-style,
 	// cover-one-side reading). Distinct from per-word Gloss.
 	let showInterlinear = $state(false);
+
+	// "?" disclosure for the dialogue usage instructions + mastery-color legend.
+	// Default closed, no persistence.
+	let showHelp = $state(false);
+
+	const SPEAKER_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+	// Map each distinct line.role to a letter (A, B, C, ...) in order of first
+	// appearance, so dialogue lines show a compact "speaker" chip instead of a
+	// raw voice id like "female-1" / "male-1".
+	const speakerLetters = $derived.by(() => {
+		const map: Record<string, string> = {};
+		let count = 0;
+		for (const line of transcript.dialogue_lines) {
+			if (!(line.role in map)) {
+				map[line.role] = SPEAKER_LETTERS[count % SPEAKER_LETTERS.length];
+				count += 1;
+			}
+		}
+		return map;
+	});
+
+	// The speaker's position among distinct roles, derived from its letter —
+	// used to pick a distinct accent class per speaker. `role` is always a key
+	// of speakerLetters (built from the same dialogue_lines), so the lookup
+	// never misses.
+	function speakerIndex(role: string): number {
+		return SPEAKER_LETTERS.indexOf(speakerLetters[role]);
+	}
 
 	function resetSelection() {
 		selection = null;
@@ -333,7 +362,19 @@
 	{#if transcript.dialogue_lines.length > 0}
 		<div class="transcript-section">
 			<div class="dialogue-head">
-				<h3>Dialogue <span class="transcript-hint">{selectionMode ? 'Tap first word, then last word to set phrase range.' : 'Drag to create a phrase, or tap \'+ New phrase\' on mobile. Click phrases/words to change SRS state; Alt+click a word inside a phrase for word-only.'}</span></h3>
+				<h3>
+					Dialogue
+					<button
+						type="button"
+						class="help-toggle"
+						aria-label="How to use the transcript"
+						aria-expanded={showHelp}
+						onclick={() => (showHelp = !showHelp)}
+					>?</button>
+					{#if selectionMode}
+						<span class="transcript-hint">Tap first word, then last word to set phrase range.</span>
+					{/if}
+				</h3>
 
 				<div class="disclosure-toggles" role="group" aria-label="Show variations">
 					<button
@@ -360,6 +401,35 @@
 				</div>
 			</div>
 
+			{#if showHelp}
+				<div class="help-panel">
+					<p class="help-instructions">
+						Drag to create a phrase, or tap '+ New phrase' on mobile. Click phrases/words to
+						change SRS state; Alt+click a word inside a phrase for word-only.
+					</p>
+					<div class="help-legend">
+						<span class="legend-row">
+							<span class="legend-swatch" style={`background-color: ${masteryColor(0)};`}></span>
+							New
+						</span>
+						<span class="legend-arrow">→</span>
+						<span class="legend-row">
+							<span class="legend-swatch" style={`background-color: ${masteryColor(0.5)};`}></span>
+							Learning
+						</span>
+						<span class="legend-arrow">→</span>
+						<span class="legend-row">
+							<span class="legend-swatch" style={`background-color: ${masteryColor(1)};`}></span>
+							Known
+						</span>
+						<span class="legend-row">
+							<span class="legend-swatch word-unknown"></span>
+							Unknown
+						</span>
+					</div>
+				</div>
+			{/if}
+
 			<button class="new-phrase-btn" onclick={toggleSelectionMode}>
 				{selectionMode ? 'Cancel' : '+ New phrase'}
 			</button>
@@ -373,7 +443,12 @@
 					{@const segments = groupIntoSegments(line.words)}
 					{@const lineSentence = transcript.dialogue_lines[lineIndex]?.sentence ?? ''}
 					<div class="dialogue-line">
-						<span class="dialogue-role">{line.role}</span>
+						<span class="dialogue-role">
+							<span
+								class="dialogue-role-chip speaker-{speakerIndex(line.role) % 4}"
+								title={line.role}
+							>{speakerLetters[line.role]}</span>
+						</span>
 						<div class="dialogue-line-body">
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
 							<span
@@ -548,6 +623,67 @@
 		text-transform: none;
 		font-size: 0.75rem;
 	}
+	.help-toggle {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.1rem;
+		height: 1.1rem;
+		margin-left: 0.35rem;
+		padding: 0;
+		font-size: 0.7rem;
+		font-style: normal;
+		line-height: 1;
+		color: var(--color-muted, #6b7280);
+		background: transparent;
+		border: 1px solid var(--color-border, #e5e7eb);
+		border-radius: 50%;
+		cursor: pointer;
+		vertical-align: middle;
+	}
+	.help-toggle:hover,
+	.help-toggle[aria-expanded='true'] {
+		color: var(--color-primary, #2563eb);
+		border-color: var(--color-primary, #2563eb);
+	}
+	.help-panel {
+		margin: 0.4rem 0 0.6rem;
+		padding: 0.5rem 0.75rem;
+		background: var(--color-surface-2);
+		border: 1px solid var(--color-border, #e5e7eb);
+		border-radius: 4px;
+		font-size: 0.8rem;
+	}
+	.help-instructions {
+		margin: 0 0 0.5rem;
+		font-style: italic;
+		color: var(--color-muted, #6b7280);
+	}
+	.help-legend {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+	}
+	.legend-row {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+	}
+	.legend-arrow {
+		color: var(--color-muted, #6b7280);
+	}
+	.legend-swatch {
+		display: inline-block;
+		width: 0.8rem;
+		height: 0.8rem;
+		border-radius: 2px;
+		border: 1px solid var(--color-border, #e5e7eb);
+	}
+	/* Same indigo as WordSpan's .word-unknown text color, reused here as a swatch fill. */
+	.legend-swatch.word-unknown {
+		background-color: #818cf8;
+	}
 	.new-phrase-btn {
 		font-size: 0.75rem;
 		padding: 0.2rem 0.6rem;
@@ -616,6 +752,34 @@
 		font-size: 0.85rem;
 		padding-top: 0.1rem;
 		flex-shrink: 0;
+	}
+	.dialogue-role-chip {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.4rem;
+		height: 1.4rem;
+		border-radius: var(--radius-pill);
+		font-size: 0.75rem;
+		font-weight: 700;
+		line-height: 1;
+		cursor: default;
+	}
+	.dialogue-role-chip.speaker-0 {
+		background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+		color: var(--color-primary);
+	}
+	.dialogue-role-chip.speaker-1 {
+		background: color-mix(in srgb, var(--color-brand) 18%, transparent);
+		color: var(--color-brand);
+	}
+	.dialogue-role-chip.speaker-2 {
+		background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+		color: var(--color-accent);
+	}
+	.dialogue-role-chip.speaker-3 {
+		background: color-mix(in srgb, var(--color-secondary) 18%, transparent);
+		color: var(--color-secondary);
 	}
 	.dialogue-words {
 		display: block;
