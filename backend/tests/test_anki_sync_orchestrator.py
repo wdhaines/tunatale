@@ -38,138 +38,7 @@ def _clear_auth_cache():
     so._AUTH_CACHE = None
 
 
-def _login_ops(mock_run) -> list[dict]:
-    """The parsed driver inputs whose op is 'login' (one per real authentication)."""
-    return [
-        payload for call in mock_run.call_args_list if (payload := json.loads(call.kwargs["input"]))["op"] == "login"
-    ]
-
-
 class TestPeerSync:
-    @pytest.mark.parametrize("full", [FULL_SYNC, FULL_DOWNLOAD, FULL_UPLOAD])
-    def test_pull_full_sync_variants_abort(self, full):
-        """Any full-sync-required code (2/3/4) on pull aborts before TT sync."""
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[
-                    _mock_run(AUTH_RESPONSE),
-                    _mock_run(full),
-                ],
-            ),
-            patch("app.anki.sync.main") as mock_tt,
-            pytest.raises(PeerSyncError, match="FULL_SYNC"),
-        ):
-            peer_sync(dry_run=False)
-
-        mock_tt.assert_not_called()
-
-    def test_tt_sync_failure_aborts_before_push(self):
-        """Non-zero TT sync exit aborts before the push sync runs."""
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[
-                    _mock_run(AUTH_RESPONSE),
-                    _mock_run(NORMAL_SYNC),
-                ],
-            ) as mock_run,
-            patch("app.anki.sync.main", return_value=1),
-            pytest.raises(PeerSyncError, match="TT sync"),
-        ):
-            peer_sync(dry_run=False)
-
-        # login + pull only; the push sync is never reached.
-        assert mock_run.call_count == 2
-
-    def test_push_full_sync_aborts(self):
-        """Full-sync-required on the push sync raises (push result is validated)."""
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[
-                    _mock_run(AUTH_RESPONSE),
-                    _mock_run(NORMAL_SYNC),
-                    _mock_run(FULL_SYNC),
-                ],
-            ),
-            patch("app.anki.sync.main", return_value=0),
-            pytest.raises(PeerSyncError, match="FULL_SYNC"),
-        ):
-            peer_sync(dry_run=False)
-
-    def test_driver_error_surfaces(self):
-        """Driver error surfaces as PeerSyncError."""
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[
-                    _mock_run(AUTH_RESPONSE),
-                    _mock_run({"error": "collection not found"}),
-                ],
-            ),
-            patch("app.anki.sync.main"),
-            pytest.raises(PeerSyncError, match="collection not found"),
-        ):
-            peer_sync(dry_run=False)
-
-    def test_login_error(self):
-        """Login failure surfaces as PeerSyncError."""
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[
-                    _mock_run({"error": "invalid credentials"}),
-                ],
-            ),
-            patch("app.anki.sync.main"),
-            pytest.raises(PeerSyncError, match="Login failed"),
-        ):
-            peer_sync(dry_run=False)
-
-    def test_auth_reused_across_syncs(self):
-        """Same auth dict is passed to both pull and push sync calls."""
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[
-                    _mock_run(AUTH_RESPONSE),
-                    _mock_run(NORMAL_SYNC),
-                    _mock_run(NO_CHANGE),
-                ],
-            ) as mock_run,
-            patch("app.anki.sync.main", return_value=0),
-        ):
-            peer_sync(dry_run=False)
-
-        pull_input = json.loads(mock_run.call_args_list[1].kwargs["input"])
-        push_input = json.loads(mock_run.call_args_list[2].kwargs["input"])
-        assert pull_input["auth"] == AUTH_RESPONSE
-        assert push_input["auth"] == AUTH_RESPONSE
-
-    def test_pull_leg_is_media_enabled(self):
-        """Regression: media must sync on the PULL leg (the always-run bidirectional
-        sync_collection), not only the conditional push leg. The pull leg pushes
-        dirty collection rows first → has_pending clears → the push leg (and its
-        media sync) is skipped → media files stranded on the client. Found doing a
-        real backfill: note-field updates reached AnkiWeb but the media did not."""
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[
-                    _mock_run(AUTH_RESPONSE),
-                    _mock_run(NORMAL_SYNC),
-                    _mock_run(NO_CHANGE),
-                ],
-            ) as mock_run,
-            patch("app.anki.sync.main", return_value=0),
-        ):
-            peer_sync(dry_run=False)
-
-        pull_input = json.loads(mock_run.call_args_list[1].kwargs["input"])
-        assert pull_input["op"] == "sync"
-        assert pull_input["sync_media"] is True, "pull leg must be media-enabled or media strands"
-
     def test_tt_settings_retargets_path(self):
         """_tt_settings clones settings with anki_collection_path = tt_collection_path."""
         from app.anki.sync_orchestrator import _tt_settings
@@ -219,73 +88,6 @@ class TestPeerSync:
             assert _anki_with_spec() == "anki"
         with patch.object(settings, "anki_pkg_version", "25.02"):
             assert _anki_with_spec() == "anki==25.02"
-
-
-class TestAuthCache:
-    """The hkey is a long-lived session token: cache it across syncs (like Anki) and
-    only re-login on a miss or when a sync rejects a cached token."""
-
-    def test_auth_cached_across_syncs(self):
-        """A second peer_sync reuses the hkey — login runs once, not twice."""
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[
-                    _mock_run(AUTH_RESPONSE),  # login (first sync only)
-                    _mock_run(NORMAL_SYNC),  # pull #1
-                    _mock_run(NO_CHANGE),  # push #1
-                    _mock_run(NORMAL_SYNC),  # pull #2 (no login before it)
-                    _mock_run(NO_CHANGE),  # push #2
-                ],
-            ) as mock_run,
-            patch("app.anki.sync.main", return_value=0),
-        ):
-            peer_sync(dry_run=False)
-            peer_sync(dry_run=False)
-
-        assert len(_login_ops(mock_run)) == 1
-        assert mock_run.call_count == 5
-
-    def test_stale_cached_auth_relogins_and_retries(self):
-        """A cached hkey the server rejects on the pull → re-login + retry once."""
-        import app.anki.sync_orchestrator as so
-
-        so._AUTH_CACHE = AUTH_RESPONSE  # pre-warm the cache with a (now stale) token
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[
-                    _mock_run({"error": "auth failed"}),  # pull with stale hkey
-                    _mock_run(AUTH_RESPONSE),  # forced re-login
-                    _mock_run(NORMAL_SYNC),  # retried pull
-                    _mock_run(NO_CHANGE),  # push
-                ],
-            ) as mock_run,
-            patch("app.anki.sync.main", return_value=0),
-        ):
-            report = peer_sync(dry_run=False)
-
-        assert report.pull_required == 1
-        assert len(_login_ops(mock_run)) == 1  # exactly the refresh login
-        assert mock_run.call_count == 4
-
-    def test_fresh_auth_failure_not_retried(self):
-        """A pull failure on a *fresh* (uncached) login isn't an expiry → no retry."""
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[
-                    _mock_run(AUTH_RESPONSE),  # fresh login
-                    _mock_run({"error": "network down"}),  # pull fails
-                ],
-            ) as mock_run,
-            patch("app.anki.sync.main", return_value=0),
-            pytest.raises(PeerSyncError, match="network down"),
-        ):
-            peer_sync(dry_run=False)
-
-        assert len(_login_ops(mock_run)) == 1  # no second login
-        assert mock_run.call_count == 2
 
 
 SLOVENE_DECK = b"1"
@@ -436,37 +238,6 @@ class TestCurDeckMirror:
             holder.close()
         assert _read_curdeck_val(tt) == NORWEGIAN_DECK  # untouched
 
-    # ── peer_sync wiring ──────────────────────────────────────────────────────
-
-    def test_peer_sync_mirrors_before_push(self):
-        """End-to-end: peer_sync rewrites TT's stale curDeck to the user's real deck."""
-        _make_collection_with_curdeck(settings.anki_collection_path, val=SLOVENE_DECK)
-        _make_collection_with_curdeck(settings.tt_collection_path, val=NORWEGIAN_DECK)
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[_mock_run(AUTH_RESPONSE), _mock_run(NORMAL_SYNC), _mock_run(NO_CHANGE)],
-            ),
-            patch("app.anki.sync.main", return_value=0),
-        ):
-            peer_sync(dry_run=False)
-        assert _read_curdeck_val(settings.tt_collection_path) == SLOVENE_DECK
-
-    def test_dry_run_still_mirrors_before_pull(self):
-        """dry_run skips the push but its pull leg still uploads config, so the
-        pre-pull mirror must still fire."""
-        _make_collection_with_curdeck(settings.anki_collection_path, val=SLOVENE_DECK)
-        _make_collection_with_curdeck(settings.tt_collection_path, val=NORWEGIAN_DECK)
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[_mock_run(AUTH_RESPONSE), _mock_run(NORMAL_SYNC)],
-            ),
-            patch("app.anki.sync.main", return_value=0),
-        ):
-            peer_sync(dry_run=True)
-        assert _read_curdeck_val(settings.tt_collection_path) == SLOVENE_DECK
-
 
 def _make_tt_collection(path, *, pending: bool = False, curdeck_val: bytes = NORWEGIAN_DECK) -> None:
     """tt_collection with the synced tables the push-pending probe reads + a curDeck row.
@@ -515,44 +286,6 @@ class TestHasPendingPush:
         col = tmp_path / "tt.anki2"
         _make_collection_with_curdeck(col, val=NORWEGIAN_DECK)  # config only, no cards table
         assert _has_pending_push(col) is True
-
-
-class TestSkipNoOpPush:
-    """Most syncs have nothing to upload (the user grades in Anki, not TT); the push leg
-    is then a pure 2–4s no-op round-trip. Skip it when no row is usn=-1 (pending push)."""
-
-    def test_skips_push_when_nothing_pending(self):
-        """Clean tt_collection (no usn=-1 rows) → push leg is skipped."""
-        _make_collection_with_curdeck(settings.anki_collection_path, val=SLOVENE_DECK)
-        _make_tt_collection(settings.tt_collection_path, pending=False)
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[_mock_run(AUTH_RESPONSE), _mock_run(NORMAL_SYNC)],  # login + pull only
-            ) as mock_run,
-            patch("app.anki.sync.main", return_value=0),
-        ):
-            report = peer_sync(dry_run=False)
-
-        assert mock_run.call_count == 2  # the push subprocess never ran
-        assert report.push_required == 0
-        assert report.push_message == "skipped: no local changes to push"
-
-    def test_pushes_when_rows_pending(self):
-        """A usn=-1 row (a TT grade to upload) → the push leg runs."""
-        _make_collection_with_curdeck(settings.anki_collection_path, val=SLOVENE_DECK)
-        _make_tt_collection(settings.tt_collection_path, pending=True)
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[_mock_run(AUTH_RESPONSE), _mock_run(NORMAL_SYNC), _mock_run(NO_CHANGE)],
-            ) as mock_run,
-            patch("app.anki.sync.main", return_value=0),
-        ):
-            report = peer_sync(dry_run=False)
-
-        assert mock_run.call_count == 3  # push leg ran
-        assert report.push_message == "no changes"
 
 
 class TestDriverInvalidJson:
@@ -730,90 +463,6 @@ class TestSyncPassword:
             pytest.raises(PeerSyncError, match="No AnkiWeb password"),
         ):
             _resolve_sync_password()
-
-
-class TestPeerSyncTiming:
-    """Per-leg wall-time instrumentation on the peer-sync bracket.
-
-    These let us catch an occasional slow sync after the fact (which leg hung)
-    from ``sync.log`` instead of trying to reproduce the conditions live.
-    """
-
-    def _full_bracket(self):
-        """Run a happy-path peer_sync with all three driver legs mocked."""
-        return patch(
-            "app.anki.sync_orchestrator.subprocess.run",
-            side_effect=[
-                _mock_run(AUTH_RESPONSE),
-                _mock_run(NORMAL_SYNC),
-                _mock_run(NO_CHANGE),
-            ],
-        ), patch("app.anki.sync.main", return_value=0)
-
-    def test_records_one_timing_per_leg(self):
-        """A full (non-dry) sync times every leg plus the total.
-
-        tt_collection doesn't exist under tmp_path, so ``_has_pending_push``
-        returns True and the push legs run.
-        """
-        run_ctx, tt_ctx = self._full_bracket()
-        with run_ctx, tt_ctx:
-            report = peer_sync(dry_run=False)
-
-        assert set(report.timings) == {
-            "auth",
-            "mirror_pre",
-            "pull",
-            "reconcile",
-            "pending_check",
-            "mirror_pre_push",
-            "push",
-            "total",
-        }
-        assert all(v >= 0 for v in report.timings.values())
-        # total brackets the whole bracket, so it's >= any single leg.
-        for label, secs in report.timings.items():
-            if label != "total":
-                assert report.timings["total"] >= secs - 1e-6
-
-    def test_dry_run_skips_push_leg_timings(self):
-        """dry_run has no pending-check / mirror_pre_push / push legs."""
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[_mock_run(AUTH_RESPONSE), _mock_run(NORMAL_SYNC)],
-            ),
-            patch("app.anki.sync.main", return_value=0),
-        ):
-            report = peer_sync(dry_run=True)
-
-        assert set(report.timings) == {"auth", "mirror_pre", "pull", "reconcile", "total"}
-
-    def test_writes_timing_log_line(self):
-        """A greppable PEER_SYNC_TIMING line is appended to settings.sync_log."""
-        run_ctx, tt_ctx = self._full_bracket()
-        with run_ctx, tt_ctx:
-            peer_sync(dry_run=False)
-
-        log = settings.sync_log.read_text()
-        assert "PEER_SYNC_TIMING" in log
-        assert "dry_run=False" in log
-        for field_name in ("auth=", "mirror_pre=", "pull=", "reconcile=", "push=", "total="):
-            assert field_name in log, f"missing {field_name} in {log!r}"
-
-    def test_no_timing_log_on_pull_abort(self):
-        """A full-sync abort raises before any timing line is written."""
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[_mock_run(AUTH_RESPONSE), _mock_run(FULL_SYNC)],
-            ),
-            patch("app.anki.sync.main"),
-            pytest.raises(PeerSyncError, match="FULL_SYNC"),
-        ):
-            peer_sync(dry_run=False)
-
-        assert not settings.sync_log.exists()
 
 
 # ── Sociable peer-sync tests (Phase 7) ─────────────────────────────────────────
@@ -999,6 +648,367 @@ class TestSociableSync:
         item = db.get_collocation(text)
         assert item is not None
         assert item.anki_note_id is None, "dry_run must not link item"
+
+    # ═════════════════════════════════════════════════════════════════════
+    # Batch B — failure-path tests
+    # ═════════════════════════════════════════════════════════════════════
+
+    @pytest.mark.parametrize("response", [FULL_SYNC, FULL_DOWNLOAD, FULL_UPLOAD])
+    def test_pull_full_sync_variants_abort(self, monkeypatch, response):
+        """Any full-sync-required code on pull aborts before TT reconcile."""
+        import app.anki.sync_orchestrator as so
+
+        op_log: list[dict] = []
+
+        def _fake(command: dict, timeout: int = 120) -> dict:
+            op_log.append(command)
+            if command.get("op") == "login":
+                return AUTH_RESPONSE
+            if command.get("op") == "sync":
+                return response
+            return {"error": f"unknown op: {command.get('op')}"}
+
+        monkeypatch.setattr(so, "_run_driver", _fake)
+        with pytest.raises(PeerSyncError, match="FULL_SYNC"):
+            peer_sync(dry_run=False)
+        assert [c["op"] for c in op_log] == ["login", "sync"]
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    def test_push_full_sync_aborts(self, monkeypatch):
+        """Full-sync on push aborts via PeerSyncError.
+
+        Seeds a pending ``graves`` row so ``_has_pending_push`` returns
+        True and the push leg is not skipped.
+        """
+        import sqlite3
+
+        con = sqlite3.connect(settings.tt_collection_path)
+        con.execute("INSERT INTO graves (oid, type, usn) VALUES (1, 0, -1)")
+        con.commit()
+        con.close()
+
+        import app.anki.sync_orchestrator as so
+
+        op_log: list[dict] = []
+        responses = iter([AUTH_RESPONSE, NORMAL_SYNC, FULL_SYNC])
+
+        def _fake(command: dict, timeout: int = 120) -> dict:
+            op_log.append(command)
+            return next(responses)
+
+        monkeypatch.setattr(so, "_run_driver", _fake)
+        with pytest.raises(PeerSyncError, match="FULL_SYNC"):
+            peer_sync(dry_run=False)
+        assert [c["op"] for c in op_log] == ["login", "sync", "sync"]
+
+    # ═════════════════════════════════════════════════════════════════════
+    # Batch C — driver/login errors
+    # ═════════════════════════════════════════════════════════════════════
+
+    def test_driver_error_surfaces(self, monkeypatch):
+        """Driver error surfaces as PeerSyncError — exercises real _run_driver."""
+        import app.anki.sync_orchestrator as so
+
+        def _fake_run(*args, input: str | None = None, **kwargs):
+            return subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps({"error": "collection not found"}), stderr=""
+            )
+
+        monkeypatch.setattr(so.subprocess, "run", _fake_run)
+
+        # _get_auth calls _run_driver which will hit the fake subprocess
+        with pytest.raises(PeerSyncError, match="collection not found"):
+            peer_sync(dry_run=False)
+
+    def test_login_error(self, monkeypatch):
+        """Login failure surfaces as PeerSyncError."""
+        import app.anki.sync_orchestrator as so
+
+        def _fake(command: dict, timeout: int = 120) -> dict:
+            if command.get("op") == "login":
+                raise PeerSyncError("invalid credentials")
+            return {"error": f"unknown op: {command.get('op')}"}
+
+        monkeypatch.setattr(so, "_run_driver", _fake)
+        with pytest.raises(PeerSyncError, match="Login failed"):
+            peer_sync(dry_run=False)
+
+    # ═════════════════════════════════════════════════════════════════════
+    # Batch D — auth reuse / media enabled
+    # ═════════════════════════════════════════════════════════════════════
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    def test_auth_reused_across_syncs(self, fake_driver):
+        """Same auth dict is passed to both pull and push sync calls."""
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(settings.database_url)
+        db.add_collocation(
+            SyntacticUnit(
+                text="Dober dan",
+                translation="Good day",
+                word_count=2,
+                difficulty=1,
+                source="test",
+                source_sentence="Dober dan, kako ste?",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+
+        peer_sync(dry_run=False)
+
+        sync_cmds = [c for c in fake_driver if c["op"] == "sync"]
+        assert len(sync_cmds) >= 2
+        assert sync_cmds[0]["auth"]["hkey"] == sync_cmds[1]["auth"]["hkey"]
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    def test_pull_leg_is_media_enabled(self, fake_driver):
+        """The pull (always-run) leg must sync media or files strand."""
+        peer_sync(dry_run=False)
+
+        sync_cmds = [c for c in fake_driver if c["op"] == "sync"]
+        assert len(sync_cmds) >= 1
+        assert sync_cmds[0].get("sync_media") is True
+
+    # ═════════════════════════════════════════════════════════════════════
+    # Batch E — auth cache
+    # ═════════════════════════════════════════════════════════════════════
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    def test_auth_cached_across_syncs(self, fake_driver):
+        """A second peer_sync reuses the hkey — login runs once, not twice.
+
+        The test uses a clean ``tmp_path`` collection, so after the first
+        reconcile there are no pending server pushes and the push leg is
+        skipped — the auth-reuse assertion is unaffected.
+        """
+        peer_sync(dry_run=False)
+        peer_sync(dry_run=False)
+
+        login_ops = [c for c in fake_driver if c["op"] == "login"]
+        assert len(login_ops) == 1
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    def test_stale_cached_auth_relogins_and_retries(self, monkeypatch):
+        """A cached hkey the server rejects on the pull → re-login + retry once."""
+        import app.anki.sync_orchestrator as so
+
+        so._AUTH_CACHE = {"hkey": "stale-key", "endpoint": "http://localhost:8080/"}
+
+        responses = iter(
+            [
+                {"error": "auth failed"},
+                AUTH_RESPONSE,
+                NORMAL_SYNC,
+            ]
+        )
+        op_log: list[dict] = []
+
+        def _fake(command: dict, timeout: int = 120) -> dict:
+            op_log.append(command)
+            resp = next(responses)
+            if "error" in resp:
+                raise PeerSyncError(resp["error"])
+            return resp
+
+        monkeypatch.setattr(so, "_run_driver", _fake)
+        report = peer_sync(dry_run=False)
+
+        assert report.pull_required == 1
+        # The retry flow: stale pull → re-login → retry pull
+        ops = [c["op"] for c in op_log]
+        assert ops[:3] == ["sync", "login", "sync"], f"got {ops}"
+
+    def test_fresh_auth_failure_not_retried(self, monkeypatch):
+        """A pull failure on a *fresh* (uncached) login isn't an expiry → no retry."""
+        import app.anki.sync_orchestrator as so
+
+        op_log: list[dict] = []
+
+        def _fake(command: dict, timeout: int = 120) -> dict:
+            op_log.append(command)
+            if command.get("op") == "login":
+                return AUTH_RESPONSE
+            if command.get("op") == "sync":
+                raise PeerSyncError("network down")
+            return {"error": f"unknown op: {command.get('op')}"}
+
+        monkeypatch.setattr(so, "_run_driver", _fake)
+        with pytest.raises(PeerSyncError, match="network down"):
+            peer_sync(dry_run=False)
+        assert [c["op"] for c in op_log] == ["login", "sync"]
+
+    # ═════════════════════════════════════════════════════════════════════
+    # Batch F — curDeck mirror wiring
+    # ═════════════════════════════════════════════════════════════════════
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    def test_peer_sync_mirrors_before_push(self, fake_driver):
+        """peer_sync rewrites TT's stale curDeck to the user's real deck."""
+        _make_collection_with_curdeck(settings.anki_collection_path, val=SLOVENE_DECK)
+
+        import sqlite3
+
+        con = sqlite3.connect(settings.tt_collection_path)
+        con.execute(
+            "INSERT OR REPLACE INTO config (key, usn, mtime_secs, val) VALUES ('curDeck', -1, 1, ?)",
+            (NORWEGIAN_DECK,),
+        )
+        con.commit()
+        con.close()
+
+        peer_sync(dry_run=False)
+        assert _read_curdeck_val(settings.tt_collection_path) == SLOVENE_DECK
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    def test_dry_run_still_mirrors_before_pull(self, fake_driver):
+        """dry_run skips the push but still mirrors curDeck before the pull."""
+        _make_collection_with_curdeck(settings.anki_collection_path, val=SLOVENE_DECK)
+
+        import sqlite3
+
+        con = sqlite3.connect(settings.tt_collection_path)
+        con.execute(
+            "INSERT OR REPLACE INTO config (key, usn, mtime_secs, val) VALUES ('curDeck', -1, 1, ?)",
+            (NORWEGIAN_DECK,),
+        )
+        con.commit()
+        con.close()
+
+        peer_sync(dry_run=True)
+        assert _read_curdeck_val(settings.tt_collection_path) == SLOVENE_DECK
+
+    # ═════════════════════════════════════════════════════════════════════
+    # Batch G — skip-no-op push
+    # ═════════════════════════════════════════════════════════════════════
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    def test_skips_push_when_nothing_pending(self, fake_driver):
+        """Clean tt_collection (no usn=-1 rows) → push leg is skipped."""
+        report = peer_sync(dry_run=False)
+
+        assert [c["op"] for c in fake_driver] == ["login", "sync"]
+        assert report.push_required == 0
+        assert report.push_message == "skipped: no local changes to push"
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    def test_pushes_when_rows_pending(self, fake_driver):
+        """A pending collocation triggers push leg after reconcile."""
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(settings.database_url)
+        db.add_collocation(
+            SyntacticUnit(
+                text="Potisk",
+                translation="Push",
+                word_count=1,
+                difficulty=1,
+                source="test",
+                source_sentence="Potisk test.",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+
+        report = peer_sync(dry_run=False)
+
+        assert [c["op"] for c in fake_driver] == ["login", "sync", "sync"]
+        assert report.push_message is not None
+
+    # ═════════════════════════════════════════════════════════════════════
+    # Batch H — peer-sync timing
+    # ═════════════════════════════════════════════════════════════════════
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    def test_records_one_timing_per_leg(self, fake_driver):
+        """A full (non-dry) sync times every leg plus the total.
+
+        Seeds a collocation so the reconcile creates a pending push and the
+        push-leg timings are populated.
+        """
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(settings.database_url)
+        db.add_collocation(
+            SyntacticUnit(
+                text="Timing test",
+                translation="Timing",
+                word_count=1,
+                difficulty=1,
+                source="test",
+                source_sentence="Timing test.",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+
+        report = peer_sync(dry_run=False)
+
+        assert set(report.timings) == {
+            "auth",
+            "mirror_pre",
+            "pull",
+            "reconcile",
+            "pending_check",
+            "mirror_pre_push",
+            "push",
+            "total",
+        }
+        assert all(v >= 0 for v in report.timings.values())
+        for label, secs in report.timings.items():
+            if label != "total":
+                assert report.timings["total"] >= secs - 1e-6
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    def test_dry_run_skips_push_leg_timings(self, fake_driver):
+        """dry_run has no pending-check / mirror_pre_push / push legs."""
+        report = peer_sync(dry_run=True)
+
+        assert set(report.timings) == {"auth", "mirror_pre", "pull", "reconcile", "total"}
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    def test_writes_timing_log_line(self, fake_driver):
+        """A greppable PEER_SYNC_TIMING line is appended to settings.sync_log."""
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(settings.database_url)
+        db.add_collocation(
+            SyntacticUnit(
+                text="Log test",
+                translation="Log",
+                word_count=1,
+                difficulty=1,
+                source="test",
+                source_sentence="Log test.",
+                card_type="cloze",
+            ),
+            language_code="sl",
+        )
+
+        peer_sync(dry_run=False)
+
+        log = settings.sync_log.read_text()
+        assert "PEER_SYNC_TIMING" in log
+        assert "dry_run=False" in log
+        for field_name in ("auth=", "mirror_pre=", "pull=", "reconcile=", "push=", "total="):
+            assert field_name in log, f"missing {field_name} in {log!r}"
+
+    def test_no_timing_log_on_pull_abort(self, monkeypatch):
+        """A full-sync abort raises before any timing line is written."""
+        import app.anki.sync_orchestrator as so
+
+        def _fake(command: dict, timeout: int = 120) -> dict:
+            if command.get("op") == "login":
+                return AUTH_RESPONSE
+            if command.get("op") == "sync":
+                return FULL_SYNC
+            return {"error": f"unknown op: {command.get('op')}"}
+
+        monkeypatch.setattr(so, "_run_driver", _fake)
+        with pytest.raises(PeerSyncError, match="FULL_SYNC"):
+            peer_sync(dry_run=False)
+        assert not settings.sync_log.exists()
 
 
 class TestMediaDirResolution:

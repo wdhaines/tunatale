@@ -7,7 +7,6 @@ tests/test_anki_sync_main.py	app.anki.sync.AnkiSync.sync_push	6
 tests/test_anki_sync_main.py	app.anki.sync.OfflineWriter	1
 tests/test_anki_sync_main.py	app.anki.sync._write_sync_soak_log	6
 tests/test_anki_sync_main.py	app.anki.sync.run_full_sync	2
-tests/test_anki_sync_orchestrator.py	app.anki.sync.main	17
 tests/test_anki_sync_orchestrator.py	app.anki.sync_orchestrator.bootstrap_collection	1
 tests/test_anki_sync_orchestrator.py	app.anki.sync_orchestrator.peer_sync	2
 tests/test_api.py	app.api.generation.get_lemmatizer	4
