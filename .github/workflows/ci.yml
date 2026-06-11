@@ -63,3 +63,57 @@ jobs:
 
       - name: Unit tests
         run: bun run test:coverage
+
+  oracle-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.14
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Warm anki subprocess env
+        run: uv run --isolated --no-project --python 3.14 --with anki python -c "import anki"
+
+      - name: Oracle parity gate
+        run: uv run pytest -m oracle --run-oracle -n auto --no-cov
+
+  peer-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.14
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Warm anki subprocess env
+        run: uv run --isolated --no-project --python 3.14 --with anki python -c "import anki"
+
+      - name: Peer-sync gate
+        run: uv run pytest tests/test_anki_peer_sync_selfhost.py --run-peer-sync --no-cov -v

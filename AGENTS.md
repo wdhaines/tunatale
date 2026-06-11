@@ -66,7 +66,7 @@ All commands use `uv run` (no manual venv activation).
 - **Anki tests**: use `fake_anki_db`, `fake_anki_db_modern`, `fake_anki_db_slovene_pairs` fixtures from `conftest.py` — never use real `collection.anki2`
   - Cloze tests use `_make_cloze_collection_conn()` or `_make_dual_collection_conn()` helpers from `test_anki_sync_create_new.py`
 - **E2E tests**: `test_e2e_listen_to_sync.py` combines `/listen` API calls with offline Anki sync
-- **CI runs backend + frontend** (two parallel jobs in `.github/workflows/ci.yml`); frontend job runs svelte-check + vitest; E2E (Playwright) is local-only
+- **CI runs four parallel jobs** in `.github/workflows/ci.yml`; frontend job runs svelte-check + vitest; E2E (Playwright) is local-only
 - CI requires `ffmpeg` as system dependency (backend job only)
 
 ## Key Conventions
@@ -80,11 +80,15 @@ All commands use `uv run` (no manual venv activation).
 
 ## CI Order
 
-**Backend job**: `ruff check → ruff format --check → pytest`
+**Backend job** (parallel): `ruff check → ruff format --check → pytest`
 
-**Frontend job** (parallel): `bun install → bun run check → bun run test:coverage`
+**Frontend job** (parallel): `bun install → svelte-check → vitest`
 
-E2E (Playwright) is local-only via `./test.sh`.
+**Oracle-parity job** (parallel): `setup-uv → uv sync → warm anki env → pytest -m oracle --run-oracle -n auto --no-cov`
+
+**Peer-sync job** (parallel): `setup-uv → uv sync → warm anki env → pytest tests/test_anki_peer_sync_selfhost.py --run-peer-sync --no-cov -v`
+
+All four run in parallel on push/PR. E2E (Playwright) is local-only via `./test.sh`.
 
 ## Instruction Files
 
