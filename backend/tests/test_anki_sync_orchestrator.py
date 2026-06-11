@@ -398,6 +398,32 @@ class TestCurDeckMirror:
         garbage.write_bytes(b"not a sqlite database")
         assert _read_real_curdeck(garbage) is None
 
+    def test_locked_collection_reads_none_fast_and_warns(self, tmp_path, caplog):
+        """A hard-locked real collection (Anki holding a long transaction) must
+        not stall the sync for sqlite's 5s default busy timeout, and the skipped
+        mirror must be visible — a silent no-op means TT may re-assert a stale
+        deck (the 188a08b regression class). Observed live 2026-06-11:
+        mirror_pre=5.2s on every sync while Anki held the lock."""
+        import logging
+        import sqlite3
+        import time as _time
+
+        from app.anki.sync_orchestrator import _read_real_curdeck
+
+        real = tmp_path / "real.anki2"
+        _make_collection_with_curdeck(real, val=SLOVENE_DECK)
+        holder = sqlite3.connect(real)
+        holder.execute("BEGIN EXCLUSIVE")
+        try:
+            t0 = _time.monotonic()
+            with caplog.at_level(logging.WARNING, logger="app.anki.sync_orchestrator"):
+                assert _read_real_curdeck(real) is None
+            assert _time.monotonic() - t0 < 2.0, "must fail fast, not wait out the 5s default timeout"
+            assert "curDeck mirror" in caplog.text
+        finally:
+            holder.rollback()
+            holder.close()
+
     # ── _mirror_real_curdeck_into_tt ──────────────────────────────────────────
 
     def test_mirror_copies_real_value_into_tt(self, tmp_path):
@@ -425,6 +451,31 @@ class TestCurDeckMirror:
         real = tmp_path / "real.anki2"
         _make_collection_with_curdeck(real, val=SLOVENE_DECK)
         _mirror_real_curdeck_into_tt(real, tmp_path / "absent.anki2")
+
+    def test_mirror_locked_tt_collection_skips_fast_and_warns(self, tmp_path, caplog):
+        """A locked tt_collection must not crash peer_sync (the write previously
+        raised OperationalError after the 5s default timeout) — skip + warn."""
+        import logging
+        import sqlite3
+        import time as _time
+
+        from app.anki.sync_orchestrator import _mirror_real_curdeck_into_tt
+
+        real, tt = tmp_path / "real.anki2", tmp_path / "tt.anki2"
+        _make_collection_with_curdeck(real, val=SLOVENE_DECK)
+        _make_collection_with_curdeck(tt, val=NORWEGIAN_DECK)
+        holder = sqlite3.connect(tt)
+        holder.execute("BEGIN EXCLUSIVE")
+        try:
+            t0 = _time.monotonic()
+            with caplog.at_level(logging.WARNING, logger="app.anki.sync_orchestrator"):
+                _mirror_real_curdeck_into_tt(real, tt)  # must not raise
+            assert _time.monotonic() - t0 < 2.0
+            assert "curDeck mirror" in caplog.text
+        finally:
+            holder.rollback()
+            holder.close()
+        assert _read_curdeck_val(tt) == NORWEGIAN_DECK  # untouched
 
     # ── peer_sync wiring ──────────────────────────────────────────────────────
 

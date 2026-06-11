@@ -249,12 +249,20 @@ def _read_real_curdeck(real_collection_path: Path) -> bytes | None:
     if not real_collection_path.exists():
         return None
     try:
-        con = sqlite3.connect(f"file:{real_collection_path}?mode=ro", uri=True)
+        # timeout=0.3: this is a best-effort single-row read — when Anki holds a
+        # hard lock (observed 2026-06-11: an open dialog kept the collection
+        # exclusively locked for hours), sqlite's default 5s busy timeout turned
+        # every sync's mirror step into a constant +5.2s stall.
+        con = sqlite3.connect(f"file:{real_collection_path}?mode=ro", uri=True, timeout=0.3)
         try:
             row = con.execute("SELECT val FROM config WHERE key = 'curDeck'").fetchone()
         finally:
             con.close()
-    except sqlite3.Error:
+    except sqlite3.Error as exc:
+        # Not silent: a skipped mirror means the push may re-assert TT's stale
+        # curDeck — the 188a08b regression class. Surface it so a wedged-lock
+        # state is visible in the server log instead of only as slow syncs.
+        logger.warning("curDeck mirror skipped: real collection unreadable (%s)", exc)
         return None
     return row[0] if row else None
 
@@ -301,15 +309,20 @@ def _mirror_real_curdeck_into_tt(real_collection_path: Path, tt_collection_path:
     val = _read_real_curdeck(real_collection_path)
     if val is None or not tt_collection_path.exists():
         return
-    con = sqlite3.connect(tt_collection_path)
     try:
-        con.execute(
-            "UPDATE config SET val = ?, mtime_secs = ? WHERE key = 'curDeck'",
-            (val, int(time.time())),
-        )
-        con.commit()
-    finally:
-        con.close()
+        con = sqlite3.connect(tt_collection_path, timeout=0.3)
+        try:
+            con.execute(
+                "UPDATE config SET val = ?, mtime_secs = ? WHERE key = 'curDeck'",
+                (val, int(time.time())),
+            )
+            con.commit()
+        finally:
+            con.close()
+    except sqlite3.Error as exc:
+        # Same contract as the read side: a mirroring hiccup must never break
+        # (or stall) the sync — skip fast and leave a visible trace.
+        logger.warning("curDeck mirror skipped: tt_collection write failed (%s)", exc)
 
 
 def _login() -> dict:
