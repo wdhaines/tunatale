@@ -13,6 +13,7 @@ import pytest
 
 from app.anki.sync_orchestrator import PeerSyncError, bootstrap_collection, main_cli, peer_sync
 from app.config import settings
+from app.models.syntactic_unit import SyntacticUnit
 
 AUTH_RESPONSE = {"hkey": "test-hkey", "endpoint": "http://localhost:8080/"}
 NORMAL_SYNC = {"required": 1, "server_message": "OK"}
@@ -855,6 +856,107 @@ class TestPeerSyncTiming:
             peer_sync(dry_run=False)
 
         assert not settings.sync_log.exists()
+
+
+# ── Sociable peer-sync tests (Phase 7) ─────────────────────────────────────────
+#
+# These test peer_sync() with a real on-disk SyntheticCollection, patching only
+# the driver process boundary (_run_driver). This exercises the full run_full_sync
+# pipeline (sync_create_new, sync_push, sync_pull, refresh-*) without needing a
+# real Anki installation.
+#
+# Escalation trigger: if SyntheticCollection needs more than ~2 small builder
+# extensions to satisfy OfflineReader / refresh-*, stop and escalate. It means
+# the synthetic schema and the reader have drifted.
+
+CLOZE_NOTETYPE_MID = 1704067201
+
+
+@pytest.fixture
+def sociable_tt_collection(monkeypatch):
+    """Create a real on-disk Anki collection at settings.tt_collection_path.
+
+    Deck is set to ``settings.anki_deck_name`` (``0. Slovene``) with both
+    ``Basic`` and ``Cloze`` notetypes. Pins ``anki_model_name`` so model
+    discovery doesn't need notes in the collection.
+    """
+    from tests.anki_oracle.synthetic_collection import SyntheticCollection
+
+    coll = SyntheticCollection(settings.tt_collection_path)
+    coll.set_deck(settings.anki_deck_name, 1)
+    coll.add_notetype(CLOZE_NOTETYPE_MID, "Cloze", ("Text", "Back Extra"), template_count=1)
+    coll.save()
+
+    monkeypatch.setattr(settings, "anki_model_name", "Cloze")
+    return coll
+
+
+@pytest.fixture
+def fake_driver(monkeypatch):
+    """Replace ``_run_driver`` with canned responses so auth/sync legs complete.
+
+    Mirrors :func:`_run_driver`'s real signature exactly
+    ``(command: dict, timeout: int = 120) -> dict`` and reuses the file's
+    existing response constants (``AUTH_RESPONSE``, ``NORMAL_SYNC``) so the
+    fake stays honest if those shapes change.
+    """
+    import app.anki.sync_orchestrator as so
+
+    def _fake(command: dict, timeout: int = 120) -> dict:
+        op = command.get("op", "")
+        if op == "login":
+            return AUTH_RESPONSE
+        if op == "sync":
+            return NORMAL_SYNC
+        return {"error": f"unknown op: {op}"}
+
+    monkeypatch.setattr(so, "_run_driver", _fake)
+
+
+class TestSociableSync:
+    """peer_sync with a real on-disk collection — only the driver boundary is faked.
+
+    ``_AUTH_CACHE`` is reset by the module-level ``_clear_auth_cache`` autouse
+    fixture (lines 35–37), so ordering-dependent auth leakage between these
+    sociable tests is prevented.
+    """
+
+    @pytest.mark.usefixtures("sociable_tt_collection", "fake_driver")
+    def test_unlinked_cloze_item_gets_linked_and_written(self):
+        """b0a4b8a guard: unlinked TT cloze collocation → real peer_sync →
+        collocation has ``anki_note_id`` AND a notes row exists in the
+        ``tt_collection`` file."""
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(settings.database_url)
+
+        text = "Kava je dobra"
+        unit = SyntacticUnit(
+            text=text,
+            translation="Coffee is good",
+            word_count=3,
+            difficulty=2,
+            source="test",
+            source_sentence="Kava je dobra, ampak čaj je boljši.",
+            card_type="cloze",
+        )
+        db.add_collocation(unit, language_code="sl")
+
+        assert peer_sync().tt_push_pull_exit == 0
+
+        item = db.get_collocation(text)
+        assert item is not None
+        assert item.anki_note_id is not None, f"Expected anki_note_id for {text}, got None"
+
+        from app.anki.safety import safe_open
+        from app.anki.sync import OfflineReader
+
+        with safe_open(settings.tt_collection_path, mode="ro") as ctx:
+            reader = OfflineReader(ctx.conn, settings.anki_deck_name)
+            records = reader.get_note_records()
+            assert any(r.anki_note_id == item.anki_note_id for r in records), (
+                f"No notes row with anki_note_id={item.anki_note_id} in tt_collection"
+            )
 
 
 class TestMediaDirResolution:

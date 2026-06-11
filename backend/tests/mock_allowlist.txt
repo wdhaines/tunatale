@@ -1,5 +1,6 @@
 # Process/network boundaries — never shrink these
 app.anki.sync_orchestrator.subprocess.run       # subprocess boundary (inside _run_driver)
+app.anki.sync_orchestrator._run_driver          # designated driver boundary for sociable peer-sync tests
 app.anki.sync_orchestrator._keychain_password   # macOS Keychain boundary
 app.audio.edge_tts.edge_tts.*                   # EdgeTTS network boundary (Communicate, list_voices)
 app.audio.edge_tts.asyncio.sleep                # EdgeTTS retry sleep
