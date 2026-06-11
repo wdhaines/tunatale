@@ -13,7 +13,7 @@ backend/tests/anki_oracle/
 └── harness_fixtures.py       # pytest fixtures + run_oracle() helper
 ```
 
-Tests live alongside other tests as `backend/tests/test_parity_*.py`. They're opt-in via `--run-oracle`: `./test.sh` passes the flag so local pre-commit runs the harness, while CI (`.github/workflows/ci.yml`) runs `uv run pytest` without it so it doesn't depend on Anki being installable in the CI image. If you need to skip the harness locally for speed, run `cd backend && uv run pytest` directly.
+Tests live alongside other tests as `backend/tests/test_parity_*.py`. They're opt-in via `--run-oracle`: `./test.sh` passes the flag so local pre-commit runs the harness, and CI runs them in a dedicated **oracle-parity job** (`.github/workflows/ci.yml`: warm the isolated anki env, then `pytest -m oracle --run-oracle -n auto --no-cov`) so an oracle failure is never conflated with a unit failure. Every oracle-gated test must carry `@pytest.mark.oracle` or the CI job won't select it. If you need to skip the harness locally for speed, run `cd backend && uv run pytest` directly. CI runs on Linux/UTC while dev is macOS/EDT — timezone-sensitive day arithmetic WILL diverge there (see gotcha #10).
 
 ## Subprocess boundary — never violate
 

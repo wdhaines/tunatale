@@ -86,16 +86,24 @@ Never call `sqlite3.connect` on `collection.anki2` directly. Use `app.anki.safet
 
 ## One sync sequence — never fork the phase list (the b0a4b8a class)
 
-There is exactly **one** definition of "the steps a sync runs": `run_full_sync` in `app/anki/sync.py`. It does `detect_and_reset_orphans → sync_create_new → sync_push → sync_pull → (every `refresh_*` deck-config sync + multi-deck warn + soak heartbeat)`. **Both** sync entry points call it:
+There is exactly **one** definition of "the steps a sync runs": `run_full_sync` in `app/anki/sync.py`. It does `detect_and_reset_orphans → sync_create_new → sync_push → sync_pull → (every `refresh_*` deck-config sync + multi-deck warn + Anki→TT media refresh + soak heartbeat)`. Every sync path funnels through `main()` into it:
 
-- **`POST /api/anki/sync`** (`app/api/anki.py`) — closed-collection sync; supplies an LLM/image `media_fn`.
-- **`peer_sync` → `main`** (`sync_orchestrator.py` → `sync.py:main`) — the path the UI Sync button actually uses; passes `media_fn=None`.
+- **`POST /api/anki/peer-sync`** (`app/api/anki.py`, the ONLY HTTP sync endpoint) → `peer_sync` → `main` (`sync_orchestrator.py` → `sync.py:main`) — the path the UI Sync button uses; threads the LLM/image `media_fn` and the media dir through.
+- **`python -m app.anki.sync`** — manual Anki-closed CLI against the real `collection.anki2`; `media_fn=None`.
 
-The **only** legitimate per-caller difference is `media_fn`. Everything else lives in `run_full_sync`.
+(The legacy `POST /api/anki/sync` + `GET /api/anki/status` endpoints were deleted 2026-06-10 — AnkiWeb-only direction. Do not reintroduce a second HTTP sync path.)
+
+The **only** legitimate per-caller differences are `media_fn`/`media_dir`. Everything else lives in `run_full_sync`.
 
 **Do NOT inline a sync phase into one entry point.** A second entry point that runs a *different subset* of phases is the `b0a4b8a` regression: when the Sync button was repointed from `/api/anki/sync` to `peer_sync`, the peer reconcile (`main`) ran only `push`+`pull`, silently dropping **`sync_create_new`** (TT-added cards never reached Anki) **and every `refresh_*`** (Anki-side FSRS-param / desired-retention / daily-cap / load-balancer changes never reached TT). Unit tests + the 100% coverage gate did not catch it: each function was green in isolation, and the orchestrator tests `patch("app.anki.sync.main")`, so nothing crossed the seam.
 
-New sync phase? Add it to `run_full_sync`, not to a call site. The phase list is pinned by `tests/test_anki_sync_main.py::TestRunFullSync` (asserts the full ordered phase set, incl. all `refresh_*` by name) plus delegation tests on both entry points; the create-through-peer-sync round-trip has a `--run-peer-sync` e2e in `test_anki_peer_sync_selfhost.py`. If you add a phase and only `TestRunFullSync` needs updating, you did it right; if you found yourself editing an entry point's body, stop and move it into the helper.
+New sync phase? Add it to `run_full_sync`, not to a call site. Three independent nets pin this (all run in CI):
+
+1. **`tests/test_anki_sync_main.py::TestRunFullSync`** — the contract test; asserts the full ordered phase set (incl. all `refresh_*` by name and the media-refresh phase) against a mocked sync object. The *only* sanctioned place to pin the phase list.
+2. **`tests/test_anki_sync_orchestrator.py::TestSociableSync`** — the b0a4b8a guard: the real `peer_sync` internals run against a real on-disk `SyntheticCollection`, only the `_run_driver` subprocess faked. An unlinked TT collocation must come out linked with a real `notes` row — if a phase is dropped from `run_full_sync`, this goes red (sabotage-drilled 2026-06-10).
+3. **`test_anki_peer_sync_selfhost.py`** (`--run-peer-sync`, auto-started server) — full round-trips against a real sync server, incl. `test_media_round_trip_parity` (both media directions).
+
+If you add a phase and only `TestRunFullSync` needs updating, you did it right; if you found yourself editing an entry point's body, stop and move it into the helper.
 
 ## When building a new UI that adds cards
 

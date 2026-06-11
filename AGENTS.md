@@ -66,6 +66,8 @@ All commands use `uv run` (no manual venv activation).
 - **Anki tests**: use `fake_anki_db`, `fake_anki_db_modern`, `fake_anki_db_slovene_pairs` fixtures from `conftest.py` — never use real `collection.anki2`
   - Cloze tests use `_make_cloze_collection_conn()` or `_make_dual_collection_conn()` helpers from `test_anki_sync_create_new.py`
 - **E2E tests**: `test_e2e_listen_to_sync.py` combines `/listen` API calls with offline Anki sync
+- **Mock-boundary check**: `./test.sh` and CI fail any `patch("app.…")` not in `backend/tests/mock_allowlist.txt` (true process/network boundaries) or the shrink-only `mock_grandfather.txt` — see `.claude/rules/testing.md` "Mock Boundaries"
+- **Peer-sync tests** (`--run-peer-sync`): auto-start a throwaway `anki.syncserver` (no manual server, zero skips); also a dedicated CI job
 - **CI runs four parallel jobs** in `.github/workflows/ci.yml`; frontend job runs svelte-check + vitest; E2E (Playwright) is local-only
 - CI requires `ffmpeg` as system dependency (backend job only)
 
@@ -80,7 +82,7 @@ All commands use `uv run` (no manual venv activation).
 
 ## CI Order
 
-**Backend job** (parallel): `ruff check → ruff format --check → pytest`
+**Backend job** (parallel): `ruff check → ruff format --check → mock-boundary check → pytest`
 
 **Frontend job** (parallel): `bun install → svelte-check → vitest`
 
@@ -92,7 +94,7 @@ All four run in parallel on push/PR. E2E (Playwright) is local-only via `./test.
 
 ## Instruction Files
 
-- `.claude/rules/testing.md` — cassette system, mocking strategy, test types
+- `.claude/rules/testing.md` — cassette system, mock boundaries (enforced), test tiers
 - `.claude/rules/tdd.md` — red-green-refactor workflow, step ordering
 - `.claude/rules/environment.md` — secrets, venv, Groq setup, rate limits
 - `.claude/rules/anki-sync.md` — USN protocol, safety envelope, migration rules
