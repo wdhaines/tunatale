@@ -1010,6 +1010,21 @@ class TestSociableSync:
             peer_sync(dry_run=False)
         assert not settings.sync_log.exists()
 
+    def test_tt_sync_failure_aborts_before_push(self, fake_driver):
+        """Garbage tt_collection triggers reconcile failure — pull runs, no push.
+
+        Write non-SQLite bytes to ``settings.tt_collection_path`` so ``safe_open``
+        raises inside ``main()``, which returns exit-code 1. ``peer_sync`` catches
+        the non-zero exit and raises ``PeerSyncError`` before the push leg.
+        """
+        settings.tt_collection_path.write_bytes(b"not a sqlite database")
+
+        with pytest.raises(PeerSyncError, match="TT sync against tt_collection failed"):
+            peer_sync(dry_run=False)
+
+        ops = [c["op"] for c in fake_driver]
+        assert ops == ["login", "sync"]
+
 
 class TestMediaDirResolution:
     """Peer-path media dir resolution + the tt_collection.media → real symlink.
