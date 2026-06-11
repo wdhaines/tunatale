@@ -17,6 +17,7 @@ sys.path.insert(0, str(_SCRIPTS))
 from check_mock_boundaries import (  # noqa: E402
     _is_monkeypatch_setattr,
     _is_patch,
+    do_write_grandfather,
     format_grandfather_line,
     load_allowlist,
     load_grandfather,
@@ -200,3 +201,37 @@ def test_scan_does_not_crash_on_syntax_error(tmp_path):
     f.write_text("This is not valid python {{{{\n")
     # Should not raise; should return empty list
     assert scan_file(f) == []
+
+
+class TestGrandfatherOutput:
+    def test_allowlisted_targets_excluded_from_write_output(self, tmp_path):
+        """Invariant: ``--write-grandfather`` excludes targets matching the allowlist."""
+        import sys
+        from io import StringIO
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_example.py").write_text(
+            "from unittest.mock import patch\n"
+            "\n"
+            "def test_x():\n"
+            '    patch("app.anki.sync.main")\n'
+            '    patch("app.config.settings.database_url")\n'
+        )
+
+        allow_path = tmp_path / "allow.txt"
+        allow_path.write_text("app.config.settings.*\n")
+
+        captured = StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = captured
+        try:
+            do_write_grandfather(tests_dir=tests_dir, allowlist_path=allow_path)
+        finally:
+            sys.stdout = old_stdout
+
+        output = captured.getvalue()
+        assert "app.anki.sync.main" in output, "non-allowlisted target should appear in grandfather output"
+        assert "app.config.settings.database_url" not in output, (
+            "allowlisted target should NOT appear in grandfather output"
+        )

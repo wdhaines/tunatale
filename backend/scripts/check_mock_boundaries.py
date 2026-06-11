@@ -148,15 +148,47 @@ def _relative_path(filepath: Path) -> str:
 
 
 def load_allowlist(path: Path = ALLOWLIST_PATH) -> list[str]:
-    """Return non-empty, non-comment lines from the allowlist file."""
+    """Return non-empty, non-comment lines from the allowlist file.
+
+    Inline comments (``app.foo  # why``) are stripped so the remaining
+    text is a clean fnmatch glob.
+    """
     if not path.exists():
         return []
     lines: list[str] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
-        if stripped and not stripped.startswith("#"):
+        if not stripped or stripped.startswith("#"):
+            continue
+        # Strip inline comment (first unquoted ``#``)
+        comment_pos = _find_inline_comment(stripped)
+        if comment_pos is not None:
+            stripped = stripped[:comment_pos].rstrip()
+        if stripped:
             lines.append(stripped)
     return lines
+
+
+def _find_inline_comment(s: str) -> int | None:
+    """Return index of the first ``#`` that starts a comment (not inside a
+    string or escaped), or None."""
+    in_single = False
+    in_double = False
+    escape = False
+    for i, ch in enumerate(s):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif ch == "#" and not in_single and not in_double:
+            return i
+    return None
 
 
 def matches_allowlist(target: str, patterns: list[str]) -> bool:
@@ -261,12 +293,15 @@ def do_check(
     return exit_code
 
 
-def do_write_grandfather(tests_dir: Path = TESTS_DIR) -> None:
-    """Print grandfather-format lines to stdout."""
+def do_write_grandfather(tests_dir: Path = TESTS_DIR, allowlist_path: Path | None = None) -> None:
+    """Print grandfather-format lines to stdout, skipping allowlisted targets."""
+    allowlist_patterns = load_allowlist(allowlist_path or ALLOWLIST_PATH)
     by_file = collect_all_hits(tests_dir)
     for rel_path in sorted(by_file):
         counter = by_file[rel_path]
         for target in sorted(counter):
+            if matches_allowlist(target, allowlist_patterns):
+                continue
             print(format_grandfather_line(rel_path, target, counter[target]))
 
 
