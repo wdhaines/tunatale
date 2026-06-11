@@ -2632,12 +2632,21 @@ class SRSDatabase:
 
         return item.directions[direction]
 
-    def latest_revlog_id_for_card(self, anki_card_id: int) -> int | None:
-        """Return MAX(id) from tt_revlog for the given Anki card, or None."""
+    def latest_revlog_id_for_direction(self, collocation_id: int, direction: Direction) -> int | None:
+        """Return MAX(id) from tt_revlog for the given direction, or None.
+
+        The Stage-3b incremental-replay anchor (Layer 71). Keyed by
+        (collocation_id, direction) — the same domain ``rebuild_from_revlog``
+        walks — NOT by ``anki_card_id``: TT-native rows graded before
+        ``sync_create_new`` mints the card carry ``anki_card_id=NULL`` (and a
+        re-minted card changes ids), so a card-keyed anchor misses them,
+        ``since_id`` resolves to None, and the replay re-walks the full
+        history on top of the already-evolved stored state on every sync.
+        """
         with self._get_conn() as conn:
             row = conn.execute(
-                "SELECT MAX(id) FROM tt_revlog WHERE anki_card_id = ?",
-                (anki_card_id,),
+                "SELECT MAX(id) FROM tt_revlog WHERE collocation_id = ? AND direction = ?",
+                (collocation_id, direction.value),
             ).fetchone()
             return row[0] if row and row[0] is not None else None
 

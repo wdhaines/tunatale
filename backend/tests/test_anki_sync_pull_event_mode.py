@@ -441,3 +441,45 @@ def test_new_mode_detector_skips_fsrs_unknown():
     assert len(report.recompute_divergences) == 0
     after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
     assert after.stability == stored.stability  # fsrs_known=False keeps local
+
+
+def test_new_mode_detector_ignores_unlinked_revlog_rows():
+    """Layer 71: tt_revlog rows written before sync_create_new minted the Anki
+    card carry anki_card_id=NULL. The replay anchor must be keyed by
+    (collocation_id, direction) — the domain rebuild_from_revlog walks — or
+    since_id resolves to None and the replay re-walks the full history on top
+    of the already-evolved stored state, firing identical phantom divergences
+    on every sync (the 858/866 ste/si perma-fire, 2026-06-11)."""
+    from app.models.srs_item import RevlogRow
+
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    stored = _seed_review_direction(db, guid)
+    coll_id = db.get_collocation_id_by_guid(guid)
+    db.set_event_sync_pull_mode("new")
+
+    # Two pre-link TT-native grades (anki_card_id=NULL), already reflected in
+    # the stored direction state — replay must NOT re-apply them.
+    for i, ts in enumerate((10, 5)):
+        db.append_revlog(
+            RevlogRow(
+                id=int((stored.last_review - timedelta(days=ts)).timestamp() * 1000),
+                collocation_id=coll_id,
+                direction=Direction.RECOGNITION,
+                button_chosen=3,
+                interval=0,
+                last_interval=0,
+                factor=0,
+                taken_millis=4000,
+                review_kind=i,
+                anki_card_id=None,
+            )
+        )
+
+    # Anki agrees with TT exactly; no new Anki revlog rows.
+    card = make_card_record(anki_card_id=_CARD_ID, ord=0, reps=3, stability=5.0, difficulty=4.5)
+    report = _run_pull_report(db, [make_note_record(anki_guid=guid, cards=[card])], revlog_rows=[])
+
+    assert len(report.recompute_divergences) == 0
+    after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+    assert after.stability == stored.stability

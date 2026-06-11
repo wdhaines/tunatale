@@ -2180,8 +2180,11 @@ class AnkiSync:
                 # is already folded into the stored `local_dir` (TT-native grades
                 # applied live, prior Anki grades applied at the last sync); the
                 # rows ingested below (this sync's new Anki grades) are > it.
+                # Layer 71: anchor by (collocation_id, direction) — the domain
+                # the replay walks — not by anki_card_id, which misses pre-link
+                # rows (anki_card_id=NULL) and re-minted card ids.
                 pre_ingest_revlog_id = (
-                    self._db.latest_revlog_id_for_card(card_rec.anki_card_id)
+                    self._db.latest_revlog_id_for_direction(coll_id, direction)
                     if event_mode in ("compare", "new")
                     else None
                 )

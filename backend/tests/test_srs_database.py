@@ -3047,7 +3047,7 @@ class TestRevlog:
     """Tests for revlog row creation and querying."""
 
     def test_append_revlog_and_query_latest(self, srs_db):
-        """append_revlog stores a row; latest_revlog_id_for_card returns MAX(id)."""
+        """append_revlog stores a row; latest_revlog_id_for_direction returns MAX(id)."""
         from app.models.srs_item import RevlogRow
 
         srs_db.add_collocation(
@@ -3068,12 +3068,53 @@ class TestRevlog:
         )
         srs_db.append_revlog(row)
 
-        latest = srs_db.latest_revlog_id_for_card(100)
+        latest = srs_db.latest_revlog_id_for_direction(1, Direction.RECOGNITION)
         assert latest == 5000
 
-    def test_latest_revlog_id_for_card_returns_none(self, srs_db):
-        """When no revlog rows exist, latest_revlog_id_for_card returns None."""
-        assert srs_db.latest_revlog_id_for_card(999) is None
+    def test_latest_revlog_id_for_direction_returns_none(self, srs_db):
+        """When no revlog rows exist, latest_revlog_id_for_direction returns None."""
+        assert srs_db.latest_revlog_id_for_direction(999, Direction.RECOGNITION) is None
+
+    def test_latest_revlog_id_for_direction_includes_unlinked_rows(self, srs_db):
+        """Layer 71: rows with anki_card_id=NULL (graded pre-link) count toward
+        the anchor — they belong to the direction's replay domain."""
+        from app.models.srs_item import RevlogRow
+
+        srs_db.add_collocation(
+            SyntacticUnit(text="morje", translation="sea", word_count=1, difficulty=1, source="corpus"),
+            language_code="sl",
+        )
+        for rid, akid in ((7001, None), (7002, 400)):
+            srs_db.append_revlog(
+                RevlogRow(
+                    id=rid,
+                    collocation_id=1,
+                    direction=Direction.RECOGNITION,
+                    button_chosen=3,
+                    interval=1,
+                    last_interval=0,
+                    factor=0,
+                    taken_millis=500,
+                    review_kind=1,
+                    anki_card_id=akid,
+                )
+            )
+        srs_db.append_revlog(
+            RevlogRow(
+                id=7003,
+                collocation_id=1,
+                direction=Direction.PRODUCTION,
+                button_chosen=3,
+                interval=1,
+                last_interval=0,
+                factor=0,
+                taken_millis=500,
+                review_kind=1,
+                anki_card_id=None,
+            )
+        )
+        # NULL-akid row 7001 counts; the other direction's 7003 does not.
+        assert srs_db.latest_revlog_id_for_direction(1, Direction.RECOGNITION) == 7002
 
     def test_append_revlog_insert_or_ignore(self, srs_db):
         """Duplicate id is silently ignored (INSERT OR IGNORE)."""
@@ -3097,7 +3138,7 @@ class TestRevlog:
         )
         srs_db.append_revlog(row)
         srs_db.append_revlog(row)  # same id, should be ignored
-        assert srs_db.latest_revlog_id_for_card(200) == 5001
+        assert srs_db.latest_revlog_id_for_direction(1, Direction.RECOGNITION) == 5001
 
     def test_get_tt_revlog_ids_returns_held_ids_for_direction(self, srs_db):
         """get_tt_revlog_ids returns the set of ids held for (collocation_id, direction)."""
@@ -3148,7 +3189,7 @@ class TestRevlog:
         )
         srs_db.append_manual_revlog(collocation_id=1, direction=Direction.RECOGNITION, anki_card_id=300)
 
-        latest = srs_db.latest_revlog_id_for_card(300)
+        latest = srs_db.latest_revlog_id_for_direction(1, Direction.RECOGNITION)
         assert latest is not None
         row = srs_db._conn.execute("SELECT * FROM tt_revlog WHERE id = ?", (latest,)).fetchone()
         assert row is not None
