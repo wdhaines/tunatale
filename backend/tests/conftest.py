@@ -628,7 +628,8 @@ def seed_direction(
 _CASSETTES_DIR = Path(__file__).parent / "cassettes"
 
 
-# Re-export Anki oracle fixtures so tests anywhere in the suite can request them.
+# Re-export fixtures so tests anywhere in the suite can request them.
+from tests._helpers.sync_server import selfhost_sync_server  # noqa: E402, F401
 from tests.anki_oracle.harness_fixtures import anki_queue, synthetic_collection  # noqa: E402, F401
 
 

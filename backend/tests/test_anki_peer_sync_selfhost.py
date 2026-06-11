@@ -1,6 +1,21 @@
 """Peer-sync integration gate (Phase 6).
 
-Requires ``--run-peer-sync`` and a running self-host Anki sync server.
+Requires ``--run-peer-sync``. The server is **auto-started** (throwaway
+credentials ``tt-test`` / ``tt-test-pw```, free port, temporary ``SYNC_BASE``)
+via the session-scoped ``selfhost_sync_server`` fixture.
+
+If you already set ``sync_endpoint``, ``sync_username``, ``sync_password`` (e.g.
+via env vars pointing at a hand-started server), the fixture reuses it instead
+of spawning — preserving the manual two-terminal workflow::
+
+    # Terminal 1: start a self-host server:
+    SYNC_USER1="$USER:$PASS" SYNC_HOST=127.0.0.1 SYNC_PORT=8080 \\
+      uv run --isolated --no-project --python 3.14 --with anki python -m anki.syncserver
+
+    # Terminal 2: run the gate (creds + endpoint via env):
+    cd backend && sync_endpoint=http://127.0.0.1:8080/ sync_username="$USER" \\
+      sync_password="$PASS" uv run pytest tests/test_anki_peer_sync_selfhost.py \\
+      --run-peer-sync --no-cov -v
 
 This is the **gate test** for option 2 (TT as an AnkiWeb sync peer). It seeds two
 cards, grades a *different* card in each of two peers, syncs, and verifies each
@@ -10,19 +25,7 @@ orchestrator (the production entry point); the second peer stands in for a
 desktop/AnkiDroid device via the raw driver. If this passes, the architecture is
 validated; if it fails, fall back to option-3-smoothed.
 
-Usage::
-
-    # Terminal 1: start a self-host server (isolated 3.14 — anki's protobuf can't
-    # import under the project env; see app/anki/sync_driver.py). Pick any
-    # throwaway user/pass for the local server (this is not a real account):
-    SYNC_USER1="$USER:$PASS" SYNC_HOST=127.0.0.1 SYNC_PORT=8080 \\
-      uv run --isolated --no-project --python 3.14 --with anki python -m anki.syncserver
-
-    # Terminal 2: run the gate (creds + endpoint via env → Settings), reusing the
-    # same throwaway USER/PASS you chose above:
-    cd backend && sync_endpoint=http://127.0.0.1:8080/ sync_username="$USER" \\
-      sync_password="$PASS" uv run pytest tests/test_anki_peer_sync_selfhost.py \\
-      --run-peer-sync --no-cov -v
+This file runs **serially** (one server per session, no cross-worker races).
 """
 
 from __future__ import annotations
@@ -31,26 +34,14 @@ import json
 import subprocess
 from pathlib import Path
 
-import httpx
 import pytest
 
 from app.anki.sync_orchestrator import _driver_cmd, peer_sync
 from app.config import settings
 
-SERVER_TIMEOUT_S = 5
 # The first isolated `uv run --with anki` may build the ephemeral env from a cold
 # cache; give each driver call headroom.
 _DRIVER_TIMEOUT_S = 180
-
-
-def _server_reachable() -> bool:
-    """Check if the sync server is reachable at *sync_endpoint*."""
-    endpoint = (settings.sync_endpoint or "http://127.0.0.1:8080").rstrip("/")
-    try:
-        r = httpx.get(f"{endpoint}/sync/ping", timeout=SERVER_TIMEOUT_S)
-        return r.status_code < 500
-    except httpx.ConnectError, httpx.TimeoutException:
-        return False
 
 
 def _driver(command: dict, timeout: int = _DRIVER_TIMEOUT_S) -> dict:
@@ -96,16 +87,25 @@ def _assert_incremental(required: int | None, where: str) -> None:
     assert required in (0, 1), f"{where}: expected incremental sync, got required={required}"
 
 
+@pytest.fixture(autouse=True)
+def _auto_server(selfhost_sync_server, monkeypatch: pytest.MonkeyPatch):
+    """Pin sync credentials from the session-scoped server fixture into settings.
+
+    The session-scoped ``selfhost_sync_server`` fixture handles server lifecycle
+    (spawn or reuse once per session).  This fixture reads the returned
+    credentials and pins them function-scoped so every test sees the intended
+    endpoint.  It runs **after** conftest's ``_settings_overrides`` (same
+    function scope), so its override of ``sync_password`` wins over the generic
+    dummy.
+    """
+    endpoint, username, password = selfhost_sync_server
+    monkeypatch.setattr(settings, "sync_endpoint", endpoint)
+    monkeypatch.setattr(settings, "sync_username", username)
+    monkeypatch.setattr(settings, "sync_password", password)
+
+
 @pytest.mark.peer_sync
 class TestPeerSyncSelfHost:
-    @pytest.fixture(autouse=True)
-    def _check_preconditions(self):
-        # Legitimate external-infra gate: the integration test cannot run without a
-        # server. (The dangerous silent skip — a *driver error* masquerading as a
-        # pass — is handled by _driver, which fails.)
-        if not _server_reachable():
-            pytest.skip("Sync server not reachable — start it with `python -m anki.syncserver`")
-
     def test_bidirectional_convergence(self, tmp_path: Path):
         """Grade a different card in each peer; verify each receives the other's
         grade with no FULL_SYNC. TT side goes through the real peer_sync bracket."""
@@ -418,11 +418,6 @@ class TestPeerSyncMediaDriver:
     Gated on --run-peer-sync + a reachable THROWAWAY self-host server (never real
     AnkiWeb).
     """
-
-    @pytest.fixture(autouse=True)
-    def _check_preconditions(self):
-        if not _server_reachable():
-            pytest.skip("Sync server not reachable — start it with `python -m anki.syncserver`")
 
     def test_media_round_trips_via_driver_sync(self, tmp_path: Path):
         tt_col = tmp_path / "tt.anki2"
