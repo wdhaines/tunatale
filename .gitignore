@@ -67,5 +67,7 @@ backend/media/
 
 # Generated outputs and ad-hoc scripts
 backend/output/
-backend/scripts/
+backend/scripts/*
+!backend/scripts/check_mock_boundaries.py
+!backend/scripts/__init__.py
 frontend/test-results/

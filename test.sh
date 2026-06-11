@@ -33,10 +33,13 @@ echo "Running backend + frontend suites in parallel..."
   cd "$ROOT/backend"
 
   echo "=== Ruff lint ==="
-  uv run ruff check app tests
+  uv run ruff check app tests scripts
 
   echo "=== Ruff format check ==="
-  uv run ruff format --check app tests
+  uv run ruff format --check app tests scripts
+
+  echo "=== Mock boundary check ==="
+  uv run python scripts/check_mock_boundaries.py
 
   echo "=== Tests ==="
   # -n auto parallelizes across CPU cores; pytest-cov combines per-worker
