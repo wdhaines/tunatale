@@ -1457,9 +1457,23 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
         grammar=grammar_hint,
     )
     # 5. Persist + synthesize + serialize (always a cloze).
-    return await _persist_new_card(
+    result = await _persist_new_card(
         db, unit, language_code, synthesize=True, audio_sentence=body.sentence, audio_word=body.surface
     )
+
+    # 6. Self-healing backfill (mirrors /listen, srs.py:461). add_collocation is
+    #    idempotent by guid and does NOT update an existing row, so a cloze first
+    #    minted without lesson context (empty sentence_translation) would strand
+    #    permanently — no Anki Back Extra <span class="st">. When we resolved a
+    #    translation and re-hit an existing row that lacks one, stamp it dirty so
+    #    the next sync rewrites Back Extra. (A freshly-created row already carries
+    #    the translation from `unit`, so only the idempotent path needs this.)
+    if sentence_translation and not result["was_created"]:
+        guid = compute_guid(unit.text, language_code, unit.disambig_key or "")
+        stored = db.get_collocation_by_guid(guid)
+        if not stored.syntactic_unit.source_sentence_translation:
+            db.set_sentence_translation_dirty(guid, sentence_translation)
+    return result
 
 
 @router.get("/review-queue", status_code=200)

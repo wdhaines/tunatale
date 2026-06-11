@@ -601,3 +601,102 @@ class TestInflectionClozes:
         with api_app_state._get_conn() as conn:
             count = conn.execute("SELECT COUNT(*) FROM collocations WHERE guid = ?", (guid,)).fetchone()[0]
         assert count == 1
+
+    async def test_backfills_sentence_translation_on_existing_empty_row(self, api_app_state):
+        """Self-healing: a cloze first minted without lesson context (empty
+        sentence_translation) gets backfilled when re-clicked from the lesson.
+
+        Mirrors the /listen path's backfill (srs.py:461). Without it, an
+        inflection cloze created before its lesson resolved — or via a UI surface
+        that omitted lesson_id — strands permanently with no Anki Back Extra
+        sentence-translation <span class="st"> (the nasvidenje/Glavnem-trgu bug).
+        """
+        from app.main import app
+        from app.models.lesson import Lesson
+
+        self._seed_base_learned(api_app_state)
+        guid = compute_guid("Ljubljano", "sl", "morph:noun-acc-sg")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            # 1. First mint WITHOUT lesson_id → empty sentence_translation.
+            first = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "Ljubljano",
+                    "lemma": "ljubljana",
+                    "feature": "noun:acc:sg",
+                    "sentence": "Grem v Ljubljano.",
+                    "language_code": "sl",
+                },
+            )
+            assert first.status_code == 200
+            assert first.json()["was_created"] is True
+            assert api_app_state.get_collocation_by_guid(guid).syntactic_unit.source_sentence_translation == ""
+
+            # 2. The lesson now carries the translation; re-click WITH lesson_id.
+            store = app.state.content_store
+            lesson = Lesson(title="Day 1", language_code="sl", sections=[], key_phrases=[])
+            lesson.generation_metadata = {
+                "sentence_translations": {"Grem v Ljubljano.": "I'm going to Ljubljana."},
+            }
+            store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+            second = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "Ljubljano",
+                    "lemma": "ljubljana",
+                    "feature": "noun:acc:sg",
+                    "sentence": "Grem v Ljubljano.",
+                    "language_code": "sl",
+                    "lesson_id": "lesson-1",
+                },
+            )
+        assert second.status_code == 200
+        assert second.json()["was_created"] is False
+
+        # The existing row is backfilled and marked dirty so sync rewrites Back Extra.
+        cloze = api_app_state.get_collocation_by_guid(guid)
+        assert cloze.syntactic_unit.source_sentence_translation == "I'm going to Ljubljana."
+        with api_app_state._get_conn() as conn:
+            dirty = conn.execute("SELECT dirty_fields FROM collocations WHERE guid = ?", (guid,)).fetchone()[0]
+        assert "sentence_translation" in (dirty or "")
+
+    async def test_idempotent_recall_does_not_redirty_populated_translation(self, api_app_state):
+        """Re-clicking a cloze that already has its sentence_translation is a no-op.
+
+        The backfill must fire only on an *empty* existing row — not re-dirty an
+        already-populated one on every re-click (which would churn sync).
+        """
+        from app.main import app
+        from app.models.lesson import Lesson
+
+        self._seed_base_learned(api_app_state)
+        store = app.state.content_store
+        lesson = Lesson(title="Day 1", language_code="sl", sections=[], key_phrases=[])
+        lesson.generation_metadata = {
+            "sentence_translations": {"Grem v Ljubljano.": "I'm going to Ljubljana."},
+        }
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        body = {
+            "surface": "Ljubljano",
+            "lemma": "ljubljana",
+            "feature": "noun:acc:sg",
+            "sentence": "Grem v Ljubljano.",
+            "language_code": "sl",
+            "lesson_id": "lesson-1",
+        }
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            first = await client.post("/api/srs/inflection-clozes", json=body)
+            second = await client.post("/api/srs/inflection-clozes", json=body)
+
+        assert first.json()["was_created"] is True
+        assert second.json()["was_created"] is False
+        guid = compute_guid("Ljubljano", "sl", "morph:noun-acc-sg")
+        cloze = api_app_state.get_collocation_by_guid(guid)
+        assert cloze.syntactic_unit.source_sentence_translation == "I'm going to Ljubljana."
+        # First mint stamped it dirty; the no-op re-call must not append a duplicate.
+        with api_app_state._get_conn() as conn:
+            dirty = conn.execute("SELECT dirty_fields FROM collocations WHERE guid = ?", (guid,)).fetchone()[0]
+        assert (dirty or "").split(",").count("sentence_translation") <= 1
