@@ -91,6 +91,17 @@ class _FakeWriter:
     def set_specific_value_of_card(self, card_id: int, keys: list[str], new_values: list[str]) -> None:
         pass
 
+    def update_card_memory_state(
+        self,
+        card_id: int,
+        *,
+        stability: float,
+        difficulty: float,
+        last_review_secs: int | None = None,
+        desired_retention: float | None = None,
+    ) -> None:
+        pass
+
     def set_learning_state(self, card_id: int, left: int, due_timestamp: int, type_: int) -> None:
         self.set_learning_state_calls.append((card_id, left, due_timestamp, type_))
 

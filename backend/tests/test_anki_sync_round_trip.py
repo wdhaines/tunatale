@@ -49,6 +49,7 @@ class _FakeWriter:
         self.suspend_calls: list[list[int]] = []
         self.set_learning_state_calls: list[tuple[int, int, int]] = []
         self.set_specific_value_calls: list[tuple[int, list[str], list[str]]] = []
+        self.update_memory_state_calls: list[tuple[int, float, float, int | None]] = []
 
     def update_note_fields(self, note_id: int, fields: dict) -> None:
         pass
@@ -84,6 +85,17 @@ class _FakeWriter:
 
     def set_specific_value_of_card(self, card_id: int, keys: list, new_values: list) -> None:
         self.set_specific_value_calls.append((card_id, list(keys), list(new_values)))
+
+    def update_card_memory_state(
+        self,
+        card_id: int,
+        *,
+        stability: float,
+        difficulty: float,
+        last_review_secs: int | None = None,
+        desired_retention: float | None = None,
+    ) -> None:
+        self.update_memory_state_calls.append((card_id, stability, difficulty, last_review_secs))
 
     def get_current_card_state(self, card_id: int) -> dict | None:
         return None
@@ -372,7 +384,6 @@ def test_known_direction_pushes_far_future_due_date():
 
     max_ivl = 3650
     due_at = datetime.combine(date.today() + timedelta(days=max_ivl), time(4, 0), tzinfo=UTC)
-    import json as _json
 
     db.mark_known(row_id, due_at=due_at, stability=float(max_ivl))
 
@@ -421,14 +432,17 @@ def test_known_direction_pushes_far_future_due_date():
     assert 90010 in all_cids
     assert 90011 in all_cids
 
-    # Must also push FSRS data (force_fsrs for KNOWN state)
+    # Must also push FSRS data (force_fsrs for KNOWN state). Layer 70: the data
+    # JSON moved to update_card_memory_state (merge-write); set_specific keeps
+    # ivl/factor only.
     assert len(writer.set_specific_value_calls) == 2, (
         f"expected 2 set_specific_value calls, got {writer.set_specific_value_calls}"
     )
-    for _cid, keys, values in writer.set_specific_value_calls:
-        assert keys == ["data", "ivl", "factor"]
-        data = _json.loads(values[0])
-        assert data["s"] == float(max_ivl), f"expected stability={max_ivl}, got {data['s']}"
+    for _cid, keys, _values in writer.set_specific_value_calls:
+        assert keys == ["ivl", "factor"]
+    assert len(writer.update_memory_state_calls) == 2
+    for _cid, stability, _difficulty, _lrt in writer.update_memory_state_calls:
+        assert stability == float(max_ivl), f"expected stability={max_ivl}, got {stability}"
 
     # After push, dirty_fsrs cleared
     dirty_after = db.list_dirty()
@@ -792,3 +806,88 @@ def test_set_specific_value_of_card_empty_keys_is_noop():
     writer.set_specific_value_of_card(90010, [], [])
     after = conn.execute("SELECT mod, usn FROM cards WHERE id = 90010").fetchone()
     assert (after["mod"], after["usn"]) == (before["mod"], before["usn"])
+
+
+# ── Layer 70: TT grade's FSRS memory state survives push+pull ──────────────────
+
+
+def test_tt_grade_memory_state_survives_push_pull_round_trip(fake_anki_db):
+    """The cid=428 loss (2026-06-10), end-to-end against a real collection file.
+
+    A TT-native grade is pushed (scheduling + revlog + — Layer 70 — cards.data)
+    and the same sync's pull must NOT revert TT's stability/difficulty/
+    last_review to Anki's pre-grade values. Pre-Layer-70: push skipped
+    cards.data, pull's fsrs_known branch took Anki's stale s/d/lrt verbatim,
+    and the grade's FSRS effect was erased on both sides.
+    """
+    import json as _json
+    import sqlite3 as _sqlite3
+
+    from app.anki.sync import OfflineReader
+
+    conn = _sqlite3.connect(str(fake_anki_db))
+    conn.row_factory = _sqlite3.Row  # production uses safe_open, which sets this
+    try:
+        nid = conn.execute("SELECT id FROM notes WHERE flds LIKE 'banka%'").fetchone()[0]
+        cids = [r[0] for r in conn.execute("SELECT id FROM cards WHERE nid = ? ORDER BY ord", (nid,))]
+        rec_cid, prod_cid = cids[0], cids[1]
+
+        # Anki's memory state predates the TT grade by 9 days (graded in Anki then).
+        stale_lrt = int((datetime.now(UTC) - timedelta(days=9)).timestamp())
+        conn.execute(
+            "UPDATE cards SET data = ?, queue = 2, reps = 10, ivl = 10 WHERE id = ?",
+            (
+                _json.dumps({"pos": 872, "s": 8.2442, "d": 8.385, "dr": 0.86, "decay": 0.5, "lrt": stale_lrt}),
+                rec_cid,
+            ),
+        )
+        conn.commit()
+
+        db = SRSDatabase(":memory:")
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus")
+        db.add_collocation(unit)
+        guid = db.get_collocation("banka").guid
+        db.set_anki_ids(guid, nid, {Direction.RECOGNITION: rec_cid, Direction.PRODUCTION: prod_cid})
+
+        # TT-native grade two hours ago: lapse arc resolved to REVIEW at s=18.2671.
+        graded_at = datetime.now(UTC) - timedelta(hours=2)
+        db.update_direction(
+            guid,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                due_at=graded_at + timedelta(days=27),
+                stability=18.2671,
+                difficulty=8.883,
+                reps=11,
+                lapses=2,
+                state=SRSState.REVIEW,
+                dirty_fsrs=True,
+                anki_card_id=rec_cid,
+                last_review=graded_at,
+                last_review_time_ms=int(graded_at.timestamp() * 1000),
+                last_rating=3,
+            ),
+        )
+
+        sync = AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=OfflineWriter(conn))
+        sync.sync_push()
+        sync.sync_pull()
+
+        # TT side: the grade survived the round trip.
+        after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert after.stability == 18.2671, f"TT grade reverted to Anki's stale stability: {after.stability}"
+        assert after.difficulty == 8.883
+        assert after.last_review == graded_at
+
+        # Anki side: cards.data now carries the grade's memory state, merged
+        # (pos/decay/dr preserved — the force-path used to drop them).
+        data = _json.loads(conn.execute("SELECT data FROM cards WHERE id = ?", (rec_cid,)).fetchone()[0])
+        assert data["s"] == 18.2671
+        assert data["d"] == 8.883
+        assert data["lrt"] == int(graded_at.timestamp())
+        assert data["pos"] == 872
+        assert data["decay"] == 0.5
+        assert data["dr"] == 0.86
+    finally:
+        conn.close()

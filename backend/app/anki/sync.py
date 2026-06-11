@@ -780,6 +780,50 @@ class OfflineWriter:
         self._bump_col(ts)
         self._conn.commit()
 
+    def update_card_memory_state(
+        self,
+        card_id: int,
+        *,
+        stability: float,
+        difficulty: float,
+        last_review_secs: int | None = None,
+        desired_retention: float | None = None,
+    ) -> None:
+        """Merge FSRS memory state into ``cards.data`` (Layer 70).
+
+        Every TT grade push must carry the post-grade memory state, like Anki's
+        own sync would — otherwise Anki's stored s/d/lrt go stale for TT-graded
+        cards and the next pull's take-Anki reverts the grade (the cid=428
+        lapse-arc loss, 2026-06-10). Merge, never replace: ``data`` also holds
+        ``pos`` (new-card position), ``decay``, and ``dr``, which this write
+        must not drop. ``dr`` is set only when absent (Anki's own grade-time
+        value wins); ``lrt`` only when the grade has a timestamp. Same dirty
+        contract as every card write: ``usn=-1``, ``mod=now``, ``col.mod`` bump.
+        """
+        row = self._conn.execute("SELECT data FROM cards WHERE id = ?", (card_id,)).fetchone()
+        if row is None:
+            return
+        raw = row[0] or ""
+        try:
+            data = _json.loads(raw) if raw.strip() else {}
+        except ValueError:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        data["s"] = float(stability)
+        data["d"] = float(difficulty)
+        if last_review_secs is not None:
+            data["lrt"] = int(last_review_secs)
+        if desired_retention is not None and "dr" not in data:
+            data["dr"] = float(desired_retention)
+        ts = int(_time.time())
+        self._conn.execute(
+            "UPDATE cards SET data = ?, mod = ?, usn = -1 WHERE id = ?",
+            (_json.dumps(data), ts, card_id),
+        )
+        self._bump_col(ts)
+        self._conn.commit()
+
     def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list) -> int:
         """Insert a new note + cards into the collection.
 
@@ -1166,6 +1210,24 @@ def _anki_step_ahead(anki_left: int | None, local_left: int | None) -> bool:
     anki_tr = (anki_left or 0) % 1000
     local_tr = (local_left or 0) % 1000
     return anki_tr > 0 and local_tr > 0 and anki_tr < local_tr
+
+
+def _tt_memory_newer(local_dir: DirectionState, card_rec: CardRecord) -> bool:
+    """True when TT's last grade postdates Anki's FSRS memory-state timestamp.
+
+    Layer 70. ``card_rec.last_review`` is lrt-derived when ``cards.data`` has
+    ``lrt`` (parse_fsrs_data prefers it) — i.e. the timestamp of the last grade
+    Anki's stored s/d actually incorporate. A TT grade newer than that means
+    Anki's memory state is stale relative to TT's: sync_push wrote scheduling +
+    revlog for the grade but pull must not let Anki's pre-grade s/d win.
+    Strict ``>`` so an equal timestamp (the same grade already round-tripped)
+    keeps the take-Anki default; either side missing keeps it too.
+    """
+    return (
+        local_dir.last_review is not None
+        and card_rec.last_review is not None
+        and local_dir.last_review > card_rec.last_review
+    )
 
 
 # Layer 35: bury_kind split (sched/user/None).
@@ -1767,6 +1829,47 @@ class AnkiSync:
                 last_synced_at=datetime.now(UTC).isoformat(),
             )
 
+        # Layer 70 recency guard: TT graded this card after Anki's memory state
+        # was last computed (cards.data lrt). sync_push runs before pull in the
+        # same sync and clears dirty_fsrs, so the dirty-branch defenses above
+        # never see a freshly-pushed TT grade — without this branch the
+        # unconditional take-Anki below reverted the grade's s/d/last_review to
+        # Anki's pre-grade values (the cid=428 lapse-arc loss, 2026-06-10; 165
+        # directions affected). Keep TT's memory state + grade timestamp;
+        # scheduling fields stay pass-through from Anki, which sync_push wrote.
+        if card_rec.fsrs_known and _tt_memory_newer(local_dir, card_rec):
+            new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
+            return DirectionState(
+                direction=direction,
+                due_at=card_rec.due_at,
+                stability=local_dir.stability,
+                difficulty=local_dir.difficulty,
+                reps=card_rec.reps,
+                lapses=card_rec.lapses,
+                state=new_state,
+                prior_state=_resolve_prior_state(
+                    local_dir,
+                    new_state,
+                    first_review_ms=card_rec.first_review_ms,
+                    today_start_ms=today_start_ms,
+                ),
+                introduced_at=_resolve_introduced_at(
+                    local_dir,
+                    new_state,
+                    first_review_ms=card_rec.first_review_ms,
+                ),
+                dirty_fsrs=False,
+                anki_card_id=card_rec.anki_card_id,
+                anki_card_mod=card_rec.anki_card_mod,
+                anki_due=card_rec.anki_due,
+                last_review=local_dir.last_review,
+                last_review_time_ms=local_dir.last_review_time_ms,
+                last_synced_at=datetime.now(UTC).isoformat(),
+                last_rating=local_dir.last_rating,
+                left=card_rec.left,
+                bury_kind=_bury_kind_from_queue(card_rec.queue),
+            )
+
         if card_rec.fsrs_known:
             new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
             return DirectionState(
@@ -2116,6 +2219,14 @@ class AnkiSync:
                 if (
                     event_mode == "new"
                     and not dry_run
+                    # Layer 70: the detector flags genuine Anki recompute events
+                    # only. Skip when Anki's s/d are placeholders (fsrs_known is
+                    # False — the 854/858/866/882-886 every-sync noise cohort)
+                    # or when TT's grade is newer than Anki's lrt (a known-stale
+                    # Anki value the recency guard just declined to take, not a
+                    # recompute).
+                    and card_rec.fsrs_known
+                    and not _tt_memory_newer(local_dir, card_rec)
                     and new_dir_state.state
                     not in (
                         SRSState.SUSPENDED,
@@ -2252,7 +2363,14 @@ class AnkiSync:
 
     def sync_push(self, dry_run: bool = False, force_fsrs: bool = False) -> PushReport:
         """Push TunaTale → Anki. Returns a PushReport summarising changes."""
+        from app.srs.queue_stats import resolve_fsrs_params
+
         report = PushReport()
+        # Layer 70: threaded into update_card_memory_state so a card whose
+        # cards.data lacks `dr` (TT-only-graded — Anki never wrote it) still
+        # sorts at its real R position in Anki's R-asc queue instead of the
+        # SM2 fallback (oracle gotcha #1).
+        push_desired_retention = resolve_fsrs_params(self._db)[0].desired_retention
 
         for guid, anki_note_id, dirty_fields_str, item, coll_id in self._db.list_dirty_field_edits():
             if anki_note_id is None:
@@ -2400,17 +2518,28 @@ class AnkiSync:
                         ds_reps=ds.reps,
                         ds_lapses=ds.lapses,
                     )
-                if row_force_fsrs:
-                    schema_ok = self._anki_col_ver is None or self._anki_col_ver <= KNOWN_ANKI_SCHEMA_VER
-                    if schema_ok:
-                        ivl_val = max(1, round(ds.stability))
-                        data_json = _json.dumps({"s": ds.stability, "d": ds.difficulty})
-                        factor_val = max(1300, min(13000, round(ds.difficulty * 1000)))
-                        self._writer.set_specific_value_of_card(
-                            ds.anki_card_id,
-                            keys=["data", "ivl", "factor"],
-                            new_values=[data_json, str(ivl_val), str(factor_val)],
-                        )
+                schema_ok = self._anki_col_ver is None or self._anki_col_ver <= KNOWN_ANKI_SCHEMA_VER
+                if schema_ok and (ds.reps > 0 or row_force_fsrs):
+                    # Layer 70: every grade push carries the post-grade FSRS
+                    # memory state (merge-update — preserves pos/decay/dr).
+                    # Without this, Anki's s/d/lrt stay at their pre-grade
+                    # values and the same sync's pull reverts the TT grade
+                    # (the cid=428 lapse-arc loss, 2026-06-10).
+                    self._writer.update_card_memory_state(
+                        ds.anki_card_id,
+                        stability=ds.stability,
+                        difficulty=ds.difficulty,
+                        last_review_secs=int(ds.last_review.timestamp()) if ds.last_review else None,
+                        desired_retention=push_desired_retention,
+                    )
+                if row_force_fsrs and schema_ok:
+                    ivl_val = max(1, round(ds.stability))
+                    factor_val = max(1300, min(13000, round(ds.difficulty * 1000)))
+                    self._writer.set_specific_value_of_card(
+                        ds.anki_card_id,
+                        keys=["ivl", "factor"],
+                        new_values=[str(ivl_val), str(factor_val)],
+                    )
                 self._db.mark_direction_clean(guid, direction)
             report.directions_pushed += 1
 

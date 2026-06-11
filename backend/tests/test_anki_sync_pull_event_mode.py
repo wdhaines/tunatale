@@ -392,3 +392,52 @@ def test_new_mode_dry_run_writes_nothing():
     after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
     assert after.stability == stored.stability
     assert after.difficulty == stored.difficulty
+
+
+def test_new_mode_detector_skips_when_tt_memory_newer():
+    """Layer 70: a TT grade newer than Anki's lrt is a known-stale Anki value,
+    not a recompute event — the detector must not count it (and the recency
+    guard keeps TT's memory state)."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    stored = _seed_review_direction(db, guid)
+    db.set_event_sync_pull_mode("new")
+
+    stale_lrt = stored.last_review - timedelta(days=20)
+    card = make_card_record(
+        anki_card_id=_CARD_ID,
+        ord=0,
+        reps=4,
+        stability=8.2442,
+        difficulty=8.385,
+        last_review=stale_lrt,
+    )
+    report = _run_pull_report(db, [make_note_record(anki_guid=guid, cards=[card])], revlog_rows=[])
+
+    assert len(report.recompute_divergences) == 0
+    after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+    assert after.stability == stored.stability  # recency guard kept TT's value
+
+
+def test_new_mode_detector_skips_fsrs_unknown():
+    """Layer 70: fsrs_known=False cards carry placeholder s/d (1.0/5.0) — the
+    detector comparing replay vs placeholder re-fires every sync forever (the
+    854/858/866/882-886 soak-noise cohort). Gate it off."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    stored = _seed_review_direction(db, guid)
+    db.set_event_sync_pull_mode("new")
+
+    card = make_card_record(
+        anki_card_id=_CARD_ID,
+        ord=0,
+        reps=4,
+        stability=1.0,
+        difficulty=5.0,
+        fsrs_known=False,
+    )
+    report = _run_pull_report(db, [make_note_record(anki_guid=guid, cards=[card])], [_good_revlog_row()])
+
+    assert len(report.recompute_divergences) == 0
+    after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+    assert after.stability == stored.stability  # fsrs_known=False keeps local

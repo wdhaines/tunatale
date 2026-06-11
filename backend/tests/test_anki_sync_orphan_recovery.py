@@ -31,6 +31,7 @@ class FakeWriter:
         self.learning_state_calls: list[tuple] = []
         self.revlogs: list[dict] = []
         self.specific_value_calls: list[tuple] = []
+        self.memory_state_calls: list[tuple] = []
 
     def update_note_fields(self, note_id, fields):
         pass
@@ -77,6 +78,17 @@ class FakeWriter:
 
     def set_specific_value_of_card(self, card_id, *, keys, new_values):
         self.specific_value_calls.append((card_id, keys, new_values))
+
+    def update_card_memory_state(
+        self,
+        card_id,
+        *,
+        stability,
+        difficulty,
+        last_review_secs=None,
+        desired_retention=None,
+    ):
+        self.memory_state_calls.append((card_id, stability, difficulty, last_review_secs))
 
     def bury_siblings(
         self,
@@ -270,11 +282,13 @@ class TestSyncPushHonorsRecoveryFlag:
 
         sync.sync_push(force_fsrs=False)
 
-        # force_fsrs path writes set_specific_value_of_card with data/ivl/factor.
+        # force_fsrs path: data goes through update_card_memory_state (Layer 70
+        # merge-write); set_specific_value_of_card keeps ivl/factor.
         assert writer.specific_value_calls, "force_fsrs not invoked for recovered row"
         card_id, keys, _values = writer.specific_value_calls[0]
         assert card_id == 998  # the (still-linked-in-this-test) anki_card_id
-        assert "data" in keys
+        assert keys == ["ivl", "factor"]
+        assert writer.memory_state_calls and writer.memory_state_calls[0][0] == 998
 
     def test_push_does_not_force_fsrs_for_non_recovered_direction(self):
         """Without a recovery flag, force_fsrs stays off (existing behavior)."""

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
@@ -112,6 +111,19 @@ class FakeWriter:
 
     def set_specific_value_of_card(self, card_id: int, keys: list[str], new_values: list[str]) -> None:
         self.calls.append(("set_specific_value_of_card", card_id, list(keys), list(new_values)))
+
+    def update_card_memory_state(
+        self,
+        card_id: int,
+        *,
+        stability: float,
+        difficulty: float,
+        last_review_secs: int | None = None,
+        desired_retention: float | None = None,
+    ) -> None:
+        self.calls.append(
+            ("update_card_memory_state", card_id, stability, difficulty, last_review_secs, desired_retention)
+        )
 
     def bury_siblings(
         self,
@@ -234,14 +246,17 @@ class TestSyncPushForceFsrs:
         writer = FakeWriter()
         sync = AnkiSync(db=db, _reader=FakeReader(), _writer=writer)
         sync.sync_push(force_fsrs=True)
+        # Layer 70: the data JSON moved to update_card_memory_state (merge-write,
+        # preserves pos/decay/dr); set_specific_value_of_card keeps ivl/factor.
+        memory_calls = [c for c in writer.calls if c[0] == "update_card_memory_state"]
+        assert len(memory_calls) == 1
+        _, card_id, stability, difficulty, _lrt, _dr = memory_calls[0]
+        assert card_id == rec_cid
+        assert stability == pytest.approx(10.5)
+        assert difficulty == pytest.approx(4.8)
         fsrs_calls = [c for c in writer.calls if c[0] == "set_specific_value_of_card"]
         assert len(fsrs_calls) == 1
-        _, card_id, keys, new_values = fsrs_calls[0]
-        assert card_id == rec_cid
-        data_idx = keys.index("data")
-        data = json.loads(new_values[data_idx])
-        assert data["s"] == pytest.approx(10.5)
-        assert data["d"] == pytest.approx(4.8)
+        assert fsrs_calls[0][2] == ["ivl", "factor"]
 
     def test_force_fsrs_ivl_is_rounded_stability(self):
         db = _make_tt_db()

@@ -3063,3 +3063,206 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
         with db._get_conn() as tt_conn:
             count = tt_conn.execute("SELECT COUNT(*) FROM tt_revlog WHERE anki_card_id = ?", (cid,)).fetchone()[0]
         assert count == 1
+
+
+# ── Layer 70: pull recency guard ───────────────────────────────────────────────
+
+
+class TestPullRecencyGuardLayer70:
+    """Pull must not revert a TT grade with Anki's stale memory state.
+
+    The cid=428 loss (2026-06-10): sync_push writes scheduling + revlog for a
+    TT grade but not ``cards.data``, and clears ``dirty_fsrs`` before pull runs
+    in the same sync. Pull's non-dirty fsrs_known branch then took Anki's stale
+    s/d/lrt unconditionally, reverting the grade's FSRS effect on both sides.
+    The guard: when TT's ``last_review`` postdates Anki's memory-state
+    timestamp (``card_rec.last_review``, lrt-derived), keep TT's memory state;
+    scheduling fields stay pass-through from Anki.
+    """
+
+    _GRADED_AT = datetime(2026, 6, 10, 21, 4, 8, tzinfo=UTC)
+    _STALE_LRT = datetime(2026, 6, 1, 2, 49, 4, tzinfo=UTC)
+
+    def _seed_clean_graded(
+        self,
+        db: SRSDatabase,
+        guid: str,
+        *,
+        last_review: datetime,
+        stability: float = 18.2671,
+        difficulty: float = 8.883,
+        state: SRSState = SRSState.REVIEW,
+    ) -> DirectionState:
+        """Seed banka RECOGNITION as a just-pushed TT grade (clean, dirty_fsrs=0)."""
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=last_review + timedelta(days=27),
+            stability=stability,
+            difficulty=difficulty,
+            reps=12,
+            lapses=2,
+            state=state,
+            dirty_fsrs=False,
+            anki_card_id=90010,
+            last_review=last_review,
+            last_review_time_ms=int(last_review.timestamp() * 1000),
+            last_rating=3,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+        return ds
+
+    def test_stale_anki_memory_keeps_local_fsrs(self):
+        """Anki lrt 9 days behind the TT grade → local s/d/last_review survive."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        self._seed_clean_graded(db, guid, last_review=self._GRADED_AT)
+
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            reps=13,
+            lapses=2,
+            stability=8.2442,
+            difficulty=8.385,
+            last_review=self._STALE_LRT,
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert after.stability == 18.2671
+        assert after.difficulty == 8.883
+        assert after.last_review == self._GRADED_AT
+        assert after.last_rating == 3
+
+    def test_stale_anki_memory_still_takes_anki_scheduling(self):
+        """Guard keeps memory state only; reps/lapses/due_at/state come from Anki."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        self._seed_clean_graded(db, guid, last_review=self._GRADED_AT)
+
+        anki_due_at = datetime.combine(date.today() + timedelta(days=27), time(4, 0), tzinfo=UTC)
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            reps=13,
+            lapses=2,
+            stability=8.2442,
+            difficulty=8.385,
+            last_review=self._STALE_LRT,
+            due_at=anki_due_at,
+            anki_due=900,
+            anki_card_mod=1_781_000_000,
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert after.reps == 13
+        assert after.lapses == 2
+        assert after.due_at == anki_due_at
+        assert after.anki_due == 900
+        assert after.anki_card_mod == 1_781_000_000
+        assert after.state == SRSState.REVIEW
+        assert after.dirty_fsrs is False
+
+    def test_stale_anki_memory_maps_queue_to_state(self):
+        """Guard + queue=1/type=3 (mid relearning arc): local s/d kept, state RELEARNING."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        self._seed_clean_graded(db, guid, last_review=self._GRADED_AT, stability=1.8681, state=SRSState.RELEARNING)
+
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            queue=1,
+            card_type=3,
+            reps=13,
+            lapses=2,
+            stability=8.2442,
+            difficulty=8.385,
+            last_review=self._STALE_LRT,
+            left=1001,
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert after.stability == 1.8681
+        assert after.state == SRSState.RELEARNING
+        assert after.left == 1001
+
+    def test_fresh_anki_memory_takes_anki(self):
+        """Anki lrt newer than the TT grade → Anki's memory state wins (unchanged)."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        anki_lrt = self._GRADED_AT + timedelta(days=1)
+        self._seed_clean_graded(db, guid, last_review=self._GRADED_AT)
+
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            reps=13,
+            stability=8.2442,
+            difficulty=8.385,
+            last_review=anki_lrt,
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert after.stability == 8.2442
+        assert after.difficulty == 8.385
+        assert after.last_review == anki_lrt
+
+    def test_missing_anki_last_review_takes_anki(self):
+        """No Anki timestamp at all → conservative take-Anki (unchanged)."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        self._seed_clean_graded(db, guid, last_review=self._GRADED_AT)
+
+        card = make_card_record(anki_card_id=90010, ord=0, reps=13, stability=8.2442, difficulty=8.385)
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert after.stability == 8.2442
+
+    def test_equal_timestamps_take_anki(self):
+        """lrt == TT last_review (same grade already round-tripped) → take Anki."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        self._seed_clean_graded(db, guid, last_review=self._GRADED_AT)
+
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            reps=13,
+            stability=8.2442,
+            difficulty=8.385,
+            last_review=self._GRADED_AT,
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert after.stability == 8.2442
+
+    def test_local_never_graded_takes_anki(self):
+        """Local last_review is NULL (never TT-graded) → take Anki (unchanged)."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            reps=13,
+            stability=8.2442,
+            difficulty=8.385,
+            last_review=self._STALE_LRT,
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert after.stability == 8.2442

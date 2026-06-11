@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 
 from app.anki.sync import (
@@ -127,6 +129,19 @@ class FakeWriter:
 
     def get_current_card_state(self, card_id: int) -> dict | None:
         return self.current_states.get(card_id)
+
+    def update_card_memory_state(
+        self,
+        card_id: int,
+        *,
+        stability: float,
+        difficulty: float,
+        last_review_secs: int | None = None,
+        desired_retention: float | None = None,
+    ) -> None:
+        self.calls.append(
+            ("update_card_memory_state", card_id, stability, difficulty, last_review_secs, desired_retention)
+        )
 
     def bury_siblings(
         self,
@@ -3073,3 +3088,243 @@ class TestSyncPushBumpNewToday:
         sync.sync_push()
         # No assertion needed — the test passes if no exception is raised;
         # the hasattr guard in _recompute_anki_new_today_all_decks returns early.
+
+
+# ── Layer 70: push carries FSRS memory state ───────────────────────────────────
+
+
+def _mark_dirty_graded(
+    db: SRSDatabase,
+    guid: str,
+    *,
+    state: SRSState = SRSState.REVIEW,
+    stability: float = 18.2671,
+    difficulty: float = 8.883,
+    reps: int = 12,
+    last_review: datetime | None = None,
+    left: int | None = None,
+    anki_card_id: int = 90010,
+) -> DirectionState:
+    """Seed a TT-graded (dirty) direction with an explicit last_review."""
+    if last_review is None:
+        last_review = datetime.now(UTC) - timedelta(hours=2)
+    ds = DirectionState(
+        direction=Direction.RECOGNITION,
+        due_at=last_review + timedelta(days=27),
+        stability=stability,
+        difficulty=difficulty,
+        reps=reps,
+        lapses=2,
+        state=state,
+        dirty_fsrs=True,
+        anki_card_id=anki_card_id,
+        last_review=last_review,
+        last_review_time_ms=int(last_review.timestamp() * 1000),
+        last_rating=3,
+        left=left,
+    )
+    db.update_direction(guid, Direction.RECOGNITION, ds)
+    return ds
+
+
+def _memory_state_calls(writer: FakeWriter) -> list[tuple]:
+    return [c for c in writer.calls if c[0] == "update_card_memory_state"]
+
+
+class TestPushMemoryStateLayer70:
+    """Every TT grade push must carry the post-grade FSRS memory state.
+
+    The cid=428 loss (2026-06-10): push wrote scheduling + revlog but not
+    ``cards.data``, so Anki's s/d/lrt went stale and the subsequent pull
+    reverted TT's grade with them. ``update_card_memory_state`` closes the
+    push half; the pull recency guard closes the pull half.
+    """
+
+    def test_review_grade_pushes_memory_state(self):
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = _mark_dirty_graded(db, guid, anki_card_id=rec_cid)
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        calls = _memory_state_calls(writer)
+        assert len(calls) == 1
+        _, cid, stability, difficulty, lrt_secs, dr = calls[0]
+        assert cid == rec_cid
+        assert stability == 18.2671
+        assert difficulty == 8.883
+        assert lrt_secs == int(ds.last_review.timestamp())
+        assert dr is not None  # desired_retention threaded from FSRS params
+
+    def test_relearning_grade_pushes_memory_state(self):
+        """The 428 arc shape: a relearning-step grade must also carry memory state."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        _mark_dirty_graded(db, guid, state=SRSState.RELEARNING, stability=1.8681, left=1001, anki_card_id=rec_cid)
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert "set_learning_state" in writer.action_names()
+        calls = _memory_state_calls(writer)
+        assert len(calls) == 1
+        assert calls[0][2] == 1.8681
+
+    def test_anki_ahead_defer_skips_memory_state(self):
+        """When push defers to Anki (anki_ahead), TT's memory state must NOT be pushed."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = _mark_dirty_graded(db, guid, state=SRSState.RELEARNING, left=1001, anki_card_id=rec_cid)
+        # Strip last_review so the Layer-69 recency rescue cannot fire.
+        db.update_direction(guid, Direction.RECOGNITION, replace(ds, last_review=None, last_review_time_ms=0))
+
+        writer = FakeWriter()
+        writer.current_states[rec_cid] = {"queue": 2, "type": 2, "left": 0, "mod": 1}
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert _memory_state_calls(writer) == []
+
+    def test_dry_run_skips_memory_state(self):
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        _mark_dirty_graded(db, guid, anki_card_id=rec_cid)
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push(dry_run=True)
+
+        assert _memory_state_calls(writer) == []
+
+    def test_new_reset_skips_memory_state(self):
+        """A reset-to-NEW push (forget) carries no grade — no memory state write."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.now(UTC),
+            stability=1.0,
+            difficulty=5.0,
+            reps=0,
+            lapses=0,
+            state=SRSState.NEW,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert _memory_state_calls(writer) == []
+
+    def test_reps_zero_non_force_skips_memory_state(self):
+        """reps=0 non-KNOWN direction: nothing graded yet — no memory state write."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = _mark_dirty_graded(db, guid, reps=0, anki_card_id=rec_cid)
+        db.update_direction(guid, Direction.RECOGNITION, replace(ds, reps=0))
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert _memory_state_calls(writer) == []
+
+    def test_schema_too_new_skips_memory_state(self):
+        """Unknown newer Anki schema: don't write data (same guard as force_fsrs)."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        _mark_dirty_graded(db, guid, anki_card_id=rec_cid)
+
+        writer = FakeWriter()
+        sync = AnkiSync(db=db, _reader=FakeReader(), _writer=writer)
+        sync._anki_col_ver = 99
+        sync.sync_push()
+
+        assert _memory_state_calls(writer) == []
+        assert "write_revlog" in writer.action_names()  # revlog still pushed
+
+    def test_last_review_none_pushes_null_lrt(self):
+        """A graded direction with no last_review pushes s/d without lrt."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        ds = _mark_dirty_graded(db, guid, anki_card_id=rec_cid)
+        db.update_direction(guid, Direction.RECOGNITION, replace(ds, last_review=None, last_review_time_ms=0))
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        calls = _memory_state_calls(writer)
+        assert len(calls) == 1
+        assert calls[0][4] is None  # last_review_secs
+
+
+class TestOfflineWriterUpdateCardMemoryState:
+    """Merge-update of cards.data: unrelated keys survive (pos/decay/dr)."""
+
+    def _make_conn(self, data: str = ""):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE cards (id INTEGER PRIMARY KEY, ivl INTEGER, factor INTEGER, data TEXT, mod INTEGER, usn INTEGER)"
+        )
+        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, mod INTEGER)")
+        conn.execute("INSERT INTO col VALUES (1, 0)")
+        conn.execute("INSERT INTO cards (id, ivl, factor, data, mod, usn) VALUES (12345, 0, 0, ?, 0, 5)", (data,))
+        conn.commit()
+        return conn
+
+    def _data(self, conn) -> dict:
+        return json.loads(conn.execute("SELECT data FROM cards WHERE id = 12345").fetchone()[0])
+
+    def test_merge_preserves_unrelated_keys(self):
+        conn = self._make_conn('{"pos": 872, "dr": 0.86, "decay": 0.5, "s": 8.2442, "d": 8.385, "lrt": 111}')
+        OfflineWriter(conn).update_card_memory_state(
+            12345, stability=18.2671, difficulty=8.883, last_review_secs=222, desired_retention=0.9
+        )
+        data = self._data(conn)
+        assert data["s"] == 18.2671
+        assert data["d"] == 8.883
+        assert data["lrt"] == 222
+        assert data["pos"] == 872  # preserved
+        assert data["decay"] == 0.5  # preserved
+        assert data["dr"] == 0.86  # existing dr NOT overwritten
+
+    def test_marks_row_and_col_dirty(self):
+        conn = self._make_conn("{}")
+        OfflineWriter(conn).update_card_memory_state(12345, stability=2.5, difficulty=6.1, last_review_secs=222)
+        row = conn.execute("SELECT usn, mod FROM cards WHERE id = 12345").fetchone()
+        assert row[0] == -1
+        assert row[1] > 0
+        assert conn.execute("SELECT mod FROM col").fetchone()[0] > 0
+
+    def test_empty_data_gets_full_memory_state(self):
+        conn = self._make_conn("")
+        OfflineWriter(conn).update_card_memory_state(
+            12345, stability=2.5, difficulty=6.1, last_review_secs=222, desired_retention=0.9
+        )
+        data = self._data(conn)
+        assert data == {"s": 2.5, "d": 6.1, "lrt": 222, "dr": 0.9}
+
+    def test_no_desired_retention_no_dr_key(self):
+        conn = self._make_conn("{}")
+        OfflineWriter(conn).update_card_memory_state(12345, stability=2.5, difficulty=6.1, last_review_secs=222)
+        assert "dr" not in self._data(conn)
+
+    def test_no_last_review_no_lrt_key(self):
+        conn = self._make_conn("{}")
+        OfflineWriter(conn).update_card_memory_state(12345, stability=2.5, difficulty=6.1)
+        assert "lrt" not in self._data(conn)
+
+    def test_malformed_data_treated_as_empty(self):
+        conn = self._make_conn("not json{")
+        OfflineWriter(conn).update_card_memory_state(12345, stability=2.5, difficulty=6.1, last_review_secs=222)
+        assert self._data(conn) == {"s": 2.5, "d": 6.1, "lrt": 222}
+
+    def test_non_dict_data_treated_as_empty(self):
+        conn = self._make_conn("[1, 2]")
+        OfflineWriter(conn).update_card_memory_state(12345, stability=2.5, difficulty=6.1, last_review_secs=222)
+        assert self._data(conn) == {"s": 2.5, "d": 6.1, "lrt": 222}
+
+    def test_missing_card_is_noop(self):
+        conn = self._make_conn("{}")
+        OfflineWriter(conn).update_card_memory_state(99999, stability=2.5, difficulty=6.1)
+        assert self._data(conn) == {}  # untouched
