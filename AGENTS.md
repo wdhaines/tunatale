@@ -109,6 +109,16 @@ Without this, Anki's default "Ascending position" surfaces oldest-first, defeati
 
 2. **Ask for help when stuck**: If you're going in circles or stuck, proactively ask for advice from a stronger model (Claude Opus 4.7 with max thinking) rather than spinning endlessly.
 
+## Delivering
+
+When completing a phase or fix, the definition of done includes pasting the verification output into the report:
+
+1. **`./test.sh` output tail** — the actual log lines showing backend/frontend/E2E all pass.
+2. **CI Actions run URL** — after push, confirm all parallel jobs are green and provide the link.
+3. **Commit message** — states what was verified (and how), plus any non-obvious mechanism or diagnostic signature that would help the next person debugging this class of bug.
+
+This convention exists because "Done" with no output was the gap in both Phase 3 and Phase 5 — the fix was correct, but the acceptance evidence was missing.
+
 ## Rules (from ~/.claude/CLAUDE.md)
 
 - Always run tests using the virtual environment; don't just theorize
