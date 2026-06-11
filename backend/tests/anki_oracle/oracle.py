@@ -15,6 +15,8 @@ Operations
     Returns Anki's ordered queue head and ``counts()`` dict.
 ``{"op": "set_config", "key": "fsrs", "value": true}``
     Calls ``col.set_config(key, value)`` for setup.
+``{"op": "get_today"}``
+    Returns ``{"today": col.sched.today}`` — Anki's day index for today.
 """
 
 from __future__ import annotations
@@ -235,6 +237,11 @@ def _op_scheduling_states(col: Any, op: dict) -> dict:
     }
 
 
+def _op_get_today(col: Any, op: dict) -> dict:
+    """Return Anki's day index for today (col.sched.today)."""
+    return {"today": col.sched.today}
+
+
 def _op_get_card(col: Any, op: dict) -> dict:
     """Read a card's current state without modifying it."""
     card_id = op["card_id"]
@@ -258,6 +265,7 @@ _OPERATIONS: dict[str, Any] = {
     "set_config": _op_set_config,
     "answer_card": _op_answer_card,
     "get_card": _op_get_card,
+    "get_today": _op_get_today,
     "scheduling_states": _op_scheduling_states,
 }
 

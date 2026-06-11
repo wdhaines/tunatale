@@ -191,10 +191,21 @@ def test_null_R_card_typical_position_matches_anki_LAYER_38(synthetic_collection
             last_review_secs=now_secs - elapsed_days * 86400,
         )
 
-    # NULL-R card configured so Anki's SM2 fallback ≈ -1.0 (= dr's relative_R):
-    # `due=col_day, ivl=N → elapsed=N → fallback = -(N+0.001)/N ≈ -1`.
-    # col_crt = 2024-01-01, today_col_day ≈ 869 → due=869, ivl=10 puts elapsed=10.
-    today_col_day = (now_secs - 1704067200) // 86400
+    # Save intermediate state so we can query Anki's actual today.
+    synthetic_collection.save()
+
+    # Ask Anki for its day index (col.sched.today). We must NOT compute
+    # today Python-side via naive UTC division — Anki's 4AM rollover means
+    # the two can differ by ±1, causing the NULL-R card to land in the
+    # wrong day and vanish from the queue entirely (gotcha #10).
+    oracle_result = run_oracle(
+        synthetic_collection.path,
+        [{"op": "get_today"}],
+    )
+    anki_today = oracle_result.raw()["get_today_0"]["today"]
+
+    # NULL-R card using Anki's actual today as due:
+    # `due=anki_today, ivl=N → elapsed=N → fallback = -(N+0.001)/N ≈ -1`.
     synthetic_collection.add_note(id=109, guid="g-null", fields=["null", "back"])
     synthetic_collection.add_card(
         id=10099,
@@ -202,7 +213,7 @@ def test_null_R_card_typical_position_matches_anki_LAYER_38(synthetic_collection
         ord=0,
         type=2,
         queue=2,
-        due=today_col_day,
+        due=anki_today,
         ivl=10,
         reps=5,
         empty_fsrs_data=True,

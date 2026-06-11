@@ -71,6 +71,8 @@ These are documented in the test docstrings too, but listed here for fast recall
 
 9. **`due=0, ivl=10` for a NULL-R card lands at the queue tail.** SM2 fallback `-(elapsed/ivl)` evaluates to `-0.0001` because of saturating-`u32` wraparound on `review_day = due - interval = -10`. Use `due=today_col_day, ivl=N → elapsed=N` to land NULL-R near the dr position (Layer 43).
 
+10. **Never compute Anki's `today` Python-side.** Naive UTC day division (`(now - col.crt) // 86400`) ignores the local-TZ 4AM rollover. Between local midnight and 4AM, the naive UTC day has advanced but Anki's `today` has NOT — so `due=naive_today` lands one day in Anki's **future**, the card isn't due yet, and it's absent from the queue entirely (a past-due card would still be gathered). Passes in EDT afternoons, fails in UTC CI (and on any machine in the midnight–4AM window). Use the `get_today` oracle op (`col.sched.today`) — Anki's authoritative day index. Found on the first Linux/UTC CI run (2026-06-10), LAYER_38.
+
 ## Both gates per commit
 
 Every commit that touches the harness or `test_parity_*.py` must pass:
