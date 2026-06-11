@@ -1710,7 +1710,7 @@ Three changes since the original walkthrough revision:
 
 - **`FSRSParams` dataclass** replaces the module-level `W` and `REQUESTED_RETENTION` constants. The 19-float weights vector and the desired retention can now be threaded in from Anki's deck_config protobuf (PART 12.6) so TunaTale's scheduler matches what Anki would predict for the same card. `DEFAULT_FSRS5_PARAMS` keeps the original constants as a fallback.
 - **`direction` parameter** — every call updates exactly one direction's `DirectionState` (RECOGNITION or PRODUCTION), leaving the other untouched. The function returns a new `SRSItem` with the chosen direction's state swapped in.
-- **Sync bookkeeping writes** — every successful schedule sets `dirty_fsrs=True` and stores the integer rating in `last_rating`. The next `/api/anki/sync` push reads those flags to decide what to write to Anki's revlog and card FSRS state. See PART 12.4 (sync_push) for the consumer side.
+- **Sync bookkeeping writes** — every successful schedule sets `dirty_fsrs=True` and stores the integer rating in `last_rating`. The next sync push reads those flags to decide what to write to Anki's revlog and card FSRS state. See PART 12.4 (sync_push) for the consumer side.
 
 Here is the scheduling in action — watch how ratings affect the next review date:
 
@@ -4157,7 +4157,7 @@ Three points worth noting:
 
 - The `direction` path segment is parsed into the `Direction` enum (422 on garbage); `schedule(...)` updates only that direction.
 - `resolve_fsrs_params(db)` reads the cached weights+retention from `anki_state_cache` (PART 12.6), falling back to `DEFAULT_FSRS5_PARAMS` when no Anki cache is present.
-- The handler also enqueues a `pending_revlog` row so the next `/api/anki/sync` push has the rating to write to Anki's revlog (see PART 12.4 — drain phase).
+- The handler also enqueues a `pending_revlog` row so the next sync push has the rating to write to Anki's revlog (see PART 12.4 — drain phase).
 
 #### Routes by functional area
 
@@ -4450,8 +4450,7 @@ Four changes from the prototype:
 | `/api/audio/lesson/{lesson_id}` | GET | Get audio metadata for a lesson |
 | `/api/audio/lesson/{lesson_id}/zip` | GET | Download all sections as a single ZIP |
 | `/api/audio/{audio_id}` | GET | Download a WAV file |
-| `/api/anki/sync` | POST | Unified offline sync (create-new → push → drain → pull); 409 if Anki running |
-| `/api/anki/status` | GET | Whether Anki holds the collection lock |
+| `/api/anki/peer-sync` | POST | Peer sync via AnkiWeb / self-host server; works with Anki open |
 | `/api/admin/refresh-media` | POST | Re-import Anki media → TunaTale cache |
 | `/api/health` | GET | Health check |
 
@@ -4813,7 +4812,7 @@ First generate a curriculum and lesson (which registers SRS items via `POST /api
 Navigate to http://localhost:5173/admin/srs to browse and manage SRS items. Features: search (full-text across text and translation), filter by state, sortable columns, inline edit, single and bulk delete, reset schedule, suspend/unsuspend, force state, create new item.
 
 ### Anki sync
-Close Anki, then click **Sync** in the UI (or `POST /api/anki/sync`). The backend acquires an exclusive lock on `collection.anki2`, takes a SHA-256-validated backup, and runs the four-phase sync (create-new → push → drain pending revlog → pull). If Anki is open you'll get a 409 with a user-facing message; the `/api/anki/status` endpoint drives the UI's gating spinner.
+Click **Sync** in the UI (or `POST /api/anki/peer-sync`). The backend runs the peer-sync sequence against TT's own ``tt_collection``, which works with Anki open.
 
 ### Developer reference
 For day-to-day developer commands, testing quirks (cassette modes, the offline-Anki test fixtures), and architectural conventions, see `AGENTS.md` at the repo root and `.claude/rules/anki-sync.md` for the USN/sync protocol details. CLAUDE.md is the project-level companion that points at the rules directory.
@@ -4993,7 +4992,7 @@ sed -n '135,205p' backend/app/anki/safety.py | cat -n
 
 Three gates execute on every `safe_open` call before the caller sees a connection:
 
-1. **Lock probe.** `BEGIN EXCLUSIVE` against the collection — if Anki holds it, the probe fails and `AnkiRunningError` propagates up to the API as a 409. `probe_lock()` is the read-only inverse used by `/api/anki/status`.
+1. **Lock probe.** `BEGIN EXCLUSIVE` against the collection — if Anki holds it, the probe fails and `AnkiRunningError` propagates up to the API as a 409. `probe_lock()` is the read-only inverse.
 2. **SHA-256 fingerprint.** Computed before any work. In `mode="ro"`, the same hash is checked again at exit — any mid-run mutation is treated as a torn read and raises.
 3. **Backup + validation.** A timestamped copy goes to `~/.tunatale/anki-backups/` via SQLite's online `Connection.backup()` API. The backup is then opened independently, an integrity check runs, and the note count must match the source. Any mismatch raises before the caller's transaction begins.
 
@@ -5076,7 +5075,7 @@ Two details from the reader are worth highlighting because they're easy to get w
 
 ### 12.4 The Four-Phase Sync Flow
 
-The user-visible `POST /api/anki/sync` runs four phases in a single `safe_open` transaction. The order matters — getting it wrong loses revlog entries or creates duplicate notes.
+The sync flow (``run_full_sync``) runs four phases in a single transaction. The order matters — getting it wrong loses revlog entries or creates duplicate notes.
 
 ```bash
 grep -nE '    def sync_|    def _direction_differs|class AnkiSync' backend/app/anki/sync.py | head -20
@@ -5292,145 +5291,13 @@ Three values are pulled out of the protobuf blobs:
 
 Plus bury settings (bury_new, bury_review) and the new-card spread mode used by the review queue.
 
-`refresh_daily_new_cap`, `refresh_review_settings`, and `refresh_fsrs_params` run as side effects of every successful sync (see the bottom of the `/api/anki/sync` handler in 12.7), so the cache stays current. `resolve_*` accessors return tuples of `(value, source)` where source is `anki`, `legacy_dconf`, or `fallback` so the UI can show provenance — the green-yellow-red badge in the queue stats card.
+`refresh_daily_new_cap`, `refresh_review_settings`, and `refresh_fsrs_params` run as side effects of every successful sync, so the cache stays current. `resolve_*` accessors return tuples of `(value, source)` where source is `anki`, `legacy_dconf`, or `fallback` so the UI can show provenance — the green-yellow-red badge in the queue stats card.
 
 Two test files exercise this end-to-end with synthesized protobuf blobs: `test_queue_stats.py` and `test_queue_stats_cache.py`.
 
 ### 12.7 Anki API Surface
 
-Two FastAPI routes drive the Anki integration:
-
-```bash
-cat -n backend/app/api/anki.py
-```
-
-```output
-     1	"""Anki integration endpoints."""
-     2	
-     3	from __future__ import annotations
-     4	
-     5	from pathlib import Path
-     6	
-     7	from fastapi import APIRouter, HTTPException, Request
-     8	
-     9	from app.anki.media.pipeline import fetch_card_media
-    10	
-    11	router = APIRouter(prefix="/api/anki", tags=["anki"])
-    12	
-    13	
-    14	def _derive_media_dir(collection_path) -> Path:
-    15	    return Path(collection_path).parent / "collection.media"
-    16	
-    17	
-    18	def _refresh_media_if_not_dry_run(dry_run: bool) -> dict:
-    19	    if dry_run:
-    20	        return {}
-    21	    from app.anki.import_seed import import_seed
-    22	
-    23	    return import_seed()
-    24	
-    25	
-    26	@router.post("/sync", status_code=200)
-    27	async def trigger_sync(request: Request, dry_run: bool = False):
-    28	    """Unified create-new + push + drain + pull sync using direct sqlite access.
-    29	
-    30	    Requires Anki to be closed (safe_open acquires an exclusive lock).
-    31	    Returns 409 with a user-facing message if Anki is running.
-    32	    """
-    33	    from app.anki import model_discovery
-    34	    from app.anki.safety import AnkiRunningError, safe_open
-    35	    from app.anki.sync import AnkiSync, OfflineReader, OfflineWriter, drain_pending_revlog_to_writer
-    36	    from app.config import settings
-    37	
-    38	    db = request.app.state.srs_db
-    39	
-    40	    try:
-    41	        with safe_open(settings.anki_collection_path, mode="rw") as ctx:
-    42	            col_ver = ctx.conn.execute("SELECT ver FROM col").fetchone()[0]
-    43	            reader = OfflineReader(ctx.conn, settings.anki_deck_name)
-    44	            writer = OfflineWriter(ctx.conn, media_dir=_derive_media_dir(settings.anki_collection_path))
-    45	
-    46	            model_name = settings.anki_model_name
-    47	            if not model_name:
-    48	                model_name = model_discovery.get_or_discover_model_name_offline(ctx.conn, settings.anki_deck_name)
-    49	            if not model_name:
-    50	                raise HTTPException(
-    51	                    status_code=409,
-    52	                    detail=(
-    53	                        "Anki model not configured and no notes found to discover from. "
-    54	                        "Set anki_model_name in settings."
-    55	                    ),
-    56	                )
-    57	
-    58	            sync = AnkiSync(db=db, _reader=reader, _writer=writer, _anki_col_ver=col_ver)
-    59	
-    60	            async def _media_fn(word, english, *, used_image_urls):
-    61	                return await fetch_card_media(
-    62	                    word,
-    63	                    english,
-    64	                    pixabay_key=settings.pixabay_api_key,
-    65	                    used_image_urls=used_image_urls,
-    66	                )
-    67	
-    68	            create_report = await sync.sync_create_new(
-    69	                deck_name=settings.anki_deck_name,
-    70	                model_name=model_name,
-    71	                dry_run=dry_run,
-    72	                _media_fn=_media_fn,
-    73	            )
-    74	            push_report = sync.sync_push(dry_run=dry_run)
-    75	            drained = 0 if dry_run else drain_pending_revlog_to_writer(db, writer)
-    76	            pull_report = sync.sync_pull(dry_run=dry_run)
-    77	
-    78	            if not dry_run:
-    79	                from app.srs.queue_stats import refresh_daily_new_cap, refresh_fsrs_params, refresh_review_settings
-    80	
-    81	                refresh_daily_new_cap(db, ctx.conn, settings.anki_deck_name)
-    82	                refresh_fsrs_params(db, ctx.conn, settings.anki_deck_name)
-    83	                refresh_review_settings(db, ctx.conn, settings.anki_deck_name)
-    84	
-    85	    except AnkiRunningError as exc:
-    86	        raise HTTPException(
-    87	            status_code=409,
-    88	            detail="Close Anki to sync — TunaTale needs exclusive access to collection.anki2.",
-    89	        ) from exc
-    90	
-    91	    media_result = _refresh_media_if_not_dry_run(dry_run)
-    92	    media_updated = media_result.get("updated_media", 0)
-    93	    media_unchanged = media_result.get("unchanged_media", 0)
-    94	    media_new = media_result.get("new_media", 0)
-    95	
-    96	    return {
-    97	        "mode": "offline",
-    98	        "created": create_report.created,
-    99	        "linked": create_report.linked,
-   100	        "skipped": create_report.skipped,
-   101	        "notes_pulled": pull_report.notes_updated,
-   102	        "directions_pulled": pull_report.directions_updated,
-   103	        "conflicts": len(pull_report.conflicts),
-   104	        "notes_pushed": push_report.notes_pushed,
-   105	        "directions_pushed": push_report.directions_pushed,
-   106	        "revlog_drained": drained,
-   107	        "dry_run": dry_run,
-   108	        "media_updated": media_updated,
-   109	        "media_unchanged": media_unchanged,
-   110	        "media_new": media_new,
-   111	    }
-   112	
-   113	
-   114	@router.get("/status", status_code=200)
-   115	def get_anki_status(request: Request):
-   116	    """Return whether Anki is currently running (i.e. collection.anki2 is locked)."""
-   117	    from app.anki.safety import probe_lock
-   118	    from app.config import settings
-   119	
-   120	    locked = probe_lock(settings.anki_collection_path)
-   121	    return {"anki_running": locked, "lock_acquirable": not locked}
-```
-
-The handler reads as the canonical demonstration of how every piece in PART 12 wires together: `safe_open` provides the connection, `model_discovery` finds the right notetype to use (or 409s if none can be inferred), an `AnkiSync` is constructed with the offline reader/writer, the four phases run, and `refresh_*` updates the cached deck config from protobuf. Media re-import (`import_seed`) runs as a side effect after the transaction commits.
-
-`/api/anki/status` is the cheap polling endpoint the frontend uses to grey out the Sync button when Anki is running.
+One FastAPI route drives the Anki integration — ``POST /api/anki/peer-sync``, which drives ``app.anki.sync_orchestrator.peer_sync``. Unlike the old offline sync, this path works with Anki open and threads a media generator so new TT cards reach AnkiWeb with audio and images attached.
 
 ### 12.8 Anki Test Inventory
 
@@ -5479,9 +5346,9 @@ The four-phase sync described in 12.4 only works once a user's Anki collection h
 
 Each step has a `__main__` entry point (`uv run python -m app.anki.<module>`), goes through `safe_open` for backup + lock probe, and emits a dry-run plan before mutating. All five test files in PART 12.8 cover these CLIs.
 
-After this pipeline, ongoing sync uses only `/api/anki/sync` (PART 12.4) — no further bootstrap is needed unless the user adds a third notetype or imports a substantially new deck.
+After this pipeline, ongoing sync uses only the peer-sync endpoint (PART 12.4) — no further bootstrap is needed unless the user adds a third notetype or imports a substantially new deck.
 
-`app.anki.model_discovery` is a small support utility: given a deck and an open Anki connection (or just the offline collection), it figures out which notetype's notes to sync. Called by `/api/anki/sync` whenever `settings.anki_model_name` is unset.
+`app.anki.model_discovery` is a small support utility: given a deck and an open Anki connection (or just the offline collection), it figures out which notetype's notes to sync. Called by the sync handler whenever `settings.anki_model_name` is unset.
 
 ---
 
@@ -5507,7 +5374,7 @@ The notable changes:
 
 - **`/admin/srs`** provides full CRUD over the SRS database: paginated table, search across text and translation, state filter, sortable columns, inline edit, single + bulk delete, reset schedule, suspend/unsuspend, force state, create new item.
 
-- **Sync button** in the layout calls `POST /api/anki/sync`. The button polls `/api/anki/status` and disables itself with a tooltip when Anki is running. On success it shows a toast with the report (created / pushed / pulled / drained / media counts).
+- **Sync button** in the layout calls `POST /api/anki/peer-sync`. On success it shows a toast with the sync report.
 
 ### 13.2 Components
 
@@ -5610,7 +5477,7 @@ Migrations are guarded by `_column_exists` / `_table_exists` so they're idempote
 Two CLI entry points worth knowing:
 
 - `uv run python -m app.anki.normalize_usns` — the post-full-upload USN clamp. Run it whenever `*_gt_col > 0` from the diagnostic in `.claude/rules/anki-sync.md`.
-- `uv run python -m app.anki.import_seed` — refresh Anki media into TunaTale's local cache. Now invoked automatically by `/api/anki/sync` so the manual button was removed.
+- `uv run python -m app.anki.import_seed` — refresh Anki media into TunaTale's local cache.
 
 
 ---

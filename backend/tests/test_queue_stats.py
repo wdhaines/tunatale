@@ -820,6 +820,16 @@ class TestReadFSRSParamsFromDeckConfig:
         assert _read_fsrs_short_term_from_config_table(conn) is None
         conn.close()
 
+    def test_reads_fsrs_short_term_when_no_config_table(self, tmp_path):
+        """_read_fsrs_short_term_from_config_table returns None when config table absent."""
+        from app.srs.queue_stats import _read_fsrs_short_term_from_config_table
+
+        conn = sqlite3.connect(":memory:")
+        # No config table at all
+        result = _read_fsrs_short_term_from_config_table(conn)
+        assert result is None
+        conn.close()
+
     def test_refresh_fsrs_short_term_flag_writes_cache(self, tmp_path):
         """refresh_fsrs_short_term_flag writes the flag to anki_state_cache."""
         from app.srs.queue_stats import refresh_fsrs_short_term_flag
@@ -835,6 +845,17 @@ class TestReadFSRSParamsFromDeckConfig:
         row = db.get_anki_state_cache("fsrs_short_term_with_steps_enabled")
         assert row is not None
         assert row[0] == "true"
+        conn.close()
+
+    def test_refresh_fsrs_short_term_flag_skips_cache_when_config_table_absent(self, tmp_path):
+        """refresh_fsrs_short_term_flag does nothing when config table is absent (val is None)."""
+        from app.srs.queue_stats import refresh_fsrs_short_term_flag
+
+        conn = sqlite3.connect(":memory:")
+        db = SRSDatabase(":memory:")
+        refresh_fsrs_short_term_flag(db, conn)
+        row = db.get_anki_state_cache("fsrs_short_term_with_steps_enabled")
+        assert row is None
         conn.close()
 
 

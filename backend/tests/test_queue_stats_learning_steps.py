@@ -344,3 +344,15 @@ class TestResolveLearningSteps:
 
         result = _read_learning_steps_from_deck_config_table(conn, "Test")
         assert result is None
+
+    def test_read_learning_steps_returns_none_when_tables_missing(self):
+        """Line 678-679: _read_learning_steps_from_deck_config_table when deck_config/decks tables absent."""
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY)")
+        conn.commit()
+
+        from app.srs.queue_stats import _read_learning_steps_from_deck_config_table
+
+        result = _read_learning_steps_from_deck_config_table(conn, "Test")
+        assert result is None

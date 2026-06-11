@@ -111,7 +111,7 @@ This freezes the pre-experiment state for both DBs.
 
 ```bash
 # Run sync_pull through TT — pulls the day's Anki-side activity into TT.
-# Use whatever your normal sync trigger is (UI button, /api/anki/sync endpoint,
+# Use whatever your normal sync trigger is (UI button, /api/anki/peer-sync endpoint,
 # or test.sh's sync path — confirm which works in your current setup).
 ```
 

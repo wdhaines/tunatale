@@ -132,43 +132,6 @@ def _refresh_media_for_collocation(
             results["collapsed_media"] = results.get("collapsed_media", 0) + removed
 
 
-def refresh_media_for_deck(
-    deck_name: str | None = None,
-    anki_collection_path: Path | None = None,
-    anki_media_path: Path | None = None,
-    anki_backup_dir: Path | None = None,
-    tunatale_db_path: str | None = None,
-    media_dir: Path | None = None,
-) -> dict[str, Any]:
-    """Refresh TT media files for all Anki notes already linked in TT.
-
-    Read-only on Anki side (no Anki writes). Writes to TT media dir and DB.
-    Returns media-only keys: new_media, updated_media, unchanged_media, collapsed_media.
-    """
-    if deck_name is None:
-        deck_name = settings.anki_deck_name
-    if anki_collection_path is None:
-        anki_collection_path = settings.anki_collection_path
-    if anki_media_path is None:
-        anki_media_path = settings.anki_media_path
-    if anki_backup_dir is None:
-        anki_backup_dir = settings.anki_backup_dir
-    if tunatale_db_path is None:
-        tunatale_db_path = settings.database_url.replace("sqlite:///", "")
-    if media_dir is None:
-        media_dir = settings.media_dir
-
-    with safe_open(anki_collection_path, backup_dir=anki_backup_dir) as ctx:
-        db = SRSDatabase(tunatale_db_path)
-        return refresh_media_from_conn(
-            ctx.conn,
-            deck_name=deck_name,
-            anki_media_path=anki_media_path,
-            media_dir=media_dir,
-            db=db,
-        )
-
-
 def refresh_media_from_conn(
     conn,
     *,
@@ -180,8 +143,7 @@ def refresh_media_from_conn(
     """Refresh TT media for every linked note in `deck_name`, reading note fields
     from an already-open collection `conn`.
 
-    The Anki→TT media-propagation engine, shared by ``refresh_media_for_deck``
-    (real collection.anki2, needs Anki closed) and the peer-sync reconcile
+    The Anki→TT media-propagation engine, used by the peer-sync reconcile
     (``tt_collection``, Anki-open-safe). Copies from ``anki_media_path`` (where the
     collection's media lives) into ``media_dir`` (TT's frontend-served dir) and
     updates the TT ``media`` table — so an image swapped in Anki shows up in TT.

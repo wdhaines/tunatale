@@ -8,7 +8,6 @@ to flush — grades reviewed in TunaTale were silently discarded.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
-from unittest.mock import patch
 
 from app.anki.sync import AnkiSync, CardRecord, NoteRecord, OfflineWriter
 from app.models.srs_item import Direction, DirectionState, SRSState
@@ -540,13 +539,20 @@ def test_sync_pull_state_not_clobbered_by_media_refresh():
     rec = after.directions[Direction.RECOGNITION]
     assert rec.state == SRSState.REVIEW, f"state should be REVIEW after sync_pull, got {rec.state}"
 
-    # Now simulate what the sync endpoint does after pull —
-    # refresh_media_for_deck must not touch direction state.
-    # We use a patched no-op so the test doesn't need a real Anki collection.
-    with patch("app.anki.import_seed.refresh_media_for_deck", return_value={}):
-        from app.api.anki import _refresh_media
+    # Now simulate the media-refresh step that the sync pipeline runs after pull.
+    # refresh_media_from_conn must not touch direction state (writes only media table).
+    from pathlib import Path
 
-        _refresh_media()
+    from app.anki.import_seed import refresh_media_from_conn
+
+    anki_conn = _make_anki_conn()
+    refresh_media_from_conn(
+        anki_conn,
+        deck_name="0. Slovene",
+        anki_media_path=Path("/nonexistent"),
+        media_dir=Path("/nonexistent"),
+        db=db,
+    )
 
     after2 = db.get_collocation_by_guid(guid)
     rec2 = after2.directions[Direction.RECOGNITION]

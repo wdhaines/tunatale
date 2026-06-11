@@ -2741,9 +2741,10 @@ async def run_full_sync(
 ) -> tuple[CreateNewReport, PushReport, PullReport]:
     """The single canonical TT↔Anki sync sequence.
 
-    BOTH sync entry points call this: the closed-collection ``/api/anki/sync``
-    endpoint (Anki must be closed; ``media_fn`` supplies LLM/image media) and the
-    peer-sync reconcile (``peer_sync`` → ``main``; ``media_fn=None``). The ONLY
+    Every sync path funnels through ``main`` into this function: the peer-sync
+    reconcile (``trigger_peer_sync`` → ``peer_sync`` → ``main``, which threads
+    the LLM/image ``media_fn`` through) and the manual Anki-closed CLI
+    (``python -m app.anki.sync``; ``media_fn=None``). The ONLY
     legitimate per-caller difference is the media generator. Everything else —
     orphan recovery, note creation, push, pull, every deck-config refresh, the
     soak heartbeat — lives here so neither path can silently drop a phase.
