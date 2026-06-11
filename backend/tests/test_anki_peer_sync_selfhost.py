@@ -453,3 +453,190 @@ class TestPeerSyncMediaDriver:
         _driver({"op": "sync", "collection_path": str(peer2_col), "auth": auth, "sync_media": True})
         present = _driver({"op": "media_present", "collection_path": str(peer2_col), "media_filename": "newcard.mp3"})
         assert present["present"], "newcard.mp3 did NOT reach peer2 via media sync"
+
+    def test_media_round_trip_parity(self, tmp_path: Path, monkeypatch):
+        """Both directions of media convergence through the full peer_sync bracket.
+
+        Direction 2 (server→TT, written first per TDD): a second peer swaps a
+        note's media reference and syncs to the server; TT's peer_sync pulls the
+        update and ``refresh_media_from_conn`` copies the new file into TT's
+        ``_MEDIA_DIR`` + updates TT's media row.
+
+        Direction 1 (TT→server): TT originates a media-bearing cloze card that
+        reaches another device through peer_sync (partially covered by
+        ``test_tt_card_media_reaches_server_through_peer_sync`` above; re-verified
+        here as part of the round-trip).
+
+        **Deck-filter dependency**: every note-creating driver op passes
+        ``deck="0. Slovene"`` to match ``refresh_media_from_conn``'s
+        ``find_deck_id(conn, settings.anki_deck_name)`` filter — the driver
+        default ``"Default"`` would silently skip the media refresh (no error,
+        just a no-op), producing a fake "Direction 2 red" that looks like a live
+        bug. If Direction 2 does go red, check the deck filter first:
+        ``SELECT did FROM cards WHERE nid=?`` in tt_collection against
+        ``find_deck_id`` for ``"0. Slovene"``.
+        """
+        from app.models.srs_item import Direction
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+
+        tt_col = tmp_path / "tt_collection.anki2"
+        peer2_col = tmp_path / "peer2.anki2"
+        auth = _login()
+
+        # TT's source media dir — refresh_media_from_conn writes here.
+        tt_media_src = tmp_path / "tt_media_src"
+        tt_media_src.mkdir()
+        monkeypatch.setattr("app.anki.sync._MEDIA_DIR", tt_media_src)
+
+        # ── Shared setup ──────────────────────────────────────────────
+        # Both media ops use deck="0. Slovene" (see class docstring).
+        _driver({"op": "create_collection", "collection_path": str(tt_col)})
+        add = _driver(
+            {
+                "op": "add_media_note",
+                "collection_path": str(tt_col),
+                "deck": "0. Slovene",
+                "media_filename": "baseline.mp3",
+                "media_hex": "424153454c494e45",  # "BASELINE"
+            }
+        )
+        note_id = add["note_id"]
+        card_id = add["card_ids"][0]
+        baseline_stored = add["media_filename"]
+
+        _driver({"op": "full_upload", "collection_path": str(tt_col), "auth": auth})
+        _driver({"op": "create_collection", "collection_path": str(peer2_col)})
+        _driver({"op": "full_download", "collection_path": str(peer2_col), "auth": auth})
+
+        # Link the note in TT's DB so refresh_media_from_conn processes it.
+        db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        try:
+            db.add_collocation(
+                SyntacticUnit(text="baseline", translation="baseline", word_count=1, difficulty=1, source="test")
+            )
+            guid = db.get_collocation("baseline").guid
+            coll_id = db.get_collocation_id_by_guid(guid)
+            db.set_anki_ids(guid, note_id, {Direction.RECOGNITION: card_id})
+            db.add_media(
+                coll_id,
+                "audio_tts_sentence",
+                baseline_stored,
+                str(tt_media_src / baseline_stored),
+                baseline_stored,
+                "deadbeef",
+                8,
+            )
+        finally:
+            db.close()
+
+        (tt_media_src / baseline_stored).write_bytes(b"BASELINE")
+
+        # Settle: peer_sync uploads the media file (media-sync leg) and the
+        # reconcile's refresh confirms it already exists in _MEDIA_DIR.
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(settings, "tt_collection_path", tt_col)
+            report = peer_sync(dry_run=False)
+        assert report.tt_push_pull_exit == 0
+
+        # ── Direction 2: server → TT ─────────────────────────────────
+        # peer2 swaps the note's media reference and syncs to the server.
+        _driver(
+            {
+                "op": "update_note_media",
+                "collection_path": str(peer2_col),
+                "note_id": note_id,
+                "field_index": 1,  # back field (add_media_note writes [sound:…] here)
+                "new_field_text": "[sound:swapped.mp3]",
+                "media_filename": "swapped.mp3",
+                "media_hex": "53574150504544",  # "SWAPPED"
+            }
+        )
+        push = _driver(
+            {
+                "op": "sync",
+                "collection_path": str(peer2_col),
+                "auth": auth,
+                "sync_media": True,
+            }
+        )
+        _assert_incremental(push.get("required"), "peer2 media-swap push")
+        assert push["media"]["completed"], f"peer2 media push errored: {push['media']}"
+
+        # TT pulls the update — peer_sync's media-sync leg downloads
+        # swapped.mp3 into tt_col's media dir, then refresh_media_from_conn
+        # copies it into _MEDIA_DIR.
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(settings, "tt_collection_path", tt_col)
+            report2 = peer_sync(dry_run=False)
+        assert report2.tt_push_pull_exit == 0
+
+        # Assert the new file arrived in TT's frontend media dir.
+        assert (tt_media_src / "swapped.mp3").read_bytes() == bytes.fromhex("53574150504544"), (
+            "swapped.mp3 not found in _MEDIA_DIR after peer_sync pull"
+        )
+
+        # Assert TT's media row now references the swapped file.
+        db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        try:
+            swapped_row = db.find_media_by_anki_filename("swapped.mp3", collocation_id=coll_id)
+            assert swapped_row is not None, "swapped.mp3 not found in TT media rows after pull"
+        finally:
+            db.close()
+
+        # ── Direction 1: TT → server ─────────────────────────────────
+        # TT originates a cloze card with sentence audio (no Anki note yet).
+        db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        try:
+            db.add_collocation(
+                SyntacticUnit(
+                    text="novo",
+                    translation="new",
+                    word_count=1,
+                    difficulty=1,
+                    source="llm",
+                    lemma="novo",
+                    source_sentence="To je nov avto.",
+                    card_type="cloze",
+                )
+            )
+            coll_id2 = db.get_collocation_id_by_guid(db.get_collocation("novo").guid)
+            assert db.get_collocation("novo").anki_note_id is None
+            db.add_media(
+                coll_id2,
+                "audio_tts_sentence",
+                "newcard.mp3",
+                str(tt_media_src / "newcard.mp3"),
+                "newcard.mp3",
+                "f00d",
+                7,
+            )
+        finally:
+            db.close()
+
+        (tt_media_src / "newcard.mp3").write_bytes(b"NEWCARD")
+
+        # sync_create_new mints the cloze note, push leg carries the media.
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(settings, "tt_collection_path", tt_col)
+            report3 = peer_sync(dry_run=False)
+        assert report3.tt_push_pull_exit == 0
+        _assert_incremental(report3.push_required, "Direction 1 push")
+
+        # peer2 pulls with media → must now physically have newcard.mp3.
+        _driver(
+            {
+                "op": "sync",
+                "collection_path": str(peer2_col),
+                "auth": auth,
+                "sync_media": True,
+            }
+        )
+        present = _driver(
+            {
+                "op": "media_present",
+                "collection_path": str(peer2_col),
+                "media_filename": "newcard.mp3",
+            }
+        )
+        assert present["present"], f"newcard.mp3 did NOT reach peer2: {present}"

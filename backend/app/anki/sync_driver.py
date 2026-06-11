@@ -261,7 +261,12 @@ def _op_add_media_note(op: dict) -> dict:
         note.fields[1] = op.get("back", f"[sound:{stored}]")
         deck_id = col.decks.id(op.get("deck", "Default"))
         col.add_note(note, deck_id)
-        return {"note_id": note.id, "media_filename": stored, "media_dir": col.media.dir()}
+        return {
+            "note_id": note.id,
+            "card_ids": [c.id for c in note.cards()],
+            "media_filename": stored,
+            "media_dir": col.media.dir(),
+        }
     finally:
         col.close()
 
@@ -275,6 +280,30 @@ def _op_media_present(op: dict) -> dict:
         media_dir = Path(col.media.dir())
         count = sum(1 for _ in media_dir.iterdir()) if media_dir.exists() else 0
         return {"present": col.media.have(fname), "media_count": count, "media_dir": str(media_dir)}
+    finally:
+        col.close()
+
+
+def _op_update_note_media(op: dict) -> dict:
+    """Register a new media file and update an existing note's field to reference it.
+
+    Used by Phase 4's server→TT media round-trip parity test to simulate an image/audio
+    swap on a second peer. Registers via ``col.media.write_data`` (the production path)
+    and writes the note field via ``col.update_note`` (not the deprecated ``note.flush()``).
+    """
+    collection_path = op["collection_path"]
+    note_id = op["note_id"]
+    field_index = op["field_index"]
+    new_field_text = op["new_field_text"]
+    media_filename = op["media_filename"]
+    media_data = bytes.fromhex(op["media_hex"])
+    col = Collection(str(collection_path))
+    try:
+        stored = col.media.write_data(media_filename, media_data)
+        note = col.get_note(note_id)
+        note.fields[field_index] = new_field_text
+        col.update_note(note)
+        return {"ok": True, "stored_filename": stored, "media_dir": col.media.dir()}
     finally:
         col.close()
 
@@ -300,6 +329,7 @@ _OPERATIONS: dict[str, Any] = {
     "add_note": _op_add_note,
     "add_media_note": _op_add_media_note,
     "media_present": _op_media_present,
+    "update_note_media": _op_update_note_media,
     "answer_card": _op_answer_card,
     "get_card": _op_get_card,
 }
