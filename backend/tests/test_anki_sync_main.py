@@ -84,7 +84,7 @@ class TestRunFullSync:
         db = MagicMock()
         db.get_event_sync_pull_mode.return_value = "new"
 
-        create, push, pull = await run_full_sync(
+        create, push, pull, media_report = await run_full_sync(
             sync,
             MagicMock(),
             db,
@@ -101,6 +101,8 @@ class TestRunFullSync:
         assert isinstance(create, CreateNewReport)
         assert isinstance(push, PushReport)
         assert isinstance(pull, PullReport)
+        # No media_dir → media refresh skipped; default dict returned.
+        assert media_report == {"new_media": 0, "updated_media": 0, "unchanged_media": 0, "collapsed_media": 0}
 
     async def test_dry_run_skips_refresh_and_soak_but_still_syncs(self, monkeypatch, tmp_path):
         from unittest.mock import MagicMock
@@ -114,7 +116,7 @@ class TestRunFullSync:
         db = MagicMock()
         db.get_event_sync_pull_mode.return_value = "new"
 
-        await run_full_sync(
+        _, _, _, media_report = await run_full_sync(
             sync,
             MagicMock(),
             db,
@@ -126,6 +128,7 @@ class TestRunFullSync:
 
         assert calls == ["orphans", "create", "push", "pull"]
         assert refreshed == []
+        assert media_report == {"new_media": 0, "updated_media": 0, "unchanged_media": 0, "collapsed_media": 0}
 
     async def test_passes_media_fn_and_force_fsrs_through(self, monkeypatch, tmp_path):
         from unittest.mock import MagicMock
@@ -148,7 +151,7 @@ class TestRunFullSync:
         db = MagicMock()
         db.get_event_sync_pull_mode.return_value = "new"
 
-        await run_full_sync(
+        _, _, _, media_report = await run_full_sync(
             sync,
             MagicMock(),
             db,
@@ -162,6 +165,99 @@ class TestRunFullSync:
 
         assert captured["media_fn"] is sentinel
         assert captured["force"] is True
+        assert media_report == {"new_media": 0, "updated_media": 0, "unchanged_media": 0, "collapsed_media": 0}
+
+    async def test_includes_media_refresh_when_media_dir_set(self, monkeypatch, tmp_path):
+        """media_dir=Path triggers the Anki→TT media-refresh phase after pull, before soak."""
+        from unittest.mock import MagicMock
+
+        calls: list[str] = []
+        sync = self._make_spy_sync(calls)
+        self._patch_refreshes(monkeypatch, [])
+        monkeypatch.setattr("app.anki.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
+
+        media_spy = MagicMock(
+            return_value={"new_media": 0, "updated_media": 0, "unchanged_media": 0, "collapsed_media": 0},
+            side_effect=lambda *a, **k: calls.append("media_refresh"),
+        )
+        monkeypatch.setattr("app.anki.import_seed.refresh_media_from_conn", media_spy)
+
+        db = MagicMock()
+        db.get_event_sync_pull_mode.return_value = "new"
+
+        _, _, _, media_report = await run_full_sync(
+            sync,
+            MagicMock(),
+            db,
+            deck_name="0. Slovene",
+            model_name="Slovene Vocabulary",
+            sync_log_path=tmp_path / "sync.log",
+            media_dir=tmp_path,
+            dry_run=False,
+        )
+
+        assert calls == ["orphans", "create", "push", "pull", "media_refresh", "soak"]
+        media_spy.assert_called_once()
+        assert media_spy.call_args.kwargs["deck_name"] == "0. Slovene"
+
+    async def test_skips_media_refresh_when_media_dir_none(self, monkeypatch, tmp_path):
+        """media_dir=None (CLI default) skips the media-refresh phase."""
+        from unittest.mock import MagicMock
+
+        calls: list[str] = []
+        sync = self._make_spy_sync(calls)
+        self._patch_refreshes(monkeypatch, [])
+        monkeypatch.setattr("app.anki.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
+
+        media_spy = MagicMock()
+        monkeypatch.setattr("app.anki.import_seed.refresh_media_from_conn", media_spy)
+
+        db = MagicMock()
+        db.get_event_sync_pull_mode.return_value = "new"
+
+        _, _, _, media_report = await run_full_sync(
+            sync,
+            MagicMock(),
+            db,
+            deck_name="0. Slovene",
+            model_name="Slovene Vocabulary",
+            sync_log_path=tmp_path / "sync.log",
+            dry_run=False,
+        )
+
+        assert calls == ["orphans", "create", "push", "pull", "soak"]
+        media_spy.assert_not_called()
+        assert media_report == {"new_media": 0, "updated_media": 0, "unchanged_media": 0, "collapsed_media": 0}
+
+    async def test_skips_media_refresh_on_dry_run(self, monkeypatch, tmp_path):
+        """dry_run=True skips the media-refresh phase even when media_dir is set."""
+        from unittest.mock import MagicMock
+
+        calls: list[str] = []
+        sync = self._make_spy_sync(calls)
+        self._patch_refreshes(monkeypatch, [])
+        monkeypatch.setattr("app.anki.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
+
+        media_spy = MagicMock()
+        monkeypatch.setattr("app.anki.import_seed.refresh_media_from_conn", media_spy)
+
+        db = MagicMock()
+        db.get_event_sync_pull_mode.return_value = "new"
+
+        _, _, _, media_report = await run_full_sync(
+            sync,
+            MagicMock(),
+            db,
+            deck_name="0. Slovene",
+            model_name="Slovene Vocabulary",
+            sync_log_path=tmp_path / "sync.log",
+            media_dir=tmp_path,
+            dry_run=True,
+        )
+
+        assert calls == ["orphans", "create", "push", "pull"]
+        media_spy.assert_not_called()
+        assert media_report == {"new_media": 0, "updated_media": 0, "unchanged_media": 0, "collapsed_media": 0}
 
 
 class TestMainDelegatesToRunFullSync:
@@ -176,7 +272,7 @@ class TestMainDelegatesToRunFullSync:
         anki_conn.execute("INSERT INTO col VALUES (18, 0)")
         anki_conn.commit()
 
-        spy = AsyncMock(return_value=(CreateNewReport(), PushReport(), PullReport()))
+        spy = AsyncMock(return_value=(CreateNewReport(), PushReport(), PullReport(), {}))
         monkeypatch.setattr("app.anki.sync.run_full_sync", spy)
 
         tt_db = SRSDatabase(":memory:")
@@ -201,8 +297,9 @@ class TestMainDelegatesToRunFullSync:
 
         assert exit_code == 0
         assert spy.await_count == 1
-        # Default (CLI) call passes no media generator.
+        # Default (CLI) call passes no media generator or media dir.
         assert spy.await_args.kwargs["media_fn"] is None
+        assert spy.await_args.kwargs["media_dir"] is None
 
     def test_main_forwards_media_fn_and_media_dir(self, tmp_path, monkeypatch):
         """When peer_sync supplies a media generator + media dir, main() threads
@@ -214,14 +311,15 @@ class TestMainDelegatesToRunFullSync:
         anki_conn.execute("INSERT INTO col VALUES (18, 0)")
         anki_conn.commit()
 
-        spy = AsyncMock(return_value=(CreateNewReport(), PushReport(), PullReport()))
-        monkeypatch.setattr("app.anki.sync.run_full_sync", spy)
-        # This test isolates forwarding to run_full_sync/OfflineWriter; no-op the
-        # real Anki→TT media refresh (the minimal conn has no decks/cards tables).
-        monkeypatch.setattr(
-            "app.anki.import_seed.refresh_media_from_conn",
-            lambda *a, **k: {"new_media": 0, "updated_media": 0, "collapsed_media": 0},
+        spy = AsyncMock(
+            return_value=(
+                CreateNewReport(),
+                PushReport(),
+                PullReport(),
+                {"new_media": 0, "updated_media": 0, "collapsed_media": 0},
+            )
         )
+        monkeypatch.setattr("app.anki.sync.run_full_sync", spy)
         captured_media_dir = {}
         real_writer = __import__("app.anki.sync", fromlist=["OfflineWriter"]).OfflineWriter
 
@@ -257,6 +355,7 @@ class TestMainDelegatesToRunFullSync:
 
         assert exit_code == 0
         assert spy.await_args.kwargs["media_fn"] is sentinel_fn
+        assert spy.await_args.kwargs["media_dir"] == media_dir
         assert captured_media_dir["v"] == media_dir
 
 

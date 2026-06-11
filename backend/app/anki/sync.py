@@ -2736,9 +2736,10 @@ async def run_full_sync(
     model_name: str,
     sync_log_path: Path,
     media_fn=None,
+    media_dir: Path | None = None,
     dry_run: bool = False,
     force_fsrs: bool = False,
-) -> tuple[CreateNewReport, PushReport, PullReport]:
+) -> tuple[CreateNewReport, PushReport, PullReport, dict[str, int]]:
     """The single canonical TT↔Anki sync sequence.
 
     Every sync path funnels through ``main`` into this function: the peer-sync
@@ -2747,7 +2748,8 @@ async def run_full_sync(
     (``python -m app.anki.sync``; ``media_fn=None``). The ONLY
     legitimate per-caller difference is the media generator. Everything else —
     orphan recovery, note creation, push, pull, every deck-config refresh, the
-    soak heartbeat — lives here so neither path can silently drop a phase.
+    Anki→TT media propagation, the soak heartbeat — lives here so neither path
+    can silently drop a phase.
 
     Do **not** inline a sync phase into one caller. A second entry point that
     runs a different subset of phases is the b0a4b8a regression: the peer-sync
@@ -2757,7 +2759,9 @@ async def run_full_sync(
 
     ``detect_and_reset_orphans`` runs unconditionally (it only resets stale TT
     pointers so create/push can rebuild). create/push/pull honor ``dry_run``;
-    the refresh block + soak log run only on a real (non-dry) sync.
+    the refresh block, media propagation, and soak log run only on a real
+    (non-dry) sync. ``media_dir`` activates the Anki→TT media-refresh phase
+    (peer-sync path; CLI passes ``None``).
     """
     # Self-healing: reset TT rows pointing at Anki cards/notes that no longer
     # exist, so sync_create_new recreates them and sync_push force_fsrs the
@@ -2772,6 +2776,9 @@ async def run_full_sync(
     )
     push_report = sync.sync_push(dry_run=dry_run, force_fsrs=force_fsrs)
     pull_report = sync.sync_pull(dry_run=dry_run)
+
+    # Default media report (returned on dry-run / no media_dir).
+    media_report: dict[str, int] = {"new_media": 0, "updated_media": 0, "unchanged_media": 0, "collapsed_media": 0}
 
     if not dry_run:
         from app.srs.queue_stats import (
@@ -2806,6 +2813,21 @@ async def run_full_sync(
         refresh_easy_days(db, conn, deck_name)
         warn_if_multi_deck_preset(conn, deck_name)
 
+        # Anki→TT media propagation: pull the (media-synced) note fields from
+        # tt_collection into TT's own media table + backend/media, so an image
+        # swapped in Anki shows up in TunaTale. Peer path only (media_dir set);
+        # source = where the pulled media lives, dest = _MEDIA_DIR (frontend).
+        if media_dir is not None:
+            from app.anki.import_seed import refresh_media_from_conn
+
+            media_report = refresh_media_from_conn(
+                conn,
+                deck_name=deck_name,
+                anki_media_path=media_dir,
+                media_dir=_MEDIA_DIR,
+                db=db,
+            )
+
         _write_sync_soak_log(
             sync_log_path,
             event_mode=db.get_event_sync_pull_mode(),
@@ -2813,7 +2835,7 @@ async def run_full_sync(
             push=push_report,
         )
 
-    return create_report, push_report, pull_report
+    return create_report, push_report, pull_report, media_report
 
 
 def main(
@@ -2883,7 +2905,7 @@ def main(
             model_name = _s.anki_model_name or model_discovery.get_or_discover_model_name_offline(
                 ctx.conn, _s.anki_deck_name
             )
-            create, push, pull = asyncio.run(
+            create, push, pull, media = asyncio.run(
                 run_full_sync(
                     sync,
                     ctx.conn,
@@ -2892,6 +2914,7 @@ def main(
                     model_name=model_name,
                     sync_log_path=_sync_log,
                     media_fn=_media_fn,
+                    media_dir=_media_dir,
                     dry_run=args.dry_run,
                     force_fsrs=args.force_fsrs,
                 )
@@ -2905,20 +2928,7 @@ def main(
                 f"{len(pull.conflicts)} conflicts, "
                 f"{len(pull.recompute_divergences)} recompute divergences"
             )
-            # Anki→TT media propagation: pull the (media-synced) note fields from
-            # tt_collection into TT's own media table + backend/media, so an image
-            # swapped in Anki shows up in TunaTale. Peer path only (media_dir set);
-            # source = where the pulled media lives, dest = _MEDIA_DIR (frontend).
             if not args.dry_run and _media_dir is not None:
-                from app.anki.import_seed import refresh_media_from_conn
-
-                media = refresh_media_from_conn(
-                    ctx.conn,
-                    deck_name=_s.anki_deck_name,
-                    anki_media_path=_media_dir,
-                    media_dir=_MEDIA_DIR,
-                    db=db,
-                )
                 print(
                     f"Media: {media['new_media']} new, {media['updated_media']} updated, "
                     f"{media['collapsed_media']} collapsed"
