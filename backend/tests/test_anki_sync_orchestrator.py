@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from unittest.mock import ANY, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -46,48 +46,6 @@ def _login_ops(mock_run) -> list[dict]:
 
 
 class TestPeerSync:
-    def test_full_bracket(self):
-        """Happy path: login → pull sync → TT sync → push sync."""
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[
-                    _mock_run(AUTH_RESPONSE),
-                    _mock_run(NORMAL_SYNC),
-                    _mock_run(NO_CHANGE),
-                ],
-            ) as mock_run,
-            patch("app.anki.sync.main", return_value=0) as mock_tt,
-        ):
-            report = peer_sync(dry_run=False)
-
-        assert mock_run.call_count == 3
-        mock_tt.assert_called_once_with(argv=[], _settings=ANY, _media_fn=ANY, _media_dir=ANY)
-        actual_settings = mock_tt.call_args.kwargs["_settings"]
-        assert actual_settings.anki_collection_path == settings.tt_collection_path
-        assert report.auth_success
-        assert report.pull_required == 1
-        assert report.push_required == 0
-        assert report.tt_push_pull_exit == 0
-
-    def test_dry_run_skips_push(self):
-        """dry_run=True: no push sync, TT sync gets --dry-run."""
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[
-                    _mock_run(AUTH_RESPONSE),
-                    _mock_run(NORMAL_SYNC),
-                ],
-            ) as mock_run,
-            patch("app.anki.sync.main", return_value=0) as mock_tt,
-        ):
-            report = peer_sync(dry_run=True)
-
-        assert mock_run.call_count == 2
-        mock_tt.assert_called_once_with(argv=["--dry-run"], _settings=ANY, _media_fn=ANY, _media_dir=ANY)
-        assert report.dry_run
-
     @pytest.mark.parametrize("full", [FULL_SYNC, FULL_DOWNLOAD, FULL_UPLOAD])
     def test_pull_full_sync_variants_abort(self, full):
         """Any full-sync-required code (2/3/4) on pull aborts before TT sync."""
@@ -899,10 +857,15 @@ def fake_driver(monkeypatch):
     ``(command: dict, timeout: int = 120) -> dict`` and reuses the file's
     existing response constants (``AUTH_RESPONSE``, ``NORMAL_SYNC``) so the
     fake stays honest if those shapes change.
+
+    Yields the op log (a list of commands received) for assertion use.
     """
     import app.anki.sync_orchestrator as so
 
+    op_log: list[dict] = []
+
     def _fake(command: dict, timeout: int = 120) -> dict:
+        op_log.append(command)
         op = command.get("op", "")
         if op == "login":
             return AUTH_RESPONSE
@@ -911,6 +874,7 @@ def fake_driver(monkeypatch):
         return {"error": f"unknown op: {op}"}
 
     monkeypatch.setattr(so, "_run_driver", _fake)
+    return op_log
 
 
 class TestSociableSync:
@@ -957,6 +921,84 @@ class TestSociableSync:
             assert any(r.anki_note_id == item.anki_note_id for r in records), (
                 f"No notes row with anki_note_id={item.anki_note_id} in tt_collection"
             )
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    def test_full_bracket_with_pending_change(self, fake_driver):
+        """Happy path via synthetic collection: login → pull → reconcile →
+        push. The pending change (unlinked cloze) triggers the push leg."""
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(settings.database_url)
+
+        text = "Dober dan"
+        unit = SyntacticUnit(
+            text=text,
+            translation="Good day",
+            word_count=2,
+            difficulty=1,
+            source="test",
+            source_sentence="Dober dan, kako ste?",
+            card_type="cloze",
+        )
+        db.add_collocation(unit, language_code="sl")
+
+        report = peer_sync(dry_run=False)
+
+        ops = [c["op"] for c in fake_driver]
+        assert ops == ["login", "sync", "sync"], f"Expected login+pull+push, got {ops}"
+
+        assert report.tt_push_pull_exit == 0
+
+        item = db.get_collocation(text)
+        assert item is not None
+        assert item.anki_note_id is not None
+        from app.anki.safety import safe_open
+        from app.anki.sync import OfflineReader
+
+        with safe_open(settings.tt_collection_path, mode="ro") as ctx:
+            reader = OfflineReader(ctx.conn, settings.anki_deck_name)
+            records = reader.get_note_records()
+            assert any(r.anki_note_id == item.anki_note_id for r in records)
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    def test_dry_run_skips_push_leg_no_writes(self, fake_driver):
+        """dry_run skips the push leg AND the reconcile must not write.
+
+        The tt_collection file is byte-identical before/after, the seeded
+        item stays unlinked, and the op log has no push-leg sync op.
+        """
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(settings.database_url)
+
+        text = "Lepa hiza"
+        unit = SyntacticUnit(
+            text=text,
+            translation="Beautiful house",
+            word_count=2,
+            difficulty=1,
+            source="test",
+            source_sentence="To je lepa hiza.",
+            card_type="cloze",
+        )
+        db.add_collocation(unit, language_code="sl")
+
+        before_bytes = settings.tt_collection_path.read_bytes()
+
+        peer_sync(dry_run=True)
+
+        after_bytes = settings.tt_collection_path.read_bytes()
+        assert before_bytes == after_bytes, "dry_run must not modify tt_collection"
+
+        ops = [c["op"] for c in fake_driver]
+        assert "login" in ops
+        push_syncs = [c for c in ops if c == "sync"]
+        assert len(push_syncs) >= 1  # pull leg runs
+        assert "sync" not in ops[2:], "no push sync after reconcile"
+
+        item = db.get_collocation(text)
+        assert item is not None
+        assert item.anki_note_id is None, "dry_run must not link item"
 
 
 class TestMediaDirResolution:
