@@ -254,8 +254,10 @@ Implemented: `src/lib/sw/prefetch.ts` (`shouldPrefetchOnConnection`,
 `navigator.connection` / `globalThis.caches` / `fetch`, prefetching the lesson's
 full + section audio on wifi. No-op where the (Chrome-Android-only) Network
 Information API or Cache Storage is absent — on-demand cache-first still applies.
-**Not yet done:** a user-facing "auto-download on wifi" toggle (the plan suggested
-one; currently always-on when wifi is detected). Add a setting if you want opt-out.
+Also shipped: a user-facing **"auto-download on wifi" opt-out toggle**
+(`src/lib/stores/prefetchPref.svelte.ts`, persisted; nav button in `+layout.svelte`
+next to the theme toggle). `maybePrefetchLesson` gained an `enabled` gate so the
+component stays branch-free. Default on; respects the stored preference.
 
 **Value:** lessons are cached *before* first play, so even the first listen off
 wifi is free. Only build this if Phase 3 leaves you wanting pre-caching.
