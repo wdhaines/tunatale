@@ -132,6 +132,13 @@
 		}
 	}
 
+	// Single-level undo cycle: the last drill grade (word or phrase) stays
+	// reversible from its popover ("Undo ↩") until something else is graded,
+	// the page reloads, or a sync hands the review to Anki (backend 409s then).
+	let undoable = $state<{ itemId: number; direction: 'recognition' | 'production' } | null>(
+		null
+	);
+
 	async function handleWordClick(word: import('$lib/api').WordToken, lineIndex: number) {
 		error = '';
 		try {
@@ -145,11 +152,9 @@
 					translation: word.translation ?? ''
 				});
 			} else if (word.is_due && word.active_direction && word.srs_item_id != null) {
-				await api.submitDrill(
-					word.srs_item_id,
-					word.active_direction as 'recognition' | 'production',
-					'good'
-				);
+				const direction = word.active_direction as 'recognition' | 'production';
+				await api.submitDrill(word.srs_item_id, direction, 'good');
+				undoable = { itemId: word.srs_item_id, direction };
 			} else {
 				return;
 			}
@@ -163,6 +168,20 @@
 		error = '';
 		try {
 			await api.submitDrill(span_id, 'recognition', 'good');
+			undoable = { itemId: span_id, direction: 'recognition' };
+			transcript = await api.getLessonTranscript(data.lesson.id);
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		}
+	}
+
+	async function handleUndoGrade(itemId: number, direction: 'recognition' | 'production') {
+		error = '';
+		// Either way the snapshot is spent: success restores it, failure means a
+		// newer grade or a sync invalidated it — drop the Undo button regardless.
+		undoable = null;
+		try {
+			await api.undoGrade(itemId, direction);
 			transcript = await api.getLessonTranscript(data.lesson.id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -248,6 +267,14 @@
 			} catch (e) {
 				error = e instanceof Error ? e.message : String(e);
 			}
+		},
+		// Match on item id only — grading recognition can graduate it, flipping the
+		// refetched word's active_direction to production; the undo must still hit
+		// the direction that was actually graded (stored in `undoable`).
+		isGradeUndoable: (word: import('$lib/api').WordToken) =>
+			undoable != null && word.srs_item_id === undoable.itemId,
+		onUndoGrade: async (_word: import('$lib/api').WordToken) => {
+			if (undoable != null) await handleUndoGrade(undoable.itemId, undoable.direction);
 		}
 	};
 
@@ -328,6 +355,8 @@
 					lesson={data.lesson}
 					onWordClick={handleWordClick}
 					onCollocationStateChange={handleCollocationStateChange}
+					undoableItemId={undoable?.itemId ?? null}
+					onCollocationUndo={(spanId) => handleUndoGrade(spanId, 'recognition')}
 					onCreatePhrase={handleCreatePhrase}
 					tooltipActions={tooltipActions}
 				/>

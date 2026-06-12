@@ -34,37 +34,11 @@
 		onWordClick?.(word, lineIndex ?? 0);
 	}
 
-	function isPunctClick(e: MouseEvent | KeyboardEvent): boolean {
-		const target = 'key' in e ? null : (e.target as Element | null);
-		return target != null && target.closest('.punct') != null;
-	}
-
-	// Distinguish a tap from a drag-to-select by how far the pointer moved
-	// between press and release: a tap cycles state, a drag selects/copies text.
-	// (Checking for a present selection regressed cycling — a double-click while
-	// rapidly cycling selects the word, which then blocked the following click.)
-	let downX = 0;
-	let downY = 0;
-
-	function handleMouseDown(e: MouseEvent) {
-		if (isPunctClick(e)) return;
-		downX = e.clientX;
-		downY = e.clientY;
-	}
-
-	function handleClick(e: MouseEvent) {
-		if (isPunctClick(e)) return;
-		if (Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > 8) return;
-		if (requireModifier) {
-			if (e.altKey || e.shiftKey) {
-				e.stopPropagation();
-				fire();
-			}
-			return;
-		}
-		fire();
-	}
-
+	// Clicking/tapping a word never grades — it toggles the popover (Tooltip
+	// handles that). Grading is the popover's grade button below, the same
+	// deliberate two-step on desktop and mobile. Keyboard Enter/Space still
+	// grades directly: focusing the word already shows the popover, and a key
+	// press can't happen by accident the way a touch tap can.
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key !== 'Enter' && e.key !== ' ') return;
 		if (requireModifier && !(e.altKey || e.shiftKey)) return;
@@ -94,6 +68,34 @@
 	// structure stays stable — toggling Alt over a collocation must not reflow the
 	// line (the prior if/else swap caused a visible spacing jump).
 	const showTooltip = $derived(!requireModifier || altHover);
+
+	// Undo cycle: when the page says THIS word holds the last (still-local)
+	// grade, the grade button flips to "Undo ↩" — even though the word is no
+	// longer due post-grade. Single-level, mirrors the backend snapshot.
+	const undoable = $derived(Boolean(tooltipActions?.isGradeUndoable?.(word)));
+
+	// Grade-button label mirrors what the old direct click did (the "cycle"):
+	// unknown → create a base card; due+tracked → grade Good; otherwise the
+	// click was a no-op, so no button.
+	const gradeLabel = $derived(
+		undoable
+			? 'Undo ↩'
+			: onWordClick == null
+				? null
+				: word.active_state === 'unknown'
+					? 'Start learning'
+					: word.is_due && word.active_direction && word.srs_item_id != null
+						? 'Got it ✓'
+						: null
+	);
+
+	const onGrade = $derived(
+		undoable
+			? () => void tooltipActions!.onUndoGrade!(word)
+			: onWordClick
+				? fire
+				: null
+	);
 </script>
 
 <Tooltip
@@ -102,6 +104,8 @@
 	{sentence}
 	actions={tooltipActions}
 	suppressed={!showTooltip}
+	{gradeLabel}
+	{onGrade}
 >
 	<span
 		class="word-wrapper"
@@ -116,8 +120,6 @@
 			tabindex="0"
 			data-line-index={lineIndex}
 			data-word-index={wordIndex}
-			onmousedown={handleMouseDown}
-			onclick={handleClick}
 			onkeydown={handleKeydown}
 		><span class="punct">{word.prefix_punct ?? ''}</span>{word.surface}<span class="punct">{word.suffix_punct ?? ''}</span></span>
 		{#if showGloss && word.translation}

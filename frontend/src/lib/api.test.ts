@@ -433,6 +433,24 @@ describe("TunaTaleAPI", () => {
       expect(result.new_state).toBe("review");
     });
 
+    it("undoGrade calls POST /api/srs/items/:id/direction/:dir/undo", async () => {
+      const mockResp = {
+        status: "ok",
+        direction: "recognition",
+        restored_state: "learning",
+        restored_due_at: "2026-06-11T04:00:00+00:00",
+      };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(mockResp)));
+
+      const result = await api.undoGrade(42, "recognition");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/items/42/direction/recognition/undo`,
+        expect.objectContaining({ method: "POST" }),
+      );
+      expect(result.restored_state).toBe("learning");
+    });
+
     it("submitDrill works for production direction", async () => {
       vi.stubGlobal(
         "fetch",

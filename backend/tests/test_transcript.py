@@ -470,6 +470,83 @@ class TestWordTokenEnrichment:
         word = result.dialogue_lines[0].words[0]
         assert word.collocation_progress is None
 
+    def test_collocation_is_due_true_when_active_direction_due(self):
+        """Span tokens carry the collocation's due-ness (same _is_due rule as words).
+
+        The frontend gates the phrase popover's grade button on this — without
+        it, phrases showed "Got it" even when not due while words didn't.
+        """
+        from datetime import UTC, datetime
+        from datetime import date as _date
+
+        unit = SyntacticUnit(
+            text="kje je banka",
+            translation="where is the bank",
+            word_count=3,
+            difficulty=2,
+            source="llm",
+            lemma=None,
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        item = self.db.get_collocation("kje je banka")
+        ds = item.directions[Direction.RECOGNITION]
+        ds.state = SRSState.LEARNING
+        ds.due_at = datetime(2026, 5, 30, 12, 0, tzinfo=UTC)
+        self.db.update_direction(item.guid, Direction.RECOGNITION, ds)
+
+        lesson = _make_lesson([("female-1", "kje je banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=_date(2026, 6, 1))
+        words = result.dialogue_lines[0].words
+        assert [w.collocation_is_due for w in words] == [True, True, True]
+
+    def test_collocation_is_due_false_for_new_collocation(self):
+        """A NEW (never-introduced) phrase is not due — mirrors word is_due gating."""
+        from datetime import date as _date
+
+        unit = SyntacticUnit(
+            text="kje je banka",
+            translation="where is the bank",
+            word_count=3,
+            difficulty=2,
+            source="llm",
+            lemma=None,
+        )
+        self.db.add_collocation(unit, language_code="sl")
+
+        lesson = _make_lesson([("female-1", "kje je banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=_date(2026, 6, 1))
+        words = result.dialogue_lines[0].words
+        assert [w.collocation_is_due for w in words] == [False, False, False]
+
+    def test_collocation_is_due_false_when_due_in_future(self):
+        from datetime import UTC, datetime
+        from datetime import date as _date
+
+        unit = SyntacticUnit(
+            text="kje je banka",
+            translation="where is the bank",
+            word_count=3,
+            difficulty=2,
+            source="llm",
+            lemma=None,
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        item = self.db.get_collocation("kje je banka")
+        ds = item.directions[Direction.RECOGNITION]
+        ds.state = SRSState.LEARNING
+        ds.due_at = datetime(2026, 6, 3, 12, 0, tzinfo=UTC)
+        self.db.update_direction(item.guid, Direction.RECOGNITION, ds)
+
+        lesson = _make_lesson([("female-1", "kje je banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=_date(2026, 6, 1))
+        words = result.dialogue_lines[0].words
+        assert [w.collocation_is_due for w in words] == [False, False, False]
+
+    def test_word_not_in_collocation_has_false_collocation_is_due(self):
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].collocation_is_due is False
+
     def test_transcript_word_matches_existing_lowercase_card(self):
         """Sentence-initial 'Zdravo' matches existing 'zdravo' card via lemma lookup."""
         unit = SyntacticUnit(

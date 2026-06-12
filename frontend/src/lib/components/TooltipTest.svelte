@@ -10,6 +10,9 @@
 		sentence?: string;
 		actions?: TooltipActions;
 		suppressed?: boolean;
+		gradeLabel?: string | null;
+		onGrade?: (() => void) | null;
+		onDrillIn?: (() => void) | null;
 		onChildClick?: () => void;
 	}
 	let {
@@ -19,11 +22,14 @@
 		sentence,
 		actions,
 		suppressed = false,
+		gradeLabel = null,
+		onGrade = null,
+		onDrillIn = null,
 		onChildClick
 	}: Props = $props();
 </script>
 
-<Tooltip {translation} {word} {sentence} {actions} {suppressed}>
+<Tooltip {translation} {word} {sentence} {actions} {suppressed} {gradeLabel} {onGrade} {onDrillIn}>
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<span onclick={onChildClick}>{childText}</span>
 </Tooltip>

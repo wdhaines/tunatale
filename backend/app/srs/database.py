@@ -2519,6 +2519,12 @@ class SRSDatabase:
             )
             self._commit(conn)
 
+    def delete_revlog_row(self, revlog_id: int) -> None:
+        """Delete a single tt_revlog row by id (grade-undo unwinds its own row)."""
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM tt_revlog WHERE id = ?", (revlog_id,))
+            self._commit(conn)
+
     def rebuild_from_revlog(
         self,
         collocation_id: int,

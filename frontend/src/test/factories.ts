@@ -13,6 +13,7 @@ export function makeWordToken(overrides: Partial<WordToken> = {}): WordToken {
     collocation_lemma: null,
     collocation_translation: null,
     collocation_progress: null,
+    collocation_is_due: false,
     card_type: null,
     active_state: "new",
     active_direction: null,

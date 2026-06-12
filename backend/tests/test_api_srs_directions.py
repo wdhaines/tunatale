@@ -460,3 +460,155 @@ class TestUpdateDirectionByIdMissing:
             state=SRSState.NEW,
         )
         db.update_direction_by_id(99999, Direction.RECOGNITION, ds)  # should not raise
+
+
+class TestUndoGradeEndpoint:
+    """POST /api/srs/items/{id}/direction/{direction}/undo — single-level grade undo.
+
+    The popover's "Got it ✓" needs a cycle back ("Undo ↩"): restore the exact
+    pre-grade DirectionState and delete the grade's tt_revlog row, but ONLY
+    while the grade is still TT-local (dirty_fsrs=1, revlog row still the
+    latest). After a sync Anki owns the review — undo must refuse (409).
+    """
+
+    def _item_id(self) -> int:
+        db = _db()
+        db.add_collocation(_unit("voda"), language_code="sl")
+        rows, _ = db.list_collocations(search="voda", limit=1)
+        return rows[0][0]
+
+    @staticmethod
+    def _rec_state(item_id: int) -> DirectionState:
+        result = _db().get_collocation_by_id(item_id)
+        assert result is not None
+        _, item, _ = result
+        return item.directions[Direction.RECOGNITION]
+
+    async def test_undo_restores_exact_prior_state_and_deletes_revlog(self):
+        item_id = self._item_id()
+        prior = self._rec_state(item_id)
+        assert prior.introduced_at is None  # first grade stamps it; undo must unstamp
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post(
+                f"/api/srs/items/{item_id}/direction/recognition/feedback",
+                json={"rating": "good"},
+            )
+            assert r.status_code == 200
+            assert _db().latest_revlog_id_for_direction(item_id, Direction.RECOGNITION) is not None
+            assert self._rec_state(item_id) != prior
+
+            r2 = await c.post(f"/api/srs/items/{item_id}/direction/recognition/undo")
+        assert r2.status_code == 200
+        assert r2.json()["status"] == "ok"
+        assert self._rec_state(item_id) == prior
+        assert _db().latest_revlog_id_for_direction(item_id, Direction.RECOGNITION) is None
+
+    async def test_undo_without_any_grade_returns_409(self):
+        item_id = self._item_id()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post(f"/api/srs/items/{item_id}/direction/recognition/undo")
+        assert r.status_code == 409
+
+    async def test_undo_wrong_direction_returns_409(self):
+        item_id = self._item_id()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            await c.post(
+                f"/api/srs/items/{item_id}/direction/recognition/feedback",
+                json={"rating": "good"},
+            )
+            r = await c.post(f"/api/srs/items/{item_id}/direction/production/undo")
+        assert r.status_code == 409
+
+    async def test_undo_twice_returns_409_second_time(self):
+        item_id = self._item_id()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            await c.post(
+                f"/api/srs/items/{item_id}/direction/recognition/feedback",
+                json={"rating": "good"},
+            )
+            r1 = await c.post(f"/api/srs/items/{item_id}/direction/recognition/undo")
+            r2 = await c.post(f"/api/srs/items/{item_id}/direction/recognition/undo")
+        assert r1.status_code == 200
+        assert r2.status_code == 409
+
+    async def test_undo_after_sync_cleared_dirty_returns_409(self):
+        """Once sync clears dirty_fsrs the grade lives in Anki — undo must refuse."""
+        item_id = self._item_id()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            await c.post(
+                f"/api/srs/items/{item_id}/direction/recognition/feedback",
+                json={"rating": "good"},
+            )
+            db = _db()
+            result = db.get_collocation_by_id(item_id)
+            assert result is not None
+            _, item, _ = result
+            db.mark_direction_clean(item.guid, Direction.RECOGNITION)
+
+            r = await c.post(f"/api/srs/items/{item_id}/direction/recognition/undo")
+        assert r.status_code == 409
+
+    async def test_undo_after_second_grade_restores_post_first_grade_state(self):
+        """Single-level: undo unwinds only the most recent grade."""
+        import asyncio
+
+        item_id = self._item_id()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            await c.post(
+                f"/api/srs/items/{item_id}/direction/recognition/feedback",
+                json={"rating": "good"},
+            )
+            after_first = self._rec_state(item_id)
+            await asyncio.sleep(0.002)  # distinct revlog id (ms-resolution)
+            await c.post(
+                f"/api/srs/items/{item_id}/direction/recognition/feedback",
+                json={"rating": "good"},
+            )
+            assert self._rec_state(item_id) != after_first
+
+            r1 = await c.post(f"/api/srs/items/{item_id}/direction/recognition/undo")
+            r2 = await c.post(f"/api/srs/items/{item_id}/direction/recognition/undo")
+        assert r1.status_code == 200
+        assert self._rec_state(item_id) == after_first
+        assert r2.status_code == 409
+
+    async def test_undo_superseded_snapshot_returns_409(self):
+        """A newer revlog row on the direction (e.g. a /listen grade) invalidates the snapshot."""
+        from app.models.srs_item import RevlogRow
+
+        item_id = self._item_id()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            await c.post(
+                f"/api/srs/items/{item_id}/direction/recognition/feedback",
+                json={"rating": "good"},
+            )
+            latest = _db().latest_revlog_id_for_direction(item_id, Direction.RECOGNITION)
+            assert latest is not None
+            _db().append_revlog(
+                RevlogRow(
+                    id=latest + 10_000,
+                    collocation_id=item_id,
+                    direction=Direction.RECOGNITION,
+                    button_chosen=3,
+                    interval=1,
+                    last_interval=0,
+                    factor=0,
+                    taken_millis=1000,
+                    review_kind=0,
+                    anki_card_id=None,
+                )
+            )
+            r = await c.post(f"/api/srs/items/{item_id}/direction/recognition/undo")
+        assert r.status_code == 409
+
+    async def test_undo_nonexistent_item_returns_404(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post("/api/srs/items/99999/direction/recognition/undo")
+        assert r.status_code == 404
+
+    async def test_undo_invalid_direction_returns_422(self):
+        item_id = self._item_id()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post(f"/api/srs/items/{item_id}/direction/baddir/undo")
+        assert r.status_code == 422

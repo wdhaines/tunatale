@@ -295,6 +295,84 @@ describe("Tooltip", () => {
     expect(onSetState).toHaveBeenCalledWith(15, "new");
   });
 
+  // --- Grade button (all grading lives in the popover) ---
+
+  describe("grade button", () => {
+    it("renders the grade button with the given label when gradeLabel and onGrade are set", () => {
+      const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+      const { getByRole } = render(TooltipTest, {
+        props: { word, childText: "test", gradeLabel: "Got it ✓", onGrade: vi.fn() },
+      });
+      expect(getByRole("button", { name: "Got it ✓" })).toBeTruthy();
+    });
+
+    it("calls onGrade when the grade button is clicked, and keeps the popover open", async () => {
+      const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+      const onGrade = vi.fn();
+      const { getByRole, getByText, container } = render(TooltipTest, {
+        props: { word, childText: "test", gradeLabel: "Got it ✓", onGrade },
+      });
+      const wrap = container.querySelector(".tt-wrap")!;
+
+      await fireEvent.click(getByText("test"));
+      expect(wrap.className).toContain("open");
+
+      await fireEvent.click(getByRole("button", { name: "Got it ✓" }));
+      expect(onGrade).toHaveBeenCalledTimes(1);
+      // Stays open so the user can watch the state advance (cycle) and keep acting.
+      expect(wrap.className).toContain("open");
+    });
+
+    it("does not render a grade button when gradeLabel is null", () => {
+      const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+      const { queryByRole } = render(TooltipTest, {
+        props: { word, childText: "test", gradeLabel: null, onGrade: vi.fn() },
+      });
+      expect(queryByRole("button", { name: /got it|start learning/i })).toBeNull();
+    });
+
+    it("does not render a grade button when onGrade is null", () => {
+      const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+      const { queryByRole } = render(TooltipTest, {
+        props: { word, childText: "test", gradeLabel: "Got it ✓", onGrade: null },
+      });
+      expect(queryByRole("button", { name: /got it/i })).toBeNull();
+    });
+
+    it("grade button alone makes the popover renderable (counts as content)", () => {
+      const { getByRole } = render(TooltipTest, {
+        props: {
+          translation: null,
+          childText: "test",
+          gradeLabel: "Start learning",
+          onGrade: vi.fn(),
+        },
+      });
+      expect(getByRole("tooltip")).toBeTruthy();
+      expect(getByRole("button", { name: "Start learning" })).toBeTruthy();
+    });
+  });
+
+  // --- Drill-in button (touch path into a phrase's individual words) ---
+
+  describe("drill-in button", () => {
+    it('renders "Words…" when onDrillIn is provided and calls it on click', async () => {
+      const onDrillIn = vi.fn();
+      const { getByRole } = render(TooltipTest, {
+        props: { translation: "good day", childText: "phrase", onDrillIn },
+      });
+      await fireEvent.click(getByRole("button", { name: /words…/i }));
+      expect(onDrillIn).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not render "Words…" when onDrillIn is absent', () => {
+      const { queryByRole } = render(TooltipTest, {
+        props: { translation: "good day", childText: "phrase" },
+      });
+      expect(queryByRole("button", { name: /words…/i })).toBeNull();
+    });
+  });
+
   describe("long-press to open / tap to grade", () => {
     it("tooltip is hidden by default (no hover/press)", () => {
       const word = makeWordToken({ is_due: true, srs_item_id: 1 });
@@ -305,7 +383,7 @@ describe("Tooltip", () => {
       expect(wrap.className).not.toContain("open");
     });
 
-    it("a plain tap does NOT open the tooltip and lets the grade click through", async () => {
+    it("a plain tap OPENS the popover (click-to-open) without suppressing child handlers", async () => {
       const word = makeWordToken({ is_due: true, srs_item_id: 1 });
       const onChildClick = vi.fn();
       const { getByText, container } = render(TooltipTest, {
@@ -318,8 +396,37 @@ describe("Tooltip", () => {
       await fireEvent.pointerUp(child);
       await fireEvent.click(child);
 
-      expect(wrap.className).not.toContain("open");
+      expect(wrap.className).toContain("open");
       expect(onChildClick).toHaveBeenCalledTimes(1);
+    });
+
+    it("a second tap closes the popover (toggle)", async () => {
+      const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+      const { getByText, container } = render(TooltipTest, {
+        props: { translation: "hello", word, childText: "tap-me" },
+      });
+      const child = getByText("tap-me");
+      const wrap = container.querySelector(".tt-wrap")!;
+
+      await fireEvent.click(child);
+      expect(wrap.className).toContain("open");
+
+      await fireEvent.click(child);
+      expect(wrap.className).not.toContain("open");
+    });
+
+    it("a click inside the popover body does not toggle it closed", async () => {
+      const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+      const { getByText, getByRole, container } = render(TooltipTest, {
+        props: { translation: "hello", word, childText: "tap-me" },
+      });
+      const wrap = container.querySelector(".tt-wrap")!;
+
+      await fireEvent.click(getByText("tap-me"));
+      expect(wrap.className).toContain("open");
+
+      await fireEvent.click(getByRole("tooltip"));
+      expect(wrap.className).toContain("open");
     });
 
     it("a long-press opens the tooltip and suppresses the grade click", async () => {
@@ -347,7 +454,7 @@ describe("Tooltip", () => {
       }
     });
 
-    it("pointer movement cancels the long-press (no open)", async () => {
+    it("pointer movement beyond the jitter threshold cancels the long-press (no open)", async () => {
       vi.useFakeTimers();
       try {
         const word = makeWordToken({ is_due: true, srs_item_id: 1 });
@@ -357,8 +464,8 @@ describe("Tooltip", () => {
         const child = getByText("drag-me");
         const wrap = container.querySelector(".tt-wrap")!;
 
-        await fireEvent.pointerDown(child);
-        await fireEvent.pointerMove(child);
+        await fireEvent.pointerDown(child, { clientX: 10, clientY: 10 });
+        await fireEvent.pointerMove(child, { clientX: 40, clientY: 10 });
         vi.advanceTimersByTime(500);
 
         expect(wrap.className).not.toContain("open");
@@ -367,7 +474,134 @@ describe("Tooltip", () => {
       }
     });
 
-    it("click-outside closes an open tooltip", async () => {
+    it("small finger jitter does NOT cancel the long-press (touch tremor)", async () => {
+      vi.useFakeTimers();
+      try {
+        const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+        const { getByText, container } = render(TooltipTest, {
+          props: { translation: "hello", word, childText: "hold-me" },
+        });
+        const child = getByText("hold-me");
+        const wrap = container.querySelector(".tt-wrap")!;
+
+        await fireEvent.pointerDown(child, { clientX: 10, clientY: 10 });
+        await fireEvent.pointerMove(child, { clientX: 14, clientY: 12 });
+        vi.advanceTimersByTime(500);
+        await tick();
+
+        expect(wrap.className).toContain("open");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("pointer movement with no active press is a no-op", async () => {
+      vi.useFakeTimers();
+      try {
+        const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+        const { getByText, container } = render(TooltipTest, {
+          props: { translation: "hello", word, childText: "move-me" },
+        });
+        const child = getByText("move-me");
+        const wrap = container.querySelector(".tt-wrap")!;
+
+        await fireEvent.pointerMove(child, { clientX: 100, clientY: 100 });
+        vi.advanceTimersByTime(500);
+
+        expect(wrap.className).not.toContain("open");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("pointercancel (browser takes over for scrolling) cancels the long-press", async () => {
+      vi.useFakeTimers();
+      try {
+        const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+        const { getByText, container } = render(TooltipTest, {
+          props: { translation: "hello", word, childText: "scroll-me" },
+        });
+        const child = getByText("scroll-me");
+        const wrap = container.querySelector(".tt-wrap")!;
+
+        await fireEvent.pointerDown(child);
+        await fireEvent.pointerCancel(child);
+        vi.advanceTimersByTime(500);
+
+        expect(wrap.className).not.toContain("open");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a non-primary-button press (right-click) never starts a long-press", async () => {
+      vi.useFakeTimers();
+      try {
+        const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+        const { getByText, container } = render(TooltipTest, {
+          props: { translation: "hello", word, childText: "right-click-me" },
+        });
+        const child = getByText("right-click-me");
+        const wrap = container.querySelector(".tt-wrap")!;
+
+        await fireEvent.pointerDown(child, { button: 2 });
+        vi.advanceTimersByTime(500);
+
+        expect(wrap.className).not.toContain("open");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("suppresses the OS context menu while a press is pending (Android long-press)", async () => {
+      vi.useFakeTimers();
+      try {
+        const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+        const { getByText } = render(TooltipTest, {
+          props: { translation: "hello", word, childText: "hold-me" },
+        });
+        const child = getByText("hold-me");
+
+        await fireEvent.pointerDown(child);
+        const notPrevented = await fireEvent.contextMenu(child);
+        expect(notPrevented).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("suppresses the OS context menu after the long-press completes", async () => {
+      vi.useFakeTimers();
+      try {
+        const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+        const { getByText } = render(TooltipTest, {
+          props: { translation: "hello", word, childText: "hold-me" },
+        });
+        const child = getByText("hold-me");
+
+        await fireEvent.pointerDown(child);
+        vi.advanceTimersByTime(500);
+        await tick();
+
+        const notPrevented = await fireEvent.contextMenu(child);
+        expect(notPrevented).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does NOT suppress the context menu when no press is active (desktop right-click)", async () => {
+      const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+      const { getByText } = render(TooltipTest, {
+        props: { translation: "hello", word, childText: "right-click-me" },
+      });
+      const child = getByText("right-click-me");
+
+      const notPrevented = await fireEvent.contextMenu(child);
+      expect(notPrevented).toBe(true);
+    });
+
+    it("tap-outside (pointerdown) closes an open tooltip", async () => {
       vi.useFakeTimers();
       try {
         const word = makeWordToken({ is_due: true, srs_item_id: 1 });
@@ -382,14 +616,14 @@ describe("Tooltip", () => {
         await tick();
         expect(wrap.className).toContain("open");
 
-        await fireEvent.mouseDown(document.body);
+        await fireEvent.pointerDown(document.body);
         expect(wrap.className).not.toContain("open");
       } finally {
         vi.useRealTimers();
       }
     });
 
-    it("mousedown inside the open tooltip does NOT close it", async () => {
+    it("pointerdown inside the open tooltip does NOT close it", async () => {
       vi.useFakeTimers();
       try {
         const word = makeWordToken({ is_due: true, srs_item_id: 1 });
@@ -404,8 +638,112 @@ describe("Tooltip", () => {
         await tick();
         expect(wrap.className).toContain("open");
 
-        await fireEvent.mouseDown(child);
+        await fireEvent.pointerDown(child);
         expect(wrap.className).toContain("open");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("tapping a DIFFERENT word's wrapper closes this tooltip (scoped outside-check)", async () => {
+      vi.useFakeTimers();
+      try {
+        const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+        const first = render(TooltipTest, {
+          props: { translation: "hello", word, childText: "first-word" },
+        });
+        const second = render(TooltipTest, {
+          props: { translation: "world", word, childText: "second-word" },
+        });
+        const firstWrap = first.container.querySelector(".tt-wrap")!;
+
+        await fireEvent.pointerDown(first.getByText("first-word"));
+        vi.advanceTimersByTime(500);
+        await tick();
+        expect(firstWrap.className).toContain("open");
+
+        // The old closest('.tt-wrap') check matched ANY wrapper, leaving stale
+        // popovers open when the user tapped the next word on touch.
+        await fireEvent.pointerDown(second.getByText("second-word"));
+        expect(firstWrap.className).not.toContain("open");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe("viewport edge clamping", () => {
+    /** Long-press open with a mocked tooltip rect, then return the tooltip el. */
+    async function openWithRect(rect: { left: number; right: number } | null) {
+      const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+      const { getByText, container } = render(TooltipTest, {
+        props: { translation: "hello", word, childText: "clamp-me" },
+      });
+      const tt = container.querySelector<HTMLElement>(".tt")!;
+      if (rect) {
+        tt.getBoundingClientRect = () =>
+          ({
+            ...rect,
+            top: 0,
+            bottom: 20,
+            width: rect.right - rect.left,
+            height: 20,
+            x: rect.left,
+            y: 0,
+            toJSON: () => ({}),
+          }) as DOMRect;
+      }
+      await fireEvent.pointerDown(getByText("clamp-me"));
+      vi.advanceTimersByTime(500);
+      await tick();
+      return { tt, container };
+    }
+
+    it("shifts right when the popover would clip the left viewport edge", async () => {
+      vi.useFakeTimers();
+      try {
+        const { tt } = await openWithRect({ left: -20, right: 100 });
+        expect(tt.style.transform).toBe("translateX(calc(-50% + 28px))");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("shifts left when the popover would clip the right viewport edge", async () => {
+      vi.useFakeTimers();
+      try {
+        // jsdom window.innerWidth is 1024; margin 8 → max right edge 1016.
+        const { tt } = await openWithRect({ left: 900, right: 1020 });
+        expect(tt.style.transform).toBe("translateX(calc(-50% + -4px))");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("applies no shift when the popover fits", async () => {
+      vi.useFakeTimers();
+      try {
+        const { tt } = await openWithRect({ left: 100, right: 200 });
+        expect(tt.style.transform).toBe("translateX(calc(-50% + 0px))");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("opening with no tooltip content (suppressed/empty) does not crash the clamp", async () => {
+      vi.useFakeTimers();
+      try {
+        const { getByText, container, queryByRole } = render(TooltipTest, {
+          props: { translation: null, childText: "empty-me" },
+        });
+        const wrap = container.querySelector(".tt-wrap")!;
+
+        await fireEvent.pointerDown(getByText("empty-me"));
+        vi.advanceTimersByTime(500);
+        await tick();
+
+        expect(wrap.className).toContain("open");
+        expect(queryByRole("tooltip")).toBeNull();
       } finally {
         vi.useRealTimers();
       }

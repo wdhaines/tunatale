@@ -75,6 +75,9 @@ export interface WordToken {
   // Optional (not required-with-null like the siblings) to spare ~40 inline test
   // literals — the consumer reads `?? 0`.
   collocation_progress?: number | null;
+  // Same optionality rationale: enclosing collocation's active direction is due
+  // (gates the phrase popover's grade button — same _is_due rule as word is_due).
+  collocation_is_due?: boolean;
   card_type: string | null;
   active_state: string;
   active_direction: string | null;
@@ -338,6 +341,15 @@ export class TunaTaleAPI {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ rating, time_ms: timeMs }),
+    });
+  }
+
+  async undoGrade(
+    itemId: number,
+    direction: "recognition" | "production",
+  ): Promise<{ status: string; restored_state: string; restored_due_at: string }> {
+    return this.request(`/api/srs/items/${itemId}/direction/${direction}/undo`, {
+      method: "POST",
     });
   }
 

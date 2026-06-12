@@ -10,6 +10,12 @@
 		onUnignore?: (id: number) => Promise<void>;
 		onIgnoreLemma?: (lemma: string) => Promise<void>;
 		onUnignoreLemma?: (lemma: string) => Promise<void>;
+		// Undo cycle for the grade button: when isGradeUndoable(word) is true the
+		// word's popover shows "Undo ↩" (calling onUndoGrade) instead of its grade
+		// label — the page tracks which item was graded last (single-level, mirrors
+		// the backend's one snapshot).
+		isGradeUndoable?: (word: WordToken) => boolean;
+		onUndoGrade?: (word: WordToken) => Promise<void>;
 	}
 
 	interface Props {
@@ -22,21 +28,52 @@
 		// stable DOM structure (no layout shift) while gating the popover on, e.g.,
 		// an Alt-held state — see WordSpan's collocation inner words.
 		suppressed?: boolean;
+		// All grading lives in the popover: the grade button (label + callback) is
+		// the ONLY way to advance a word/phrase from the transcript. Callers decide
+		// the label ("Start learning" / "Got it ✓" / "Undo ↩") and pass null to hide it.
+		gradeLabel?: string | null;
+		onGrade?: (() => void) | null;
+		// "Words…" — the touch path into a phrase's individual words (what
+		// Alt+hover does on desktop). Only collocation popovers pass this.
+		onDrillIn?: (() => void) | null;
 	}
 
-	let { translation, children, word, sentence, actions, suppressed = false }: Props = $props();
+	let {
+		translation,
+		children,
+		word,
+		sentence,
+		actions,
+		suppressed = false,
+		gradeLabel = null,
+		onGrade = null,
+		onDrillIn = null
+	}: Props = $props();
 
 	let open = $state(false);
+	let wrapEl = $state<HTMLElement | null>(null);
+	let ttEl = $state<HTMLElement | null>(null);
 
 	// A *long-press* opens the popover (so a touch user can reach the per-word
 	// actions); a plain *tap* falls through to the word's own grade handler. This
 	// avoids the tap-to-grade-also-toggles-the-tooltip conflict: pressing a word
 	// grades it, holding it reveals its actions without grading.
 	const LONG_PRESS_MS = 450;
+	// Cancel only when the pointer travels beyond finger jitter. Cancelling on
+	// ANY pointermove made long-press unreachable on real touchscreens — touch
+	// pointermove fires for sub-pixel tremor on every hold.
+	const MOVE_CANCEL_PX = 10;
 	let pressTimer: ReturnType<typeof setTimeout> | null = null;
 	let longPressed = false;
+	let pressX = 0;
+	let pressY = 0;
 
-	function startPress() {
+	function startPress(e: PointerEvent) {
+		// Right/middle button never long-presses (keeps desktop right-click
+		// reaching the browser context menu — see handleContextMenu).
+		if (e.button !== 0) return;
+		pressX = e.clientX;
+		pressY = e.clientY;
 		longPressed = false;
 		pressTimer = setTimeout(() => {
 			open = true;
@@ -52,8 +89,23 @@
 		}
 	}
 
-	// Swallow the click a long-press would otherwise fire (capture phase, before
-	// the inner word/collocation grade handler), so holding never grades.
+	function handlePressMove(e: PointerEvent) {
+		if (pressTimer === null) return;
+		if (Math.abs(e.clientX - pressX) + Math.abs(e.clientY - pressY) > MOVE_CANCEL_PX) {
+			cancelPress();
+		}
+	}
+
+	// Android fires contextmenu on long-press; swallow it while a press is
+	// pending or just completed so the OS menu never covers the popover. A
+	// desktop right-click never starts a press (button !== 0 above), so its
+	// context menu is unaffected.
+	function handleContextMenu(e: Event) {
+		if (pressTimer !== null || longPressed) e.preventDefault();
+	}
+
+	// Swallow the click a long-press would otherwise fire (capture phase), so
+	// releasing a long-press doesn't immediately toggle the popover back closed.
 	function suppressClickAfterLongPress(e: MouseEvent) {
 		if (longPressed) {
 			e.stopPropagation();
@@ -62,15 +114,44 @@
 		}
 	}
 
-	// Click-outside: close when tapping anywhere outside the tooltip wrapper
+	// Click/tap toggles the popover — the same affordance on desktop and touch
+	// (desktop hover remains a preview). Clicks never grade; grading is the
+	// explicit grade button inside the popover. Popover-body clicks don't reach
+	// this (the .tt onclick stops propagation).
+	function handleWrapClick() {
+		open = !open;
+	}
+
+	// Tap-outside: close when the pointer goes down outside THIS wrapper.
+	// Scoped to wrapEl (not closest('.tt-wrap'), which matched ANY wrapper and
+	// left stale popovers open when tapping the next word); pointerdown so it
+	// fires immediately on touch instead of waiting for the synthesized click.
 	$effect(() => {
 		if (!open) return;
-		function handleOutside(e: MouseEvent) {
-			const el = e.target as HTMLElement;
-			if (!el.closest('.tt-wrap')) open = false;
+		function handleOutside(e: PointerEvent) {
+			if (!wrapEl!.contains(e.target as Node)) open = false;
 		}
-		document.addEventListener('mousedown', handleOutside);
-		return () => document.removeEventListener('mousedown', handleOutside);
+		document.addEventListener('pointerdown', handleOutside);
+		return () => document.removeEventListener('pointerdown', handleOutside);
+	});
+
+	// Keep the popover on-screen: when the centered position would clip at a
+	// viewport edge (narrow phone screens), nudge it horizontally on open.
+	const EDGE_MARGIN_PX = 8;
+	let shiftX = $state(0);
+	$effect(() => {
+		if (!open || !ttEl) {
+			shiftX = 0;
+			return;
+		}
+		const rect = ttEl.getBoundingClientRect();
+		if (rect.left < EDGE_MARGIN_PX) {
+			shiftX = EDGE_MARGIN_PX - rect.left;
+		} else if (rect.right > window.innerWidth - EDGE_MARGIN_PX) {
+			shiftX = window.innerWidth - EDGE_MARGIN_PX - rect.right;
+		} else {
+			shiftX = 0;
+		}
 	});
 
 	const dueLabel = $derived(word != null ? (word.is_due ? 'Due' : 'Not Due') : null);
@@ -126,8 +207,11 @@
 		)
 	);
 
+	const showGrade = $derived(Boolean(gradeLabel && onGrade));
+	const showDrillIn = $derived(Boolean(onDrillIn));
+
 	const hasActions = $derived(
-		showCreateInflection || showIgnore || showIgnoreCardless || showUnignore || showUnignoreCardless || showMarkKnown || showUnmarkKnown || showResetNew
+		showGrade || showDrillIn || showCreateInflection || showIgnore || showIgnoreCardless || showUnignore || showUnignoreCardless || showMarkKnown || showUnmarkKnown || showResetNew
 	);
 
 	const hasContent = $derived(!suppressed && Boolean(translation || dueLabel || hasActions));
@@ -137,19 +221,44 @@
 <span
 	class="tt-wrap"
 	class:open
+	bind:this={wrapEl}
 	onpointerdown={startPress}
 	onpointerup={cancelPress}
 	onpointerleave={cancelPress}
-	onpointermove={cancelPress}
+	onpointercancel={cancelPress}
+	onpointermove={handlePressMove}
+	oncontextmenu={handleContextMenu}
 	onclickcapture={suppressClickAfterLongPress}
+	onclick={handleWrapClick}
 >
 	{@render children()}
 	{#if hasContent}
-		<span class="tt" role="tooltip" aria-hidden="false" onclick={(e) => e.stopPropagation()}>
+		<span
+			class="tt"
+			role="tooltip"
+			aria-hidden="false"
+			bind:this={ttEl}
+			style:transform={`translateX(calc(-50% + ${shiftX}px))`}
+			onclick={(e) => e.stopPropagation()}
+		>
 			{#if translation}<span class="tt-translation">{translation}</span>{/if}
 			{#if dueLabel}<span class="tt-state tt-state-{word?.is_due ? 'due' : 'not-due'}">{dueLabel}</span>{/if}
 			{#if hasActions}
 				<span class="tt-actions">
+					{#if showGrade}
+						<button
+							type="button"
+							class="tt-btn tt-btn-grade"
+							onclick={() => onGrade!()}
+						>{gradeLabel}</button>
+					{/if}
+					{#if showDrillIn}
+						<button
+							type="button"
+							class="tt-btn"
+							onclick={() => onDrillIn!()}
+						>Words…</button>
+					{/if}
 					{#if showCreateInflection}
 						<button
 							type="button"
@@ -221,20 +330,33 @@
 		position: absolute;
 		bottom: 100%;
 		left: 50%;
-		transform: translateX(-50%);
+		/* transform is set inline: translateX(-50%) plus the viewport-edge shift */
 		background: #111827;
 		color: #f9fafb;
 		padding: 4px 8px;
 		border-radius: 4px;
 		font-size: 12px;
-		white-space: nowrap;
+		/* Shrink-wrap to one line when short, wrap within the viewport when long
+		   (the containing block is the inline word, so max-content is required
+		   to avoid wrapping at the word's own width). */
+		width: max-content;
+		max-width: min(280px, calc(100vw - 16px));
+		white-space: normal;
 		z-index: 10;
 		opacity: 0;
 		pointer-events: none;
 		transition: opacity 0.1s;
 	}
-	.tt-wrap:hover > .tt,
-	.tt-wrap:focus-within > .tt,
+	/* Hover/focus reveal is a fine-pointer affordance only. On touch, a tap
+	   synthesizes hover AND focuses the tabindex word, which sticky-opened the
+	   popover on every grade-tap; there, long-press (.open) is the only opener. */
+	@media (hover: hover) {
+		.tt-wrap:hover > .tt,
+		.tt-wrap:focus-within > .tt {
+			opacity: 1;
+			pointer-events: auto;
+		}
+	}
 	.tt-wrap.open > .tt {
 		opacity: 1;
 		pointer-events: auto;
@@ -257,6 +379,7 @@
 	}
 	.tt-actions {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 4px;
 		margin-top: 4px;
 	}
@@ -272,5 +395,37 @@
 	}
 	.tt-btn:hover {
 		background: rgba(255, 255, 255, 0.25);
+	}
+	/* The grade button is the primary action — give it the accent so it reads
+	   as "this is what advances the word," distinct from the utility actions. */
+	.tt-btn-grade {
+		background: var(--color-primary, #2563eb);
+		border-color: var(--color-primary, #2563eb);
+	}
+	.tt-btn-grade:hover {
+		background: var(--color-primary-hover, #1d4ed8);
+	}
+	@media (pointer: coarse) {
+		/* Long-press must win over the OS gestures it collides with: iOS text
+		   selection + callout, magnifier. Scoped to coarse pointers so desktop
+		   drag-to-select-and-copy on words keeps working. */
+		.tt-wrap {
+			-webkit-touch-callout: none;
+			-webkit-user-select: none;
+			user-select: none;
+		}
+		/* Finger-sized targets — 11px/2px buttons are untappable. */
+		.tt {
+			font-size: 14px;
+			padding: 8px 10px;
+		}
+		.tt-btn {
+			font-size: 14px;
+			padding: 8px 12px;
+		}
+		.tt-actions {
+			gap: 8px;
+			margin-top: 8px;
+		}
 	}
 </style>

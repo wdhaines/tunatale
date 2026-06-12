@@ -32,6 +32,7 @@ class WordToken:
     collocation_lemma: str | None = None  # canonical text of the enclosing collocation
     collocation_translation: str | None = None  # L1 translation of the enclosing collocation
     collocation_progress: float | None = None  # mastery of the enclosing collocation (red→green ramp)
+    collocation_is_due: bool = False  # enclosing collocation's active direction is due (same rule as is_due)
     # Phase 5 enrichment fields
     card_type: str | None = None  # resolved item's card_type; None if unknown
     active_state: str = "unknown"  # active direction's state.value; "unknown" if no card
@@ -353,7 +354,7 @@ def extract_transcript(
 
             # Annotate collocation spans
             span_annotations = match_spans(lemmas, collocation_index)
-            span_cache: dict[int, tuple[str, str, str | None, float | None]] = {}
+            span_cache: dict[int, tuple[str, str, str | None, float | None, bool]] = {}
             for word, (span_id, is_start) in zip(words, span_annotations, strict=True):
                 word.collocation_span_id = span_id
                 word.collocation_start = is_start
@@ -362,11 +363,13 @@ def extract_transcript(
                 cached = span_cache.get(span_id)
                 if cached is None:
                     _, coll_item, _ = db.get_collocation_by_id(span_id)
+                    coll_active_ds = coll_item.directions.get(resolve_active_direction(coll_item))
                     cached = (
                         coll_item.state.value,
                         coll_item.syntactic_unit.text,
                         coll_item.syntactic_unit.translation or None,
                         compute_mastery_progress(coll_item.directions.values()),
+                        coll_active_ds is not None and _is_due(coll_active_ds, today),
                     )
                     span_cache[span_id] = cached
                 (
@@ -374,6 +377,7 @@ def extract_transcript(
                     word.collocation_lemma,
                     word.collocation_translation,
                     word.collocation_progress,
+                    word.collocation_is_due,
                 ) = cached
 
             # Reconstruct with each token's surrounding punctuation, not the bare

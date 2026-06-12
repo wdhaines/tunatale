@@ -20,6 +20,7 @@ vi.mock("$lib/api", () => ({
     createBaseCard: vi.fn(),
     createInflectionCloze: vi.fn(),
     submitDrill: vi.fn(),
+    undoGrade: vi.fn(),
     generateStory: vi.fn(),
     ignoreLemma: vi.fn(),
     unignoreLemma: vi.fn(),
@@ -50,6 +51,7 @@ const mockUntrackSRSItem = vi.mocked(api.untrackSRSItem);
 const mockCreateBaseCard = vi.mocked(api.createBaseCard);
 const mockCreateInflectionCloze = vi.mocked(api.createInflectionCloze);
 const mockSubmitDrill = vi.mocked(api.submitDrill);
+const mockUndoGrade = vi.mocked(api.undoGrade);
 const mockGenerateStory = vi.mocked(api.generateStory);
 const mockIgnoreLemma = vi.mocked(api.ignoreLemma);
 const mockUnignoreLemma = vi.mocked(api.unignoreLemma);
@@ -460,7 +462,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+      await fireEvent.click(await findByRole("button", { name: "Start learning" }));
 
       await waitFor(() => {
         expect(mockCreateBaseCard).toHaveBeenCalledWith({
@@ -489,7 +491,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
 
       await waitFor(() => {
         expect(mockSubmitDrill).toHaveBeenCalledWith(42, "recognition", "good");
@@ -512,7 +514,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
 
       await waitFor(() => {
         expect(mockSubmitDrill).toHaveBeenCalledWith(42, "production", "good");
@@ -532,7 +534,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+      await fireEvent.keyDown(await findByRole("button", { name: "zdravo" }), { key: "Enter" });
 
       await waitFor(() => {
         expect(mockCreateBaseCard).not.toHaveBeenCalled();
@@ -551,7 +553,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+      await fireEvent.keyDown(await findByRole("button", { name: "zdravo" }), { key: "Enter" });
 
       await waitFor(() => {
         expect(mockCreateBaseCard).not.toHaveBeenCalled();
@@ -570,7 +572,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+      await fireEvent.keyDown(await findByRole("button", { name: "zdravo" }), { key: "Enter" });
 
       await waitFor(() => {
         expect(mockCreateBaseCard).not.toHaveBeenCalled();
@@ -589,7 +591,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+      await fireEvent.keyDown(await findByRole("button", { name: "zdravo" }), { key: "Enter" });
 
       await waitFor(() => {
         expect(mockCreateBaseCard).not.toHaveBeenCalled();
@@ -606,7 +608,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+      await fireEvent.click(await findByRole("button", { name: "Start learning" }));
 
       expect(await findByText("base card failed")).toBeTruthy();
     });
@@ -620,7 +622,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+      await fireEvent.click(await findByRole("button", { name: "Start learning" }));
 
       expect(await findByText("plain error")).toBeTruthy();
     });
@@ -653,7 +655,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+      await fireEvent.click(await findByRole("button", { name: "Start learning" }));
 
       await waitFor(() => {
         expect(mockCreateBaseCard).toHaveBeenCalledWith(expect.objectContaining({ sentence: "" }));
@@ -674,7 +676,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "zdravo" }));
+      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
 
       expect(await findByText("drill failed")).toBeTruthy();
     });
@@ -696,6 +698,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
               srs_item_id: null,
               translation: null,
               collocation_span_id: 77,
+              collocation_is_due: true,
               collocation_start: true,
               collocation_srs_state: "learning",
               collocation_lemma: "dober dan",
@@ -716,6 +719,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
               srs_item_id: null,
               translation: null,
               collocation_span_id: 77,
+              collocation_is_due: true,
               collocation_start: false,
               collocation_srs_state: "learning",
               collocation_lemma: "dober dan",
@@ -734,15 +738,15 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       ],
     };
 
-    it("calls submitDrill with recognition good on click", async () => {
+    it("calls submitDrill with recognition good via the popover grade button", async () => {
       mockSubmitDrill.mockResolvedValue({ new_due_at: "", new_state: "review" });
       mockGetTranscript.mockResolvedValue(transcriptWithCollocation);
 
-      const { container } = render(Page, {
+      const { findByRole } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript: transcriptWithCollocation } },
       });
 
-      await fireEvent.click(container.querySelector(".collocation-span") as HTMLElement);
+      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
 
       await waitFor(() => {
         expect(mockSubmitDrill).toHaveBeenCalledWith(77, "recognition", "good");
@@ -754,11 +758,11 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       mockSubmitDrill.mockRejectedValue(new Error("coll drill failed"));
       mockGetTranscript.mockResolvedValue(transcriptWithCollocation);
 
-      const { container, findByText } = render(Page, {
+      const { findByRole, findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript: transcriptWithCollocation } },
       });
 
-      await fireEvent.click(container.querySelector(".collocation-span") as HTMLElement);
+      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
 
       expect(await findByText("coll drill failed")).toBeTruthy();
     });
@@ -1516,6 +1520,184 @@ describe("load function for /c/[curriculumId]/l/[lessonId]", () => {
       syncStore.notify(PEER_RESULT);
 
       expect(await findByText("weird refresh failure")).toBeTruthy();
+    });
+  });
+
+  describe("undo grade flow (Got it ✓ → Undo ↩ cycle)", () => {
+    const dueWordTranscript = {
+      lesson_id: "l1",
+      key_phrases: [],
+      dialogue_lines: [
+        {
+          role: "Petra",
+          sentence: "Zdravo kako si",
+          words: [
+            {
+              surface: "zdravo",
+              lemma: "zdravo",
+              srs_state: "learning",
+              srs_item_id: 42,
+              translation: null,
+              collocation_span_id: null,
+              collocation_start: false,
+              collocation_srs_state: null,
+              collocation_lemma: null,
+              collocation_translation: null,
+              card_type: null,
+              active_state: "learning",
+              active_direction: "recognition",
+              is_due: true,
+              progress: null,
+              inflectable: false,
+              inflection_feature: null,
+              known_marked: false,
+            },
+          ],
+        },
+      ],
+    };
+
+    it('after grading, the word popover shows "Undo ↩"; clicking it calls api.undoGrade and cycles back', async () => {
+      mockSubmitDrill.mockResolvedValue({ new_due_at: "", new_state: "review" });
+      mockUndoGrade.mockResolvedValue({
+        status: "ok",
+        restored_state: "learning",
+        restored_due_at: "",
+      });
+      mockGetTranscript.mockResolvedValue(dueWordTranscript);
+
+      const { findByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: dueWordTranscript } },
+      });
+
+      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+
+      const undoBtn = await findByRole("button", { name: "Undo ↩" });
+      await fireEvent.click(undoBtn);
+
+      await waitFor(() => {
+        expect(mockUndoGrade).toHaveBeenCalledWith(42, "recognition");
+      });
+      // Cycle complete: the grade button is back.
+      expect(await findByRole("button", { name: "Got it ✓" })).toBeTruthy();
+    });
+
+    it("the undo targets the direction that was graded, even if the active direction shifts after refetch", async () => {
+      // Grading recognition can graduate it → the refetched word's active
+      // direction flips to production. Undo must still hit recognition.
+      const after = JSON.parse(JSON.stringify(dueWordTranscript));
+      after.dialogue_lines[0].words[0].active_direction = "production";
+      mockSubmitDrill.mockResolvedValue({ new_due_at: "", new_state: "review" });
+      mockUndoGrade.mockResolvedValue({
+        status: "ok",
+        restored_state: "learning",
+        restored_due_at: "",
+      });
+      mockGetTranscript.mockResolvedValue(after);
+
+      const { findByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: dueWordTranscript } },
+      });
+
+      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+      await fireEvent.click(await findByRole("button", { name: "Undo ↩" }));
+
+      await waitFor(() => {
+        expect(mockUndoGrade).toHaveBeenCalledWith(42, "recognition");
+      });
+    });
+
+    it("a phrase grade then Undo ↩ calls api.undoGrade with the span id", async () => {
+      const collocationTranscript = {
+        lesson_id: "l1",
+        key_phrases: [],
+        dialogue_lines: [
+          {
+            role: "Petra",
+            sentence: "dober dan",
+            words: [
+              {
+                surface: "dober",
+                lemma: "dober",
+                srs_state: "new",
+                srs_item_id: null,
+                translation: null,
+                collocation_span_id: 77,
+                collocation_is_due: true,
+                collocation_start: true,
+                collocation_srs_state: "learning",
+                collocation_lemma: "dober dan",
+                collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
+              },
+              {
+                surface: "dan",
+                lemma: "dan",
+                srs_state: "new",
+                srs_item_id: null,
+                translation: null,
+                collocation_span_id: 77,
+                collocation_is_due: true,
+                collocation_start: false,
+                collocation_srs_state: "learning",
+                collocation_lemma: "dober dan",
+                collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
+              },
+            ],
+          },
+        ],
+      };
+      mockSubmitDrill.mockResolvedValue({ new_due_at: "", new_state: "review" });
+      mockUndoGrade.mockResolvedValue({
+        status: "ok",
+        restored_state: "learning",
+        restored_due_at: "",
+      });
+      mockGetTranscript.mockResolvedValue(collocationTranscript);
+
+      const { findByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: collocationTranscript } },
+      });
+
+      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+      await fireEvent.click(await findByRole("button", { name: "Undo ↩" }));
+
+      await waitFor(() => {
+        expect(mockUndoGrade).toHaveBeenCalledWith(77, "recognition");
+      });
+    });
+
+    it("shows the error and drops the Undo button when undo is refused (already synced)", async () => {
+      mockSubmitDrill.mockResolvedValue({ new_due_at: "", new_state: "review" });
+      mockUndoGrade.mockRejectedValue(new Error("grade already synced to Anki"));
+      mockGetTranscript.mockResolvedValue(dueWordTranscript);
+
+      const { findByRole, findByText, queryByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: dueWordTranscript } },
+      });
+
+      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+      await fireEvent.click(await findByRole("button", { name: "Undo ↩" }));
+
+      expect(await findByText("grade already synced to Anki")).toBeTruthy();
+      await waitFor(() => {
+        expect(queryByRole("button", { name: "Undo ↩" })).toBeNull();
+      });
     });
   });
 });

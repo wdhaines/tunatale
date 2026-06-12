@@ -24,6 +24,11 @@
 		lesson?: LessonDetail;
 		onWordClick?: (word: WordToken, lineIndex: number) => void;
 		onCollocationStateChange?: (span_id: number) => void;
+		// Undo cycle for phrase grades: when undoableItemId matches a span_id the
+		// phrase popover shows "Undo ↩" (calling onCollocationUndo) instead of its
+		// grade label. Word-level undo flows through tooltipActions instead.
+		undoableItemId?: number | null;
+		onCollocationUndo?: (span_id: number) => void | Promise<void>;
 		onCreatePhrase?: (args: CreatePhraseArgs) => void | Promise<void>;
 		tooltipActions?: TooltipActions;
 	}
@@ -33,6 +38,8 @@
 		lesson,
 		onWordClick,
 		onCollocationStateChange,
+		undoableItemId = null,
+		onCollocationUndo,
 		onCreatePhrase,
 		tooltipActions
 	}: Props = $props();
@@ -143,9 +150,25 @@
 		const start = Math.min(dragAnchor.wordIdx, resolved.wordIdx);
 		const end = Math.max(dragAnchor.wordIdx, resolved.wordIdx);
 
+		// A single-word "drag" is finger jitter during a tap, not a phrase —
+		// without this the confirm bar flashed under the finger on every touch
+		// tap (and stuck around when the gesture became a scroll).
+		if (start === end) {
+			selection = null;
+			return;
+		}
+
 		if (hasOverlap(words, start, end)) return;
 
 		selection = { lineIndex, startIdx: start, endIdx: end };
+	}
+
+	// The browser fires pointercancel (never pointerup) when it claims the
+	// touch for scrolling — drop any half-built selection or it sticks open.
+	function handlePointerCancel() {
+		isDragging = false;
+		dragAnchor = null;
+		selection = null;
 	}
 
 	function handlePointerUp(e: PointerEvent, lineIndex: number, words: WordToken[]) {
@@ -332,6 +355,22 @@
 		altHeld = false;
 	}
 
+	// --- Phrase drill-in: the touch path to a phrase's individual words. The
+	// "Words…" popover button sets this; the affected phrase then behaves like
+	// Alt-held (group popover suppressed, per-word popovers live) until a tap
+	// lands outside that phrase. ---
+	let expandedSpanId = $state<number | null>(null);
+
+	$effect(() => {
+		if (expandedSpanId === null) return;
+		const spanSelector = `[data-span-id="${expandedSpanId}"]`;
+		function handleOutside(e: PointerEvent) {
+			const el = e.target as HTMLElement;
+			if (!el.closest(spanSelector)) expandedSpanId = null;
+		}
+		document.addEventListener('pointerdown', handleOutside);
+		return () => document.removeEventListener('pointerdown', handleOutside);
+	});
 
 	const scenes = $derived.by(() => {
 		if (lesson) {
@@ -404,8 +443,9 @@
 			{#if showHelp}
 				<div class="help-panel">
 					<p class="help-instructions">
-						Drag to create a phrase, or tap '+ New phrase' on mobile. Click phrases/words to
-						change SRS state; Alt+click a word inside a phrase for word-only.
+						Tap or hover a word/phrase to open its popover — grading and all other actions
+						live there. Alt+hover a phrase for its individual words. Drag to create a
+						phrase, or tap '+ New phrase' on mobile.
 					</p>
 					<div class="help-legend">
 						<span class="legend-row">
@@ -456,14 +496,28 @@
 								onpointerdown={(e) => handlePointerDown(e, lineIndex)}
 								onpointermove={(e) => handlePointerMove(e, lineIndex, line.words)}
 								onpointerup={(e) => handlePointerUp(e, lineIndex, line.words)}
+								onpointercancel={handlePointerCancel}
 							>
 								{#each segments as segment, segIdx (segIdx)}
 									{#if segment.type === 'collocation'}
 										{@const collOffRamp = collocationOffRamp(segment.words[0].collocation_srs_state)}
+										{@const drilledIn = altHeld || expandedSpanId === segment.span_id}
+										{@const collUndoable = undoableItemId === segment.span_id && onCollocationUndo != null}
 										<Tooltip
 											translation={segment.words[0].collocation_translation}
-											suppressed={altHeld}
+											suppressed={drilledIn}
 											word={segment.words[0]}
+											gradeLabel={collUndoable
+												? 'Undo ↩'
+												: segment.words[0].collocation_is_due
+													? 'Got it ✓'
+													: null}
+											onGrade={collUndoable
+												? () => void onCollocationUndo!(segment.span_id)
+												: onCollocationStateChange
+													? () => handleCollocationClick(segment)
+													: null}
+											onDrillIn={() => (expandedSpanId = segment.span_id)}
 										>
 											<span
 												class="collocation-span"
@@ -473,7 +527,7 @@
 													: `background-color: ${masteryBackgroundColor(segment.words[0].collocation_progress ?? 0)};`}
 												role="button"
 												tabindex="0"
-												onclick={() => handleCollocationClick(segment)}
+												data-span-id={segment.span_id}
 												onkeydown={(e) => handleCollocationKeydown(e, segment)}
 											>
 												{#each segment.words as cw, innerIdx (innerIdx)}
@@ -482,7 +536,7 @@
 														word={cw}
 														onWordClick={onWordClick}
 														requireModifier={true}
-														altHover={altHeld}
+														altHover={drilledIn}
 														lineIndex={lineIndex}
 														wordIndex={wIdx}
 														selected={wordIsSelected(lineIndex, wIdx)}
@@ -822,6 +876,8 @@
 	}
 	.phrase-confirm-bar {
 		display: flex;
+		/* Wrap on narrow screens — preview + input + 3 buttons overflowed phones. */
+		flex-wrap: wrap;
 		align-items: center;
 		gap: 0.5rem;
 		padding: 0.4rem 0.75rem;
@@ -834,9 +890,11 @@
 	.phrase-preview {
 		font-weight: 500;
 		color: var(--color-primary, #4f46e5);
+		overflow-wrap: anywhere;
 	}
 	.phrase-translation-input {
-		flex: 1;
+		flex: 1 1 8rem;
+		min-width: 0;
 		border: 1px solid var(--color-border, #e5e7eb);
 		border-radius: 3px;
 		padding: 0.15rem 0.4rem;

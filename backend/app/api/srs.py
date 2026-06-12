@@ -41,6 +41,7 @@ from app.srs.function_words import (
     make_morphology_cloze_text,
     normalize_sentence_key,
 )
+from app.srs.grade_undo import UndoNotAvailable, record_grade_snapshot, undo_last_grade
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, lemmatize_surfaces_in_context, model_version_for
 from app.srs.queue_stats import (
     advance_learning_cutoff,
@@ -261,6 +262,9 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
     db.update_direction_by_id(item_id, dir_enum, updated.directions[dir_enum])
     row = build_revlog_row(item_id, dir_enum, prev_dir, updated.directions[dir_enum], rating, body.time_ms, now=now)
     db.append_revlog(row)
+    # Single-level undo: snapshot the verbatim pre-grade state so the popover's
+    # "Got it ✓" can cycle back via "Undo ↩" (see app.srs.grade_undo).
+    record_grade_snapshot(db, item_id=item_id, direction=dir_enum, prior=prev_dir, revlog_id=row.id)
     _balancer_add(balancer, card_id=prev_dir.anki_card_id, note_id=item.anki_note_id, interval=row.interval)
     # Anki parity: advance the learning cutoff at grade time. The next /review-queue
     # call uses this snapshot (not live `now`) to decide which queue=1 cards are
@@ -279,6 +283,35 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
     if new_dir.left is not None:
         response["left"] = new_dir.left
     return response
+
+
+@router.post("/items/{item_id}/direction/{direction}/undo", status_code=200)
+async def undo_grade(item_id: int, direction: str, request: Request):
+    """Undo the most recent TT-native grade on (item, direction).
+
+    409 when the grade was superseded by a newer one, already synced to Anki
+    (dirty_fsrs cleared), or there is nothing to undo.
+    """
+    try:
+        dir_enum = Direction(direction)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid direction: {direction!r}") from exc
+
+    db = request.app.state.srs_db
+    if db.get_collocation_by_id(item_id) is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    try:
+        restored = undo_last_grade(db, item_id=item_id, direction=dir_enum)
+    except UndoNotAvailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return {
+        "status": "ok",
+        "direction": dir_enum.value,
+        "restored_state": restored.state.value,
+        "restored_due_at": restored.due_at.isoformat(),
+    }
 
 
 @router.get("/media/{filename}", status_code=200)

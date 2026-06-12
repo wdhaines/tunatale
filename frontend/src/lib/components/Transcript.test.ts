@@ -74,6 +74,7 @@ const transcriptWithCollocation: TranscriptData = {
           srs_item_id: null,
           translation: "good",
           collocation_span_id: 99,
+          collocation_is_due: true,
           collocation_start: true,
           collocation_srs_state: "learning",
           collocation_lemma: "dober dan",
@@ -94,6 +95,7 @@ const transcriptWithCollocation: TranscriptData = {
           srs_item_id: null,
           translation: "day",
           collocation_span_id: 99,
+          collocation_is_due: true,
           collocation_start: false,
           collocation_srs_state: "learning",
           collocation_lemma: "dober dan",
@@ -200,7 +202,7 @@ describe("Transcript", () => {
   });
 
   describe("collocation click behavior", () => {
-    it("plain click on collocation wrapper fires onCollocationStateChange", async () => {
+    it("plain click on collocation wrapper does NOT grade (grading lives in the popover)", async () => {
       const onCollocationStateChange = vi.fn();
       const { container } = render(Transcript, {
         props: defaultProps({
@@ -210,7 +212,115 @@ describe("Transcript", () => {
       });
       const span = container.querySelector(".collocation-span") as HTMLElement;
       await fireEvent.click(span);
+      expect(onCollocationStateChange).not.toHaveBeenCalled();
+    });
+
+    it("popover grade button fires onCollocationStateChange with the span id", async () => {
+      const onCollocationStateChange = vi.fn();
+      const { getByRole } = render(Transcript, {
+        props: defaultProps({
+          transcript: transcriptWithCollocation,
+          onCollocationStateChange,
+        }),
+      });
+      // collocation_srs_state is "learning" → past the intro, label is "Got it ✓"
+      await fireEvent.click(getByRole("button", { name: "Got it ✓" }));
       expect(onCollocationStateChange).toHaveBeenCalledWith(99);
+    });
+
+    it("shows no collocation grade button when onCollocationStateChange is not provided", () => {
+      const { queryByRole } = render(Transcript, {
+        props: defaultProps({
+          transcript: transcriptWithCollocation,
+          onCollocationStateChange: undefined,
+        }),
+      });
+      expect(queryByRole("button", { name: "Got it ✓" })).toBeNull();
+    });
+
+    it("shows no grade button when the collocation is not due (parity with words)", () => {
+      const notDue: TranscriptData = JSON.parse(JSON.stringify(transcriptWithCollocation));
+      for (const w of notDue.dialogue_lines[0].words) {
+        if (w.collocation_span_id !== null) w.collocation_is_due = false;
+      }
+      const { queryByRole } = render(Transcript, {
+        props: defaultProps({
+          transcript: notDue,
+          onCollocationStateChange: vi.fn(),
+        }),
+      });
+      expect(queryByRole("button", { name: "Got it ✓" })).toBeNull();
+    });
+
+    it('phrase popover shows "Undo ↩" when undoableItemId matches the span, and fires onCollocationUndo', async () => {
+      const onCollocationStateChange = vi.fn();
+      const onCollocationUndo = vi.fn();
+      const { getByRole } = render(Transcript, {
+        props: defaultProps({
+          transcript: transcriptWithCollocation,
+          onCollocationStateChange,
+          onCollocationUndo,
+          undoableItemId: 99,
+        }),
+      });
+      await fireEvent.click(getByRole("button", { name: "Undo ↩" }));
+      expect(onCollocationUndo).toHaveBeenCalledWith(99);
+      expect(onCollocationStateChange).not.toHaveBeenCalled();
+    });
+
+    it("phrase popover shows the normal grade button when undoableItemId is a different id", () => {
+      const { getByRole, queryByRole } = render(Transcript, {
+        props: defaultProps({
+          transcript: transcriptWithCollocation,
+          onCollocationStateChange: vi.fn(),
+          onCollocationUndo: vi.fn(),
+          undoableItemId: 12345,
+        }),
+      });
+      expect(getByRole("button", { name: "Got it ✓" })).toBeTruthy();
+      expect(queryByRole("button", { name: "Undo ↩" })).toBeNull();
+    });
+
+    it('clicking "Words…" switches the phrase to per-word popovers (like Alt)', async () => {
+      const { container, getByRole, queryByText } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptWithCollocation }),
+      });
+      const collSpan = container.querySelector(".collocation-span") as HTMLElement;
+      const outerWrap = collSpan.parentElement as HTMLElement;
+      const groupTooltip = () =>
+        Array.from(outerWrap.children).find((el) => el.getAttribute("role") === "tooltip") ?? null;
+
+      // Default: group tooltip exists, no per-word tooltip content.
+      expect(groupTooltip()).not.toBeNull();
+      expect(queryByText("good")).toBeNull();
+
+      await fireEvent.click(getByRole("button", { name: /words…/i }));
+
+      // Drilled in: group tooltip suppressed, inner word tooltip ("good") present.
+      expect(groupTooltip()).toBeNull();
+      expect(queryByText("good")).not.toBeNull();
+    });
+
+    it("tapping outside the phrase exits drill-in mode", async () => {
+      const { getByRole, queryByText } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptWithCollocation }),
+      });
+
+      await fireEvent.click(getByRole("button", { name: /words…/i }));
+      expect(queryByText("good")).not.toBeNull();
+
+      await fireEvent.pointerDown(document.body);
+      expect(queryByText("good")).toBeNull();
+    });
+
+    it("tapping an inner word stays in drill-in mode", async () => {
+      const { getByRole, getByText, queryByText } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptWithCollocation }),
+      });
+
+      await fireEvent.click(getByRole("button", { name: /words…/i }));
+      await fireEvent.pointerDown(getByText("dober"));
+      expect(queryByText("good")).not.toBeNull();
     });
 
     it("Enter key on collocation wrapper fires onCollocationStateChange", async () => {
@@ -226,7 +336,7 @@ describe("Transcript", () => {
       expect(onCollocationStateChange).toHaveBeenCalledWith(99);
     });
 
-    it("plain click inside collocation does not fire word-level onWordClick", async () => {
+    it("plain click inside collocation grades nothing (word nor collocation)", async () => {
       const onWordClick = vi.fn();
       const onCollocationStateChange = vi.fn();
       const { getByText } = render(Transcript, {
@@ -238,24 +348,29 @@ describe("Transcript", () => {
       });
       await fireEvent.click(getByText("dober"));
       expect(onWordClick).not.toHaveBeenCalled();
-      expect(onCollocationStateChange).toHaveBeenCalled();
+      expect(onCollocationStateChange).not.toHaveBeenCalled();
     });
 
-    it("Alt+click inside collocation fires word-level onWordClick", async () => {
+    it("Alt reveals per-word popovers whose grade button fires word-level onWordClick", async () => {
       const onWordClick = vi.fn();
-      const onCollocationStateChange = vi.fn();
-      const { getByText } = render(Transcript, {
+      // Make the inner word gradeable (unknown → "Start learning").
+      const transcriptUnknownInner: TranscriptData = JSON.parse(
+        JSON.stringify(transcriptWithCollocation),
+      );
+      transcriptUnknownInner.dialogue_lines[0].words[0].active_state = "unknown";
+      const { getByRole } = render(Transcript, {
         props: defaultProps({
-          transcript: transcriptWithCollocation,
+          transcript: transcriptUnknownInner,
           onWordClick,
-          onCollocationStateChange,
+          onCollocationStateChange: vi.fn(),
         }),
       });
-      await fireEvent.click(getByText("dober"), { altKey: true });
+      await fireEvent.keyDown(window, { key: "Alt" });
+      await fireEvent.click(getByRole("button", { name: "Start learning" }));
       expect(onWordClick).toHaveBeenCalledWith(expect.objectContaining({ lemma: "dober" }), 0);
     });
 
-    it("plain click on word outside collocation fires word-level onWordClick", async () => {
+    it("plain click on word outside collocation grades nothing", async () => {
       const onWordClick = vi.fn();
       const onCollocationStateChange = vi.fn();
       const { getByText } = render(Transcript, {
@@ -266,7 +381,7 @@ describe("Transcript", () => {
         }),
       });
       await fireEvent.click(getByText("hvala"));
-      expect(onWordClick).toHaveBeenCalledWith(expect.objectContaining({ lemma: "hvala" }), 0);
+      expect(onWordClick).not.toHaveBeenCalled();
       expect(onCollocationStateChange).not.toHaveBeenCalled();
     });
 
@@ -863,6 +978,56 @@ describe("Transcript", () => {
       await fireEvent.pointerDown(centruSpan);
       await fireEvent.pointerUp(centruSpan);
 
+      expect(container.querySelector(".phrase-confirm-bar")).toBeFalsy();
+    });
+
+    it("finger jitter on a single word does NOT flash the confirm bar mid-press", async () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptForDrag }),
+      });
+      const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+
+      // A touch tap fires pointermove over the SAME word before pointerup;
+      // the bar must not appear for a single-word "drag".
+      await fireEvent.pointerDown(centruSpan);
+      await fireEvent.pointerMove(centruSpan);
+
+      expect(container.querySelector(".phrase-confirm-bar")).toBeFalsy();
+    });
+
+    it("dragging out to a 2nd word and back to the anchor clears the selection", async () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptForDrag }),
+      });
+      const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+      const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+
+      await fireEvent.pointerDown(centruSpan);
+      await fireEvent.pointerMove(mestaSpan);
+      expect(container.querySelector(".phrase-confirm-bar")).toBeTruthy();
+
+      await fireEvent.pointerMove(centruSpan);
+      expect(container.querySelector(".phrase-confirm-bar")).toBeFalsy();
+    });
+
+    it("pointercancel (browser claims the touch for scrolling) clears any pending selection", async () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptForDrag }),
+      });
+      const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
+      const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
+
+      await fireEvent.pointerDown(centruSpan);
+      await fireEvent.pointerMove(mestaSpan);
+      expect(container.querySelector(".phrase-confirm-bar")).toBeTruthy();
+
+      // No pointerup ever fires when the browser takes over for scrolling —
+      // without cleanup the bar stuck open on every scroll that started on a word.
+      await fireEvent.pointerCancel(mestaSpan);
+      expect(container.querySelector(".phrase-confirm-bar")).toBeFalsy();
+
+      // And the aborted drag must not leave a stale anchor behind.
+      await fireEvent.pointerUp(mestaSpan);
       expect(container.querySelector(".phrase-confirm-bar")).toBeFalsy();
     });
 
@@ -2083,9 +2248,10 @@ describe("Transcript", () => {
       expect(helpToggle.getAttribute("aria-expanded")).toBe("true");
       const panel = container.querySelector(".help-panel");
       expect(panel).toBeTruthy();
-      expect(panel!.textContent).toContain("Drag to create a phrase");
+      expect(panel!.textContent).toContain("Drag to create a");
       expect(panel!.textContent).toContain("+ New phrase");
-      expect(panel!.textContent).toContain("Alt+click");
+      expect(panel!.textContent).toContain("popover");
+      expect(panel!.textContent).toContain("Alt+hover");
 
       // Mastery legend: New → Learning → Known, plus Unknown.
       const legend = panel!.querySelector(".help-legend") as HTMLElement;

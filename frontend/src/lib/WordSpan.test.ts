@@ -14,24 +14,134 @@ describe("WordSpan", () => {
     expect(getByRole("button").textContent).toBe("hvala");
   });
 
-  it("calls onWordClick with word and lineIndex on click", async () => {
+  it("clicking the word does NOT fire onWordClick (grading lives in the popover)", async () => {
     const onWordClick = vi.fn();
-    const word = makeWordToken({ lemma: "zdravo", srs_item_id: 42 });
+    const word = makeWordToken({
+      lemma: "zdravo",
+      srs_item_id: 42,
+      is_due: true,
+      active_direction: "recognition",
+    });
     const { getByRole } = render(WordSpan, {
       props: { word, onWordClick, lineIndex: 2 },
     });
     await fireEvent.click(getByRole("button", { name: /^zdravo$/ }));
+    expect(onWordClick).not.toHaveBeenCalled();
+  });
+
+  it("fires onWordClick with word and lineIndex via the popover grade button", async () => {
+    const onWordClick = vi.fn();
+    const word = makeWordToken({
+      lemma: "zdravo",
+      srs_item_id: 42,
+      is_due: true,
+      active_direction: "recognition",
+    });
+    const { getByRole } = render(WordSpan, {
+      props: { word, onWordClick, lineIndex: 2 },
+    });
+    await fireEvent.click(getByRole("button", { name: "Got it ✓" }));
     expect(onWordClick).toHaveBeenCalledWith(word, 2);
   });
 
   it("passes 0 as lineIndex when lineIndex prop is not provided", async () => {
     const onWordClick = vi.fn();
-    const word = makeWordToken({ srs_item_id: null });
+    const word = makeWordToken({ active_state: "unknown", srs_item_id: null });
     const { getByRole } = render(WordSpan, {
       props: { word, onWordClick },
     });
-    await fireEvent.click(getByRole("button"));
+    await fireEvent.click(getByRole("button", { name: "Start learning" }));
     expect(onWordClick).toHaveBeenCalledWith(word, 0);
+  });
+
+  describe("popover grade button", () => {
+    it('shows "Start learning" for an unknown word', () => {
+      const { getByRole } = render(WordSpan, {
+        props: { word: makeWordToken({ active_state: "unknown" }), onWordClick: vi.fn() },
+      });
+      expect(getByRole("button", { name: "Start learning" })).toBeTruthy();
+    });
+
+    it('shows "Got it ✓" for a due tracked word', () => {
+      const word = makeWordToken({ is_due: true, active_direction: "production", srs_item_id: 7 });
+      const { getByRole } = render(WordSpan, {
+        props: { word, onWordClick: vi.fn() },
+      });
+      expect(getByRole("button", { name: "Got it ✓" })).toBeTruthy();
+    });
+
+    it("shows no grade button for a tracked word that is not due (the old click no-op)", () => {
+      const word = makeWordToken({ is_due: false, active_direction: "production", srs_item_id: 7 });
+      const { queryByRole } = render(WordSpan, {
+        props: { word, onWordClick: vi.fn() },
+      });
+      expect(queryByRole("button", { name: /got it|start learning/i })).toBeNull();
+    });
+
+    it("shows no grade button for a due word missing active_direction", () => {
+      const word = makeWordToken({ is_due: true, active_direction: null, srs_item_id: 7 });
+      const { queryByRole } = render(WordSpan, {
+        props: { word, onWordClick: vi.fn() },
+      });
+      expect(queryByRole("button", { name: /got it|start learning/i })).toBeNull();
+    });
+
+    it("shows no grade button when onWordClick is not provided", () => {
+      const { queryByRole } = render(WordSpan, {
+        props: { word: makeWordToken({ active_state: "unknown" }) },
+      });
+      expect(queryByRole("button", { name: /start learning/i })).toBeNull();
+    });
+
+    it("inner-phrase word (requireModifier) exposes the grade button when altHover reveals it", async () => {
+      const onWordClick = vi.fn();
+      const word = makeWordToken({ active_state: "unknown", lemma: "dober" });
+      const { getByRole } = render(WordSpan, {
+        props: { word, onWordClick, requireModifier: true, altHover: true },
+      });
+      await fireEvent.click(getByRole("button", { name: "Start learning" }));
+      expect(onWordClick).toHaveBeenCalledWith(word, 0);
+    });
+  });
+
+  describe("undo cycle (Got it ✓ → Undo ↩)", () => {
+    it('shows "Undo ↩" when isGradeUndoable says this word was just graded — even though no longer due', () => {
+      const word = makeWordToken({ srs_item_id: 42, is_due: false, active_direction: null });
+      const tooltipActions = {
+        isGradeUndoable: (w: typeof word) => w.srs_item_id === 42,
+        onUndoGrade: vi.fn(),
+      };
+      const { getByRole } = render(WordSpan, {
+        props: { word, onWordClick: vi.fn(), tooltipActions },
+      });
+      expect(getByRole("button", { name: "Undo ↩" })).toBeTruthy();
+    });
+
+    it('clicking "Undo ↩" calls onUndoGrade with the word, not onWordClick', async () => {
+      const onWordClick = vi.fn();
+      const onUndoGrade = vi.fn();
+      const word = makeWordToken({ srs_item_id: 42 });
+      const tooltipActions = {
+        isGradeUndoable: () => true,
+        onUndoGrade,
+      };
+      const { getByRole } = render(WordSpan, {
+        props: { word, onWordClick, tooltipActions },
+      });
+      await fireEvent.click(getByRole("button", { name: "Undo ↩" }));
+      expect(onUndoGrade).toHaveBeenCalledWith(word);
+      expect(onWordClick).not.toHaveBeenCalled();
+    });
+
+    it("shows the normal grade label when isGradeUndoable returns false", () => {
+      const word = makeWordToken({ is_due: true, active_direction: "recognition", srs_item_id: 7 });
+      const tooltipActions = { isGradeUndoable: () => false, onUndoGrade: vi.fn() };
+      const { getByRole, queryByRole } = render(WordSpan, {
+        props: { word, onWordClick: vi.fn(), tooltipActions },
+      });
+      expect(getByRole("button", { name: "Got it ✓" })).toBeTruthy();
+      expect(queryByRole("button", { name: "Undo ↩" })).toBeNull();
+    });
   });
 
   it("handles Enter key the same as click", async () => {
@@ -256,23 +366,23 @@ describe("WordSpan", () => {
       expect(onWordClick).not.toHaveBeenCalled();
     });
 
-    it("Alt+click fires onWordClick when requireModifier is true", async () => {
+    it("Alt+click no longer fires onWordClick (grading moved to the popover)", async () => {
       const onWordClick = vi.fn();
       const word = makeWordToken({ lemma: "zdravo", srs_item_id: 7 });
       const { getByRole } = render(WordSpan, {
         props: { word, onWordClick, requireModifier: true },
       });
       await fireEvent.click(getByRole("button"), { altKey: true });
-      expect(onWordClick).toHaveBeenCalledWith(word, 0);
+      expect(onWordClick).not.toHaveBeenCalled();
     });
 
-    it("Shift+click fires onWordClick when requireModifier is true", async () => {
+    it("Shift+click no longer fires onWordClick (grading moved to the popover)", async () => {
       const onWordClick = vi.fn();
       const { getByRole } = render(WordSpan, {
         props: { word: makeWordToken(), onWordClick, requireModifier: true },
       });
       await fireEvent.click(getByRole("button"), { shiftKey: true });
-      expect(onWordClick).toHaveBeenCalled();
+      expect(onWordClick).not.toHaveBeenCalled();
     });
 
     it("plain Enter does not fire onWordClick when requireModifier is true", async () => {
@@ -386,71 +496,14 @@ describe("WordSpan", () => {
       expect(onWordClick).not.toHaveBeenCalled();
     });
 
-    it("mousedown on punct does not set drag anchor", async () => {
+    it("passes the given lineIndex to onWordClick via the grade button", async () => {
       const onWordClick = vi.fn();
-      const { container } = render(WordSpan, {
-        props: { word: makeWordToken({ suffix_punct: "," }), onWordClick },
-      });
-      const puncts = container.querySelectorAll(".punct");
-      await fireEvent.mouseDown(puncts[1], { clientX: 0, clientY: 0 });
-      await fireEvent.click(puncts[1], { clientX: 50, clientY: 0 });
-      expect(onWordClick).not.toHaveBeenCalled();
-    });
-
-    it("still fires onWordClick when clicking the word surface with punct present", async () => {
-      const onWordClick = vi.fn();
-      const word = makeWordToken({ lemma: "zdravo", srs_item_id: 1, suffix_punct: "?" });
-      const { getByRole } = render(WordSpan, {
-        props: { word, onWordClick },
-      });
-      await fireEvent.click(getByRole("button", { name: /^zdravo/ }));
-      expect(onWordClick).toHaveBeenCalledWith(word, 0);
-    });
-
-    it("passes the given lineIndex to onWordClick", async () => {
-      const onWordClick = vi.fn();
-      const word = makeWordToken({ lemma: "zdravo" });
+      const word = makeWordToken({ lemma: "zdravo", active_state: "unknown", suffix_punct: "?" });
       const { getByRole } = render(WordSpan, {
         props: { word, onWordClick, lineIndex: 7 },
       });
-      await fireEvent.click(getByRole("button", { name: /^zdravo/ }));
+      await fireEvent.click(getByRole("button", { name: "Start learning" }));
       expect(onWordClick).toHaveBeenCalledWith(word, 7);
-    });
-  });
-
-  describe("drag-to-select vs click", () => {
-    it("does not fire onWordClick on a drag (pointer moved past threshold)", async () => {
-      const onWordClick = vi.fn();
-      const { getByRole } = render(WordSpan, {
-        props: { word: makeWordToken(), onWordClick },
-      });
-      const el = getByRole("button");
-      await fireEvent.mouseDown(el, { clientX: 0, clientY: 0 });
-      await fireEvent.click(el, { clientX: 50, clientY: 0 });
-      expect(onWordClick).not.toHaveBeenCalled();
-    });
-
-    it("fires onWordClick on a click (pointer barely moved)", async () => {
-      const onWordClick = vi.fn();
-      const word = makeWordToken({ lemma: "zdravo", srs_item_id: 1 });
-      const { getByRole } = render(WordSpan, {
-        props: { word, onWordClick },
-      });
-      const el = getByRole("button", { name: /^zdravo$/ });
-      await fireEvent.mouseDown(el, { clientX: 10, clientY: 10 });
-      await fireEvent.click(el, { clientX: 12, clientY: 11 });
-      expect(onWordClick).toHaveBeenCalledWith(word, 0);
-    });
-
-    it("still suppresses a drag when requireModifier and Alt are set", async () => {
-      const onWordClick = vi.fn();
-      const { getByRole } = render(WordSpan, {
-        props: { word: makeWordToken(), onWordClick, requireModifier: true },
-      });
-      const el = getByRole("button");
-      await fireEvent.mouseDown(el, { clientX: 0, clientY: 0 });
-      await fireEvent.click(el, { clientX: 50, clientY: 0, altKey: true });
-      expect(onWordClick).not.toHaveBeenCalled();
     });
   });
 });
