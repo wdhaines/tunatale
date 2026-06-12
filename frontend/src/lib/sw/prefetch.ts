@@ -69,11 +69,13 @@ export async function prefetchAudioUrls(
 export function maybePrefetchLesson(
   urls: string[],
   deps: {
+    enabled: boolean;
     connection: NetworkInformationLike | undefined;
     caches: PrefetchCacheStorageLike | undefined;
     fetch: (url: string) => Promise<ResponseLike>;
   },
 ): Promise<void> {
+  if (!deps.enabled) return Promise.resolve();
   if (!deps.caches) return Promise.resolve();
   if (!shouldPrefetchOnConnection(deps.connection)) return Promise.resolve();
   return prefetchAudioUrls(urls, { caches: deps.caches, fetch: deps.fetch });

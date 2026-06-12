@@ -80,9 +80,21 @@ describe("prefetchAudioUrls", () => {
 });
 
 describe("maybePrefetchLesson", () => {
+  it("is a no-op when the preference is disabled", async () => {
+    const caches = new FakeCaches();
+    await maybePrefetchLesson(["/api/audio/x"], {
+      enabled: false,
+      connection: { type: "wifi" },
+      caches,
+      fetch: () => Promise.resolve(ok()),
+    });
+    expect(caches.cache.store.size).toBe(0);
+  });
+
   it("is a no-op when Cache Storage is unavailable", async () => {
     let fetched = false;
     await maybePrefetchLesson(["/api/audio/x"], {
+      enabled: true,
       connection: { type: "wifi" },
       caches: undefined,
       fetch: () => {
@@ -96,6 +108,7 @@ describe("maybePrefetchLesson", () => {
   it("is a no-op when the connection disallows prefetch", async () => {
     const caches = new FakeCaches();
     await maybePrefetchLesson(["/api/audio/x"], {
+      enabled: true,
       connection: { type: "cellular" },
       caches,
       fetch: () => Promise.resolve(ok()),
@@ -103,9 +116,10 @@ describe("maybePrefetchLesson", () => {
     expect(caches.cache.store.size).toBe(0);
   });
 
-  it("prefetches when Cache Storage exists and the connection is wifi", async () => {
+  it("prefetches when enabled, Cache Storage exists, and the connection is wifi", async () => {
     const caches = new FakeCaches();
     await maybePrefetchLesson(["/api/audio/x"], {
+      enabled: true,
       connection: { type: "wifi" },
       caches,
       fetch: () => Promise.resolve(ok()),
