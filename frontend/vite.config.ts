@@ -13,21 +13,28 @@ const API_PROTO = USE_SSL ? 'https' : 'http';
 // `allowedHosts: ['.ts.net']` lets Vite's host check accept the Mac's MagicDNS
 // hostname (it otherwise rejects non-IP/non-localhost Host headers); the suffix
 // match is scoped to Tailscale MagicDNS only.
+// Shared by `server` (vite dev) and `preview` (vite preview, used by the
+// `start-dev.sh --prod` build-serve path). The service worker only activates
+// against a production build — HMR and SWs conflict — so the phone-facing
+// offline mode runs `vite preview`, which needs the same host/HTTPS/proxy wiring.
+const serverOptions = {
+	host: true,
+	...(USE_SSL && {
+		https: {
+			key: readFileSync('../certs/localhost-key.pem'),
+			cert: readFileSync('../certs/localhost.pem'),
+		}
+	}),
+	allowedHosts: ['.ts.net'],
+	proxy: USE_SSL
+		? { '/api': { target: `${API_PROTO}://localhost:${process.env.API_PORT ?? 8000}`, secure: false } }
+		: { '/api': `http://localhost:${process.env.API_PORT ?? 8000}` }
+};
+
 export default defineConfig({
 	plugins: [sveltekit()],
-	server: {
-		host: true,
-		...(USE_SSL && {
-			https: {
-				key: readFileSync('../certs/localhost-key.pem'),
-				cert: readFileSync('../certs/localhost.pem'),
-			}
-		}),
-		allowedHosts: ['.ts.net'],
-		proxy: USE_SSL
-			? { '/api': { target: `${API_PROTO}://localhost:${process.env.API_PORT ?? 8000}`, secure: false } }
-			: { '/api': `http://localhost:${process.env.API_PORT ?? 8000}` }
-	},
+	server: serverOptions,
+	preview: serverOptions,
 	resolve: {
 		conditions: ['browser']
 	},
