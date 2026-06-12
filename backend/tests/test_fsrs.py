@@ -302,6 +302,38 @@ class TestReviewScheduling:
         )
 
 
+class TestIsDayLevelLastReview:
+    """Unit tests for the shared day-level-marker predicate (Layer 72).
+
+    Midnight-UTC `last_review` is `parse_fsrs_data`'s marker for "reconstructed
+    day-level from due - ivl, no lrt present". The predicate is shared by
+    `_elapsed_days_for_fsrs` (R/elapsed branch select) and sync's
+    `_tt_memory_newer` recency guard (a round-tripped day-level timestamp is
+    not a TT grade time).
+    """
+
+    def test_midnight_datetime_is_day_level(self):
+        from datetime import datetime as _dt
+
+        from app.srs.fsrs import is_day_level_last_review
+
+        assert is_day_level_last_review(_dt(2026, 5, 21, 0, 0, 0, tzinfo=UTC)) is True
+
+    def test_subday_datetime_is_not_day_level(self):
+        from datetime import datetime as _dt
+
+        from app.srs.fsrs import is_day_level_last_review
+
+        assert is_day_level_last_review(_dt(2026, 5, 20, 16, 8, 36, tzinfo=UTC)) is False
+        # Even a single microsecond past midnight counts as a real (lrt/grade) time.
+        assert is_day_level_last_review(_dt(2026, 5, 21, 0, 0, 0, 1, tzinfo=UTC)) is False
+
+    def test_bare_date_is_day_level(self):
+        from app.srs.fsrs import is_day_level_last_review
+
+        assert is_day_level_last_review(date(2026, 5, 21)) is True
+
+
 class TestElapsedDaysForFsrs:
     """Direct unit tests for the day-level vs lrt-fractional helper."""
 

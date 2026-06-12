@@ -34,6 +34,7 @@ from app.common.guid import compute_guid
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
+from app.srs.fsrs import is_day_level_last_review
 from app.srs.queue_stats import resolve_bury_new, resolve_bury_review, resolve_learning_steps, resolve_relearning_steps
 
 # Logger name pinned to "app.anki.sync": BURY_TRACE assertions in
@@ -167,9 +168,17 @@ def _tt_memory_newer(local_dir: DirectionState, card_rec: CardRecord) -> bool:
     revlog for the grade but pull must not let Anki's pre-grade s/d win.
     Strict ``>`` so an equal timestamp (the same grade already round-tripped)
     keeps the take-Anki default; either side missing keeps it too.
+
+    Layer 72: a midnight-UTC local ``last_review`` is `parse_fsrs_data`'s
+    day-level reconstruction round-tripped back from a no-lrt Anki card, not
+    a TT grade time (TT-native grades stamp sub-second ``now``). Day
+    truncation can overshoot the real grade by up to 24h, so it may postdate
+    Anki's lrt — without this check the guard protected a placeholder s/d
+    against every future pull (the stuck upogniti card, 2026-06-12).
     """
     return (
         local_dir.last_review is not None
+        and not is_day_level_last_review(local_dir.last_review)
         and card_rec.last_review is not None
         and local_dir.last_review > card_rec.last_review
     )

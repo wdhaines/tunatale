@@ -230,6 +230,31 @@ def _forgetting_curve(elapsed_days: float, stability: float, decay: float = -0.5
     return float(np.power(e / s * factor + 1, d))
 
 
+def is_day_level_last_review(last_review: datetime | date) -> bool:
+    """True when *last_review* is `parse_fsrs_data`'s day-level marker.
+
+    A midnight-UTC timestamp (or a bare ``date``) means the value was
+    reconstructed day-level from ``due - ivl`` because Anki's ``cards.data``
+    had no ``lrt`` — it is NOT a real grade time. TT-native grades always
+    stamp ``datetime.now(UTC)`` (sub-second precision), so a genuine grade
+    landing exactly on midnight is the same vanishing-probability tradeoff
+    the R-branch select below already accepts.
+
+    Shared by `_elapsed_days_for_fsrs` (integer-vs-fractional elapsed branch)
+    and sync's `_tt_memory_newer` recency guard (Layer 72: a round-tripped
+    day-level value can postdate Anki's real lrt by up to 24h and must not
+    read as "TT graded later").
+    """
+    if isinstance(last_review, datetime):
+        return (
+            last_review.hour == 0
+            and last_review.minute == 0
+            and last_review.second == 0
+            and last_review.microsecond == 0
+        )
+    return True
+
+
 def _elapsed_days_for_fsrs(
     last_review: datetime | date | None,
     ref_now: datetime,
@@ -259,12 +284,7 @@ def _elapsed_days_for_fsrs(
     if last_review is None:
         return 0.0
     if isinstance(last_review, datetime):
-        is_day_level = (
-            last_review.hour == 0
-            and last_review.minute == 0
-            and last_review.second == 0
-            and last_review.microsecond == 0
-        )
+        is_day_level = is_day_level_last_review(last_review)
         if is_day_level and col_crt is not None:
             today_col_day = compute_anki_day_index(col_crt, rollover_hour, ref_now)
             review_col_day = compute_anki_day_index(col_crt, rollover_hour, last_review)

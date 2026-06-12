@@ -3248,6 +3248,49 @@ class TestPullRecencyGuardLayer70:
         after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
         assert after.stability == 8.2442
 
+    def test_day_level_local_timestamp_does_not_block_take_anki(self):
+        """Layer 72 (upogniti, 2026-06-12): a midnight-UTC local last_review is
+        parse_fsrs_data's day-level reconstruction (due - ivl, no lrt) round-
+        tripped back from Anki — not a TT grade time. Day truncation can
+        overshoot the real grade by up to 24h, so it may postdate Anki's lrt;
+        the guard must NOT read that as "TT graded later" or a placeholder
+        s/d gets protected against every future pull, permanently."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        midnight = datetime(2026, 5, 21, 0, 0, 0, tzinfo=UTC)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=midnight + timedelta(days=23),
+            stability=1.0,
+            difficulty=5.0,
+            reps=1,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=False,
+            anki_card_id=90010,
+            last_review=midnight,
+            last_review_time_ms=0,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        # Anki's real lrt: the actual grade, ~8h BEFORE the midnight stamp.
+        anki_lrt = datetime(2026, 5, 20, 16, 8, 36, tzinfo=UTC)
+        card = make_card_record(
+            anki_card_id=90010,
+            ord=0,
+            reps=1,
+            stability=4.8369,
+            difficulty=3.379,
+            last_review=anki_lrt,
+        )
+        records = [make_note_record(anki_guid=guid, cards=[card])]
+        AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert after.stability == 4.8369
+        assert after.difficulty == 3.379
+        assert after.last_review == anki_lrt
+
     def test_local_never_graded_takes_anki(self):
         """Local last_review is NULL (never TT-graded) → take Anki (unchanged)."""
         db = _make_tt_db()
