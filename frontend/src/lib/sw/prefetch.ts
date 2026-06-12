@@ -32,7 +32,9 @@ export interface PrefetchCacheStorageLike {
  * on-demand caching via the service worker's cache-first still applies, so the
  * user just pays for the first play instead of a background prefetch.
  */
-export function shouldPrefetchOnConnection(connection: NetworkInformationLike | undefined): boolean {
+export function shouldPrefetchOnConnection(
+  connection: NetworkInformationLike | undefined,
+): boolean {
   if (!connection) return false;
   if (connection.saveData === true) return false;
   return connection.type === "wifi";

@@ -71,7 +71,10 @@ describe("prefetchAudioUrls", () => {
 
   it("does nothing for an empty url list", async () => {
     const caches = new FakeCaches();
-    await prefetchAudioUrls([], { caches, fetch: () => Promise.reject(new Error("should not fetch")) });
+    await prefetchAudioUrls([], {
+      caches,
+      fetch: () => Promise.reject(new Error("should not fetch")),
+    });
     expect(caches.cache.store.size).toBe(0);
   });
 });

@@ -39,7 +39,9 @@ sw.addEventListener("activate", (event) => {
       .keys()
       .then((keys) =>
         Promise.all(
-          keys.filter((key) => key !== APP_CACHE && key !== AUDIO_CACHE).map((key) => sw.caches.delete(key)),
+          keys
+            .filter((key) => key !== APP_CACHE && key !== AUDIO_CACHE)
+            .map((key) => sw.caches.delete(key)),
         ),
       )
       .then(() => sw.clients.claim()),
