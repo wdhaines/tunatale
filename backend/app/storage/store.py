@@ -264,3 +264,9 @@ class ContentStore:
                 (lesson_id,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def delete_audio_files_for_lesson(self, lesson_id: str) -> None:
+        """Delete all audio file rows for a lesson so re-render replaces, not appends."""
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (lesson_id,))
+            conn.commit()

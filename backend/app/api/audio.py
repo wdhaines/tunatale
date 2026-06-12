@@ -44,6 +44,9 @@ async def render_audio(body: RenderAudioRequest, request: Request):
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
 
+    # Delete stale rows so re-render replaces, not appends
+    store.delete_audio_files_for_lesson(body.lesson_id)
+
     renderer = request.app.state.renderer
     audio_dir: Path = request.app.state.audio_dir
     audio_dir.mkdir(parents=True, exist_ok=True)

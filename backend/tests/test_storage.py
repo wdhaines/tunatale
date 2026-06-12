@@ -218,6 +218,16 @@ class TestSectionAudioStorage:
         """get_audio_file_row returns None for unknown audio_id."""
         assert store.get_audio_file_row("nonexistent") is None
 
+    def test_delete_audio_files_for_lesson(self, store):
+        """delete_audio_files_for_lesson removes all rows for a given lesson."""
+        store.save_audio_file("a1", "l1", "/a1.wav")
+        store.save_audio_file("a2", "l1", "/a2.wav", section_index=0, section_type="key_phrases")
+        store.save_audio_file("a3", "l2", "/a3.wav")  # different lesson — should survive
+
+        store.delete_audio_files_for_lesson("l1")
+        assert store.list_audio_files_for_lesson("l1") == []
+        assert store.list_audio_files_for_lesson("l2") != []
+
     def test_schema_migration_adds_missing_columns(self, tmp_path):
         """ContentStore adds section_index/section_type columns when opening an old-schema DB."""
         import sqlite3

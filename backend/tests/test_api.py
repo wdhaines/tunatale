@@ -2456,6 +2456,44 @@ class TestAudioEndpoints:
         assert sec["section_type"] == "key_phrases"
         assert sec["title"] == "Key Phrases"
 
+    async def test_render_replaces_existing_rows(self, tmp_path):
+        """Re-rendering a lesson replaces stale rows so count is exactly len(sections)+1."""
+        from app.storage.store import ContentStore
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=_fake_render)
+
+        mock_lesson = _make_mock_lesson_with_sections()
+        store = ContentStore(":memory:")
+        lesson_id = "lesson-replace-test"
+        store.save_lesson(lesson_id, "some-curriculum-id", 1, mock_lesson)
+
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        expected_count = len(mock_lesson.sections) + 1  # sections + full row
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            # First render
+            resp1 = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+            assert resp1.status_code == 202
+            after_first = store.list_audio_files_for_lesson(lesson_id)
+            assert len(after_first) == expected_count, (
+                f"Expected {expected_count} rows after first render, got {len(after_first)}"
+            )
+
+            # Second render — should replace, not append
+            resp2 = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+            assert resp2.status_code == 202
+            after_second = store.list_audio_files_for_lesson(lesson_id)
+            assert len(after_second) == expected_count, (
+                f"Expected {expected_count} rows after re-render, got {len(after_second)}"
+            )
+
+            # Audio IDs should be different (new cohort)
+            assert resp1.json()["audio_id"] != resp2.json()["audio_id"]
+
     async def test_get_lesson_audio_endpoint(self, tmp_path):
         """GET /api/audio/lesson/{lesson_id} returns existing audio files list."""
         from app.storage.store import ContentStore
