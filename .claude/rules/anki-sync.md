@@ -86,7 +86,7 @@ Never call `sqlite3.connect` on `collection.anki2` directly. Use `app.anki.safet
 
 ## One sync sequence — never fork the phase list (the b0a4b8a class)
 
-There is exactly **one** definition of "the steps a sync runs": `run_full_sync` in `app/anki/sync.py`. It does `detect_and_reset_orphans → sync_create_new → sync_push → sync_pull → (every `refresh_*` deck-config sync + multi-deck warn + Anki→TT media refresh + soak heartbeat)`. Every sync path funnels through `main()` into it:
+There is exactly **one** definition of "the steps a sync runs": `run_full_sync` in `app/anki/sync.py`. (Since the 2026-06-11 split, `sync.py` is the runner + re-export facade; the `AnkiSync` engine is in `sync_engine.py`, collection I/O in `sync_reader.py`/`sync_writer.py`, leaf helpers in `sync_common.py` — import and patch through `app.anki.sync` as before.) It does `detect_and_reset_orphans → sync_create_new → sync_push → sync_pull → (every `refresh_*` deck-config sync + multi-deck warn + Anki→TT media refresh + soak heartbeat)`. Every sync path funnels through `main()` into it:
 
 - **`POST /api/anki/peer-sync`** (`app/api/anki.py`, the ONLY HTTP sync endpoint) → `peer_sync` → `main` (`sync_orchestrator.py` → `sync.py:main`) — the path the UI Sync button uses; threads the LLM/image `media_fn` and the media dir through.
 - **`python -m app.anki.sync`** — manual Anki-closed CLI against the real `collection.anki2`; `media_fn=None`.

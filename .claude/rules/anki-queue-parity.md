@@ -1,6 +1,6 @@
 # TT ↔ Anki Queue Parity
 
-Required reading before changing `backend/app/api/srs.py`, `backend/app/srs/fsrs.py`, `backend/app/srs/queue_stats.py`, or `backend/app/anki/sync.py`. Full layer history at `docs/anki-parity-layers.md` — open only when "have we hit this exact thing before?"
+Required reading before changing `backend/app/api/srs.py`, `backend/app/srs/fsrs.py`, `backend/app/srs/queue_stats.py`, or the sync modules (`backend/app/anki/sync.py` — runner + facade; since the 2026-06-11 split, the reconcile engine lives in `sync_engine.py`, the collection I/O in `sync_reader.py`/`sync_writer.py`, shared leaf helpers in `sync_common.py`; `app.anki.sync` re-exports everything, so "sync.py" references below mean the facade surface). Full layer history at `docs/anki-parity-layers.md` — open only when "have we hit this exact thing before?"
 
 ## What "parity" means
 
