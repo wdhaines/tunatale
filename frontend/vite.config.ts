@@ -1,5 +1,6 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vitest/config';
+import { readFileSync } from 'node:fs';
 
 // Expose the dev server beyond localhost so a Tailscale-connected phone can reach
 // it. `host: true` binds all interfaces (incl. the Tailscale address).
@@ -10,9 +11,16 @@ export default defineConfig({
 	plugins: [sveltekit()],
 	server: {
 		host: true,
+		https: {
+			key: readFileSync('../certs/localhost-key.pem'),
+			cert: readFileSync('../certs/localhost.pem'),
+		},
 		allowedHosts: ['.ts.net'],
 		proxy: {
-			'/api': `http://localhost:${process.env.API_PORT ?? 8000}`
+			'/api': {
+				target: `https://localhost:${process.env.API_PORT ?? 8000}`,
+				secure: false,
+			}
 		}
 	},
 	resolve: {

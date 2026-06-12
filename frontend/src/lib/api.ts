@@ -2,7 +2,7 @@
  * TunaTale API client — wraps backend endpoints.
  */
 
-export const BASE_URL = typeof window !== "undefined" ? "" : "http://localhost:8000";
+export const BASE_URL = typeof window !== "undefined" ? "" : "https://localhost:8000";
 
 export interface CurriculumSummary {
   id: string;

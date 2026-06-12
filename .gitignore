@@ -21,6 +21,10 @@ env/
 .env.*
 !.env.example
 
+# SSL certs (local dev only)
+certs/
+*.pem
+
 # Test & coverage artifacts
 .coverage
 coverage.xml

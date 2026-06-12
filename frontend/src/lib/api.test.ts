@@ -24,7 +24,7 @@ describe("BASE_URL SSR branch", () => {
     vi.stubGlobal("window", undefined);
     vi.resetModules();
     const { BASE_URL } = await import("./api");
-    expect(BASE_URL).toBe("http://localhost:8000");
+    expect(BASE_URL).toBe("https://localhost:8000");
   });
 });
 
