@@ -38,7 +38,7 @@ To delete notes/cards while keeping AnkiWeb in sync, write a grave row instead o
 - `usn=-1` on every new grave row (client-side; the server rewrites it during sync).
 - Bump `col.mod` and set `col.usn=-1`. **Don't** touch `col.scm` — deletes are data-only, no full upload.
 
-Canonical pattern (mirror `app/anki/archive/delete_phonology_demos.py` or `archive/cleanup_function_word_notes.py`):
+Canonical pattern (mirror `scripts/anki_archive/delete_phonology_demos.py` or `scripts/anki_archive/cleanup_function_word_notes.py`):
 
 ```python
 _GRAVE_KIND_CARD, _GRAVE_KIND_NOTE = 0, 1

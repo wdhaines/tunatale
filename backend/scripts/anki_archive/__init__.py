@@ -7,9 +7,10 @@ only consumers were dead test scaffolding; ``bootstrap_tt_revlog`` — the one-t
 tt_revlog seeding tool). None is imported by production code (verified: zero
 non-test references at archival time). They are kept — rather than deleted —
 because several rule files cite them as canonical patterns (grave-writing,
-schema-bump workflow, dedupe). They are excluded from the coverage gate via
-``app/anki/archive/*`` in pyproject's ``coverage.run.omit``.
+schema-bump workflow, dedupe). They live under ``scripts/`` (not ``app/``) so the
+coverage gate (``source = ["app"]``) and ``ruff check app`` skip them — retired
+tooling shouldn't gate the build.
 
-If you need to re-run one: ``uv run python -m app.anki.archive.<name>``.
+If you need to re-run one: ``uv run python -m scripts.anki_archive.<name>``.
 If you need a new migration, copy the *shape* of one of these into ``app/anki/``.
 """

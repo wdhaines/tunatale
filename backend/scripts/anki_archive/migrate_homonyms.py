@@ -26,7 +26,7 @@ import re
 import time
 from pathlib import Path
 
-from app.anki.archive.notetype_builders import build_field_config
+from scripts.anki_archive.notetype_builders import build_field_config
 from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
 from app.anki.safety import safe_open
 from app.anki.sqlite_reader import find_deck_id

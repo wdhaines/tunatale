@@ -108,9 +108,9 @@ addopts = "--cov=app --cov-report=term-missing"
 source = ["app"]
 branch = true
 omit = [
-    # Retired one-shot migration/repair/analysis scripts (already applied to the
-    # production collection, zero non-test references). See app/anki/archive/__init__.py.
-    "app/anki/archive/*",
+    # Retired one-shot migration/repair/analysis scripts now live under
+    # scripts/anki_archive/ (outside source=["app"]), so they need no omit here.
+    # See scripts/anki_archive/__init__.py.
     "app/srs/build_function_word_list.py",
     "app/anki/sync_driver.py",
 ]

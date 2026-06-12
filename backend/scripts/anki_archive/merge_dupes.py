@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from app.anki.archive.notetype_builders import (
+from scripts.anki_archive.notetype_builders import (
     SLOVENE_VOCAB_CSS,
     build_field_config,
     build_notetype_config,
