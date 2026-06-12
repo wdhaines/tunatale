@@ -277,21 +277,29 @@ class TestMainDelegatesToRunFullSync:
 
         tt_db = SRSDatabase(":memory:")
 
+        settings_log = tmp_path / "from_settings" / "sync.log"
+
         class FakeSettings:
             anki_collection_path = "unused"
             anki_deck_name = "0. Slovene"
             anki_model_name = "Slovene Vocabulary"
             database_url = "sqlite:///:memory:"
+            sync_log = settings_log
 
         @contextmanager
         def fake_safe_open(path, mode):
             yield type("Ctx", (), {"conn": anki_conn})()
 
+        # No _sync_log_path: main() must default the soak-log path from
+        # settings.sync_log, NOT a hardcoded ~/.tunatale/logs/sync.log. The
+        # hardcoded default ignored the conftest isolation fixture's
+        # monkeypatch(settings, "sync_log", tmp), so peer-sync tests (which route
+        # through tt_sync_main without _sync_log_path) leaked SYNC_SOAK heartbeats
+        # into the user's real production sync.log.
         exit_code = main(
             argv=[],
             _settings=FakeSettings(),
             _safe_open_fn=fake_safe_open,
-            _sync_log_path=tmp_path / "sync.log",
             _db=tt_db,
         )
 
@@ -300,6 +308,7 @@ class TestMainDelegatesToRunFullSync:
         # Default (CLI) call passes no media generator or media dir.
         assert spy.await_args.kwargs["media_fn"] is None
         assert spy.await_args.kwargs["media_dir"] is None
+        assert spy.await_args.kwargs["sync_log_path"] == settings_log
 
     def test_main_forwards_media_fn_and_media_dir(self, tmp_path, monkeypatch):
         """When peer_sync supplies a media generator + media dir, main() threads
@@ -632,6 +641,7 @@ class TestMain:
             anki_deck_name = "Test"
             anki_model_name = "Basic"
             sqlite_db_path = ":memory:"
+            sync_log = tmp_path / "sync.log"
 
         # Mock safe_open to avoid actual file locking
         @contextmanager
@@ -663,6 +673,7 @@ class TestMain:
             anki_deck_name = "Test"
             anki_model_name = "Basic"
             database_url = "sqlite:///:memory:"
+            sync_log = tmp_path / "sync.log"
 
         exit_code = main(
             argv=["--force-fsrs"],
@@ -687,6 +698,7 @@ class TestMain:
             anki_deck_name = "Test"
             anki_model_name = "Basic"
             database_url = "sqlite:///:memory:"
+            sync_log = tmp_path / "sync.log"
 
         # Mock safe_open to raise RuntimeError
         @contextmanager

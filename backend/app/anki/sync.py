@@ -281,7 +281,12 @@ def main(
         if _force_fsrs_ack_path is not None
         else Path("~/.tunatale/force_fsrs_ack.txt").expanduser()
     )
-    _sync_log = _sync_log_path if _sync_log_path is not None else Path("~/.tunatale/logs/sync.log").expanduser()
+    # Default to settings.sync_log (not a hardcoded path) so the conftest
+    # isolation fixture's monkeypatch reaches it — otherwise peer-sync tests,
+    # which route through tt_sync_main without an explicit _sync_log_path, leak
+    # SYNC_SOAK heartbeats into the user's real ~/.tunatale/logs/sync.log.
+    # Production is unchanged: settings.sync_log defaults to that same path.
+    _sync_log = _sync_log_path if _sync_log_path is not None else _s.sync_log
 
     # Get database instance
     db = _db if _db is not None else SRSDatabase(_s.database_url.removeprefix("sqlite:///"))
