@@ -1,12 +1,31 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { LessonAudio } from '$lib/api';
+	import { maybePrefetchLesson } from '$lib/sw/prefetch';
+	import type { NetworkInformationLike, PrefetchCacheStorageLike } from '$lib/sw/prefetch';
 
 	interface Props {
 		audio: LessonAudio;
 	}
 
 	let { audio }: Props = $props();
+
+	// On wifi, prefetch this lesson's audio into the service-worker cache so it
+	// replays offline later for free. No-op when Cache Storage / wifi-detection
+	// is unavailable (all gating lives in maybePrefetchLesson). See
+	// docs/offline-audio-plan.md Phase 4.
+	onMount(() => {
+		const nav = navigator as Navigator & { connection?: NetworkInformationLike };
+		const urls = [audio.audio_id, ...audio.sections.map((s) => s.audio_id)].map((id) =>
+			api.audioUrl(id)
+		);
+		void maybePrefetchLesson(urls, {
+			connection: nav.connection,
+			caches: (globalThis as { caches?: PrefetchCacheStorageLike }).caches,
+			fetch
+		});
+	});
 </script>
 
 <section class="card">
