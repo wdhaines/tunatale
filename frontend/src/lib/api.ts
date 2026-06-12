@@ -2,7 +2,13 @@
  * TunaTale API client — wraps backend endpoints.
  */
 
-export const BASE_URL = typeof window !== "undefined" ? "" : "https://localhost:8000";
+// SSR fetches go straight to the backend (the browser uses the Vite proxy via
+// relative URLs). Protocol and port must mirror the proxy target in
+// vite.config.ts: HTTPS only when start-dev.sh sets VITE_SSL_ENABLED, port from
+// API_PORT (E2E runs the backend on 8001).
+const SSR_PROTO = import.meta.env.VITE_SSL_ENABLED === "true" ? "https" : "http";
+export const BASE_URL =
+  typeof window !== "undefined" ? "" : `${SSR_PROTO}://localhost:${process.env.API_PORT ?? 8000}`;
 
 export interface CurriculumSummary {
   id: string;

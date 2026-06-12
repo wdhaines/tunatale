@@ -61,6 +61,15 @@ if command -v mkcert &>/dev/null && ! security find-certificate -c "mkcert" /Lib
         || echo "ℹ mkcert CA not added to system trust store (run 'sudo mkcert -install' manually if you want browsers to trust the cert)"
 fi
 
+# Node doesn't read the macOS keychain, so the system-trust install above isn't
+# enough for SvelteKit's SSR fetches to the HTTPS backend. Point Node at the
+# mkcert root CA instead — keeps TLS verification ON (unlike the
+# NODE_TLS_REJECT_UNAUTHORIZED=0 hammer, which disables it for ALL requests).
+MKCERT_CA="$(mkcert -CAROOT 2>/dev/null)/rootCA.pem"
+if [ -f "$MKCERT_CA" ]; then
+    export NODE_EXTRA_CA_CERTS="$MKCERT_CA"
+fi
+
 cleanup() {
     echo ""
     echo "Shutting down..."
@@ -95,23 +104,32 @@ sleep 2
 # Start frontend in background
 echo "Starting frontend on https://localhost:5173..."
 cd frontend
-VITE_SSL_ENABLED=true NODE_TLS_REJECT_UNAUTHORIZED=0 bun run dev &
+VITE_SSL_ENABLED=true bun run dev &
 FRONTEND_PID=$!
 cd ..
+
+# Wait for Vite to answer before printing the URL banner, so it lands AFTER
+# (not buried under) the localhost/IP listing Vite prints asynchronously.
+for _ in $(seq 1 40); do
+    curl -sk -o /dev/null "https://localhost:5173/" 2>/dev/null && break
+    sleep 0.5
+done
 
 echo ""
 echo "Application started!"
 echo ""
+if [ -n "$TS_HOST" ]; then
+    echo "  ➜ Phone (tailnet): https://${TS_HOST}:5173"
+fi
+echo "  Frontend:     https://localhost:5173"
 echo "  Backend API:  https://localhost:8000"
 echo "  API Docs:     https://localhost:8000/docs"
-echo "  Frontend:     https://localhost:5173"
 
 if [ -n "$TS_HOST" ]; then
-    echo "  Phone (tailnet): https://${TS_HOST}:5173"
-    echo ""
-    echo "  To trust certs on Android:"
     CA_DIR="$(mkcert -CAROOT 2>/dev/null)"
     if [ -n "$CA_DIR" ] && [ -f "$CA_DIR/rootCA.pem" ]; then
+        echo ""
+        echo "  To trust certs on Android:"
         echo "    Copy $CA_DIR/rootCA.pem to your phone, then:"
         echo "    Settings → Security → Install certificate → CA certificate"
         echo "    To serve the CA for download:"

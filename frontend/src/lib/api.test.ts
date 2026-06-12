@@ -17,14 +17,33 @@ function mockFail(statusText = "Internal Server Error"): Response {
 describe("BASE_URL SSR branch", () => {
   afterEach(async () => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     vi.resetModules();
   });
 
-  it("BASE_URL is localhost:8000 when window is undefined (SSR)", async () => {
+  it("BASE_URL is https://localhost:8000 in SSR when SSL is enabled", async () => {
     vi.stubGlobal("window", undefined);
+    vi.stubEnv("VITE_SSL_ENABLED", "true");
     vi.resetModules();
     const { BASE_URL } = await import("./api");
     expect(BASE_URL).toBe("https://localhost:8000");
+  });
+
+  it("BASE_URL is http://localhost:8000 in SSR when SSL is not enabled", async () => {
+    vi.stubGlobal("window", undefined);
+    vi.stubEnv("VITE_SSL_ENABLED", "");
+    vi.resetModules();
+    const { BASE_URL } = await import("./api");
+    expect(BASE_URL).toBe("http://localhost:8000");
+  });
+
+  it("BASE_URL honors API_PORT in SSR (matches the Vite proxy target)", async () => {
+    vi.stubGlobal("window", undefined);
+    vi.stubEnv("VITE_SSL_ENABLED", "");
+    vi.stubEnv("API_PORT", "8001");
+    vi.resetModules();
+    const { BASE_URL } = await import("./api");
+    expect(BASE_URL).toBe("http://localhost:8001");
   });
 });
 
