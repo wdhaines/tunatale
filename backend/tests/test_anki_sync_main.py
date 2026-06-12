@@ -47,7 +47,7 @@ def _patch_all_refreshes(monkeypatch):
 
 class TestRunFullSync:
     """run_full_sync is the SINGLE canonical TT↔Anki sync sequence. Both entry
-    points (the closed-collection /api/anki/sync endpoint and the peer-sync
+    points (the Anki-closed CLI `python -m app.anki.sync` and the peer-sync
     reconcile via main) must delegate to it, so no path can drop a phase."""
 
     def _make_spy_sync(self, calls):
