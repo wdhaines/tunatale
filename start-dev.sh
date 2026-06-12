@@ -95,7 +95,7 @@ sleep 2
 # Start frontend in background
 echo "Starting frontend on https://localhost:5173..."
 cd frontend
-NODE_TLS_REJECT_UNAUTHORIZED=0 bun run dev &
+VITE_SSL_ENABLED=true NODE_TLS_REJECT_UNAUTHORIZED=0 bun run dev &
 FRONTEND_PID=$!
 cd ..
 

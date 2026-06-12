@@ -2,6 +2,12 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vitest/config';
 import { readFileSync } from 'node:fs';
 
+// SSL (HTTPS) is opt-in via VITE_SSL_ENABLED=true. The dev script (start-dev.sh)
+// sets this; E2E tests and CI don't, so they keep plain HTTP which avoids cert
+// dependency and proxy-protocol mismatch with the E2E backend (HTTP-only).
+const USE_SSL = process.env.VITE_SSL_ENABLED === 'true';
+const API_PROTO = USE_SSL ? 'https' : 'http';
+
 // Expose the dev server beyond localhost so a Tailscale-connected phone can reach
 // it. `host: true` binds all interfaces (incl. the Tailscale address).
 // `allowedHosts: ['.ts.net']` lets Vite's host check accept the Mac's MagicDNS
@@ -11,17 +17,16 @@ export default defineConfig({
 	plugins: [sveltekit()],
 	server: {
 		host: true,
-		https: {
-			key: readFileSync('../certs/localhost-key.pem'),
-			cert: readFileSync('../certs/localhost.pem'),
-		},
-		allowedHosts: ['.ts.net'],
-		proxy: {
-			'/api': {
-				target: `https://localhost:${process.env.API_PORT ?? 8000}`,
-				secure: false,
+		...(USE_SSL && {
+			https: {
+				key: readFileSync('../certs/localhost-key.pem'),
+				cert: readFileSync('../certs/localhost.pem'),
 			}
-		}
+		}),
+		allowedHosts: ['.ts.net'],
+		proxy: USE_SSL
+			? { '/api': { target: `${API_PROTO}://localhost:${process.env.API_PORT ?? 8000}`, secure: false } }
+			: { '/api': `http://localhost:${process.env.API_PORT ?? 8000}` }
 	},
 	resolve: {
 		conditions: ['browser']
