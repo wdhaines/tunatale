@@ -2559,8 +2559,42 @@ class TestAudioEndpoints:
         assert response.status_code == 200
         cd = response.headers.get("content-disposition", "")
         assert "attachment" in cd
-        assert ".wav" in cd
+        # Default delivery codec is opus, so the rendered file is served as .opus.
+        assert ".opus" in cd
         assert "ordering_coffee" in cd.lower()
+
+    async def test_get_audio_serves_ogg_media_type_for_opus_file(self, tmp_path):
+        """A stored .opus file is served as audio/ogg (media type inferred from suffix)."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        opus = tmp_path / "audio.opus"
+        opus.write_bytes(b"OggS-fake-opus")
+        store.save_audio_file("opus-audio", "ghost-lesson", str(opus))
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/opus-audio")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "audio/ogg"
+        assert ".opus" in response.headers.get("content-disposition", "")
+
+    async def test_get_audio_serves_wav_media_type_for_wav_file(self, tmp_path):
+        """A pre-existing .wav file still serves as audio/wav (back-compat)."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        wav = tmp_path / "audio.wav"
+        wav.write_bytes(b"RIFF-fake-wav")
+        store.save_audio_file("wav-audio", "ghost-lesson", str(wav))
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/wav-audio")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "audio/wav"
 
     async def test_get_audio_section_content_disposition(self, tmp_path):
         """GET /api/audio/{section_audio_id} includes topic, day, and section type in filename."""
@@ -2712,10 +2746,10 @@ class TestAudioEndpoints:
         for name in names:
             assert "ordering_coffee" in name.lower()
             assert "Day03" in name
-        # full file sorts first (00), then sections (01, 02…)
-        assert names[0].endswith("_00_Full.wav")
-        assert names[1].endswith("_01_Key_Phrases.wav")
-        assert names[2].endswith("_02_Natural_Speed.wav")
+        # full file sorts first (00), then sections (01, 02…); opus is the default codec
+        assert names[0].endswith("_00_Full.opus")
+        assert names[1].endswith("_01_Key_Phrases.opus")
+        assert names[2].endswith("_02_Natural_Speed.opus")
 
     async def test_zip_download_content_disposition_header(self, tmp_path):
         """ZIP Content-Disposition includes topic and day in the filename."""
@@ -2887,7 +2921,7 @@ class TestAudioEndpoints:
 
         assert response.status_code == 200
         cd = response.headers.get("content-disposition", "")
-        assert ".wav" in cd
+        assert ".opus" in cd
         # Lesson title is "Day 1: Ordering Coffee" → sanitized
         assert "Day_1" in cd or "Ordering_Coffee" in cd
 

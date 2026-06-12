@@ -104,6 +104,8 @@ async def lifespan(app: FastAPI):
         tts=EdgeTTSService(),
         preprocessor=SlovenePreprocessor(),
         pause_calculator=NaturalPauseCalculator(),
+        delivery_codec=settings.audio_delivery_codec,
+        delivery_bitrate=settings.audio_delivery_bitrate,
     )
     app.state.audio_dir = Path("output/audio")
 

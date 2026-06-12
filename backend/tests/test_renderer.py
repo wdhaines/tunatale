@@ -89,6 +89,63 @@ class TestLessonRenderer:
             assert wf.getnchannels() >= 1
             assert wf.getframerate() > 0
 
+    async def test_render_opus_produces_compressed_ogg_output(self, tmp_path):
+        """delivery_codec='opus' writes an Ogg-framed file far smaller than WAV."""
+        lesson = _minimal_lesson()
+        fake_audio = _make_wav_bytes(duration_ms=500)
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        # WAV baseline for size comparison
+        wav_rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessor=SlovenePreprocessor(),
+            pause_calculator=NaturalPauseCalculator(),
+        )
+        wav_out = tmp_path / "lesson.wav"
+        await wav_rdr.render(lesson, wav_out)
+
+        opus_rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessor=SlovenePreprocessor(),
+            pause_calculator=NaturalPauseCalculator(),
+            delivery_codec="opus",
+            delivery_bitrate="28k",
+        )
+        opus_out = tmp_path / "lesson.opus"
+        await opus_rdr.render(lesson, opus_out)
+
+        data = opus_out.read_bytes()
+        assert data[:4] == b"OggS"
+        assert len(data) < wav_out.stat().st_size
+
+    async def test_render_opus_section_files_are_compressed(self, tmp_path):
+        """Per-section files honour the delivery codec too."""
+        lesson = _minimal_lesson()
+        fake_audio = _make_wav_bytes(duration_ms=300)
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessor=SlovenePreprocessor(),
+            pause_calculator=NaturalPauseCalculator(),
+            delivery_codec="opus",
+        )
+        section_paths = [tmp_path / f"s{i}.opus" for i in range(len(lesson.sections))]
+        await rdr.render(lesson, tmp_path / "full.opus", section_paths=section_paths)
+
+        for sp in section_paths:
+            assert sp.read_bytes()[:4] == b"OggS"
+
     async def test_render_calls_tts_for_each_phrase(self, tmp_path):
         """render() calls synthesize once per phrase plus once for the lesson title."""
         lesson = _minimal_lesson()

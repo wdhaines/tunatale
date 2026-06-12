@@ -15,6 +15,7 @@ import soundfile as sf
 from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.ports import TTSService
 from app.audio.preprocessing.base import TextPreprocessor
+from app.audio.transcode import encode_audio
 from app.models.lesson import Lesson, Section
 
 logger = logging.getLogger(__name__)
@@ -96,10 +97,26 @@ class LessonRenderer:
         tts: TTSService,
         preprocessor: TextPreprocessor,
         pause_calculator: NaturalPauseCalculator,
+        delivery_codec: str = "wav",
+        delivery_bitrate: str = "28k",
     ) -> None:
         self._tts = tts
         self._preprocessor = preprocessor
         self._calc = pause_calculator
+        self._delivery_codec = delivery_codec
+        self._delivery_bitrate = delivery_bitrate
+
+    def _write_audio(self, path: Path, audio: _Audio) -> None:
+        """Write *audio* to *path* in the configured delivery codec.
+
+        ``"wav"`` writes uncompressed PCM (the historical default); any other
+        codec routes the buffer through ffmpeg for a compressed, mobile-friendly
+        file. The caller is responsible for giving *path* the matching extension.
+        """
+        if self._delivery_codec == "wav":
+            _write_wav(path, audio)
+        else:
+            path.write_bytes(encode_audio(audio.samples, audio.rate, self._delivery_codec, self._delivery_bitrate))
 
     async def _render_section(self, section: Section, tmp: Path, section_idx: int) -> _Audio:
         """Render a single section to an audio buffer (no boundary silence).
@@ -188,7 +205,7 @@ class LessonRenderer:
                     sp = section_paths[section_idx]
                     sp.parent.mkdir(parents=True, exist_ok=True)
                     t0 = time.perf_counter()
-                    _write_wav(sp, sec_audio)
+                    self._write_audio(sp, sec_audio)
                     logger.debug("Section %d export → %.0f ms", section_idx, (time.perf_counter() - t0) * 1000)
 
             # Assemble full lesson: title + bs + sec0 + bs + sec1 + ...
@@ -202,7 +219,7 @@ class LessonRenderer:
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
-        _write_wav(output_path, combined)
+        self._write_audio(output_path, combined)
         logger.debug("Full lesson export → %.0f ms", (time.perf_counter() - t0) * 1000)
         logger.info(
             "Rendered lesson to %s (audio: %d ms, wall: %.0f ms)",

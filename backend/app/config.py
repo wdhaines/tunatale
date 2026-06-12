@@ -58,5 +58,11 @@ class Settings(BaseSettings):
     anki_new_per_day_default: int = 20
     anki_reviews_per_day_default: int = 200
 
+    # Lesson audio delivery format. Opus is ~10-20× smaller than WAV for speech,
+    # cutting mobile-data use when streaming lessons to a phone. Set to "wav" to
+    # restore uncompressed delivery. Codec must be a key of transcode.CODEC_EXT.
+    audio_delivery_codec: str = "opus"  # opus | aac | mp3 | wav
+    audio_delivery_bitrate: str = "28k"
+
 
 settings = Settings()

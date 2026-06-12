@@ -12,6 +12,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
 from app.api.models import RenderAudioRequest
+from app.audio.transcode import CODEC_EXT, EXT_MEDIA_TYPE
+from app.config import settings
 from app.generation.section_builder import SECTION_TITLES
 from app.models.lesson import SectionType
 
@@ -25,8 +27,8 @@ def _sanitize_filename(name: str) -> str:
     return name or "audio"
 
 
-def _build_section_filename(topic: str, day: int, section_index: int, section_type: str) -> str:
-    """Build a context-rich section WAV filename: {Topic}_Day{DD}_{NN}_{Title}.wav."""
+def _build_section_filename(topic: str, day: int, section_index: int, section_type: str, ext: str = ".wav") -> str:
+    """Build a context-rich section filename: {Topic}_Day{DD}_{NN}_{Title}{ext}."""
     safe_topic = _sanitize_filename(topic)
     try:
         st = SectionType(section_type)
@@ -34,7 +36,7 @@ def _build_section_filename(topic: str, day: int, section_index: int, section_ty
     except ValueError:
         title = section_type
     safe_title = _sanitize_filename(title)
-    return f"{safe_topic}_Day{day:02d}_{section_index + 1:02d}_{safe_title}.wav"
+    return f"{safe_topic}_Day{day:02d}_{section_index + 1:02d}_{safe_title}{ext}"
 
 
 @router.post("/render", status_code=202)
@@ -51,12 +53,14 @@ async def render_audio(body: RenderAudioRequest, request: Request):
     audio_dir: Path = request.app.state.audio_dir
     audio_dir.mkdir(parents=True, exist_ok=True)
 
-    # Allocate UUIDs for full lesson and each section
+    # Allocate UUIDs for full lesson and each section. The extension matches the
+    # configured delivery codec so serving can infer the media type from the suffix.
+    ext = CODEC_EXT.get(settings.audio_delivery_codec, "wav")
     audio_id = str(uuid.uuid4())
-    full_path = audio_dir / f"{audio_id}.wav"
+    full_path = audio_dir / f"{audio_id}.{ext}"
 
     section_ids = [str(uuid.uuid4()) for _ in lesson.sections]
-    section_paths = [audio_dir / f"{sid}.wav" for sid in section_ids]
+    section_paths = [audio_dir / f"{sid}.{ext}" for sid in section_ids]
 
     await renderer.render(lesson, full_path, section_paths=section_paths)
 
@@ -160,10 +164,12 @@ async def download_lesson_zip(lesson_id: str, request: Request):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_STORED) as zf:
         if full_row:
-            full_filename = f"{safe_topic}_Day{day:02d}_00_Full.wav"
+            full_ext = Path(full_row["file_path"]).suffix or ".wav"
+            full_filename = f"{safe_topic}_Day{day:02d}_00_Full{full_ext}"
             zf.write(full_row["file_path"], arcname=full_filename)
         for r in sorted(section_rows, key=lambda x: x["section_index"]):
-            filename = _build_section_filename(topic, day, r["section_index"], r["section_type"] or "")
+            ext = Path(r["file_path"]).suffix or ".wav"
+            filename = _build_section_filename(topic, day, r["section_index"], r["section_type"] or "", ext)
             zf.write(r["file_path"], arcname=filename)
 
     zip_name = f"{_sanitize_filename(topic)}_Day{day:02d}.zip"
@@ -199,13 +205,18 @@ async def get_audio(audio_id: str, request: Request):
             lesson = store.get_lesson(lesson_id)
             topic = lesson.title  # lesson_row exists → lesson exists
 
+    # Derive extension + media type from the actual stored file, so pre-existing
+    # WAV files and newly-rendered compressed files both serve correctly.
+    ext = path.suffix or ".wav"
+    media_type = EXT_MEDIA_TYPE.get(ext, "application/octet-stream")
+
     if row["section_index"] is not None:
-        filename = _build_section_filename(topic, day, row["section_index"], row["section_type"] or "")
+        filename = _build_section_filename(topic, day, row["section_index"], row["section_type"] or "", ext)
     else:
-        filename = f"{_sanitize_filename(topic)}_Day{day:02d}_full.wav"
+        filename = f"{_sanitize_filename(topic)}_Day{day:02d}_full{ext}"
 
     return FileResponse(
         str(path),
-        media_type="audio/wav",
+        media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
