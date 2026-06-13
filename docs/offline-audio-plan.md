@@ -302,11 +302,32 @@ wifi is free. Only build this if Phase 3 leaves you wanting pre-caching.
 - Per root `CLAUDE.md` "Delivering": paste the `./test.sh` tail and the green CI
   URL into each phase's completion report.
 
-## Remaining manual verification (not automatable here)
+## Testing outcomes (2026-06-12)
 
-The automated gates (unit + coverage + build + preview-serves-200) all pass, but
-driving a real Android phone is out of scope for the test suite. Confirm on the
-phone once:
+Manual phone testing surfaced two real SW bugs that unit-tests-with-fakes missed
+(both now fixed + guarded by the e2e below):
+1. **206-caching crash → 0:00.** `<audio>` sends `Range`; FastAPI answers `206`;
+   `Cache.put(206)` throws → `respondWith` rejected → blank player. Fix: cache
+   only `200`, fetch full file by URL.
+2. **200-to-Range stall → ~14s then stop.** Returning a full `200` to a media
+   Range request stalls Chromium playback. Fix: synthesize real `206` slices from
+   the cached full body (`buildPartialResponse` / `computeByteRange`).
+
+**Automated e2e: `frontend/tests/offline-audio.spec.ts`** (Playwright, local-only)
+— register SW → fetch (cache) → `setOffline` → replay-from-cache + Range→206.
+Two hard-won gotchas baked into it: (a) **SvelteKit registers the SW in dev too**
+(not prod-only — only the app-shell *precache* is empty in dev), so audio caching
+is testable against the dev server; (b) **Playwright route mocking intercepts the
+page request *before* the SW**, so it can't validate SW caching — seed a real
+audio file + use real `setOffline` instead.
+
+Also re-rendered the day-1 lesson to opus during testing: **19 MB WAV → 957 KB**
+(`POST /api/audio/render`; there is no UI re-render button — use the endpoint).
+
+## Remaining manual verification (real phone, not automatable)
+
+The automated gates (unit + coverage + build + the SW e2e above) all pass, but
+driving a real Android phone is out of scope. Confirm on the phone once:
 
 1. `./start-dev.sh --prod`, open `https://<your-host>.ts.net:5173` on the phone.
 2. DevTools / chrome://inspect → Application → Service Workers shows it active,
@@ -318,5 +339,8 @@ phone once:
 
 If install/offline don't behave, the usual culprits: the mkcert CA isn't trusted
 on the phone (service workers require a valid secure context — see start-dev.sh's
-Android CA-trust hint), or you're on `vite dev` not `--prod` (SW only registers
-against the build).
+Android CA-trust hint), or you're on `vite dev` not `--prod`. Note the SW *does*
+register in dev (so audio cache+replay works there), but the **cold offline app
+launch** needs `--prod` — dev has no app-shell precache. To update the SW on the
+phone, **clear site data** for the host (killing the PWA doesn't unregister it;
+`chrome://inspect` is desktop-only).
