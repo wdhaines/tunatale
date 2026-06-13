@@ -1,50 +1,40 @@
 import { describe, it, expect } from "vitest";
-import {
-  maybePrefetchLesson,
-  prefetchAudioUrls,
-  shouldPrefetchOnConnection,
-  type PrefetchCacheLike,
-  type PrefetchCacheStorageLike,
-} from "./prefetch";
-import type { ResponseLike } from "./audio-cache";
+import { maybePrefetchLesson, prefetchAudioUrls, shouldPrefetchOnConnection } from "./prefetch";
+import type { CacheLike, CacheStorageLike } from "./audio-cache";
 
 describe("shouldPrefetchOnConnection", () => {
   it("is false when the Network Information API is absent", () => {
     expect(shouldPrefetchOnConnection(undefined)).toBe(false);
   });
-
   it("is false when the user opted into data saving", () => {
     expect(shouldPrefetchOnConnection({ type: "wifi", saveData: true })).toBe(false);
   });
-
   it("is true on wifi without data saving", () => {
     expect(shouldPrefetchOnConnection({ type: "wifi", saveData: false })).toBe(true);
   });
-
   it("is false on a cellular connection", () => {
     expect(shouldPrefetchOnConnection({ type: "cellular" })).toBe(false);
   });
 });
 
-function ok(): ResponseLike {
-  const self: ResponseLike = { status: 200, clone: () => self };
-  return self;
+function ok(): Response {
+  return new Response("audio", { status: 200 });
 }
 
-class FakeCache implements PrefetchCacheLike {
-  store = new Map<string, ResponseLike>();
-  match(url: string): Promise<ResponseLike | undefined> {
+class FakeCache implements CacheLike {
+  store = new Map<string, Response>();
+  match(url: string): Promise<Response | undefined> {
     return Promise.resolve(this.store.get(url));
   }
-  put(url: string, response: ResponseLike): Promise<void> {
+  put(url: string, response: Response): Promise<void> {
     this.store.set(url, response);
     return Promise.resolve();
   }
 }
 
-class FakeCaches implements PrefetchCacheStorageLike {
+class FakeCaches implements CacheStorageLike {
   cache = new FakeCache();
-  open(): Promise<PrefetchCacheLike> {
+  open(): Promise<CacheLike> {
     return Promise.resolve(this.cache);
   }
 }
@@ -59,8 +49,7 @@ describe("prefetchAudioUrls", () => {
       caches,
       fetch: (url) => {
         fetched.push(url);
-        const failed: ResponseLike = { status: 500, clone: () => failed };
-        return Promise.resolve(url.endsWith("bad") ? failed : ok());
+        return Promise.resolve(url.endsWith("bad") ? new Response("", { status: 500 }) : ok());
       },
     });
 

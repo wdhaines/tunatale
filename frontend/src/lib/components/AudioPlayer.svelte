@@ -3,7 +3,8 @@
 	import { api } from '$lib/api';
 	import type { LessonAudio } from '$lib/api';
 	import { maybePrefetchLesson } from '$lib/sw/prefetch';
-	import type { NetworkInformationLike, PrefetchCacheStorageLike } from '$lib/sw/prefetch';
+	import type { NetworkInformationLike } from '$lib/sw/prefetch';
+	import type { CacheStorageLike } from '$lib/sw/audio-cache';
 	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
 
 	interface Props {
@@ -24,7 +25,7 @@
 		void maybePrefetchLesson(urls, {
 			enabled: prefetchPrefStore.enabled,
 			connection: nav.connection,
-			caches: (globalThis as { caches?: PrefetchCacheStorageLike }).caches,
+			caches: (globalThis as { caches?: CacheStorageLike }).caches,
 			fetch
 		});
 	});

@@ -15,7 +15,7 @@
  */
 
 import { build, files, version } from "$service-worker";
-import { AUDIO_CACHE, cacheFirstAudio, isCacheableAudioRequest } from "$lib/sw/audio-cache";
+import { AUDIO_CACHE, handleAudioFetch, isCacheableAudioRequest } from "$lib/sw/audio-cache";
 
 // `self` in a service worker is a ServiceWorkerGlobalScope; the webworker lib
 // reference above provides the type.
@@ -50,15 +50,15 @@ sw.addEventListener("activate", (event) => {
 
 sw.addEventListener("fetch", (event) => {
   if (isCacheableAudioRequest(event.request)) {
+    // Fetch by URL (not the Request) so the SW's own fetch carries no `Range`
+    // header → a cacheable full 200. handleAudioFetch then synthesizes a 206
+    // slice for the media element's Range request (Chromium needs a 206, not a
+    // 200, or playback stalls after the first buffer).
     event.respondWith(
-      cacheFirstAudio(event.request, {
+      handleAudioFetch(event.request, {
         caches: sw.caches,
-        // Fetch by URL (not the Request) to drop the media element's `Range`
-        // header — the server answers ranges with 206, which can't be cached.
-        // The full 200 we get back is cacheable and the browser handles serving
-        // it to a Range request.
-        fetch: (request) => fetch(request.url),
-      }) as Promise<Response>,
+        fetch: (url) => fetch(url),
+      }),
     );
   }
 });

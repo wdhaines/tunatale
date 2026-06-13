@@ -6,7 +6,7 @@
  * Pure, fully-tested primitives; the (thin) call site lives in the audio player.
  */
 
-import { AUDIO_CACHE, type ResponseLike } from "./audio-cache";
+import { AUDIO_CACHE, type CacheStorageLike } from "./audio-cache";
 
 /**
  * The slice of the Network Information API we use. It's Chrome-on-Android only
@@ -15,15 +15,6 @@ import { AUDIO_CACHE, type ResponseLike } from "./audio-cache";
 export interface NetworkInformationLike {
   readonly type?: string;
   readonly saveData?: boolean;
-}
-
-export interface PrefetchCacheLike {
-  match(url: string): Promise<ResponseLike | undefined>;
-  put(url: string, response: ResponseLike): Promise<void>;
-}
-
-export interface PrefetchCacheStorageLike {
-  open(name: string): Promise<PrefetchCacheLike>;
 }
 
 /**
@@ -46,7 +37,7 @@ export function shouldPrefetchOnConnection(
  */
 export async function prefetchAudioUrls(
   urls: string[],
-  deps: { caches: PrefetchCacheStorageLike; fetch: (url: string) => Promise<ResponseLike> },
+  deps: { caches: CacheStorageLike; fetch: (url: string) => Promise<Response> },
 ): Promise<void> {
   const cache = await deps.caches.open(AUDIO_CACHE);
   for (const url of urls) {
@@ -71,8 +62,8 @@ export function maybePrefetchLesson(
   deps: {
     enabled: boolean;
     connection: NetworkInformationLike | undefined;
-    caches: PrefetchCacheStorageLike | undefined;
-    fetch: (url: string) => Promise<ResponseLike>;
+    caches: CacheStorageLike | undefined;
+    fetch: (url: string) => Promise<Response>;
   },
 ): Promise<void> {
   if (!deps.enabled) return Promise.resolve();
