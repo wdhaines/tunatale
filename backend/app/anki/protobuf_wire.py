@@ -11,6 +11,8 @@ from __future__ import annotations
 import time as _time
 from datetime import UTC, datetime, time, timedelta
 
+from app.config import ANKI_ROLLOVER_HOUR
+
 # ── Encode ─────────────────────────────────────────────────────────────────────
 
 
@@ -193,7 +195,7 @@ def pb_remove_field(blob: bytes, field_number: int) -> bytes:
     return bytes(out)
 
 
-def compute_anki_day_index(col_crt: int, rollover_hour: int = 4, now: datetime | None = None) -> int:
+def compute_anki_day_index(col_crt: int, rollover_hour: int = ANKI_ROLLOVER_HOUR, now: datetime | None = None) -> int:
     """Return the Anki day index for *now*, matching what Anki writes to ``decks.common`` field 3.
 
     Anki's day index increments at *rollover_hour* (default 4 AM) each day.
@@ -202,7 +204,7 @@ def compute_anki_day_index(col_crt: int, rollover_hour: int = 4, now: datetime |
     return (now_ts - col_crt + rollover_hour * 3600) // 86400
 
 
-def review_due_at_for_col_day(col_crt: int, col_day: int, rollover_hour: int = 4) -> datetime:
+def review_due_at_for_col_day(col_crt: int, col_day: int, rollover_hour: int = ANKI_ROLLOVER_HOUR) -> datetime:
     """Convert an Anki review-state col_day index to a UTC datetime (Layer 49).
 
     For queue 2/3 cards, ``cards.due`` is the col_day index when the card next

@@ -15,6 +15,7 @@ from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 
 from app.anki.sqlite_reader import extract_translation
+from app.config import ANKI_ROLLOVER_HOUR
 
 KNOWN_ANKI_SCHEMA_VER = 18
 
@@ -254,7 +255,7 @@ def _local_today_4am(now: datetime | None = None) -> datetime:
     if now.tzinfo is None:
         now = now.astimezone()
     local_tz = now.tzinfo
-    today_4am = datetime.combine(now.date(), time(4), tzinfo=local_tz)
+    today_4am = datetime.combine(now.date(), time(ANKI_ROLLOVER_HOUR), tzinfo=local_tz)
     if now < today_4am:
-        today_4am = datetime.combine(now.date() - timedelta(days=1), time(4), tzinfo=local_tz)
+        today_4am = datetime.combine(now.date() - timedelta(days=1), time(ANKI_ROLLOVER_HOUR), tzinfo=local_tz)
     return today_4am

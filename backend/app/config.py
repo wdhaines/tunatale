@@ -66,3 +66,13 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+# Anki rolls the study day over at this *local* hour (default 4 AM), not at
+# midnight — a grade timestamped between local midnight and the rollover belongs
+# to the PRIOR Anki day. Single source of truth: the day-rollover helpers in
+# `app.srs.database` (`_anki_day_bounds_utc`), `app.anki.sync_common`
+# (`_local_today_4am`), and `app.anki.protobuf_wire` (`compute_anki_day_index`,
+# `review_due_at_for_col_day`) all derive from this. Promote to a Settings field
+# if it ever needs to be config-driven (Anki stores it per-collection).
+ANKI_ROLLOVER_HOUR = 4

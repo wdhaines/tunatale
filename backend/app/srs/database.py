@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from app.common.guid import compute_guid
+from app.config import ANKI_ROLLOVER_HOUR
 from app.models.srs_item import (
     Direction,
     DirectionState,
@@ -37,13 +38,6 @@ def _parse_last_review(value: str | None) -> datetime | None:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
     return dt
-
-
-# Anki rolls the study day over at this *local* hour (default 4 AM), not at
-# midnight. A grade timestamped between local midnight and the rollover belongs
-# to the PRIOR Anki day. Mirrors `app.anki.sync._local_today_4am` and
-# `app.anki.protobuf_wire.compute_anki_day_index`; keep them in sync.
-ANKI_ROLLOVER_HOUR = 4
 
 
 def _anki_day_bounds_utc(today: date, now: datetime | None = None) -> tuple[str, str]:
@@ -2597,7 +2591,7 @@ class SRSDatabase:
         card_type = coll["card_type"] or "vocab" if coll else "vocab"
 
         other_dir = Direction.PRODUCTION if direction == Direction.RECOGNITION else Direction.RECOGNITION
-        now_4am = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        now_4am = datetime.combine(date.today(), time(ANKI_ROLLOVER_HOUR, 0), tzinfo=UTC)
         # Incremental: forward-step from the stored state. Otherwise: from NEW.
         start_state = (
             starting_state
