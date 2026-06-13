@@ -53,7 +53,7 @@ export async function prefetchAudioUrls(
     const existing = await cache.match(url);
     if (existing) continue;
     const response = await deps.fetch(url);
-    if (response.ok) {
+    if (response.status === 200) {
       await cache.put(url, response.clone());
     }
   }

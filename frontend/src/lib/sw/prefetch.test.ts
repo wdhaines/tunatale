@@ -27,7 +27,7 @@ describe("shouldPrefetchOnConnection", () => {
 });
 
 function ok(): ResponseLike {
-  const self: ResponseLike = { ok: true, clone: () => self };
+  const self: ResponseLike = { status: 200, clone: () => self };
   return self;
 }
 
@@ -59,7 +59,7 @@ describe("prefetchAudioUrls", () => {
       caches,
       fetch: (url) => {
         fetched.push(url);
-        const failed: ResponseLike = { ok: false, clone: () => failed };
+        const failed: ResponseLike = { status: 500, clone: () => failed };
         return Promise.resolve(url.endsWith("bad") ? failed : ok());
       },
     });

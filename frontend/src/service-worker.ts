@@ -53,7 +53,11 @@ sw.addEventListener("fetch", (event) => {
     event.respondWith(
       cacheFirstAudio(event.request, {
         caches: sw.caches,
-        fetch: (request) => fetch(request as Request),
+        // Fetch by URL (not the Request) to drop the media element's `Range`
+        // header — the server answers ranges with 206, which can't be cached.
+        // The full 200 we get back is cacheable and the browser handles serving
+        // it to a Range request.
+        fetch: (request) => fetch(request.url),
       }) as Promise<Response>,
     );
   }

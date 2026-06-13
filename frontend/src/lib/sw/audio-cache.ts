@@ -21,7 +21,7 @@ export interface RequestLike {
 }
 
 export interface ResponseLike {
-  readonly ok: boolean;
+  readonly status: number;
   clone(): ResponseLike;
 }
 
@@ -46,9 +46,17 @@ export function isCacheableAudioRequest(request: RequestLike): boolean {
 }
 
 /**
- * Serve *request* from the audio cache if present; otherwise fetch it, store a
- * successful response, and return it. A non-OK response is passed through
- * without caching so transient errors don't get pinned.
+ * Serve *request* from the audio cache if present; otherwise fetch the full
+ * resource, cache it, and return it.
+ *
+ * Range handling is the crux: `<audio>` requests with a `Range` header and the
+ * server answers ranges with `206 Partial Content`, which `Cache.put()` rejects
+ * (TypeError) — that crash rejected `respondWith` and showed a 0:00 player. So
+ * `deps.fetch` MUST fetch the whole resource *without* a Range header (the SW
+ * shell fetches by URL), yielding a cacheable `200`. We cache **only** `200`;
+ * anything else (an error, or an unexpected partial) is passed through uncached.
+ * A cached full `200` served back to a later Range request is handled by the
+ * browser, so offline replay and seeking both work.
  */
 export async function cacheFirstAudio(
   request: RequestLike,
@@ -59,7 +67,7 @@ export async function cacheFirstAudio(
   if (cached) return cached;
 
   const response = await deps.fetch(request);
-  if (response.ok) {
+  if (response.status === 200) {
     await cache.put(request, response.clone());
   }
   return response;

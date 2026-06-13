@@ -13,9 +13,9 @@ function req(url: string, method = "GET"): RequestLike {
   return { method, url };
 }
 
-function fakeResponse(ok: boolean, id = "r"): ResponseLike {
+function fakeResponse(status: number, id = "r"): ResponseLike {
   const self: ResponseLike = {
-    ok,
+    status,
     clone: () => ({ ...self, _cloned: true }) as ResponseLike & { _cloned: boolean },
   };
   (self as ResponseLike & { id: string }).id = id;
@@ -66,7 +66,7 @@ describe("isCacheableAudioRequest", () => {
 describe("cacheFirstAudio", () => {
   it("returns the cached response without fetching on a hit", async () => {
     const caches = new FakeCaches();
-    const cached = fakeResponse(true, "cached");
+    const cached = fakeResponse(200, "cached");
     caches.cache.store.set("https://host/api/audio/x", cached);
     let fetched = false;
 
@@ -74,7 +74,7 @@ describe("cacheFirstAudio", () => {
       caches,
       fetch: () => {
         fetched = true;
-        return Promise.resolve(fakeResponse(true, "network"));
+        return Promise.resolve(fakeResponse(200, "network"));
       },
     });
 
@@ -83,9 +83,9 @@ describe("cacheFirstAudio", () => {
     expect(caches.opened).toEqual([AUDIO_CACHE]);
   });
 
-  it("fetches and caches a successful miss", async () => {
+  it("fetches and caches a 200 miss", async () => {
     const caches = new FakeCaches();
-    const network = fakeResponse(true, "network");
+    const network = fakeResponse(200, "network");
 
     const result = await cacheFirstAudio(req("https://host/api/audio/y"), {
       caches,
@@ -97,16 +97,33 @@ describe("cacheFirstAudio", () => {
     expect(caches.cache.puts[0][0]).toBe("https://host/api/audio/y");
   });
 
-  it("returns but does not cache a failed fetch", async () => {
+  it("returns but does NOT cache a 206 partial response", async () => {
+    // Regression: <audio> sends Range → server replies 206 → Cache.put(206)
+    // throws a TypeError, which rejected respondWith and showed a 0:00 player.
+    // We must pass 206 through uncached. (The shell strips Range so the SW's own
+    // fetch gets a 200; this guards the path where a partial slips through.)
     const caches = new FakeCaches();
-    const network = fakeResponse(false, "error");
+    const partial = fakeResponse(206, "partial");
 
     const result = await cacheFirstAudio(req("https://host/api/audio/z"), {
       caches,
-      fetch: () => Promise.resolve(network),
+      fetch: () => Promise.resolve(partial),
     });
 
-    expect(result).toBe(network);
+    expect(result).toBe(partial);
+    expect(caches.cache.puts).toHaveLength(0);
+  });
+
+  it("returns but does not cache an error response", async () => {
+    const caches = new FakeCaches();
+    const error = fakeResponse(500, "error");
+
+    const result = await cacheFirstAudio(req("https://host/api/audio/e"), {
+      caches,
+      fetch: () => Promise.resolve(error),
+    });
+
+    expect(result).toBe(error);
     expect(caches.cache.puts).toHaveLength(0);
   });
 });
