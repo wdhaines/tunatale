@@ -10,6 +10,13 @@ The phases below are ordered by value-per-effort and are **independently
 shippable**. An agent can take any one phase without the others. Phase 1 alone
 delivers ~95% of the data savings; Phases 2–4 add true offline playback.
 
+> **STATUS 2026-06-12: ALL PHASES IMPLEMENTED.** Phase 1 on `main` (commit
+> c7c0aa3). Phases 2–4 on branch `feat/offline-audio-cache`. To use offline mode:
+> run `./start-dev.sh --prod` (builds + serves so the service worker activates),
+> open the app on the phone, play a lesson on wifi → it caches and replays
+> offline. Manual phone verification of install/offline replay is the one thing
+> not automatable here — see "Remaining manual verification" at the bottom.
+
 ---
 
 ## Current architecture (grounded, 2026-06-12)
@@ -151,7 +158,14 @@ reproducible from TTS anyway.
 
 ---
 
-## Phase 2 — Serve a production frontend build to the phone (prereq for SW)
+## Phase 2 — Serve a production frontend build to the phone (prereq for SW) ✅ DONE
+
+Implemented: `vite.config.ts` extracts shared host/HTTPS/proxy/allowedHosts into
+`serverOptions`, applied to both `server` and `preview` (preview had no wiring
+before, so a Tailscale phone couldn't reach it). `start-dev.sh --prod` runs
+`vite build` then `vite preview --port 5173`. Verified preview serves `/`,
+`/service-worker.js`, `/manifest.webmanifest` (all 200). Kept `adapter-auto`;
+preview's SvelteKit SSR works without a forced adapter swap.
 
 **Why:** service workers + Vite **dev** (HMR) fight each other; SW caching is
 only reliable against `vite build` / `vite preview` (or adapter output). Phase 3
@@ -179,7 +193,14 @@ Add a "served build" mode to `start-dev.sh` (or a sibling `start-phone.sh`):
 
 ---
 
-## Phase 3 — PWA + service worker: cache played audio for offline replay
+## Phase 3 — PWA + service worker: cache played audio for offline replay ✅ DONE
+
+Implemented: `src/lib/sw/audio-cache.ts` (pure cache-first logic, 100% tested),
+thin `src/service-worker.ts` shell (auto-registered by SvelteKit; precaches app
+shell, cleans stale caches, delegates audio fetches), `static/manifest.webmanifest`
++ `icon.svg` + `app.html` link for installability. Coverage strategy from the plan
+held exactly: logic in `src/lib/**` is gated to 100%; the SW shell sits outside the
+gate's include globs. `vite build` emits `service-worker.js` precaching the shell.
 
 **Value:** "played it once on wifi → free forever after." No per-lesson button,
 no fragile wifi detection. Depends on Phase 2.
@@ -225,7 +246,18 @@ The 100% per-file frontend gate is the hard part of this phase. Pattern:
 
 ---
 
-## Phase 4 — (Optional) Automatic wifi-only prefetch
+## Phase 4 — (Optional) Automatic wifi-only prefetch ✅ DONE
+
+Implemented: `src/lib/sw/prefetch.ts` (`shouldPrefetchOnConnection`,
+`prefetchAudioUrls`, `maybePrefetchLesson` — all gating in the lib, 100% tested);
+`AudioPlayer.svelte` `onMount` fires `maybePrefetchLesson` with real
+`navigator.connection` / `globalThis.caches` / `fetch`, prefetching the lesson's
+full + section audio on wifi. No-op where the (Chrome-Android-only) Network
+Information API or Cache Storage is absent — on-demand cache-first still applies.
+Also shipped: a user-facing **"auto-download on wifi" opt-out toggle**
+(`src/lib/stores/prefetchPref.svelte.ts`, persisted; nav button in `+layout.svelte`
+next to the theme toggle). `maybePrefetchLesson` gained an `enabled` gate so the
+component stays branch-free. Default on; respects the stored preference.
 
 **Value:** lessons are cached *before* first play, so even the first listen off
 wifi is free. Only build this if Phase 3 leaves you wanting pre-caching.
@@ -269,3 +301,46 @@ wifi is free. Only build this if Phase 3 leaves you wanting pre-caching.
 - None of this touches Anki sync / FSRS / queue parity. Do not let it.
 - Per root `CLAUDE.md` "Delivering": paste the `./test.sh` tail and the green CI
   URL into each phase's completion report.
+
+## Testing outcomes (2026-06-12)
+
+Manual phone testing surfaced two real SW bugs that unit-tests-with-fakes missed
+(both now fixed + guarded by the e2e below):
+1. **206-caching crash → 0:00.** `<audio>` sends `Range`; FastAPI answers `206`;
+   `Cache.put(206)` throws → `respondWith` rejected → blank player. Fix: cache
+   only `200`, fetch full file by URL.
+2. **200-to-Range stall → ~14s then stop.** Returning a full `200` to a media
+   Range request stalls Chromium playback. Fix: synthesize real `206` slices from
+   the cached full body (`buildPartialResponse` / `computeByteRange`).
+
+**Automated e2e: `frontend/tests/offline-audio.spec.ts`** (Playwright, local-only)
+— register SW → fetch (cache) → `setOffline` → replay-from-cache + Range→206.
+Two hard-won gotchas baked into it: (a) **SvelteKit registers the SW in dev too**
+(not prod-only — only the app-shell *precache* is empty in dev), so audio caching
+is testable against the dev server; (b) **Playwright route mocking intercepts the
+page request *before* the SW**, so it can't validate SW caching — seed a real
+audio file + use real `setOffline` instead.
+
+Also re-rendered the day-1 lesson to opus during testing: **19 MB WAV → 957 KB**
+(`POST /api/audio/render`; there is no UI re-render button — use the endpoint).
+
+## Remaining manual verification (real phone, not automatable)
+
+The automated gates (unit + coverage + build + the SW e2e above) all pass, but
+driving a real Android phone is out of scope. Confirm on the phone once:
+
+1. `./start-dev.sh --prod`, open `https://<your-host>.ts.net:5173` on the phone.
+2. DevTools / chrome://inspect → Application → Service Workers shows it active,
+   and Manifest shows TunaTale installable ("Add to Home Screen").
+3. Play a lesson on wifi. Then enable airplane mode (or switch off wifi with the
+   Mac unreachable) and replay — it should play from cache with no network.
+4. Optional: confirm the wifi prefetch populated `Cache Storage → tt-audio-v1`
+   for sections you hadn't played yet.
+
+If install/offline don't behave, the usual culprits: the mkcert CA isn't trusted
+on the phone (service workers require a valid secure context — see start-dev.sh's
+Android CA-trust hint), or you're on `vite dev` not `--prod`. Note the SW *does*
+register in dev (so audio cache+replay works there), but the **cold offline app
+launch** needs `--prod` — dev has no app-shell precache. To update the SW on the
+phone, **clear site data** for the host (killing the PWA doesn't unregister it;
+`chrome://inspect` is desktop-only).

@@ -8,8 +8,17 @@
 	import { syncStore } from '$lib/stores/sync.svelte';
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
+	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
 
 	let { children } = $props();
+
+	// "Auto-download lessons on wifi" — when on, the audio player caches lessons
+	// while on wifi so they replay offline for free (offline-audio Phase 4).
+	const prefetchMeta = $derived(
+		prefetchPrefStore.enabled
+			? { icon: '📥', label: 'Auto-download on wifi: On' }
+			: { icon: '🚫', label: 'Auto-download on wifi: Off' }
+	);
 
 	// Theme is an explicit setting (System / Light / Dark) defaulting to the OS.
 	const themeMeta = $derived(
@@ -27,6 +36,7 @@
 	// — the badge just doesn't render.
 	onMount(() => {
 		themeStore.init();
+		prefetchPrefStore.init();
 		queueStatsStore.refresh();
 	});
 
@@ -63,6 +73,12 @@
 		<a href="/cards" class="nav-link" class:active={onCards}>Cards</a>
 	</div>
 	<div class="nav-actions">
+		<button
+			class="theme-toggle"
+			onclick={() => prefetchPrefStore.toggle()}
+			aria-label={`${prefetchMeta.label} (tap to toggle)`}
+			title={`${prefetchMeta.label} (tap to toggle)`}
+		>{prefetchMeta.icon}</button>
 		<button
 			class="theme-toggle"
 			onclick={() => themeStore.cycle()}
