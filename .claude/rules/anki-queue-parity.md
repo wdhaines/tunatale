@@ -183,14 +183,24 @@ Walk this tree on a divergence report. Each leaf → mechanism that handles it; 
 
 Moved to `docs/anki-parity-diagnostics.md` (snapshot-the-DBs, live badges + queue head, introduced-today, step-state, R-value compare, force-fresh-queue, binary repro, soak classifier). Open it when actively debugging.
 
-## When to escalate to Path 2
+## Maintenance strategy — keep the mirror, hold it cheaply (decided 2026-06-12)
 
-Current model — TT reconstructs from TT state — has held through ~22 fixes. If a new divergence:
-- Not-yet-mirrored R formula / queue gather branch → patch.
-- Input quality (sync didn't carry a field) → patch.
-- Fundamental algorithmic difference where mirroring complexity keeps growing → **Path 2**.
+**The Anki mirror is the product, not a means to sync.** Anki is a reference FSRS implementation; TT mirrors it because its behavior *is* the correct SRS behavior we want users to get. Sync is a bonus on top. Two corollaries:
 
-**Path 2** = at sync time, execute Anki's `review_order_sql` and persist the card-id sequence as TT's "today's anchor queue." Between syncs, TT serves from snapshot filtered by "graded since sync." Dissolves the entire "mirror Anki's algorithm with all branches" class. ~2-3 hour refactor. Most freeze / intersperser / R-asc reconstruction code goes away. Only when the leak count won't stop.
+- **The Layers are encoded SRS correctness, not tech debt.** Most Anki choices (sibling-bury, fuzz, the load balancer, R-ascending, learning steps, NULL-R placement) exist for a good reason. **"Fewer Layers" is not a goal.** Do not propose deleting mirror behavior to simplify.
+- **The leak rate has slowed way down** — decelerating toward a fixed point (Anki's branch set is finite and mostly covered). Evidence in the commit log: **34 Layer commits in 2026-05 vs 6 in the first 12 days of 2026-06**, and Layers 69–72 are all *sync-seam* fixes (push→pull state, recency guards) — the queue/FSRS **mirror itself** hasn't needed a fix since ~Layer 64 (2026-05-31). The mirror is stable; the recent trickle is the sync cherry, not the cake.
+
+**Goal: minimize the cost of *holding* the mirror — behavior-preserving only.** Two cost drivers:
+1. **Duplication** — the same mirror logic living in N places (the 4 AM rollover in 3 spots, the two-branch R formula, the 21-helper table). Single-source it so the next Layer is applied once, not N times. Highest value, lowest risk. (The "Pre-Layer checklist" exists to compensate for exactly this — fix the cause.)
+2. **Illegibility** — the `database.py` / `api/srs.py` god-modules make the mirror hard to find and easy to re-duplicate. Decompose by concern **opportunistically** (when already in there for another reason), never a big-bang teardown of parity code.
+
+The **oracle harness** (TT output == Anki output) and the **soak** (FSRS bit-exactness) are the safety nets that make de-dup / decompose safe — keep them green, expand the harness. They are the asset that lets you simplify *without* losing the mirror.
+
+### Path 2 — considered and REJECTED (do not re-pitch)
+
+Recorded so it isn't re-proposed every session: **Path 2** would be — at sync, run Anki's `review_order_sql` (R supplied via a registered SQLite UDF, so still no `import anki`) and persist the resulting card-id sequence as an "anchor queue"; between syncs serve from that snapshot filtered by "graded since sync." It would dissolve the freeze / intersperser / R-asc reconstruction code.
+
+**Rejected, because it trades away the live mirror, which is the product.** TT rebuilds the queue on every `/review` mount (`session_start=1` → `build_and_freeze_main_queue`, re-sorting by current R — `api/srs.py:1537`) — a valued, Anki-faithful behavior the user explicitly wants to keep. Path 2 makes the sync-time snapshot authoritative and **cannot re-derive on the live request path** (rule 1 forbids opening the collection there), so it would kill refresh-rebuild. It also isn't triggered by its own former threshold ("only when the leak count won't stop") — the leak rate is *falling*. **Default answer: no.** Revisit only if leaks *accelerate* into a genuinely new fundamental-divergence class; otherwise maintain the mirror per the strategy above.
 
 **The FSRS load balancer — now MIRRORED in the live grade path (Layer 53 port → Layer 55 wiring).** If `config['loadBalancerEnabled']` is set, Anki relocates every graded card's interval to a less-loaded day *within* the fuzz range, using the whole collection's due-date histogram (`states/fuzz.rs:36-42` tries `load_balancer_ctx.find_interval` before pure fuzz; wired into both the live answer path `answering/mod.rs:237-258` and the reschedule path `fsrs/memory_state.rs:218`). **History: this section used to say "TT does not mirror this and should not" — that is now stale.** Layer 53 ported the balancer bit-exact but applied it only at sync (read Anki's load-balanced `cards.due` verbatim). Layer 55 then **wired it into TT's live grade path**: a TT-native grade now load-balances like Anki via `build_live_load_balancer` (`queue_stats.py`) threaded into `schedule(load_balancer=…)` at the three grade call sites (`api/srs.py`), gated on `resolve_load_balancer_enabled`. The "needs a global histogram so TT can't" argument was wrong for the single-preset Slovene deck — TT's own `collocation_directions` *is* that histogram (`load_balancer.py`, `_anki_rng.py`, `test_parity_load_balancer.py`; 24/24 oracle bit-exact). **Sync is still pass-through** (`sync_pull` reads `cards.due` directly), so synced cards get Anki's pick verbatim regardless. **Residual `due_at` ±1–2 day signature now means a real config mismatch**, not an accepted gap: if TT's stored interval lands *inside* the fuzz `[lower, upper]` but differs from Anki's pick, check that `resolve_load_balancer_enabled` agrees with `config['loadBalancerEnabled']` and that the histogram (`get_load_balancer_histogram` + session replay) matches — don't dismiss it as cosmetic.
 

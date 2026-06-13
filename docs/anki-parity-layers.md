@@ -296,7 +296,18 @@ The `last_review == cutoff` equality check is exact — the grade endpoint sets 
 
 ---
 
-## Path 2 (deferred architectural pivot)
+## Path 2 (considered and REJECTED 2026-06-12 — do not re-pitch)
+
+> **Decision (2026-06-12): rejected.** Path 2 would trade away the *live mirror*, which
+> is the product. TT rebuilds the queue on every `/review` mount (`session_start=1` →
+> re-sort by current R) — a valued, Anki-faithful behavior; Path 2's sync-time snapshot
+> can't re-derive on the live request path (rule 1), so it would kill refresh-rebuild.
+> The leak rate has also slowed *way* down (34 Layer commits in 2026-05 → 6 in early
+> 2026-06; the queue/FSRS mirror hasn't needed a fix since ~Layer 64, only the sync seam
+> has), so Path 2's own trigger ("only when the leak count won't stop") isn't met. The
+> mirror is the asset; maintain it cheaply (de-dup helpers, decompose god-modules
+> opportunistically) per `.claude/rules/anki-queue-parity.md` → "Maintenance strategy."
+> The description below is kept for context only.
 
 Across Layers 9-15 in particular, every fix to "TT reconstructs Anki's queue from TT state" surfaced another input-quality bug. The pattern: Anki has N code branches, TT had mirrored M of them. Path 2 would dissolve this whole class by snapshotting Anki's actual queue at sync time.
 
@@ -306,7 +317,7 @@ Across Layers 9-15 in particular, every fix to "TT reconstructs Anki's queue fro
 - Wins: removes session_main_queue freeze, intersperser ratio override, R-asc reconstruction, two-branch R formula mirror, today_col_day computation, sibling-bury reconstruction. Estimated 60% of `app/api/srs.py` queue logic goes away.
 - Costs: ~2-3 hour refactor. Single sync-time dependency on `collection.anki2` (already accepted at sync). Slightly less flexible if TT later wants to serve cards Anki wouldn't have served (e.g. self-introduced TT-only cards).
 
-**Decision.** Not yet executed. Layers 18-23 closed enough leaks that the leak count is flat. Revisit if the next session needs another R-asc patch.
+**Decision.** REJECTED 2026-06-12 (see banner at the top of this section). Not "deferred until the next R-asc patch" — actively not the direction, because it would cost the live refresh-rebuild mirror and the leak rate has fallen rather than risen.
 
 ---
 
