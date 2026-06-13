@@ -115,9 +115,12 @@ echo "Starting frontend on https://localhost:5173..."
 cd frontend
 if [ "$FRONTEND_MODE" = "prod" ]; then
     # Build then serve the production bundle so the service worker activates.
+    # Use the robust launcher (scripts/preview.mjs): plain `vite preview` crashes
+    # when a stale service-worker client requests a hashed asset a newer build no
+    # longer contains — common in this rebuild-often on-device loop.
     echo "Building production frontend (service worker enabled)..."
     VITE_SSL_ENABLED=true bun run build
-    VITE_SSL_ENABLED=true bun run preview --port 5173 &
+    VITE_SSL_ENABLED=true bun run preview:robust --port 5173 &
 else
     VITE_SSL_ENABLED=true bun run dev &
 fi
