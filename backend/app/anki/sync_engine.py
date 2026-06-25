@@ -1097,6 +1097,22 @@ class AnkiSync:
                 if anki_last_ms > max_revlog_ms:
                     max_revlog_ms = anki_last_ms
 
+                # Invariant guard: sync_push runs before sync_pull in run_full_sync
+                # and clears dirty_fsrs for every Anki-linked direction (the three
+                # mark_direction_clean paths in sync_push). So a real, non-dry-run
+                # sync never reaches _pull_merge_direction's dirty branches — they
+                # survive only for dry-run (push doesn't mutate) and direct-pull
+                # tests. Make any production violation loud: if DIRTY_AT_PULL ever
+                # fires in a real sync, the dirty branches are NOT safe to delete.
+                # Pinned by test_anki_sync_merge_equivalence; grep sync.log / stderr.
+                if local_dir.dirty_fsrs and not dry_run:
+                    _log.warning(
+                        "DIRTY_AT_PULL cid=%s dir=%s state=%s — sync_push should have cleared this",
+                        coll_id,
+                        direction.value,
+                        local_dir.state.value,
+                    )
+
                 new_dir_state = self._pull_merge_direction(
                     card_rec,
                     local_dir,

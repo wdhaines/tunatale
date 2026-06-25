@@ -26,6 +26,7 @@ faked, matching the mock-boundary policy.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 from app.anki.sync import AnkiSync
@@ -33,6 +34,8 @@ from app.models.srs_item import Direction, DirectionState, SRSState
 from app.srs.database import SRSDatabase
 from tests.conftest import make_card_record, make_note_record
 from tests.test_anki_sync_pull import FakeReader, FakeWriter, _add_banka, _make_tt_db
+from tests.test_anki_sync_push import FakeReader as PushFakeReader
+from tests.test_anki_sync_push import FakeWriter as PushFakeWriter
 
 # Matches make_card_record's default anki_card_id so the seeded direction and the
 # Anki record refer to the same card.
@@ -354,3 +357,99 @@ def test_clean_suspend_via_queue_to_state():
 
     assert after.state == SRSState.SUSPENDED
     assert after.bury_kind is None
+
+
+# ── "dirty branches are dead in production" invariant ─────────────────────────
+#
+# _pull_merge_direction's dirty branches (1, 2a–2f) only matter if a direction
+# can still be dirty_fsrs=True when pull processes it. These tests pin the
+# invariant that makes those branches unreachable in a real sync — the
+# foundation for deleting them (a behavior-preserving deletion, justified by
+# proof rather than a soak): sync_push (which runs before pull in run_full_sync)
+# clears dirty_fsrs for every Anki-linked direction, so a real non-dry-run sync
+# never reaches them. They survive only for dry-run and direct-pull tests.
+
+
+def test_sync_push_clears_every_dirty_linked_direction():
+    """Foundation of the invariant: sync_push clears dirty_fsrs for every
+    Anki-LINKED dirty direction, in every state. This is what guarantees pull
+    never sees a dirty direction in a real (push-then-pull) sync."""
+    for state, left in (
+        (SRSState.REVIEW, None),
+        (SRSState.LEARNING, 1001),
+        (SRSState.SUSPENDED, None),
+    ):
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        _seed(db, guid, state=state, dirty_fsrs=True, left=left, reps=2, last_rating=3)
+
+        AnkiSync(db=db, _reader=PushFakeReader(), _writer=PushFakeWriter()).sync_push()
+
+        after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+        assert after.dirty_fsrs is False, f"sync_push left a {state.value} direction dirty"
+
+
+def test_sync_push_leaves_unlinked_dirty_direction_dirty():
+    """The one exception: a dirty direction with no anki_card_id is NOT cleared
+    by push (sync_create_new owns minting it). It's also never routed through
+    _pull_merge_direction — Anki has no card for it, so pull emits no card_rec."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    ds = DirectionState(
+        direction=Direction.RECOGNITION,
+        due_at=datetime.now(UTC) + timedelta(days=1),
+        state=SRSState.REVIEW,
+        reps=1,
+        dirty_fsrs=True,
+        anki_card_id=None,
+        last_review=datetime.now(UTC),
+    )
+    db.update_direction(guid, Direction.RECOGNITION, ds)
+
+    AnkiSync(db=db, _reader=PushFakeReader(), _writer=PushFakeWriter()).sync_push()
+
+    after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
+    assert after.dirty_fsrs is True  # push skipped it (anki_card_id is None)
+
+
+def test_dirty_at_pull_guard_warns_when_push_skipped(caplog):
+    """Teeth for the DIRTY_AT_PULL guard: a dirty direction reaching pull
+    without a preceding push (the impossible-in-production state the dirty
+    branches handle) is flagged loudly."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    coll_id = db.get_collocation_id_by_guid(guid)
+    _seed(db, guid, dirty_fsrs=True, stability=5.0)
+
+    card = make_card_record(anki_card_id=_CARD_ID, queue=2, reps=4, stability=7.25)
+    with caplog.at_level(logging.WARNING, logger="app.anki.sync"):
+        AnkiSync(
+            db=db,
+            _reader=FakeReader([make_note_record(anki_guid=guid, cards=[card])]),
+            _writer=FakeWriter(),
+        ).sync_pull()
+
+    assert f"DIRTY_AT_PULL cid={coll_id}" in caplog.text
+
+
+def test_real_sync_sequence_leaves_no_dirty_at_pull(caplog):
+    """The invariant end-to-end: in a real push-then-pull sequence, push clears
+    dirty so pull never reaches a dirty branch — no DIRTY_AT_PULL warning."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    _seed(db, guid, dirty_fsrs=True, stability=5.0, reps=2, last_rating=3)
+
+    # Push first, as run_full_sync does — this clears dirty_fsrs.
+    AnkiSync(db=db, _reader=PushFakeReader(), _writer=PushFakeWriter()).sync_push()
+    assert db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION].dirty_fsrs is False
+
+    # Then pull — the direction is clean, so the guard stays silent.
+    card = make_card_record(anki_card_id=_CARD_ID, queue=2, reps=4, stability=7.25)
+    with caplog.at_level(logging.WARNING, logger="app.anki.sync"):
+        AnkiSync(
+            db=db,
+            _reader=FakeReader([make_note_record(anki_guid=guid, cards=[card])]),
+            _writer=FakeWriter(),
+        ).sync_pull()
+
+    assert "DIRTY_AT_PULL" not in caplog.text
