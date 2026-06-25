@@ -783,84 +783,27 @@ class AnkiSync:
                 last_synced_at=datetime.now(UTC).isoformat(),
             )
 
-        # Layer 70 recency guard: TT graded this card after Anki's memory state
-        # was last computed (cards.data lrt). sync_push runs before pull in the
-        # same sync and clears dirty_fsrs, so the dirty-branch defenses above
-        # never see a freshly-pushed TT grade — without this branch the
-        # unconditional take-Anki below reverted the grade's s/d/last_review to
-        # Anki's pre-grade values (the cid=428 lapse-arc loss, 2026-06-10; 165
-        # directions affected). Keep TT's memory state + grade timestamp;
-        # scheduling fields stay pass-through from Anki, which sync_push wrote.
-        if card_rec.fsrs_known and _tt_memory_newer(local_dir, card_rec):
-            new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
-            return DirectionState(
-                direction=direction,
-                due_at=card_rec.due_at,
-                stability=local_dir.stability,
-                difficulty=local_dir.difficulty,
-                reps=card_rec.reps,
-                lapses=card_rec.lapses,
-                state=new_state,
-                prior_state=_resolve_prior_state(
-                    local_dir,
-                    new_state,
-                    first_review_ms=card_rec.first_review_ms,
-                    today_start_ms=today_start_ms,
-                ),
-                introduced_at=_resolve_introduced_at(
-                    local_dir,
-                    new_state,
-                    first_review_ms=card_rec.first_review_ms,
-                ),
-                dirty_fsrs=False,
-                anki_card_id=card_rec.anki_card_id,
-                anki_card_mod=card_rec.anki_card_mod,
-                anki_due=card_rec.anki_due,
-                last_review=local_dir.last_review,
-                last_review_time_ms=local_dir.last_review_time_ms,
-                last_synced_at=datetime.now(UTC).isoformat(),
-                last_rating=local_dir.last_rating,
-                left=card_rec.left,
-                bury_kind=_bury_kind_from_queue(card_rec.queue),
-            )
-
-        if card_rec.fsrs_known:
-            new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
-            return DirectionState(
-                direction=direction,
-                due_at=card_rec.due_at,
-                stability=card_rec.stability,
-                difficulty=card_rec.difficulty,
-                reps=card_rec.reps,
-                lapses=card_rec.lapses,
-                state=new_state,
-                prior_state=_resolve_prior_state(
-                    local_dir,
-                    new_state,
-                    first_review_ms=card_rec.first_review_ms,
-                    today_start_ms=today_start_ms,
-                ),
-                introduced_at=_resolve_introduced_at(
-                    local_dir,
-                    new_state,
-                    first_review_ms=card_rec.first_review_ms,
-                ),
-                dirty_fsrs=False,
-                anki_card_id=card_rec.anki_card_id,
-                anki_card_mod=card_rec.anki_card_mod,
-                anki_due=card_rec.anki_due,
-                last_review=resolved_last_review,
-                last_synced_at=datetime.now(UTC).isoformat(),
-                left=card_rec.left,
-                bury_kind=_bury_kind_from_queue(card_rec.queue),
-            )
-
+        # Clean path (the every-sync common case). One take-Anki resolution with
+        # two keep-TT guards, collapsing the former 3 branches (Layer-70 recency,
+        # fsrs_known, fsrs_unknown default):
+        #   - tt_newer (Layer 70): TT graded after Anki's stored memory state
+        #     (cards.data lrt). sync_push runs before pull and clears dirty_fsrs,
+        #     so the dirty-branch defenses above never see a freshly-pushed TT
+        #     grade — without this guard the take-Anki default reverts the grade's
+        #     s/d/last_review to Anki's pre-grade values (the cid=428 lapse-arc
+        #     loss, 2026-06-10; 165 directions). Keep TT's memory state AND grade
+        #     timestamp; scheduling stays pass-through from Anki (sync_push wrote it).
+        #   - fsrs_unknown: Anki's cards.data has no real s/d (placeholder 1.0/5.0),
+        #     so keep TT's memory state — but last_review still comes from Anki.
+        #   - otherwise: Anki's cards.data is authoritative (take-Anki-verbatim).
         new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
+        tt_newer = card_rec.fsrs_known and _tt_memory_newer(local_dir, card_rec)
+        keep_local_memory = tt_newer or not card_rec.fsrs_known
         return DirectionState(
             direction=direction,
             due_at=card_rec.due_at,
-            stability=local_dir.stability,
-            difficulty=local_dir.difficulty,
+            stability=local_dir.stability if keep_local_memory else card_rec.stability,
+            difficulty=local_dir.difficulty if keep_local_memory else card_rec.difficulty,
             reps=card_rec.reps,
             lapses=card_rec.lapses,
             state=new_state,
@@ -879,8 +822,10 @@ class AnkiSync:
             anki_card_id=card_rec.anki_card_id,
             anki_card_mod=card_rec.anki_card_mod,
             anki_due=card_rec.anki_due,
-            last_review=resolved_last_review,
+            last_review=local_dir.last_review if tt_newer else resolved_last_review,
+            last_review_time_ms=local_dir.last_review_time_ms if tt_newer else 0,
             last_synced_at=datetime.now(UTC).isoformat(),
+            last_rating=local_dir.last_rating if tt_newer else None,
             left=card_rec.left,
             bury_kind=_bury_kind_from_queue(card_rec.queue),
         )
