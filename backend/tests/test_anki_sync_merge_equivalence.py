@@ -1,0 +1,356 @@
+"""Stage 3b step 2 — the merge-tree collapse's compare gate (characterization).
+
+``_pull_merge_direction`` is a 9-branch decision tree (sync_engine.py). Stage 3b
+step 2 collapses its 6 FSRS-state branches into one take-Anki / keep-TT-ahead
+branch (plan: ``ticklish-questing-fountain.md``). The collapse must be
+*behavior-preserving for the authoritative write* — the DirectionState that
+lands in ``collocation_directions`` — even though it changes how the resolution
+is reported (``_record_conflict`` → ``_record_recompute_divergence``).
+
+This module pins the **who-wins semantics of the stored state** for every branch:
+for each input shape it asserts whether each authoritative field (stability,
+difficulty, state, last_review, reps, …) came from TT's local row or from Anki's
+``cards.data``. When the collapsed 2-branch resolution replaces the 9-branch one,
+these tests prove it preserved every who-wins decision — e.g. that the Layer-70
+TT-ahead recency guard still keeps TT's memory state, and that the take-Anki
+path still writes Anki's value.
+
+Deliberately NOT pinned (the collapse is allowed to change these):
+- ``report.conflicts`` / ``report.recompute_divergences`` shape and counts —
+  telemetry, covered by ``test_anki_sync_pull_event_mode.py``.
+- which branch produced the result — only the resulting DirectionState matters.
+
+Driven sociably through ``sync_pull`` (the real wiring), only the Anki driver
+faked, matching the mock-boundary policy.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+from app.anki.sync import AnkiSync
+from app.models.srs_item import Direction, DirectionState, SRSState
+from app.srs.database import SRSDatabase
+from tests.conftest import make_card_record, make_note_record
+from tests.test_anki_sync_pull import FakeReader, FakeWriter, _add_banka, _make_tt_db
+
+# Matches make_card_record's default anki_card_id so the seeded direction and the
+# Anki record refer to the same card.
+_CARD_ID = 90010
+
+
+def _seed(
+    db: SRSDatabase,
+    guid: str,
+    *,
+    state: SRSState = SRSState.REVIEW,
+    stability: float = 5.0,
+    difficulty: float = 4.5,
+    reps: int = 3,
+    lapses: int = 0,
+    dirty_fsrs: bool = False,
+    left: int | None = None,
+    last_rating: int | None = None,
+    last_review: datetime | None = None,
+    days_ago: int = 10,
+) -> DirectionState:
+    """Seed banka RECOGNITION with the given local state; return what was stored.
+
+    ``last_review`` defaults to ``days_ago`` days back at the current wall-clock
+    time-of-day (sub-second precision → never day-level, so it doesn't trip the
+    Layer-72 day-level guard unless a test asks for it).
+    """
+    if last_review is None:
+        last_review = datetime.now(UTC) - timedelta(days=days_ago)
+    ds = DirectionState(
+        direction=Direction.RECOGNITION,
+        due_at=last_review + timedelta(days=10),
+        stability=stability,
+        difficulty=difficulty,
+        reps=reps,
+        lapses=lapses,
+        state=state,
+        last_review=last_review,
+        last_review_time_ms=int(last_review.timestamp() * 1000),
+        anki_card_id=_CARD_ID,
+        dirty_fsrs=dirty_fsrs,
+        left=left,
+        last_rating=last_rating,
+        last_synced_at=last_review.isoformat(),
+    )
+    db.update_direction(guid, Direction.RECOGNITION, ds)
+    return ds
+
+
+def _pull(db: SRSDatabase, guid: str, card) -> DirectionState:
+    """Run a sync_pull for one banka card; return the resulting RECOGNITION state."""
+    reader = FakeReader([make_note_record(anki_guid=guid, cards=[card])])
+    AnkiSync(db=db, _reader=reader, _writer=FakeWriter()).sync_pull()
+    item = db.get_collocation_by_guid(guid)
+    assert item is not None
+    return item.directions[Direction.RECOGNITION]
+
+
+# ── dirty path ────────────────────────────────────────────────────────────────
+
+
+def test_dirty_anki_newer_timestamp_takes_anki_fsrs_keeps_tt_last_review():
+    """Branch 1: dirty + Anki graded more recently → take Anki's full FSRS state,
+    but keep TT's last_review/last_rating (TT owns its own grade timestamp)."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    seed = _seed(db, guid, dirty_fsrs=True, stability=5.0, last_rating=3)
+
+    # Anki's lrt (last_review_ms) is newer than TT's stored grade.
+    newer = datetime.now(UTC) - timedelta(days=1)
+    card = make_card_record(
+        anki_card_id=_CARD_ID,
+        queue=2,
+        reps=4,
+        stability=7.25,
+        difficulty=4.6,
+        last_review=newer,
+        last_review_ms=int(newer.timestamp() * 1000),
+    )
+    after = _pull(db, guid, card)
+
+    assert after.stability == 7.25  # Anki
+    assert after.difficulty == 4.6  # Anki
+    assert after.reps == 4  # Anki
+    assert after.state == SRSState.REVIEW
+    assert after.last_review == seed.last_review  # TT kept its grade timestamp
+    assert after.dirty_fsrs is False  # merge cleared the dirty flag
+
+
+def test_dirty_suspend_keeps_local_fsrs_sets_suspended():
+    """Branch 2a: dirty + queue=-1 → SUSPENDED, local FSRS preserved (no bury_kind)."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    _seed(db, guid, dirty_fsrs=True, stability=5.0)
+
+    card = make_card_record(anki_card_id=_CARD_ID, queue=-1, stability=7.25)
+    after = _pull(db, guid, card)
+
+    assert after.state == SRSState.SUSPENDED
+    assert after.stability == 5.0  # TT kept — suspend doesn't import Anki FSRS
+    assert after.bury_kind is None
+
+
+def test_dirty_bury_keeps_local_fsrs_sets_buried_sched():
+    """Branch 2b: dirty + queue=-2 → BURIED, local FSRS preserved, bury_kind='sched'."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    _seed(db, guid, dirty_fsrs=True, stability=5.0)
+
+    card = make_card_record(anki_card_id=_CARD_ID, queue=-2, stability=7.25)
+    after = _pull(db, guid, card)
+
+    assert after.state == SRSState.BURIED
+    assert after.stability == 5.0  # TT kept
+    assert after.bury_kind == "sched"
+
+
+def test_dirty_review_to_learning_takes_anki_state_class():
+    """Branch 2c: dirty, local REVIEW but Anki learning (queue=1) → take Anki FSRS,
+    state LEARNING, last_review = Anki's resolved timestamp."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    _seed(db, guid, state=SRSState.REVIEW, dirty_fsrs=True, stability=5.0)
+
+    # last_review_ms omitted → anki_last_ms=0, so branch 1 (Anki-newer) is skipped.
+    anki_lr = datetime.now(UTC) - timedelta(days=2)
+    card = make_card_record(
+        anki_card_id=_CARD_ID,
+        queue=1,
+        card_type=1,
+        reps=1,
+        stability=2.0,
+        difficulty=6.0,
+        left=1001,
+        last_review=anki_lr,
+    )
+    after = _pull(db, guid, card)
+
+    assert after.state == SRSState.LEARNING
+    assert after.stability == 2.0  # Anki
+    assert after.last_review == anki_lr  # resolved-from-Anki
+    assert after.dirty_fsrs is False
+
+
+def test_dirty_learning_to_review_takes_anki_state_class():
+    """Branch 2d: dirty, local LEARNING but Anki REVIEW (queue=2) → take Anki FSRS,
+    state REVIEW, bury_kind None."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    _seed(db, guid, state=SRSState.LEARNING, dirty_fsrs=True, stability=2.0, left=1001)
+
+    anki_lr = datetime.now(UTC) - timedelta(days=2)
+    card = make_card_record(
+        anki_card_id=_CARD_ID,
+        queue=2,
+        reps=3,
+        stability=6.0,
+        difficulty=4.0,
+        last_review=anki_lr,
+    )
+    after = _pull(db, guid, card)
+
+    assert after.state == SRSState.REVIEW
+    assert after.stability == 6.0  # Anki
+    assert after.last_review == anki_lr
+    assert after.bury_kind is None
+
+
+def test_dirty_both_learning_anki_step_ahead_takes_anki():
+    """Branch 2e: dirty, both learning, Anki further along the steps
+    (smaller total_remaining) → take Anki FSRS + left, state stays learning."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    _seed(db, guid, state=SRSState.LEARNING, dirty_fsrs=True, stability=2.0, left=1002)
+
+    anki_lr = datetime.now(UTC) - timedelta(days=2)
+    card = make_card_record(
+        anki_card_id=_CARD_ID,
+        queue=1,
+        card_type=1,
+        reps=2,
+        stability=2.5,
+        difficulty=5.5,
+        left=1001,  # total_remaining 1 < local 2 → Anki step-ahead
+        last_review=anki_lr,
+    )
+    after = _pull(db, guid, card)
+
+    assert after.left == 1001  # Anki
+    assert after.stability == 2.5  # Anki
+    assert after.state == SRSState.LEARNING
+    assert after.dirty_fsrs is False
+
+
+def test_dirty_both_learning_not_step_ahead_keeps_local():
+    """Branch 2f (dirty default): both learning, Anki NOT step-ahead → keep ALL of
+    TT's local FSRS state; only metadata refreshes. The dirty flag is NOT cleared."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    seed = _seed(db, guid, state=SRSState.LEARNING, dirty_fsrs=True, stability=2.0, left=1001)
+
+    card = make_card_record(
+        anki_card_id=_CARD_ID,
+        queue=1,
+        card_type=1,
+        stability=9.0,  # would-be Anki value, must be ignored
+        left=1001,  # equal total_remaining → not step-ahead
+    )
+    after = _pull(db, guid, card)
+
+    assert after.stability == seed.stability == 2.0  # TT kept
+    assert after.state == SRSState.LEARNING
+    assert after.dirty_fsrs is True  # dirty default leaves the flag set
+
+
+# ── not-dirty path ────────────────────────────────────────────────────────────
+
+
+def test_clean_tt_memory_newer_keeps_tt_fsrs_takes_anki_scheduling():
+    """Layer-70 recency guard (the cid=869 shape): clean local row, TT graded
+    after Anki's lrt → keep TT's stability/difficulty/last_review; take Anki's
+    reps/state/due. This is the branch the collapse MUST preserve."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    # Sub-second precision now → not day-level; recent so it postdates Anki's lrt.
+    tt_now = datetime.now(UTC)
+    seed = _seed(db, guid, stability=6.869, difficulty=3.226, last_review=tt_now, last_rating=4)
+
+    stale_lrt = tt_now - timedelta(days=20)
+    card = make_card_record(
+        anki_card_id=_CARD_ID,
+        queue=2,
+        reps=4,
+        stability=4.1946,
+        difficulty=4.939,
+        last_review=stale_lrt,
+        last_review_ms=int(stale_lrt.timestamp() * 1000),
+    )
+    after = _pull(db, guid, card)
+
+    assert after.stability == 6.869  # TT kept (recency guard)
+    assert after.difficulty == 3.226  # TT kept
+    assert after.last_review == seed.last_review  # TT kept
+    assert after.reps == 4  # Anki scheduling
+    assert after.state == SRSState.REVIEW
+
+
+def test_clean_fsrs_known_takes_anki_fsrs():
+    """Standard take-Anki: clean local row, Anki not stale → take Anki's
+    stability/difficulty + resolved last_review."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    _seed(db, guid, stability=5.0, difficulty=4.5, days_ago=10)
+
+    anki_lr = datetime.now(UTC) - timedelta(days=1)  # newer than TT's → not TT-ahead
+    card = make_card_record(
+        anki_card_id=_CARD_ID,
+        queue=2,
+        reps=4,
+        stability=7.25,
+        difficulty=4.6,
+        last_review=anki_lr,
+        last_review_ms=int(anki_lr.timestamp() * 1000),
+    )
+    after = _pull(db, guid, card)
+
+    assert after.stability == 7.25  # Anki
+    assert after.difficulty == 4.6  # Anki
+    assert after.last_review == anki_lr  # resolved-from-Anki
+    assert after.reps == 4
+    assert after.state == SRSState.REVIEW
+
+
+def test_clean_fsrs_unknown_keeps_local_fsrs_takes_anki_scheduling():
+    """Default branch: clean local row, Anki has no FSRS data (fsrs_known=False,
+    placeholder s/d) → keep TT's stability/difficulty; take Anki reps/state."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    _seed(db, guid, stability=5.0, difficulty=4.5)
+
+    card = make_card_record(
+        anki_card_id=_CARD_ID,
+        queue=2,
+        reps=4,
+        stability=1.0,  # placeholder
+        difficulty=5.0,  # placeholder
+        fsrs_known=False,
+    )
+    after = _pull(db, guid, card)
+
+    assert after.stability == 5.0  # TT kept (Anki had no real FSRS data)
+    assert after.difficulty == 4.5  # TT kept
+    assert after.reps == 4  # Anki scheduling
+    assert after.state == SRSState.REVIEW
+
+
+def test_clean_bury_via_queue_to_state():
+    """Clean path has no dedicated bury branch: queue=-2 flows through the
+    fsrs_known branch and is mapped to BURIED via _queue_to_state + bury_kind."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    _seed(db, guid, stability=5.0)
+
+    card = make_card_record(anki_card_id=_CARD_ID, queue=-2, reps=4, stability=7.25)
+    after = _pull(db, guid, card)
+
+    assert after.state == SRSState.BURIED
+    assert after.bury_kind == "sched"
+
+
+def test_clean_suspend_via_queue_to_state():
+    """Clean path: queue=-1 → SUSPENDED via _queue_to_state, no bury_kind."""
+    db = _make_tt_db()
+    guid = _add_banka(db)
+    _seed(db, guid, stability=5.0)
+
+    card = make_card_record(anki_card_id=_CARD_ID, queue=-1, reps=4, stability=7.25)
+    after = _pull(db, guid, card)
+
+    assert after.state == SRSState.SUSPENDED
+    assert after.bury_kind is None
