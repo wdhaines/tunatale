@@ -701,6 +701,25 @@ class TestSociableSync:
             peer_sync(dry_run=False)
         assert [c["op"] for c in op_log] == ["login", "sync", "sync"]
 
+    def test_full_sync_error_message_is_actionable(self):
+        """The FULL_SYNC abort names the cause and the exact bootstrap fix command."""
+        import app.anki.sync_orchestrator as so
+
+        msg = str(so._full_sync_error("pull", 2, "please full-sync"))
+        assert "FULL_SYNC" in msg  # kept so existing match= assertions still fire
+        assert "pull" in msg  # the failing leg
+        assert "--bootstrap" in msg  # the actual fix command, not the opaque "run bootstrap"
+        assert "download-only" in msg  # reassurance it won't touch the desktop collection
+        assert "please full-sync" in msg  # server message preserved
+
+    def test_full_sync_error_omits_server_message_when_blank(self):
+        """No dangling 'Server message:' when the server sent none."""
+        import app.anki.sync_orchestrator as so
+
+        msg = str(so._full_sync_error("push", 4, ""))
+        assert "Server message:" not in msg
+        assert "push" in msg
+
     # ═════════════════════════════════════════════════════════════════════
     # Batch C — driver/login errors
     # ═════════════════════════════════════════════════════════════════════

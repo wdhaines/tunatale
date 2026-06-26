@@ -14,6 +14,10 @@ function mockFail(statusText = "Internal Server Error"): Response {
   return { ok: false, statusText } as Response;
 }
 
+function mockFailBody(body: unknown, status = 500, statusText = ""): Response {
+  return { ok: false, status, statusText, json: async () => body } as Response;
+}
+
 describe("BASE_URL SSR branch", () => {
   afterEach(async () => {
     vi.unstubAllGlobals();
@@ -987,6 +991,34 @@ describe("TunaTaleAPI", () => {
       expect(fetch).toHaveBeenCalledWith(
         `${BASE}/api/anki/peer-sync?dry_run=true`,
         expect.objectContaining({ method: "POST" }),
+      );
+    });
+
+    it("surfaces the server's error detail (body.detail) on a failed request", async () => {
+      const detail =
+        "AnkiWeb requires a one-way FULL_SYNC (required=2) on the pull leg. " +
+        "Fix: cd backend && uv run python -m app.anki.sync_orchestrator --bootstrap";
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFailBody({ detail }, 409, "")));
+
+      await expect(api.peerSync()).rejects.toThrow(detail);
+    });
+
+    it("falls back to statusText when the error body has no string detail", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(mockFailBody({ not_detail: "x" }, 503, "Service Unavailable")),
+      );
+
+      await expect(api.peerSync()).rejects.toThrow(
+        "POST /api/anki/peer-sync?dry_run=false: Service Unavailable",
+      );
+    });
+
+    it("falls back to HTTP <status> when there is no detail and no statusText", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFailBody({}, 409, "")));
+
+      await expect(api.peerSync()).rejects.toThrow(
+        "POST /api/anki/peer-sync?dry_run=false: HTTP 409",
       );
     });
 

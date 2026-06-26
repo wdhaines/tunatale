@@ -247,7 +247,20 @@ export class TunaTaleAPI {
     const res = init
       ? await fetch(`${this.baseUrl}${path}`, init)
       : await fetch(`${this.baseUrl}${path}`);
-    if (!res.ok) throw new Error(`${method} ${path}: ${res.statusText}`);
+    if (!res.ok) {
+      // Surface the server's error detail (FastAPI puts it in body.detail) instead of
+      // the bare status line — statusText is empty over HTTP/2, which left sync/other
+      // failures showing a useless "METHOD /path:" with no reason.
+      let detail = "";
+      try {
+        const body = await res.json();
+        const d = (body as { detail?: unknown }).detail;
+        if (typeof d === "string") detail = d;
+      } catch {
+        /* error response body wasn't JSON */
+      }
+      throw new Error(`${method} ${path}: ${detail || res.statusText || `HTTP ${res.status}`}`);
+    }
     return res.json();
   }
 

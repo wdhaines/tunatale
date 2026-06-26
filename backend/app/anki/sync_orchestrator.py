@@ -112,6 +112,25 @@ def _full_sync_required(required: int | None) -> bool:
     return required in (2, 3, 4)
 
 
+def _full_sync_error(leg: str, required: int | None, server_message: str) -> PeerSyncError:
+    """Build an actionable FULL_SYNC abort error for the *leg* ("pull"/"push").
+
+    The bare "Run bootstrap first" wording was opaque in the UI popover (it named
+    no command and no cause). This spells out why it happened and the exact fix.
+    """
+    msg = (server_message or "").strip()
+    return PeerSyncError(
+        f"AnkiWeb requires a one-way FULL_SYNC (required={required}) on the {leg} leg, so "
+        "TunaTale aborted rather than risk clobbering data. This happens when Anki desktop "
+        "does a full one-way sync with AnkiWeb — e.g. choosing 'Upload to AnkiWeb' after a "
+        "schema / notetype / deck-preset change — which leaves TunaTale's sync mirror behind "
+        "the server. Fix by re-downloading the mirror, then sync again:\n"
+        "    cd backend && uv run python -m app.anki.sync_orchestrator --bootstrap\n"
+        "This is download-only: it does NOT modify your Anki desktop collection or AnkiWeb."
+        + (f"\nServer message: {msg}" if msg else "")
+    )
+
+
 def _absolute_sqlite_url(url: str) -> str | None:
     """Anchor a CWD-relative on-disk sqlite URL to the backend dir.
 
@@ -421,11 +440,7 @@ def peer_sync(dry_run: bool = False, *, media_fn=None) -> PeerSyncReport:
     report.pull_message = sync_out.get("server_message", "")
 
     if _full_sync_required(sync_out.get("required")):
-        raise PeerSyncError(
-            f"Server requested FULL_SYNC (required={sync_out.get('required')}) on pull — aborting. "
-            f"Server message: {sync_out.get('server_message', '')}. "
-            "Run bootstrap first or check collection compatibility."
-        )
+        raise _full_sync_error("pull", sync_out.get("required"), sync_out.get("server_message", ""))
 
     from app.anki.sync import main as tt_sync_main
 
@@ -469,10 +484,7 @@ def peer_sync(dry_run: bool = False, *, media_fn=None) -> PeerSyncReport:
             report.push_required = push_out.get("required")
             report.push_message = push_out.get("server_message", "")
             if _full_sync_required(push_out.get("required")):
-                raise PeerSyncError(
-                    f"Server requested FULL_SYNC (required={push_out.get('required')}) on push — aborting. "
-                    f"Server message: {push_out.get('server_message', '')}."
-                )
+                raise _full_sync_error("push", push_out.get("required"), push_out.get("server_message", ""))
 
     report.timings["total"] = time.perf_counter() - t_start
     _write_peer_sync_timing_log(settings.sync_log, report)
