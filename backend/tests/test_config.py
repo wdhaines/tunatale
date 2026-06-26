@@ -24,6 +24,21 @@ def test_settings_from_env(monkeypatch):
     assert s.llm_mode == "live"
 
 
+def test_target_language_default(monkeypatch, tmp_path):
+    """target_language defaults to 'sl'."""
+    for var in ("GROQ_API_KEY", "DATABASE_URL", "LLM_MODE", "TARGET_LANGUAGE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.chdir(tmp_path)
+    s = Settings(_env_file=None)
+    assert s.target_language == "sl"
+
+
+def test_target_language_from_env(monkeypatch):
+    monkeypatch.setenv("TARGET_LANGUAGE", "no")
+    s = Settings()
+    assert s.target_language == "no"
+
+
 def test_anki_settings_defaults(monkeypatch, tmp_path):
     """New Anki-related settings have expected defaults."""
     for var in (

@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     llm_mode: str = "mock"  # mock | live | record | patch
     llm_model: str = "llama-3.3-70b-versatile"
 
+    target_language: str = "sl"
+
     anki_collection_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.anki2").expanduser()
     anki_media_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.media").expanduser()
     anki_deck_name: str = "0. Slovene"

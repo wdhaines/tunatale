@@ -34,6 +34,24 @@ class Language:
         )
 
     @classmethod
+    def norwegian(cls) -> Language:
+        return cls(
+            code="no",
+            name="Norwegian",
+            native_name="norsk",
+            script="latin",
+            tts_voice_map={
+                "narrator": "en-US-GuyNeural",
+                "female-1": "nb-NO-PernilleNeural",
+                "female-2": "nb-NO-PernilleNeural",
+                "male-1": "nb-NO-FinnNeural",
+                "male-2": "nb-NO-FinnNeural",
+                "female": "nb-NO-PernilleNeural",
+                "male": "nb-NO-FinnNeural",
+            },
+        )
+
+    @classmethod
     def english(cls) -> Language:
         return cls(
             code="en",

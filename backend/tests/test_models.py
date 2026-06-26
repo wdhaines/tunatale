@@ -129,6 +129,30 @@ class TestLanguage:
         for key in ("narrator", "female-1", "male-1"):
             assert key in lang.tts_voice_map, f"missing key '{key}' in {lang.code} voice map"
 
+    def test_norwegian_code(self):
+        lang = Language.norwegian()
+        assert lang.code == "no"
+
+    def test_norwegian_name(self):
+        lang = Language.norwegian()
+        assert lang.name == "Norwegian"
+        assert lang.native_name == "norsk"
+
+    def test_norwegian_has_all_voices(self):
+        lang = Language.norwegian()
+        for key in ("narrator", "female-1", "female-2", "male-1", "male-2"):
+            assert key in lang.tts_voice_map, f"missing '{key}' in Norwegian voice map"
+
+    def test_norwegian_has_legacy_aliases(self):
+        lang = Language.norwegian()
+        assert "female" in lang.tts_voice_map
+        assert "male" in lang.tts_voice_map
+
+    def test_norwegian_voices_are_nb_no(self):
+        lang = Language.norwegian()
+        assert "nb-NO" in lang.tts_voice_map["female-1"]
+        assert "nb-NO" in lang.tts_voice_map["male-1"]
+
 
 class TestCurriculum:
     """Tests for Curriculum JSON serialization and CurriculumDay validation."""

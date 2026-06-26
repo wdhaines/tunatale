@@ -15,14 +15,13 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from app.audio.edge_tts import EdgeTTSService  # noqa: E402
 from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
-from app.audio.preprocessing.slovene import SlovenePreprocessor  # noqa: E402
 from app.audio.renderer import LessonRenderer  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.generation.curriculum import CurriculumGenerator  # noqa: E402
 from app.generation.story import StoryGenerator  # noqa: E402
+from app.languages import get_language, get_preprocessor  # noqa: E402
 from app.llm.cassette import CassetteLLMClient  # noqa: E402
 from app.llm.client import LLMClient  # noqa: E402
-from app.models.language import Language  # noqa: E402
 from app.models.lesson import SectionType  # noqa: E402
 from app.srs.database import SRSDatabase  # noqa: E402
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for  # noqa: E402
@@ -92,7 +91,7 @@ async def lifespan(app: FastAPI):
     srs_db = SRSDatabase(db_path)
     content_store = ContentStore(db_path)
 
-    language = Language.slovene()
+    language = get_language(settings.target_language)
 
     app.state.srs_db = srs_db
     app.state.content_store = content_store
@@ -102,7 +101,7 @@ async def lifespan(app: FastAPI):
     app.state.story_generator = StoryGenerator(llm)
     app.state.renderer = LessonRenderer(
         tts=EdgeTTSService(),
-        preprocessor=SlovenePreprocessor(),
+        preprocessor=get_preprocessor(settings.target_language),
         pause_calculator=NaturalPauseCalculator(),
         delivery_codec=settings.audio_delivery_codec,
         delivery_bitrate=settings.audio_delivery_bitrate,

@@ -674,7 +674,7 @@ def _build_translate_prompt(words: list[str], language_name: str) -> str:
     )
 
 
-_VALID_LANGUAGE_CODES = frozenset({"sl", "en"})
+_VALID_LANGUAGE_CODES = frozenset({"sl", "en", "no"})
 
 
 @router.post("/translate", status_code=200)

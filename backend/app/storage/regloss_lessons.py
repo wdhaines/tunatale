@@ -24,6 +24,7 @@ import json
 import logging
 import re
 
+from app.languages import get_language
 from app.models.language import Language
 from app.models.lesson import Lesson, SectionType
 from app.srs.lemmatizer import Lemmatizer, get_lemmatizer, lemmatize_surfaces_in_context
@@ -159,8 +160,10 @@ async def _main() -> None:  # pragma: no cover — CLI wiring, run once against 
     parser.add_argument("--language", default="sl", help="language code (default: sl)")
     args = parser.parse_args()
 
-    if args.language != "sl":
-        raise SystemExit(f"Unsupported language: {args.language}")
+    try:
+        language = get_language(args.language)
+    except KeyError as e:
+        raise SystemExit(str(e)) from None
 
     from app.config import settings
     from app.llm.client import LLMClient
@@ -170,7 +173,7 @@ async def _main() -> None:  # pragma: no cover — CLI wiring, run once against 
     store = ContentStore(settings.database_url.replace("sqlite:///", ""))
     llm = LLMClient(groq_api_key=settings.groq_api_key, groq_model=settings.llm_model)
     try:
-        count = await regloss_all(store, llm, get_lemmatizer(), Language.slovene())
+        count = await regloss_all(store, llm, get_lemmatizer(), language)
         logger.info("Re-glossed %d lesson(s)", count)
     finally:
         store.close()
