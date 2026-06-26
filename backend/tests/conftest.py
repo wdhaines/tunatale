@@ -312,6 +312,7 @@ def build_norwegian_anki_db(
     tmp_path: Path,
     deck_name: str = "0. 6000 Most Frequent Norwegian Words [Part 1]",
     deck_id: int = 22345,
+    with_homographs: bool = False,
 ) -> Path:
     """Create a minimal collection.anki2 using the Norwegian field-map notetype.
 
@@ -321,6 +322,10 @@ def build_norwegian_anki_db(
     matching the real Norwegian deck. The L2 word sits at field index 1 and the
     English gloss at index 3 — NOT index 0/1 — so the test proves extraction is
     by field *name*, not position.
+
+    When *with_homographs* is True, adds two notes sharing the surface "løfte"
+    with different Word class (noun "promise" / verb "lift") so a test can pin
+    that the Word-class disambig keeps homographs as separate collocations.
     """
     norwegian_mid = 1694414741634
     db_path = tmp_path / "collection.anki2"
@@ -363,6 +368,26 @@ def build_norwegian_anki_db(
         "INSERT INTO cards VALUES (30010, 3001, ?, 0, 0, 0, 2, 2, 10, 21, 2500, 5, 0, 0, 0, 0, 0, ?)",
         (deck_id, json.dumps({"s": 15.78, "d": 8.7})),
     )
+
+    if with_homographs:
+        # Same surface "løfte", different Word class → must NOT merge.
+        conn.execute(
+            "INSERT INTO notes VALUES (3002, 'no_guid_2', ?, 0, 0, '', "
+            "'1534\x1fløfte\x1fnoun\x1fpromise', 'løfte', 0, 0, '')",
+            (norwegian_mid,),
+        )
+        conn.execute(
+            "INSERT INTO notes VALUES (3003, 'no_guid_3', ?, 0, 0, '', "
+            "'1535\x1fløfte\x1fverb\x1flift', 'løfte', 0, 0, '')",
+            (norwegian_mid,),
+        )
+        conn.execute(
+            "INSERT INTO cards VALUES (30020, 3002, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')", (deck_id,)
+        )
+        conn.execute(
+            "INSERT INTO cards VALUES (30030, 3003, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')", (deck_id,)
+        )
+
     conn.commit()
     conn.close()
     return db_path

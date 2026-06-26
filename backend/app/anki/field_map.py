@@ -37,7 +37,12 @@ _PROFILES: dict[str, NotetypeProfile] = {
     "6000 Most Frequent Norwegian Words": NotetypeProfile(
         l2="Norwegian word",
         translation="English translation",
-        disambig=None,
+        # Word class disambiguates homographs that share a surface form — e.g.
+        # "løfte" (noun "promise" vs verb "lift"), "vår" ("our" vs "spring"),
+        # "om" (3 senses). Without it they collapse to one GUID and one survives.
+        # A true same-class duplicate (e.g. "foran" listed twice as preposition)
+        # still shares a GUID and correctly merges.
+        disambig="Word class",
     ),
 }
 

@@ -1139,7 +1139,8 @@ class TestNotetypeProfileExtraction:
         from app.anki.sqlite_reader import extract_via_profile
 
         note = self._note(tmp_path)[0]
-        assert extract_via_profile(note) == ("være", "to be", "")
+        # disambig comes from the 'Word class' field ('verb')
+        assert extract_via_profile(note) == ("være", "to be", "verb")
 
     def test_extract_via_profile_returns_none_without_profile(self):
         from app.anki.sqlite_reader import AnkiNote, extract_via_profile
@@ -1160,4 +1161,4 @@ class TestNotetypeProfileExtraction:
         assert len(records) == 1
         assert records[0].l2_text == "være"
         assert records[0].translation == "to be"
-        assert records[0].disambig_key == ""
+        assert records[0].disambig_key == "verb"  # from 'Word class'

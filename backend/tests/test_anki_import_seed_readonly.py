@@ -820,6 +820,31 @@ class TestLanguageCode:
         assert row["language_code"] == "no"
         assert dirs == {"recognition"}  # single card → recognition-only, no phantom production
 
+    def test_homographs_with_different_word_class_stay_separate(self, tmp_path):
+        """Two notes sharing 'løfte' (noun 'promise' / verb 'lift') must import as
+        TWO collocations — Word class is the disambig, so they don't collapse."""
+        from tests.conftest import build_norwegian_anki_db
+
+        db_path = build_norwegian_anki_db(tmp_path, with_homographs=True)
+        import_seed(
+            anki_collection_path=db_path,
+            anki_backup_dir=tmp_path / "bak",
+            anki_media_path=tmp_path / "fake_media",
+            deck_name="0. 6000 Most Frequent Norwegian Words [Part 1]",
+            language_code="no",
+            tunatale_db_path=str(tmp_path / "tunatale_no.db"),
+            media_dir=tmp_path / "media",
+            fallback_log_path=tmp_path / "fallback.log",
+        )
+        with closing(sqlite3.connect(str(tmp_path / "tunatale_no.db"))) as db:
+            db.row_factory = sqlite3.Row
+            rows = db.execute(
+                "SELECT translation, disambig_key FROM collocations WHERE text='løfte' ORDER BY disambig_key"
+            ).fetchall()
+        assert len(rows) == 2, f"homographs collapsed: {[dict(r) for r in rows]}"
+        assert {r["translation"] for r in rows} == {"promise", "lift"}
+        assert {r["disambig_key"] for r in rows} == {"noun", "verb"}
+
 
 class TestCLI:
     def test_cli_dry_run_prints_dry_run(self, fake_anki_db, tmp_path, monkeypatch, capsys):

@@ -9,7 +9,7 @@ class TestGetProfile:
         assert isinstance(profile, NotetypeProfile)
         assert profile.l2 == "Norwegian word"
         assert profile.translation == "English translation"
-        assert profile.disambig is None
+        assert profile.disambig == "Word class"  # disambiguates homographs (løfte noun vs verb)
 
     def test_slovene_vocabulary_has_no_profile(self):
         # Slovene deliberately keeps the heuristics — no profile.
