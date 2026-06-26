@@ -176,11 +176,6 @@ _NEW_RESET_SET = (
 # States that count as "in the learning bucket" (Anki queue=1 / queue=3).
 # Shared by get_learning_items (review queue) and count_learning (badge).
 _LEARNING_STATES = ("learning", "relearning")
-# Stage 3b sync_pull merge modes (anki_state_cache['event_sync_pull']):
-#   legacy  — the pre-Stage-3b 9-branch _pull_merge_direction (default)
-#   compare — run legacy + replay, write legacy authoritative + replay to shadow cols
-#   new     — collapsed FSRS branch: take Anki verbatim, forward-step as validator
-_EVENT_SYNC_PULL_MODES = frozenset({"legacy", "compare", "new"})
 
 
 class SRSDatabase:
@@ -480,28 +475,6 @@ class SRSDatabase:
                     row["id"],
                     direction.value,
                 ),
-            )
-            self._commit(conn)
-
-    def set_direction_shadow_replay(
-        self,
-        collocation_id: int,
-        direction: Direction,
-        stability: float,
-        difficulty: float,
-    ) -> None:
-        """Write the replay-derived FSRS state to the Stage-3b shadow columns.
-
-        Compare-mode (``event_sync_pull='compare'``) only. Leaves the
-        authoritative ``stability``/``fsrs_difficulty`` untouched; the soak
-        SQL-diffs ``*_replayed`` against them to confirm replay reproduces Anki.
-        """
-        with self._get_conn() as conn:
-            conn.execute(
-                "UPDATE collocation_directions "
-                "SET stability_replayed = ?, fsrs_difficulty_replayed = ? "
-                "WHERE collocation_id = ? AND direction = ?",
-                (stability, difficulty, collocation_id, direction.value),
             )
             self._commit(conn)
 
@@ -2320,24 +2293,6 @@ class SRSDatabase:
         with self._get_conn() as conn:
             conn.execute("DELETE FROM anki_state_cache WHERE key = ?", (key,))
             self._commit(conn)
-
-    def get_event_sync_pull_mode(self) -> str:
-        """Return the sync_pull merge mode (Stage 3b): ``legacy`` / ``compare`` / ``new``.
-
-        Defaults to ``legacy`` (the pre-Stage-3b 9-branch merge tree) when unset.
-        A corrupt/unrecognised stored value also falls back to ``legacy`` so a
-        bad row can never silently take sync_pull down an unimplemented path.
-        """
-        row = self.get_anki_state_cache("event_sync_pull")
-        if row is None or row[0] not in _EVENT_SYNC_PULL_MODES:
-            return "legacy"
-        return row[0]
-
-    def set_event_sync_pull_mode(self, mode: str) -> None:
-        """Persist the sync_pull merge mode; rejects anything but the 3 known modes."""
-        if mode not in _EVENT_SYNC_PULL_MODES:
-            raise ValueError(f"event_sync_pull mode must be one of {sorted(_EVENT_SYNC_PULL_MODES)}, got {mode!r}")
-        self.set_anki_state_cache("event_sync_pull", mode)
 
     def set_dirty_fields(self, guid: str, fields_str: str) -> None:
         """Set dirty_fields for the collocation identified by guid."""

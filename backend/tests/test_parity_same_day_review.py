@@ -16,7 +16,7 @@ instead of the short-term one.
 live path (``rebuild_from_revlog`` → ``schedule``), but the soak runs it
 *incrementally*: it anchors each card to its last-synced ``DirectionState`` (=
 Anki's authoritative ``cards.data.s``) and forward-steps only the revlog rows
-added since that sync (``_write_compare_shadow`` → ``starting_state`` + ``since_id``).
+added since that sync (``_replay_incremental`` → ``starting_state`` + ``since_id``).
 Already-synced same-day double-grades are baked into the anchor, so they are
 never re-derived through ``schedule``. A *from-scratch* replay does diverge —
 reproduced against the live collection: card "How is Slovene..." graded EASY

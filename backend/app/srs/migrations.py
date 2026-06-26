@@ -13,7 +13,7 @@ from datetime import date
 from app.common.guid import compute_guid
 from app.srs.function_words import format_morphology_hint
 
-CURRENT_VERSION = 31
+CURRENT_VERSION = 32
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -932,6 +932,20 @@ def migrate_v30_to_v31(conn: sqlite3.Connection) -> None:
     _set_version(conn, 31)
 
 
+def migrate_v31_to_v32(conn: sqlite3.Connection) -> None:
+    """Drop the Stage-3b compare-mode shadow columns from collocation_directions.
+
+    ``stability_replayed`` / ``fsrs_difficulty_replayed`` (added in v27) were
+    written only under ``event_sync_pull='compare'``. Stage 3b decommissioned the
+    ``event_sync_pull`` flag — sync_pull now has a single path (collapsed merge +
+    recompute detector), so the shadow columns are dead. TT-only; no USN, no sync.
+    """
+    for col in ("stability_replayed", "fsrs_difficulty_replayed"):
+        if _column_exists(conn, "collocation_directions", col):
+            conn.execute(f"ALTER TABLE collocation_directions DROP COLUMN {col}")
+    _set_version(conn, 32)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -964,6 +978,7 @@ _MIGRATIONS = {
     28: migrate_v28_to_v29,
     29: migrate_v29_to_v30,
     30: migrate_v30_to_v31,
+    31: migrate_v31_to_v32,
 }
 
 

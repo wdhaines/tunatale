@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 31
+        assert CURRENT_VERSION == 32
 
     def test_migrates_v27_to_v28_adds_lemma_key_column(self, tmp_path):
         """v28 adds collocations.lemma_key (space-joined lemma tuple for span matching)."""
@@ -1920,3 +1920,51 @@ class TestMigrateV30ToV31:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
         assert "fsrs_force_next" in cols
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 31
+
+
+class TestMigrateV31ToV32:
+    """Tests for v31→v32 (drop the Stage-3b compare-mode shadow columns)."""
+
+    def _make_v31_conn(self):
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            CREATE TABLE collocation_directions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                collocation_id INTEGER NOT NULL,
+                direction TEXT NOT NULL,
+                stability REAL NOT NULL DEFAULT 1.0,
+                fsrs_difficulty REAL NOT NULL DEFAULT 5.0,
+                stability_replayed REAL,
+                fsrs_difficulty_replayed REAL
+            )
+        """)
+        conn.execute("PRAGMA user_version = 31")
+        conn.commit()
+        return conn
+
+    def test_drops_shadow_columns(self):
+        from app.srs.migrations import migrate_v31_to_v32
+
+        conn = self._make_v31_conn()
+        migrate_v31_to_v32(conn)
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
+        assert "stability_replayed" not in cols
+        assert "fsrs_difficulty_replayed" not in cols
+        # Authoritative FSRS columns untouched.
+        assert "stability" in cols
+        assert "fsrs_difficulty" in cols
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 32
+
+    def test_idempotent_v31_to_v32(self):
+        from app.srs.migrations import migrate_v31_to_v32
+
+        conn = self._make_v31_conn()
+        migrate_v31_to_v32(conn)
+        migrate_v31_to_v32(conn)  # second call exercises the column-already-dropped branch
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
+        assert "stability_replayed" not in cols
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 32

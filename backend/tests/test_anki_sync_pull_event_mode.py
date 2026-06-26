@@ -1,16 +1,16 @@
-"""Stage 3b step 3 — compare-mode equivalence for sync_pull.
+"""sync_pull's recompute detector (Stage 3b, post flag-decommission).
 
-``event_sync_pull='compare'`` must be a strict superset of ``'legacy'``: the
-authoritative columns get exactly the legacy merge result (production behavior
-unchanged), and the replay-derived FSRS state is written *only* to the shadow
-columns (``stability_replayed`` / ``fsrs_difficulty_replayed``) for the ≥1-week
-soak SQL-diff. These tests pin:
+The ``event_sync_pull`` flag (legacy / compare / new) was removed once the merge
+collapsed: there is now a single sync_pull path — the collapsed take-Anki merge
+plus an unconditional forward-step replay that runs *only* as a recompute
+DETECTOR. On a divergence it records a ``recompute_divergence`` (Optimize /
+FSRS-param / retention / restore event) but keeps Anki's value — stored state is
+take-Anki-verbatim regardless. These tests pin the detector's behaviour:
 
-- legacy mode never touches the shadow columns;
-- compare mode leaves the authoritative columns byte-identical to legacy;
-- compare mode populates the shadow columns from the incremental replay
-  (``rebuild_from_revlog(starting_state=stored, since_id=pre-ingest-max)``);
-- dry-run compare writes nothing.
+- within tolerance → no divergence, Anki's value written verbatim;
+- outside tolerance → divergence recorded + greppable WARNING, Anki's value kept;
+- the Layer-70 skips (tt-memory-newer, fsrs_unknown, pre-link revlog rows);
+- suspend/bury and dry-run paths.
 """
 
 from __future__ import annotations
@@ -64,15 +64,6 @@ def _seed_review_direction(db: SRSDatabase, guid: str) -> DirectionState:
     return ds
 
 
-def _shadow(db: SRSDatabase, coll_id: int, direction: Direction = Direction.RECOGNITION) -> tuple:
-    row = db._conn.execute(
-        "SELECT stability_replayed, fsrs_difficulty_replayed "
-        "FROM collocation_directions WHERE collocation_id = ? AND direction = ?",
-        (coll_id, direction.value),
-    ).fetchone()
-    return (row[0], row[1])
-
-
 def _good_revlog_row() -> dict:
     """A single fresh Anki GOOD review row (type=1)."""
     return {
@@ -86,106 +77,6 @@ def _good_revlog_row() -> dict:
     }
 
 
-def test_legacy_mode_never_writes_shadow_columns():
-    """Default legacy mode leaves shadow columns NULL; authoritative gets Anki's value."""
-    db = _make_tt_db()
-    guid = _add_banka(db)
-    _seed_review_direction(db, guid)
-    coll_id = db.get_collocation_id_by_guid(guid)
-
-    card = make_card_record(anki_card_id=_CARD_ID, ord=0, reps=4, stability=7.25, difficulty=4.6)
-    _run_pull(db, [make_note_record(anki_guid=guid, cards=[card])], [_good_revlog_row()])
-
-    after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
-    assert after.stability == 7.25  # legacy took Anki's value
-    assert _shadow(db, coll_id) == (None, None)
-
-
-def test_compare_mode_keeps_authoritative_identical_to_legacy():
-    """Compare mode's authoritative write is byte-identical to legacy's."""
-    revlog = [_good_revlog_row()]
-    card_kwargs = dict(anki_card_id=_CARD_ID, ord=0, reps=4, stability=7.25, difficulty=4.6)
-
-    db_legacy = _make_tt_db()
-    guid_l = _add_banka(db_legacy)
-    _seed_review_direction(db_legacy, guid_l)
-    _run_pull(db_legacy, [make_note_record(anki_guid=guid_l, cards=[make_card_record(**card_kwargs)])], revlog)
-    legacy = db_legacy.get_collocation_by_guid(guid_l).directions[Direction.RECOGNITION]
-
-    db_cmp = _make_tt_db()
-    guid_c = _add_banka(db_cmp)
-    _seed_review_direction(db_cmp, guid_c)
-    db_cmp.set_event_sync_pull_mode("compare")
-    _run_pull(db_cmp, [make_note_record(anki_guid=guid_c, cards=[make_card_record(**card_kwargs)])], revlog)
-    compare = db_cmp.get_collocation_by_guid(guid_c).directions[Direction.RECOGNITION]
-
-    assert compare.stability == legacy.stability
-    assert compare.difficulty == legacy.difficulty
-    assert compare.state == legacy.state
-    assert compare.due_at == legacy.due_at
-    assert compare.reps == legacy.reps
-
-
-def test_compare_mode_populates_shadow_from_incremental_replay():
-    """Shadow columns equal the forward-step replay from the stored state."""
-    db = _make_tt_db()
-    guid = _add_banka(db)
-    stored = _seed_review_direction(db, guid)
-    coll_id = db.get_collocation_id_by_guid(guid)
-    db.set_event_sync_pull_mode("compare")
-
-    revlog = [_good_revlog_row()]
-    card = make_card_record(anki_card_id=_CARD_ID, ord=0, reps=4, stability=7.25, difficulty=4.6)
-    _run_pull(db, [make_note_record(anki_guid=guid, cards=[card])], revlog)
-
-    # Independently replay the same single new row from the stored state.
-    params = resolve_fsrs_params(db)[0]
-    expected = db.rebuild_from_revlog(
-        coll_id,
-        Direction.RECOGNITION,
-        params=params,
-        col_crt=None,
-        anki_card_id=_CARD_ID,
-        starting_state=stored,
-        since_id=None,  # no pre-existing rows → equals the sync's pre_ingest boundary
-    )
-    shadow_s, shadow_d = _shadow(db, coll_id)
-    assert shadow_s == expected.stability
-    assert shadow_d == expected.difficulty
-    # The replay advanced the stored state (a real grade was walked).
-    assert shadow_s != stored.stability
-
-
-def test_compare_mode_zero_new_rows_shadows_stored_state():
-    """With no new Anki revlog rows, the replay returns the stored state verbatim."""
-    db = _make_tt_db()
-    guid = _add_banka(db)
-    stored = _seed_review_direction(db, guid)
-    coll_id = db.get_collocation_id_by_guid(guid)
-    db.set_event_sync_pull_mode("compare")
-
-    card = make_card_record(anki_card_id=_CARD_ID, ord=0, reps=3, stability=5.0, difficulty=4.5)
-    _run_pull(db, [make_note_record(anki_guid=guid, cards=[card])], revlog_rows=[])
-
-    shadow_s, shadow_d = _shadow(db, coll_id)
-    assert shadow_s == stored.stability
-    assert shadow_d == stored.difficulty
-
-
-def test_compare_mode_dry_run_writes_nothing():
-    """dry_run compare must not populate shadow columns."""
-    db = _make_tt_db()
-    guid = _add_banka(db)
-    _seed_review_direction(db, guid)
-    coll_id = db.get_collocation_id_by_guid(guid)
-    db.set_event_sync_pull_mode("compare")
-
-    card = make_card_record(anki_card_id=_CARD_ID, ord=0, reps=4, stability=7.25, difficulty=4.6)
-    _run_pull(db, [make_note_record(anki_guid=guid, cards=[card])], [_good_revlog_row()], dry_run=True)
-
-    assert _shadow(db, coll_id) == (None, None)
-
-
 def _run_pull_report(db, records, revlog_rows, *, dry_run: bool = False) -> PullReport:
     """Run a sync_pull and return the PullReport."""
     return AnkiSync(db=db, _reader=RevlogReader(records, revlog_rows), _writer=FakeWriter()).sync_pull(dry_run=dry_run)
@@ -193,7 +84,6 @@ def _run_pull_report(db, records, revlog_rows, *, dry_run: bool = False) -> Pull
 
 def _compute_replay(db, coll_id, stored):
     """Compute the forward-step replay result for a single GOOD grade from stored state."""
-    from app.srs.queue_stats import resolve_fsrs_params
 
     params = resolve_fsrs_params(db)[0]
     return db.rebuild_from_revlog(
@@ -220,7 +110,6 @@ def test_new_mode_writes_anki_verbatim_within_tolerance():
     guid = _add_banka(db)
     stored = _seed_review_direction(db, guid)
     coll_id = db.get_collocation_id_by_guid(guid)
-    db.set_event_sync_pull_mode("new")
 
     revlog = [_good_revlog_row()]
     records = [make_note_record(anki_guid=guid, cards=[])]
@@ -260,7 +149,6 @@ def test_new_mode_divergence_takes_anki(caplog):
     guid = _add_banka(db)
     stored = _seed_review_direction(db, guid)
     coll_id = db.get_collocation_id_by_guid(guid)
-    db.set_event_sync_pull_mode("new")
 
     revlog = [_good_revlog_row()]
     card = make_card_record(anki_card_id=_CARD_ID, ord=0, reps=4, stability=7.25, difficulty=4.6)
@@ -309,7 +197,6 @@ def test_new_mode_suspend_branch():
     db = _make_tt_db()
     guid = _add_banka(db)
     _seed_review_direction(db, guid)
-    db.set_event_sync_pull_mode("new")
 
     card = make_card_record(anki_card_id=_CARD_ID, ord=0, reps=4, stability=7.25, difficulty=4.6, queue=-1)
     _run_pull(db, [make_note_record(anki_guid=guid, cards=[card])], [_good_revlog_row()])
@@ -323,7 +210,6 @@ def test_new_mode_bury_branch():
     db = _make_tt_db()
     guid = _add_banka(db)
     _seed_review_direction(db, guid)
-    db.set_event_sync_pull_mode("new")
 
     card = make_card_record(anki_card_id=_CARD_ID, ord=0, reps=4, stability=7.25, difficulty=4.6, queue=-2)
     _run_pull(db, [make_note_record(anki_guid=guid, cards=[card])], [_good_revlog_row()])
@@ -338,7 +224,6 @@ def test_new_mode_zero_new_rows_noop():
     db = _make_tt_db()
     guid = _add_banka(db)
     stored = _seed_review_direction(db, guid)
-    db.set_event_sync_pull_mode("new")
 
     card = make_card_record(anki_card_id=_CARD_ID, ord=0, reps=3, stability=5.0, difficulty=4.5)
     report = _run_pull_report(db, [make_note_record(anki_guid=guid, cards=[card])], revlog_rows=[])
@@ -379,7 +264,6 @@ def test_new_mode_dry_run_writes_nothing():
     db = _make_tt_db()
     guid = _add_banka(db)
     stored = _seed_review_direction(db, guid)
-    db.set_event_sync_pull_mode("new")
 
     card = make_card_record(anki_card_id=_CARD_ID, ord=0, reps=4, stability=7.25, difficulty=4.6)
     _run_pull(
@@ -401,7 +285,6 @@ def test_new_mode_detector_skips_when_tt_memory_newer():
     db = _make_tt_db()
     guid = _add_banka(db)
     stored = _seed_review_direction(db, guid)
-    db.set_event_sync_pull_mode("new")
 
     stale_lrt = stored.last_review - timedelta(days=20)
     card = make_card_record(
@@ -426,7 +309,6 @@ def test_new_mode_detector_skips_fsrs_unknown():
     db = _make_tt_db()
     guid = _add_banka(db)
     stored = _seed_review_direction(db, guid)
-    db.set_event_sync_pull_mode("new")
 
     card = make_card_record(
         anki_card_id=_CARD_ID,
@@ -456,7 +338,6 @@ def test_new_mode_detector_ignores_unlinked_revlog_rows():
     guid = _add_banka(db)
     stored = _seed_review_direction(db, guid)
     coll_id = db.get_collocation_id_by_guid(guid)
-    db.set_event_sync_pull_mode("new")
 
     # Two pre-link TT-native grades (anki_card_id=NULL), already reflected in
     # the stored direction state — replay must NOT re-apply them.

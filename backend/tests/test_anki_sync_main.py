@@ -82,7 +82,6 @@ class TestRunFullSync:
         monkeypatch.setattr("app.anki.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
 
         db = MagicMock()
-        db.get_event_sync_pull_mode.return_value = "new"
 
         create, push, pull, media_report = await run_full_sync(
             sync,
@@ -114,7 +113,6 @@ class TestRunFullSync:
         monkeypatch.setattr("app.anki.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
 
         db = MagicMock()
-        db.get_event_sync_pull_mode.return_value = "new"
 
         _, _, _, media_report = await run_full_sync(
             sync,
@@ -149,7 +147,6 @@ class TestRunFullSync:
 
         sentinel = object()
         db = MagicMock()
-        db.get_event_sync_pull_mode.return_value = "new"
 
         _, _, _, media_report = await run_full_sync(
             sync,
@@ -183,7 +180,6 @@ class TestRunFullSync:
         monkeypatch.setattr("app.anki.import_seed.refresh_media_from_conn", media_spy)
 
         db = MagicMock()
-        db.get_event_sync_pull_mode.return_value = "new"
 
         _, _, _, media_report = await run_full_sync(
             sync,
@@ -213,7 +209,6 @@ class TestRunFullSync:
         monkeypatch.setattr("app.anki.import_seed.refresh_media_from_conn", media_spy)
 
         db = MagicMock()
-        db.get_event_sync_pull_mode.return_value = "new"
 
         _, _, _, media_report = await run_full_sync(
             sync,
@@ -242,7 +237,6 @@ class TestRunFullSync:
         monkeypatch.setattr("app.anki.import_seed.refresh_media_from_conn", media_spy)
 
         db = MagicMock()
-        db.get_event_sync_pull_mode.return_value = "new"
 
         _, _, _, media_report = await run_full_sync(
             sync,
@@ -734,10 +728,10 @@ class TestSyncSoakLog:
         )
         push = PushReport(notes_pushed=1, directions_pushed=3)
 
-        _write_sync_soak_log(log_path, event_mode="new", pull=pull, push=push)
+        _write_sync_soak_log(log_path, pull=pull, push=push)
 
         text = log_path.read_text()
-        assert "SYNC_SOAK mode=new" in text
+        assert "SYNC_SOAK pull_notes=2" in text
         assert "pull_notes=2 pull_dirs=5 conflicts=0 recompute_divergences=1" in text
         assert "push_notes=1 push_dirs=3" in text
         assert "RECOMPUTE_DIVERGENCE cid=785 dir=production" in text
@@ -748,8 +742,8 @@ class TestSyncSoakLog:
         log_path = tmp_path / "sync.log"
         pull = PullReport()
         push = PushReport()
-        _write_sync_soak_log(log_path, event_mode="new", pull=pull, push=push)
-        _write_sync_soak_log(log_path, event_mode="new", pull=pull, push=push)
+        _write_sync_soak_log(log_path, pull=pull, push=push)
+        _write_sync_soak_log(log_path, pull=pull, push=push)
         assert log_path.read_text().count("SYNC_SOAK") == 2
 
     def test_non_dry_run_writes_soak_log(self, tmp_path, monkeypatch):
@@ -794,8 +788,8 @@ class TestSyncSoakLog:
 
         assert exit_code == 0
         text = log_path.read_text()
-        # :memory: db defaults to legacy mode; 0 divergences => clean heartbeat.
-        assert "SYNC_SOAK mode=legacy" in text
+        # 0 divergences => clean heartbeat.
+        assert "SYNC_SOAK pull_notes=" in text
         assert "recompute_divergences=0" in text
         assert "pull_dirs=4 conflicts=0" in text
 

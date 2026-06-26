@@ -116,22 +116,21 @@ def _copy_tt_media_to_anki(writer: OfflineWriter, filename: str) -> None:
 def _write_sync_soak_log(
     path: Path,
     *,
-    event_mode: str,
     pull: PullReport,
     push,
 ) -> None:
     """Append a durable, greppable soak line for each non-dry CLI sync.
 
-    The CLI only print()s its summary to stdout, so the Stage-3b `new`-mode soak
-    signal (``recompute_divergences``) was lost the moment the terminal scrolled.
-    This persists one ``SYNC_SOAK`` heartbeat per sync (even at count 0, so the
-    soak has positive "ran clean" confirmation) plus one ``RECOMPUTE_DIVERGENCE``
-    detail line per divergence. Grep ``~/.tunatale/logs/sync.log`` for either.
+    The CLI only print()s its summary to stdout, so the recompute-divergence
+    health signal would be lost when the terminal scrolled. This persists one
+    ``SYNC_SOAK`` heartbeat per sync (even at count 0, so there's positive
+    "ran clean" confirmation) plus one ``RECOMPUTE_DIVERGENCE`` detail line per
+    divergence. Grep ``~/.tunatale/logs/sync.log`` for either.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().isoformat(timespec="seconds")
     lines = [
-        f"{ts} SYNC_SOAK mode={event_mode} pull_notes={pull.notes_updated} "
+        f"{ts} SYNC_SOAK pull_notes={pull.notes_updated} "
         f"pull_dirs={pull.directions_updated} conflicts={len(pull.conflicts)} "
         f"recompute_divergences={len(pull.recompute_divergences)} "
         f"push_notes={push.notes_pushed} push_dirs={push.directions_pushed}"
@@ -249,7 +248,6 @@ async def run_full_sync(
 
         _write_sync_soak_log(
             sync_log_path,
-            event_mode=db.get_event_sync_pull_mode(),
             pull=pull_report,
             push=push_report,
         )

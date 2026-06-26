@@ -456,12 +456,12 @@ class AnkiSync:
     ) -> None:
         """Record an FSRS recompute-memory-state divergence event on PullReport.
 
-        Called when ``event_sync_pull='new'`` and the forward-step replay of
-        tt_revlog produces stability/difficulty outside tolerance (0.01) from
-        Anki's ``cards.data`` — indicating Anki ran ``recompute_memory_state``
-        between syncs. The divergence is surfaced via ``report.recompute_divergences``
-        and the sync summary log, but does NOT write to a DB table (it is a
-        diagnostic signal for the soak, not a permanent record).
+        Called when the forward-step replay of tt_revlog produces
+        stability/difficulty outside tolerance (0.01) from Anki's ``cards.data`` —
+        indicating Anki ran ``recompute_memory_state`` between syncs. The
+        divergence is surfaced via ``report.recompute_divergences`` and the sync
+        summary log, but does NOT write to a DB table (it is a diagnostic signal,
+        not a permanent record).
         """
         report.recompute_divergences.append(
             RecomputeDivergence(
@@ -655,12 +655,11 @@ class AnkiSync:
         params,
         col_crt: int | None,
     ) -> DirectionState:
-        """Incremental forward-step replay — shared by compare and new modes.
+        """Incremental forward-step replay for the recompute detector.
 
-        Walks tt_revlog rows newer than ``since_id`` (all rows when None) from a
+        Walks tt_revlog rows newer than ``since_id`` (all rows when None) from the
         stored ``local_dir`` starting state. With zero new rows returns ``local_dir``
-        unchanged.  A pure wrapper around ``rebuild_from_revlog`` that canonicalises
-        the common argument shape so the two call sites stay in lockstep.
+        unchanged. A pure wrapper around ``rebuild_from_revlog``.
         """
         return self._db.rebuild_from_revlog(
             collocation_id,
@@ -670,33 +669,6 @@ class AnkiSync:
             anki_card_id=local_dir.anki_card_id,
             starting_state=local_dir,
             since_id=since_id,
-        )
-
-    def _write_compare_shadow(
-        self,
-        collocation_id: int,
-        direction: Direction,
-        local_dir: DirectionState,
-        since_id: int | None,
-        params,
-        col_crt: int | None,
-    ) -> None:
-        """Stage 3b compare-mode: replay forward from the stored state and record
-        the result in the shadow columns for post-hoc SQL-diffing.
-
-        Incremental forward-step: starts from ``local_dir`` (the stored,
-        Anki-aligned-at-last-sync state) and walks only tt_revlog rows newer than
-        ``since_id`` — this sync's freshly-ingested Anki grades. With zero new
-        rows it returns ``local_dir`` unchanged (the common "no Anki grades since
-        last sync" case). Never touches the authoritative columns; legacy stays
-        the production write.
-        """
-        replayed = self._replay_incremental(collocation_id, direction, local_dir, since_id, params, col_crt)
-        self._db.set_direction_shadow_replay(
-            collocation_id,
-            direction,
-            replayed.stability,
-            replayed.difficulty,
         )
 
     def _pull_advance_learning_cutoff(self, max_revlog_ms: int, dry_run: bool) -> None:
@@ -743,18 +715,14 @@ class AnkiSync:
         max_revlog_ms = 0
         bury_stats = self._init_bury_stats()
 
-        # Stage 3b: compare/new modes both run incremental replay alongside the
-        # legacy merge. Compare writes replay to shadow columns (legacy stays
-        # authoritative); new replaces authoritative FSRS state with replay-derived
-        # values (or Anki's on divergence). Resolve params/col_crt once.
-        event_mode = self._db.get_event_sync_pull_mode()
-        compare_params = None
-        compare_col_crt = None
-        if event_mode in ("compare", "new"):
-            from app.srs.queue_stats import resolve_fsrs_params
+        # Forward-step replay runs on every sync purely as a recompute DETECTOR.
+        # The merge writes Anki's cards.data verbatim (take-Anki), so a replay
+        # that diverges signals a genuine Anki recompute event (Optimize /
+        # FSRS-param / retention change / restore), not a stored-state choice.
+        from app.srs.queue_stats import resolve_fsrs_params
 
-            compare_params = resolve_fsrs_params(self._db)[0]
-            compare_col_crt = self._anki_col_crt
+        replay_params = resolve_fsrs_params(self._db)[0]
+        replay_col_crt = self._anki_col_crt
 
         self._pull_unbury_sweep(dry_run)
 
@@ -843,11 +811,7 @@ class AnkiSync:
                 # Layer 71: anchor by (collocation_id, direction) — the domain
                 # the replay walks — not by anki_card_id, which misses pre-link
                 # rows (anki_card_id=NULL) and re-minted card ids.
-                pre_ingest_revlog_id = (
-                    self._db.latest_revlog_id_for_direction(coll_id, direction)
-                    if event_mode in ("compare", "new")
-                    else None
-                )
+                pre_ingest_revlog_id = self._db.latest_revlog_id_for_direction(coll_id, direction)
                 self._ingest_anki_revlog_for_card(
                     card_rec.anki_card_id,
                     coll_id,
@@ -882,24 +846,18 @@ class AnkiSync:
                     today_start_ms,
                 )
 
-                # Stage 3b new-mode (take-Anki-verbatim, fork resolved 2026-06-02):
-                # new_dir_state already holds Anki's cards.data (the legacy merge
-                # result), which IS the authoritative write — Anki is the source of
-                # truth on divergence. The forward-step replay runs only as a
-                # divergence DETECTOR: on a recompute event (Optimize / FSRS-param /
-                # retention change / FSRS toggle / restore) it can't reproduce
-                # Anki's state, so we record the event for diagnostics but keep
-                # Anki's value. Stored state therefore does NOT depend on f32 replay
-                # parity. Suspend/bury skip the check — the legacy branch owns them.
+                # Recompute DETECTOR (take-Anki-verbatim, fork resolved 2026-06-02):
+                # new_dir_state already holds Anki's cards.data, which IS the
+                # authoritative write. The forward-step replay only DETECTS a
+                # recompute event (Optimize / FSRS-param / retention change /
+                # restore) it can't reproduce — recorded for diagnostics, Anki's
+                # value kept. Stored state does NOT depend on f32 replay parity.
+                # Layer 70: flag genuine recomputes only — skip placeholder s/d
+                # (fsrs_known False, the every-sync noise cohort) and TT-newer
+                # grades (a known-stale Anki value the recency guard declined, not
+                # a recompute). Suspend/bury skip — _queue_to_state owns them.
                 if (
-                    event_mode == "new"
-                    and not dry_run
-                    # Layer 70: the detector flags genuine Anki recompute events
-                    # only. Skip when Anki's s/d are placeholders (fsrs_known is
-                    # False — the 854/858/866/882-886 every-sync noise cohort)
-                    # or when TT's grade is newer than Anki's lrt (a known-stale
-                    # Anki value the recency guard just declined to take, not a
-                    # recompute).
+                    not dry_run
                     and card_rec.fsrs_known
                     and not _tt_memory_newer(local_dir, card_rec)
                     and new_dir_state.state
@@ -913,8 +871,8 @@ class AnkiSync:
                         direction,
                         local_dir,
                         pre_ingest_revlog_id,
-                        compare_params,
-                        compare_col_crt,
+                        replay_params,
+                        replay_col_crt,
                     )
                     stab_diff = abs(card_rec.stability - replayed.stability)
                     diff_diff = abs(card_rec.difficulty - replayed.difficulty)
@@ -982,16 +940,6 @@ class AnkiSync:
                     if not dry_run:
                         self._db.update_direction(guid, direction, new_dir_state)
                     report.directions_updated += 1
-
-                if event_mode == "compare" and not dry_run:
-                    self._write_compare_shadow(
-                        coll_id,
-                        direction,
-                        local_dir,
-                        pre_ingest_revlog_id,
-                        compare_params,
-                        compare_col_crt,
-                    )
 
         self._pull_advance_learning_cutoff(max_revlog_ms, dry_run)
         self._pull_rebuild_session_main_queue(dry_run)
