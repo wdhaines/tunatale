@@ -1106,3 +1106,58 @@ class TestLeftAndDueAtFromCards:
         assert state.due_at == expected, (
             f"buried review card lost underlying due: got {state.due_at}, expected {expected}"
         )
+
+
+class TestNotetypeProfileExtraction:
+    """Field-role profile path (Norwegian 17-field notetype) vs the heuristics."""
+
+    DECK = "0. 6000 Most Frequent Norwegian Words [Part 1]"
+
+    def _note(self, tmp_path):
+        from tests.conftest import build_norwegian_anki_db
+
+        db_path = build_norwegian_anki_db(tmp_path)
+        conn = sqlite3.connect(str(db_path))
+        try:
+            deck_id = find_deck_id(conn, self.DECK)
+            return fetch_notes_for_deck(conn, deck_id)
+        finally:
+            conn.close()
+
+    def test_fetch_notes_resolves_notetype_name_and_field_names(self, tmp_path):
+        notes = self._note(tmp_path)
+        assert len(notes) == 1
+        assert notes[0].notetype_name == "6000 Most Frequent Norwegian Words"
+        assert notes[0].field_names == (
+            "Frequency index",
+            "Norwegian word",
+            "Word class",
+            "English translation",
+        )
+
+    def test_extract_via_profile_reads_roles_by_name(self, tmp_path):
+        from app.anki.sqlite_reader import extract_via_profile
+
+        note = self._note(tmp_path)[0]
+        assert extract_via_profile(note) == ("være", "to be", "")
+
+    def test_extract_via_profile_returns_none_without_profile(self):
+        from app.anki.sqlite_reader import AnkiNote, extract_via_profile
+
+        note = AnkiNote(id=1, anki_guid="g", mid=999, mod=0, tags=[], fields=["x"], notetype_name="Unprofiled")
+        assert extract_via_profile(note) is None
+
+    def test_offline_reader_uses_profile_for_norwegian_notes(self, tmp_path):
+        from app.anki.sync import OfflineReader
+        from tests.conftest import build_norwegian_anki_db
+
+        db_path = build_norwegian_anki_db(tmp_path)
+        conn = sqlite3.connect(str(db_path))
+        try:
+            records = OfflineReader(conn, self.DECK).get_note_records()
+        finally:
+            conn.close()
+        assert len(records) == 1
+        assert records[0].l2_text == "være"
+        assert records[0].translation == "to be"
+        assert records[0].disambig_key == ""

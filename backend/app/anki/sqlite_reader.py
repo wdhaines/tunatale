@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from pathlib import Path
 
+from app.anki.field_map import get_profile
 from app.anki.protobuf_wire import review_due_at_for_col_day
 from app.models.srs_item import Direction, DirectionState, SRSState
 
@@ -23,6 +24,8 @@ class AnkiNote:
     mod: int
     tags: list[str]
     fields: list[str]  # split on \x1f
+    notetype_name: str = ""  # resolved from mid via the notetypes table; "" if unavailable
+    field_names: tuple[str, ...] = ()  # ordered field names (fields table); () if unavailable
 
 
 @dataclass
@@ -103,6 +106,26 @@ def find_deck_id(conn: sqlite3.Connection, deck_name: str) -> int | None:
     return None
 
 
+def _fetch_notetype_meta(conn: sqlite3.Connection) -> dict[int, tuple[str, tuple[str, ...]]]:
+    """Map notetype id -> (name, ordered field names) for every notetype.
+
+    Returns an empty map when the modern ``notetypes``/``fields`` tables are
+    absent (minimal/legacy test collections) — callers then fall back to the
+    positional heuristics. Ordered by integer ``ntid``/``ord`` only, never by
+    the unicase-collated ``name`` column (which a raw sqlite3 connection can't
+    sort).
+    """
+    try:
+        nt_rows = conn.execute("SELECT id, name FROM notetypes").fetchall()
+        f_rows = conn.execute("SELECT ntid, ord, name FROM fields ORDER BY ntid, ord").fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    names_by_ntid: dict[int, list[str]] = {}
+    for ntid, _ord, name in f_rows:
+        names_by_ntid.setdefault(ntid, []).append(name)
+    return {ntid: (name, tuple(names_by_ntid.get(ntid, ()))) for ntid, name in nt_rows}
+
+
 def fetch_notes_for_deck(conn: sqlite3.Connection, deck_id: int) -> list[AnkiNote]:
     """Fetch all notes that have at least one card in the given deck."""
     rows = conn.execute(
@@ -114,11 +137,24 @@ def fetch_notes_for_deck(conn: sqlite3.Connection, deck_id: int) -> list[AnkiNot
         """,
         (deck_id,),
     ).fetchall()
+    nt_meta = _fetch_notetype_meta(conn)
     notes = []
     for r in rows:
         fields = r[5].split("\x1f")
         tags = [t for t in r[4].strip().split() if t]
-        notes.append(AnkiNote(id=r[0], anki_guid=r[1], mid=r[2], mod=r[3], tags=tags, fields=fields))
+        notetype_name, field_names = nt_meta.get(r[2], ("", ()))
+        notes.append(
+            AnkiNote(
+                id=r[0],
+                anki_guid=r[1],
+                mid=r[2],
+                mod=r[3],
+                tags=tags,
+                fields=fields,
+                notetype_name=notetype_name,
+                field_names=field_names,
+            )
+        )
     return notes
 
 
@@ -585,3 +621,22 @@ def extract_l2_from_fields(fields: list[str]) -> str:
 def extract_disambig_from_fields(fields: list[str]) -> str:
     """Return field index 6 (DisambigKey), stripped, or '' if absent."""
     return fields[6].strip() if len(fields) > 6 else ""
+
+
+def extract_via_profile(note: AnkiNote) -> tuple[str, str, str] | None:
+    """Return ``(l2, translation, disambig)`` for *note* via its notetype profile.
+
+    Returns ``None`` when the note's notetype has no profile — the caller then
+    falls back to the positional/HTML heuristics. Reads each role's field *by
+    name* (robust to the field's position), then applies the same single-field
+    cleaners the heuristics use (``extract_l2`` / ``extract_translation``).
+    """
+    profile = get_profile(note.notetype_name)
+    if profile is None:
+        return None
+    by_name = dict(zip(note.field_names, note.fields, strict=False))
+    l2 = extract_l2(by_name.get(profile.l2, ""))
+    translation = extract_translation(by_name.get(profile.translation, ""))
+    # profile.disambig may be None (no disambig field) — dict.get(None, "") is "".
+    disambig = by_name.get(profile.disambig, "").strip()
+    return l2, translation, disambig

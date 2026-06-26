@@ -795,6 +795,31 @@ class TestLanguageCode:
             assert r["language_code"] == "no"
             assert r["guid"] == compute_guid(r["text"], "no", r["disambig_key"] or "")
 
+    def test_norwegian_notetype_extracts_by_field_name_not_position(self, tmp_path):
+        """The Norwegian profile reads L2 from 'Norwegian word' (field idx 1) and the
+        gloss from 'English translation' (field idx 3) — proving name-based extraction."""
+        from tests.conftest import build_norwegian_anki_db
+
+        db_path = build_norwegian_anki_db(tmp_path)
+        import_seed(
+            anki_collection_path=db_path,
+            anki_backup_dir=tmp_path / "bak",
+            anki_media_path=tmp_path / "fake_media",
+            deck_name="0. 6000 Most Frequent Norwegian Words [Part 1]",
+            language_code="no",
+            tunatale_db_path=str(tmp_path / "tunatale_no.db"),
+            media_dir=tmp_path / "media",
+            fallback_log_path=tmp_path / "fallback.log",
+        )
+        with closing(sqlite3.connect(str(tmp_path / "tunatale_no.db"))) as db:
+            db.row_factory = sqlite3.Row
+            row = db.execute("SELECT text, translation, language_code FROM collocations").fetchone()
+            dirs = {r[0] for r in db.execute("SELECT direction FROM collocation_directions")}
+        assert row["text"] == "være"  # 'Norwegian word' field, not 'Frequency index' (idx 0)
+        assert row["translation"] == "to be"  # 'English translation' field, not 'Word class' (idx 2)
+        assert row["language_code"] == "no"
+        assert dirs == {"recognition"}  # single card → recognition-only, no phantom production
+
 
 class TestCLI:
     def test_cli_dry_run_prints_dry_run(self, fake_anki_db, tmp_path, monkeypatch, capsys):

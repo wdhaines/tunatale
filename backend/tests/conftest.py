@@ -308,6 +308,66 @@ def build_minimal_anki_db(
     return db_path
 
 
+def build_norwegian_anki_db(
+    tmp_path: Path,
+    deck_name: str = "0. 6000 Most Frequent Norwegian Words [Part 1]",
+    deck_id: int = 22345,
+) -> Path:
+    """Create a minimal collection.anki2 using the Norwegian field-map notetype.
+
+    Unlike ``build_minimal_anki_db``, this writes the modern ``notetypes`` +
+    ``fields`` tables so ``_fetch_notetype_meta`` resolves a real notetype name
+    and the field-role profile kicks in. One recognition-only note (1 card),
+    matching the real Norwegian deck. The L2 word sits at field index 1 and the
+    English gloss at index 3 — NOT index 0/1 — so the test proves extraction is
+    by field *name*, not position.
+    """
+    norwegian_mid = 1694414741634
+    db_path = tmp_path / "collection.anki2"
+    conn = sqlite3.connect(str(db_path))
+
+    conn.execute("""CREATE TABLE col (
+        id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER,
+        dty INTEGER, usn INTEGER, ls INTEGER, conf TEXT, models TEXT,
+        decks TEXT, dconf TEXT, tags TEXT)""")
+    conn.execute("""CREATE TABLE notes (
+        id INTEGER, guid TEXT, mid INTEGER, mod INTEGER, usn INTEGER,
+        tags TEXT, flds TEXT, sfld TEXT, csum INTEGER, flags INTEGER, data TEXT)""")
+    conn.execute("""CREATE TABLE cards (
+        id INTEGER, nid INTEGER, did INTEGER, ord INTEGER, mod INTEGER,
+        usn INTEGER, type INTEGER, queue INTEGER, due INTEGER, ivl INTEGER,
+        factor INTEGER, reps INTEGER, lapses INTEGER, left INTEGER,
+        odue INTEGER, odid INTEGER, flags INTEGER, data TEXT)""")
+    conn.execute("""CREATE TABLE revlog (
+        id INTEGER, cid INTEGER, usn INTEGER, ease INTEGER, ivl INTEGER,
+        lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)""")
+    conn.execute("CREATE TABLE notetypes (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)")
+    conn.execute("CREATE TABLE fields (ntid INTEGER, ord INTEGER, name TEXT, config BLOB)")
+
+    conn.execute(
+        "INSERT INTO notetypes VALUES (?, ?, 0, 0, NULL)", (norwegian_mid, "6000 Most Frequent Norwegian Words")
+    )
+    for ord_, name in enumerate(["Frequency index", "Norwegian word", "Word class", "English translation"]):
+        conn.execute("INSERT INTO fields VALUES (?, ?, ?, NULL)", (norwegian_mid, ord_, name))
+
+    decks_json = json.dumps({"1": {"id": 1, "name": "Default"}, str(deck_id): {"id": deck_id, "name": deck_name}})
+    conn.execute("INSERT INTO col VALUES (1,1704067200,0,0,11,0,0,0,'{}','{}',?,'{}','{}')", (decks_json,))
+
+    # flds: Frequency index | Norwegian word | Word class | English translation
+    conn.execute(
+        "INSERT INTO notes VALUES (3001, 'no_guid_1', ?, 0, 0, '', '1\x1fvære\x1fverb\x1fto be', 'være', 0, 0, '')",
+        (norwegian_mid,),
+    )
+    # Single recognition card (ord=0), with FSRS memory state.
+    conn.execute(
+        "INSERT INTO cards VALUES (30010, 3001, ?, 0, 0, 0, 2, 2, 10, 21, 2500, 5, 0, 0, 0, 0, 0, ?)",
+        (deck_id, json.dumps({"s": 15.78, "d": 8.7})),
+    )
+    conn.commit()
+    conn.close()
+    return db_path
+
+
 @pytest.fixture
 def fake_anki_db(tmp_path):
     """Minimal collection.anki2 with 5 notes (deck '0. Slovene'), legacy format."""

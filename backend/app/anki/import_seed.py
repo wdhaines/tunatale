@@ -24,6 +24,7 @@ from app.anki.sqlite_reader import (
     extract_l2,
     extract_l2_from_fields,
     extract_translation,
+    extract_via_profile,
     fetch_cards_for_notes,
     fetch_notes_for_deck,
     find_deck_id,
@@ -250,7 +251,31 @@ def import_seed(
     db = SRSDatabase(tunatale_db_path)
     with db.begin_transaction(dry_run=dry_run):
         for note in notes:
-            l2_text = extract_l2_from_fields(note.fields)
+            # Notetypes with a field-role profile (e.g. Norwegian's 17-field deck)
+            # read L2/translation/disambig by field name; everything else (the
+            # Slovene decks) falls back to the positional/HTML heuristics.
+            profile_result = extract_via_profile(note)
+            if profile_result is not None:
+                l2_text, translation, disambig = profile_result
+            else:
+                l2_text = extract_l2_from_fields(note.fields)
+                disambig = extract_disambig_from_fields(note.fields)
+                # Layer 31: if a field uses the `<b>L2</b><br><i>EN</i>` pattern
+                # (Pronunciation/Basic notetype), the English gloss lives inside
+                # the same field as the L2 word — recover it directly. Otherwise
+                # translation lives in the field that isn't the L2 field. For
+                # inverse-layout notes the L2 text is in fields[1], so read
+                # translation from fields[0].
+                gloss = extract_gloss_from_fields(note.fields)
+                if gloss is not None:
+                    translation = gloss
+                else:
+                    l2_idx = next(
+                        (i for i, f in enumerate(note.fields) if extract_l2(f) == l2_text and l2_text),
+                        0,
+                    )
+                    other_idx = 1 - l2_idx if len(note.fields) > 1 else 0
+                    translation = extract_translation(note.fields[other_idx]) if len(note.fields) > 1 else ""
             word_count = len(l2_text.split())
             if word_count < 1:
                 # Extractor returned empty/whitespace — nothing to import.
@@ -263,23 +288,6 @@ def import_seed(
                 )
                 results["skipped_non_vocab"] += 1
                 continue
-            disambig = extract_disambig_from_fields(note.fields)
-            # Layer 31: if a field uses the `<b>L2</b><br><i>EN</i>` pattern
-            # (Pronunciation/Basic notetype), the English gloss lives inside
-            # the same field as the L2 word — recover it directly. Otherwise
-            # translation lives in the field that isn't the L2 field. For
-            # inverse-layout notes the L2 text is in fields[1], so read
-            # translation from fields[0].
-            gloss = extract_gloss_from_fields(note.fields)
-            if gloss is not None:
-                translation = gloss
-            else:
-                l2_idx = next(
-                    (i for i, f in enumerate(note.fields) if extract_l2(f) == l2_text and l2_text),
-                    0,
-                )
-                other_idx = 1 - l2_idx if len(note.fields) > 1 else 0
-                translation = extract_translation(note.fields[other_idx]) if len(note.fields) > 1 else ""
             guid = compute_guid(l2_text, language_code, disambig)
 
             # GUID collision check: if existing row has different (text, disambig_key), skip

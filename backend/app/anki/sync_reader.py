@@ -12,6 +12,7 @@ from app.anki.sqlite_reader import (
     extract_disambig_from_fields,
     extract_l2_from_fields,
     extract_translation,
+    extract_via_profile,
     fetch_cards_for_notes,
     fetch_notes_for_deck,
     find_deck_id,
@@ -106,9 +107,13 @@ class OfflineReader:
                 l2_text = extract_l2_from_fields(note.fields)
                 disambig_key = ""
             else:
-                l2_text = extract_l2_from_fields(note.fields)
-                translation = extract_translation(note.fields[1]) if len(note.fields) > 1 else ""
-                disambig_key = extract_disambig_from_fields(note.fields)
+                profile_result = extract_via_profile(note)
+                if profile_result is not None:
+                    l2_text, translation, disambig_key = profile_result
+                else:
+                    l2_text = extract_l2_from_fields(note.fields)
+                    translation = extract_translation(note.fields[1]) if len(note.fields) > 1 else ""
+                    disambig_key = extract_disambig_from_fields(note.fields)
                 note_text = ""
             card_records = [
                 CardRecord(
