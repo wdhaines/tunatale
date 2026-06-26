@@ -26,11 +26,11 @@ import re
 import time
 from pathlib import Path
 
-from scripts.anki_archive.notetype_builders import build_field_config
 from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
 from app.anki.safety import safe_open
 from app.anki.sqlite_reader import find_deck_id
 from app.config import settings
+from scripts.anki_archive.notetype_builders import build_field_config
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 

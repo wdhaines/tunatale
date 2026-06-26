@@ -31,6 +31,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
+from app.anki.safety import safe_open
+from app.anki.sqlite_reader import AnkiNote, fetch_notes_for_deck, find_deck_id
+from app.anki.sqlite_writer import check_anki_web_sync_active
+from app.config import settings
 from scripts.anki_archive.notetype_builders import (
     SLOVENE_VOCAB_CSS,
     build_field_config,
@@ -39,11 +44,6 @@ from scripts.anki_archive.notetype_builders import (
     slovene_vocab_fields,
     slovene_vocab_templates,
 )
-from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
-from app.anki.safety import safe_open
-from app.anki.sqlite_reader import AnkiNote, fetch_notes_for_deck, find_deck_id
-from app.anki.sqlite_writer import check_anki_web_sync_active
-from app.config import settings
 
 _Direction = Literal["recognition", "production", "unknown"]
 

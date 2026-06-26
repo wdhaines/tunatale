@@ -78,7 +78,10 @@ select = [
 ignore = ["E501"]  # line length handled by formatter
 
 [tool.ruff.lint.isort]
-known-first-party = ["app"]
+# Pin both first-party roots. Without "scripts", ruff auto-detects it racily
+# (first-party vs third-party), so the required order of `from scripts` vs
+# `from app` imports flip-flops and I001 fires intermittently in CI.
+known-first-party = ["app", "scripts"]
 
 [tool.ruff.format]
 quote-style = "double"
