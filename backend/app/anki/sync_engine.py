@@ -10,7 +10,6 @@ the importing module).
 from __future__ import annotations
 
 import logging
-from dataclasses import replace
 from datetime import UTC, date, datetime, time
 
 from app.anki.media.vocab_media import safe_stem as _safe_stem
@@ -530,269 +529,31 @@ class AnkiSync:
         self,
         card_rec: CardRecord,
         local_dir: DirectionState,
-        guid: str,
         direction: Direction,
         resolved_last_review: datetime | None,
         today_start_ms: int,
-        anki_last_ms: int,
-        report: PullReport,
-        dry_run: bool,
     ) -> DirectionState:
         """Compute the merged DirectionState for a single card during sync_pull.
 
-        Handles the 9-branch decision tree (dirty_fsrs timestamp conflict,
-        suspension, bury, state-class divergence, step progress, fsrs_known,
-        and the default fsrs_unknown path). The caller owns BURY_TRACE,
-        bury_stats, _direction_differs, and the DB write.
+        One take-Anki resolution with two keep-TT guards (the Layer-70 recency
+        guard and fsrs_unknown), plus suspend/bury via ``_queue_to_state`` /
+        ``_bury_kind_from_queue``. The former ``dirty_fsrs`` branches were
+        deleted once proven unreachable in a real sync: ``sync_push`` runs
+        before pull in ``run_full_sync`` and clears ``dirty_fsrs`` for every
+        Anki-linked direction, so pull only ever sees clean state (the
+        DIRTY_AT_PULL guard in the caller enforces the invariant; the dead
+        branches lived only for dry-run and direct-pull tests). The caller owns
+        BURY_TRACE, bury_stats, ``_direction_differs``, and the DB write.
         """
-        local_last_ms = int(local_dir.last_review.timestamp() * 1000) if local_dir.last_review else 0
-
-        if local_dir.dirty_fsrs and anki_last_ms > local_last_ms:
-            new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
-            new_dir_state = DirectionState(
-                direction=direction,
-                due_at=card_rec.due_at,
-                stability=card_rec.stability,
-                difficulty=card_rec.difficulty,
-                reps=card_rec.reps,
-                lapses=card_rec.lapses,
-                state=new_state,
-                prior_state=_resolve_prior_state(
-                    local_dir,
-                    new_state,
-                    first_review_ms=card_rec.first_review_ms,
-                    today_start_ms=today_start_ms,
-                ),
-                introduced_at=_resolve_introduced_at(
-                    local_dir,
-                    new_state,
-                    first_review_ms=card_rec.first_review_ms,
-                ),
-                dirty_fsrs=False,
-                anki_card_id=card_rec.anki_card_id,
-                anki_card_mod=card_rec.anki_card_mod,
-                anki_due=card_rec.anki_due,
-                last_review=local_dir.last_review,
-                last_review_time_ms=local_dir.last_review_time_ms,
-                last_synced_at=datetime.now(UTC).isoformat(),
-                last_rating=local_dir.last_rating,
-                left=card_rec.left,
-                bury_kind=_bury_kind_from_queue(card_rec.queue),
-            )
-            self._record_conflict(
-                report,
-                guid=guid,
-                direction=direction.value,
-                field="schedule",
-                local=str(local_dir.last_review),
-                remote=str(card_rec.last_review),
-                resolution="anki_wins_by_timestamp",
-                dry_run=dry_run,
-            )
-            return new_dir_state
-
-        if local_dir.dirty_fsrs:
-            anki_in_learning = card_rec.queue in (1, 3)
-            local_in_learning = local_dir.state in (SRSState.LEARNING, SRSState.RELEARNING)
-
-            if card_rec.queue == -1:
-                return replace(
-                    local_dir,
-                    state=SRSState.SUSPENDED,
-                    prior_state=_resolve_prior_state(
-                        local_dir,
-                        SRSState.SUSPENDED,
-                        first_review_ms=card_rec.first_review_ms,
-                        today_start_ms=today_start_ms,
-                    ),
-                    introduced_at=_resolve_introduced_at(
-                        local_dir,
-                        SRSState.SUSPENDED,
-                        first_review_ms=card_rec.first_review_ms,
-                    ),
-                    anki_card_id=card_rec.anki_card_id,
-                    anki_card_mod=card_rec.anki_card_mod,
-                    anki_due=card_rec.anki_due,
-                    last_synced_at=datetime.now(UTC).isoformat(),
-                    bury_kind=None,
-                )
-
-            if card_rec.queue in (-2, -3):
-                return replace(
-                    local_dir,
-                    state=SRSState.BURIED,
-                    prior_state=_resolve_prior_state(
-                        local_dir,
-                        SRSState.BURIED,
-                        first_review_ms=card_rec.first_review_ms,
-                        today_start_ms=today_start_ms,
-                    ),
-                    introduced_at=_resolve_introduced_at(
-                        local_dir,
-                        SRSState.BURIED,
-                        first_review_ms=card_rec.first_review_ms,
-                    ),
-                    anki_card_id=card_rec.anki_card_id,
-                    anki_card_mod=card_rec.anki_card_mod,
-                    anki_due=card_rec.anki_due,
-                    last_synced_at=datetime.now(UTC).isoformat(),
-                    bury_kind=_bury_kind_from_queue(card_rec.queue),
-                )
-
-            if anki_in_learning and not local_in_learning:
-                new_state = (
-                    SRSState.RELEARNING if (card_rec.queue == 3 or card_rec.card_type == 3) else SRSState.LEARNING
-                )
-                new_dir_state = DirectionState(
-                    direction=direction,
-                    due_at=card_rec.due_at,
-                    stability=card_rec.stability,
-                    difficulty=card_rec.difficulty,
-                    reps=card_rec.reps,
-                    lapses=card_rec.lapses,
-                    state=new_state,
-                    prior_state=_resolve_prior_state(
-                        local_dir,
-                        new_state,
-                        first_review_ms=card_rec.first_review_ms,
-                        today_start_ms=today_start_ms,
-                    ),
-                    introduced_at=_resolve_introduced_at(
-                        local_dir,
-                        new_state,
-                        first_review_ms=card_rec.first_review_ms,
-                    ),
-                    dirty_fsrs=False,
-                    anki_card_id=card_rec.anki_card_id,
-                    anki_card_mod=card_rec.anki_card_mod,
-                    anki_due=card_rec.anki_due,
-                    last_review=resolved_last_review,
-                    last_synced_at=datetime.now(UTC).isoformat(),
-                    left=card_rec.left,
-                    bury_kind=_bury_kind_from_queue(card_rec.queue),
-                )
-                self._record_conflict(
-                    report,
-                    guid=guid,
-                    direction=direction.value,
-                    field="state_class",
-                    local=local_dir.state.value,
-                    remote=new_state.value,
-                    resolution="anki_wins_state_class_divergence",
-                    dry_run=dry_run,
-                )
-                return new_dir_state
-
-            if local_in_learning and card_rec.queue == 2:
-                new_dir_state = DirectionState(
-                    direction=direction,
-                    due_at=card_rec.due_at,
-                    stability=card_rec.stability,
-                    difficulty=card_rec.difficulty,
-                    reps=card_rec.reps,
-                    lapses=card_rec.lapses,
-                    state=SRSState.REVIEW,
-                    prior_state=_resolve_prior_state(
-                        local_dir,
-                        SRSState.REVIEW,
-                        first_review_ms=card_rec.first_review_ms,
-                        today_start_ms=today_start_ms,
-                    ),
-                    introduced_at=_resolve_introduced_at(
-                        local_dir,
-                        SRSState.REVIEW,
-                        first_review_ms=card_rec.first_review_ms,
-                    ),
-                    dirty_fsrs=False,
-                    anki_card_id=card_rec.anki_card_id,
-                    anki_card_mod=card_rec.anki_card_mod,
-                    anki_due=card_rec.anki_due,
-                    last_review=resolved_last_review,
-                    last_synced_at=datetime.now(UTC).isoformat(),
-                    left=card_rec.left,
-                    bury_kind=None,
-                )
-                self._record_conflict(
-                    report,
-                    guid=guid,
-                    direction=direction.value,
-                    field="state_class",
-                    local=local_dir.state.value,
-                    remote=SRSState.REVIEW.value,
-                    resolution="anki_wins_state_class_divergence",
-                    dry_run=dry_run,
-                )
-                return new_dir_state
-
-            if anki_in_learning and local_in_learning and _anki_step_ahead(card_rec.left, local_dir.left):
-                new_dir_state = replace(
-                    local_dir,
-                    stability=card_rec.stability,
-                    difficulty=card_rec.difficulty,
-                    reps=card_rec.reps,
-                    lapses=card_rec.lapses,
-                    left=card_rec.left,
-                    due_at=card_rec.due_at,
-                    prior_state=_resolve_prior_state(
-                        local_dir,
-                        local_dir.state,
-                        first_review_ms=card_rec.first_review_ms,
-                        today_start_ms=today_start_ms,
-                    ),
-                    introduced_at=_resolve_introduced_at(
-                        local_dir,
-                        local_dir.state,
-                        first_review_ms=card_rec.first_review_ms,
-                    ),
-                    dirty_fsrs=False,
-                    anki_card_id=card_rec.anki_card_id,
-                    anki_card_mod=card_rec.anki_card_mod,
-                    anki_due=card_rec.anki_due,
-                    last_review=resolved_last_review,
-                    last_synced_at=datetime.now(UTC).isoformat(),
-                )
-                self._record_conflict(
-                    report,
-                    guid=guid,
-                    direction=direction.value,
-                    field="step_progress",
-                    local=str(local_dir.left),
-                    remote=str(card_rec.left),
-                    resolution="anki_wins_step_progress",
-                    dry_run=dry_run,
-                )
-                return new_dir_state
-
-            return replace(
-                local_dir,
-                state=local_dir.state,
-                prior_state=_resolve_prior_state(
-                    local_dir,
-                    local_dir.state,
-                    first_review_ms=card_rec.first_review_ms,
-                    today_start_ms=today_start_ms,
-                ),
-                introduced_at=_resolve_introduced_at(
-                    local_dir,
-                    local_dir.state,
-                    first_review_ms=card_rec.first_review_ms,
-                ),
-                anki_card_id=card_rec.anki_card_id,
-                anki_card_mod=card_rec.anki_card_mod,
-                anki_due=card_rec.anki_due,
-                last_synced_at=datetime.now(UTC).isoformat(),
-            )
-
-        # Clean path (the every-sync common case). One take-Anki resolution with
-        # two keep-TT guards, collapsing the former 3 branches (Layer-70 recency,
-        # fsrs_known, fsrs_unknown default):
+        # One take-Anki resolution with two keep-TT guards (suspend/bury fall out
+        # of _queue_to_state / _bury_kind_from_queue):
         #   - tt_newer (Layer 70): TT graded after Anki's stored memory state
-        #     (cards.data lrt). sync_push runs before pull and clears dirty_fsrs,
-        #     so the dirty-branch defenses above never see a freshly-pushed TT
-        #     grade — without this guard the take-Anki default reverts the grade's
-        #     s/d/last_review to Anki's pre-grade values (the cid=428 lapse-arc
-        #     loss, 2026-06-10; 165 directions). Keep TT's memory state AND grade
-        #     timestamp; scheduling stays pass-through from Anki (sync_push wrote it).
+        #     (cards.data lrt). sync_push writes scheduling + a revlog row for a
+        #     TT grade but Anki's cards.data lags, so without this guard the
+        #     take-Anki default reverts the grade's s/d/last_review to Anki's
+        #     pre-grade values (the cid=428 lapse-arc loss, 2026-06-10; 165
+        #     directions). Keep TT's memory state AND grade timestamp; scheduling
+        #     stays pass-through from Anki (sync_push wrote it).
         #   - fsrs_unknown: Anki's cards.data has no real s/d (placeholder 1.0/5.0),
         #     so keep TT's memory state — but last_review still comes from Anki.
         #   - otherwise: Anki's cards.data is authoritative (take-Anki-verbatim).
@@ -1116,13 +877,9 @@ class AnkiSync:
                 new_dir_state = self._pull_merge_direction(
                     card_rec,
                     local_dir,
-                    guid,
                     direction,
                     card_rec.last_review,
                     today_start_ms,
-                    anki_last_ms,
-                    report,
-                    dry_run,
                 )
 
                 # Stage 3b new-mode (take-Anki-verbatim, fork resolved 2026-06-02):

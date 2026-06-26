@@ -2141,40 +2141,6 @@ class TestOfflineOrdering:
         # After push+pull, direction is clean
         assert db.list_dirty() == []
 
-    def test_pull_before_push_still_flushes_revlog(self):
-        """Pull-then-push correctly preserves dirty_fsrs so push can still fire.
-
-        Previously pull cleared dirty_fsrs (anki_wins), causing push to skip
-        the row. Now pull preserves dirty rows, so pull-before-push also works.
-        """
-        db = _make_tt_db()
-        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
-        _mark_direction_dirty(db, guid, reps=3, stability=10.5, anki_card_id=rec_cid)
-
-        class OrderedFakeReader:
-            def get_note_records(self):
-                card = make_card_record(
-                    anki_card_id=rec_cid,
-                    ord=0,
-                    reps=5,
-                    stability=15.0,
-                    difficulty=4.5,
-                    due_date=date.today() + timedelta(days=15),
-                )
-                return [make_note_record(anki_guid=guid, cards=[card])]
-
-            def get_revlog_for_card(self, card_id: int, after_ms: int = 0) -> list:
-                return []
-
-        writer = FakeWriter()
-        sync = AnkiSync(db=db, _reader=OrderedFakeReader(), _writer=writer)
-
-        # Pull preserves dirty_fsrs; push sees the dirty row and flushes it
-        sync.sync_pull()
-        sync.sync_push()
-
-        assert "write_revlog" in writer.action_names()
-
 
 # ── TestRevlogFactor ─────────────────────────────────────────────────────────
 
