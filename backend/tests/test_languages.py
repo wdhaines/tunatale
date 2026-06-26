@@ -4,7 +4,7 @@ import pytest
 
 from app.audio.preprocessing.norwegian import NorwegianPreprocessor
 from app.audio.preprocessing.slovene import SlovenePreprocessor
-from app.languages import get_language, get_preprocessor
+from app.languages import get_deck_name, get_language, get_preprocessor
 from app.models.language import Language
 
 
@@ -104,3 +104,20 @@ class TestGetPreprocessor:
     def test_slovene_is_slovene_preprocessor_type(self):
         pp = get_preprocessor("sl")
         assert type(pp).__name__ == "SlovenePreprocessor"
+
+
+class TestGetDeckName:
+    def test_returns_slovene_deck(self):
+        assert get_deck_name("sl") == "1. Slovene"
+
+    def test_returns_norwegian_deck(self):
+        assert get_deck_name("no") == "0. 6000 Most Frequent Norwegian Words [Part 1]"
+
+    def test_raises_keyerror_for_unknown_code(self):
+        with pytest.raises(KeyError, match="xyz"):
+            get_deck_name("xyz")
+
+    def test_raises_valueerror_for_language_without_deck(self):
+        # en is the gloss language — no TT-managed deck of its own.
+        with pytest.raises(ValueError, match="en"):
+            get_deck_name("en")

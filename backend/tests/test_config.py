@@ -11,7 +11,7 @@ def test_settings_defaults(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     s = Settings(_env_file=None)
     assert s.groq_api_key == ""
-    assert s.database_url == "sqlite:///./tunatale.db"
+    assert s.database_url == "sqlite:///./tunatale_sl.db"
     assert s.llm_mode == "mock"
     assert s.llm_model == "llama-3.3-70b-versatile"
 
@@ -58,7 +58,7 @@ def test_anki_settings_defaults(monkeypatch, tmp_path):
     s = Settings(_env_file=None)
     assert s.anki_collection_path == Path("~/Library/Application Support/Anki2/Will/collection.anki2").expanduser()
     assert s.anki_media_path == Path("~/Library/Application Support/Anki2/Will/collection.media").expanduser()
-    assert s.anki_deck_name == "0. Slovene"
+    assert s.anki_deck_name == "1. Slovene"
     assert s.anki_backup_dir == Path("~/.tunatale/anki-backups").expanduser()
     assert s.media_dir == Path("./media")
     assert s.anki_fallback_log == Path("~/.tunatale/logs/anki-fallback.log").expanduser()

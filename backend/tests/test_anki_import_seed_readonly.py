@@ -274,6 +274,7 @@ class TestSettingsDefaults:
             (),
             {
                 "anki_deck_name": "0. Slovene",
+                "target_language": "sl",
                 "anki_collection_path": fake_anki_db,
                 "anki_media_path": tmp_path / "no_media",
                 "anki_backup_dir": tmp_path / "bak",
@@ -773,6 +774,28 @@ class TestSkipsNonVocabNotes:
         assert result["skipped_non_vocab"] == 0
 
 
+class TestLanguageCode:
+    def test_default_tags_collocations_with_target_language(self, fake_anki_db, tmp_path):
+        """language_code=None defaults to settings.target_language ('sl' in tests)."""
+        _run(fake_anki_db, tmp_path)
+        with closing(sqlite3.connect(str(tmp_path / "tunatale.db"))) as db:
+            codes = {r[0] for r in db.execute("SELECT DISTINCT language_code FROM collocations")}
+        assert codes == {"sl"}
+
+    def test_explicit_language_code_tags_and_guids_collocations(self, fake_anki_db, tmp_path):
+        """Importing with language_code='no' tags every row 'no' and folds it into the GUID."""
+        from app.common.guid import compute_guid
+
+        _run(fake_anki_db, tmp_path, language_code="no")
+        with closing(sqlite3.connect(str(tmp_path / "tunatale.db"))) as db:
+            db.row_factory = sqlite3.Row
+            rows = db.execute("SELECT text, language_code, disambig_key, guid FROM collocations").fetchall()
+        assert rows, "expected imported collocations"
+        for r in rows:
+            assert r["language_code"] == "no"
+            assert r["guid"] == compute_guid(r["text"], "no", r["disambig_key"] or "")
+
+
 class TestCLI:
     def test_cli_dry_run_prints_dry_run(self, fake_anki_db, tmp_path, monkeypatch, capsys):
         """_cli() runs without error in dry-run mode."""
@@ -793,6 +816,24 @@ class TestCLI:
         mod._cli()
         out = capsys.readouterr().out
         assert "DRY RUN" in out
+
+    def test_cli_language_resolves_registered_deck(self, monkeypatch):
+        """--language no resolves the Norwegian deck from the registry and threads the code."""
+        from app.anki import import_seed as mod
+
+        captured = {}
+
+        def fake_import_seed(**kw):
+            captured.update(kw)
+            return dict.fromkeys(
+                ("new_parents", "new_directions", "new_media", "skipped_guid_collisions", "skipped_non_vocab"), 0
+            )
+
+        monkeypatch.setattr("sys.argv", ["import_seed", "--language", "no", "--dry-run"])
+        monkeypatch.setattr(mod, "import_seed", fake_import_seed)
+        mod._cli()
+        assert captured["language_code"] == "no"
+        assert captured["deck_name"] == "0. 6000 Most Frequent Norwegian Words [Part 1]"
 
 
 class TestTransactionRollback:

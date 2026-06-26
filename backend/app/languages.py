@@ -27,26 +27,31 @@ class LanguageConfig:
     * Phase 3: ``notetype_profile``, …
 
     ``en`` (English) is the gloss/translation language — it has a ``Language``
-    entry but **no** preprocessor (``preprocessor_factory`` is ``None``).
-    Calling ``get_preprocessor("en")`` raises ``ValueError``.
+    entry but **no** preprocessor and **no** TT-managed Anki deck of its own
+    (both fields are ``None``). ``get_preprocessor("en")`` / ``get_deck_name("en")``
+    raise ``ValueError``.
     """
 
     language: Language
     preprocessor_factory: type[TextPreprocessor] | None = None
+    deck_name: str | None = None
 
 
 _CONFIGS: dict[str, LanguageConfig] = {
     "sl": LanguageConfig(
         language=Language.slovene(),
         preprocessor_factory=SlovenePreprocessor,
+        deck_name="1. Slovene",
     ),
     "en": LanguageConfig(
         language=Language.english(),
         preprocessor_factory=None,
+        deck_name=None,
     ),
     "no": LanguageConfig(
         language=Language.norwegian(),
         preprocessor_factory=NorwegianPreprocessor,
+        deck_name="0. 6000 Most Frequent Norwegian Words [Part 1]",
     ),
 }
 
@@ -73,3 +78,17 @@ def get_preprocessor(code: str) -> TextPreprocessor:
     if factory is None:
         raise ValueError(f"Language {code!r} has no preprocessor configured")
     return factory()
+
+
+def get_deck_name(code: str) -> str:
+    """Return the TT-managed Anki deck name for *code*.
+
+    Raises ``KeyError`` for unknown codes and ``ValueError`` for codes that have
+    no TT-managed deck (e.g. ``en``).
+    """
+    if code not in _CONFIGS:
+        raise KeyError(f"Unknown language code: {code!r}. Valid: {sorted(_CONFIGS)}")
+    deck_name = _CONFIGS[code].deck_name
+    if deck_name is None:
+        raise ValueError(f"Language {code!r} has no TT-managed deck configured")
+    return deck_name

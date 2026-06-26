@@ -9,7 +9,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     groq_api_key: str = ""
-    database_url: str = "sqlite:///./tunatale.db"
+    # Per-language DB (one-DB-per-language isolation). Default is the Slovene DB;
+    # switch languages by flipping target_language AND database_url together
+    # (e.g. sqlite:///./tunatale_no.db for Norwegian).
+    database_url: str = "sqlite:///./tunatale_sl.db"
     llm_mode: str = "mock"  # mock | live | record | patch
     llm_model: str = "llama-3.3-70b-versatile"
 
@@ -17,7 +20,7 @@ class Settings(BaseSettings):
 
     anki_collection_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.anki2").expanduser()
     anki_media_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.media").expanduser()
-    anki_deck_name: str = "0. Slovene"
+    anki_deck_name: str = "1. Slovene"
     anki_backup_dir: Path = Path("~/.tunatale/anki-backups").expanduser()
     # Retention cap for the safe_open backup directory. safe_open writes a full
     # ~16 MB collection snapshot on every call; without a cap the directory grows

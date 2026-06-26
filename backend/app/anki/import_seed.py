@@ -31,6 +31,7 @@ from app.anki.sqlite_reader import (
 )
 from app.common.guid import compute_guid
 from app.config import settings
+from app.languages import get_deck_name
 from app.media.importer import compute_sha256, copy_media_file
 from app.models.srs_item import Direction, DirectionState
 from app.models.syntactic_unit import SyntacticUnit
@@ -191,15 +192,22 @@ def import_seed(
     tunatale_db_path: str | None = None,
     media_dir: Path | None = None,
     fallback_log_path: Path | None = None,
+    language_code: str | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Import an Anki deck into TunaTale.
+
+    ``language_code`` tags the imported collocations (and is folded into their
+    GUIDs); defaults to ``settings.target_language``. One DB per language, so a
+    Norwegian import (`language_code="no"`) lands in its own ``tunatale_no.db``.
 
     Returns a summary dict with counts: new_parents, new_directions,
     new_media, skipped_guid_collisions.
     """
     if deck_name is None:
         deck_name = settings.anki_deck_name
+    if language_code is None:
+        language_code = settings.target_language
     if anki_collection_path is None:
         anki_collection_path = settings.anki_collection_path
     if anki_media_path is None:
@@ -272,7 +280,7 @@ def import_seed(
                 )
                 other_idx = 1 - l2_idx if len(note.fields) > 1 else 0
                 translation = extract_translation(note.fields[other_idx]) if len(note.fields) > 1 else ""
-            guid = compute_guid(l2_text, "sl", disambig)
+            guid = compute_guid(l2_text, language_code, disambig)
 
             # GUID collision check: if existing row has different (text, disambig_key), skip
             existing = db.get_collocation_by_guid(guid)
@@ -312,7 +320,7 @@ def import_seed(
             directions = _build_directions(note_cards, note.id)
 
             is_new = existing is None
-            coll_id = db.upsert_by_guid(unit, "sl", directions, anki_note_id=note.id)
+            coll_id = db.upsert_by_guid(unit, language_code, directions, anki_note_id=note.id)
 
             if is_new:
                 results["new_parents"] += 1
@@ -325,7 +333,8 @@ def import_seed(
 
 def _cli() -> None:
     parser = argparse.ArgumentParser(description="Import Anki deck into TunaTale (Stage 2a)")
-    parser.add_argument("--deck", default=None, help="Anki deck name")
+    parser.add_argument("--deck", default=None, help="Anki deck name (default: the language's registered deck)")
+    parser.add_argument("--language", default=None, help="language code (default: target_language setting)")
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -333,7 +342,9 @@ def _cli() -> None:
     )
     args = parser.parse_args()
 
-    result = import_seed(deck_name=args.deck, dry_run=args.dry_run)
+    language_code = args.language or settings.target_language
+    deck_name = args.deck or get_deck_name(language_code)
+    result = import_seed(deck_name=deck_name, language_code=language_code, dry_run=args.dry_run)
 
     mode = "DRY RUN" if args.dry_run else "IMPORTED"
     print(
