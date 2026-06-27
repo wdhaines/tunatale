@@ -775,8 +775,17 @@ async def get_queue_stats(request: Request, response: Response):
     # Falls back to the raw count when bury_new is off (no regression).
     bury_new, _ = resolve_bury_new(db)
     new_available = db.count_new_available_collocations(today) if bury_new else db.count_new_available()
+    new_badge = min(remaining_quota, new_available)
+    # Anki's "New cards ignore review limit" deck option defaults OFF, so the review
+    # limit also caps new cards: when the day's review budget is consumed by due
+    # reviews, Anki shows 0 new even with new/day > 0 (e.g. review cap 50 + 194 due
+    # → 0 new). Mirror that, badge-only (rule 12: daily caps are render-only).
+    # Assumes the default (off); honouring an explicitly-enabled flag would need the
+    # preset value synced into the cache — a follow-up.
+    review_budget = max(0, review_cap - reviews_today)
+    new_badge = min(new_badge, max(0, review_budget - review_remaining))
     return {
-        "new": min(remaining_quota, new_available),
+        "new": new_badge,
         "learning": db.count_learning(),
         "review": review_remaining,
         "daily_new_cap": new_cap,

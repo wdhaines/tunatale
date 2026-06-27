@@ -158,6 +158,52 @@ class TestQueueStats:
         )
         assert data["new"] == 0
 
+    async def test_queue_stats_new_badge_bounded_by_review_limit(self, api_app_state):
+        """Mirror Anki's 'new cards ignore review limit'=OFF (default): when the
+        review budget is consumed by due reviews, the new badge is 0 even with new
+        quota + available cards. Review cap 2 + 3 reviews due → 0 new."""
+        from datetime import date
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        due = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+
+        # 3 review-due collocations (> the review cap of 2).
+        for i in range(3):
+            db.add_collocation(
+                SyntacticUnit(text=f"rev{i}", translation=f"r{i}", word_count=1, difficulty=1, source="test"),
+                language_code="sl",
+            )
+            item = db.get_collocation(f"rev{i}")
+            for direction in (Direction.RECOGNITION, Direction.PRODUCTION):
+                db.update_direction(
+                    item.guid,
+                    direction,
+                    DirectionState(
+                        direction=direction,
+                        due_at=due,
+                        stability=5.0,
+                        difficulty=5.0,
+                        reps=5,
+                        lapses=0,
+                        state=SRSState.REVIEW,
+                    ),
+                )
+        # An available NEW collocation that should still be suppressed by the review cap.
+        db.add_collocation(
+            SyntacticUnit(text="newword", translation="nw", word_count=1, difficulty=1, source="test"),
+            language_code="sl",
+        )
+        db.set_anki_state_cache("daily_review_cap", "2")
+        db.set_anki_state_cache("daily_new_cap", "5")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            data = (await client.get("/api/srs/queue-stats")).json()
+
+        assert data["review"] == 2  # capped at the review limit
+        assert data["new"] == 0  # review budget fully consumed → no new, despite quota 5 + 1 available
+
     async def test_queue_stats_new_badge_buries_new_with_review_due_sibling(self, api_app_state):
         """New badge mirrors Anki's new-sibling bury (bury_new default True).
 
