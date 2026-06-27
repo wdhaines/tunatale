@@ -62,6 +62,14 @@ def _settings_overrides(monkeypatch, tmp_path):
 
     monkeypatch.setattr(settings, "anki_backup_dir", tmp_path / "anki-backups")
     monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'tunatale.db'}")
+    # Pin the active language + deck to deterministic test values so neither the
+    # production defaults (config.py) nor a developer's real .env (which may point
+    # at Norwegian) leak in. Synthetic collections use the "0. Slovene" deck and
+    # the "sl" language; sync reads settings.target_language for the GUID language
+    # (sync_engine) and settings.anki_deck_name for the deck. Tests that need other
+    # values monkeypatch over these (autouse runs first).
+    monkeypatch.setattr(settings, "anki_deck_name", "0. Slovene")
+    monkeypatch.setattr(settings, "target_language", "sl")
     # Peer-sync touches TT's own collection and reads the user's real collection (for
     # curDeck mirroring); pin both to tmp_path so no test reads or mutates the real
     # ~/.tunatale/tt_collection.anki2 or ~/Library/.../collection.anki2.

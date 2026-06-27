@@ -1385,11 +1385,57 @@ class TestReverseImportLayer22:
         item = db.get_collocation("voda")
         assert item is not None
         assert item.anki_note_id == 1001
-
         rec_dir = item.directions[Direction.RECOGNITION]
         assert rec_dir.state == SRSState.REVIEW
         assert rec_dir.stability == 5.0
         assert rec_dir.reps == 3
+
+    async def test_reverse_import_uses_active_language_not_hardcoded_sl(self, monkeypatch):
+        """Anki→TT ingest tags created collocations with settings.target_language,
+        not a hardcoded 'sl'. Regression: a Norwegian sync crashed with
+        UNIQUE(text, disambig_key) because the 'sl' guid missed the existing 'no'
+        collocation and tried to INSERT a duplicate (sync_engine.py:1443)."""
+        from app.common.guid import compute_guid
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "target_language", "no")
+        db = _make_db()
+        reader = _ReverseFakeReader(
+            [
+                NoteRecord(
+                    anki_note_id=2002,
+                    anki_guid="anki-native-guid",
+                    l2_text="være",
+                    translation="be",
+                    note="",
+                    disambig_key="verb",
+                    mod=0,
+                    cards=[
+                        CardRecord(
+                            anki_card_id=20020,
+                            ord=0,
+                            queue=2,
+                            reps=3,
+                            lapses=0,
+                            stability=5.0,
+                            difficulty=4.0,
+                            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+                            anki_due=10,
+                            anki_card_mod=100,
+                        ),
+                    ],
+                ),
+            ]
+        )
+        report = await AnkiSync(db=db, _reader=reader, _writer=_ReverseFakeWriter()).sync_create_new(
+            deck_name="0. 6000 Most Frequent Norwegian Words [Part 1]",
+            model_name="6000 Most Frequent Norwegian Words",
+        )
+        assert report.notes_created_from_anki == 1
+        with db._get_conn() as conn:
+            row = conn.execute("SELECT language_code, guid FROM collocations WHERE text = 'være'").fetchone()
+        assert row[0] == "no"  # the active language, not the old hardcoded 'sl'
+        assert row[1] == compute_guid("være", "no", "verb")
 
     async def test_reverse_import_handles_queue_2_reps_0(self):
         """Anki card with (queue=2, reps=0) reverse-imports as REVIEW."""

@@ -60,6 +60,11 @@ async def trigger_peer_sync(request: Request, dry_run: bool = False):
         report = await run_in_threadpool(lambda: peer_sync(dry_run, media_fn=media_fn))
     except PeerSyncError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
+    except Exception as e:
+        # Surface the real failure to the UI instead of a bare "Internal Server
+        # Error". An unhandled exception here (e.g. a sqlite IntegrityError mid-
+        # reconcile) otherwise reaches the user as an opaque 500 with no reason.
+        raise HTTPException(status_code=500, detail=f"Sync failed: {type(e).__name__}: {e}") from e
 
     return {
         "auth_success": report.auth_success,

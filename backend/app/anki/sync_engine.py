@@ -30,6 +30,7 @@ from app.anki.sync_common import (
     build_cloze_back_extra,
 )
 from app.common.guid import compute_guid
+from app.config import settings
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
@@ -735,7 +736,7 @@ class AnkiSync:
             if local_item is None:
                 # Fallback: row was never linked (e.g., imported before anki_note_id
                 # column was populated). Validate guid before trusting it.
-                expected_guid = compute_guid(rec.l2_text, "sl", rec.disambig_key)
+                expected_guid = compute_guid(rec.l2_text, settings.target_language, rec.disambig_key)
                 if rec.anki_guid != expected_guid:
                     report.skipped_unknown_guid += 1
                     continue
@@ -1337,7 +1338,7 @@ class AnkiSync:
                 _copy_tt_media_to_anki(self._writer, existing_audio)
                 audio_tag = f"[sound:{existing_audio}]"
             elif media is not None and media.audio_bytes is not None:
-                prefix = "sl" if media.audio_source == "forvo" else "tts"
+                prefix = settings.target_language if media.audio_source == "forvo" else "tts"
                 audio_filename = f"{_safe_stem(word, prefix)}.mp3"
                 self._writer.store_media_file(audio_filename, media.audio_bytes)
                 audio_tag = f"[sound:{audio_filename}]"
@@ -1440,7 +1441,7 @@ class AnkiSync:
             if not directions:
                 continue
 
-            self._db.upsert_by_guid(unit, "sl", directions, anki_note_id=rec.anki_note_id)
+            self._db.upsert_by_guid(unit, settings.target_language, directions, anki_note_id=rec.anki_note_id)
             notes_created_from_anki += 1
 
         return CreateNewReport(

@@ -25,7 +25,12 @@ export default defineConfig({
 				// Key MUST be lowercase to match the .env key: main.py's load_dotenv()
 				// loads the lowercase `lemmatizer_type` from .env, and on case-sensitive
 				// Unix an uppercase `LEMMATIZER_TYPE` is a *different* key that .env wins over.
-				lemmatizer_type: 'lowercase'
+				lemmatizer_type: 'lowercase',
+				// Pin the target language to Slovene: the e2e curriculum/story flows are
+				// backed by Slovene LLM cassettes. A developer's .env with TARGET_LANGUAGE=no
+				// (running TT as Norwegian) would otherwise generate a Norwegian prompt with
+				// no cassette → 500. Uppercase matches the .env key so load_dotenv keeps it.
+				TARGET_LANGUAGE: 'sl'
 			}
 		},
 		{

@@ -7,6 +7,7 @@ from unittest.mock import ANY, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.anki.sync_orchestrator import PeerSyncError
 from app.main import app
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
@@ -57,18 +58,25 @@ class TestPeerSync:
         assert response.json()["dry_run"] is True
         mock_ps.assert_called_once_with(True, media_fn=ANY)
 
-    async def test_409_on_peer_sync_error(self):
-        from app.anki.sync_orchestrator import PeerSyncError
-
-        with patch(
-            "app.anki.sync_orchestrator.peer_sync",
-            side_effect=PeerSyncError("No AnkiWeb password found."),
-        ):
+    @pytest.mark.parametrize(
+        ("exc", "status", "needle"),
+        [
+            # Expected failure (no creds / FULL_SYNC) → 409 with the message.
+            (PeerSyncError("No AnkiWeb password found."), 409, "No AnkiWeb password"),
+            # Unexpected failure (e.g. sqlite IntegrityError mid-reconcile) → 500 with the
+            # real reason, NOT a bare "Internal Server Error" the user can't act on.
+            (RuntimeError("UNIQUE constraint failed: collocations.text"), 500, "Sync failed"),
+        ],
+    )
+    async def test_sync_failure_surfaces_detail(self, exc, status, needle):
+        """Both expected and unexpected sync failures pass a useful reason through to
+        the UI. One ``patch`` call site (the grandfathered seam) covers both branches."""
+        with patch("app.anki.sync_orchestrator.peer_sync", side_effect=exc):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 response = await c.post("/api/anki/peer-sync")
 
-        assert response.status_code == 409
-        assert "No AnkiWeb password" in response.json()["detail"]
+        assert response.status_code == status
+        assert needle in response.json()["detail"]
 
 
 # ── _build_media_fn (shared media generator) ──────────────────────────────────
