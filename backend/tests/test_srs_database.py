@@ -3479,3 +3479,35 @@ class TestImageQueryCache:
     def test_model_version_mismatch_is_miss(self, srs_db):
         srs_db.set_image_query("sodišče", "court", "img-v1", "courtroom interior")
         assert srs_db.get_image_query("sodišče", "court", "img-v2") is None
+
+
+class TestConnectionPragmas:
+    """WAL + busy_timeout keep live reads responsive during a sync's write txn."""
+
+    def test_file_db_uses_wal_and_busy_timeout(self, tmp_path):
+        """Regression: file connections had no WAL/busy_timeout, so /queue-stats and
+        /review-queue reads got 'database is locked' the instant a peer-sync held a
+        write transaction (exposed by the slow Norwegian first-sync)."""
+        db = SRSDatabase(str(tmp_path / "wal.db"))
+        try:
+            with db._file_conn() as conn:
+                assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+                assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+        finally:
+            db.close()
+
+    def test_concurrent_read_during_write_transaction_does_not_lock(self, tmp_path):
+        """A live read on a separate connection reads the committed snapshot (WAL)
+        instead of erroring while a write transaction is held open."""
+        import sqlite3
+
+        db_path = str(tmp_path / "concurrent.db")
+        db = SRSDatabase(db_path)
+        reader = sqlite3.connect(db_path)
+        try:
+            with db.begin_transaction():
+                db.set_anki_state_cache("last_unbury_day", "2026-06-26")  # holds the write lock
+                reader.execute("SELECT COUNT(*) FROM anki_state_cache").fetchone()
+        finally:
+            reader.close()
+            db.close()

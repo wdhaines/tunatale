@@ -178,6 +178,24 @@ _NEW_RESET_SET = (
 _LEARNING_STATES = ("learning", "relearning")
 
 
+def _configure_connection(conn: sqlite3.Connection) -> None:
+    """Apply the standard pragmas to a fresh SQLite connection.
+
+    - ``foreign_keys`` — enforce FK constraints (SQLite defaults them off).
+    - ``busy_timeout`` — wait up to 5s for a lock instead of raising
+      ``database is locked`` immediately. The live read endpoints
+      (``/queue-stats``, ``/review-queue``) otherwise fail the instant a
+      peer-sync holds a write transaction.
+    - ``journal_mode = WAL`` — readers proceed against the last committed
+      snapshot without blocking on the writer, so a slow sync (a big first
+      import plus the optimize's divergence writes) doesn't lock out the UI.
+      A no-op on ``:memory:`` connections (stays ``memory``).
+    """
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA journal_mode = WAL")
+
+
 class SRSDatabase:
     """SQLite-backed SRS repository.
 
@@ -201,7 +219,7 @@ class SRSDatabase:
         if self._in_memory:
             self._conn = sqlite3.connect(":memory:", check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA foreign_keys = ON")
+            _configure_connection(self._conn)
             self._init_schema(self._conn)
         else:
             # Handle sqlite:// URL format
@@ -229,7 +247,7 @@ class SRSDatabase:
     def _file_conn(self):
         conn = sqlite3.connect(self._path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
+        _configure_connection(conn)
         try:
             yield conn
             conn.commit()
@@ -269,7 +287,7 @@ class SRSDatabase:
         else:
             conn = sqlite3.connect(self._path, check_same_thread=False)
             conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA foreign_keys = ON")
+            _configure_connection(conn)
             conn.isolation_level = None
             conn.execute("BEGIN")
         self._txn_conn = conn
