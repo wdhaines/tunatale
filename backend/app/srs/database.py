@@ -2202,10 +2202,16 @@ class SRSDatabase:
     def count_reviews_completed_today(self, today: date) -> int:
         """Count distinct collocation_directions with a review completed today.
 
-        Filters on state IN ('review', 'relearning') with a last_review that
-        falls within today's local-day window and a non-null last_rating
-        (filters out new-card introductions that happened to land today).
-        Mirrors Anki's 'reviews done today' derived from revlog.
+        Filters on state IN ('review', 'relearning') with a last_review in today's
+        local-day window, EXCLUDING cards introduced today (``introduced_at`` within
+        today = a new-card study, which Anki counts as ``newToday``, not ``revToday``).
+
+        Was gated on ``last_rating IS NOT NULL`` to exclude new-card intros — but
+        last_rating is only ever set by a TT-native grade; Anki-pulled and imported
+        grades leave it NULL. So for any deck reviewed in Anki this returned 0,
+        which pinned the review badge at ``min(backlog, cap)`` = the cap (the user's
+        Norwegian deck: stuck at 50 while Anki counted down). ``introduced_at`` is
+        the Anki-faithful discriminator and is populated for both sources.
         """
         start_iso, end_iso = _anki_day_bounds_utc(today)
         with self._get_conn() as conn:
@@ -2217,9 +2223,9 @@ class SRSDatabase:
                   AND last_review IS NOT NULL
                   AND last_review >= ?
                   AND last_review < ?
-                  AND last_rating IS NOT NULL
+                  AND (introduced_at IS NULL OR introduced_at < ?)
                 """,
-                (start_iso, end_iso),
+                (start_iso, end_iso, start_iso),
             ).fetchone()
             return row[0] if row else 0
 

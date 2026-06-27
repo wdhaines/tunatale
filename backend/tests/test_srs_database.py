@@ -1516,6 +1516,7 @@ class TestCountReviewsCompletedToday:
         last_review_iso: str | None,
         last_rating: int | None = 3,
         today_due: bool = True,
+        introduced_at: datetime | None = None,
     ):
         srs_db.add_collocation(_unit(text, "x"), language_code="sl")
         item = srs_db.get_collocation(text)
@@ -1531,6 +1532,7 @@ class TestCountReviewsCompletedToday:
             lapses=0,
             last_review=datetime.fromisoformat(last_review_iso) if last_review_iso else None,
             last_rating=last_rating,
+            introduced_at=introduced_at,
         )
         srs_db.update_direction(item.guid, Direction.RECOGNITION, new_dir)
 
@@ -1561,14 +1563,29 @@ class TestCountReviewsCompletedToday:
         self._seed_review(srs_db, "no_review", SRSState.REVIEW, None, last_rating=3)
         assert srs_db.count_reviews_completed_today(today) == 0
 
-    def test_excludes_review_with_null_last_rating(self, srs_db):
-        """A REVIEW direction with a last_review today but null rating does NOT count."""
-        from datetime import datetime as _dt
-
+    def test_counts_review_with_null_last_rating(self, srs_db):
+        """A REVIEW reviewed today still counts when last_rating is NULL — that's the
+        case for every Anki-pulled / imported grade (TT only sets last_rating on its
+        own grades). The old last_rating filter wrongly returned 0 here, pinning the
+        review badge at the cap for any Anki-reviewed deck."""
         today = date.today()
-        local = _dt.now().astimezone().tzinfo
-        today_noon = _dt.combine(today, time(12), tzinfo=local).astimezone(UTC).isoformat()
+        today_noon = anki_day_anchor(today).isoformat()
         self._seed_review(srs_db, "no_rating", SRSState.REVIEW, today_noon, last_rating=None)
+        assert srs_db.count_reviews_completed_today(today) == 1
+
+    def test_excludes_card_introduced_today(self, srs_db):
+        """A card introduced today (new-card study graduating to REVIEW) does NOT
+        count as a review — Anki counts it as newToday, not revToday."""
+        today = date.today()
+        today_anchor = anki_day_anchor(today)
+        self._seed_review(
+            srs_db,
+            "intro_today",
+            SRSState.REVIEW,
+            today_anchor.isoformat(),
+            last_rating=None,
+            introduced_at=today_anchor,
+        )
         assert srs_db.count_reviews_completed_today(today) == 0
 
     def test_counts_multiple_directions_on_same_collocation_individually(self, srs_db):
