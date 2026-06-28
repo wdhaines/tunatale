@@ -20,9 +20,32 @@ class MediaCopyResult:
     size_bytes: int
 
 
+_AUDIO_EXTS = {".mp3", ".ogg", ".oga", ".opus", ".wav", ".m4a", ".aac", ".flac"}
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".avif", ".bmp", ".tif", ".tiff"}
+
+
 def infer_kind(filename: str) -> str:
-    """Infer media kind from filename prefix. sl_ → audio_forvo, tts_ → audio_tts, else → image."""
+    """Infer media kind for a media file.
+
+    Audio vs image is decided by file **extension** — the only reliable signal
+    across decks. The audio *sub-kind* (Forvo vs TTS) is refined by a source
+    marker in the name: Slovene uses ``sl_*`` (Forvo) / ``tts_*`` (TTS); Norwegian
+    uses ``forvo-*`` (Forvo) / ``azure-*`` (Azure TTS). A prefix-only rule (the old
+    behaviour) mislabelled every ``forvo-*``/``azure-*`` ``.mp3`` as an image, so
+    ``get_image_filename`` returned an audio file and the card rendered a broken
+    ``<img>`` on every Norwegian card. Unknown extensions fall back to the legacy
+    prefix heuristic (keeps ``some_file.webm`` → image).
+    """
     name = Path(filename).name
+    ext = Path(name).suffix.lower()
+    if ext in _AUDIO_EXTS:
+        # Sentence-level TTS (cloze Back audio) is its own kind — don't fold it
+        # into plain audio_tts (get_sentence_audio_filename queries it).
+        if name.startswith("tts_sentence"):
+            return "audio_tts_sentence"
+        return "audio_forvo" if name.startswith(("sl_", "forvo")) else "audio_tts"
+    if ext in _IMAGE_EXTS:
+        return "image"
     if name.startswith("sl_"):
         return "audio_forvo"
     if name.startswith("tts_"):

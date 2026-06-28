@@ -90,3 +90,34 @@ class TestInferKind:
 
     def test_unknown_prefix_is_image(self):
         assert infer_kind("some_file.webm") == "image"
+
+    # Audio vs image is decided by EXTENSION, not just the prefix — Slovene names
+    # audio `sl_*`/`tts_*`, but other decks (Norwegian) use `forvo-*`/`azure-*`,
+    # which a prefix-only rule mislabelled as images (broken <img> on every card).
+    def test_norwegian_forvo_mp3_is_audio_forvo(self):
+        assert infer_kind("forvo-f39077c4-a88e7bd2.mp3") == "audio_forvo"
+
+    def test_norwegian_azure_mp3_is_audio_tts(self):
+        assert infer_kind("azure-14734ddc-3aa2919f.mp3") == "audio_tts"
+
+    def test_generic_mp3_without_source_marker_is_audio_tts(self):
+        assert infer_kind("clip.mp3") == "audio_tts"
+
+    def test_ogg_extension_is_audio(self):
+        assert infer_kind("sound.ogg") == "audio_tts"
+
+    def test_audio_extension_overrides_image_default(self):
+        # An audio file with no recognised prefix must NOT fall through to image.
+        assert infer_kind("recording-123.m4a") == "audio_tts"
+
+    def test_tts_sentence_is_its_own_kind(self):
+        # Cloze Back sentence audio is queried by get_sentence_audio_filename;
+        # it must not be folded into plain audio_tts.
+        assert infer_kind("tts_sentence_7e8494b5d8627dd4.mp3") == "audio_tts_sentence"
+
+    def test_unknown_extension_falls_back_to_sl_prefix(self):
+        # No recognised extension → legacy prefix heuristic still classifies audio.
+        assert infer_kind("sl_legacy_no_ext") == "audio_forvo"
+
+    def test_unknown_extension_falls_back_to_tts_prefix(self):
+        assert infer_kind("tts_legacy_no_ext") == "audio_tts"
