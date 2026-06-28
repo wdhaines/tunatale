@@ -255,6 +255,41 @@ async def run_full_sync(
     return create_report, push_report, pull_report, media_report
 
 
+def _sync_target_specs(_s, *, all_languages: bool, injected_db: bool) -> list[tuple[str, str | None, str]]:
+    """Return ``[(code, db_url_or_None, deck_name), …]`` — one entry per language to sync.
+
+    Multi-deck only on the explicit ``--all-languages`` CLI path with
+    ``database_urls`` configured and no injected db. peer_sync injects a
+    ``_settings`` that shares the same fields (model_copy), so keeping the loop
+    opt-in keeps the peer-sync reconcile single-language and unchanged. A
+    ``db_url`` of ``None`` means "reuse the already-built single ``db``".
+    """
+    if all_languages and not injected_db and getattr(_s, "database_urls", {}):
+        from app.languages import get_deck_name
+
+        return [(code, url, get_deck_name(code)) for code, url in _s.database_urls.items()]
+    return [(getattr(_s, "target_language", "sl"), None, _s.anki_deck_name)]
+
+
+def _resolve_model_name(_s, code: str, conn, deck_name: str) -> str:
+    """Notetype to mint TT-originated cards into for *code*.
+
+    Precedence: explicit ``anki_model_name`` override > the language's TT vocab
+    notetype (e.g. "Norwegian Vocabulary", NOT the imported deck's recognition-only
+    notetype discovery would return) > deck-discovered model (the Slovene case,
+    where deck notetype == mint notetype).
+    """
+    from app.anki import model_discovery
+    from app.languages import get_vocab_notetype
+
+    vocab = get_vocab_notetype(code)
+    return (
+        _s.anki_model_name
+        or (vocab.name if vocab is not None else "")
+        or model_discovery.get_or_discover_model_name_offline(conn, deck_name)
+    )
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -292,6 +327,12 @@ def main(
     parser = argparse.ArgumentParser(description="TunaTale ↔ Anki bidirectional sync")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force-fsrs", action="store_true", dest="force_fsrs")
+    parser.add_argument(
+        "--all-languages",
+        action="store_true",
+        dest="all_languages",
+        help="Sync every language in settings.database_urls (each its own deck + db).",
+    )
     args = parser.parse_args(argv)
 
     if args.force_fsrs:
@@ -302,71 +343,50 @@ def main(
             print(f"Error: {e}", file=sys.stderr)
             return 1
 
+    specs = _sync_target_specs(_s, all_languages=args.all_languages, injected_db=_db is not None)
+
     try:
         with _so(_s.anki_collection_path, mode="rw") as ctx:
             col_row = ctx.conn.execute("SELECT ver, crt FROM col").fetchone()
             col_ver = col_row[0]
             col_crt = col_row[1]
-            reader = OfflineReader(ctx.conn, _s.anki_deck_name)
-            writer = OfflineWriter(ctx.conn, media_dir=_media_dir)
-            sync = AnkiSync(
-                db=db,
-                _reader=reader,
-                _writer=writer,
-                _anki_col_ver=col_ver,
-                _anki_col_crt=col_crt,
-            )
             # Run the single canonical sync sequence (orphans → create → push →
-            # pull → refresh-all → soak). The peer-sync reconcile path must run
-            # exactly the phases the legacy endpoint does — see run_full_sync.
+            # pull → refresh-all → soak) once PER language, against the shared
+            # collection. The loop wraps the sequence — it does NOT fork the phase
+            # list (see run_full_sync / .claude/rules/anki-sync.md).
             import asyncio
 
-            from app.anki import model_discovery
-
-            # Notetype to mint TT-originated cards into. Precedence:
-            #   1. explicit anki_model_name setting (override),
-            #   2. the active language's TT vocab notetype (e.g. "Norwegian
-            #      Vocabulary" — NOT the imported deck's recognition-only notetype
-            #      that discovery would return), then
-            #   3. deck-discovered model (the Slovene case, where deck notetype ==
-            #      mint notetype).
-            from app.languages import get_vocab_notetype
-
-            _vocab = get_vocab_notetype(getattr(_s, "target_language", "sl"))
-            model_name = (
-                _s.anki_model_name
-                or (_vocab.name if _vocab is not None else "")
-                or model_discovery.get_or_discover_model_name_offline(ctx.conn, _s.anki_deck_name)
-            )
-            create, push, pull, media = asyncio.run(
-                run_full_sync(
-                    sync,
-                    ctx.conn,
-                    db,
-                    deck_name=_s.anki_deck_name,
-                    model_name=model_name,
-                    sync_log_path=_sync_log,
-                    media_fn=_media_fn,
-                    media_dir=_media_dir,
-                    dry_run=args.dry_run,
-                    force_fsrs=args.force_fsrs,
-                )
-            )
-            print(
-                f"Create: {create.created} created, {create.linked} linked, {create.notes_created_from_anki} from Anki"
-            )
-            print(
-                f"Pull: {pull.notes_updated} notes updated, "
-                f"{pull.directions_updated} directions, "
-                f"{len(pull.conflicts)} conflicts, "
-                f"{len(pull.recompute_divergences)} recompute divergences"
-            )
-            if not args.dry_run and _media_dir is not None:
-                print(
-                    f"Media: {media['new_media']} new, {media['updated_media']} updated, "
-                    f"{media['collapsed_media']} collapsed"
-                )
-            print(f"Push: {push.notes_pushed} notes, {push.directions_pushed} directions")
+            for code, db_url, deck_name in specs:
+                lang_db = SRSDatabase(db_url.removeprefix("sqlite:///")) if db_url is not None else db
+                try:
+                    reader = OfflineReader(ctx.conn, deck_name)
+                    writer = OfflineWriter(ctx.conn, media_dir=_media_dir)
+                    sync = AnkiSync(
+                        db=lang_db,
+                        _reader=reader,
+                        _writer=writer,
+                        _anki_col_ver=col_ver,
+                        _anki_col_crt=col_crt,
+                    )
+                    model_name = _resolve_model_name(_s, code, ctx.conn, deck_name)
+                    create, push, pull, media = asyncio.run(
+                        run_full_sync(
+                            sync,
+                            ctx.conn,
+                            lang_db,
+                            deck_name=deck_name,
+                            model_name=model_name,
+                            sync_log_path=_sync_log,
+                            media_fn=_media_fn,
+                            media_dir=_media_dir,
+                            dry_run=args.dry_run,
+                            force_fsrs=args.force_fsrs,
+                        )
+                    )
+                    _print_sync_report(code if len(specs) > 1 else None, create, push, pull, media, args, _media_dir)
+                finally:
+                    if lang_db is not db:
+                        lang_db.close()
             return 0
     except OrphanThresholdExceededError as e:
         # run_full_sync runs detect_and_reset_orphans on this path; its threshold
@@ -378,6 +398,26 @@ def main(
     except RuntimeError as e:
         print(f"Error opening collection: {e}", file=sys.stderr)
         return 1
+
+
+def _print_sync_report(code, create, push, pull, media, args, _media_dir) -> None:
+    """Print the per-language sync summary (prefixed with [code] in multi-deck runs)."""
+    prefix = f"[{code}] " if code is not None else ""
+    print(
+        f"{prefix}Create: {create.created} created, {create.linked} linked, {create.notes_created_from_anki} from Anki"
+    )
+    print(
+        f"{prefix}Pull: {pull.notes_updated} notes updated, "
+        f"{pull.directions_updated} directions, "
+        f"{len(pull.conflicts)} conflicts, "
+        f"{len(pull.recompute_divergences)} recompute divergences"
+    )
+    if not args.dry_run and _media_dir is not None:
+        print(
+            f"{prefix}Media: {media['new_media']} new, {media['updated_media']} updated, "
+            f"{media['collapsed_media']} collapsed"
+        )
+    print(f"{prefix}Push: {push.notes_pushed} notes, {push.directions_pushed} directions")
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -10,6 +10,8 @@ from app.anki.sync import (
     PullReport,
     PushReport,
     RecomputeDivergence,
+    _resolve_model_name,
+    _sync_target_specs,
     _write_sync_soak_log,
     main,
     run_full_sync,
@@ -837,3 +839,100 @@ class TestSyncSoakLog:
 
         assert exit_code == 0
         assert not log_path.exists()
+
+
+class TestSyncTargetSpecs:
+    """The per-language sync target resolution (multi-deck opt-in)."""
+
+    class _S:
+        target_language = "no"
+        anki_deck_name = "0. 6000 Most Frequent Norwegian Words [Part 1]"
+        anki_model_name = ""
+        database_urls = {"sl": "sqlite:///./tunatale_sl.db", "no": "sqlite:///./tunatale_no.db"}
+
+    def test_single_language_when_not_all_languages(self):
+        specs = _sync_target_specs(self._S(), all_languages=False, injected_db=False)
+        assert specs == [("no", None, "0. 6000 Most Frequent Norwegian Words [Part 1]")]
+
+    def test_single_language_when_db_injected(self):
+        # peer_sync injects a db; --all-languages must NOT fan out there.
+        specs = _sync_target_specs(self._S(), all_languages=True, injected_db=True)
+        assert specs == [("no", None, "0. 6000 Most Frequent Norwegian Words [Part 1]")]
+
+    def test_multi_language_fans_out_over_database_urls(self):
+        specs = _sync_target_specs(self._S(), all_languages=True, injected_db=False)
+        by_code = {code: (url, deck) for code, url, deck in specs}
+        assert by_code["sl"] == ("sqlite:///./tunatale_sl.db", "1. Slovene")
+        assert by_code["no"] == (
+            "sqlite:///./tunatale_no.db",
+            "0. 6000 Most Frequent Norwegian Words [Part 1]",
+        )
+
+    def test_resolve_model_name_prefers_language_vocab_notetype(self):
+        conn = sqlite3.connect(":memory:")
+        assert _resolve_model_name(self._S(), "no", conn, "deck") == "Norwegian Vocabulary"
+        assert _resolve_model_name(self._S(), "sl", conn, "deck") == "Slovene Vocabulary"
+
+
+class TestMainAllLanguages:
+    def test_all_languages_dry_run_loops_over_each_deck_and_db(self, tmp_path):
+        """--all-languages runs the real run_full_sync once per language, each with
+        its own deck + per-language db, against the one shared collection. Tested
+        through the seam (real sync, dry-run makes push/pull/refresh no-op; only the
+        injected safe_open is faked — no app.anki.sync patches)."""
+        from app.models.syntactic_unit import SyntacticUnit
+        from tests.test_anki_sync_create_new import _make_dual_collection_conn
+
+        anki_conn = _make_dual_collection_conn()
+        # Decks the language registry resolves via get_deck_name (sl / no).
+        anki_conn.execute("INSERT INTO decks VALUES (201, '1. Slovene', 0, 0, x'')")
+        anki_conn.execute(
+            "INSERT INTO decks VALUES (202, '0. 6000 Most Frequent Norwegian Words [Part 1]', 0, 0, x'')"
+        )
+        anki_conn.commit()
+
+        # Two real per-language TT dbs — main() opens these from database_urls.
+        sl_path = tmp_path / "sl.db"
+        no_path = tmp_path / "no.db"
+        db_sl = SRSDatabase(str(sl_path))
+        db_sl.add_collocation(
+            SyntacticUnit(text="voda", translation="water", word_count=1, difficulty=1, source="user")
+        )
+        db_sl.close()
+        db_no = SRSDatabase(str(no_path))
+        db_no.add_collocation(
+            SyntacticUnit(text="vann", translation="water", word_count=1, difficulty=1, source="user")
+        )
+        db_no.close()
+
+        class FakeSettings:
+            anki_collection_path = "unused"
+            anki_deck_name = "1. Slovene"
+            anki_model_name = ""
+            target_language = "sl"
+            database_url = f"sqlite:///{sl_path}"
+            database_urls = {"sl": f"sqlite:///{sl_path}", "no": f"sqlite:///{no_path}"}
+            sync_log = tmp_path / "sync.log"
+
+        @contextmanager
+        def fake_safe_open(path, mode):
+            yield type("Ctx", (), {"conn": anki_conn})()
+
+        exit_code = main(
+            argv=["--all-languages", "--dry-run"],
+            _settings=FakeSettings(),
+            _safe_open_fn=fake_safe_open,
+            _sync_log_path=tmp_path / "sync.log",
+        )
+
+        assert exit_code == 0
+        # Dry run touched both decks but wrote nothing: no notes, both items unlinked.
+        assert anki_conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0
+        db_sl2 = SRSDatabase(str(sl_path))
+        db_no2 = SRSDatabase(str(no_path))
+        try:
+            assert db_sl2.get_collocation("voda").anki_note_id is None
+            assert db_no2.get_collocation("vann").anki_note_id is None
+        finally:
+            db_sl2.close()
+            db_no2.close()
