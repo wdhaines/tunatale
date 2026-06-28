@@ -18,9 +18,11 @@ vi.mock("$app/stores", () => ({
 }));
 
 vi.mock("$lib/api", () => ({
+  LANGUAGE_STORAGE_KEY: "tt-language",
   api: {
     peerSync: vi.fn(),
     fetchQueueStats: vi.fn(),
+    getLanguages: vi.fn().mockResolvedValue({ languages: [], active: "sl" }),
   },
 }));
 

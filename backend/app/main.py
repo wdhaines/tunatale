@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI  # noqa: E402
+from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from app.audio.edge_tts import EdgeTTSService  # noqa: E402
@@ -209,3 +209,21 @@ app.include_router(admin.router)
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/languages")
+async def languages(request: Request):
+    """Configured languages (for the frontend selector) + the request's active one.
+
+    Lists every language with an open connection; single-language deployments
+    return one entry. ``active`` is the language the X-TT-Language header resolved
+    to for this request.
+    """
+    langs = getattr(request.app.state, "languages", None)
+    if langs is None:
+        # Single-language test fallback: the singular app.state.language.
+        lang = getattr(request.app.state, "language", None)
+        items = [{"code": lang.code, "name": lang.name}] if lang is not None else []
+    else:
+        items = [{"code": code, "name": lang.name} for code, lang in langs.items()]
+    return {"languages": items, "active": request.state.language_code}

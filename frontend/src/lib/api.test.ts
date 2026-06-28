@@ -1085,3 +1085,63 @@ describe("TunaTaleAPI", () => {
     });
   });
 });
+
+describe("TunaTaleAPI language header", () => {
+  let api: TunaTaleAPI;
+
+  beforeEach(() => {
+    api = new TunaTaleAPI(BASE);
+    vi.restoreAllMocks();
+    localStorage.removeItem("tt-language");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    localStorage.removeItem("tt-language");
+  });
+
+  it("sends X-TT-Language on a GET when a language is selected", async () => {
+    localStorage.setItem("tt-language", "no");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ items: [], total: 0 })));
+    await api.listSRSItems();
+    expect(fetch).toHaveBeenCalledWith(
+      `${BASE}/api/srs/items`,
+      expect.objectContaining({ headers: expect.objectContaining({ "X-TT-Language": "no" }) }),
+    );
+  });
+
+  it("merges X-TT-Language into a POST's existing headers", async () => {
+    localStorage.setItem("tt-language", "no");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ id: "x" })));
+    await api.generateCurriculum("coffee");
+    const init = (fetch as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][1] as RequestInit;
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+    expect((init.headers as Record<string, string>)["X-TT-Language"]).toBe("no");
+  });
+
+  it("omits the header when no language is selected (single-arg GET preserved)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk([])));
+    await api.listCurricula();
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/curriculum`);
+  });
+
+  it("omits the header during SSR (no localStorage)", async () => {
+    vi.stubGlobal("localStorage", undefined);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk([])));
+    await api.listCurricula();
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/curriculum`);
+  });
+
+  it("getLanguages calls GET /api/languages", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(mockOk({ languages: [{ code: "sl", name: "Slovene" }], active: "sl" })),
+    );
+    const result = await api.getLanguages();
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/languages`);
+    expect(result.active).toBe("sl");
+  });
+});

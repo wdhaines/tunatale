@@ -886,9 +886,7 @@ class TestMainAllLanguages:
         anki_conn = _make_dual_collection_conn()
         # Decks the language registry resolves via get_deck_name (sl / no).
         anki_conn.execute("INSERT INTO decks VALUES (201, '1. Slovene', 0, 0, x'')")
-        anki_conn.execute(
-            "INSERT INTO decks VALUES (202, '0. 6000 Most Frequent Norwegian Words [Part 1]', 0, 0, x'')"
-        )
+        anki_conn.execute("INSERT INTO decks VALUES (202, '0. 6000 Most Frequent Norwegian Words [Part 1]', 0, 0, x'')")
         anki_conn.commit()
 
         # Two real per-language TT dbs — main() opens these from database_urls.

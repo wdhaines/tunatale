@@ -10,6 +10,27 @@ const SSR_PROTO = import.meta.env.VITE_SSL_ENABLED === "true" ? "https" : "http"
 export const BASE_URL =
   typeof window !== "undefined" ? "" : `${SSR_PROTO}://localhost:${process.env.API_PORT ?? 8000}`;
 
+// localStorage key the language selector writes; read here so every request
+// carries the active language (the backend resolves the per-language connection
+// from this header). SSR / no selection → no header → backend default language.
+export const LANGUAGE_STORAGE_KEY = "tt-language";
+
+function activeLanguageHeader(): Record<string, string> {
+  if (typeof localStorage === "undefined") return {};
+  const code = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+  return code ? { "X-TT-Language": code } : {};
+}
+
+export interface LanguageOption {
+  code: string;
+  name: string;
+}
+
+export interface LanguagesResponse {
+  languages: LanguageOption[];
+  active: string;
+}
+
 export interface CurriculumSummary {
   id: string;
   topic: string;
@@ -244,9 +265,18 @@ export class TunaTaleAPI {
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const method = init?.method ?? "GET";
-    const res = init
-      ? await fetch(`${this.baseUrl}${path}`, init)
-      : await fetch(`${this.baseUrl}${path}`);
+    const langHeader = activeLanguageHeader();
+    let res: Response;
+    if (Object.keys(langHeader).length > 0) {
+      res = await fetch(`${this.baseUrl}${path}`, {
+        ...init,
+        headers: { ...(init?.headers as Record<string, string> | undefined), ...langHeader },
+      });
+    } else {
+      res = init
+        ? await fetch(`${this.baseUrl}${path}`, init)
+        : await fetch(`${this.baseUrl}${path}`);
+    }
     if (!res.ok) {
       // Surface the server's error detail (FastAPI puts it in body.detail) instead of
       // the bare status line — statusText is empty over HTTP/2, which left sync/other
@@ -533,6 +563,10 @@ export class TunaTaleAPI {
 
   async peerSync(dryRun = false): Promise<PeerSyncResult> {
     return this.request(`/api/anki/peer-sync?dry_run=${dryRun}`, { method: "POST" });
+  }
+
+  async getLanguages(): Promise<LanguagesResponse> {
+    return this.request("/api/languages");
   }
 }
 

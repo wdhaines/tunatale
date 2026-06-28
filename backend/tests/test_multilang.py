@@ -120,6 +120,15 @@ class TestPerRequestIsolation:
             # "de" isn't configured → falls back to target_language (no).
             assert await self._texts(client, {"X-TT-Language": "de"}) == {"vann"}
 
+    async def test_languages_endpoint_lists_configured_languages(self, two_language_app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/languages", headers={"X-TT-Language": "no"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert {lang["code"] for lang in body["languages"]} == {"sl", "no"}
+        assert {lang["name"] for lang in body["languages"]} == {"Slovene", "Norwegian"}
+        assert body["active"] == "no"
+
     async def test_grade_in_one_language_does_not_touch_the_other(self, two_language_app):
         """A write through one connection is invisible to the other (no shared DB)."""
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -133,3 +142,28 @@ class TestPerRequestIsolation:
             # Slovene connection is unaffected.
             assert await self._texts(client, {"X-TT-Language": "sl"}) == {"voda"}
             assert await self._texts(client, {"X-TT-Language": "no"}) == {"vann", "hund"}
+
+
+class TestLanguagesEndpointFallbacks:
+    """The /api/languages singular + empty fallbacks (no per-language maps)."""
+
+    def _cleanup(self):
+        for attr in ("languages", "language", "srs_dbs", "srs_db"):
+            if hasattr(app.state, attr):
+                delattr(app.state, attr)
+
+    async def test_single_language_uses_singular_app_state(self):
+        app.state.language = Language.slovene()
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                body = (await client.get("/api/languages")).json()
+            assert body["languages"] == [{"code": "sl", "name": "Slovene"}]
+        finally:
+            self._cleanup()
+
+    async def test_no_language_configured_returns_empty_list(self):
+        # Neither maps nor singular language set → empty list (no crash).
+        self._cleanup()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            body = (await client.get("/api/languages")).json()
+        assert body["languages"] == []

@@ -5,6 +5,8 @@
 	import { page } from '$app/stores';
 	import SyncButton from '$lib/components/SyncButton.svelte';
 	import QueueStatsWidget from '$lib/components/QueueStatsWidget.svelte';
+	import LanguageSelector from '$lib/components/LanguageSelector.svelte';
+	import { languageStore } from '$lib/stores/language.svelte';
 	import { syncStore } from '$lib/stores/sync.svelte';
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
@@ -37,6 +39,7 @@
 	onMount(() => {
 		themeStore.init();
 		prefetchPrefStore.init();
+		languageStore.init();
 		queueStatsStore.refresh();
 	});
 
@@ -73,6 +76,7 @@
 		<a href="/cards" class="nav-link" class:active={onCards}>Cards</a>
 	</div>
 	<div class="nav-actions">
+		<LanguageSelector />
 		<button
 			class="theme-toggle"
 			onclick={() => prefetchPrefStore.toggle()}

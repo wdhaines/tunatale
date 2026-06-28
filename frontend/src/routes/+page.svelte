@@ -5,6 +5,15 @@
 	import type { CurriculumSummary } from '$lib/api';
 	import { api } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
+	import { languageStore } from '$lib/stores/language.svelte';
+
+	// Tagline names the active L2 (falls back to a generic line before the language
+	// list has loaded, or in a single-language deployment that hasn't resolved yet).
+	const tagline = $derived(
+		languageStore.name
+			? `AI-powered ${languageStore.name}, tuned to what you know.`
+			: 'AI-powered language learning, tuned to what you know.'
+	);
 
 	interface CardProgress {
 		listenedCount: number;
@@ -89,7 +98,7 @@
 	<header class="page-head">
 		<div>
 			<h1>Lessons</h1>
-			<p class="tagline">AI-powered Slovene, tuned to what you know.</p>
+			<p class="tagline">{tagline}</p>
 		</div>
 		<button class="new-btn" onclick={() => (showForm = !showForm)} aria-expanded={showForm}>
 			{showForm ? 'Cancel' : '+ New curriculum'}
