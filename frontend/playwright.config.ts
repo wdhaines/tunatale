@@ -34,6 +34,24 @@ export default defineConfig({
 			}
 		},
 		{
+			// Norwegian test backend: same image, TARGET_LANGUAGE=no, isolated DB +
+			// port. Exercises the Phase-2 Norwegian generation path (story prompt +
+			// nb-NO voices + syllabifier) against the Norwegian cassettes recorded in
+			// e2e.json. API-level only — the frontend isn't language-switchable yet
+			// (Phase 5), so the Norwegian spec hits port 8002 directly via `request`.
+			command: 'cd ../backend && rm -f tunatale-test-no.db && uv run uvicorn app.main:app --host 0.0.0.0 --port 8002 --log-level error',
+			port: 8002,
+			reuseExistingServer: false,
+			timeout: 30000,
+			env: {
+				LLM_MODE: 'mock',
+				DATABASE_URL: 'sqlite:///./tunatale-test-no.db',
+				PIXABAY_API_KEY: '',
+				lemmatizer_type: 'lowercase',
+				TARGET_LANGUAGE: 'no'
+			}
+		},
+		{
 			// Test frontend: proxies /api to port 8001, dedicated port
 			command: 'npm run dev -- --port 5174',
 			url: 'http://localhost:5174',
