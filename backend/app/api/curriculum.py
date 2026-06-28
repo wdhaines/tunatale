@@ -21,8 +21,8 @@ def _slug(text: str) -> str:
 @router.post("/generate", status_code=201)
 async def generate_curriculum(body: GenerateCurriculumRequest, request: Request):
     generator = request.app.state.curriculum_generator
-    language = request.app.state.language
-    store = request.app.state.content_store
+    language = request.state.language
+    store = request.state.content_store
 
     curriculum = await generator.generate(
         topic=body.topic,
@@ -44,13 +44,13 @@ async def generate_curriculum(body: GenerateCurriculumRequest, request: Request)
 
 @router.get("", status_code=200)
 async def list_curricula(request: Request):
-    store = request.app.state.content_store
+    store = request.state.content_store
     return store.list_curricula()
 
 
 @router.get("/{curriculum_id}", status_code=200)
 async def get_curriculum(curriculum_id: str, request: Request):
-    store = request.app.state.content_store
+    store = request.state.content_store
     curriculum = store.get_curriculum(curriculum_id)
     if curriculum is None:
         raise HTTPException(status_code=404, detail="Curriculum not found")
@@ -64,7 +64,7 @@ async def get_curriculum(curriculum_id: str, request: Request):
 
 @router.get("/{curriculum_id}/progress")
 async def get_curriculum_progress(curriculum_id: str, request: Request):
-    store = request.app.state.content_store
+    store = request.state.content_store
     if store.get_curriculum(curriculum_id) is None:
         raise HTTPException(status_code=404, detail="Curriculum not found")
     return store.get_lesson_days(curriculum_id)
@@ -72,7 +72,7 @@ async def get_curriculum_progress(curriculum_id: str, request: Request):
 
 @router.get("/{curriculum_id}/days/{day}/lesson", status_code=200)
 async def get_lesson_by_day(curriculum_id: str, day: int, request: Request):
-    store = request.app.state.content_store
+    store = request.state.content_store
     result = store.get_latest_lesson_by_day(curriculum_id, day)
     if result is None:
         raise HTTPException(status_code=404, detail=f"No lesson found for day {day}")

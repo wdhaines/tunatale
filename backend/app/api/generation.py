@@ -66,7 +66,7 @@ def _prewarm_phrases(
 
 @router.post("/generate", status_code=201)
 async def generate_story(body: GenerateStoryRequest, request: Request):
-    store = request.app.state.content_store
+    store = request.state.content_store
     curriculum = store.get_curriculum(body.curriculum_id)
     if curriculum is None:
         raise HTTPException(status_code=404, detail="Curriculum not found")
@@ -77,7 +77,7 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
 
     curriculum_day = days[0]
     strategy = ContentStrategy[body.strategy]
-    language = request.app.state.language
+    language = request.state.language
     generator = request.app.state.story_generator
 
     lesson = await generator.generate(
@@ -101,7 +101,7 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
 
 @router.get("/{lesson_id}", status_code=200)
 async def get_lesson(lesson_id: str, request: Request):
-    store = request.app.state.content_store
+    store = request.state.content_store
     row = store.get_lesson_row(lesson_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Lesson not found")

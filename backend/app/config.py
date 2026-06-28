@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     # switch languages by flipping target_language AND database_url together
     # (e.g. sqlite:///./tunatale_no.db for Norwegian).
     database_url: str = "sqlite:///./tunatale_sl.db"
+    # Phase 5 — simultaneous multi-language. When non-empty, the app opens one
+    # connection per entry (``{"sl": "sqlite:///./tunatale_sl.db", "no": "…_no.db"}``)
+    # and resolves the active one per request from the X-TT-Language header. Empty
+    # (the default) = single-language: one connection from ``database_url`` bound to
+    # ``target_language``. ``target_language`` is the default when no header is sent.
+    database_urls: dict[str, str] = {}
     llm_mode: str = "mock"  # mock | live | record | patch
     llm_model: str = "llama-3.3-70b-versatile"
 

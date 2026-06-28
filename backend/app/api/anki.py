@@ -52,7 +52,7 @@ async def trigger_peer_sync(request: Request, dry_run: bool = False):
 
     from app.anki.sync_orchestrator import PeerSyncError, peer_sync
 
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     llm = getattr(request.app.state, "llm", None)
     media_fn = _build_media_fn(llm, db)
 

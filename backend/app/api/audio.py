@@ -41,7 +41,7 @@ def _build_section_filename(topic: str, day: int, section_index: int, section_ty
 
 @router.post("/render", status_code=202)
 async def render_audio(body: RenderAudioRequest, request: Request):
-    store = request.app.state.content_store
+    store = request.state.content_store
     lesson = store.get_lesson(body.lesson_id)
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
@@ -93,7 +93,7 @@ async def render_audio(body: RenderAudioRequest, request: Request):
 @router.get("/lesson/{lesson_id}", status_code=200)
 async def get_lesson_audio(lesson_id: str, request: Request):
     """Return the audio file list for a lesson (full + sections) without re-rendering."""
-    store = request.app.state.content_store
+    store = request.state.content_store
     rows = store.list_audio_files_for_lesson(lesson_id)
     if not rows:
         raise HTTPException(status_code=404, detail="No audio found for this lesson")
@@ -131,7 +131,7 @@ async def get_lesson_audio(lesson_id: str, request: Request):
 @router.get("/lesson/{lesson_id}/zip", status_code=200)
 async def download_lesson_zip(lesson_id: str, request: Request):
     """Return a ZIP of all section WAVs for a lesson with context-rich filenames."""
-    store = request.app.state.content_store
+    store = request.state.content_store
     rows = store.list_audio_files_for_lesson(lesson_id)
     full_row = next((r for r in rows if r["section_index"] is None), None)
     section_rows = [r for r in rows if r["section_index"] is not None]
@@ -182,7 +182,7 @@ async def download_lesson_zip(lesson_id: str, request: Request):
 
 @router.get("/{audio_id}", status_code=200)
 async def get_audio(audio_id: str, request: Request):
-    store = request.app.state.content_store
+    store = request.state.content_store
     row = store.get_audio_file_row(audio_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Audio not found")

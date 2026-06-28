@@ -200,7 +200,7 @@ async def _generate_add_time_media(
 
 @router.get("/due", status_code=200)
 async def get_due_collocations(request: Request, direction: str = "recognition"):
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     today = datetime.date.today()
     if direction == "any":
         rec = db.get_due_items(today, Direction.RECOGNITION)
@@ -217,7 +217,7 @@ async def get_due_collocations(request: Request, direction: str = "recognition")
 
 @router.get("/new", status_code=200)
 async def get_new_collocations(request: Request, limit: int = 10, direction: str = "recognition"):
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     try:
         dir_enum = Direction(direction)
     except ValueError as exc:
@@ -238,7 +238,7 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     result = db.get_collocation_by_id(item_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -297,7 +297,7 @@ async def undo_grade(item_id: int, direction: str, request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"Invalid direction: {direction!r}") from exc
 
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     if db.get_collocation_by_id(item_id) is None:
         raise HTTPException(status_code=404, detail="Item not found")
 
@@ -345,12 +345,12 @@ def _listen_grade_eligible(
 
 @router.post("/listen", status_code=200)
 async def mark_lesson_listened(body: ListenRequest, request: Request):
-    store = request.app.state.content_store
+    store = request.state.content_store
     lesson = store.get_lesson(body.lesson_id)
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
 
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     col_crt = resolve_col_crt(db)
     llm = getattr(request.app.state, "llm", None)
     # One shared set across this request so two new words don't pick the same image.
@@ -609,12 +609,12 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 async def get_lesson_transcript(lesson_id: str, request: Request):
     from datetime import date
 
-    store = request.app.state.content_store
+    store = request.state.content_store
     lesson = store.get_lesson(lesson_id)
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
 
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     today = date.today()
     # extract_transcript runs the (classla) lemmatizer synchronously and can take
     # seconds — especially right after restart before the warm-up finishes. Offload it
@@ -696,9 +696,9 @@ async def translate(body: TranslateRequest, request: Request):
 @router.post("/translate-missing", status_code=200)
 async def translate_missing(request: Request):
     """Call the LLM to fill in translations for every card that has none."""
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     llm = request.app.state.llm
-    language = request.app.state.language
+    language = request.state.language
 
     untranslated = db.get_untranslated_collocations()
     if not untranslated:
@@ -728,8 +728,8 @@ async def translate_missing(request: Request):
 @router.post("/backfill-translations", status_code=200)
 async def backfill_translations(request: Request):
     """One-time repair: fill empty translations from all stored lesson glosses."""
-    store = request.app.state.content_store
-    db = request.app.state.srs_db
+    store = request.state.content_store
+    db = request.state.srs_db
     glosses = store.get_all_token_glosses()
     updated = db.backfill_translations(glosses)
     return {"updated": updated, "glosses_found": len(glosses)}
@@ -737,7 +737,7 @@ async def backfill_translations(request: Request):
 
 @router.get("/stats", status_code=200)
 async def get_stats(request: Request):
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     today = datetime.date.today()
     return {"total": db.count_collocations(), "due_today": db.count_due_collocations(today)}
 
@@ -747,7 +747,7 @@ async def get_queue_stats(request: Request, response: Response):
     # Live state; never cache. Without this, a normal browser refresh can be
     # served from heuristic disk cache and the badges go stale.
     response.headers["Cache-Control"] = "no-store"
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     today = datetime.date.today()
     db.unbury_if_needed(today)
     new_cap, new_cap_source = resolve_daily_new_cap(db)
@@ -814,7 +814,7 @@ _STATE_MAP = {
 
 @router.post("/items", status_code=201)
 async def create_item(body: CreateItemRequest, request: Request):
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     if body.word_count < 1:
         from fastapi import HTTPException as _HTTPException
 
@@ -918,7 +918,7 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
     add_collocation card-adding contract (no Anki ids; sync_create_new mints +
     links). No LLM auto-translate here — the caller passes the transcript gloss.
     """
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     lang = body.language_code
     lemma = body.lemma.casefold()
 
@@ -991,7 +991,7 @@ async def list_items(
     limit: int = 50,
     offset: int = 0,
 ):
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     state_enum = SRSState(state) if state else None
     try:
         rows, total = db.list_collocations(
@@ -1009,7 +1009,7 @@ async def list_items(
 
 @router.patch("/items/{item_id}", status_code=200)
 async def patch_item(item_id: int, body: UpdateItemRequest, request: Request):
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     if db.get_collocation_by_id(item_id) is None:
         raise HTTPException(status_code=404, detail="Item not found")
     try:
@@ -1022,7 +1022,7 @@ async def patch_item(item_id: int, body: UpdateItemRequest, request: Request):
 
 @router.delete("/items/{item_id}", status_code=200)
 async def delete_item(item_id: int, request: Request):
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     if db.get_collocation_by_id(item_id) is None:
         raise HTTPException(status_code=404, detail="Item not found")
     db.delete_collocation(item_id)
@@ -1031,14 +1031,14 @@ async def delete_item(item_id: int, request: Request):
 
 @router.post("/items/bulk-delete", status_code=200)
 async def bulk_delete_items(body: BulkDeleteRequest, request: Request):
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     deleted = db.delete_collocations(body.ids)
     return {"deleted": deleted}
 
 
 @router.post("/items/{item_id}/reset", status_code=200)
 async def reset_item(item_id: int, request: Request):
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     if db.get_collocation_by_id(item_id) is None:
         raise HTTPException(status_code=404, detail="Item not found")
     db.reset_collocation(item_id)
@@ -1052,7 +1052,7 @@ async def set_item_state(item_id: int, body: SetStateRequest, request: Request):
         raise HTTPException(
             status_code=422, detail=f"Invalid state: {body.state!r}. Must be one of {sorted(_VALID_USER_STATES)}"
         )
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     if db.get_collocation_by_id(item_id) is None:
         raise HTTPException(status_code=404, detail="Item not found")
     if body.state == "learning":
@@ -1082,7 +1082,7 @@ async def restore_known_item(item_id: int, request: Request):
     mappings there are label-only / full-reset and would be confusing here.
     No-op (still 200) when the item has no known snapshot.
     """
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     if db.get_collocation_by_id(item_id) is None:
         raise HTTPException(status_code=404, detail="Item not found")
     db.restore_known(item_id)
@@ -1092,7 +1092,7 @@ async def restore_known_item(item_id: int, request: Request):
 
 @router.post("/items/{item_id}/untrack", status_code=200)
 async def untrack_item(item_id: int, request: Request):
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     if db.get_collocation_by_id(item_id) is None:
         raise HTTPException(status_code=404, detail="Item not found")
     result = db.untrack_collocation(item_id)
@@ -1104,7 +1104,7 @@ async def untrack_item(item_id: int, request: Request):
 
 @router.post("/items/{item_id}/suspend", status_code=200)
 async def suspend_item(item_id: int, body: SuspendRequest, request: Request):
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     if db.get_collocation_by_id(item_id) is None:
         raise HTTPException(status_code=404, detail="Item not found")
     dir_enum: Direction | None = None
@@ -1120,14 +1120,14 @@ async def suspend_item(item_id: int, body: SuspendRequest, request: Request):
 
 @router.post("/ignored-lemmas", status_code=200)
 async def add_ignored_lemma(body: IgnoreLemmaRequest, request: Request):
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     db.add_ignored_lemma(body.language_code, body.lemma)
     return {"status": "ok"}
 
 
 @router.delete("/ignored-lemmas", status_code=200)
 async def remove_ignored_lemma(lemma: str, language_code: str, request: Request):
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     db.remove_ignored_lemma(language_code, lemma)
     return {"status": "ok"}
 
@@ -1434,7 +1434,7 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
     Idempotent by guid. Follows the add_collocation contract
     (card_type=cloze, no Anki ids).
     """
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     language_code = body.language_code
 
     # 1. Eligibility gate — base word production must be REVIEW/KNOWN.
@@ -1459,7 +1459,7 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
     if body.lesson_id:
         from app.models.lesson import extract_sentence_translations_from_translated
 
-        lesson = request.app.state.content_store.get_lesson(body.lesson_id)
+        lesson = request.state.content_store.get_lesson(body.lesson_id)
         if lesson is not None:
             token_glosses: dict[str, str] = lesson.generation_metadata.get("token_glosses", {})
             sentence_translations: dict[str, str] = dict(lesson.generation_metadata.get("sentence_translations", {}))
@@ -1551,7 +1551,7 @@ async def get_review_queue(request: Request, response: Response, session_start: 
     # bypasses the cache, which is a bad UX.
     response.headers["Cache-Control"] = "no-store"
 
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     today = datetime.date.today()
     now = datetime.datetime.now(datetime.UTC)
 

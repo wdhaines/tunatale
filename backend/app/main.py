@@ -76,6 +76,18 @@ def _warm_from_lessons(
             analyze_sentence_cached(srs_db, lemmatizer, phrase.text, lesson.language_code, model_version)
 
 
+def _language_db_map() -> dict[str, str]:
+    """Map of language code → SQLite URL to open at startup.
+
+    Multi-language when ``settings.database_urls`` is set (one connection per
+    entry, resolved per request from the X-TT-Language header); otherwise the
+    single ``database_url`` bound to ``target_language`` (single-language).
+    """
+    if settings.database_urls:
+        return dict(settings.database_urls)
+    return {settings.target_language: settings.database_url}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     real_client = LLMClient(groq_api_key=settings.groq_api_key, groq_model=settings.llm_model)
@@ -87,21 +99,36 @@ async def lifespan(app: FastAPI):
     else:
         llm = real_client
 
-    db_path = settings.database_url.removeprefix("sqlite:///")
-    srs_db = SRSDatabase(db_path)
-    content_store = ContentStore(db_path)
+    # One connection set per configured language. The per-request middleware picks
+    # the active one; the parity-sensitive queue/badge queries stay unmodified —
+    # isolation is which connection serves the request, not a WHERE clause.
+    db_map = _language_db_map()
+    default_code = settings.target_language if settings.target_language in db_map else next(iter(db_map))
 
-    language = get_language(settings.target_language)
+    srs_dbs: dict[str, SRSDatabase] = {}
+    content_stores: dict[str, ContentStore] = {}
+    languages = {}
+    for code, url in db_map.items():
+        path = url.removeprefix("sqlite:///")
+        srs_dbs[code] = SRSDatabase(path)
+        content_stores[code] = ContentStore(path)
+        languages[code] = get_language(code)
 
-    app.state.srs_db = srs_db
-    app.state.content_store = content_store
-    app.state.language = language
+    app.state.srs_dbs = srs_dbs
+    app.state.content_stores = content_stores
+    app.state.languages = languages
+    # Singular defaults (the active language): the middleware's single-language
+    # fallback, the lemmatizer warm-up, and any non-request-scoped consumer.
+    app.state.srs_db = srs_dbs[default_code]
+    app.state.content_store = content_stores[default_code]
+    app.state.language = languages[default_code]
+
     app.state.llm = llm
     app.state.curriculum_generator = CurriculumGenerator(llm)
     app.state.story_generator = StoryGenerator(llm)
     app.state.renderer = LessonRenderer(
         tts=EdgeTTSService(),
-        preprocessor=get_preprocessor(settings.target_language),
+        preprocessor=get_preprocessor(default_code),
         pause_calculator=NaturalPauseCalculator(),
         delivery_codec=settings.audio_delivery_codec,
         delivery_bitrate=settings.audio_delivery_bitrate,
@@ -114,7 +141,7 @@ async def lifespan(app: FastAPI):
     # event, so the port never binds and every frontend /api/* request is refused until
     # "Done loading processors!". As a background task, the port binds immediately and
     # classla still warms eagerly. A no-op for the default lowercase lemmatizer.
-    warmup_task = asyncio.create_task(_warm_lemmatizer(srs_db, content_store))
+    warmup_task = asyncio.create_task(_warm_lemmatizer(app.state.srs_db, app.state.content_store))
 
     logger.info("TunaTale backend starting up")
     yield
@@ -122,8 +149,10 @@ async def lifespan(app: FastAPI):
     # Let the warm-up settle on shutdown. _warm_lemmatizer swallows its own exceptions,
     # so this never raises; by normal shutdown the pipeline is long since loaded.
     await warmup_task
-    srs_db.close()
-    content_store.close()
+    for db in srs_dbs.values():
+        db.close()
+    for store in content_stores.values():
+        store.close()
     logger.info("TunaTale backend shutting down")
 
 
@@ -136,6 +165,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _resolve_language_state(request, call_next):
+    """Bind the request's language connection set onto ``request.state``.
+
+    The active language is the ``X-TT-Language`` header, defaulting to
+    ``settings.target_language``. When the app has per-language maps
+    (``srs_dbs``), the request is served from the matching connection (unknown
+    codes fall back to the default language); otherwise — single-language tests
+    that only set the singular ``app.state.srs_db`` — it falls back to those.
+    Routes read ``request.state.{srs_db,content_store,language}`` so isolation is
+    which connection serves the request, not a per-query filter.
+    """
+    code = request.headers.get("x-tt-language") or settings.target_language
+    state = request.app.state
+    srs_dbs = getattr(state, "srs_dbs", None)
+    if srs_dbs is not None:
+        if code not in srs_dbs:
+            code = settings.target_language
+        request.state.srs_db = srs_dbs[code]
+        request.state.content_store = state.content_stores[code]
+        request.state.language = state.languages[code]
+    else:
+        request.state.srs_db = getattr(state, "srs_db", None)
+        request.state.content_store = getattr(state, "content_store", None)
+        request.state.language = getattr(state, "language", None)
+    request.state.language_code = code
+    return await call_next(request)
+
 
 from app.api import admin, anki, audio, curriculum, generation, srs  # noqa: E402
 
