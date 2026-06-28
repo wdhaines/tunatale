@@ -438,15 +438,32 @@ class OfflineWriter:
         self._bump_col(ts)
         self._conn.commit()
 
-    def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list) -> int:
+    def get_sort_field_name(self, model_name: str) -> str:
+        """Return the name of *model_name*'s sort field (field ord 0 = the L2 word).
+
+        Lets callers build the ``fields`` dict with the right L2 key per notetype
+        (e.g. "Slovene" vs "Norwegian") without hardcoding it.
+        """
+        row = self._conn.execute(
+            "SELECT f.name FROM fields f JOIN notetypes n ON f.ntid = n.id WHERE n.name = ? ORDER BY f.ord LIMIT 1",
+            (model_name,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Notetype {model_name!r} has no fields")
+        return row["name"]
+
+    def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list, language_code: str = "sl") -> int:
         """Insert a new note + cards into the collection.
+
+        The note's field layout is read from the collection's ``fields`` table
+        for *model_name* (ord order), so any TT vocab notetype works — the L2
+        word lives in field ord 0 (the sort field) and ``fields`` is keyed by
+        the notetype's Anki field names. ``language_code`` folds into the GUID.
 
         Raises DuplicateNoteError if the computed GUID already exists.
         No col.scm change — data-only insert against an existing notetype.
         """
         import hashlib
-
-        from app.anki.notetype import SLOVENE_VOCAB_FIELD_NAMES
 
         mid_row = self._conn.execute("SELECT id FROM notetypes WHERE name = ?", (model_name,)).fetchone()
         if mid_row is None:
@@ -457,10 +474,14 @@ class OfflineWriter:
         if did is None:
             raise ValueError(f"Deck {deck_name!r} not found")
 
-        # "Slovene" is SLOVENE_VOCAB_FIELD_NAMES[0] — the sort field for this single-language project
-        sfld = re.sub(r"<[^>]+>", "", fields.get("Slovene", "")).strip()
+        # Field order is authoritative from the collection; ord 0 = the L2/sort field.
+        field_names = [
+            r["name"] for r in self._conn.execute("SELECT name FROM fields WHERE ntid = ? ORDER BY ord", (mid,))
+        ]
+        sort_field = field_names[0]
+        sfld = re.sub(r"<[^>]+>", "", fields.get(sort_field, "")).strip()
         disambig = fields.get("DisambigKey", "")
-        anki_guid = compute_guid(sfld, "sl", disambig)
+        anki_guid = compute_guid(sfld, language_code, disambig)
 
         existing = self._conn.execute("SELECT id FROM notes WHERE guid = ?", (anki_guid,)).fetchone()
         if existing:
@@ -471,7 +492,7 @@ class OfflineWriter:
         max_row = self._conn.execute("SELECT MAX(id) FROM notes").fetchone()
         note_id = max(ts_ms, (max_row[0] or 0) + 1)
 
-        flds = "\x1f".join(fields.get(name, "") for name in SLOVENE_VOCAB_FIELD_NAMES)
+        flds = "\x1f".join(fields.get(name, "") for name in field_names)
         csum = int(hashlib.sha1(sfld.encode()).hexdigest()[:8], 16)
         ts = int(_time.time())
         tags_str = f" {' '.join(tags)} " if tags else ""
@@ -507,11 +528,14 @@ class OfflineWriter:
         cloze_text: str,
         back_extra: str = "",
         tags: list[str] | None = None,
+        language_code: str = "sl",
     ) -> int:
         """Insert a new Cloze note + cards into the collection.
 
         Cloze notetype is Anki built-in: fields are Text + Back Extra. One card
         per c1, c2, ... cloze number. For Phase F we use c1 only → one card per note.
+        ``language_code`` folds into the GUID (so Slovene and Norwegian clozes of
+        the same surface don't collide).
 
         Raises DuplicateNoteError if the computed GUID already exists.
         Raises ValueError if the Cloze notetype is not found.
@@ -529,7 +553,7 @@ class OfflineWriter:
             raise ValueError(f"Deck {deck_name!r} not found")
 
         sfld = cloze_text
-        anki_guid = compute_guid(cloze_text, "sl", "")
+        anki_guid = compute_guid(cloze_text, language_code, "")
 
         existing = self._conn.execute("SELECT id FROM notes WHERE guid = ?", (anki_guid,)).fetchone()
         if existing:

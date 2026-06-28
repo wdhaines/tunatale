@@ -140,7 +140,10 @@ class FakeCreateWriter:
         self._new_note_id = new_note_id
         self._cards_by_ord = cards_by_ord if cards_by_ord is not None else {0: 50010, 1: 50011}
 
-    def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list) -> int:
+    def get_sort_field_name(self, model_name: str) -> str:
+        return "Slovene"
+
+    def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list, language_code: str = "sl") -> int:
         self.calls.append(("create_note", deck_name, model_name, dict(fields), list(tags)))
         return self._new_note_id
 
@@ -1182,7 +1185,7 @@ class TestSyncCreateNew:
         _add_item(db, "voda", "water")
 
         class OfflineDupWriter(FakeCreateWriter):
-            def create_note(self, deck, model, fields, tags):
+            def create_note(self, deck, model, fields, tags, language_code="sl"):
                 raise DuplicateNoteError(note_id=8888)
 
         writer = OfflineDupWriter()
@@ -1309,10 +1312,13 @@ class _ReverseFakeReader:
 class _ReverseFakeWriter:
     """Writer stub for sync_create_new reverse-import tests."""
 
-    def create_note(self, deck_name, model_name, fields, tags):
+    def get_sort_field_name(self, model_name):
+        return "Slovene"
+
+    def create_note(self, deck_name, model_name, fields, tags, language_code="sl"):
         return 5001
 
-    def create_cloze_note(self, deck_name, cloze_text, back_extra, tags):
+    def create_cloze_note(self, deck_name, cloze_text, back_extra, tags, language_code="sl"):
         return 5001
 
     def get_cards_for_note(self, note_id):
@@ -1653,3 +1659,60 @@ class TestReverseImportLayer22:
 
         assert report.notes_created_from_anki == 0
         assert db.get_collocation("missing") is None
+
+
+# ── Norwegian production write-back (Phase 3) ─────────────────────────────
+
+_NO_DECK = "0. 6000 Most Frequent Norwegian Words [Part 1]"
+_NO_VOCAB_MID = 1000003
+_NO_DECK_ID = 77777
+
+
+def _make_norwegian_collection_conn():
+    """Collection with the Norwegian deck + a Norwegian Vocabulary notetype."""
+    from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+
+    conn = _make_dual_collection_conn()  # reuse the table schema + Slovene/Cloze notetypes
+    conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, x'')", (_NO_DECK_ID, _NO_DECK))
+    conn.execute("INSERT INTO notetypes VALUES (?, ?, 0, 0, x'')", (_NO_VOCAB_MID, NORWEGIAN_VOCAB.name))
+    conn.executemany(
+        "INSERT INTO fields VALUES (?, ?, ?, x'')",
+        [(_NO_VOCAB_MID, i, name) for i, name in enumerate(NORWEGIAN_VOCAB.field_names)],
+    )
+    conn.executemany(
+        "INSERT INTO templates VALUES (?, ?, ?, 0, 0, x'')",
+        [(_NO_VOCAB_MID, 0, "Recognition"), (_NO_VOCAB_MID, 1, "Production")],
+    )
+    conn.commit()
+    return conn
+
+
+class TestSyncCreateNewNorwegian:
+    async def test_mints_norwegian_vocab_note_with_recognition_and_production(self, monkeypatch):
+        from app.anki.sync_engine import settings as _engine_settings
+        from app.common.guid import compute_guid
+
+        monkeypatch.setattr(_engine_settings, "target_language", "no")
+
+        db = _make_db()
+        _add_item(db, "snakke", "to speak")  # vocab → recognition + production
+
+        anki_conn = _make_norwegian_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name=_NO_DECK, model_name="Norwegian Vocabulary"
+        )
+        assert report.created == 1
+
+        note = anki_conn.execute("SELECT id, mid, guid, flds FROM notes").fetchone()
+        assert note["mid"] == _NO_VOCAB_MID  # minted into Norwegian Vocabulary, not the 6000 deck notetype
+        assert note["guid"] == compute_guid("snakke", "no", "")  # language folded into GUID
+        assert note["flds"].split("\x1f")[0] == "snakke"  # L2 in field ord 0 ("Norwegian")
+
+        cards = anki_conn.execute("SELECT ord FROM cards WHERE nid = ? ORDER BY ord", (note["id"],)).fetchall()
+        assert [c["ord"] for c in cards] == [0, 1]  # recognition + production
+
+        # TT row linked to the new Anki ids.
+        item = db.get_collocation_by_guid(db.get_collocation("snakke").guid)
+        assert item.anki_note_id == note["id"]
+        assert Direction.RECOGNITION in item.directions and Direction.PRODUCTION in item.directions

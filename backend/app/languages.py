@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.anki.vocab_notetype import NORWEGIAN_VOCAB, SLOVENE_VOCAB, VocabNotetype
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.preprocessing.norwegian import NorwegianPreprocessor
 from app.audio.preprocessing.slovene import SlovenePreprocessor
@@ -24,7 +25,9 @@ class LanguageConfig:
 
     * Phase 0: ``language``, ``preprocessor_factory``
     * Phase 1: ``deck_name``
-    * Phase 3: ``notetype_profile``, …
+    * Phase 3: ``vocab_notetype`` — the TT-managed notetype new cards are minted
+      into (recognition + production). ``None`` for languages TT doesn't mint
+      into (``en``).
 
     ``en`` (English) is the gloss/translation language — it has a ``Language``
     entry but **no** preprocessor and **no** TT-managed Anki deck of its own
@@ -35,6 +38,7 @@ class LanguageConfig:
     language: Language
     preprocessor_factory: type[TextPreprocessor] | None = None
     deck_name: str | None = None
+    vocab_notetype: VocabNotetype | None = None
 
 
 _CONFIGS: dict[str, LanguageConfig] = {
@@ -42,16 +46,19 @@ _CONFIGS: dict[str, LanguageConfig] = {
         language=Language.slovene(),
         preprocessor_factory=SlovenePreprocessor,
         deck_name="1. Slovene",
+        vocab_notetype=SLOVENE_VOCAB,
     ),
     "en": LanguageConfig(
         language=Language.english(),
         preprocessor_factory=None,
         deck_name=None,
+        vocab_notetype=None,
     ),
     "no": LanguageConfig(
         language=Language.norwegian(),
         preprocessor_factory=NorwegianPreprocessor,
         deck_name="0. 6000 Most Frequent Norwegian Words [Part 1]",
+        vocab_notetype=NORWEGIAN_VOCAB,
     ),
 }
 
@@ -92,3 +99,13 @@ def get_deck_name(code: str) -> str:
     if deck_name is None:
         raise ValueError(f"Language {code!r} has no TT-managed deck configured")
     return deck_name
+
+
+def get_vocab_notetype(code: str) -> VocabNotetype | None:
+    """Return the TT-managed vocab notetype TT mints *code*'s cards into.
+
+    ``None`` for an unknown code or a language TT doesn't mint into (``en``) —
+    callers fall back to the deck-discovered notetype.
+    """
+    config = _CONFIGS.get(code)
+    return config.vocab_notetype if config else None

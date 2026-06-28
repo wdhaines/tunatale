@@ -1,14 +1,16 @@
 """Identity of the ``Slovene Vocabulary`` notetype (name + field layout).
 
-These two constants are live: ``app.anki.sync`` maps Anki note fields by
-position via ``SLOVENE_VOCAB_FIELD_NAMES``, and the note-creation round-trip
-tests target ``SLOVENE_VOCAB_NOTETYPE_NAME``. The protobuf notetype/field/
-template *builders* (used solely by the retired one-shot migrations) live in
-``scripts.anki_archive.notetype_builders``.
+These back-compat constants are kept for the archived one-shot migrations and
+the legacy write-path fallback. The canonical per-language vocab notetype
+descriptors (including Norwegian) now live in ``app.anki.vocab_notetype`` as
+:class:`~app.anki.vocab_notetype.VocabNotetype`; these constants are derived
+from the Slovene one so there is a single source of truth for its field order.
 """
 
 from __future__ import annotations
 
-SLOVENE_VOCAB_NOTETYPE_NAME = "Slovene Vocabulary"
+from app.anki.vocab_notetype import SLOVENE_VOCAB
 
-SLOVENE_VOCAB_FIELD_NAMES = ["Slovene", "English", "Audio", "Image", "Grammar", "Note", "DisambigKey"]
+SLOVENE_VOCAB_NOTETYPE_NAME = SLOVENE_VOCAB.name
+
+SLOVENE_VOCAB_FIELD_NAMES = list(SLOVENE_VOCAB.field_names)

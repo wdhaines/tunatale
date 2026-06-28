@@ -323,8 +323,20 @@ def main(
 
             from app.anki import model_discovery
 
-            model_name = _s.anki_model_name or model_discovery.get_or_discover_model_name_offline(
-                ctx.conn, _s.anki_deck_name
+            # Notetype to mint TT-originated cards into. Precedence:
+            #   1. explicit anki_model_name setting (override),
+            #   2. the active language's TT vocab notetype (e.g. "Norwegian
+            #      Vocabulary" — NOT the imported deck's recognition-only notetype
+            #      that discovery would return), then
+            #   3. deck-discovered model (the Slovene case, where deck notetype ==
+            #      mint notetype).
+            from app.languages import get_vocab_notetype
+
+            _vocab = get_vocab_notetype(getattr(_s, "target_language", "sl"))
+            model_name = (
+                _s.anki_model_name
+                or (_vocab.name if _vocab is not None else "")
+                or model_discovery.get_or_discover_model_name_offline(ctx.conn, _s.anki_deck_name)
             )
             create, push, pull, media = asyncio.run(
                 run_full_sync(

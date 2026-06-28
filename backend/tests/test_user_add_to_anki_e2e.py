@@ -48,7 +48,10 @@ class FakeWriter:
         self._new_note_id = new_note_id
         self._cards_by_ord = cards_by_ord if cards_by_ord is not None else {0: 50010, 1: 50011}
 
-    def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list) -> int:
+    def get_sort_field_name(self, model_name: str) -> str:
+        return "Slovene"
+
+    def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list, language_code: str = "sl") -> int:
         self.calls.append(("create_note", deck_name, model_name, dict(fields), list(tags)))
         self.created_notes.append((deck_name, model_name, dict(fields), list(tags)))
         return self._new_note_id

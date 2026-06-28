@@ -4,7 +4,7 @@ import pytest
 
 from app.audio.preprocessing.norwegian import NorwegianPreprocessor
 from app.audio.preprocessing.slovene import SlovenePreprocessor
-from app.languages import get_deck_name, get_language, get_preprocessor
+from app.languages import get_deck_name, get_language, get_preprocessor, get_vocab_notetype
 from app.models.language import Language
 
 
@@ -121,3 +121,22 @@ class TestGetDeckName:
         # en is the gloss language — no TT-managed deck of its own.
         with pytest.raises(ValueError, match="en"):
             get_deck_name("en")
+
+
+class TestGetVocabNotetype:
+    def test_returns_slovene_vocab_for_sl(self):
+        from app.anki.vocab_notetype import SLOVENE_VOCAB
+
+        assert get_vocab_notetype("sl") is SLOVENE_VOCAB
+
+    def test_returns_norwegian_vocab_for_no(self):
+        from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+
+        assert get_vocab_notetype("no") is NORWEGIAN_VOCAB
+
+    def test_returns_none_for_english(self):
+        # en is the gloss language — TT never mints into an English notetype.
+        assert get_vocab_notetype("en") is None
+
+    def test_returns_none_for_unknown_code(self):
+        assert get_vocab_notetype("xyz") is None

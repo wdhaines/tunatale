@@ -560,9 +560,11 @@ class TestMainCreateNew:
         assert len(anki_conn.execute("SELECT id FROM notes").fetchall()) == 0
 
     def test_main_discovers_model_name_when_unset(self, tmp_path, monkeypatch):
-        """When anki_model_name is empty, main() discovers it (here via the model-name
-        cache). _CACHE_PATH is pinned to tmp by conftest, so seed it explicitly rather
-        than depending on a real ~/.tunatale/anki_model_name.txt (absent on CI)."""
+        """Discovery is the third-tier model_name fallback (after the anki_model_name
+        override and the active language's configured vocab notetype). To exercise it,
+        target_language is a code with no configured vocab notetype, so neither of the
+        first two tiers fires and main() discovers the model via the cache. _CACHE_PATH
+        is pinned to tmp by conftest, so seed it explicitly."""
         import app.anki.model_discovery as md
         from app.models.syntactic_unit import SyntacticUnit
         from tests.test_anki_sync_create_new import _make_dual_collection_conn
@@ -579,6 +581,7 @@ class TestMainCreateNew:
             anki_collection_path = "unused"
             anki_deck_name = "0. Slovene"
             anki_model_name = ""
+            target_language = "zz"  # no configured vocab notetype → discovery fallback fires
             database_url = "sqlite:///:memory:"
 
         @contextmanager

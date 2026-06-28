@@ -378,3 +378,95 @@ class TestOfflineWriterStoreMediaFile:
         )
         assert row2 is not None and row2[0] == 1  # db2 was written
         assert row1 is None  # db1 was NOT written
+
+
+# ── Norwegian Vocabulary notetype (Phase 3 production write-back) ──────────
+
+_NO_MID = 1000099
+_NO_DECK_NAME = "0. 6000 Most Frequent Norwegian Words [Part 1]"
+_NO_DECK_ID = 54321
+
+
+def _make_norwegian_collection_conn() -> sqlite3.Connection:
+    """In-memory collection with a Norwegian Vocabulary notetype (2 templates)."""
+    from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+
+    conn = _make_collection_conn()
+    conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, x'')", (_NO_DECK_ID, _NO_DECK_NAME))
+    conn.execute("INSERT INTO notetypes VALUES (?, ?, 0, 0, x'')", (_NO_MID, NORWEGIAN_VOCAB.name))
+    conn.executemany(
+        "INSERT INTO fields VALUES (?, ?, ?, x'')",
+        [(_NO_MID, i, name) for i, name in enumerate(NORWEGIAN_VOCAB.field_names)],
+    )
+    conn.executemany(
+        "INSERT INTO templates VALUES (?, ?, ?, 0, 0, x'')",
+        [(_NO_MID, 0, "Recognition"), (_NO_MID, 1, "Production")],
+    )
+    conn.commit()
+    return conn
+
+
+def _make_norwegian_fields(word: str = "snakke", english: str = "to speak") -> dict:
+    return {
+        "Norwegian": word,
+        "English": english,
+        "Audio": "",
+        "Image": "",
+        "Grammar": "",
+        "Note": "",
+        "DisambigKey": "",
+    }
+
+
+class TestGetSortFieldName:
+    def test_returns_l2_field_for_slovene(self):
+        conn = _make_collection_conn()
+        assert OfflineWriter(conn).get_sort_field_name(SLOVENE_VOCAB_NOTETYPE_NAME) == "Slovene"
+
+    def test_returns_l2_field_for_norwegian(self):
+        conn = _make_norwegian_collection_conn()
+        assert OfflineWriter(conn).get_sort_field_name("Norwegian Vocabulary") == "Norwegian"
+
+    def test_raises_for_unknown_notetype(self):
+        conn = _make_collection_conn()
+        with pytest.raises(ValueError, match="has no fields"):
+            OfflineWriter(conn).get_sort_field_name("Nonexistent Notetype")
+
+
+class TestNorwegianCreateNote:
+    def test_minted_into_norwegian_notetype_with_norwegian_guid(self):
+        conn = _make_norwegian_collection_conn()
+        writer = OfflineWriter(conn)
+        note_id = writer.create_note(
+            _NO_DECK_NAME, "Norwegian Vocabulary", _make_norwegian_fields(), ["tunatale"], language_code="no"
+        )
+        row = conn.execute("SELECT guid, mid, sfld, flds FROM notes WHERE id = ?", (note_id,)).fetchone()
+        # GUID folds the "no" language code (distinct from a Slovene "snakke").
+        assert row["guid"] == compute_guid("snakke", "no", "")
+        assert row["guid"] != compute_guid("snakke", "sl", "")
+        assert row["mid"] == _NO_MID
+        assert row["sfld"] == "snakke"
+        # The L2 word lands in field ord 0 ("Norwegian").
+        assert row["flds"].split("\x1f")[0] == "snakke"
+
+    def test_mints_recognition_and_production_cards(self):
+        conn = _make_norwegian_collection_conn()
+        writer = OfflineWriter(conn)
+        note_id = writer.create_note(
+            _NO_DECK_NAME, "Norwegian Vocabulary", _make_norwegian_fields(), ["tunatale"], language_code="no"
+        )
+        cards = conn.execute("SELECT ord, did FROM cards WHERE nid = ? ORDER BY ord", (note_id,)).fetchall()
+        assert [c["ord"] for c in cards] == [0, 1]  # recognition + production
+        assert all(c["did"] == _NO_DECK_ID for c in cards)
+
+    def test_fields_serialize_in_norwegian_field_order(self):
+        conn = _make_norwegian_collection_conn()
+        writer = OfflineWriter(conn)
+        fields = _make_norwegian_fields("bilen", "the car")
+        fields["English"] = "the car"
+        note_id = writer.create_note(_NO_DECK_NAME, "Norwegian Vocabulary", fields, ["tunatale"], language_code="no")
+        from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+
+        row = conn.execute("SELECT flds FROM notes WHERE id = ?", (note_id,)).fetchone()
+        expected = "\x1f".join(fields.get(name, "") for name in NORWEGIAN_VOCAB.field_names)
+        assert row["flds"] == expected

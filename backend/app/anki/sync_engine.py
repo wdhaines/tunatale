@@ -1306,6 +1306,7 @@ class AnkiSync:
                         cloze_text,
                         back_extra=back_extra,
                         tags=["tunatale", "cloze"],
+                        language_code=settings.target_language,
                     )
                     created += 1
                 except DuplicateNoteError as exc:
@@ -1367,8 +1368,11 @@ class AnkiSync:
                 image_tag = f'<img src="{img_filename}">'
                 _store_tt_media(self._db, coll_id, "image", img_filename, media.image_bytes)
 
+            # The L2 word lives in the mint notetype's sort field (ord 0) — "Slovene"
+            # for Slovene Vocabulary, "Norwegian" for Norwegian Vocabulary.
+            l2_field = self._writer.get_sort_field_name(model_name)
             fields = {
-                "Slovene": word,
+                l2_field: word,
                 "English": english,
                 "Audio": audio_tag,
                 "Image": image_tag,
@@ -1378,7 +1382,9 @@ class AnkiSync:
             }
 
             try:
-                note_id = self._writer.create_note(deck_name, model_name, fields, ["tunatale"])
+                note_id = self._writer.create_note(
+                    deck_name, model_name, fields, ["tunatale"], language_code=settings.target_language
+                )
                 created += 1
             except DuplicateNoteError as exc:
                 note_id = exc.note_id
