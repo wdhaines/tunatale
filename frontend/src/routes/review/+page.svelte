@@ -6,6 +6,7 @@
 	import type { ReviewQueueItem } from '$lib/api';
 	import DrillCard from '$lib/components/DrillCard.svelte';
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
+	import { syncStore } from '$lib/stores/sync.svelte';
 
 	type QueueItem = { item: ReviewQueueItem; direction: 'recognition' | 'production' };
 
@@ -57,6 +58,18 @@
 		};
 		document.addEventListener('visibilitychange', onVisibility);
 		return () => document.removeEventListener('visibilitychange', onVisibility);
+	});
+
+	$effect(() => {
+		// A peer-sync rebuilds the server's frozen queue at sync time (sync_pull
+		// clears + rebuilds session_main_queue). The header badge already refetches
+		// via the layout's syncStore subscription; the review *body* must too, or
+		// the queue keeps showing pre-sync cards until the page is re-mounted.
+		// sessionStart=false: sync already advanced the cutoff server-side, so just
+		// pull the freshly-built queue without forcing a second rebuild.
+		if (syncStore.lastResult) {
+			refreshFromServer(false);
+		}
 	});
 
 	async function rate(rating: 'again' | 'hard' | 'good' | 'easy', timeMs: number) {

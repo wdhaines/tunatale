@@ -29,6 +29,7 @@ vi.mock("$lib/api", () => ({
 
 import { api } from "$lib/api";
 import type { ReviewQueueItem } from "$lib/api";
+import { syncStore } from "$lib/stores/sync.svelte";
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 const mockFetchReviewQueue = vi.mocked(api.fetchReviewQueue);
 const mockSubmitDrill = vi.mocked(api.submitDrill);
@@ -36,6 +37,7 @@ import { makeReviewQueueItem } from "../../test/factories";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  syncStore.notify(null);
   mockFetchQueueStats.mockResolvedValue({
     new: 0,
     learning: 0,
@@ -604,5 +606,39 @@ describe("review/+page.svelte", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(mockFetchQueueStats.mock.calls.length).toBe(statsCallsBefore);
+  });
+
+  // A peer-sync rebuilds the server's frozen queue at sync time. The header badge
+  // refetches via the layout's syncStore subscription, but the review *body* must
+  // refetch too — otherwise the queue shows pre-sync cards until you navigate away
+  // and back (user report: "header updates counts but the body doesn't").
+  it("refetches stats and queue when a sync completes", async () => {
+    const item = makeReviewQueueItem({ id: 1, text: "okno", direction: "recognition" });
+    mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
+    render(ReviewPage);
+    await screen.findByText("okno");
+    const statsCallsBefore = mockFetchQueueStats.mock.calls.length;
+    const queueCallsBefore = mockFetchReviewQueue.mock.calls.length;
+
+    // SyncButton calls syncStore.notify(result) on a successful peer-sync.
+    syncStore.notify({ ok: true, pushed: 0, pulled: 1, created: 0, message: "" } as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockFetchQueueStats.mock.calls.length).toBeGreaterThan(statsCallsBefore);
+    expect(mockFetchReviewQueue.mock.calls.length).toBeGreaterThan(queueCallsBefore);
+  });
+
+  it("sync refetch does not advance the learning cutoff (sessionStart=false)", async () => {
+    // sync_pull already rebuilt the frozen queue and advanced the cutoff server-side;
+    // the body just pulls that result — it must not trigger a second rebuild.
+    const item = makeReviewQueueItem({ id: 1, text: "okno", direction: "recognition" });
+    mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
+    render(ReviewPage);
+    await screen.findByText("okno");
+
+    syncStore.notify({ ok: true, pushed: 0, pulled: 1, created: 0, message: "" } as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockFetchReviewQueue.mock.calls.at(-1)).toEqual([{ sessionStart: false }]);
   });
 });
