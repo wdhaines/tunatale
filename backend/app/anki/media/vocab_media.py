@@ -27,6 +27,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.config import settings
+
 from .pipeline import fetch_card_media
 from .query_llm import generate_image_query
 
@@ -117,7 +119,9 @@ async def generate_vocab_media(
         return stored
 
     if media.audio_bytes is not None:
-        prefix = "sl" if media.audio_source == "forvo" else "tts"
+        # Forvo audio gets the active language's code as filename prefix (matches
+        # the sync fetch path in sync_engine); TTS audio uses "tts".
+        prefix = settings.target_language if media.audio_source == "forvo" else "tts"
         audio_filename = f"{safe_stem(word, prefix)}.mp3"
         store_tt_media(db, coll_id, f"audio_{media.audio_source or 'tts'}", audio_filename, media.audio_bytes)
         stored["audio"] = audio_filename

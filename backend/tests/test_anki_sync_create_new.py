@@ -1716,3 +1716,26 @@ class TestSyncCreateNewNorwegian:
         item = db.get_collocation_by_guid(db.get_collocation("snakke").guid)
         assert item.anki_note_id == note["id"]
         assert Direction.RECOGNITION in item.directions and Direction.PRODUCTION in item.directions
+
+    async def test_attaches_image_to_norwegian_image_field(self, monkeypatch):
+        """An add-time/fetched image round-trips into the Norwegian Vocabulary
+        Image field via sync_create_new (on-demand images for Norwegian)."""
+        from app.anki.sync_engine import settings as _engine_settings
+        from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+
+        monkeypatch.setattr(_engine_settings, "target_language", "no")
+
+        db = _make_db()
+        _add_item(db, "bil", "car")
+
+        anki_conn = _make_norwegian_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        # _tts_media returns image_bytes; store_media_file no-ops without a media_dir
+        # but the <img> tag is still written into the note's Image field.
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name=_NO_DECK, model_name="Norwegian Vocabulary", _media_fn=_tts_media
+        )
+
+        img_idx = NORWEGIAN_VOCAB.field_names.index("Image")
+        flds = anki_conn.execute("SELECT flds FROM notes").fetchone()["flds"].split("\x1f")
+        assert flds[img_idx].startswith('<img src="')

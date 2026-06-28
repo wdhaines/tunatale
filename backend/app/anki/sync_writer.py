@@ -54,33 +54,36 @@ class OfflineWriter:
         # which is what actually pushes on the next incremental sync.
         self._conn.execute("UPDATE col SET mod = ?", (ts,))
 
-    def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
+    def _field_names_for_mid(self, mid: int) -> list[str]:
+        """Field names (ord order) for the notetype *mid*, read from the collection.
+
+        The ``fields`` table is authoritative — this works for any notetype
+        (Slovene/Norwegian Vocabulary, Cloze's ["Text", "Back Extra"], …) without
+        hardcoding. Falls back to the legacy Slovene Vocabulary roster when the
+        notetype/fields tables are absent (some unit-test fixtures) or the mid has
+        no field rows.
+        """
         from app.anki.notetype import SLOVENE_VOCAB_FIELD_NAMES
 
+        try:
+            rows = self._conn.execute("SELECT name FROM fields WHERE ntid = ? ORDER BY ord", (mid,)).fetchall()
+        except sqlite3.OperationalError:
+            rows = []
+        if rows:
+            return [r["name"] for r in rows]
+        return list(SLOVENE_VOCAB_FIELD_NAMES)
+
+    def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
         row = self._conn.execute("SELECT flds, mid FROM notes WHERE id = ?", (note_id,)).fetchone()
         if row is None:
             return
-        # Detect notetype: Cloze notes have fields ["Text", "Back Extra"];
-        # everything else falls through to SLOVENE_VOCAB_FIELD_NAMES. The
-        # notetypes table is absent in some unit-test fixtures — treat that
-        # as "use the legacy Slovene Vocabulary mapping."
-        nt_name = ""
-        try:
-            nt_row = self._conn.execute("SELECT name FROM notetypes WHERE id = ?", (row["mid"],)).fetchone()
-            if nt_row is not None:
-                nt_name = nt_row["name"] or ""
-        except sqlite3.OperationalError:
-            nt_name = ""
-        if nt_name == "Cloze":
-            field_names: list[str] = ["Text", "Back Extra"]
-        else:
-            field_names = list(SLOVENE_VOCAB_FIELD_NAMES)
+        field_names = self._field_names_for_mid(row["mid"])
         parts = row["flds"].split("\x1f")
         name_to_idx = {name: i for i, name in enumerate(field_names)}
         for name, value in fields.items():
             idx = name_to_idx.get(name)
             if idx is None:
-                raise ValueError(f"Unknown field name for {nt_name or 'Slovene Vocabulary'} notetype: {name!r}")
+                raise ValueError(f"Unknown field name {name!r} for note {note_id}")
             parts[idx] = value
         new_flds = "\x1f".join(parts)
         ts = int(_time.time())

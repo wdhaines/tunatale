@@ -470,3 +470,15 @@ class TestNorwegianCreateNote:
         row = conn.execute("SELECT flds FROM notes WHERE id = ?", (note_id,)).fetchone()
         expected = "\x1f".join(fields.get(name, "") for name in NORWEGIAN_VOCAB.field_names)
         assert row["flds"] == expected
+
+    def test_image_lands_in_norwegian_image_field(self):
+        from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+
+        conn = _make_norwegian_collection_conn()
+        writer = OfflineWriter(conn)
+        fields = _make_norwegian_fields("bil", "car")
+        fields["Image"] = '<img src="img_car.jpg">'
+        note_id = writer.create_note(_NO_DECK_NAME, "Norwegian Vocabulary", fields, ["tunatale"], language_code="no")
+        img_idx = NORWEGIAN_VOCAB.field_names.index("Image")
+        parts = conn.execute("SELECT flds FROM notes WHERE id = ?", (note_id,)).fetchone()["flds"].split("\x1f")
+        assert parts[img_idx] == '<img src="img_car.jpg">'

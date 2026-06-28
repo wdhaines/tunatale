@@ -92,6 +92,25 @@ async def test_stores_image_and_audio(media_dir) -> None:
     assert kinds == {"audio_forvo", "image"}
 
 
+async def test_forvo_audio_prefix_follows_target_language(media_dir, monkeypatch) -> None:
+    """Forvo audio filename prefix is the active language code (so Norwegian
+    Forvo audio is no_*.mp3, matching the sync fetch path)."""
+    monkeypatch.setattr(vocab_media.settings, "target_language", "no")
+    db = _FakeDB()
+
+    async def _query(*_a, **_k):
+        return "speaking"
+
+    async def _fetch(*_a, **_k):
+        return MediaResult(audio_bytes=b"AUD", audio_source="forvo")
+
+    out = await vocab_media.generate_vocab_media(
+        db, 7, "snakke", "to speak", llm=object(), pixabay_key="k", _query_fn=_query, _fetch_fn=_fetch
+    )
+    assert out["audio"] == "no_snakke.mp3"
+    assert (media_dir / "no_snakke.mp3").read_bytes() == b"AUD"
+
+
 async def test_tts_audio_prefix(media_dir) -> None:
     """Non-Forvo audio is stored under the tts_ prefix / audio_tts kind."""
     db = _FakeDB()

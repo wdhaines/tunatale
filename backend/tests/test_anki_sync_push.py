@@ -492,6 +492,29 @@ class TestOfflineWriter:
         assert parts[1] == '<i>every</i><br><br><span class="st">It is open every day</span>'
         assert row["usn"] == -1
 
+    def test_update_note_fields_reads_norwegian_field_names_from_collection(self):
+        """Generalized update_note_fields maps by the note's actual notetype fields.
+        Updating the L2 field 'Norwegian' (absent from the legacy Slovene roster)
+        proves it reads field names from the collection, not a hardcoded list."""
+        from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+
+        conn = _make_anki_full_db()
+        conn.execute(
+            "CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)"
+        )
+        conn.execute("CREATE TABLE fields (ntid INTEGER, ord INTEGER, name TEXT, config BLOB, PRIMARY KEY (ntid, ord))")
+        conn.execute("INSERT INTO notetypes VALUES (200, ?, 0, 0, x'')", (NORWEGIAN_VOCAB.name,))
+        conn.executemany(
+            "INSERT INTO fields VALUES (200, ?, ?, x'')",
+            [(i, name) for i, name in enumerate(NORWEGIAN_VOCAB.field_names)],
+        )
+        _seed_note_and_cards(conn, mid=200, flds=("snakke", "to speak", "", "", "", "", ""))
+        writer = OfflineWriter(conn)
+        writer.update_note_fields(9001, {"Norwegian": "snakker", "Note": "Jeg snakker norsk."})
+        parts = conn.execute("SELECT flds FROM notes WHERE id=9001").fetchone()["flds"].split("\x1f")
+        assert parts[0] == "snakker"  # L2 field (index 0) — would raise under the old Slovene roster
+        assert parts[5] == "Jeg snakker norsk."  # Note field (index 5)
+
     def test_suspend_sets_queue_minus_one_and_usn_minus_one(self):
         conn = _make_anki_full_db()
         _seed_note_and_cards(conn)
