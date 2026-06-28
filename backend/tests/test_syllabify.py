@@ -2,7 +2,11 @@
 
 import pytest
 
-from app.generation.syllabify import syllabify_slovene_word
+from app.generation.syllabify import (
+    syllabify_norwegian_word,
+    syllabify_slovene_word,
+    syllabify_word,
+)
 
 # --- Edge cases ---
 
@@ -61,3 +65,62 @@ def test_case_lowercased():
 )
 def test_syllabification(word, expected):
     assert syllabify_slovene_word(word) == expected, f"word={word!r}"
+
+
+# --- Norwegian syllabification ---
+
+
+def test_norwegian_empty_string():
+    assert syllabify_norwegian_word("") == []
+
+
+def test_norwegian_single_vowel():
+    assert syllabify_norwegian_word("å") == ["å"]
+
+
+def test_norwegian_case_lowercased():
+    assert syllabify_norwegian_word("Norge") == ["nor", "ge"]
+
+
+@pytest.mark.parametrize(
+    "word, expected",
+    [
+        # Single-syllable words (one or zero vowels)
+        ("takk", ["takk"]),
+        ("norsk", ["norsk"]),
+        ("jeg", ["jeg"]),
+        ("nytt", ["nytt"]),
+        # Two-consonant medial cluster → split before the last consonant
+        ("hallo", ["hal", "lo"]),
+        ("snakke", ["snak", "ke"]),
+        ("kaffe", ["kaf", "fe"]),
+        ("gutten", ["gut", "ten"]),
+        ("vannet", ["van", "net"]),
+        ("bytte", ["byt", "te"]),  # y is a vowel
+        # Medial cluster ending in a valid onset → onset goes with next vowel
+        ("elske", ["el", "ske"]),  # "sk" is a valid onset
+        ("ekstra", ["ek", "stra"]),  # "str" is a valid 3-consonant onset
+        # Norwegian special vowels æ/ø/å
+        ("lære", ["læ", "re"]),
+        ("kjøre", ["kjø", "re"]),
+        ("måne", ["må", "ne"]),
+    ],
+)
+def test_norwegian_syllabification(word, expected):
+    assert syllabify_norwegian_word(word) == expected, f"word={word!r}"
+
+
+# --- Language-dispatching syllabifier ---
+
+
+def test_syllabify_word_routes_slovene():
+    assert syllabify_word("prosim", "sl") == ["pro", "sim"]
+
+
+def test_syllabify_word_routes_norwegian():
+    assert syllabify_word("snakke", "no") == ["snak", "ke"]
+
+
+def test_syllabify_word_unknown_code_falls_back_to_slovene():
+    # Unknown codes use the default (Slovene) onset rules rather than raising.
+    assert syllabify_word("prosim", "xx") == syllabify_slovene_word("prosim")

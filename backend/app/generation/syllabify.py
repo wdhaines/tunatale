@@ -1,6 +1,13 @@
-"""Slovene syllabification for Pimsleur breakdown generation."""
+"""Syllabification for Pimsleur breakdown generation.
+
+The onset-maximization algorithm itself is language-agnostic; each language
+supplies its own vowel set and its set of valid syllable onsets. Slovene and
+Norwegian are wired today; ``syllabify_word`` dispatches on the language code.
+"""
 
 from __future__ import annotations
+
+from collections.abc import Callable
 
 _VOWELS = frozenset("aeiou")
 
@@ -62,18 +69,75 @@ _VALID_ONSETS = frozenset(
 )
 
 
-def syllabify_slovene_word(word: str) -> list[str]:
-    """Split a Slovene word into syllables.
+# Norwegian (Bokmål) vowels include y and the special letters æ/ø/å.
+_NO_VOWELS = frozenset("aeiouyæøå")
 
-    Uses onset-maximization: for a consonant cluster between two vowels the
-    longest suffix that is a recognised Slovene onset goes with the following
-    vowel; the remainder closes the preceding syllable.
+# Valid consonant clusters that can begin a Norwegian syllable (onset
+# maximization). Germanic phonotactics: stop/fricative + liquid/glide,
+# s-clusters, and the palatal digraphs (kj/gj/sj/skj/tj/fj).
+_NO_VALID_ONSETS = frozenset(
+    [
+        # Three-consonant onsets
+        "str",
+        "spr",
+        "skr",
+        "skv",
+        "spl",
+        "skj",
+        "stj",
+        # Stop/fricative + liquid
+        "bl",
+        "br",
+        "dr",
+        "fl",
+        "fr",
+        "gl",
+        "gr",
+        "kl",
+        "kr",
+        "pl",
+        "pr",
+        "tr",
+        "vr",
+        # s-clusters
+        "sk",
+        "sl",
+        "sm",
+        "sn",
+        "sp",
+        "st",
+        "sv",
+        # Stop/fricative + glide or nasal, palatal digraphs
+        "kn",
+        "kv",
+        "gn",
+        "kj",
+        "gj",
+        "sj",
+        "tj",
+        "fj",
+        "hj",
+        "hv",
+        "pj",
+        "bj",
+        "dv",
+        "tv",
+    ]
+)
 
-    Single-vowel and no-vowel words (including syllabic-r words like "prst")
-    are returned as a single syllable.
+
+def _syllabify(word: str, vowels: frozenset[str], valid_onsets: frozenset[str]) -> list[str]:
+    """Onset-maximization syllabifier parameterised by language phonotactics.
+
+    For a consonant cluster between two vowels the longest suffix that is a
+    recognised onset goes with the following vowel; the remainder closes the
+    preceding syllable. Single-vowel and no-vowel words (including syllabic-r
+    words like Slovene "prst") are returned as a single syllable.
 
     Args:
         word: Word to syllabify (case-insensitive; returned lowercased).
+        vowels: The language's vowel set.
+        valid_onsets: The language's set of valid syllable onsets.
 
     Returns:
         List of syllables, lowercased.
@@ -82,7 +146,7 @@ def syllabify_slovene_word(word: str) -> list[str]:
     if not word:
         return []
 
-    vowel_positions = [i for i, ch in enumerate(word) if ch in _VOWELS]
+    vowel_positions = [i for i, ch in enumerate(word) if ch in vowels]
 
     if len(vowel_positions) <= 1:
         return [word]
@@ -95,17 +159,14 @@ def syllabify_slovene_word(word: str) -> list[str]:
         next_v = vowel_positions[vi + 1]
         cluster = word[curr_v + 1 : next_v]
 
-        if len(cluster) == 0:
-            # Hiatus — split between adjacent vowels
-            syllables.append(word[start : curr_v + 1])
-            start = curr_v + 1
-        elif len(cluster) == 1:
-            # Single consonant → V-CV, consonant goes with following vowel
+        if len(cluster) <= 1:
+            # Hiatus (adjacent vowels) or a single consonant → the consonant,
+            # if any, goes with the following vowel (V-CV).
             syllables.append(word[start : curr_v + 1])
             start = curr_v + 1
         else:
             # Multiple consonants — find longest valid onset suffix
-            split = _onset_split(cluster, curr_v + 1)
+            split = _onset_split(cluster, curr_v + 1, valid_onsets)
             syllables.append(word[start:split])
             start = split
 
@@ -113,7 +174,7 @@ def syllabify_slovene_word(word: str) -> list[str]:
     return syllables
 
 
-def _onset_split(cluster: str, cluster_start: int) -> int:
+def _onset_split(cluster: str, cluster_start: int, valid_onsets: frozenset[str]) -> int:
     """Return the index in the word where the onset begins.
 
     Tries progressively shorter suffixes of *cluster* (longest first) until a
@@ -121,7 +182,32 @@ def _onset_split(cluster: str, cluster_start: int) -> int:
     """
     for onset_start in range(len(cluster)):
         candidate = cluster[onset_start:]
-        if len(candidate) == 1 or candidate in _VALID_ONSETS:
+        if len(candidate) == 1 or candidate in valid_onsets:
             return cluster_start + onset_start
     # Fallback (should not be reached): first consonant closes preceding syllable
     return cluster_start + 1  # pragma: no cover
+
+
+def syllabify_slovene_word(word: str) -> list[str]:
+    """Split a Slovene word into syllables using Slovene phonotactics."""
+    return _syllabify(word, _VOWELS, _VALID_ONSETS)
+
+
+def syllabify_norwegian_word(word: str) -> list[str]:
+    """Split a Norwegian (Bokmål) word into syllables."""
+    return _syllabify(word, _NO_VOWELS, _NO_VALID_ONSETS)
+
+
+_SYLLABIFIERS: dict[str, Callable[[str], list[str]]] = {
+    "sl": syllabify_slovene_word,
+    "no": syllabify_norwegian_word,
+}
+
+
+def syllabify_word(word: str, language_code: str) -> list[str]:
+    """Syllabify *word* using the rules for *language_code*.
+
+    Unknown codes fall back to the Slovene onset rules (the breakdown is a
+    pedagogical audio aid, so a reasonable default is preferable to raising).
+    """
+    return _SYLLABIFIERS.get(language_code, syllabify_slovene_word)(word)

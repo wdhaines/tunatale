@@ -144,3 +144,39 @@ def test_build_story_system_prompt_contains_language_name():
 def test_build_story_system_prompt_contains_density_floor():
     prompt = build_story_system_prompt(Language.slovene())
     assert "5-12" in prompt or "5–12" in prompt
+
+
+# ── Conditional morphology block (Slavic case/dual only for Slovene) ──────
+
+
+def test_slovene_prompt_contains_morphology_block():
+    """Slovene keeps the full morphology-tagging block (cases + dual)."""
+    prompt = build_story_system_prompt(Language.slovene())
+    assert "morphology_focus" in prompt
+    assert "Allowed cases for A1" in prompt
+    assert "dual" in prompt.lower()
+
+
+def test_norwegian_prompt_omits_slavic_morphology_block():
+    """Norwegian has neither grammatical case nor dual number — the Slavic
+    morphology-tagging instructions must not leak into its prompt."""
+    prompt = build_story_system_prompt(Language.norwegian())
+    assert "morphology_focus" not in prompt
+    assert "Allowed cases for A1" not in prompt
+    assert "noun:acc" not in prompt
+
+
+def test_norwegian_prompt_contains_bokmal_style_notes():
+    """The Norwegian style file (Bokmål rules) must be injected."""
+    prompt = build_story_system_prompt(Language.norwegian())
+    assert "Bokmål" in prompt
+    # No T–V distinction is the headline Norwegian rule.
+    assert "du" in prompt
+
+
+def test_norwegian_prompt_keeps_shared_sections():
+    """Dropping the morphology block must not drop the shared instructions."""
+    prompt = build_story_system_prompt(Language.norwegian())
+    assert "dialogue_glosses" in prompt
+    assert "SCENE HEADER FORMAT" in prompt
+    assert "5-12" in prompt or "5–12" in prompt

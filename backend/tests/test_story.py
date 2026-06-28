@@ -338,3 +338,92 @@ class TestStoryGeneration:
         system_prompt = call_kwargs.kwargs.get("system_prompt", "")
         # Style notes for Slovene must include the izvinite/oprostite guardrail
         assert "oprostite" in system_prompt.lower()
+
+
+class TestNorwegianStoryGeneration:
+    """Norwegian listening-lesson generation: voices, syllabifier routing, prompt.
+
+    Uses a mocked LLM (Norwegian content). Recording real Norwegian cassettes
+    is a separate user-gated `--llm-mode=record` step (needs GROQ_API_KEY).
+    """
+
+    @staticmethod
+    def _norwegian_response() -> str:
+        return json.dumps(
+            {
+                "title": "God morgen",
+                "key_phrases": [
+                    {"phrase": "god morgen", "translation": "good morning"},
+                    {"phrase": "tusen takk", "translation": "a thousand thanks"},
+                ],
+                "scenes": [
+                    {
+                        "label": "At the Bakery",
+                        "lines": [
+                            {"speaker": "female-1", "text": "God morgen!", "translation": "Good morning!"},
+                            {
+                                "speaker": "male-1",
+                                "text": "Jeg vil gjerne ha kaffe.",
+                                "translation": "I'd like coffee.",
+                            },
+                        ],
+                    }
+                ],
+                "dialogue_glosses": [
+                    {"word": "god", "translation": "good"},
+                    {"word": "morgen", "translation": "morning"},
+                ],
+            }
+        )
+
+    @pytest.fixture
+    def norwegian(self):
+        from app.models.language import Language
+
+        return Language.norwegian()
+
+    @pytest.fixture
+    def norwegian_generator(self):
+        client = MagicMock()
+        client.complete = AsyncMock(return_value=self._norwegian_response())
+        return StoryGenerator(llm_client=client)
+
+    async def test_generates_lesson_in_norwegian(self, norwegian_generator, norwegian):
+        day = _make_curriculum_day()
+        lesson = await norwegian_generator.generate(
+            curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER
+        )
+        assert isinstance(lesson, Lesson)
+        assert lesson.language_code == "no"
+
+    async def test_key_phrases_use_norwegian_voice(self, norwegian_generator, norwegian):
+        day = _make_curriculum_day()
+        lesson = await norwegian_generator.generate(
+            curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER
+        )
+        kp = next(s for s in lesson.sections if s.section_type == SectionType.KEY_PHRASES)
+        l2_phrases = [p for p in kp.phrases if p.language_code == "no"]
+        assert l2_phrases  # there are L2 phrases
+        assert all(p.voice_id == "nb-NO-PernilleNeural" for p in l2_phrases)
+
+    async def test_breakdown_uses_norwegian_syllabifier(self, norwegian_generator, norwegian):
+        """The KEY_PHRASES breakdown must split 'morgen' with Norwegian rules
+        (mor-gen), proving section_builder routes through the active language."""
+        day = _make_curriculum_day()
+        lesson = await norwegian_generator.generate(
+            curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER
+        )
+        kp = next(s for s in lesson.sections if s.section_type == SectionType.KEY_PHRASES)
+        texts = [p.text for p in kp.phrases]
+        assert "mor" in texts
+        assert "gen" in texts
+
+    async def test_norwegian_system_prompt_has_bokmal_no_slavic_morphology(self, norwegian):
+        client = MagicMock()
+        client.complete = AsyncMock(return_value=self._norwegian_response())
+        gen = StoryGenerator(llm_client=client)
+        day = _make_curriculum_day()
+        await gen.generate(curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER)
+        system_prompt = client.complete.call_args_list[0].kwargs.get("system_prompt", "")
+        assert "Bokmål" in system_prompt
+        assert "Allowed cases for A1" not in system_prompt

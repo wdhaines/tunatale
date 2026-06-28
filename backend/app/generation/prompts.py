@@ -118,10 +118,7 @@ Respond with ONLY a JSON object matching this schema (no markdown fences, no pre
   ],
   "dialogue_glosses": [
     {{"word": "lowercased_word", "translation": "English translation"}}
-  ],
-  "morphology_focus": [
-    {{"lemma": "lemma", "surface": "inflected_form", "feature": "verb:1sg", "gloss": "English translation"}}
-  ]
+  ]{morphology_schema}
 }}
 
 The "dialogue_glosses" array MUST contain an entry for EVERY unique word that appears
@@ -131,6 +128,38 @@ in any scene, it must have a gloss entry. No exceptions. Give each word's lowerc
 and a concise English translation. This enables word-level hover translations
 in the learning UI.
 
+{morphology_block}
+
+**SCENE HEADER FORMAT**
+- All scene labels must be in English, describing location/time/situation
+- Example: "At the Riverside Café", "Morning at the Train Station"
+- NEVER use standalone L2 scene headers
+
+**TRANSLATION GUIDELINES**
+- Provide direct translations only — no cultural commentary
+- Keep translations concise and literal
+- Translations are for comprehension scaffolding, not style guides
+"""
+
+
+# ── Morphology-tagging block (Slavic case/dual — Slovene only) ────────────
+#
+# These two fragments are injected into SYSTEM_PROMPT for languages whose
+# morphology drills depend on grammatical case + dual number (Slovene). They
+# are deliberately omitted for languages that have neither (e.g. Norwegian
+# Bokmål), which would otherwise be told to tag cases that don't exist. The
+# Slovene fragments reproduce the prior inline text byte-for-byte so the
+# Slovene system prompt — and therefore its cassette hashes — stay stable.
+#
+# Braces are doubled (``{{…}}``) because these strings pass through the final
+# ``str.format`` call in build_story_system_prompt alongside the template.
+
+_MORPHOLOGY_SCHEMA_SL = """,
+  "morphology_focus": [
+    {{"lemma": "lemma", "surface": "inflected_form", "feature": "verb:1sg", "gloss": "English translation"}}
+  ]"""
+
+_MORPHOLOGY_BLOCK_SL = """\
 Build the "morphology_focus" array LAST by scanning the NATURAL_SPEED lines you wrote and tagging
 inflected words ALREADY PRESENT in them. Aim for 4-6 entries, **prioritizing verb conjugations**.
 
@@ -165,18 +194,21 @@ and locative nouns** whose ending changes the word (`kavo`, `sobo`, `Ljubljani`,
 or `adj:` with any case other than `nom` — those are A2+ topics that don't belong in A1 drills.
 
 **Cases derive from the governing word, NOT English gloss:** `v/na/pri/o/po` + static location →
-`loc` (v Ljubljani); `v/na/čez/skozi` + motion → `acc` (grem v Ljubljano); direct object → `acc`.
+`loc` (v Ljubljani); `v/na/čez/skozi` + motion → `acc` (grem v Ljubljano); direct object → `acc`."""
 
-**SCENE HEADER FORMAT**
-- All scene labels must be in English, describing location/time/situation
-- Example: "At the Riverside Café", "Morning at the Train Station"
-- NEVER use standalone L2 scene headers
+# Languages whose prompt gets the Slavic morphology-tagging block. Anything not
+# listed (Norwegian, Tagalog, …) omits it.
+_MORPHOLOGY_SECTIONS: dict[str, tuple[str, str]] = {
+    "sl": (_MORPHOLOGY_SCHEMA_SL, _MORPHOLOGY_BLOCK_SL),
+}
 
-**TRANSLATION GUIDELINES**
-- Provide direct translations only — no cultural commentary
-- Keep translations concise and literal
-- Translations are for comprehension scaffolding, not style guides
-"""
+
+def _morphology_sections(language_code: str) -> tuple[str, str]:
+    """Return the (schema fragment, instructions block) for *language_code*.
+
+    Empty strings for languages without a case/dual morphology drill.
+    """
+    return _MORPHOLOGY_SECTIONS.get(language_code, ("", ""))
 
 
 def build_story_system_prompt(language: Language) -> str:
@@ -189,9 +221,12 @@ def build_story_system_prompt(language: Language) -> str:
     style_notes = _load_style_notes(language.code)
     if not style_notes:
         style_notes = f"Use authentic, natural {language.name} as a native speaker would write and speak."
-    # Replace style notes first (content may contain literal braces), then
-    # resolve the remaining {language_name}/{language_code} placeholders.
+    morphology_schema, morphology_block = _morphology_sections(language.code)
+    # Replace text fragments first (their content may contain literal braces),
+    # then resolve the remaining {language_name}/{language_code} placeholders.
     template = SYSTEM_PROMPT.replace("{language_style_notes}", style_notes)
+    template = template.replace("{morphology_schema}", morphology_schema)
+    template = template.replace("{morphology_block}", morphology_block)
     return template.format(
         language_name=language.name,
         language_code=language.code,

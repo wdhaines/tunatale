@@ -6,7 +6,7 @@ transform that raw data into the four structured Lesson sections deterministical
 
 from __future__ import annotations
 
-from app.generation.syllabify import syllabify_slovene_word
+from app.generation.syllabify import syllabify_word
 from app.models.lesson import Phrase, Section, SectionType
 
 # Type aliases for plain-dict inputs from parsed LLM JSON
@@ -27,7 +27,7 @@ def _resolve_voice(speaker: str, l2_voice_map: dict[str, str], narrator_voice: s
     return l2_voice_map.get(speaker, l2_voice_map.get("female-1", narrator_voice))
 
 
-def build_word_breakdown(phrase_text: str) -> list[str]:
+def build_word_breakdown(phrase_text: str, language_code: str = "sl") -> list[str]:
     """Build a Pimsleur-style syllable-level backward buildup sequence.
 
     Processes words right-to-left. For each multi-syllable word the syllables
@@ -35,7 +35,8 @@ def build_word_breakdown(phrase_text: str) -> list[str]:
     preceding word. Single-syllable words are presented as-is.
 
     The sequence always starts with the full phrase and ends with the full
-    phrase repeated twice.
+    phrase repeated twice. Syllabification uses the rules for *language_code*
+    (defaults to Slovene for back-compat).
 
     Examples:
         "dan"     → ["dan", "dan"]
@@ -51,7 +52,7 @@ def build_word_breakdown(phrase_text: str) -> list[str]:
     breakdown: list[str] = [phrase]
 
     if len(words) == 1:
-        syllables = syllabify_slovene_word(words[0])
+        syllables = syllabify_word(words[0], language_code)
         if len(syllables) <= 1:
             breakdown.append(phrase)
             return breakdown
@@ -64,7 +65,7 @@ def build_word_breakdown(phrase_text: str) -> list[str]:
 
     for word_index in range(len(words) - 1, -1, -1):
         word = words[word_index]
-        syllables = syllabify_slovene_word(word)
+        syllables = syllabify_word(word, language_code)
 
         if len(syllables) > 1:
             for i in range(len(syllables) - 1, -1, -1):
@@ -117,7 +118,7 @@ def build_key_phrases_section(
 
         phrases.append(Phrase(text=phrase_text, voice_id=female_1_voice, language_code=l2_code))
         phrases.append(Phrase(text=translation, voice_id=narrator_voice, language_code="en", role="narrator"))
-        for step in build_word_breakdown(phrase_text):
+        for step in build_word_breakdown(phrase_text, l2_code):
             phrases.append(Phrase(text=step, voice_id=female_1_voice, language_code=l2_code))
 
     return Section(section_type=SectionType.KEY_PHRASES, phrases=phrases)
