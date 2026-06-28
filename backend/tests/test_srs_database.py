@@ -1506,111 +1506,145 @@ class TestCountNewIntroducedToday:
 
 
 class TestCountReviewsCompletedToday:
-    """count_reviews_completed_today counts review/relearning directions with last_review today."""
+    """count_reviews_completed_today mirrors Anki's per-deck ``review_today``
+    counter from ``tt_revlog`` (Layer 73): an interday-queue answer today, i.e.
+    ``review_kind IN (0,1,2) AND last_interval >= 1`` within the 4am window.
 
-    def _seed_review(
+    Keys on the *pre-answer* interval sign (``last_interval``, days-positive /
+    seconds-negative) — the discriminator that distinguishes interday from
+    intraday (re)learning, which current direction state cannot recover. Counts
+    both TT-native rows (written at grade time) and Anki-pulled rows (ingested at
+    sync_pull), with no ``last_rating`` dependency.
+    """
+
+    def _seed_revlog(
         self,
         srs_db,
         text: str,
-        state: SRSState,
-        last_review_iso: str | None,
-        last_rating: int | None = 3,
-        today_due: bool = True,
-        introduced_at: datetime | None = None,
-    ):
+        *,
+        review_kind: int,
+        last_interval: int,
+        when: datetime,
+        direction: Direction = Direction.RECOGNITION,
+    ) -> None:
+        from app.models.srs_item import RevlogRow
+
         srs_db.add_collocation(_unit(text, "x"), language_code="sl")
-        item = srs_db.get_collocation(text)
-        dt = date.today()
-        orig = item.directions[Direction.RECOGNITION]
-        new_dir = DirectionState(
-            direction=Direction.RECOGNITION,
-            state=state,
-            due_at=datetime.combine(dt if today_due else orig.due_at.date(), time(4, 0), tzinfo=UTC),
-            stability=1.0,
-            difficulty=5.0,
-            reps=5 if state != SRSState.NEW else 0,
-            lapses=0,
-            last_review=datetime.fromisoformat(last_review_iso) if last_review_iso else None,
-            last_rating=last_rating,
-            introduced_at=introduced_at,
+        srs_db.append_revlog(
+            RevlogRow(
+                id=int(when.timestamp() * 1000),
+                collocation_id=_id_for_text(srs_db, text),
+                direction=direction,
+                button_chosen=3,
+                interval=30,
+                last_interval=last_interval,
+                factor=0,
+                taken_millis=1500,
+                review_kind=review_kind,
+            )
         )
-        srs_db.update_direction(item.guid, Direction.RECOGNITION, new_dir)
 
-    def test_counts_review_completed_today(self, srs_db):
-        """A REVIEW direction with last_review today and a rating counts."""
+    def test_counts_interday_review_today(self, srs_db):
+        """A review answer (kind=1) on interday footing (lastIvl≥1) today counts."""
         today = date.today()
-        today_noon = anki_day_anchor(today).isoformat()
-        self._seed_review(srs_db, "done_today", SRSState.REVIEW, today_noon, last_rating=3)
+        self._seed_revlog(srs_db, "review_today", review_kind=1, last_interval=30, when=anki_day_anchor(today))
         assert srs_db.count_reviews_completed_today(today) == 1
 
-    def test_counts_relearning_completed_today(self, srs_db):
-        """A RELEARNING direction with last_review today counts."""
+    def test_counts_interday_relearning_today(self, srs_db):
+        """An interday relearning answer (kind=2, lastIvl≥1) counts — Anki answers
+        it from the DayLearn queue, which bumps review_today."""
         today = date.today()
-        today_noon = anki_day_anchor(today).isoformat()
-        self._seed_review(srs_db, "relearn_today", SRSState.RELEARNING, today_noon, last_rating=2)
+        self._seed_revlog(srs_db, "relearn_today", review_kind=2, last_interval=10, when=anki_day_anchor(today))
         assert srs_db.count_reviews_completed_today(today) == 1
+
+    def test_counts_interday_learning_today(self, srs_db):
+        """The under-count fix: an interday LEARNING step (kind=0, lastIvl≥1) counts
+        — Anki answers it from DayLearn. The old state-based query excluded
+        state='learning' entirely and missed this."""
+        today = date.today()
+        self._seed_revlog(srs_db, "interday_learn", review_kind=0, last_interval=4, when=anki_day_anchor(today))
+        assert srs_db.count_reviews_completed_today(today) == 1
+
+    def test_excludes_intraday_relearning_today(self, srs_db):
+        """The over-count fix: an intraday relearning step (kind=2, lastIvl<1) is
+        answered from the Learn queue → Anki does NOT bump review_today. The old
+        state-based query counted every state='relearning' graded today."""
+        today = date.today()
+        self._seed_revlog(srs_db, "intraday_relearn", review_kind=2, last_interval=-600, when=anki_day_anchor(today))
+        assert srs_db.count_reviews_completed_today(today) == 0
+
+    def test_excludes_new_intro_today(self, srs_db):
+        """A new-card first answer (kind=0, lastIvl=0) is newToday, not revToday."""
+        today = date.today()
+        self._seed_revlog(srs_db, "intro_today", review_kind=0, last_interval=0, when=anki_day_anchor(today))
+        assert srs_db.count_reviews_completed_today(today) == 0
+
+    def test_excludes_filtered_and_manual(self, srs_db):
+        """Filtered/cram (kind=3) and manual (kind=4) are never answer-driven
+        counter events even with lastIvl≥1."""
+        today = date.today()
+        self._seed_revlog(srs_db, "filtered", review_kind=3, last_interval=30, when=anki_day_anchor(today))
+        self._seed_revlog(srs_db, "manual", review_kind=4, last_interval=30, when=anki_day_anchor(today))
+        assert srs_db.count_reviews_completed_today(today) == 0
 
     def test_excludes_review_from_yesterday(self, srs_db):
-        """A REVIEW direction with last_review yesterday does NOT count."""
+        """A review on a prior day does NOT count (4am-window lower bound)."""
         today = date.today()
-        yesterday_noon = anki_prev_day_anchor(today).isoformat()
-        self._seed_review(srs_db, "yesterday", SRSState.REVIEW, yesterday_noon, last_rating=3)
+        self._seed_revlog(srs_db, "yesterday", review_kind=1, last_interval=30, when=anki_prev_day_anchor(today))
         assert srs_db.count_reviews_completed_today(today) == 0
 
-    def test_excludes_review_with_null_last_review(self, srs_db):
-        """A REVIEW direction with no last_review does NOT count."""
+    def test_counts_rows_not_distinct_cards(self, srs_db):
+        """Anki increments per answer — two interday reviews of the same card today
+        count as 2."""
         today = date.today()
-        self._seed_review(srs_db, "no_review", SRSState.REVIEW, None, last_rating=3)
-        assert srs_db.count_reviews_completed_today(today) == 0
+        from app.models.srs_item import RevlogRow
 
-    def test_counts_review_with_null_last_rating(self, srs_db):
-        """A REVIEW reviewed today still counts when last_rating is NULL — that's the
-        case for every Anki-pulled / imported grade (TT only sets last_rating on its
-        own grades). The old last_rating filter wrongly returned 0 here, pinning the
-        review badge at the cap for any Anki-reviewed deck."""
-        today = date.today()
-        today_noon = anki_day_anchor(today).isoformat()
-        self._seed_review(srs_db, "no_rating", SRSState.REVIEW, today_noon, last_rating=None)
-        assert srs_db.count_reviews_completed_today(today) == 1
+        srs_db.add_collocation(_unit("twice", "x"), language_code="sl")
+        cid = _id_for_text(srs_db, "twice")
+        base = int(anki_day_anchor(today).timestamp() * 1000)
+        for offset in (0, 1000):
+            srs_db.append_revlog(
+                RevlogRow(
+                    id=base + offset,
+                    collocation_id=cid,
+                    direction=Direction.RECOGNITION,
+                    button_chosen=3,
+                    interval=30,
+                    last_interval=20,
+                    factor=0,
+                    taken_millis=1500,
+                    review_kind=1,
+                )
+            )
+        assert srs_db.count_reviews_completed_today(today) == 2
 
-    def test_excludes_card_introduced_today(self, srs_db):
-        """A card introduced today (new-card study graduating to REVIEW) does NOT
-        count as a review — Anki counts it as newToday, not revToday."""
-        today = date.today()
-        today_anchor = anki_day_anchor(today)
-        self._seed_review(
-            srs_db,
-            "intro_today",
-            SRSState.REVIEW,
-            today_anchor.isoformat(),
-            last_rating=None,
-            introduced_at=today_anchor,
-        )
-        assert srs_db.count_reviews_completed_today(today) == 0
-
-    def test_counts_multiple_directions_on_same_collocation_individually(self, srs_db):
+    def test_counts_both_directions_individually(self, srs_db):
         """Both directions of the same collocation reviewed today → counts each."""
         today = date.today()
-        today_noon = anki_day_anchor(today).isoformat()
-        srs_db.add_collocation(_unit("dual", "x"), language_code="sl")
-        item = srs_db.get_collocation("dual")
-        orig = item.directions[Direction.RECOGNITION]
-        for direction, state in [(Direction.RECOGNITION, SRSState.REVIEW), (Direction.PRODUCTION, SRSState.REVIEW)]:
-            srs_db.update_direction(
-                item.guid,
-                direction,
-                DirectionState(
-                    direction=direction,
-                    state=state,
-                    due_at=datetime.combine(orig.due_at.date(), time(4, 0), tzinfo=UTC),
-                    stability=1.0,
-                    difficulty=5.0,
-                    reps=5,
-                    lapses=0,
-                    last_review=datetime.fromisoformat(today_noon),
-                    last_rating=3,
-                ),
+        self._seed_revlog(
+            srs_db,
+            "dual",
+            review_kind=1,
+            last_interval=30,
+            when=anki_day_anchor(today),
+            direction=Direction.RECOGNITION,
+        )
+        # Same collocation already added; append the production-direction row directly.
+        from app.models.srs_item import RevlogRow
+
+        srs_db.append_revlog(
+            RevlogRow(
+                id=int(anki_day_anchor(today).timestamp() * 1000) + 5,
+                collocation_id=_id_for_text(srs_db, "dual"),
+                direction=Direction.PRODUCTION,
+                button_chosen=3,
+                interval=30,
+                last_interval=25,
+                factor=0,
+                taken_millis=1500,
+                review_kind=1,
             )
+        )
         assert srs_db.count_reviews_completed_today(today) == 2
 
 

@@ -2200,32 +2200,45 @@ class SRSDatabase:
             return row[0] if row else 0
 
     def count_reviews_completed_today(self, today: date) -> int:
-        """Count distinct collocation_directions with a review completed today.
+        """Count today's review answers, mirroring Anki's per-deck ``review_today``.
 
-        Filters on state IN ('review', 'relearning') with a last_review in today's
-        local-day window, EXCLUDING cards introduced today (``introduced_at`` within
-        today = a new-card study, which Anki counts as ``newToday``, not ``revToday``).
+        Anki increments ``review_today`` from the card's **pre-answer queue**:
+        ``CardQueue::Review | CardQueue::DayLearn => review_delta += 1``
+        (``rslib/.../answering/mod.rs``, verified against Anki 25.09). ``DayLearn``
+        is the *interday* (re)learning queue — interday learning and interday
+        relearning both count; *intraday* (re)learning does not. The revlog `type`
+        alone can't reproduce this (a lapse writes type=1, interday relearn type=2,
+        interday learn type=0 — all increment), so the discriminator is the
+        pre-answer interval sign.
 
-        Was gated on ``last_rating IS NOT NULL`` to exclude new-card intros — but
-        last_rating is only ever set by a TT-native grade; Anki-pulled and imported
-        grades leave it NULL. So for any deck reviewed in Anki this returned 0,
-        which pinned the review badge at ``min(backlog, cap)`` = the cap (the user's
-        Norwegian deck: stuck at 50 while Anki counted down). ``introduced_at`` is
-        the Anki-faithful discriminator and is populated for both sources.
+        ``tt_revlog`` carries that sign in ``last_interval`` (days-positive /
+        seconds-negative, the Anki ``lastIvl`` convention — see
+        ``_compute_revlog_last_interval`` and the sync ingest), so the mirror is
+        ``review_kind IN (0,1,2) AND last_interval >= 1`` over the 4am window.
+        ``tt_revlog`` holds both TT-native grades (written at grade time) and
+        Anki-pulled grades (ingested in ``sync_pull``), so this needs no
+        ``last_rating`` and no ``introduced_at`` exclusion — a new-card intro is
+        ``last_interval=0`` and falls out naturally. Counts **rows** (per-answer,
+        as Anki increments), not distinct cards.
+
+        Layer 73: supersedes the old ``collocation_directions`` state heuristic,
+        which over-counted intraday relearning (every ``state='relearning'`` graded
+        today) and under-counted interday learning (``state='learning'`` excluded) —
+        both invisible from current direction state, which holds the *post*-grade
+        interval, not the pre-grade one.
         """
         start_iso, end_iso = _anki_day_bounds_utc(today)
+        start_ms = int(datetime.fromisoformat(start_iso).timestamp() * 1000)
+        end_ms = int(datetime.fromisoformat(end_iso).timestamp() * 1000)
         with self._get_conn() as conn:
             row = conn.execute(
                 """
-                SELECT COUNT(DISTINCT collocation_id || '-' || direction)
-                FROM collocation_directions
-                WHERE state IN ('review', 'relearning')
-                  AND last_review IS NOT NULL
-                  AND last_review >= ?
-                  AND last_review < ?
-                  AND (introduced_at IS NULL OR introduced_at < ?)
+                SELECT COUNT(*) FROM tt_revlog
+                WHERE id >= ? AND id < ?
+                  AND review_kind IN (0, 1, 2)
+                  AND last_interval >= 1
                 """,
-                (start_iso, end_iso, start_iso),
+                (start_ms, end_ms),
             ).fetchone()
             return row[0] if row else 0
 

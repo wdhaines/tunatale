@@ -68,22 +68,30 @@ def _add_new_with_graduated_sibling(db, text: str, today: date):
 
 
 def _stamp_reviews_completed_today(db, today: date, count: int):
-    """Stamp last_rating and last_review on count collocations to simulate reviews done today."""
-    import random
+    """Simulate `count` reviews done today by appending interday-review tt_revlog
+    rows (Layer 73: `count_reviews_completed_today` counts tt_revlog, not state)."""
+    from app.models.srs_item import Direction, RevlogRow
 
-    reviewed_at = anki_day_anchor(today).isoformat()
-
+    base_ms = int(anki_day_anchor(today).timestamp() * 1000)
     conn = db._get_conn().__enter__()
     rows = conn.execute(
         "SELECT collocation_id, direction FROM collocation_directions WHERE state = 'review' LIMIT ?",
         (count,),
     ).fetchall()
-    for row in rows:
-        conn.execute(
-            "UPDATE collocation_directions SET last_review = ?, last_rating = ? WHERE collocation_id = ? AND direction = ?",
-            (reviewed_at, random.choice([1, 2, 3]), row["collocation_id"], row["direction"]),
+    for i, row in enumerate(rows):
+        db.append_revlog(
+            RevlogRow(
+                id=base_ms + i,
+                collocation_id=row["collocation_id"],
+                direction=Direction(row["direction"]),
+                button_chosen=3,
+                interval=30,
+                last_interval=30,  # interday footing → counts
+                factor=0,
+                taken_millis=1500,
+                review_kind=1,
+            )
         )
-    conn.commit()
 
 
 class TestQueueStats:
