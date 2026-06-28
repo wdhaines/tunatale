@@ -395,6 +395,47 @@ class TestOfflineWriter:
         assert card_after["reps"] == 1
         assert card_after["lapses"] == 3, "pre-existing lapses must be preserved"
 
+    def test_write_revlog_uses_preferred_id_when_free(self):
+        """Layer 74: the pushed row lands at the exact grade-time id (== TT's own
+        tt_revlog id) so sync_pull's ingest skips it as already-held."""
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, rec_cid=90010)
+        writer = OfflineWriter(conn)
+        writer.write_revlog(cid=90010, ease=3, ivl=7, last_ivl=7, factor=2500, time_ms=1000, type_=2, preferred_id=1700)
+        ids = [r["id"] for r in conn.execute("SELECT id FROM revlog")]
+        assert ids == [1700]
+
+    def test_write_revlog_keeps_preferred_id_even_with_a_later_row_present(self):
+        """The echo regression: a later (e.g. phone) revlog row must NOT bump the
+        TT grade's id past it. Old code did max(preferred_id, max_id+1) → the echo
+        landed ~seconds late, outside the ±5s dedup window, double-counting."""
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, rec_cid=90010)
+        # A later grade already in the revlog (higher id than our preferred_id).
+        conn.execute(
+            "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) "
+            "VALUES (5000, 90010, -1, 3, 1, 1, 2500, 1000, 1)"
+        )
+        conn.commit()
+        writer = OfflineWriter(conn)
+        writer.write_revlog(cid=90010, ease=3, ivl=7, last_ivl=7, factor=2500, time_ms=1000, type_=2, preferred_id=1700)
+        ids = sorted(r["id"] for r in conn.execute("SELECT id FROM revlog"))
+        assert ids == [1700, 5000], "grade-time id preserved, not bumped to 5001"
+
+    def test_write_revlog_bumps_on_preferred_id_collision(self):
+        """If preferred_id is already taken (PK collision), fall back to max_id+1."""
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, rec_cid=90010)
+        conn.execute(
+            "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) "
+            "VALUES (1700, 90010, -1, 3, 1, 1, 2500, 1000, 1)"
+        )
+        conn.commit()
+        writer = OfflineWriter(conn)
+        writer.write_revlog(cid=90010, ease=3, ivl=7, last_ivl=7, factor=2500, time_ms=1000, type_=2, preferred_id=1700)
+        ids = sorted(r["id"] for r in conn.execute("SELECT id FROM revlog"))
+        assert ids == [1700, 1701], "collision → bumped to max_id+1"
+
     def test_update_note_fields_replaces_named_field_and_bumps_usn(self):
         conn = _make_anki_full_db()
         _seed_note_and_cards(conn)

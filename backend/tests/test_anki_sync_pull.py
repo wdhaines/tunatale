@@ -2555,6 +2555,64 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
             ).fetchall()
         assert [r["id"] for r in rows] == [tt_grade_ms], "Anki copy within 5s of TT row with same ease must be skipped"
 
+    def test_pushed_grade_at_preferred_id_is_not_re_ingested_as_echo(self, fake_anki_db):
+        """Layer 74 end-to-end: a TT grade pushed via the real OfflineWriter lands
+        at its grade-time id even when a later (phone) grade is already present, so
+        sync_pull's ingest skips it as already-held instead of re-counting it.
+
+        The bug: the old ``max(preferred_id, max_id+1)`` bumped the pushed id past
+        the later grade (~6s away), outside has_revision_near's ±5s window, so TT
+        re-ingested its own grade → inflated reviews_today after a parallel-graded
+        card synced. Fails without the write_revlog fix (echo lands at phone_ms+1
+        and is ingested as a third row).
+        """
+        from app.anki.sync import OfflineWriter
+        from app.models.srs_item import RevlogRow
+
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        cid = 10010
+        self._link_banka_to_card(db, guid, cid)
+        coll_id = db.get_collocation_id_by_guid(guid)
+        tt_grade_ms = 1_700_000_000_000
+        # TT's own grade row, written at grade time (id == int(last_review*1000)).
+        db.append_revlog(
+            RevlogRow(
+                id=tt_grade_ms,
+                collocation_id=coll_id,
+                direction=Direction.RECOGNITION,
+                button_chosen=3,
+                interval=10,
+                last_interval=1,
+                factor=0,
+                taken_millis=4500,
+                review_kind=1,
+                anki_card_id=cid,
+            )
+        )
+        # A LATER (e.g. phone) grade already in Anki — the precondition for the bump.
+        phone_ms = tt_grade_ms + 6000
+        self._seed_anki_revlog(fake_anki_db, cid, [(phone_ms, 3, 12, 10, 2500, 3200, 1)])
+
+        conn = sqlite3.connect(str(fake_anki_db))
+        conn.row_factory = sqlite3.Row
+        try:
+            # Push TT's grade exactly as sync_push does (preferred_id = grade time).
+            OfflineWriter(conn).write_revlog(
+                cid=cid, ease=3, ivl=10, last_ivl=1, factor=2500, time_ms=4500, type_=1, preferred_id=tt_grade_ms
+            )
+            pushed = sorted(r["id"] for r in conn.execute("SELECT id FROM revlog WHERE cid=?", (cid,)))
+            assert pushed == [tt_grade_ms, phone_ms], "pushed grade keeps its grade-time id, not bumped past phone_ms"
+            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+        finally:
+            conn.close()
+
+        with db._get_conn() as tt_conn:
+            ids = [
+                r["id"] for r in tt_conn.execute("SELECT id FROM tt_revlog WHERE anki_card_id=? ORDER BY id", (cid,))
+            ]
+        assert ids == [tt_grade_ms, phone_ms], "TT's own pushed grade must not be re-ingested as a duplicate echo"
+
     def test_ingest_keeps_anki_row_when_ease_differs(self, fake_anki_db):
         """Within 5s but *different* ease → not the same event; keep both."""
         from app.models.srs_item import RevlogRow

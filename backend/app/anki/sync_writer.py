@@ -223,6 +223,10 @@ class OfflineWriter:
         self._bump_col(ts)
         self._conn.commit()
 
+    def _revlog_id_exists(self, revlog_id: int) -> bool:
+        """True if a revlog row already uses *revlog_id* (PK-collision probe)."""
+        return self._conn.execute("SELECT 1 FROM revlog WHERE id = ? LIMIT 1", (revlog_id,)).fetchone() is not None
+
     def write_revlog(
         self,
         *,
@@ -241,7 +245,23 @@ class OfflineWriter:
         max_row = self._conn.execute("SELECT MAX(id) FROM revlog").fetchone()
         max_id = (max_row[0] or 0) if max_row else 0
         base = preferred_id if preferred_id is not None else int(_time.time() * 1000)
-        rid = max(base, max_id + 1)
+        # Layer 74: insert at the exact grade-time id (preferred_id) when it's
+        # free, instead of always bumping past max_id. Two reasons:
+        #  1. Temporal honesty — a TT grade made *before* a later (e.g. phone)
+        #     grade should sort before it in the revlog, not get shoved after.
+        #  2. Self-echo suppression — preferred_id equals the id of TT's own
+        #     `tt_revlog` grade row (both are int(last_review*1000)). Landing the
+        #     Anki copy at that same id lets sync_pull's ingest recognise it via
+        #     `held_ids` (get_tt_revlog_ids) and NOT re-ingest it as a duplicate
+        #     "Anki" grade. The old unconditional `max(base, max_id+1)` bumped the
+        #     id off the grade time whenever any later revlog row existed, so the
+        #     echo landed outside has_revision_near's ±5s window and was counted
+        #     twice (inflated reviews_today after a parallel-graded card synced).
+        # Only bump on a genuine PK collision (preferred_id already taken).
+        if preferred_id is not None and not self._revlog_id_exists(preferred_id):
+            rid = preferred_id
+        else:
+            rid = max(base, max_id + 1)
         self._conn.execute(
             "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
