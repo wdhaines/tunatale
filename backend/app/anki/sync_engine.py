@@ -957,33 +957,44 @@ class AnkiSync:
             return self._writer.get_current_card_state(card_id)
         return None
 
-    def _recompute_anki_new_today_all_decks(self) -> None:
-        """Set every revlog-touched deck's ``new_today`` counter from revlog reality.
+    def _recompute_anki_studied_today_all_decks(self) -> None:
+        """Set every revlog-touched deck's ``new_today`` + ``review_today`` counters
+        from revlog reality.
 
         Replaces per-push increment. Walks ``SELECT DISTINCT did`` for cards
-        with any revlog ``id >= today_4am_ms``, then for each deck counts
-        distinct cards whose *first* revlog id falls today (mirroring Anki's
-        newToday semantic) and writes that count back to ``deck.common.new_today``.
+        with any revlog ``id >= today_4am_ms``, then for each deck:
+        - ``new_today`` = distinct cards whose *first* revlog id falls today
+          (Anki's newToday semantic), and
+        - ``review_today`` = today's interday-queue answers (Anki's revToday
+          semantic — see `OfflineWriter.count_reviews_today_for_deck`),
+        writing both back to ``deck.common``.
 
         Idempotent — running it twice in a row produces the same result.
         Eliminates the per-push double-count drift that the older increment
         approach was prone to (Anki grades a card → Anki bumps; TT pushes the
-        same card → push bumped again).
+        same card → push bumped again). Layer 73 added ``review_today`` so the
+        rollover branch no longer zeroes the reviews-done counter on AnkiWeb.
 
-        No-op when the writer doesn't support the three methods (e.g., legacy
+        No-op when the writer doesn't support the required methods (e.g., legacy
         AnkiConnect path, FakeReader-only tests). Also no-op when col.crt is
         unknown (can't compute today_day_index).
         """
         if self._anki_col_crt is None:
             return
-        required = ("list_decks_with_revlog_today", "count_first_grades_today_for_deck", "set_deck_new_today")
+        required = (
+            "list_decks_with_revlog_today",
+            "count_first_grades_today_for_deck",
+            "count_reviews_today_for_deck",
+            "set_deck_studied_today",
+        )
         if not all(hasattr(self._writer, m) for m in required):
             return
         today_4am_ms = int(_local_today_4am().timestamp() * 1000)
         day_index = compute_anki_day_index(self._anki_col_crt)
         for deck_id in self._writer.list_decks_with_revlog_today(today_4am_ms):
-            count = self._writer.count_first_grades_today_for_deck(deck_id, today_4am_ms)
-            self._writer.set_deck_new_today(deck_id, day_index, count)
+            new_count = self._writer.count_first_grades_today_for_deck(deck_id, today_4am_ms)
+            review_count = self._writer.count_reviews_today_for_deck(deck_id, today_4am_ms)
+            self._writer.set_deck_studied_today(deck_id, day_index, new_count, review_count)
 
     def sync_push(self, dry_run: bool = False, force_fsrs: bool = False) -> PushReport:
         # Deferred: lives in app.anki.sync so it reads the patched _MEDIA_DIR.
@@ -1208,7 +1219,7 @@ class AnkiSync:
         # idempotent: cards already at queue=-2 are no-ops.
         if not dry_run:
             self._backfill_bury_siblings_for_today_grades()
-            self._recompute_anki_new_today_all_decks()
+            self._recompute_anki_studied_today_all_decks()
 
         return report
 

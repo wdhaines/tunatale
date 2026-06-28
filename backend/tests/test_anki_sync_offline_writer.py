@@ -157,46 +157,136 @@ class TestCountFirstGradesTodayForDeck:
         assert writer.count_first_grades_today_for_deck(1, 1000) == 0
 
 
-class TestSetDeckNewToday:
-    def test_writes_explicit_value(self):
+def _make_revlog_cards_db(common_blob: bytes | None = None) -> sqlite3.Connection:
+    """Decks DB plus revlog + cards tables (full revlog columns)."""
+    conn = _make_decks_db(common_blob)
+    conn.execute(
+        "CREATE TABLE revlog (id INTEGER, cid INTEGER, usn INTEGER, ease INTEGER, "
+        "ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)"
+    )
+    conn.execute("CREATE TABLE cards (id INTEGER, did INTEGER)")
+    return conn
+
+
+def _ins_revlog(conn: sqlite3.Connection, rid: int, cid: int, type_: int, last_ivl: int) -> None:
+    conn.execute(
+        "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) "
+        "VALUES (?, ?, -1, 3, 1, ?, 2000, 1500, ?)",
+        (rid, cid, last_ivl, type_),
+    )
+
+
+class TestCountReviewsTodayForDeck:
+    """Mirror Anki 25.09 ``review_today``: count answers from the Review or
+    DayLearn (interday) queue. The revlog-only discriminator is the pre-answer
+    interval sign — ``lastIvl >= 1`` ⟺ interday footing — over revlog types
+    ``0,1,2`` (excludes filtered=3 / manual=4). See sync_writer docstring.
+    """
+
+    def test_counts_review_daylearn_and_interday_learn(self):
+        conn = _make_revlog_cards_db()
+        conn.execute("INSERT INTO cards VALUES (10, 1), (11, 1), (12, 1), (13, 1)")
+        # All today (id >= 1000), all deck 1.
+        _ins_revlog(conn, 1100, 10, 1, 30)  # review, interday → counts
+        _ins_revlog(conn, 1200, 11, 2, 10)  # interday relearn → counts
+        _ins_revlog(conn, 1300, 12, 0, 4)  # interday learn (step ≥1d) → counts
+        _ins_revlog(conn, 1400, 13, 1, 8)  # another review → counts
+        conn.commit()
+        writer = OfflineWriter(conn)
+        assert writer.count_reviews_today_for_deck(1, 1000) == 4
+
+    def test_excludes_intraday_filtered_manual_and_zero_ivl(self):
+        conn = _make_revlog_cards_db()
+        conn.execute("INSERT INTO cards VALUES (10, 1), (11, 1), (12, 1), (13, 1), (14, 1)")
+        _ins_revlog(conn, 1100, 10, 2, -600)  # intraday relearn (lastIvl<1) → excluded
+        _ins_revlog(conn, 1200, 11, 0, 0)  # new-card first answer (lastIvl=0) → excluded
+        _ins_revlog(conn, 1300, 12, 3, 30)  # filtered/cram → excluded
+        _ins_revlog(conn, 1400, 13, 4, 30)  # manual → excluded
+        _ins_revlog(conn, 1500, 14, 1, 30)  # one genuine review → counts
+        conn.commit()
+        writer = OfflineWriter(conn)
+        assert writer.count_reviews_today_for_deck(1, 1000) == 1
+
+    def test_excludes_pre_today_and_other_decks(self):
+        conn = _make_revlog_cards_db()
+        conn.execute("INSERT INTO cards VALUES (10, 1), (20, 2)")
+        _ins_revlog(conn, 500, 10, 1, 30)  # pre-today → excluded
+        _ins_revlog(conn, 1500, 10, 1, 30)  # today, deck 1 → counts
+        _ins_revlog(conn, 1600, 20, 1, 30)  # today, deck 2 → excluded
+        conn.commit()
+        writer = OfflineWriter(conn)
+        assert writer.count_reviews_today_for_deck(1, 1000) == 1
+
+    def test_counts_rows_not_distinct_cards(self):
+        conn = _make_revlog_cards_db()
+        conn.execute("INSERT INTO cards VALUES (10, 1)")
+        # Same card, two interday-review answers today → counts both (per-answer).
+        _ins_revlog(conn, 1100, 10, 1, 30)
+        _ins_revlog(conn, 1200, 10, 1, 12)
+        conn.commit()
+        writer = OfflineWriter(conn)
+        assert writer.count_reviews_today_for_deck(1, 1000) == 2
+
+    def test_zero_when_no_rows(self):
+        conn = _make_revlog_cards_db()
+        conn.execute("INSERT INTO cards VALUES (10, 1)")
+        conn.commit()
+        writer = OfflineWriter(conn)
+        assert writer.count_reviews_today_for_deck(1, 1000) == 0
+
+    def test_catches_operational_error_when_revlog_table_missing(self):
         conn = _make_decks_db()
         writer = OfflineWriter(conn)
-        writer.set_deck_new_today(_DECK_ID, 4513, 17)
+        assert writer.count_reviews_today_for_deck(1, 1000) == 0
+
+
+class TestSetDeckStudiedToday:
+    def test_writes_both_new_and_review(self):
+        conn = _make_decks_db()
+        writer = OfflineWriter(conn)
+        writer.set_deck_studied_today(_DECK_ID, 4513, 17, 42)
 
         row = conn.execute("SELECT common, usn FROM decks WHERE id = ?", (_DECK_ID,)).fetchone()
         blob = bytes(row[0]) if row[0] else b""
         assert find_varint_field(blob, 4) == 17
+        assert find_varint_field(blob, 5) == 42
         assert find_varint_field(blob, 3) == 4513
         assert row["usn"] == -1
 
-    def test_overwrites_existing_value(self):
+    def test_overwrites_existing_values(self):
         blob = b""
         from app.anki.protobuf_wire import encode_varint_field
 
         blob += encode_varint_field(3, 4513)
-        blob += encode_varint_field(4, 30)  # the overcounted value
+        blob += encode_varint_field(4, 30)  # the overcounted new value
+        blob += encode_varint_field(5, 99)  # the overcounted review value
         conn = _make_decks_db(blob)
         writer = OfflineWriter(conn)
         # Recompute to truth.
-        writer.set_deck_new_today(_DECK_ID, 4513, 24)
+        writer.set_deck_studied_today(_DECK_ID, 4513, 24, 8)
         row = conn.execute("SELECT common FROM decks WHERE id = ?", (_DECK_ID,)).fetchone()
         assert find_varint_field(bytes(row[0]), 4) == 24
+        assert find_varint_field(bytes(row[0]), 5) == 8
 
-    def test_applies_rollover_when_last_day_older(self):
-        conn = _make_decks_db_with_review_new_reset()
+    def test_rollover_recomputes_review_instead_of_zeroing(self):
+        """The Layer 73 bug: rollover used to drop review_today (field 5) entirely,
+        pushing review_today=0 to AnkiWeb and resetting other devices' reviews-done
+        counter. Now it writes the recomputed value, not None.
+        """
+        conn = _make_decks_db_with_review_new_reset()  # field 3 = yesterday, 5 = 20
         writer = OfflineWriter(conn)
-        writer.set_deck_new_today(_DECK_ID, 4513, 5)
+        writer.set_deck_studied_today(_DECK_ID, 4513, 5, 8)
         row = conn.execute("SELECT common FROM decks WHERE id = ?", (_DECK_ID,)).fetchone()
         blob = bytes(row[0]) if row[0] else b""
         assert find_varint_field(blob, 3) == 4513
         assert find_varint_field(blob, 4) == 5
-        assert find_varint_field(blob, 5) is None
-        assert find_varint_field(blob, 7) is None
+        assert find_varint_field(blob, 5) == 8  # NOT None — recomputed, not dropped
+        assert find_varint_field(blob, 7) is None  # seconds_today still dropped on rollover
 
     def test_missing_deck_is_noop(self):
         conn = _make_decks_db()
         writer = OfflineWriter(conn)
-        writer.set_deck_new_today(999, 4513, 5)
+        writer.set_deck_studied_today(999, 4513, 5, 3)
         row = conn.execute("SELECT COUNT(*) FROM decks WHERE id = 999").fetchone()
         assert row[0] == 0
 

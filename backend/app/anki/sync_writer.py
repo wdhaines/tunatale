@@ -594,8 +594,9 @@ class OfflineWriter:
         Mirrors Anki's ``update_counters_after_answering_card``: reads/writes
         ``decks.common`` protobuf blob.
 
-        TODO: review_today and seconds_today follow the same protobuf
-        path. Extend if those counters ever drift.
+        review_today is recomputed alongside new_today on the recompute path
+        (`set_deck_studied_today`, Layer 73); seconds_today still follows the
+        same protobuf path and is dropped on rollover — extend if it ever drifts.
         """
         row = self._conn.execute("SELECT common FROM decks WHERE id = ?", (deck_id,)).fetchone()
         if row is None:
@@ -622,8 +623,8 @@ class OfflineWriter:
     def list_decks_with_revlog_today(self, today_4am_ms: int) -> list[int]:
         """Return distinct deck IDs that have at least one revlog entry since *today_4am_ms*.
 
-        Used by `AnkiSync._recompute_anki_new_today_all_decks` to know which
-        decks need their newToday counter rewritten.
+        Used by `AnkiSync._recompute_anki_studied_today_all_decks` to know which
+        decks need their newToday/revToday counters rewritten.
         """
         try:
             rows = self._conn.execute(
@@ -655,14 +656,56 @@ class OfflineWriter:
             return 0
         return row[0] if row else 0
 
-    def set_deck_new_today(self, deck_id: int, today_day_index: int, new_today: int) -> None:
-        """Set ``deck.common.new_today`` to an explicit value (recompute path).
+    def count_reviews_today_for_deck(self, deck_id: int, today_4am_ms: int) -> int:
+        """Count review answers in *deck_id* since *today_4am_ms*, mirroring Anki's
+        per-deck ``review_today`` studied counter.
 
-        Unlike `bump_deck_new_today`, this writes a known count rather than
-        incrementing. Used by `_recompute_anki_new_today_all_decks` to align
-        the deck counter with revlog reality on every sync, eliminating any
-        per-push counting drift. Rollover handling (clear today fields when
-        last_day_studied is older) matches `bump_deck_new_today`.
+        Anki increments ``review_today`` from the card's **pre-answer queue**, not
+        the revlog type: ``CardQueue::Review | CardQueue::DayLearn => review_delta += 1``
+        (``rslib/src/scheduler/answering/mod.rs`` ``update_deck_stats_from_answer``,
+        verified against the user's Anki **25.09**). ``DayLearn`` is the *interday*
+        (re)learning queue — interday learning and interday relearning both count;
+        *intraday* learning/relearning (``CardQueue::Learn``) does not.
+
+        A revlog-only reconstruction keys on the pre-answer interval sign. ``lastIvl``
+        stores the pre-answer interval encoded days-positive / seconds-negative
+        (``states/interval_kind.rs`` ``as_revlog_interval``), so ``lastIvl >= 1`` ⟺
+        the card was on interday footing (Review or DayLearn). ``type IN (0, 1, 2)``
+        keeps review (1), relearn (2) and interday-learn (0) while excluding
+        filtered/cram (3) and manual (4), which are never answer-driven counter
+        events. Counts **rows** (per-answer), matching Anki's per-button increment,
+        not distinct cards.
+        """
+        try:
+            row = self._conn.execute(
+                """
+                SELECT COUNT(*) FROM revlog r
+                JOIN cards c ON c.id = r.cid AND c.did = ?
+                WHERE r.id >= ? AND r.type IN (0, 1, 2) AND r.lastIvl >= 1
+                """,
+                (deck_id, today_4am_ms),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return 0
+        return row[0] if row else 0
+
+    def set_deck_studied_today(self, deck_id: int, today_day_index: int, new_today: int, review_today: int) -> None:
+        """Set ``deck.common`` ``new_today`` **and** ``review_today`` to explicit
+        values (recompute path).
+
+        Unlike `bump_deck_new_today`, this writes known counts rather than
+        incrementing. Used by `_recompute_anki_studied_today_all_decks` to align
+        both deck counters with revlog reality on every sync, eliminating
+        per-push counting drift.
+
+        Layer 73: the old `set_deck_new_today` rewrote only ``new_today`` and, on
+        the rollover branch (``last_day_studied`` older than today), *removed*
+        ``review_today`` without recomputing it — writing ``review_today=0`` with
+        ``usn=-1``. That pushed to AnkiWeb and reset the reviews-done counter on
+        other devices (AnkiDroid's "reviews due" jumping back up after a TT sync).
+        Both branches now write the recomputed ``review_today``. (``seconds_today``
+        is still dropped on rollover — it drives only the time-studied stat, no due
+        badge, and revlog-reconstructing it is out of scope.)
         """
         row = self._conn.execute("SELECT common FROM decks WHERE id = ?", (deck_id,)).fetchone()
         if row is None:
@@ -676,6 +719,7 @@ class OfflineWriter:
             blob = pb_remove_field(blob, self._DECKS_COMMON_SECONDS_TODAY)
             blob = pb_replace_or_insert_varint(blob, self._DECKS_COMMON_LAST_DAY_STUDIED, today_day_index)
         blob = pb_replace_or_insert_varint(blob, self._DECKS_COMMON_NEW_TODAY, new_today)
+        blob = pb_replace_or_insert_varint(blob, self._DECKS_COMMON_REVIEW_TODAY, review_today)
         now_ts = int(_time.time())
         self._conn.execute(
             "UPDATE decks SET common = ?, mtime_secs = ?, usn = -1 WHERE id = ?",

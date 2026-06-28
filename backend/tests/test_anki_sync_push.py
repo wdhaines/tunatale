@@ -163,8 +163,11 @@ class FakeWriter:
     def count_first_grades_today_for_deck(self, deck_id: int, today_4am_ms: int) -> int:
         return 0
 
-    def set_deck_new_today(self, deck_id: int, today_day_index: int, new_today: int) -> None:
-        self.calls.append(("set_deck_new_today", deck_id, today_day_index, new_today))
+    def count_reviews_today_for_deck(self, deck_id: int, today_4am_ms: int) -> int:
+        return 0
+
+    def set_deck_studied_today(self, deck_id: int, today_day_index: int, new_today: int, review_today: int) -> None:
+        self.calls.append(("set_deck_studied_today", deck_id, today_day_index, new_today, review_today))
 
     def store_media_file(self, filename: str, data: bytes) -> None:
         self.calls.append(("store_media_file", filename, len(data)))
@@ -2910,6 +2913,51 @@ class TestSyncPushBumpNewToday:
         # Both revlog entries are today's, but they share one cid.
         assert find_varint_field(bytes(row[0]), 4) == 1
 
+    def test_sync_push_recomputes_review_today_from_revlog(self):
+        """Layer 73: the recompute writes ``review_today`` (deck.common field 5)
+        from today's interday-queue revlog rows, not 0.
+
+        Two cards reviewed today (type=1, lastIvl≥1) → review_today=2; an intraday
+        relearn (type=2, lastIvl<1) is excluded. Both cards were first graded
+        *yesterday*, so new_today (field 4) stays 0 — they're reviews, not intros.
+        """
+        db = _make_tt_db()
+        guid, _, rec_cid, prod_cid = _add_banka_with_anki_ids(db)
+        anki_conn = _make_anki_with_decks()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid, prod_cid=prod_cid, queue=2, card_type=2, due=10, ivl=15)
+
+        today_4am_ms = int(_local_today_4am().timestamp() * 1000)
+        rows = [
+            # First grade YESTERDAY for both → neither counts as new_today.
+            (today_4am_ms - 100_000, rec_cid, 1, 10),
+            (today_4am_ms - 100_000 + 1, prod_cid, 1, 8),
+            # Today's interday reviews → review_today counts both.
+            (today_4am_ms + 100, rec_cid, 1, 30),
+            (today_4am_ms + 200, prod_cid, 1, 20),
+            # Today's intraday relearn (lastIvl < 1) → excluded.
+            (today_4am_ms + 300, rec_cid, 2, -600),
+        ]
+        for rid, cid, type_, last_ivl in rows:
+            anki_conn.execute(
+                "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) "
+                "VALUES (?, ?, -1, 3, 1, ?, 2000, 1500, ?)",
+                (rid, cid, last_ivl, type_),
+            )
+        anki_conn.commit()
+
+        col_crt = 1704067200
+        writer = OfflineWriter(anki_conn)
+        sync = AnkiSync(db=db, _reader=FakeReader(), _writer=writer, _anki_col_crt=col_crt)
+        sync.sync_push()
+
+        from app.anki.protobuf_wire import find_varint_field
+
+        row = anki_conn.execute("SELECT common, usn FROM decks WHERE id = 1").fetchone()
+        blob = bytes(row[0])
+        assert find_varint_field(blob, 5) == 2  # review_today recomputed (not dropped to 0)
+        assert find_varint_field(blob, 4) == 0  # no new-today cards
+        assert row["usn"] == -1  # deck row pushes via its own usn
+
     def test_sync_push_does_not_double_bump_on_second_push_same_card(self):
         """`prior_state='new'` is sticky across learning steps. The bump must
         fire only on the first push (when Anki's card is still queue=0). The
@@ -3053,7 +3101,7 @@ class TestSyncPushBumpNewToday:
         # Should not raise despite the writer lacking all three required methods.
         sync.sync_push()
         # No assertion needed — the test passes if no exception is raised;
-        # the hasattr guard in _recompute_anki_new_today_all_decks returns early.
+        # the hasattr guard in _recompute_anki_studied_today_all_decks returns early.
 
 
 # ── Layer 70: push carries FSRS memory state ───────────────────────────────────
