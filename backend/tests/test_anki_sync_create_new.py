@@ -1739,3 +1739,33 @@ class TestSyncCreateNewNorwegian:
         img_idx = NORWEGIAN_VOCAB.field_names.index("Image")
         flds = anki_conn.execute("SELECT flds FROM notes").fetchone()["flds"].split("\x1f")
         assert flds[img_idx].startswith('<img src="')
+
+    async def test_mints_norwegian_preposition_cloze_into_cloze_notetype(self, monkeypatch):
+        """A Norwegian preposition cloze (Phase 4) round-trips into the built-in
+        Cloze notetype with a 'no'-folded GUID."""
+        from app.anki.sync_engine import settings as _engine_settings
+        from app.common.guid import compute_guid
+
+        monkeypatch.setattr(_engine_settings, "target_language", "no")
+
+        db = _make_db()
+        _add_cloze_item(db, "på", "Jeg bor på Bergen")  # "i live in Bergen"
+
+        anki_conn = _make_norwegian_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name=_NO_DECK, model_name="Norwegian Vocabulary"
+        )
+        assert report.created == 1
+
+        note = anki_conn.execute("SELECT mid, guid, flds, tags FROM notes").fetchone()
+        assert note["mid"] == 1000002  # built-in Cloze notetype
+        cloze_text = "Jeg bor {{c1::på}} Bergen"
+        assert note["flds"].split("\x1f")[0] == cloze_text
+        assert note["guid"] == compute_guid(cloze_text, "no", "")
+        assert "cloze" in note["tags"]
+
+        # Cloze maps to PRODUCTION only.
+        item = db.get_collocation_by_guid(db.get_collocation("på").guid)
+        assert Direction.PRODUCTION in item.directions
+        assert Direction.RECOGNITION not in item.directions

@@ -1,0 +1,11 @@
+{
+  "_comment": "Norwegian (Bokmål) function-word policy. Same POS-first shape as sl.json. 'pos' lists the closed-class UPOS tags (used when a sentence-context analyzer supplies UPOS — e.g. a future Stanza nb model); under the lowercase lemmatizer (the Phase-1 Norwegian default) UPOS is empty, so 'include' is the SOLE signal and must enumerate the surfaces to cloze. 'include' is focused on the genuine Norwegian difficulties for English speakers: PREPOSITION choice (i/på/til/av/for/med/om/…) and the indefinite ARTICLES en/ei/et (gender + definiteness practice), plus the high-value subordinators som/at. Pronouns and the copula are deliberately left out so /listen doesn't cloze every 'jeg'/'er'. 'clozes_only_verbs' lists the auxiliaries være/ha: with a real lemmatizer that maps er→være, har→ha, these become click-only conjugation clozes via /inflection-clozes (no base card, ungated) instead of auto-clozed by /listen; under lowercase the lemma never resolves to være/ha so this key is inert (forward-compatible). No T–V distinction and no grammatical case in Norwegian, so unlike sl.json there are no case/dual targets.",
+  "pos": ["ADP", "DET", "CCONJ", "SCONJ", "PRON", "AUX", "PART"],
+  "include": [
+    "i", "på", "til", "av", "for", "med", "om", "fra", "etter",
+    "under", "over", "mot", "ved", "hos", "mellom", "uten", "gjennom",
+    "en", "ei", "et", "som", "at"
+  ],
+  "exclude": [],
+  "clozes_only_verbs": ["være", "ha"]
+}

@@ -566,3 +566,50 @@ class TestUdFeatsToTtFeature:
 
     def test_empty_upos_returns_none(self):
         assert ud_feats_to_tt_feature("") is None
+
+
+class TestNorwegianFunctionWords:
+    """Phase 4: Norwegian (no.json) — prepositions, articles, aux verbs."""
+
+    def test_prepositions_are_function_words(self):
+        for prep in ("i", "på", "til", "av", "for", "med", "om", "fra", "gjennom"):
+            assert is_function_word(prep, "no") is True, prep
+
+    def test_indefinite_articles_are_function_words(self):
+        for art in ("en", "ei", "et"):
+            assert is_function_word(art, "no") is True, art
+
+    def test_subordinators_included(self):
+        assert is_function_word("som", "no") is True
+        assert is_function_word("at", "no") is True
+
+    def test_content_word_is_not_function_word(self):
+        # A common content word must NOT be clozed under the lowercase fallback.
+        assert is_function_word("hund", "no") is False  # "dog"
+        assert is_function_word("snakke", "no") is False  # "to speak"
+
+    def test_case_insensitive(self):
+        assert is_function_word("På", "no") is True
+        assert is_function_word("EN", "no") is True
+
+    def test_pos_catches_closed_class_when_analyzer_present(self):
+        # With a future analyzer supplying UPOS, a copula not in `include`
+        # (e.g. "er") is caught via the AUX pos set.
+        assert is_function_word("er", "no") is False  # lowercase fallback → include-only
+        assert is_function_word("er", "no", upos="AUX") is True
+
+    def test_pos_does_not_catch_content_word(self):
+        assert is_function_word("hund", "no", upos="NOUN") is False
+
+    def test_clozes_only_verbs_are_vaere_and_ha(self):
+        assert is_clozes_only_verb("være", "no") is True
+        assert is_clozes_only_verb("ha", "no") is True
+
+    def test_regular_verb_is_not_clozes_only(self):
+        assert is_clozes_only_verb("snakke", "no") is False
+
+    def test_slovene_config_unchanged(self):
+        # Norwegian config must not perturb Slovene detection.
+        assert is_function_word("v", "sl") is True
+        assert is_function_word("i", "sl") is False  # "i" is Norwegian, not a Slovene function word
+        assert is_clozes_only_verb("biti", "sl") is True
