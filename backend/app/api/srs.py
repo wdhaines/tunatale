@@ -1346,6 +1346,15 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
 
     introduced_today = db.count_new_introduced_today(today)
     new_quota = max(0, cap - introduced_today)
+    # Review cap mirrors the new cap: Anki gathers at most
+    # `review_limit - reviews_today` review cards into the study session, so the
+    # served queue (not just the badge) stops at the cap. reviews_today grows as
+    # the user grades, so the cap tightens — but graded cards leave the due pool,
+    # so the surviving frozen reviews always equal the remaining budget (no
+    # mid-session drops). Learning cards are NOT review-capped (Anki exempts them).
+    review_cap, _ = resolve_daily_review_cap(db)
+    reviews_today = db.count_reviews_completed_today(today)
+    review_remaining = max(0, review_cap - reviews_today)
     buried = db.list_collocations_reviewed_today(today)
 
     due_rec = db.get_due_items(today, Direction.RECOGNITION)
@@ -1390,6 +1399,9 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
         return survivors
 
     nonlearning_due = _bury(nonlearning_due, bury_review)
+    # Apply the review cap AFTER sibling-bury (Anki counts post-bury survivors
+    # toward the limit), keeping the lowest-R reviews (already R-ascending).
+    nonlearning_due = nonlearning_due[:review_remaining]
     nonlearning_new = _bury(nonlearning_new, bury_new)
     nonlearning_new.sort(key=lambda t: 0 if t[3] == Direction.RECOGNITION else 1)
     nonlearning_new = nonlearning_new[:new_quota]

@@ -1529,3 +1529,17 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 **Files.** `app/anki/sync_writer.py` (`write_revlog` id selection, `_revlog_id_exists`). Tests: `tests/test_anki_sync_push.py::TestOfflineWriter` (`test_write_revlog_uses_preferred_id_when_free`, `…_keeps_preferred_id_even_with_a_later_row_present` = the echo regression, `…_bumps_on_preferred_id_collision`); `tests/test_anki_sync_pull.py::…::test_pushed_grade_at_preferred_id_is_not_re_ingested_as_echo` (sociable: real `OfflineWriter` push → real `OfflineReader` ingest → no duplicate; sabotage-drilled red without the fix).
 
 **Surfaced by.** User parallel-grading `like`/`tenke` in AnkiDroid + TT during Norwegian Phase 1, then syncing.
+
+## Layer 75 — review cap applied to the served queue, not just the badge
+
+**The bug.** With a 50-review daily cap, the `/queue-stats` badge correctly read 50, but `/review-queue` served *all* due reviews (e.g. 1499) — you could review past the cap indefinitely (user report, Norwegian Phase 1, 2026-06-28). Anki's daily limits cap the actual study session: you gather at most `review_limit - reviews_today` review cards (and `new_limit - introduced_today` new cards), study them, and the deck is done. The badge and the flow agree.
+
+**Root cause.** `_compute_live_main` (`app/api/srs.py`) already capped **new** cards (`nonlearning_new[:new_quota]`) but never capped **review** cards (`nonlearning_due`). The old rule-12 text claimed "daily caps are render-only / queue assembly does NOT cap / Anki only caps the deck-list badge" — wrong on all three counts (the new-card cap was always applied in assembly; Anki caps the flow).
+
+**Fix.** Compute `review_remaining = max(0, review_cap - reviews_today)` and slice `nonlearning_due = nonlearning_due[:review_remaining]` **after** sibling-bury (Anki counts post-bury survivors toward the limit), keeping the lowest-R reviews (the list is already R-ascending). Learning/relearning cards stay exempt (Anki gathers them regardless of the review limit). Mirrors the existing new-card cap exactly.
+
+**Freeze-model consistency.** The cap tightens as `reviews_today` grows mid-session, but graded cards leave the due pool (`get_due_items`), so the surviving frozen reviews always equal the remaining budget — no spurious mid-session drops, and the reconciliation in `get_review_queue` (which drops cached keys absent from `live_main`) naturally prunes the now-excess tail. Badge (`min(review_due_raw, review_cap - reviews_today)`) and queue now cap at the same value.
+
+**Files.** `app/api/srs.py` (`_compute_live_main`). Tests: `tests/test_api_srs.py::TestReviewQueue::test_review_queue_caps_review_cards_at_daily_review_cap` (cap=2 over 6 due → 2 served) + `…_uncapped_when_cap_above_available` (ceiling, not fixed size). Oracle harness (66) + full queue suite green.
+
+**Surfaced by.** User reviewing the Norwegian deck: badge 50, but the app served all 1499 due reviews.

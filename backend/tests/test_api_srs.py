@@ -467,6 +467,42 @@ class TestReviewQueue:
         assert resp.status_code == 200
         assert resp.json()["queue"] == []
 
+    async def test_review_queue_caps_review_cards_at_daily_review_cap(self, api_app_state):
+        """The review cap limits the SERVED queue, not just the badge.
+
+        Anki gathers at most ``review_limit - reviews_today`` review cards into the
+        study session — so a 50-review cap means you review 50, then the review
+        portion is done. TT mirrors this in `_compute_live_main` (alongside the
+        new-card cap that was already applied). Without it the badge said 50 while
+        the queue served all due reviews (user report).
+        """
+        db = api_app_state
+        today = date.today()
+        for i in range(6):
+            _add_review_due_collocation(db, f"rev{i}", today)
+        db.set_anki_state_cache("daily_review_cap", "2")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            data = (await client.get("/api/srs/review-queue?session_start=1")).json()
+
+        review_items = [q for q in data["queue"] if q["state"] == "review"]
+        assert len(review_items) == 2, f"review queue must cap at 2; got {len(review_items)}"
+
+    async def test_review_queue_uncapped_when_cap_above_available(self, api_app_state):
+        """Sanity: a generous cap leaves every due review in the queue (the cap is
+        a ceiling, not a fixed size)."""
+        db = api_app_state
+        today = date.today()
+        for i in range(4):
+            _add_review_due_collocation(db, f"rev{i}", today)
+        db.set_anki_state_cache("daily_review_cap", "50")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            data = (await client.get("/api/srs/review-queue?session_start=1")).json()
+
+        review_items = [q for q in data["queue"] if q["state"] == "review"]
+        assert len(review_items) == 4
+
     async def test_sets_no_store_cache_header(self, api_app_state):
         """Browser must NEVER cache /review-queue. Without `no-store`, a normal
         page refresh can be served from heuristic disk cache — the JS still
