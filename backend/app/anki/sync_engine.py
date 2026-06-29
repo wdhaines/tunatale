@@ -32,7 +32,7 @@ from app.anki.sync_common import (
 from app.common.guid import compute_guid
 from app.config import settings
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
-from app.models.syntactic_unit import SyntacticUnit
+from app.models.syntactic_unit import SyntacticUnit, serialize_extras
 from app.srs.database import SRSDatabase
 from app.srs.fsrs import is_day_level_last_review
 from app.srs.queue_stats import resolve_bury_new, resolve_bury_review, resolve_learning_steps, resolve_relearning_steps
@@ -756,7 +756,18 @@ class AnkiSync:
             local_translation = local_item.syntactic_unit.translation
             local_sent_trans = local_item.syntactic_unit.source_sentence_translation
             local_note = local_item.syntactic_unit.note
+            local_article = local_item.syntactic_unit.article
+            local_extras = local_item.syntactic_unit.extras
             note_changed = False
+            # Article is Anki-sourced display data (never edited in TT). Heal it
+            # whenever Anki's value differs — this also backfills every existing
+            # row on the first sync after the article feature shipped. None ⇒
+            # leave untouched, so we only write when there's an actual change.
+            article_update = rec.article if rec.article != local_article else None
+            # Extras (rich back-of-card fields) are likewise Anki-sourced and
+            # display-only; heal when they differ, backfilling existing rows on
+            # the first sync after the feature shipped. Pass the serialized JSON.
+            extras_update = serialize_extras(rec.extras) if rec.extras != local_extras else None
             new_dirty_fields = dirty_set.copy()
 
             if rec.translation != local_translation:
@@ -780,6 +791,12 @@ class AnkiSync:
             if rec.note != local_note:
                 note_changed = True
 
+            if article_update is not None:
+                note_changed = True
+
+            if extras_update is not None:
+                note_changed = True
+
             if note_changed:
                 if not dry_run:
                     self._db.update_collocation_for_sync(
@@ -788,6 +805,8 @@ class AnkiSync:
                         note=rec.note,
                         sentence_translation=rec.sentence_translation,
                         dirty_fields_str=",".join(sorted(new_dirty_fields)),
+                        article=article_update,
+                        extras=extras_update,
                     )
                 report.notes_updated += 1
 
@@ -1416,6 +1435,8 @@ class AnkiSync:
                 source="anki",
                 frequency=0,
                 disambig_key=rec.disambig_key,
+                article=rec.article,
+                extras=rec.extras,
                 lemma=rec.l2_text.lower() if word_count == 1 else None,
                 source_sentence=rec.note,
                 source_sentence_translation=rec.sentence_translation,

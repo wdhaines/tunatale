@@ -30,6 +30,129 @@ class TestCRUD:
         assert retrieved is not None
         assert retrieved.syntactic_unit.text == "dober dan"
 
+    def test_article_round_trips(self, srs_db):
+        unit = SyntacticUnit(text="orden", translation="order", word_count=1, difficulty=1, source="anki", article="en")
+        srs_db.add_collocation(unit, language_code="no")
+        retrieved = srs_db.get_collocation("orden")
+        assert retrieved is not None
+        assert retrieved.syntactic_unit.article == "en"
+
+    def test_article_defaults_to_empty(self, srs_db):
+        srs_db.add_collocation(_unit(), language_code="sl")
+        assert srs_db.get_collocation("dober dan").syntactic_unit.article == ""
+
+    def test_set_article_updates_existing_row(self, srs_db):
+        srs_db.add_collocation(
+            SyntacticUnit(text="orden", translation="order", word_count=1, difficulty=1, source="anki"),
+            language_code="no",
+        )
+        coll_id = _id_for_text(srs_db, "orden")
+        srs_db.set_article(coll_id, "en")
+        assert srs_db.get_collocation("orden").syntactic_unit.article == "en"
+
+    def test_set_article_is_idempotent_and_overwrites(self, srs_db):
+        srs_db.add_collocation(
+            SyntacticUnit(text="orden", translation="order", word_count=1, difficulty=1, source="anki", article="en"),
+            language_code="no",
+        )
+        coll_id = _id_for_text(srs_db, "orden")
+        srs_db.set_article(coll_id, "ei")
+        assert srs_db.get_collocation("orden").syntactic_unit.article == "ei"
+
+    def test_extras_round_trip(self, srs_db):
+        from app.models.syntactic_unit import BackField
+
+        extras = (
+            BackField(label="IPA", html="/ˈʋæːɾə/", tier="summary"),
+            BackField(label="Inflections", html="<table><tr><td>er</td></tr></table>", tier="details"),
+        )
+        unit = SyntacticUnit(text="være", translation="to be", word_count=1, difficulty=1, source="anki", extras=extras)
+        srs_db.add_collocation(unit, language_code="no")
+        assert srs_db.get_collocation("være").syntactic_unit.extras == extras
+
+    def test_extras_defaults_to_empty(self, srs_db):
+        srs_db.add_collocation(_unit(), language_code="sl")
+        assert srs_db.get_collocation("dober dan").syntactic_unit.extras == ()
+
+    def test_upsert_by_guid_round_trips_extras(self, srs_db):
+        from app.models.syntactic_unit import BackField
+
+        extras = (BackField(label="Meaning", html="exist", tier="summary"),)
+        unit = SyntacticUnit(text="være", translation="to be", word_count=1, difficulty=1, source="anki", extras=extras)
+        srs_db.upsert_by_guid(unit, "no", {})
+        assert srs_db.get_collocation("være").syntactic_unit.extras == extras
+
+    def test_update_collocation_for_sync_heals_extras(self, srs_db):
+        from app.models.syntactic_unit import BackField, serialize_extras
+
+        srs_db.add_collocation(
+            SyntacticUnit(text="være", translation="to be", word_count=1, difficulty=1, source="anki"),
+            language_code="no",
+        )
+        guid = srs_db.get_collocation("være").guid
+        new_extras = (BackField(label="IPA", html="/ˈʋæːɾə/", tier="summary"),)
+        srs_db.update_collocation_for_sync(
+            guid,
+            translation="to be",
+            note="",
+            dirty_fields_str="",
+            extras=serialize_extras(new_extras),
+        )
+        assert srs_db.get_collocation("være").syntactic_unit.extras == new_extras
+
+    def test_update_collocation_for_sync_leaves_extras_when_none(self, srs_db):
+        from app.models.syntactic_unit import BackField
+
+        existing = (BackField(label="IPA", html="/ˈʋæːɾə/", tier="summary"),)
+        srs_db.add_collocation(
+            SyntacticUnit(text="være", translation="to be", word_count=1, difficulty=1, source="anki", extras=existing),
+            language_code="no",
+        )
+        guid = srs_db.get_collocation("være").guid
+        # extras omitted (None) → stored extras untouched even as translation changes.
+        srs_db.update_collocation_for_sync(guid, translation="be", note="", dirty_fields_str="")
+        retrieved = srs_db.get_collocation("være")
+        assert retrieved.syntactic_unit.translation == "be"
+        assert retrieved.syntactic_unit.extras == existing
+
+
+class TestAmbiguousSurfaces:
+    """get_ambiguous_surfaces returns casefolded surfaces with >=2 distinct POS."""
+
+    def _add(self, srs_db, text, pos, lang="no", card_type="vocab"):
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text=text,
+                translation="x",
+                word_count=1,
+                difficulty=1,
+                source="anki",
+                disambig_key=pos,
+                card_type=card_type,
+            ),
+            language_code=lang,
+        )
+
+    def test_surface_with_two_pos_is_ambiguous(self, srs_db):
+        self._add(srs_db, "fange", "noun")
+        self._add(srs_db, "fange", "verb")
+        self._add(srs_db, "bil", "noun")
+        assert srs_db.get_ambiguous_surfaces("no") == {"fange"}
+
+    def test_casefold_groups_norwegian_surfaces(self, srs_db):
+        self._add(srs_db, "Vår", "noun")
+        self._add(srs_db, "vår", "determiner")
+        assert srs_db.get_ambiguous_surfaces("no") == {"vår"}
+
+    def test_excludes_other_language_blank_pos_and_morph_clozes(self, srs_db):
+        self._add(srs_db, "fange", "noun")
+        self._add(srs_db, "fange", "verb", lang="sl")  # other language — not counted with the 'no' noun
+        self._add(srs_db, "tom", "")  # blank POS ignored
+        self._add(srs_db, "tom", "noun")
+        self._add(srs_db, "gå", "morph:verb-pres", card_type="cloze")  # cloze morph key ignored
+        self._add(srs_db, "gå", "verb")
+        assert srs_db.get_ambiguous_surfaces("no") == set()
+
     def test_add_duplicate_does_not_raise(self, srs_db):
         unit = _unit()
         srs_db.add_collocation(unit, language_code="sl")

@@ -14,6 +14,7 @@ from pathlib import Path
 from app.anki.field_map import get_profile
 from app.anki.protobuf_wire import review_due_at_for_col_day
 from app.models.srs_item import Direction, DirectionState, SRSState
+from app.models.syntactic_unit import BackField
 
 
 @dataclass
@@ -623,13 +624,53 @@ def extract_disambig_from_fields(fields: list[str]) -> str:
     return fields[6].strip() if len(fields) > 6 else ""
 
 
-def extract_via_profile(note: AnkiNote) -> tuple[str, str, str] | None:
-    """Return ``(l2, translation, disambig)`` for *note* via its notetype profile.
+_STYLE_SCRIPT_RE = re.compile(r"<(style|script)\b[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
+_SOUND_RE = re.compile(r"\[sound:[^\]]+\]")
+
+
+def sanitize_back_html(html: str) -> str:
+    """Clean an Anki field's HTML for safe inline rendering on the card back.
+
+    Removes ``<style>``/``<script>`` blocks (Anki's inflection tables carry an
+    inline ``<style>`` that would otherwise leak global CSS into the app) and
+    ``[sound:…]`` tokens (audio is handled by the media pipeline, not this text
+    field). Other markup — tables, lists, ``<em>``/``<strong>`` — is preserved.
+    """
+    cleaned = _STYLE_SCRIPT_RE.sub("", html)
+    cleaned = _SOUND_RE.sub("", cleaned)
+    return cleaned.strip()
+
+
+def extract_back_fields(note: AnkiNote) -> tuple[BackField, ...]:
+    """Return the profile-declared rich back-of-card fields present on *note*.
+
+    Reads each declared field by name, sanitizes its HTML, and keeps it only
+    when non-empty — so a card surfaces exactly the secondary info it actually
+    carries. Empty for notes whose notetype has no profile or no ``back_fields``.
+    """
+    profile = get_profile(note.notetype_name)
+    if profile is None:
+        return ()
+    by_name = dict(zip(note.field_names, note.fields, strict=False))
+    result: list[BackField] = []
+    for spec in profile.back_fields:
+        html = sanitize_back_html(by_name.get(spec.field_name, ""))
+        if html:
+            result.append(BackField(label=spec.label, html=html, tier=spec.tier))
+    return tuple(result)
+
+
+def extract_via_profile(note: AnkiNote) -> tuple[str, str, str, str, tuple[BackField, ...]] | None:
+    """Return ``(l2, translation, disambig, article, extras)`` via *note*'s profile.
 
     Returns ``None`` when the note's notetype has no profile — the caller then
     falls back to the positional/HTML heuristics. Reads each role's field *by
     name* (robust to the field's position), then applies the same single-field
     cleaners the heuristics use (``extract_l2`` / ``extract_translation``).
+    ``article`` is the gender/indefinite article (en/ei/et) for noun headwords;
+    ``""`` when the profile has no article field or the field is blank. ``extras``
+    are the rich back-of-card fields (IPA, inflections, dictionary entry…); ``()``
+    when the profile declares none.
     """
     profile = get_profile(note.notetype_name)
     if profile is None:
@@ -637,6 +678,7 @@ def extract_via_profile(note: AnkiNote) -> tuple[str, str, str] | None:
     by_name = dict(zip(note.field_names, note.fields, strict=False))
     l2 = extract_l2(by_name.get(profile.l2, ""))
     translation = extract_translation(by_name.get(profile.translation, ""))
-    # profile.disambig may be None (no disambig field) — dict.get(None, "") is "".
+    # profile.disambig/article may be None (no such field) — dict.get(None, "") is "".
     disambig = by_name.get(profile.disambig, "").strip()
-    return l2, translation, disambig
+    article = by_name.get(profile.article, "").strip()
+    return l2, translation, disambig, article, extract_back_fields(note)

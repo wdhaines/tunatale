@@ -846,4 +846,166 @@ describe("DrillCard", () => {
       expect(prompt?.classList.contains("revealed")).toBe(true);
     });
   });
+
+  describe("gender article + POS disambiguation", () => {
+    it("recognition front prefixes the headword with the gender article", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({ text: "orden", article: "en", translation: "order" });
+      const { container } = render(DrillCard, { item, direction: "recognition", onRate });
+      const mainText = container.querySelector(".main-text");
+      expect(mainText?.textContent).toBe("en orden");
+    });
+
+    it("shows the part of speech when the surface is ambiguous", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({ text: "fange", pos: "noun", article: "" });
+      const { container } = render(DrillCard, { item, direction: "recognition", onRate });
+      expect(container.querySelector(".main-text")?.textContent).toContain("fange");
+      expect(container.querySelector(".main-text")?.textContent).toContain("(noun)");
+    });
+
+    it("omits the POS when not provided (unambiguous surface)", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({ text: "bil", pos: "", article: "en" });
+      const { container } = render(DrillCard, { item, direction: "recognition", onRate });
+      const text = container.querySelector(".main-text")?.textContent ?? "";
+      expect(text).toBe("en bil");
+      expect(text).not.toContain("(");
+    });
+
+    it("production back prefixes the article and shows POS on the answer headword", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({
+        text: "fange",
+        article: "en",
+        pos: "noun",
+        card_type: "vocab",
+      });
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "production",
+        onRate,
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      const answer = container.querySelector(".answer-text.slovene");
+      expect(answer?.textContent).toBe("en fange (noun)");
+    });
+
+    it("renders a bare headword when neither article nor POS is set", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({ text: "hund", article: "", pos: "" });
+      const { container } = render(DrillCard, { item, direction: "recognition", onRate });
+      expect(container.querySelector(".main-text")?.textContent).toBe("hund");
+    });
+  });
+
+  describe("rich back-of-card extras", () => {
+    const withExtras = () =>
+      makeSRSItemDetail({
+        text: "være",
+        translation: "to be",
+        card_type: "vocab",
+        image_url: null,
+        extras: [
+          { label: "IPA", html: "/ˈʋæːɾə/", tier: "summary" },
+          { label: "Inflections", html: "<table><tr><td>er</td></tr></table>", tier: "details" },
+          { label: "Dictionary entry", html: "<h2>være</h2>", tier: "deep" },
+        ],
+      });
+
+    it("does not render extras before reveal", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const { container } = render(DrillCard, {
+        item: withExtras(),
+        direction: "recognition",
+        onRate,
+      });
+      expect(container.querySelector(".extras-summary")).toBeNull();
+      expect(container.querySelector(".extras-details")).toBeNull();
+    });
+
+    it("renders summary extras inline and tiered fields in a Details disclosure on reveal", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const { findByRole, container } = render(DrillCard, {
+        item: withExtras(),
+        direction: "recognition",
+        onRate,
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+
+      // Summary tier is always visible inline.
+      const summary = container.querySelector(".extras-summary");
+      expect(summary?.textContent).toContain("IPA");
+      expect(summary?.textContent).toContain("/ˈʋæːɾə/");
+
+      // details + deep tiers live in one collapsed <details> labelled "Details".
+      const details = container.querySelector("details.extras-details");
+      expect(details).toBeTruthy();
+      expect(details?.querySelector("summary")?.textContent).toBe("Details");
+      expect(container.innerHTML).toContain("<td>er</td>");
+
+      // The dictionary entry is nested behind its own disclosure inside Details.
+      const deep = container.querySelector("details.extra-deep");
+      expect(deep?.querySelector("summary")?.textContent).toBe("Dictionary entry");
+      expect(deep?.innerHTML).toContain("<h2>være</h2>");
+    });
+
+    it("renders extras on the production answer side too", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const { findByRole, container } = render(DrillCard, {
+        item: withExtras(),
+        direction: "production",
+        onRate,
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      expect(container.querySelector(".extras-summary")?.textContent).toContain("/ˈʋæːɾə/");
+      expect(container.querySelector("details.extra-deep")).toBeTruthy();
+    });
+
+    it("renders no Details disclosure when only summary extras exist", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({
+        text: "være",
+        extras: [{ label: "IPA", html: "/ˈʋæːɾə/", tier: "summary" }],
+      });
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      expect(container.querySelector(".extras-summary")).toBeTruthy();
+      expect(container.querySelector("details.extras-details")).toBeNull();
+    });
+
+    it("renders Details with no summary section when only collapsed extras exist", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({
+        text: "være",
+        extras: [{ label: "Inflections", html: "<i>er</i>", tier: "details" }],
+      });
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      expect(container.querySelector(".extras-summary")).toBeNull();
+      expect(container.querySelector("details.extras-details")).toBeTruthy();
+      expect(container.querySelector("details.extra-deep")).toBeNull();
+    });
+
+    it("renders nothing extra when the item has no extras (undefined)", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({ text: "være" });
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      expect(container.querySelector(".extras-summary")).toBeNull();
+      expect(container.querySelector("details.extras-details")).toBeNull();
+    });
+  });
 });

@@ -1132,6 +1132,7 @@ class TestNotetypeProfileExtraction:
             "Frequency index",
             "Norwegian word",
             "Word class",
+            "Article",
             "English translation",
         )
 
@@ -1139,8 +1140,23 @@ class TestNotetypeProfileExtraction:
         from app.anki.sqlite_reader import extract_via_profile
 
         note = self._note(tmp_path)[0]
-        # disambig comes from the 'Word class' field ('verb')
-        assert extract_via_profile(note) == ("være", "to be", "verb")
+        # disambig comes from 'Word class' ('verb'); article from 'Article' (blank — verb).
+        # extras is () — the minimal fixture carries none of the rich back fields.
+        assert extract_via_profile(note) == ("være", "to be", "verb", "", ())
+
+    def test_extract_via_profile_reads_article_for_nouns(self, tmp_path):
+        from app.anki.sqlite_reader import extract_via_profile
+        from tests.conftest import build_norwegian_anki_db
+
+        db_path = build_norwegian_anki_db(tmp_path, with_homographs=True)
+        conn = sqlite3.connect(str(db_path))
+        try:
+            notes = fetch_notes_for_deck(conn, find_deck_id(conn, self.DECK))
+        finally:
+            conn.close()
+        noun = next(n for n in notes if "noun" in n.fields)
+        # 'et løfte' (a promise) — article read from the 'Article' field by name
+        assert extract_via_profile(noun) == ("løfte", "promise", "noun", "et", ())
 
     def test_extract_via_profile_returns_none_without_profile(self):
         from app.anki.sqlite_reader import AnkiNote, extract_via_profile
@@ -1162,3 +1178,124 @@ class TestNotetypeProfileExtraction:
         assert records[0].l2_text == "være"
         assert records[0].translation == "to be"
         assert records[0].disambig_key == "verb"  # from 'Word class'
+
+
+# Field order matching the real "6000 Most Frequent Norwegian Words" notetype.
+_NORWEGIAN_FIELD_NAMES = (
+    "Frequency index",
+    "Norwegian word",
+    "Word class",
+    "Article",
+    "IPA",
+    "Audio, word (Forvo)",
+    "Audio, word (TTS)",
+    "Inflections",
+    "Gradbøying",
+    "English translation",
+    "General meaning",
+    "Context/nuance",
+    "Example sentences",
+    "Note",
+    "Dictionary entry",
+    "Audio, example (TTS)",
+    "[Audio, example (TTS), media container]",
+)
+
+
+def _full_norwegian_note(field_values: dict[str, str]):
+    """Build an AnkiNote on the 17-field Norwegian notetype from a name→value map."""
+    from app.anki.sqlite_reader import AnkiNote
+
+    fields = [field_values.get(name, "") for name in _NORWEGIAN_FIELD_NAMES]
+    return AnkiNote(
+        id=1,
+        anki_guid="g",
+        mid=1694414741634,
+        mod=0,
+        tags=[],
+        fields=fields,
+        notetype_name="6000 Most Frequent Norwegian Words",
+        field_names=_NORWEGIAN_FIELD_NAMES,
+    )
+
+
+class TestSanitizeBackHtml:
+    """`sanitize_back_html` strips unsafe/irrelevant markup, keeps the rest."""
+
+    def test_strips_style_block(self):
+        from app.anki.sqlite_reader import sanitize_back_html
+
+        html = '<style type="text/css">.tg{border:1px}</style><table class="tg"><tr><td>er</td></tr></table>'
+        out = sanitize_back_html(html)
+        assert "<style" not in out
+        assert "<table" in out and "er" in out
+
+    def test_strips_script_block(self):
+        from app.anki.sqlite_reader import sanitize_back_html
+
+        assert sanitize_back_html("<script>alert(1)</script>hi") == "hi"
+
+    def test_strips_sound_tags(self):
+        from app.anki.sqlite_reader import sanitize_back_html
+
+        assert sanitize_back_html("Hun er lærer [sound:azure-abc.mp3]") == "Hun er lærer"
+
+    def test_empty_when_only_noise(self):
+        from app.anki.sqlite_reader import sanitize_back_html
+
+        assert sanitize_back_html("  [sound:x.mp3]  ") == ""
+
+
+class TestExtractBackFields:
+    """`extract_back_fields` returns the profile-declared rich fields present."""
+
+    def test_returns_present_fields_in_profile_order_with_tiers(self):
+        from app.anki.sqlite_reader import extract_back_fields
+
+        note = _full_norwegian_note(
+            {
+                "Norwegian word": "være",
+                "IPA": "/ˈʋæːɾə/",
+                "General meaning": "Describe existence.",
+                "Inflections": '<table class="tg"><tr><td>er</td></tr></table>',
+                "Dictionary entry": "<h2>være</h2>",
+            }
+        )
+        extras = extract_back_fields(note)
+        # Order follows the profile declaration; only non-empty fields appear.
+        assert [(e.label, e.tier) for e in extras] == [
+            ("IPA", "summary"),
+            ("Meaning", "summary"),
+            ("Inflections", "details"),
+            ("Dictionary entry", "deep"),
+        ]
+        assert extras[0].html == "/ˈʋæːɾə/"
+
+    def test_sanitizes_field_html(self):
+        from app.anki.sqlite_reader import extract_back_fields
+
+        note = _full_norwegian_note({"Example sentences": "Hun er lærer [sound:x.mp3]"})
+        extras = extract_back_fields(note)
+        assert [e.label for e in extras] == ["Examples"]
+        assert extras[0].html == "Hun er lærer"
+
+    def test_empty_when_no_back_fields_present(self):
+        from app.anki.sqlite_reader import extract_back_fields
+
+        assert extract_back_fields(_full_norwegian_note({"Norwegian word": "være"})) == ()
+
+    def test_empty_for_unprofiled_notetype(self):
+        from app.anki.sqlite_reader import AnkiNote, extract_back_fields
+
+        note = AnkiNote(id=1, anki_guid="g", mid=999, mod=0, tags=[], fields=["x"], notetype_name="Unprofiled")
+        assert extract_back_fields(note) == ()
+
+    def test_extract_via_profile_includes_extras(self):
+        from app.anki.sqlite_reader import extract_via_profile
+
+        note = _full_norwegian_note(
+            {"Norwegian word": "være", "Word class": "verb", "English translation": "to be", "IPA": "/ˈʋæːɾə/"}
+        )
+        l2, translation, disambig, article, extras = extract_via_profile(note)
+        assert (l2, translation, disambig, article) == ("være", "to be", "verb", "")
+        assert [(e.label, e.html) for e in extras] == [("IPA", "/ˈʋæːɾə/")]

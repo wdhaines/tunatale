@@ -13,6 +13,20 @@
 		onRate: (rating: Rating, timeMs: number) => Promise<void>;
 	} = $props();
 
+	// The L2 headword shown to the learner: gender article prefixed (e.g. "en
+	// orden"), and the part of speech appended in parens ("fange (noun)") only
+	// when the backend flagged the surface as ambiguous. Empty article/pos
+	// collapse to the bare word, so non-gendered languages are unaffected.
+	const headword = $derived(`${item.article ? item.article + ' ' : ''}${item.text}`);
+	const posLabel = $derived(item.pos ? ` (${item.pos})` : '');
+
+	// Rich back-of-card fields, grouped by where they render on the answer:
+	// summary inline, details inside one collapsed disclosure, deep (the verbose
+	// dictionary entry) behind its own nested disclosure.
+	const summaryExtras = $derived((item.extras ?? []).filter((e) => e.tier === 'summary'));
+	const detailExtras = $derived((item.extras ?? []).filter((e) => e.tier === 'details'));
+	const deepExtras = $derived((item.extras ?? []).filter((e) => e.tier === 'deep'));
+
 	let revealed = $state(false);
 	let inFlight = $state(false);
 	let audioEl: HTMLAudioElement | undefined = $state();
@@ -124,6 +138,43 @@
 
 <svelte:window onkeydown={handleKeyDown} />
 
+{#snippet extraField(e: { label: string; html: string })}
+	<div class="extra-field">
+		<span class="extra-eyebrow">{e.label}</span>
+		<div class="extra-value">{@html e.html}</div>
+	</div>
+{/snippet}
+
+{#snippet backExtras()}
+	{#if summaryExtras.length > 0 || detailExtras.length > 0 || deepExtras.length > 0}
+		<div class="extras">
+			{#if summaryExtras.length > 0}
+				<div class="extras-summary">
+					{#each summaryExtras as e (e.label)}
+						{@render extraField(e)}
+					{/each}
+				</div>
+			{/if}
+			{#if detailExtras.length > 0 || deepExtras.length > 0}
+				<details class="extras-details">
+					<summary><span class="disc-label">Details</span></summary>
+					<div class="extras-body">
+						{#each detailExtras as e (e.label)}
+							{@render extraField(e)}
+						{/each}
+						{#each deepExtras as e (e.label)}
+							<details class="extra-deep">
+								<summary><span class="disc-label">{e.label}</span></summary>
+								<div class="extra-value extra-dict">{@html e.html}</div>
+							</details>
+						{/each}
+					</div>
+				</details>
+			{/if}
+		</div>
+	{/if}
+{/snippet}
+
 <div class="drill-card">
 	<div class="prompt" class:revealed>
 		{#if direction === 'recognition'}
@@ -131,7 +182,7 @@
 				<audio bind:this={audioEl} src={item.audio_url} autoplay preload="auto"></audio>
 				<button class="play-btn" onclick={playAudio} aria-label="Play audio">▶</button>
 			{/if}
-			<p class="main-text slovene">{item.text}</p>
+			<p class="main-text slovene">{headword}{posLabel}</p>
 		{:else if direction === 'production'}
 			{#if item.card_type === 'cloze' && item.source_sentence}
 				<p class="main-text">{@html clozePromptHtml()}</p>
@@ -157,6 +208,7 @@
 				{#if item.note}
 					<div class="note">{@html item.note}</div>
 				{/if}
+				{@render backExtras()}
 			{:else if direction === 'production'}
 				{#if item.card_type === 'cloze' && item.source_sentence}
 					{#if item.audio_url}
@@ -176,7 +228,7 @@
 						<audio bind:this={audioEl} src={item.audio_url} autoplay preload="auto"></audio>
 						<button class="play-btn" onclick={playAudio} aria-label="Play audio">▶</button>
 					{/if}
-					<p class="answer-text slovene">{item.text}</p>
+					<p class="answer-text slovene">{headword}{posLabel}</p>
 				{/if}
 				<p class="answer-text english">{item.translation}</p>
 				{#if item.grammar}
@@ -185,6 +237,7 @@
 				{#if item.note}
 					<div class="note">{@html item.note}</div>
 				{/if}
+				{@render backExtras()}
 			{/if}
 		</div>
 		<div class="ratings">
@@ -273,6 +326,122 @@
 		font-size: 0.85rem;
 		color: var(--color-muted);
 		margin-bottom: 0.75rem;
+	}
+	/* Rich back-of-card fields (IPA, inflections, dictionary entry…) live in a
+	   contained, tinted "reference" panel. The fill + border set it apart from
+	   the centered answer as a clearly secondary layer, while text inside is
+	   left-aligned so definitions, tables and lists stay readable (Anki centers
+	   these, which reads poorly for prose). */
+	.extras {
+		margin: 1rem auto 0;
+		padding: 0.7rem 0.85rem;
+		background: var(--color-surface-2);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		text-align: left;
+	}
+	.extra-field {
+		margin-bottom: 0.6rem;
+	}
+	.extra-field:last-child {
+		margin-bottom: 0;
+	}
+	/* Tiny eyebrow label above each field — structure without shouting. */
+	.extra-eyebrow {
+		display: block;
+		font-size: 0.66rem;
+		font-weight: 700;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: var(--color-muted);
+		margin-bottom: 0.15rem;
+	}
+	.extra-value {
+		font-size: 0.95rem;
+		line-height: 1.5;
+		color: var(--color-text);
+	}
+	/* Disclosures: understated toggles with a chevron that rotates when open. */
+	.extras-summary + .extras-details {
+		margin-top: 0.7rem;
+		border-top: 1px solid var(--color-border);
+		padding-top: 0.6rem;
+	}
+	.extras-details > summary,
+	.extra-deep > summary {
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		list-style: none;
+	}
+	.extras-details > summary::-webkit-details-marker,
+	.extra-deep > summary::-webkit-details-marker {
+		display: none;
+	}
+	.extras-details > summary::before,
+	.extra-deep > summary::before {
+		content: '▸';
+		color: var(--color-primary);
+		font-size: 1rem;
+		line-height: 1;
+		transition: transform 0.15s ease;
+	}
+	.extras-details[open] > summary::before,
+	.extra-deep[open] > summary::before {
+		transform: rotate(90deg);
+	}
+	.disc-label {
+		font-size: 0.76rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--color-primary);
+	}
+	.extras-details > summary:hover .disc-label,
+	.extra-deep > summary:hover .disc-label {
+		text-decoration: underline;
+	}
+	.extras-body {
+		margin-top: 0.7rem;
+	}
+	.extra-deep {
+		margin-top: 0.6rem;
+	}
+	/* The verbose dictionary entry expands in full when opened — it's already
+	   triple-gated (reveal → Details → Dictionary entry), so an inner scroll
+	   would just hide content behind an undiscoverable affordance. */
+	.extra-dict {
+		margin-top: 0.5rem;
+	}
+	/* Anki ships inflection/comparison fields as small bordered tables; restyle
+	   them (and headings/lists in the dictionary entry) now that the inline
+	   <style> Anki carried is stripped. */
+	.extra-value :global(table) {
+		border-collapse: collapse;
+		margin: 0.3rem 0;
+	}
+	.extra-value :global(td),
+	.extra-value :global(th) {
+		border: 1px solid var(--color-border);
+		padding: 0.2rem 0.5rem;
+		text-align: center;
+	}
+	.extra-value :global(h2) {
+		font-size: 1.05rem;
+		margin: 0.4rem 0 0.2rem;
+	}
+	.extra-value :global(h3) {
+		font-size: 0.9rem;
+		margin: 0.5rem 0 0.2rem;
+	}
+	.extra-value :global(p) {
+		margin: 0.3rem 0;
+	}
+	.extra-value :global(ul),
+	.extra-value :global(ol) {
+		padding-left: 1.2rem;
+		margin: 0.25rem 0;
 	}
 	:global(.cloze-answer) {
 		background: var(--color-highlight, #fff3cd);

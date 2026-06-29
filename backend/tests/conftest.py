@@ -360,15 +360,16 @@ def build_norwegian_anki_db(
     conn.execute(
         "INSERT INTO notetypes VALUES (?, ?, 0, 0, NULL)", (norwegian_mid, "6000 Most Frequent Norwegian Words")
     )
-    for ord_, name in enumerate(["Frequency index", "Norwegian word", "Word class", "English translation"]):
+    for ord_, name in enumerate(["Frequency index", "Norwegian word", "Word class", "Article", "English translation"]):
         conn.execute("INSERT INTO fields VALUES (?, ?, ?, NULL)", (norwegian_mid, ord_, name))
 
     decks_json = json.dumps({"1": {"id": 1, "name": "Default"}, str(deck_id): {"id": deck_id, "name": deck_name}})
     conn.execute("INSERT INTO col VALUES (1,1704067200,0,0,11,0,0,0,'{}','{}',?,'{}','{}')", (decks_json,))
 
-    # flds: Frequency index | Norwegian word | Word class | English translation
+    # flds: Frequency index | Norwegian word | Word class | Article | English translation
+    # (være is a verb → blank Article)
     conn.execute(
-        "INSERT INTO notes VALUES (3001, 'no_guid_1', ?, 0, 0, '', '1\x1fvære\x1fverb\x1fto be', 'være', 0, 0, '')",
+        "INSERT INTO notes VALUES (3001, 'no_guid_1', ?, 0, 0, '', '1\x1fvære\x1fverb\x1f\x1fto be', 'være', 0, 0, '')",
         (norwegian_mid,),
     )
     # Single recognition card (ord=0), with FSRS memory state.
@@ -381,12 +382,12 @@ def build_norwegian_anki_db(
         # Same surface "løfte", different Word class → must NOT merge.
         conn.execute(
             "INSERT INTO notes VALUES (3002, 'no_guid_2', ?, 0, 0, '', "
-            "'1534\x1fløfte\x1fnoun\x1fpromise', 'løfte', 0, 0, '')",
+            "'1534\x1fløfte\x1fnoun\x1fet\x1fpromise', 'løfte', 0, 0, '')",
             (norwegian_mid,),
         )
         conn.execute(
             "INSERT INTO notes VALUES (3003, 'no_guid_3', ?, 0, 0, '', "
-            "'1535\x1fløfte\x1fverb\x1flift', 'løfte', 0, 0, '')",
+            "'1535\x1fløfte\x1fverb\x1f\x1flift', 'løfte', 0, 0, '')",
             (norwegian_mid,),
         )
         conn.execute(

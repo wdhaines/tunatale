@@ -198,6 +198,25 @@ export interface SRSItemDetail {
   word_audio_url?: string | null;
   grammar?: string;
   note?: string;
+  // Gender/indefinite article (en/ei/et) — rendered as a display-time prefix on
+  // the headword (e.g. "en orden"). Empty for non-nouns / languages without it.
+  article?: string;
+  // Part of speech, present only when the surface is ambiguous across word
+  // classes (e.g. "fange" noun vs verb). Empty otherwise.
+  pos?: string;
+  // Rich back-of-card fields sourced from the Anki note (IPA, inflections,
+  // examples, dictionary entry…). Each carries pre-sanitized HTML and a tier
+  // controlling where it renders on the answer side. Absent/empty for cards
+  // without any.
+  extras?: BackField[];
+}
+
+export interface BackField {
+  label: string;
+  html: string;
+  // "summary" → always visible; "details" → collapsed disclosure; "deep" → its
+  // own nested disclosure (the verbose dictionary entry).
+  tier: "summary" | "details" | "deep";
 }
 
 export interface SRSItemsPage {

@@ -25,6 +25,7 @@ from app.anki.sync_common import (
     extract_cloze_sentence_translation,
     extract_cloze_translation,
 )
+from app.models.syntactic_unit import BackField
 
 
 class OfflineReader:
@@ -106,14 +107,18 @@ class OfflineReader:
                 note_text = extract_cloze_note(back_extra)
                 l2_text = extract_l2_from_fields(note.fields)
                 disambig_key = ""
+                article = ""
+                extras: tuple[BackField, ...] = ()
             else:
                 profile_result = extract_via_profile(note)
                 if profile_result is not None:
-                    l2_text, translation, disambig_key = profile_result
+                    l2_text, translation, disambig_key, article, extras = profile_result
                 else:
                     l2_text = extract_l2_from_fields(note.fields)
                     translation = extract_translation(note.fields[1]) if len(note.fields) > 1 else ""
                     disambig_key = extract_disambig_from_fields(note.fields)
+                    article = ""
+                    extras = ()
                 note_text = ""
             card_records = [
                 CardRecord(
@@ -153,6 +158,8 @@ class OfflineReader:
                     sentence_translation=sentence_translation if is_cloze else "",
                     note=note_text,
                     disambig_key=disambig_key,
+                    article=article,
+                    extras=extras,
                     mod=note.mod,
                     cards=card_records,
                     is_cloze=is_cloze,

@@ -25,7 +25,7 @@ from app.models.srs_item import (
     SRSItem,
     SRSState,
 )
-from app.models.syntactic_unit import SyntacticUnit
+from app.models.syntactic_unit import SyntacticUnit, deserialize_extras, serialize_extras
 from app.srs.migrations import migrate
 
 
@@ -348,9 +348,9 @@ class SRSDatabase:
                     """
                     INSERT INTO collocations
                         (text, translation, language_code, word_count, unit_difficulty,
-                         source, corpus_frequency, lemma, guid, disambig_key, grammar, note,
+                         source, corpus_frequency, lemma, guid, disambig_key, article, extras, grammar, note,
                          source_sentence, sentence_translation, source_lesson_id, source_line_index, card_type)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         unit.text,
@@ -363,6 +363,8 @@ class SRSDatabase:
                         unit.lemma,
                         guid,
                         disambig,
+                        unit.article,
+                        serialize_extras(unit.extras),
                         unit.grammar,
                         unit.note,
                         unit.source_sentence,
@@ -571,6 +573,8 @@ class SRSDatabase:
             lemma=row["lemma"],
             guid=row["guid"],
             disambig_key=row["disambig_key"],
+            article=row["article"] if "article" in row.keys() else "",  # noqa: SIM118
+            extras=deserialize_extras(row["extras"] if "extras" in row.keys() else None),  # noqa: SIM118
             grammar=row["grammar"],
             note=row["note"],
             source_sentence=row["source_sentence"],
@@ -623,6 +627,39 @@ class SRSDatabase:
         with self._get_conn() as conn:
             rows = conn.execute("SELECT id, anki_note_id FROM collocations WHERE anki_note_id IS NOT NULL").fetchall()
             return {row["anki_note_id"]: row["id"] for row in rows}
+
+    def set_article(self, coll_id: int, article: str) -> None:
+        """Set the gender/indefinite article (en/ei/et) on a collocation.
+
+        Display-only: the headword ``text`` is untouched, so the GUID is stable.
+        TT-local; no USN, no sync, no Anki write. Used by the article backfill and
+        the Anki→TT reverse-import to keep existing rows current.
+        """
+        with self._get_conn() as conn:
+            conn.execute("UPDATE collocations SET article = ? WHERE id = ?", (article, coll_id))
+
+    def get_ambiguous_surfaces(self, language_code: str) -> set[str]:
+        """Return casefolded surfaces sharing >=2 distinct parts of speech.
+
+        A surface is "ambiguous" when two vocab collocations spell it the same
+        but carry different ``disambig_key`` POS (e.g. "fange" noun vs verb) —
+        the cards where the POS earns its keep as a disambiguator. Blank POS and
+        ``morph:`` cloze keys don't count; grouping is by Python ``casefold`` so
+        Norwegian æ/ø/å fold correctly (SQLite ``LOWER`` is ASCII-only).
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT text, disambig_key FROM collocations
+                WHERE language_code = ? AND card_type = 'vocab'
+                  AND disambig_key != '' AND disambig_key NOT LIKE 'morph:%'
+                """,
+                (language_code,),
+            ).fetchall()
+        by_surface: dict[str, set[str]] = {}
+        for row in rows:
+            by_surface.setdefault(row["text"].casefold(), set()).add(row["disambig_key"])
+        return {surface for surface, pos_set in by_surface.items() if len(pos_set) >= 2}
 
     def get_collocation_by_lemma(self, lemma: str) -> SRSItem | None:
         with self._get_conn() as conn:
@@ -1487,9 +1524,9 @@ class SRSDatabase:
                     INSERT INTO collocations
                         (text, translation, language_code, word_count, unit_difficulty,
                          source, corpus_frequency, lemma, guid, anki_note_id, disambig_key,
-                         grammar, note, source_sentence, sentence_translation,
+                         article, extras, grammar, note, source_sentence, sentence_translation,
                          source_lesson_id, source_line_index, card_type)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         unit.text,
@@ -1503,6 +1540,8 @@ class SRSDatabase:
                         guid,
                         anki_note_id,
                         unit.disambig_key,
+                        unit.article,
+                        serialize_extras(unit.extras),
                         unit.grammar,
                         unit.note,
                         unit.source_sentence,
@@ -2394,15 +2433,30 @@ class SRSDatabase:
         note: str,
         sentence_translation: str = "",
         dirty_fields_str: str,
+        article: str | None = None,
+        extras: str | None = None,
     ) -> None:
-        """Update translation, note, sentence_translation, and dirty_fields after a sync pull."""
+        """Update translation, note, sentence_translation, and dirty_fields after a sync pull.
+
+        ``article`` and ``extras`` are Anki-sourced display data (never edited in
+        TT) — when provided each is set unconditionally (Anki wins). ``None``
+        leaves that stored column untouched. ``extras`` is the serialized JSON
+        string (see ``serialize_extras``), not a ``BackField`` tuple.
+        """
         now_iso = datetime.now(UTC).isoformat()
+        # Always-written columns, then any Anki-sourced display columns that were
+        # actually provided (None ⇒ leave untouched, so we don't clobber on a sync
+        # whose reader didn't supply that field).
+        set_cols = ["translation = ?", "note = ?", "sentence_translation = ?"]
+        params: list[object] = [translation, note, sentence_translation]
+        for col, value in (("article", article), ("extras", extras)):
+            if value is not None:
+                set_cols.append(f"{col} = ?")
+                params.append(value)
+        set_cols += ["dirty_fields = ?", "last_synced_at = ?", "updated_at = ?"]
+        params += [dirty_fields_str, now_iso, now_iso, guid]
         with self._get_conn() as conn:
-            conn.execute(
-                "UPDATE collocations SET translation = ?, note = ?, sentence_translation = ?, "
-                "dirty_fields = ?, last_synced_at = ?, updated_at = ? WHERE guid = ?",
-                (translation, note, sentence_translation, dirty_fields_str, now_iso, now_iso, guid),
-            )
+            conn.execute(f"UPDATE collocations SET {', '.join(set_cols)} WHERE guid = ?", params)
             self._commit(conn)
 
     def list_items_without_anki_note(self) -> list[tuple[str, SRSItem, int]]:

@@ -460,6 +460,112 @@ class TestQueueStats:
         assert "cap_source" in data
 
 
+def _add_review_due_with_pos(db, text, today, *, pos="", article="", lang="sl"):
+    """Add a review-due collocation carrying a part of speech and/or gender article."""
+    from app.models.syntactic_unit import SyntacticUnit
+
+    unit = SyntacticUnit(
+        text=text, translation=text, word_count=1, difficulty=1, source="test", disambig_key=pos, article=article
+    )
+    db.add_collocation(unit, language_code=lang)
+    item = db.get_collocation(text)
+    for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
+        db.update_direction(
+            item.guid,
+            direction,
+            DirectionState(
+                direction=direction,
+                due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
+                stability=5.0,
+                difficulty=4.0,
+                reps=5,
+                lapses=0,
+                state=SRSState.REVIEW,
+            ),
+        )
+
+
+class TestReviewQueueArticleAndPos:
+    """/review-queue serializes the gender article (always) and the POS (only when ambiguous)."""
+
+    async def test_article_serialized_and_pos_hidden_when_unambiguous(self, api_app_state):
+        db = api_app_state
+        today = date.today()
+        _add_review_due_with_pos(db, "orden", today, pos="noun", article="en")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            data = (await client.get("/api/srs/review-queue?session_start=1")).json()
+
+        orden = next(q for q in data["queue"] if q["text"] == "orden")
+        assert orden["article"] == "en"
+        assert orden["pos"] == ""  # unambiguous surface → POS withheld
+
+    async def test_pos_shown_only_for_ambiguous_surface(self, api_app_state):
+        db = api_app_state
+        today = date.today()
+        _add_review_due_with_pos(db, "fange", today, pos="noun")
+        # Second "fange" with a different POS makes the surface ambiguous. It shares
+        # the same guid-less text but a distinct disambig_key → separate collocation.
+        _add_review_due_with_pos(db, "fange", today, pos="verb")
+        _add_review_due_with_pos(db, "bil", today, pos="noun", article="en")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            data = (await client.get("/api/srs/review-queue?session_start=1")).json()
+
+        fange = [q for q in data["queue"] if q["text"] == "fange"]
+        bil = next(q for q in data["queue"] if q["text"] == "bil")
+        assert {q["pos"] for q in fange} == {"noun", "verb"}  # ambiguous → POS shown
+        assert bil["pos"] == ""  # unambiguous noun → no POS, but article still set
+        assert bil["article"] == "en"
+
+    async def test_extras_serialized_on_review_queue(self, api_app_state):
+        """Rich back-of-card fields are emitted as a list of {label, html, tier}."""
+        from app.models.syntactic_unit import BackField, SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        extras = (
+            BackField(label="IPA", html="/bɑŋkɑ/", tier="summary"),
+            BackField(label="Dictionary entry", html="<h2>banka</h2>", tier="deep"),
+        )
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="test", extras=extras)
+        db.add_collocation(unit, language_code="no")
+        item = db.get_collocation("banka")
+        for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
+            db.update_direction(
+                item.guid,
+                direction,
+                DirectionState(
+                    direction=direction,
+                    due_at=datetime.combine(today, time(4, 0), tzinfo=UTC),
+                    stability=5.0,
+                    difficulty=4.0,
+                    reps=5,
+                    lapses=0,
+                    state=SRSState.REVIEW,
+                ),
+            )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            data = (await client.get("/api/srs/review-queue?session_start=1")).json()
+
+        banka = next(q for q in data["queue"] if q["text"] == "banka")
+        assert banka["extras"] == [
+            {"label": "IPA", "html": "/bɑŋkɑ/", "tier": "summary"},
+            {"label": "Dictionary entry", "html": "<h2>banka</h2>", "tier": "deep"},
+        ]
+
+    async def test_extras_empty_list_when_absent(self, api_app_state):
+        db = api_app_state
+        today = date.today()
+        _add_review_due_with_pos(db, "orden", today, pos="noun", article="en")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            data = (await client.get("/api/srs/review-queue?session_start=1")).json()
+
+        assert next(q for q in data["queue"] if q["text"] == "orden")["extras"] == []
+
+
 class TestReviewQueue:
     async def test_returns_empty_queue_when_nothing_due(self, api_app_state):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

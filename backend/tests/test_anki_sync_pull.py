@@ -68,9 +68,9 @@ def _make_tt_db() -> SRSDatabase:
     return SRSDatabase(":memory:")
 
 
-def _add_banka(db: SRSDatabase) -> str:
+def _add_banka(db: SRSDatabase, extras=()) -> str:
     """Insert banka/bank; return its computed GUID."""
-    unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus")
+    unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus", extras=extras)
     db.add_collocation(unit)
     item = db.get_collocation("banka")
     assert item is not None
@@ -515,6 +515,75 @@ class TestSyncPull:
         assert report.notes_updated == 1
         item = db.get_collocation_by_guid(guid)
         assert item.syntactic_unit.source_sentence_translation == "Anki sentence translation"
+
+    def test_sync_pull_backfills_article_from_anki(self):
+        """Anki's gender article heals onto the existing TT row (the backfill path).
+
+        A row imported before the article feature has article='' locally; the
+        first sync that sees Anki's 'en' writes it and counts as a note update.
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        db.set_anki_ids(guid, note_id=9001, card_ids={Direction.RECOGNITION: 90010})
+        assert db.get_collocation_by_guid(guid).syntactic_unit.article == ""
+
+        cards = [make_card_record(anki_card_id=90010, ord=0, queue=2, reps=3, stability=5.0, difficulty=4.5)]
+        records = [make_note_record(anki_guid=guid, cards=cards, article="en")]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert report.notes_updated == 1
+        assert db.get_collocation_by_guid(guid).syntactic_unit.article == "en"
+
+    def test_sync_pull_no_article_change_is_not_a_note_update(self):
+        """When Anki's article already matches TT's, no spurious note update fires."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        db.set_anki_ids(guid, note_id=9001, card_ids={Direction.RECOGNITION: 90010})
+        db.set_article(db.get_collocation_id_by_guid(guid), "en")
+
+        cards = [make_card_record(anki_card_id=90010, ord=0, queue=2, reps=3, stability=5.0, difficulty=4.5)]
+        records = [make_note_record(anki_guid=guid, cards=cards, article="en")]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert report.notes_updated == 0
+        assert db.get_collocation_by_guid(guid).syntactic_unit.article == "en"
+
+    def test_sync_pull_backfills_extras_from_anki(self):
+        """Anki's rich back-of-card fields heal onto the existing TT row.
+
+        A row imported before the extras feature has no extras locally; the first
+        sync that sees Anki's fields writes them and counts as a note update.
+        """
+        from app.models.syntactic_unit import BackField
+
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        db.set_anki_ids(guid, note_id=9001, card_ids={Direction.RECOGNITION: 90010})
+        assert db.get_collocation_by_guid(guid).syntactic_unit.extras == ()
+
+        anki_extras = (BackField(label="IPA", html="/bɑŋkɑ/", tier="summary"),)
+        cards = [make_card_record(anki_card_id=90010, ord=0, queue=2, reps=3, stability=5.0, difficulty=4.5)]
+        records = [make_note_record(anki_guid=guid, cards=cards, extras=anki_extras)]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert report.notes_updated == 1
+        assert db.get_collocation_by_guid(guid).syntactic_unit.extras == anki_extras
+
+    def test_sync_pull_no_extras_change_is_not_a_note_update(self):
+        """When Anki's extras already match TT's, no spurious note update fires."""
+        from app.models.syntactic_unit import BackField
+
+        existing = (BackField(label="IPA", html="/bɑŋkɑ/", tier="summary"),)
+        db = _make_tt_db()
+        guid = _add_banka(db, extras=existing)
+        db.set_anki_ids(guid, note_id=9001, card_ids={Direction.RECOGNITION: 90010})
+
+        cards = [make_card_record(anki_card_id=90010, ord=0, queue=2, reps=3, stability=5.0, difficulty=4.5)]
+        records = [make_note_record(anki_guid=guid, cards=cards, extras=existing)]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert report.notes_updated == 0
+        assert db.get_collocation_by_guid(guid).syntactic_unit.extras == existing
 
     def test_sync_pull_vocab_ord_0_still_maps_to_recognition(self):
         """Vocab note with ord=0 card still maps to RECOGNITION."""

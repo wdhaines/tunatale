@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 32
+        assert CURRENT_VERSION == 34
 
     def test_migrates_v27_to_v28_adds_lemma_key_column(self, tmp_path):
         """v28 adds collocations.lemma_key (space-joined lemma tuple for span matching)."""
@@ -1968,3 +1968,89 @@ class TestMigrateV31ToV32:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(collocation_directions)").fetchall()}
         assert "stability_replayed" not in cols
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 32
+
+
+class TestMigrateV32ToV33:
+    """Tests for v32→v33 (add ``collocations.article`` for the gender article)."""
+
+    def _make_v32_conn(self):
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            CREATE TABLE collocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT UNIQUE NOT NULL,
+                disambig_key TEXT NOT NULL DEFAULT ''
+            )
+        """)
+        conn.execute("PRAGMA user_version = 32")
+        conn.commit()
+        return conn
+
+    def test_adds_article_column_defaulting_to_empty(self):
+        from app.srs.migrations import migrate_v32_to_v33
+
+        conn = self._make_v32_conn()
+        conn.execute("INSERT INTO collocations (text) VALUES ('orden')")
+        conn.commit()
+        migrate_v32_to_v33(conn)
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocations)").fetchall()}
+        assert "article" in cols
+        assert conn.execute("SELECT article FROM collocations WHERE text='orden'").fetchone()[0] == ""
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 33
+
+    def test_idempotent_v32_to_v33(self):
+        from app.srs.migrations import migrate_v32_to_v33
+
+        conn = self._make_v32_conn()
+        migrate_v32_to_v33(conn)
+        migrate_v32_to_v33(conn)  # second call exercises the column-already-exists branch
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocations)").fetchall()}
+        assert "article" in cols
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 33
+
+
+class TestMigrateV33ToV34:
+    """Tests for v33→v34 (add ``collocations.extras`` for rich back-of-card fields)."""
+
+    def _make_v33_conn(self):
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            CREATE TABLE collocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT UNIQUE NOT NULL,
+                article TEXT NOT NULL DEFAULT ''
+            )
+        """)
+        conn.execute("PRAGMA user_version = 33")
+        conn.commit()
+        return conn
+
+    def test_adds_extras_column_defaulting_to_empty(self):
+        from app.srs.migrations import migrate_v33_to_v34
+
+        conn = self._make_v33_conn()
+        conn.execute("INSERT INTO collocations (text) VALUES ('være')")
+        conn.commit()
+        migrate_v33_to_v34(conn)
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocations)").fetchall()}
+        assert "extras" in cols
+        assert conn.execute("SELECT extras FROM collocations WHERE text='være'").fetchone()[0] == ""
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 34
+
+    def test_idempotent_v33_to_v34(self):
+        from app.srs.migrations import migrate_v33_to_v34
+
+        conn = self._make_v33_conn()
+        migrate_v33_to_v34(conn)
+        migrate_v33_to_v34(conn)  # second call exercises the column-already-exists branch
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocations)").fetchall()}
+        assert "extras" in cols
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 34

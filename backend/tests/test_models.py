@@ -92,6 +92,52 @@ class TestSyntacticUnit:
         unit = SyntacticUnit(text="Banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
         assert unit.lemma == "banka"
 
+    def test_extras_default_empty(self):
+        unit = SyntacticUnit(text="x", translation="y", word_count=1, difficulty=1, source="corpus")
+        assert unit.extras == ()
+
+
+class TestBackFieldSerialization:
+    """`serialize_extras` / `deserialize_extras` round-trip + tolerance."""
+
+    def test_round_trip(self):
+        from app.models.syntactic_unit import BackField, deserialize_extras, serialize_extras
+
+        extras = (
+            BackField(label="IPA", html="/ˈʋæːɾə/", tier="summary"),
+            BackField(label="Dictionary entry", html="<h2>være</h2>", tier="deep"),
+        )
+        assert deserialize_extras(serialize_extras(extras)) == extras
+
+    def test_empty_serializes_to_blank_string(self):
+        from app.models.syntactic_unit import serialize_extras
+
+        assert serialize_extras(()) == ""
+
+    @pytest.mark.parametrize("raw", ["", None])
+    def test_deserialize_blank_yields_empty(self, raw):
+        from app.models.syntactic_unit import deserialize_extras
+
+        assert deserialize_extras(raw) == ()
+
+    def test_deserialize_malformed_json_yields_empty(self):
+        from app.models.syntactic_unit import deserialize_extras
+
+        assert deserialize_extras("{not json") == ()
+
+    def test_deserialize_non_list_yields_empty(self):
+        from app.models.syntactic_unit import deserialize_extras
+
+        assert deserialize_extras('{"label": "x"}') == ()
+
+    def test_deserialize_skips_malformed_entries_and_defaults_tier(self):
+        from app.models.syntactic_unit import BackField, deserialize_extras
+
+        # One good entry (tier omitted → defaults to "details"); a non-dict and a
+        # dict missing required keys are both dropped.
+        raw = '[{"label": "Note", "html": "n"}, "junk", {"label": "x"}]'
+        assert deserialize_extras(raw) == (BackField(label="Note", html="n", tier="details"),)
+
 
 class TestLanguage:
     """Tests for Language factory methods and voice map structure."""

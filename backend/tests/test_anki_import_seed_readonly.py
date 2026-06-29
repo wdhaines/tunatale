@@ -797,7 +797,7 @@ class TestLanguageCode:
 
     def test_norwegian_notetype_extracts_by_field_name_not_position(self, tmp_path):
         """The Norwegian profile reads L2 from 'Norwegian word' (field idx 1) and the
-        gloss from 'English translation' (field idx 3) — proving name-based extraction."""
+        gloss from 'English translation' (field idx 4) — proving name-based extraction."""
         from tests.conftest import build_norwegian_anki_db
 
         db_path = build_norwegian_anki_db(tmp_path)
@@ -839,11 +839,13 @@ class TestLanguageCode:
         with closing(sqlite3.connect(str(tmp_path / "tunatale_no.db"))) as db:
             db.row_factory = sqlite3.Row
             rows = db.execute(
-                "SELECT translation, disambig_key FROM collocations WHERE text='løfte' ORDER BY disambig_key"
+                "SELECT translation, disambig_key, article FROM collocations WHERE text='løfte' ORDER BY disambig_key"
             ).fetchall()
         assert len(rows) == 2, f"homographs collapsed: {[dict(r) for r in rows]}"
         assert {r["translation"] for r in rows} == {"promise", "lift"}
         assert {r["disambig_key"] for r in rows} == {"noun", "verb"}
+        # Article imported from the 'Article' field: 'et' for the noun, blank for the verb.
+        assert {(r["disambig_key"], r["article"]) for r in rows} == {("noun", "et"), ("verb", "")}
 
 
 class TestCLI:

@@ -110,6 +110,7 @@ def _item_to_dict(
     language_code: str,
     image_url: str | None = None,
     audio_url: str | None = None,
+    ambiguous_surfaces: set[str] | None = None,
 ) -> dict:
     """Serialize an SRSItem to a response dict.
 
@@ -150,6 +151,22 @@ def _item_to_dict(
         "audio_url": audio_url,
         "grammar": item.syntactic_unit.grammar,
         "note": item.syntactic_unit.note,
+        # Gender article (en/ei/et) — display-time prefix on the headword.
+        "article": item.syntactic_unit.article,
+        # Rich back-of-card fields (IPA, inflections, dictionary entry…), each
+        # tagged with where it renders: summary (always visible), details
+        # (collapsed disclosure), or deep (its own nested disclosure). Empty list
+        # for cards without any.
+        "extras": [{"label": e.label, "html": e.html, "tier": e.tier} for e in item.syntactic_unit.extras],
+        # Part of speech, shown ONLY when the surface is ambiguous across POS
+        # (e.g. "fange" noun vs verb). Empty otherwise, so unambiguous cards
+        # stay uncluttered. ``ambiguous_surfaces`` is None on endpoints that
+        # don't compute it (single-item views) → no POS shown there.
+        "pos": (
+            item.syntactic_unit.disambig_key
+            if ambiguous_surfaces is not None and item.syntactic_unit.text.casefold() in ambiguous_surfaces
+            else ""
+        ),
     }
 
 
@@ -1290,7 +1307,14 @@ def _spread_mix(
     return result
 
 
-def _queue_item_to_dict(row_id: int, item: SRSItem, lang: str, direction: Direction, db) -> dict:
+def _queue_item_to_dict(
+    row_id: int,
+    item: SRSItem,
+    lang: str,
+    direction: Direction,
+    db,
+    ambiguous_surfaces: set[str] | None = None,
+) -> dict:
     img = db.get_image_filename(row_id)
     image_url = f"/api/srs/media/{img}" if img else None
     if item.syntactic_unit.card_type == "cloze":
@@ -1302,7 +1326,7 @@ def _queue_item_to_dict(row_id: int, item: SRSItem, lang: str, direction: Direct
         aud = db.get_audio_filename(row_id)
         audio_url = f"/api/srs/media/{aud}" if aud else None
         word_audio_url = None
-    base = _item_to_dict(row_id, item, lang, image_url, audio_url)
+    base = _item_to_dict(row_id, item, lang, image_url, audio_url, ambiguous_surfaces)
     base["direction"] = direction.value
     base["word_audio_url"] = word_audio_url
     # `_item_to_dict` populates flat fields from recognition (or production for
@@ -1712,4 +1736,14 @@ async def get_review_queue(request: Request, response: Response, session_start: 
     #    then pending learning (cards waiting on their step timer).
     ordered = ready_learning + ordered_main + pending_learning
 
-    return {"queue": [_queue_item_to_dict(*t, db) for t in ordered]}
+    # POS is a disambiguator: show it only where a surface spans >=2 word classes.
+    # Computed once per language present in the queue, then passed per item.
+    ambiguous_by_lang: dict[str, set[str]] = {}
+    for _rid, _item, qlang, _dir in ordered:
+        if qlang not in ambiguous_by_lang:
+            ambiguous_by_lang[qlang] = db.get_ambiguous_surfaces(qlang)
+    return {
+        "queue": [
+            _queue_item_to_dict(rid, it, qlang, qdir, db, ambiguous_by_lang[qlang]) for rid, it, qlang, qdir in ordered
+        ]
+    }

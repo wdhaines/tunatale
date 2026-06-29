@@ -13,7 +13,7 @@ from datetime import date
 from app.common.guid import compute_guid
 from app.srs.function_words import format_morphology_hint
 
-CURRENT_VERSION = 32
+CURRENT_VERSION = 34
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -946,6 +946,34 @@ def migrate_v31_to_v32(conn: sqlite3.Connection) -> None:
     _set_version(conn, 32)
 
 
+def migrate_v32_to_v33(conn: sqlite3.Connection) -> None:
+    """Add ``collocations.article`` — the gender/indefinite article (en/ei/et).
+
+    Sourced from the Anki note's "Article" field (the "6000 Most Frequent
+    Norwegian Words" notetype) and shown as a display-time prefix on the
+    headword ("en orden"). The stored ``text`` is left bare so the GUID
+    (``compute_guid(text, lang, disambig_key)``) is unchanged. TT-local
+    display data; no USN, no sync, no Anki write.
+    """
+    if not _column_exists(conn, "collocations", "article"):
+        conn.execute("ALTER TABLE collocations ADD COLUMN article TEXT NOT NULL DEFAULT ''")
+    _set_version(conn, 33)
+
+
+def migrate_v33_to_v34(conn: sqlite3.Connection) -> None:
+    """Add ``collocations.extras`` — rich back-of-card fields as a JSON string.
+
+    Holds an ordered list of ``{label, html, tier}`` entries (IPA, inflections,
+    examples, dictionary entry…) sourced from the Anki notetype's secondary
+    fields (the "6000 Most Frequent Norwegian Words" profile declares them).
+    Display-only, optional, Anki-sourced; ``""`` for rows without any. No USN,
+    no sync, no Anki write — the GUID and ``text`` are untouched.
+    """
+    if not _column_exists(conn, "collocations", "extras"):
+        conn.execute("ALTER TABLE collocations ADD COLUMN extras TEXT NOT NULL DEFAULT ''")
+    _set_version(conn, 34)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -979,6 +1007,8 @@ _MIGRATIONS = {
     29: migrate_v29_to_v30,
     30: migrate_v30_to_v31,
     31: migrate_v31_to_v32,
+    32: migrate_v32_to_v33,
+    33: migrate_v33_to_v34,
 }
 
 

@@ -35,7 +35,7 @@ from app.config import settings
 from app.languages import get_deck_name
 from app.media.importer import compute_sha256, copy_media_file
 from app.models.srs_item import Direction, DirectionState
-from app.models.syntactic_unit import SyntacticUnit
+from app.models.syntactic_unit import BackField, SyntacticUnit
 from app.srs.database import SRSDatabase
 
 
@@ -254,9 +254,11 @@ def import_seed(
             # Notetypes with a field-role profile (e.g. Norwegian's 17-field deck)
             # read L2/translation/disambig by field name; everything else (the
             # Slovene decks) falls back to the positional/HTML heuristics.
+            article = ""
+            extras: tuple[BackField, ...] = ()
             profile_result = extract_via_profile(note)
             if profile_result is not None:
-                l2_text, translation, disambig = profile_result
+                l2_text, translation, disambig, article, extras = profile_result
             else:
                 l2_text = extract_l2_from_fields(note.fields)
                 disambig = extract_disambig_from_fields(note.fields)
@@ -322,6 +324,8 @@ def import_seed(
                 source="anki",
                 frequency=0,
                 disambig_key=disambig,
+                article=article,
+                extras=extras,
                 lemma=l2_text.lower() if word_count == 1 else None,
             )
             note_cards = card_map.get(note.id, [])
