@@ -117,14 +117,23 @@ describe("root +layout.svelte", () => {
     expect(getByTestId("slot").textContent).toBe("page content");
   });
 
-  it("theme toggle cycles System → Light → Dark", async () => {
+  it("renders a Settings link to /settings (prefs moved out of the header)", () => {
     const { getByRole } = renderLayout();
-    const btn = getByRole("button", { name: /theme:/i });
-    expect(btn.getAttribute("aria-label")?.toLowerCase()).toContain("system");
-    await fireEvent.click(btn);
-    expect(btn.getAttribute("aria-label")?.toLowerCase()).toContain("light");
-    await fireEvent.click(btn);
-    expect(btn.getAttribute("aria-label")?.toLowerCase()).toContain("dark");
+    expect(
+      (getByRole("link", { name: "Settings" }) as HTMLAnchorElement).getAttribute("href"),
+    ).toBe("/settings");
+  });
+
+  it("marks Settings active on the settings path", () => {
+    nav.pathname = "/settings";
+    const { getByRole } = renderLayout();
+    expect(getByRole("link", { name: "Settings" }).className).toContain("active");
+  });
+
+  it("no longer renders the theme or language controls in the header", () => {
+    const { queryByRole } = renderLayout();
+    expect(queryByRole("button", { name: /theme:/i })).toBeNull();
+    expect(queryByRole("combobox", { name: /active language/i })).toBeNull();
   });
 
   // ── active-link states (cover the path-derived booleans) ──────────────────

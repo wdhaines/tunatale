@@ -5,7 +5,6 @@
 	import { page } from '$app/stores';
 	import SyncButton from '$lib/components/SyncButton.svelte';
 	import QueueStatsWidget from '$lib/components/QueueStatsWidget.svelte';
-	import LanguageSelector from '$lib/components/LanguageSelector.svelte';
 	import { languageStore } from '$lib/stores/language.svelte';
 	import { syncStore } from '$lib/stores/sync.svelte';
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
@@ -14,22 +13,9 @@
 
 	let { children } = $props();
 
-	// "Auto-download lessons on wifi" — when on, the audio player caches lessons
-	// while on wifi so they replay offline for free (offline-audio Phase 4).
-	const prefetchMeta = $derived(
-		prefetchPrefStore.enabled
-			? { icon: '📥', label: 'Auto-download on wifi: On' }
-			: { icon: '🚫', label: 'Auto-download on wifi: Off' }
-	);
-
-	// Theme is an explicit setting (System / Light / Dark) defaulting to the OS.
-	const themeMeta = $derived(
-		themeStore.pref === 'system'
-			? { icon: '🖥️', label: 'System' }
-			: themeStore.pref === 'light'
-				? { icon: '☀️', label: 'Light' }
-				: { icon: '🌙', label: 'Dark' }
-	);
+	// Theme, auto-download, and language are set-and-forget prefs — they live on
+	// /settings now. The header keeps only critical CTAs (nav + Sync). Their stores
+	// still init here so the boot-time preference (theme, prefetch) applies app-wide.
 
 	// The review counts live in the nav (Anki-style) so they're visible from every
 	// page. They come from a shared store so a grade on /review updates the nav
@@ -57,6 +43,7 @@
 	const onLessons = $derived(path === '/' || path.startsWith('/c/'));
 	const onReview = $derived(path === '/review');
 	const onCards = $derived(path.startsWith('/cards'));
+	const onSettings = $derived(path.startsWith('/settings'));
 </script>
 
 <svelte:head>
@@ -76,19 +63,13 @@
 		<a href="/cards" class="nav-link" class:active={onCards}>Cards</a>
 	</div>
 	<div class="nav-actions">
-		<LanguageSelector />
-		<button
-			class="theme-toggle"
-			onclick={() => prefetchPrefStore.toggle()}
-			aria-label={`${prefetchMeta.label} (tap to toggle)`}
-			title={`${prefetchMeta.label} (tap to toggle)`}
-		>{prefetchMeta.icon}</button>
-		<button
-			class="theme-toggle"
-			onclick={() => themeStore.cycle()}
-			aria-label={`Theme: ${themeMeta.label} (tap to change)`}
-			title={`Theme: ${themeMeta.label} (tap to change)`}
-		>{themeMeta.icon}</button>
+		<a
+			href="/settings"
+			class="settings-link"
+			class:active={onSettings}
+			aria-label="Settings"
+			title="Settings"
+		>⚙️</a>
 		<SyncButton />
 	</div>
 </nav>
@@ -131,7 +112,7 @@
 		align-items: center;
 		gap: 0.5rem;
 	}
-	.theme-toggle {
+	.settings-link {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
@@ -144,11 +125,16 @@
 		cursor: pointer;
 		font-size: 0.95rem;
 		line-height: 1;
+		text-decoration: none;
 		transition: border-color 0.15s ease, background 0.15s ease;
 	}
-	.theme-toggle:hover {
+	.settings-link:hover {
 		border-color: var(--color-primary);
 		background: var(--color-surface-2);
+	}
+	.settings-link.active {
+		border-color: var(--color-primary);
+		background: color-mix(in srgb, var(--color-primary) 14%, transparent);
 	}
 	/* On mobile the links drop to their own full-width row so the review badge
 	   has room instead of being squeezed beside the brand and Sync. */
