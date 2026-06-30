@@ -13,6 +13,16 @@ export default defineConfig({
 			env: {
 				LLM_MODE: 'mock',
 				DATABASE_URL: 'sqlite:///./tunatale-test.db',
+				// Redirect the Phase-5 multi-language map at test DBs. _language_db_map()
+				// returns settings.database_urls verbatim when non-empty and IGNORES
+				// database_url — so a developer whose .env sets database_urls (real
+				// per-language DBs) would make this "isolated" backend open the REAL
+				// tunatale_sl.db/_no.db, and e2e specs (topic "ordering coffee") would
+				// pollute live data. pydantic-settings DEEP-MERGES dict fields across
+				// .env + env vars, so an empty '{}' merges to nothing and a partial map
+				// leaves the unlisted key pointing at the real DB — every language key
+				// must be overridden here to fully isolate.
+				database_urls: '{"sl":"sqlite:///./tunatale-test.db","no":"sqlite:///./tunatale-test-no.db"}',
 				// Add-time vocab media (POST /items, /listen) fetches image+audio when
 				// a Pixabay key is set. E2E seeds cards via those endpoints, so a real
 				// key in .env makes the suite hit Pixabay/Forvo live (slow, flaky).
@@ -46,6 +56,10 @@ export default defineConfig({
 			env: {
 				LLM_MODE: 'mock',
 				DATABASE_URL: 'sqlite:///./tunatale-test-no.db',
+				// See the 8001 block: every language key must be redirected at a test DB
+				// (pydantic deep-merges this dict with the developer's .env), or e2e leaks
+				// into the real per-language DBs.
+				database_urls: '{"sl":"sqlite:///./tunatale-test.db","no":"sqlite:///./tunatale-test-no.db"}',
 				PIXABAY_API_KEY: '',
 				lemmatizer_type: 'lowercase',
 				TARGET_LANGUAGE: 'no'
