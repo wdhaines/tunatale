@@ -137,6 +137,12 @@ def _make_collection_with_curdeck(path, *, val: bytes) -> None:
     try:
         con.execute("CREATE TABLE config (key TEXT PRIMARY KEY, usn INTEGER, mtime_secs INTEGER, val BLOB)")
         con.execute("INSERT INTO config (key, usn, mtime_secs, val) VALUES ('curDeck', -1, 1, ?)", (val,))
+        # `col` table so the mirror can bump col.mod (the value that actually wins
+        # Anki's whole-blob, last-writer-wins config sync). Real collections always
+        # have it; this minimal fake must too. mod starts at 1 (epoch-ish) so a bump
+        # toward `now` is observable.
+        con.execute("CREATE TABLE col (mod INTEGER)")
+        con.execute("INSERT INTO col (mod) VALUES (1)")
         con.commit()
     finally:
         con.close()
@@ -148,6 +154,17 @@ def _read_curdeck_val(path) -> bytes | None:
     con = sqlite3.connect(path)
     try:
         row = con.execute("SELECT val FROM config WHERE key='curDeck'").fetchone()
+        return row[0] if row else None
+    finally:
+        con.close()
+
+
+def _read_col_mod(path) -> int | None:
+    import sqlite3
+
+    con = sqlite3.connect(path)
+    try:
+        row = con.execute("SELECT mod FROM col").fetchone()
         return row[0] if row else None
     finally:
         con.close()
@@ -229,6 +246,32 @@ class TestCurDeckMirror:
         _make_collection_with_curdeck(tt, val=NORWEGIAN_DECK)
         _mirror_real_curdeck_into_tt(real, tt)
         assert _read_curdeck_val(tt) == SLOVENE_DECK
+
+    def test_mirror_bumps_col_mod_so_tt_wins_config_sync(self, tmp_path):
+        """The mirror must bump tt_collection.col.mod, or the value never wins.
+
+        Anki syncs the whole config blob last-writer-wins by col.mod (NOT per-key
+        usn or config mtime_secs — see anki-source-expert findings, rslib
+        sync/collection/changes.rs + meta.rs). If the mirror only writes
+        curDeck.val/mtime_secs, TT is never the newer side, so the bidirectional
+        pull leg's set_all_config wipes TT's mirrored value back to the server's
+        stale curDeck — the deck keeps switching to Norwegian. Bumping col.mod to
+        ~now makes local_is_newer true → TT uploads its config and the server
+        withholds its own (no revert).
+        """
+        import time
+
+        from app.anki.sync_orchestrator import _mirror_real_curdeck_into_tt
+
+        real, tt = tmp_path / "real.anki2", tmp_path / "tt.anki2"
+        _make_collection_with_curdeck(real, val=SLOVENE_DECK)
+        _make_collection_with_curdeck(tt, val=NORWEGIAN_DECK)  # col.mod starts at 1
+
+        now_ms = int(time.time() * 1000)
+        _mirror_real_curdeck_into_tt(real, tt)
+
+        assert _read_curdeck_val(tt) == SLOVENE_DECK
+        assert _read_col_mod(tt) >= now_ms, "col.mod must be bumped to ~now so TT wins the col.mod compare"
 
     def test_mirror_noop_when_real_absent(self, tmp_path):
         """No real value → TT's curDeck is left untouched (not blanked)."""

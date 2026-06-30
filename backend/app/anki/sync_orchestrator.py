@@ -349,6 +349,16 @@ def _mirror_real_curdeck_into_tt(real_collection_path: Path, tt_collection_path:
                 "UPDATE config SET val = ?, mtime_secs = ? WHERE key = 'curDeck'",
                 (val, int(time.time())),
             )
+            # Bump col.mod so TT is the newer side. Anki syncs the WHOLE config blob
+            # last-writer-wins by col.mod (not per-key usn/mtime_secs): rslib
+            # sync/collection/changes.rs uploads config only when local_is_newer
+            # (col.mod), and meta.rs compares col.mod. Without this bump TT is never
+            # newer, so the bidirectional pull leg's set_all_config wipes the value we
+            # just mirrored and reverts to the server's stale curDeck — the deck keeps
+            # switching out from under the user. Bumping col.mod (NOT col.usn — see
+            # .claude/rules/anki-sync.md Layer 61) makes TT win and the server withhold
+            # its config (no revert).
+            con.execute("UPDATE col SET mod = ?", (int(time.time() * 1000),))
             con.commit()
         finally:
             con.close()
