@@ -55,9 +55,12 @@ async def trigger_peer_sync(request: Request, dry_run: bool = False):
     db = request.state.srs_db
     llm = getattr(request.app.state, "llm", None)
     media_fn = _build_media_fn(llm, db)
+    # Sync the language the UI is on (X-TT-Language, resolved by the middleware),
+    # not the .env default — otherwise a Slovene grade pushes the Norwegian deck.
+    language_code = getattr(request.state, "language_code", None)
 
     try:
-        report = await run_in_threadpool(lambda: peer_sync(dry_run, media_fn=media_fn))
+        report = await run_in_threadpool(lambda: peer_sync(dry_run, media_fn=media_fn, language_code=language_code))
     except PeerSyncError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
     except Exception as e:

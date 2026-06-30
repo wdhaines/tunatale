@@ -147,7 +147,7 @@ def _absolute_sqlite_url(url: str) -> str | None:
     return f"{prefix}{(_BACKEND_DIR / path).resolve()}"
 
 
-def _tt_settings():
+def _tt_settings(language_code: str | None = None):
     """Clone settings: anki_collection_path → tt_collection, db path made absolute.
 
     peer_sync runs inside the long-running server and re-invokes ``tt_sync_main``,
@@ -156,11 +156,25 @@ def _tt_settings():
     backend/ (e.g. the orchestrator CLI from the repo root) it resolves to a
     *different*, empty db — so the real db never gets pull-merged and the soak mode
     mislabels as ``legacy``. Anchor it so the canonical db is opened regardless of CWD.
+
+    ``language_code`` selects the per-language db + deck (Phase 5 multi-language).
+    When it names a configured language (``settings.database_urls``), override
+    ``database_url``, ``anki_deck_name`` and ``target_language`` so the reconcile
+    runs against the language the UI is actually syncing. Without this the Sync
+    button always reconciled the .env default language's deck/db (e.g. a Slovene
+    grade pushed nothing because the reconcile targeted the Norwegian deck). A
+    ``None`` / unconfigured code falls back to the singular defaults unchanged.
     """
     update = {"anki_collection_path": settings.tt_collection_path}
-    abs_url = _absolute_sqlite_url(settings.database_url)
-    if abs_url is not None:
-        update["database_url"] = abs_url
+    db_url = settings.database_url
+    if language_code and settings.database_urls.get(language_code):
+        from app.languages import get_deck_name
+
+        db_url = settings.database_urls[language_code]
+        update["anki_deck_name"] = get_deck_name(language_code)
+        update["target_language"] = language_code
+    abs_url = _absolute_sqlite_url(db_url)
+    update["database_url"] = abs_url if abs_url is not None else db_url
     return settings.model_copy(update=update)
 
 
@@ -387,7 +401,7 @@ def _sync_leg(auth: dict, *, sync_media: bool = False) -> dict:
     )
 
 
-def peer_sync(dry_run: bool = False, *, media_fn=None) -> PeerSyncReport:
+def peer_sync(dry_run: bool = False, *, media_fn=None, language_code: str | None = None) -> PeerSyncReport:
     """Execute the full peer-sync bracket.
 
     Returns a ``PeerSyncReport`` with per-step outcomes.
@@ -447,7 +461,7 @@ def peer_sync(dry_run: bool = False, *, media_fn=None) -> PeerSyncReport:
     t0 = time.perf_counter()
     report.tt_push_pull_exit = tt_sync_main(
         argv=["--dry-run"] if dry_run else [],
-        _settings=_tt_settings(),
+        _settings=_tt_settings(language_code),
         _media_fn=media_fn,
         _media_dir=_resolve_media_dir(),
     )

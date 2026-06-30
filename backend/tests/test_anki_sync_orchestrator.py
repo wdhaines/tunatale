@@ -80,6 +80,40 @@ class TestPeerSync:
         monkeypatch.setattr(settings, "database_url", url)
         assert _tt_settings().database_url == url
 
+    def test_tt_settings_resolves_per_language_db_and_deck(self, monkeypatch):
+        """A configured language_code retargets db_url AND deck AND target_language.
+
+        Regression: the peer-sync endpoint resolves request.state.srs_db per the
+        X-TT-Language header but never threaded the language into peer_sync, so the
+        reconcile always ran settings.database_url / settings.anki_deck_name (the
+        .env default language). A Slovene grade then never reached Anki because the
+        reconcile pushed the Norwegian deck/db. _tt_settings(code) must pick the
+        per-language db + deck so the active language is the one that syncs.
+        """
+        from app.anki.sync_orchestrator import _tt_settings
+
+        monkeypatch.setattr(
+            settings,
+            "database_urls",
+            {"sl": "sqlite:///./tunatale_sl.db", "no": "sqlite:///./tunatale_no.db"},
+        )
+        s = _tt_settings("no")
+        assert s.database_url.endswith("/backend/tunatale_no.db")
+        assert s.anki_deck_name == "0. 6000 Most Frequent Norwegian Words [Part 1]"
+        assert s.target_language == "no"
+
+    def test_tt_settings_unknown_or_none_language_uses_default(self, monkeypatch):
+        """None (CLI path) or an unconfigured code falls back to the default db + deck."""
+        from app.anki.sync_orchestrator import _tt_settings
+
+        monkeypatch.setattr(settings, "database_urls", {"sl": "sqlite:///./tunatale_sl.db"})
+        monkeypatch.setattr(settings, "database_url", "sqlite:///./tunatale_sl.db")
+        monkeypatch.setattr(settings, "anki_deck_name", "1. Slovene")
+        for code in (None, "zz"):
+            s = _tt_settings(code)
+            assert s.anki_deck_name == "1. Slovene", code
+            assert s.database_url.endswith("/backend/tunatale_sl.db"), code
+
     def test_anki_with_spec(self):
         """Empty version → bare 'anki' (never a malformed 'anki=='); set → pinned."""
         from app.anki.sync_orchestrator import _anki_with_spec
@@ -608,6 +642,68 @@ class TestSociableSync:
             reader = OfflineReader(ctx.conn, settings.anki_deck_name)
             records = reader.get_note_records()
             assert any(r.anki_note_id == item.anki_note_id for r in records)
+
+    def test_language_code_reconciles_per_language_db_and_deck(self, tmp_path, monkeypatch, fake_driver):
+        """peer_sync(language_code='no') reconciles the 'no' db against the Norwegian
+        deck — proven through the real pipeline, only the driver boundary faked.
+
+        Headline Phase-5 regression: the Sync button reconciled the .env default
+        language regardless of the UI selection, so a Slovene grade pushed the
+        Norwegian deck/db (and vice-versa). Here the pending unlinked collocation
+        lives ONLY in the 'no' db and the collection has ONLY the Norwegian deck:
+        if language threading works the push leg fires and the collocation links;
+        if peer_sync fell back to the default db (the bug) nothing is pending, the
+        push leg is skipped, and the collocation stays unlinked. No peer_sync patch.
+        """
+        from app.languages import get_deck_name
+        from app.srs.database import SRSDatabase
+        from tests.anki_oracle.synthetic_collection import SyntheticCollection
+
+        no_deck = get_deck_name("no")
+        coll = SyntheticCollection(settings.tt_collection_path)
+        coll.set_deck(no_deck, 1)
+        coll.add_notetype(CLOZE_NOTETYPE_MID, "Cloze", ("Text", "Back Extra"), template_count=1)
+        coll.save()
+        monkeypatch.setattr(settings, "anki_model_name", "Cloze")
+
+        sl_db_path = tmp_path / "sl.db"
+        no_db_path = tmp_path / "no.db"
+        SRSDatabase(str(sl_db_path)).close()  # empty default-language db
+        no_db = SRSDatabase(str(no_db_path))
+        unit = SyntacticUnit(
+            text="Takk skal du ha",
+            translation="Thank you",
+            word_count=4,
+            difficulty=1,
+            source="test",
+            source_sentence="Takk skal du ha.",
+            card_type="cloze",
+        )
+        no_db.add_collocation(unit, language_code="no")
+        no_db.close()
+
+        monkeypatch.setattr(
+            settings,
+            "database_urls",
+            {"sl": f"sqlite:///{sl_db_path}", "no": f"sqlite:///{no_db_path}"},
+        )
+
+        report = peer_sync(language_code="no")
+
+        assert report.tt_push_pull_exit == 0
+        ops = [c["op"] for c in fake_driver]
+        assert ops == ["login", "sync", "sync"], (
+            f"push leg should fire for the 'no' db's pending change, got {ops} "
+            "(login+sync only ⇒ peer_sync reconciled the wrong db)"
+        )
+        no_db2 = SRSDatabase(str(no_db_path))
+        try:
+            item = no_db2.get_collocation("Takk skal du ha")
+        finally:
+            no_db2.close()
+        assert item is not None and item.anki_note_id is not None, (
+            "the 'no' collocation must be linked by the reconcile against the 'no' db"
+        )
 
     @pytest.mark.usefixtures("sociable_tt_collection")
     def test_dry_run_skips_push_leg_no_writes(self, fake_driver):

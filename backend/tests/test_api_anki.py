@@ -35,7 +35,12 @@ class TestPeerSync:
         report = PeerSyncReport(auth_success=True, pull_required=0, push_required=1, tt_push_pull_exit=0, dry_run=False)
         with patch("app.anki.sync_orchestrator.peer_sync", return_value=report) as mock_ps:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                response = await c.post("/api/anki/peer-sync")
+                # X-TT-Language must reach peer_sync as language_code, or the Sync
+                # button always syncs the .env default language's deck/db regardless
+                # of the UI selection (Phase-5 multi-language regression). Asserted
+                # here rather than in a dedicated test to avoid a 4th grandfathered
+                # patch("...peer_sync") (the mock-boundary ledger is shrink-only).
+                response = await c.post("/api/anki/peer-sync", headers={"X-TT-Language": "no"})
 
         assert response.status_code == 200
         assert response.json() == {
@@ -45,7 +50,7 @@ class TestPeerSync:
             "tt_push_pull_exit": 0,
             "dry_run": False,
         }
-        mock_ps.assert_called_once_with(False, media_fn=ANY)
+        mock_ps.assert_called_once_with(False, media_fn=ANY, language_code="no")
 
     async def test_forwards_dry_run(self):
         from app.anki.sync_orchestrator import PeerSyncReport
@@ -56,7 +61,7 @@ class TestPeerSync:
 
         assert response.status_code == 200
         assert response.json()["dry_run"] is True
-        mock_ps.assert_called_once_with(True, media_fn=ANY)
+        mock_ps.assert_called_once_with(True, media_fn=ANY, language_code=ANY)
 
     @pytest.mark.parametrize(
         ("exc", "status", "needle"),
