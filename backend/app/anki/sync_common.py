@@ -9,10 +9,8 @@ imports (tests, archive scripts) keep working unchanged.
 from __future__ import annotations
 
 import re
-import time as _time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, time, timedelta
-from pathlib import Path
 
 from app.anki.sqlite_reader import extract_translation
 from app.config import ANKI_ROLLOVER_HOUR
@@ -42,36 +40,6 @@ class OrphanThresholdExceededError(Exception):
     pointing at the wrong file, in which case wholesale ID reset would erase
     the user's actual sync state.
     """
-
-
-class ForceFsrsNotAcknowledgedError(Exception):
-    """--force-fsrs requires a one-time acknowledgement file."""
-
-
-def ensure_force_fsrs_ack(ack_path: Path, interactive: bool = True) -> None:
-    """Verify the user has acknowledged the force-fsrs risk.
-
-    Reads ack_path; if absent or empty, either raises (non-interactive) or
-    prompts the user and writes the file on 'y'.
-    """
-    if ack_path.exists() and ack_path.read_text().strip():
-        return
-    if not interactive:
-        raise ForceFsrsNotAcknowledgedError(
-            f"--force-fsrs requires acknowledgement. Run interactively first to create: {ack_path}"
-        )
-    print(
-        "--force-fsrs will overwrite raw FSRS stability/difficulty in Anki's "
-        "cards.data JSON. This is officially dangerous (Anki may reject on schema drift). "
-        "Acknowledge? [y/N] ",
-        end="",
-        flush=True,
-    )
-    answer = input().strip().lower()
-    if answer != "y":
-        raise ForceFsrsNotAcknowledgedError("User declined force-fsrs acknowledgement.")
-    ack_path.parent.mkdir(parents=True, exist_ok=True)
-    ack_path.write_text(f"acknowledged at {_time.strftime('%Y-%m-%dT%H:%M:%S')}\n")
 
 
 @dataclass

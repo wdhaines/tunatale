@@ -9,9 +9,7 @@ import pytest
 from app.anki.sync import (
     KNOWN_ANKI_SCHEMA_VER,
     AnkiSync,
-    ForceFsrsNotAcknowledgedError,
     OfflineWriter,
-    ensure_force_fsrs_ack,
 )
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -149,48 +147,6 @@ class FakeWriter:
 class TestKnownAnkiSchemaVer:
     def test_constant_is_18(self):
         assert KNOWN_ANKI_SCHEMA_VER == 18
-
-
-# ── TestEnsureForceFsrsAck ──────────────────────────────────────────────────────
-
-
-class TestEnsureForceFsrsAck:
-    def test_raises_when_no_ack_file_and_non_interactive(self, tmp_path):
-        ack_path = tmp_path / "force_fsrs_ack.txt"
-        with pytest.raises(ForceFsrsNotAcknowledgedError):
-            ensure_force_fsrs_ack(ack_path, interactive=False)
-
-    def test_raises_when_ack_file_empty_and_non_interactive(self, tmp_path):
-        ack_path = tmp_path / "force_fsrs_ack.txt"
-        ack_path.write_text("")
-        with pytest.raises(ForceFsrsNotAcknowledgedError):
-            ensure_force_fsrs_ack(ack_path, interactive=False)
-
-    def test_passes_when_ack_file_present(self, tmp_path):
-        ack_path = tmp_path / "force_fsrs_ack.txt"
-        ack_path.write_text("acknowledged at 2026-04-21T12:00:00\n")
-        # Should not raise
-        ensure_force_fsrs_ack(ack_path, interactive=False)
-
-    def test_interactive_y_writes_ack_file(self, tmp_path, monkeypatch):
-        ack_path = tmp_path / "force_fsrs_ack.txt"
-        monkeypatch.setattr("builtins.input", lambda: "y")
-        ensure_force_fsrs_ack(ack_path, interactive=True)
-        assert ack_path.exists()
-        assert ack_path.read_text().strip() != ""
-
-    def test_interactive_n_raises(self, tmp_path, monkeypatch):
-        ack_path = tmp_path / "force_fsrs_ack.txt"
-        monkeypatch.setattr("builtins.input", lambda: "n")
-        with pytest.raises(ForceFsrsNotAcknowledgedError):
-            ensure_force_fsrs_ack(ack_path, interactive=True)
-
-    def test_interactive_n_does_not_write_ack_file(self, tmp_path, monkeypatch):
-        ack_path = tmp_path / "force_fsrs_ack.txt"
-        monkeypatch.setattr("builtins.input", lambda: "n")
-        with pytest.raises(ForceFsrsNotAcknowledgedError):
-            ensure_force_fsrs_ack(ack_path, interactive=True)
-        assert not ack_path.exists()
 
 
 class TestOfflineWriterSetSpecificValue:
