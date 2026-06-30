@@ -603,6 +603,31 @@ class TestResolveActiveDirection:
         srs.directions[Direction.PRODUCTION].state = SRSState.REVIEW
         assert resolve_active_direction(srs) == Direction.PRODUCTION
 
+    def test_recognition_only_review_stays_recognition(self):
+        """A recognition-only vocab card (e.g. the imported Norwegian deck — single
+        direction) that has graduated to REVIEW must NOT advance to PRODUCTION: it
+        has no production direction, so resolve_active_direction returning PRODUCTION
+        makes the caller's item.directions[active_dir] raise KeyError (the lesson
+        transcript 500'd on every Norwegian word in REVIEW). Active direction must
+        be one the item actually has."""
+        from app.models.srs_item import SRSItem
+
+        item = SyntacticUnit(
+            text="toget",
+            translation="the train",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="tog",
+            card_type="vocab",
+        )
+        srs = SRSItem(syntactic_unit=item)
+        srs.directions.pop(Direction.PRODUCTION)  # recognition-only, like a NO import
+        srs.directions[Direction.RECOGNITION].state = SRSState.REVIEW
+        active = resolve_active_direction(srs)
+        assert active == Direction.RECOGNITION
+        assert active in srs.directions  # the contract: never return an absent direction
+
 
 class TestResolveActiveDirectionDirect:
     def test_non_srs_item_returns_production(self):
@@ -618,7 +643,10 @@ class TestResolveActiveDirectionDirect:
         item = SRSItem(syntactic_unit=unit)
         assert resolve_active_direction(item) == Direction.PRODUCTION
 
-    def test_vocab_no_recognition_direction_returns_recognition(self):
+    def test_vocab_no_recognition_direction_returns_production(self):
+        """Production-only vocab → PRODUCTION (the direction it actually has). The
+        active direction must always be present in item.directions, else the caller
+        KeyErrors; returning RECOGNITION here (the old behavior) was that bug."""
         from app.models.srs_item import SRSItem
         from app.models.syntactic_unit import SyntacticUnit
 
@@ -627,7 +655,9 @@ class TestResolveActiveDirectionDirect:
         rec = item.directions.get(Direction.RECOGNITION)
         if rec is not None:
             item.directions.pop(Direction.RECOGNITION)
-        assert resolve_active_direction(item) == Direction.RECOGNITION
+        active = resolve_active_direction(item)
+        assert active == Direction.PRODUCTION
+        assert active in item.directions
 
 
 class TestIsDue:

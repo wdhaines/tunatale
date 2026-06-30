@@ -126,7 +126,15 @@ def resolve_active_direction(item: object) -> Direction:
     if ct == "cloze":
         return Direction.PRODUCTION
     rec = item.directions.get(Direction.RECOGNITION)
-    if rec is None or rec.state != SRSState.REVIEW:
+    prod = item.directions.get(Direction.PRODUCTION)
+    # Recognition is active until it graduates (REVIEW), then production takes over
+    # — BUT only if production exists. Single-direction cards (the imported
+    # Norwegian deck is recognition-only) have nothing to advance to, so they stay
+    # on the direction they actually have. Returning an absent direction makes the
+    # caller's item.directions[active_dir] KeyError (the lesson-transcript 500).
+    if rec is not None and rec.state == SRSState.REVIEW and prod is not None:
+        return Direction.PRODUCTION
+    if rec is not None:
         return Direction.RECOGNITION
     return Direction.PRODUCTION
 
