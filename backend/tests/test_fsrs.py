@@ -831,46 +831,53 @@ class TestBuildRevlogRow:
         assert _compute_review_kind(SRSState.NEW, SRSState.LEARNING) == 0
 
     def test_compute_revlog_interval_learning(self):
-        """Learning intervals are negative seconds."""
+        """Learning intervals are negative seconds — the new step from ``now``."""
         from app.srs.fsrs import _compute_revlog_interval
 
         now = datetime(2026, 5, 19, tzinfo=UTC)
-        prev_dir = DirectionState(direction=Direction.RECOGNITION, state=SRSState.NEW, due_at=now)
         new_dir = DirectionState(
             direction=Direction.RECOGNITION, state=SRSState.LEARNING, due_at=now + timedelta(minutes=10)
         )
-        interval = _compute_revlog_interval(SRSState.NEW, new_dir, prev_dir, now)
+        interval = _compute_revlog_interval(new_dir, now)
         assert interval < 0  # negative for learning
         assert interval == -600  # 10 minutes * 60 seconds
 
-    def test_compute_revlog_interval_review(self):
-        """Review intervals are positive days (span between last_review and new due)."""
+    def test_compute_revlog_interval_learning_ignores_elapsed_since_prev(self):
+        """A relearning step is the step from ``now`` — the days since the prior
+        review (a lapse from a mature card) must NOT inflate the negative seconds."""
         from app.srs.fsrs import _compute_revlog_interval
 
         now = datetime(2026, 5, 19, tzinfo=UTC)
-        prev_dir = DirectionState(
-            direction=Direction.RECOGNITION, state=SRSState.REVIEW, due_at=now, last_review=now - timedelta(days=10)
+        new_dir = DirectionState(
+            direction=Direction.RECOGNITION, state=SRSState.RELEARNING, due_at=now + timedelta(minutes=10)
         )
+        assert _compute_revlog_interval(new_dir, now) == -600  # not -(10 days + 10 min)
+
+    def test_compute_revlog_interval_review(self):
+        """Review interval is the NEW interval from ``now`` — not span-from-prev.
+
+        Regression: anchoring on the previous review double-counted the elapsed
+        time (a 30-day interval answered 10 days late stored 40). ``revlog.ivl``
+        is the newly-assigned interval; the previous one lives in last_interval.
+        """
+        from app.srs.fsrs import _compute_revlog_interval
+
+        now = datetime(2026, 5, 19, tzinfo=UTC)
         new_dir = DirectionState(
             direction=Direction.RECOGNITION, state=SRSState.REVIEW, due_at=now + timedelta(days=30)
         )
-        interval = _compute_revlog_interval(SRSState.REVIEW, new_dir, prev_dir, now)
-        # 30 - (-10) = 40 days between last_review and new due_at
-        assert interval == 40
+        interval = _compute_revlog_interval(new_dir, now)
+        assert interval == 30
 
-    def test_compute_revlog_interval_review_no_last_review(self):
-        """Review interval falls back to now when last_review is missing."""
+    def test_compute_revlog_interval_review_min_one(self):
+        """A same-day review interval floors at 1 day."""
         from app.srs.fsrs import _compute_revlog_interval
 
         now = datetime(2026, 5, 19, tzinfo=UTC)
-        prev_dir = DirectionState(
-            direction=Direction.RECOGNITION, state=SRSState.REVIEW, due_at=now - timedelta(days=5)
-        )
         new_dir = DirectionState(
-            direction=Direction.RECOGNITION, state=SRSState.REVIEW, due_at=now + timedelta(days=25)
+            direction=Direction.RECOGNITION, state=SRSState.REVIEW, due_at=now + timedelta(hours=12)
         )
-        interval = _compute_revlog_interval(SRSState.REVIEW, new_dir, prev_dir, now)
-        assert interval >= 1
+        assert _compute_revlog_interval(new_dir, now) == 1
 
     def test_compute_revlog_last_interval_zero(self):
         """Returns 0 when no last_review or due_at."""

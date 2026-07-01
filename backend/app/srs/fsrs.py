@@ -1490,24 +1490,27 @@ def _compute_review_kind(prev_state: SRSState, new_state: SRSState) -> int:
     return 1
 
 
-def _compute_revlog_interval(prev_state: SRSState, new_dir: DirectionState, prev: DirectionState, now: datetime) -> int:
+def _compute_revlog_interval(new_dir: DirectionState, now: datetime) -> int:
     """Compute interval for tt_revlog: +days for review, -seconds for learning.
 
-    Mirrors Anki's convention where ``revlog.ivl`` stores positive days for
-    review-state transitions and negative seconds for sub-day learning steps.
+    Mirrors Anki's ``revlog.ivl`` — the **new** interval this grade assigns,
+    measured from the grade time (``now``): positive days for review-state
+    transitions, negative seconds for sub-day (re)learning steps. This is the
+    value the load-balancer session replay (``get_load_balancer_session_replay``)
+    reads as the card's day-offset-from-today.
+
+    Anchored on ``now`` (== ``new_dir.last_review`` after ``schedule``), NOT the
+    *previous* review. The previous interval belongs in ``last_interval``
+    (``_compute_revlog_last_interval``); folding the elapsed time into ``ivl``
+    double-counted it (a 30-day review answered 10 days late stored 40), placing
+    the card at the wrong histogram day — or, when the doubled value exceeded
+    ``LOAD_BALANCE_DAYS``, dropping it from the histogram entirely.
     """
     if new_dir.state in (SRSState.LEARNING, SRSState.RELEARNING):
-        if prev.last_review and new_dir.due_at:
-            delta_s = (new_dir.due_at - prev.last_review).total_seconds()
-        else:
-            delta_s = (new_dir.due_at - now).total_seconds()
+        delta_s = (new_dir.due_at - now).total_seconds()
         return -max(1, int(delta_s))
-    else:
-        if prev.last_review and new_dir.due_at:
-            days = (new_dir.due_at - prev.last_review).days
-        else:
-            days = (new_dir.due_at - now).days
-        return max(1, days)
+    days = (new_dir.due_at - now).days
+    return max(1, days)
 
 
 def _compute_revlog_last_interval(prev: DirectionState) -> int:
@@ -1545,7 +1548,7 @@ def build_revlog_row(
         collocation_id=collocation_id,
         direction=direction,
         button_chosen=rating.value,
-        interval=_compute_revlog_interval(prev.state, new_dir, prev, now),
+        interval=_compute_revlog_interval(new_dir, now),
         last_interval=_compute_revlog_last_interval(prev),
         factor=0,
         taken_millis=time_ms,
