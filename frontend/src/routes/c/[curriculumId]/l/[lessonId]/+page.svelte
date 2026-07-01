@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
 	import type { LessonAudio, TranscriptData } from '$lib/api';
@@ -9,6 +9,7 @@
 	import TranscriptPlaceholder from '$lib/components/TranscriptPlaceholder.svelte';
 	import { syncStore } from '$lib/stores/sync.svelte';
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
+	import { lessonModePref } from '$lib/stores/lessonModePref.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -20,7 +21,11 @@
 		translated: 'Translated'
 	};
 
-	let mode = $state<'read' | 'listen'>('read');
+	// Read/Listen mode is a persisted preference that defaults by viewport (Listen
+	// on mobile, Read on desktop) rather than an unconditional 'read' that landed
+	// mobile users in the wrong mode. Seeds on mount like the theme/prefetch prefs.
+	const mode = $derived(lessonModePref.mode);
+	onMount(() => lessonModePref.init());
 
 	// untrack: intentionally snapshot load data as mutable local state
 	let audio: LessonAudio | null = $state(untrack(() => data.audio));
@@ -341,8 +346,8 @@
 		</p>
 
 		<div class="toggle-pill">
-			<button class:active={mode === 'read'} onclick={() => mode = 'read'}>Read</button>
-			<button class:active={mode === 'listen'} onclick={() => mode = 'listen'}>Listen</button>
+			<button class:active={mode === 'read'} onclick={() => lessonModePref.set('read')}>Read</button>
+			<button class:active={mode === 'listen'} onclick={() => lessonModePref.set('listen')}>Listen</button>
 		</div>
 
 		{#if !audio}

@@ -40,7 +40,19 @@ import { api } from "$lib/api";
 import type { TranscriptData } from "$lib/api";
 import { listenedStore } from "$lib/stores/listened.svelte";
 import { syncStore } from "$lib/stores/sync.svelte";
+import { lessonModePref } from "$lib/stores/lessonModePref.svelte";
 import Page from "./+page.svelte";
+
+/** Stub window.matchMedia (jsdom doesn't implement it). `mobile` drives the
+ * lesson-mode viewport default; the page calls it on mount via lessonModePref.init(). */
+function stubViewport(mobile: boolean) {
+  (window as unknown as { matchMedia: unknown }).matchMedia = vi.fn(() => ({
+    matches: mobile,
+    media: "(max-width: 640px)",
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
+}
 
 const mockRenderAudio = vi.mocked(api.renderAudio);
 const mockGetTranscript = vi.mocked(api.getLessonTranscript);
@@ -81,6 +93,10 @@ const transcript = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
+  stubViewport(false); // desktop default → Read, unless a test overrides
+  lessonModePref.set("read"); // reset the singleton's in-memory state
+  localStorage.clear(); // ...without leaving the persisted override set() just wrote
   syncStore.notify(null);
   vi.mocked(listenedStore.has).mockReturnValue(false);
   // When load supplies no transcript the component fetches it on mount. Default
@@ -139,6 +155,25 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     fireEvent.click(getByText("Listen"));
     fireEvent.click(getByText("Read"));
     expect(getByText("a coffee please")).toBeTruthy();
+  });
+
+  it("defaults to Listen mode on a mobile viewport (no stored preference)", () => {
+    localStorage.clear();
+    stubViewport(true); // mobile → Listen is the primary task
+    const { getByText, queryByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio: null, transcript } },
+    });
+    expect(getByText("Mark as Listened")).toBeTruthy();
+    expect(queryByText("a coffee please")).toBeFalsy();
+  });
+
+  it("honors a stored mode preference over the viewport default", () => {
+    localStorage.setItem("lessonMode", "listen");
+    stubViewport(false); // desktop would default to Read, but the stored pref wins
+    const { getByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio: null, transcript } },
+    });
+    expect(getByText("Mark as Listened")).toBeTruthy();
   });
 
   it("shows AudioPlayer when audio is pre-loaded", () => {
