@@ -42,6 +42,10 @@ class WordToken:
     inflectable: bool = False  # surface!=lemma + A1 feature + base prod REVIEW/KNOWN + no existing cloze
     inflection_feature: str | None = None  # the A1 feature string when inflectable
     known_marked: bool = False  # resolved item has a reversible "known" snapshot (db.is_known_marked)
+    # Read-ahead: recognition direction exists and is in a reviewable state
+    # (LEARNING/REVIEW/RELEARNING), regardless of due date. Reading the word is a
+    # valid recognition review even when the SRS wouldn't have surfaced it yet.
+    recognition_reviewable: bool = False
 
 
 @dataclass
@@ -139,13 +143,36 @@ def resolve_active_direction(item: object) -> Direction:
     return Direction.PRODUCTION
 
 
+_NON_REVIEWABLE_STATES = (SRSState.NEW, SRSState.KNOWN, SRSState.SUSPENDED, SRSState.BURIED)
+# Read-ahead is more permissive than the due queue: reading a NEW word is a valid
+# early introduction (the user recognizes it before the SRS surfaces it), so NEW is
+# allowed here. KNOWN/SUSPENDED are off the ramp entirely; BURIED is deferred.
+_READ_AHEAD_TERMINAL_STATES = (SRSState.KNOWN, SRSState.SUSPENDED, SRSState.BURIED)
+
+
+def _is_reviewable(ds: DirectionState) -> bool:
+    """True when the direction is on the review ramp (LEARNING/REVIEW/RELEARNING).
+
+    Matches the review queue's non-reviewable set (database._NON_REVIEWABLE_STATES):
+    NEW is gated by the daily cap; SUSPENDED/KNOWN are off the ramp; BURIED is
+    sibling-deferred for the day. This is the due-independent half of _is_due.
+    """
+    return ds.state not in _NON_REVIEWABLE_STATES
+
+
+def _is_read_reviewable(ds: DirectionState) -> bool:
+    """True when the direction can be reviewed by reading — NEW included.
+
+    Broader than _is_reviewable: reading a not-yet-introduced (NEW) word counts as
+    an early recognition review, pulling it into learning ahead of the SRS schedule.
+    """
+    return ds.state not in _READ_AHEAD_TERMINAL_STATES
+
+
 def _is_due(ds: DirectionState, today: date) -> bool:
     """True when the direction state is actionable (not new/known/suspended/buried) and due."""
-    # Match the review queue's non-reviewable set (database._NON_REVIEWABLE_STATES):
-    # NEW is gated by the daily cap; SUSPENDED/KNOWN are off the ramp; BURIED is
-    # sibling-deferred for the day. A buried card has due_at.date() == today but is
-    # NOT due — don't bold it.
-    if ds.state in (SRSState.NEW, SRSState.KNOWN, SRSState.SUSPENDED, SRSState.BURIED):
+    # A buried card has due_at.date() == today but is NOT due — don't bold it.
+    if not _is_reviewable(ds):
         return False
     return ds.due_at.date() <= today
 
@@ -291,6 +318,7 @@ def extract_transcript(
                 progress_val: float | None = None
                 inflectable_flag: bool = False
                 inflection_feature_val: str | None = None
+                recognition_reviewable_flag: bool = False
 
                 # Step 3b: Check card-less ignore list (inside the Step-3 unknown branch only)
                 if resolved_item is None and lemma.lower() in ignored_lemmas:
@@ -308,6 +336,11 @@ def extract_transcript(
                     active_ds = item.directions[active_dir]
                     active_state_val = active_ds.state.value
                     is_due_flag = _is_due(active_ds, today)
+                    # Read-ahead keys off RECOGNITION specifically (not active_dir):
+                    # reading always evidences recognition, even after the active
+                    # direction has flipped to production on graduation.
+                    rec_ds = item.directions.get(Direction.RECOGNITION)
+                    recognition_reviewable_flag = rec_ds is not None and _is_read_reviewable(rec_ds)
                     valid_components = [c for c in components if c is not None]
                     progress_val = compute_mastery_progress(valid_components)
 
@@ -357,6 +390,7 @@ def extract_transcript(
                         inflectable=inflectable_flag,
                         inflection_feature=inflection_feature_val,
                         known_marked=known_marked_flag,
+                        recognition_reviewable=recognition_reviewable_flag,
                     )
                 )
 

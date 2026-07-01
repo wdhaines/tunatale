@@ -339,6 +339,31 @@ describe("Tooltip", () => {
       expect(queryByRole("button", { name: /got it/i })).toBeNull();
     });
 
+    it("applies the review-ahead variant class when gradeVariant is 'ahead'", () => {
+      const word = makeWordToken({ is_due: false, srs_item_id: 1, recognition_reviewable: true });
+      const { getByRole } = render(TooltipTest, {
+        props: {
+          word,
+          childText: "test",
+          gradeLabel: "Review ✓",
+          gradeVariant: "ahead",
+          onGrade: vi.fn(),
+        },
+      });
+      const btn = getByRole("button", { name: "Review ✓" });
+      expect(btn.className).toContain("tt-btn-review-ahead");
+    });
+
+    it("does not apply the review-ahead class for the default (primary) grade", () => {
+      const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+      const { getByRole } = render(TooltipTest, {
+        props: { word, childText: "test", gradeLabel: "Got it ✓", onGrade: vi.fn() },
+      });
+      expect(getByRole("button", { name: "Got it ✓" }).className).not.toContain(
+        "tt-btn-review-ahead",
+      );
+    });
+
     it("grade button alone makes the popover renderable (counts as content)", () => {
       const { getByRole } = render(TooltipTest, {
         props: {

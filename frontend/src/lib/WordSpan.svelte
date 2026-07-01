@@ -74,9 +74,23 @@
 	// longer due post-grade. Single-level, mirrors the backend snapshot.
 	const undoable = $derived(Boolean(tooltipActions?.isGradeUndoable?.(word)));
 
+	// The normal due-grade path: the active direction is due and tracked.
+	const gotItApplies = $derived(
+		word.is_due && word.active_direction != null && word.srs_item_id != null
+	);
+
+	// Read-ahead: a not-due word whose RECOGNITION direction is on the review ramp.
+	// Reading it in the interface is a valid recognition review even though the SRS
+	// wouldn't have surfaced it yet. Suppressed when the due path already applies
+	// (the active direction — recognition OR production — is graded there instead;
+	// reconciling a due-production graduated word is deferred).
+	const readAheadApplies = $derived(
+		!gotItApplies && Boolean(word.recognition_reviewable) && word.srs_item_id != null
+	);
+
 	// Grade-button label mirrors what the old direct click did (the "cycle"):
-	// unknown → create a base card; due+tracked → grade Good; otherwise the
-	// click was a no-op, so no button.
+	// unknown → create a base card; due+tracked → grade Good; not-due but readable
+	// → review ahead; otherwise the click was a no-op, so no button.
 	const gradeLabel = $derived(
 		undoable
 			? 'Undo ↩'
@@ -84,10 +98,16 @@
 				? null
 				: word.active_state === 'unknown'
 					? 'Start learning'
-					: word.is_due && word.active_direction && word.srs_item_id != null
+					: gotItApplies
 						? 'Got it ✓'
-						: null
+						: readAheadApplies
+							? 'Review ✓'
+							: null
 	);
+
+	// Style the read-ahead grade subtler than the due "Got it ✓" so the user can
+	// see it's ahead of schedule (not the card the SRS is asking for).
+	const gradeVariant = $derived(!undoable && readAheadApplies ? 'ahead' : 'primary');
 
 	const onGrade = $derived(
 		undoable
@@ -105,6 +125,7 @@
 	actions={tooltipActions}
 	suppressed={!showTooltip}
 	{gradeLabel}
+	{gradeVariant}
 	{onGrade}
 >
 	<span

@@ -104,6 +104,92 @@ describe("WordSpan", () => {
     });
   });
 
+  describe("read-ahead (Review ✓)", () => {
+    it('shows "Review ✓" for a not-due word whose recognition is reviewable', () => {
+      const word = makeWordToken({
+        is_due: false,
+        active_direction: "recognition",
+        srs_item_id: 7,
+        recognition_reviewable: true,
+      });
+      const { getByRole, queryByRole } = render(WordSpan, {
+        props: { word, onWordClick: vi.fn() },
+      });
+      expect(getByRole("button", { name: "Review ✓" })).toBeTruthy();
+      expect(queryByRole("button", { name: "Got it ✓" })).toBeNull();
+    });
+
+    it('shows "Review ✓" for a graduated word whose active direction is production', () => {
+      // Recognition graduated → active_direction flips to production, but reading
+      // still evidences recognition, so the read-ahead affordance stays.
+      const word = makeWordToken({
+        is_due: false,
+        active_direction: "production",
+        srs_item_id: 7,
+        recognition_reviewable: true,
+      });
+      const { getByRole } = render(WordSpan, {
+        props: { word, onWordClick: vi.fn() },
+      });
+      expect(getByRole("button", { name: "Review ✓" })).toBeTruthy();
+    });
+
+    it("fires onWordClick when the review-ahead button is clicked", async () => {
+      const onWordClick = vi.fn();
+      const word = makeWordToken({
+        is_due: false,
+        active_direction: "recognition",
+        srs_item_id: 7,
+        recognition_reviewable: true,
+      });
+      const { getByRole } = render(WordSpan, {
+        props: { word, onWordClick, lineIndex: 3 },
+      });
+      await fireEvent.click(getByRole("button", { name: "Review ✓" }));
+      expect(onWordClick).toHaveBeenCalledWith(word, 3);
+    });
+
+    it('prefers the due "Got it ✓" over review-ahead when the active direction is due', () => {
+      const word = makeWordToken({
+        is_due: true,
+        active_direction: "recognition",
+        srs_item_id: 7,
+        recognition_reviewable: true,
+      });
+      const { getByRole, queryByRole } = render(WordSpan, {
+        props: { word, onWordClick: vi.fn() },
+      });
+      expect(getByRole("button", { name: "Got it ✓" })).toBeTruthy();
+      expect(queryByRole("button", { name: "Review ✓" })).toBeNull();
+    });
+
+    it("shows no review-ahead button when recognition_reviewable is false", () => {
+      const word = makeWordToken({
+        is_due: false,
+        active_direction: "recognition",
+        srs_item_id: 7,
+        recognition_reviewable: false,
+      });
+      const { queryByRole } = render(WordSpan, {
+        props: { word, onWordClick: vi.fn() },
+      });
+      expect(queryByRole("button", { name: "Review ✓" })).toBeNull();
+    });
+
+    it("shows no review-ahead button when there is no srs_item_id", () => {
+      const word = makeWordToken({
+        is_due: false,
+        active_direction: "recognition",
+        srs_item_id: null,
+        recognition_reviewable: true,
+      });
+      const { queryByRole } = render(WordSpan, {
+        props: { word, onWordClick: vi.fn() },
+      });
+      expect(queryByRole("button", { name: "Review ✓" })).toBeNull();
+    });
+  });
+
   describe("undo cycle (Got it ✓ → Undo ↩)", () => {
     it('shows "Undo ↩" when isGradeUndoable says this word was just graded — even though no longer due', () => {
       const word = makeWordToken({ srs_item_id: 42, is_due: false, active_direction: null });

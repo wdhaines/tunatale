@@ -562,6 +562,107 @@ class TestWordTokenEnrichment:
         assert word.srs_item_id is not None
 
 
+class TestRecognitionReviewable:
+    """recognition_reviewable: read-ahead eligibility for the recognition direction.
+
+    True when the RECOGNITION direction exists and is not terminal (KNOWN/
+    SUSPENDED/BURIED) — NEW included, since reading a not-yet-introduced word is a
+    valid early review. Independent of due date. Reading evidences recognition, so
+    this always keys off the recognition direction regardless of the active one.
+    """
+
+    def setup_method(self):
+        self.db = SRSDatabase(":memory:")
+        self.lemmatizer = LowercaseLemmatizer()
+
+    def _add_with_rec_state(self, text: str, state: SRSState) -> None:
+        unit = SyntacticUnit(text=text, translation="x", word_count=1, difficulty=1, source="llm", lemma=text)
+        self.db.add_collocation(unit, language_code="sl")
+        item = self.db.get_collocation(text)
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = state
+        # Far-future due so the word is NOT due — proves reviewable is state-based.
+        rec.due_at = datetime(2099, 1, 1, 4, 0, tzinfo=UTC)
+        self.db.update_direction(item.guid, Direction.RECOGNITION, rec)
+
+    def _word(self, text: str) -> object:
+        lesson = _make_lesson([("female-1", text)])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=date(2026, 6, 1))
+        return result.dialogue_lines[0].words[0]
+
+    def test_true_for_not_due_review(self):
+        self._add_with_rec_state("banka", SRSState.REVIEW)
+        word = self._word("banka")
+        assert word.is_due is False
+        assert word.recognition_reviewable is True
+
+    def test_true_for_learning(self):
+        self._add_with_rec_state("banka", SRSState.LEARNING)
+        word = self._word("banka")
+        assert word.recognition_reviewable is True
+
+    def test_true_for_relearning(self):
+        self._add_with_rec_state("banka", SRSState.RELEARNING)
+        assert self._word("banka").recognition_reviewable is True
+
+    def test_true_for_new(self):
+        # Reading a NEW (not-yet-introduced) word is a valid early review.
+        unit = SyntacticUnit(text="banka", translation="x", word_count=1, difficulty=1, source="llm", lemma="banka")
+        self.db.add_collocation(unit, language_code="sl")  # default state NEW
+        word = self._word("banka")
+        assert word.srs_state == "new"
+        assert word.is_due is False
+        assert word.recognition_reviewable is True
+
+    def test_false_for_suspended(self):
+        self._add_with_rec_state("banka", SRSState.SUSPENDED)
+        assert self._word("banka").recognition_reviewable is False
+
+    def test_false_for_known(self):
+        self._add_with_rec_state("banka", SRSState.KNOWN)
+        assert self._word("banka").recognition_reviewable is False
+
+    def test_false_for_unknown_word(self):
+        assert self._word("banka").recognition_reviewable is False
+
+    def test_false_for_cloze_no_recognition_direction(self):
+        unit = SyntacticUnit(
+            text="vsak",
+            translation="every",
+            word_count=1,
+            difficulty=1,
+            source="cloze",
+            lemma="vsak",
+            source_sentence="Odprto je vsak dan",
+            card_type="cloze",
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        item = self.db.get_collocation("vsak")
+        item.directions[Direction.PRODUCTION].state = SRSState.REVIEW
+        self.db.update_collocation(item)
+        lesson = _make_lesson([("female-1", "Odprto je vsak dan")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=date(2026, 6, 1))
+        # 'vsak' is the resolved cloze token; it has no recognition direction.
+        vsak = next(w for w in result.dialogue_lines[0].words if w.lemma == "vsak")
+        assert vsak.recognition_reviewable is False
+
+    def test_true_for_graduated_word_when_active_direction_is_production(self):
+        """Once recognition graduates (REVIEW) with production present, the active
+        direction flips to PRODUCTION — but reading still evidences recognition,
+        so recognition_reviewable stays True."""
+        unit = SyntacticUnit(text="banka", translation="x", word_count=1, difficulty=1, source="llm", lemma="banka")
+        self.db.add_collocation(unit, language_code="sl")
+        item = self.db.get_collocation("banka")
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            ds = item.directions[d]
+            ds.state = SRSState.REVIEW
+            ds.due_at = datetime(2099, 1, 1, 4, 0, tzinfo=UTC)
+            self.db.update_direction(item.guid, d, ds)
+        word = self._word("banka")
+        assert word.active_direction == "production"
+        assert word.recognition_reviewable is True
+
+
 class TestResolveActiveDirection:
     def test_cloze_returns_production(self):
         item = SyntacticUnit(

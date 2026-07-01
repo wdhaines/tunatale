@@ -21,6 +21,7 @@ vi.mock("$lib/api", () => ({
     createInflectionCloze: vi.fn(),
     submitDrill: vi.fn(),
     undoGrade: vi.fn(),
+    fetchQueueStats: vi.fn(),
     generateStory: vi.fn(),
     ignoreLemma: vi.fn(),
     unignoreLemma: vi.fn(),
@@ -437,7 +438,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       ],
     });
 
-    it("unknown word calls createBaseCard with sentence from dialogue line", async () => {
+    it("unknown word creates the base card AND reviews it (recognition good) in one tap", async () => {
       const t = makeTranscriptWithWord({ active_state: "unknown" });
       mockCreateBaseCard.mockResolvedValue({
         id: 1,
@@ -456,6 +457,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
           language_code: "sl",
         },
       });
+      mockSubmitDrill.mockResolvedValue({ new_due_at: "", new_state: "learning" });
       mockGetTranscript.mockResolvedValue(t);
 
       const { findByRole } = render(Page, {
@@ -472,7 +474,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
           language_code: "sl",
           translation: "",
         });
-        expect(mockSubmitDrill).not.toHaveBeenCalled();
+        // Introduced + reviewed: the newly created card id is graded recognition.
+        expect(mockSubmitDrill).toHaveBeenCalledWith(1, "recognition", "good");
         expect(mockGetTranscript).toHaveBeenCalledWith("l1");
       });
     });
@@ -521,12 +524,13 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       });
     });
 
-    it("word that is not due does not call any API", async () => {
+    it("word that is not due (and not review-ahead eligible) does not call any API", async () => {
       const t = makeTranscriptWithWord({
         active_state: "learning",
         active_direction: "recognition",
         is_due: false,
         srs_item_id: 42,
+        recognition_reviewable: false,
       });
       mockGetTranscript.mockResolvedValue(t);
 
@@ -539,6 +543,54 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await waitFor(() => {
         expect(mockCreateBaseCard).not.toHaveBeenCalled();
         expect(mockSubmitDrill).not.toHaveBeenCalled();
+      });
+    });
+
+    it("not-due review-ahead word grades RECOGNITION 'good' and refreshes", async () => {
+      const t = makeTranscriptWithWord({
+        active_state: "review",
+        active_direction: "recognition",
+        is_due: false,
+        srs_item_id: 42,
+        recognition_reviewable: true,
+      });
+      mockSubmitDrill.mockResolvedValue({ new_due_at: "", new_state: "review" });
+      mockGetTranscript.mockResolvedValue(t);
+
+      const { findByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: t } },
+      });
+
+      await fireEvent.click(await findByRole("button", { name: "Review ✓" }));
+
+      await waitFor(() => {
+        expect(mockSubmitDrill).toHaveBeenCalledWith(42, "recognition", "good");
+        expect(mockGetTranscript).toHaveBeenCalledWith("l1");
+      });
+    });
+
+    it("review-ahead grades RECOGNITION even when the active direction is production", async () => {
+      // Guardrail: a graduated word (recognition REVIEW → active_direction
+      // resolves to production) must still grade recognition, never production.
+      const t = makeTranscriptWithWord({
+        active_state: "review",
+        active_direction: "production",
+        is_due: false,
+        srs_item_id: 42,
+        recognition_reviewable: true,
+      });
+      mockSubmitDrill.mockResolvedValue({ new_due_at: "", new_state: "review" });
+      mockGetTranscript.mockResolvedValue(t);
+
+      const { findByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: t } },
+      });
+
+      await fireEvent.click(await findByRole("button", { name: "Review ✓" }));
+
+      await waitFor(() => {
+        expect(mockSubmitDrill).toHaveBeenCalledWith(42, "recognition", "good");
+        expect(mockSubmitDrill).not.toHaveBeenCalledWith(42, "production", "good");
       });
     });
 

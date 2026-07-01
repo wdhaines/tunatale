@@ -32,6 +32,10 @@
 		// the ONLY way to advance a word/phrase from the transcript. Callers decide
 		// the label ("Start learning" / "Got it ✓" / "Undo ↩") and pass null to hide it.
 		gradeLabel?: string | null;
+		// 'primary' = the due "Got it ✓" grade (accent); 'ahead' = a read-ahead
+		// recognition review of a not-due word (subtler, so it reads as ahead of
+		// schedule rather than the card the SRS is asking for).
+		gradeVariant?: 'primary' | 'ahead';
 		onGrade?: (() => void) | null;
 		// "Words…" — the touch path into a phrase's individual words (what
 		// Alt+hover does on desktop). Only collocation popovers pass this.
@@ -46,6 +50,7 @@
 		actions,
 		suppressed = false,
 		gradeLabel = null,
+		gradeVariant = 'primary',
 		onGrade = null,
 		onDrillIn = null
 	}: Props = $props();
@@ -249,6 +254,7 @@
 						<button
 							type="button"
 							class="tt-btn tt-btn-grade"
+							class:tt-btn-review-ahead={gradeVariant === 'ahead'}
 							onclick={() => onGrade!()}
 						>{gradeLabel}</button>
 					{/if}
@@ -404,6 +410,16 @@
 	}
 	.tt-btn-grade:hover {
 		background: var(--color-primary-hover, #1d4ed8);
+	}
+	/* Read-ahead review of a not-due word — subtler than the due grade (outlined
+	   accent, not filled) so it reads as "ahead of schedule," not the SRS's ask. */
+	.tt-btn-review-ahead {
+		background: transparent;
+		color: var(--color-primary, #2563eb);
+		border-color: var(--color-primary, #2563eb);
+	}
+	.tt-btn-review-ahead:hover {
+		background: rgba(37, 99, 235, 0.12);
 	}
 	@media (pointer: coarse) {
 		/* Long-press must win over the OS gestures it collides with: iOS text

@@ -669,6 +669,7 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
                         "inflectable": w.inflectable,
                         "inflection_feature": w.inflection_feature,
                         "known_marked": w.known_marked,
+                        "recognition_reviewable": w.recognition_reviewable,
                     }
                     for w in line.words
                 ],

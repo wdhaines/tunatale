@@ -339,6 +339,102 @@ class TestDrillEndpoint:
         assert r.status_code == 404
 
 
+class TestReadAheadRecognitionGrade:
+    """Read-ahead review of a not-due recognition card (the review-ahead feature).
+
+    The frontend submits the literal recognition direction; the endpoint has no
+    due-ness gate, so these lock the backend semantics that back that flow.
+    """
+
+    def _graduate(self, db: SRSDatabase, text: str) -> int:
+        """Add a word with both directions in REVIEW, not due, and return its id."""
+        db.add_collocation(_unit(text), language_code="sl")
+        item = db.get_collocation(text)
+        for d in (Direction.RECOGNITION, Direction.PRODUCTION):
+            ds = item.directions[d]
+            ds.state = SRSState.REVIEW
+            ds.due_at = datetime.datetime(2099, 1, 1, 4, 0, tzinfo=datetime.UTC)
+            ds.last_review = datetime.datetime(2026, 1, 1, 4, 0, tzinfo=datetime.UTC)
+            ds.reps = 3
+            ds.stability = 10.0
+            ds.difficulty = 5.0
+            db.update_direction(item.guid, d, ds)
+        rows, _ = db.list_collocations(search=text, limit=1)
+        return rows[0][0]
+
+    async def test_grade_recognition_leaves_production_untouched(self):
+        """Guardrail: read-ahead grades RECOGNITION even when active_direction is
+        PRODUCTION (graduated word). Production must be untouched."""
+        db = _db()
+        item_id = self._graduate(db, "voda")
+        _, before, _ = db.get_collocation_by_id(item_id)
+        prod_before = before.directions[Direction.PRODUCTION]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post(
+                f"/api/srs/items/{item_id}/direction/recognition/feedback",
+                json={"rating": "good", "time_ms": 1000},
+            )
+        assert r.status_code == 200
+        assert r.json()["direction"] == "recognition"
+
+        _, after, _ = db.get_collocation_by_id(item_id)
+        rec_after = after.directions[Direction.RECOGNITION]
+        prod_after = after.directions[Direction.PRODUCTION]
+        # Recognition advanced (last_review re-stamped to ~now).
+        assert rec_after.last_review is not None
+        assert rec_after.last_review.year >= 2026
+        assert rec_after.last_review != datetime.datetime(2026, 1, 1, 4, 0, tzinfo=datetime.UTC)
+        # A revlog row was written for the recognition direction.
+        assert db.latest_revlog_id_for_direction(item_id, Direction.RECOGNITION) is not None
+        # Production is completely untouched.
+        assert prod_after.last_review == prod_before.last_review
+        assert prod_after.due_at == prod_before.due_at
+        assert prod_after.stability == prod_before.stability
+        assert prod_after.state == prod_before.state
+
+    async def test_early_review_dampens_interval_vs_on_schedule(self):
+        """Early (well-spaced) recognition review yields a smaller resulting
+        interval than an on-schedule review of an identical card — FSRS
+        elapsed-based dampening, no queue/FSRS math change needed."""
+        db = _db()
+        now = datetime.datetime.now(datetime.UTC)
+        # Two identical REVIEW cards, stability 10; one reviewed 1 day in (early,
+        # high retrievability), one reviewed ~10 days in (on schedule, R≈0.9).
+        specs = {"early": 1, "ontime": 10}
+        ids: dict[str, int] = {}
+        for text, elapsed_days in specs.items():
+            db.add_collocation(_unit(text), language_code="sl")
+            item = db.get_collocation(text)
+            rec = item.directions[Direction.RECOGNITION]
+            rec.state = SRSState.REVIEW
+            rec.reps = 3
+            rec.stability = 10.0
+            rec.difficulty = 5.0
+            rec.last_review = now - datetime.timedelta(days=elapsed_days)
+            rec.due_at = rec.last_review + datetime.timedelta(days=10)
+            db.update_direction(item.guid, Direction.RECOGNITION, rec)
+            rows, _ = db.list_collocations(search=text, limit=1)
+            ids[text] = rows[0][0]
+
+        intervals: dict[str, float] = {}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            for text, item_id in ids.items():
+                r = await c.post(
+                    f"/api/srs/items/{item_id}/direction/recognition/feedback",
+                    json={"rating": "good", "time_ms": 1000},
+                )
+                assert r.status_code == 200
+                body = r.json()
+                assert body["new_state"] == "review"
+                new_due = datetime.datetime.fromisoformat(body["new_due_at"])
+                intervals[text] = (new_due - now).total_seconds()
+
+        # The early review's resulting interval is smaller — reviewing while
+        # retrievability is still high grows stability less.
+        assert intervals["early"] < intervals["ontime"]
+
+
 class _SpyBalancer:
     """Stand-in load balancer: records add_card, never relocates (find_interval=None)."""
 

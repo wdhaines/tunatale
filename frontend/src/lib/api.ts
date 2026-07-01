@@ -113,6 +113,11 @@ export interface WordToken {
   inflectable: boolean;
   inflection_feature: string | null;
   known_marked: boolean;
+  // Read-ahead: the recognition direction is on the review ramp (learning/review/
+  // relearning), regardless of due date. Reading the word counts as a recognition
+  // review even when the SRS wouldn't have surfaced it yet. Optional (not
+  // required-with-null) so existing test literals need no update.
+  recognition_reviewable?: boolean;
 }
 
 export interface CreateSRSItemRequest {

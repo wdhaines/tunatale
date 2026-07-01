@@ -8,6 +8,7 @@
 	import Transcript from '$lib/components/Transcript.svelte';
 	import TranscriptPlaceholder from '$lib/components/TranscriptPlaceholder.svelte';
 	import { syncStore } from '$lib/stores/sync.svelte';
+	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -143,22 +144,36 @@
 		error = '';
 		try {
 			if (word.active_state === 'unknown') {
+				// Reading an untracked word introduces AND reviews it in one tap:
+				// create the base card, then record a first recognition review so it
+				// enters learning right away (not just parked at NEW).
 				const sentence = transcript!.dialogue_lines[lineIndex]?.sentence ?? '';
-				await api.createBaseCard({
+				const created = await api.createBaseCard({
 					surface: word.surface,
 					lemma: word.lemma,
 					sentence,
 					language_code: data.lesson.language_code,
 					translation: word.translation ?? ''
 				});
+				await api.submitDrill(created.id, 'recognition', 'good');
+				undoable = { itemId: created.id, direction: 'recognition' };
 			} else if (word.is_due && word.active_direction && word.srs_item_id != null) {
 				const direction = word.active_direction as 'recognition' | 'production';
 				await api.submitDrill(word.srs_item_id, direction, 'good');
 				undoable = { itemId: word.srs_item_id, direction };
+			} else if (word.recognition_reviewable && word.srs_item_id != null) {
+				// Read-ahead: reading a not-due word is a valid RECOGNITION review.
+				// Always grade the literal recognition direction — never
+				// active_direction, which flips to production once recognition
+				// graduates (that would silently grade the wrong card).
+				await api.submitDrill(word.srs_item_id, 'recognition', 'good');
+				undoable = { itemId: word.srs_item_id, direction: 'recognition' };
 			} else {
 				return;
 			}
 			transcript = await api.getLessonTranscript(data.lesson.id);
+			// A grade changes the review counts; keep the shared nav badge truthful.
+			queueStatsStore.refresh();
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		}
