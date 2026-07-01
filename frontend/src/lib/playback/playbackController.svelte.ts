@@ -101,6 +101,10 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   let duration = $state(audioEl.duration || 0);
   let rate = $state(1);
   let sentenceSkip = $state(false);
+  // Browsers QUEUE the pause event, so destroy()'s own pause() fires the
+  // listener AFTER src="" has reset currentTime to 0 — without this flag the
+  // listener would overwrite the resume position destroy just saved.
+  let destroyed = false;
 
   let currentCue = $derived.by(() => {
     if (!cues || cues.length === 0) return null;
@@ -152,6 +156,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     if (mediaSession) mediaSession.playbackState = "playing";
   });
   audioEl.addEventListener("pause", () => {
+    if (destroyed) return;
     playing = false;
     storage.setItem(`tt-resume-${lessonId}`, String(audioEl.currentTime));
     if (mediaSession) mediaSession.playbackState = "paused";
@@ -381,6 +386,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       sentenceSkip = v;
     },
     destroy() {
+      destroyed = true;
       audioEl.pause();
       saveResume();
       audioEl.src = "";

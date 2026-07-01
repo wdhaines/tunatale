@@ -726,6 +726,40 @@ describe("playbackController", () => {
       // The stored position should be 42.5 (the pre-src-clear value), not 0
       expect(fakeLocalStorage.setItem).toHaveBeenCalledWith("tt-resume-l1", "42.5");
     });
+
+    it("a pause event queued behind destroy() does not clobber the saved resume", async () => {
+      // Real browsers QUEUE the pause event as a task (media.pause() spec), so
+      // the sequence in a real browser is: destroy() → pause() queues the
+      // event → saveResume() stores 42.5 → src="" resets currentTime to 0 →
+      // destroy returns → the queued pause listener finally runs and reads
+      // currentTime 0. The listener's own resume write must not overwrite the
+      // value destroy just saved. Asserts the FINAL stored value, not "was
+      // called with" — a later clobbering call must fail the test.
+      let internalTime = 42.5;
+      const el = makeFakeAudio();
+      Object.defineProperty(el, "currentTime", {
+        get: () => internalTime,
+        set: (v: number) => {
+          internalTime = v;
+        },
+        configurable: true,
+      });
+      Object.defineProperty(el, "src", {
+        get: () => "",
+        set: (v: string) => {
+          if (v === "") internalTime = 0;
+        },
+        configurable: true,
+      });
+      (el as unknown as { pause: () => void }).pause = () => {
+        queueMicrotask(() => el.dispatchEvent(new Event("pause")));
+      };
+
+      const ctrl = createController({ audioEl: el, storage: fakeLocalStorage });
+      ctrl.destroy();
+      await Promise.resolve(); // flush the queued pause event
+      expect(fakeLocalStorage.getItem("tt-resume-l1")).toBe("42.5");
+    });
   });
 
   describe("per-lesson resume", () => {
