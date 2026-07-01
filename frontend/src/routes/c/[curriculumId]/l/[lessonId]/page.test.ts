@@ -26,6 +26,7 @@ vi.mock("$lib/api", () => ({
     ignoreLemma: vi.fn(),
     unignoreLemma: vi.fn(),
     audioUrl: vi.fn((id: string) => `/api/audio/${id}`),
+    audioZipUrl: vi.fn((lessonId: string) => `/api/audio/lesson/${lessonId}/zip`),
   },
 }));
 
@@ -176,13 +177,30 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(getByText("Mark as Listened")).toBeTruthy();
   });
 
-  it("shows AudioPlayer when audio is pre-loaded", () => {
+  it("shows LessonPlayer when audio is pre-loaded", () => {
     const { queryByText, container } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript: null } },
     });
     expect(queryByText("Render Audio")).toBeFalsy();
-    expect(queryByText("Audio Player")).toBeTruthy();
-    expect(container.querySelector("audio")).toBeTruthy();
+    expect(container.querySelector(".player")).toBeTruthy();
+    expect(container.querySelector("audio")).toBeFalsy();
+  });
+
+  it("destroys and recreates LessonPlayer when audio_id changes (lesson nav)", async () => {
+    const pauseSpy = vi.spyOn(HTMLAudioElement.prototype, "pause");
+    const { rerender } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript: null } },
+    });
+    expect(pauseSpy).not.toHaveBeenCalled();
+
+    const newAudio = { audio_id: "a2", lesson_id: "l2", sections: [] };
+    await rerender({
+      data: { curriculum, lesson, audio: newAudio, transcript: null },
+    });
+
+    // The old LessonPlayer was destroyed (pause called), a new one created
+    expect(pauseSpy).toHaveBeenCalled();
+    pauseSpy.mockRestore();
   });
 
   it("renders audio on Render Audio click", async () => {
@@ -194,21 +212,21 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     });
     await fireEvent.click(getByText("Render Audio"));
 
-    expect(await findByText("Audio Player")).toBeTruthy();
-    expect(container.querySelector("audio")).toBeTruthy();
+    expect(container.querySelector(".player")).toBeTruthy();
+    expect(container.querySelector(".transport-row")).toBeTruthy();
     expect(await findByText("a coffee please")).toBeTruthy();
   });
 
-  it("still shows AudioPlayer if getLessonTranscript fails after render", async () => {
+  it("still shows LessonPlayer if getLessonTranscript fails after render", async () => {
     mockRenderAudio.mockResolvedValue(audio);
     mockGetTranscript.mockRejectedValue(new Error("transcript unavailable"));
 
-    const { getByText, findByText, queryByText } = render(Page, {
+    const { getByText, findByText, queryByText, container } = render(Page, {
       props: { data: { curriculum, lesson, audio: null, transcript: null } },
     });
     await fireEvent.click(getByText("Render Audio"));
 
-    expect(await findByText("Audio Player")).toBeTruthy();
+    expect(container.querySelector(".transport-row")).toBeTruthy();
     expect(queryByText("Render Audio")).toBeFalsy();
   });
 

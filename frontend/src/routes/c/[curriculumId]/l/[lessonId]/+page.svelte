@@ -4,7 +4,7 @@
 	import { api } from '$lib/api';
 	import type { LessonAudio, TranscriptData } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
-	import AudioPlayer from '$lib/components/AudioPlayer.svelte';
+	import LessonPlayer from '$lib/components/LessonPlayer.svelte';
 	import Transcript from '$lib/components/Transcript.svelte';
 	import TranscriptPlaceholder from '$lib/components/TranscriptPlaceholder.svelte';
 	import { syncStore } from '$lib/stores/sync.svelte';
@@ -364,7 +364,35 @@
 	</section>
 
 	{#if audio}
-		<AudioPlayer {audio} />
+		{#key audio.audio_id}
+			{#if mode === 'listen'}
+				<section class="card">
+					<LessonPlayer {audio} lessonTitle={data.lesson.title} />
+				</section>
+			{:else}
+				<LessonPlayer {audio} compact lessonTitle={data.lesson.title} />
+			{/if}
+		{/key}
+	{/if}
+
+	{#if mode === 'listen'}
+		<section class="card listen-card">
+			<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened} disabled={listenLoading}>
+				{#if listenLoading}
+					Registering…
+				{:else if isListened}
+					✓ Listened
+				{:else}
+					Mark as Listened
+				{/if}
+			</button>
+			{#if listenResult && !error}
+				<p class="listen-confirmation">
+					{listenResult.registered}
+					{listenResult.registered === 1 ? 'word' : 'words'} tracked in SRS
+				</p>
+			{/if}
+		</section>
 	{/if}
 
 	{#if mode === 'read'}
@@ -384,24 +412,6 @@
 				<TranscriptPlaceholder lesson={data.lesson} />
 			{:else}
 				<p class="muted">No transcript available.</p>
-			{/if}
-		</section>
-	{:else}
-		<section class="card listen-card">
-			<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened} disabled={listenLoading}>
-				{#if listenLoading}
-					Registering…
-				{:else if isListened}
-					✓ Listened
-				{:else}
-					Mark as Listened
-				{/if}
-			</button>
-			{#if listenResult && !error}
-				<p class="listen-confirmation">
-					{listenResult.registered}
-					{listenResult.registered === 1 ? 'word' : 'words'} tracked in SRS
-				</p>
 			{/if}
 		</section>
 	{/if}

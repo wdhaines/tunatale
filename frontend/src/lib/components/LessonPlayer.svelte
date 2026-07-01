@@ -1,0 +1,294 @@
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { api } from '$lib/api';
+	import type { LessonAudio } from '$lib/api';
+	import { maybePrefetchLesson } from '$lib/sw/prefetch';
+	import type { NetworkInformationLike } from '$lib/sw/prefetch';
+	import type { CacheStorageLike } from '$lib/sw/audio-cache';
+	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
+	import { createPlaybackController } from '$lib/playback/playbackController.svelte';
+	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
+
+	interface Props {
+		audio: LessonAudio;
+		compact?: boolean;
+		lessonTitle?: string;
+	}
+
+	let { audio, compact = false, lessonTitle = '' }: Props = $props();
+
+	const totalSections = audio.sections.length;
+
+	let controller = createPlaybackController({
+		lessonId: audio.lesson_id,
+		lessonTitle: lessonTitle || audio.lesson_id,
+		audioUrl: api.audioUrl(audio.audio_id),
+		audio
+	});
+
+	const hasCues = audio.cues !== null && audio.cues !== undefined && audio.cues.length > 0;
+
+	const SPEED_OPTIONS = [0.7, 0.8, 0.85, 0.9, 0.95, 1.0];
+
+	function cycleSpeed() {
+		const current = controller.playbackRate;
+		const idx = SPEED_OPTIONS.indexOf(current);
+		const next = SPEED_OPTIONS[(idx + 1) % SPEED_OPTIONS.length];
+		controller.setRate(next);
+	}
+
+	function formatTime(s: number): string {
+		const m = Math.floor(s / 60);
+		const sec = Math.floor(s % 60);
+		return `${m}:${sec.toString().padStart(2, '0')}`;
+	}
+
+	onMount(() => {
+		const nav = navigator as Navigator & { connection?: NetworkInformationLike };
+		const urls = [api.audioUrl(audio.audio_id)];
+		void maybePrefetchLesson(urls, {
+			enabled: prefetchPrefStore.enabled,
+			connection: nav.connection,
+			caches: (globalThis as { caches?: CacheStorageLike }).caches,
+			fetch
+		});
+
+		return () => {
+			controller.destroy();
+		};
+	});
+</script>
+
+<section class="player" class:compact>
+	{#if hasCues && !compact}
+		<div class="section-info">
+			<span class="section-title">{controller.currentSectionTitle || 'Audio'}</span>
+			<span class="section-count">
+				{controller.currentSectionIndex != null ? controller.currentSectionIndex + 1 : '-'}/{totalSections}
+			</span>
+		</div>
+
+		<div class="current-line" title={controller.currentCue?.text ?? ''}>
+			{controller.currentCue?.text ?? ''}
+		</div>
+	{/if}
+
+	<div class="transport-row">
+		{#if hasCues}
+			<button class="ctrl-btn" onclick={() => controller.prevSection()} title="Previous section">⏮ Sec</button>
+		{/if}
+		<button class="ctrl-btn" onclick={() => controller.seekBy(-10)} title="Rewind 10s">◀10s</button>
+		<button class="ctrl-btn play-btn" onclick={() => controller.togglePlay()} title={controller.playing ? 'Pause' : 'Play'}>
+			{controller.playing ? '⏸' : '▶'}
+		</button>
+		<button class="ctrl-btn" onclick={() => controller.seekBy(10)} title="Forward 10s">10s▶</button>
+		{#if hasCues}
+			<button class="ctrl-btn" onclick={() => controller.nextSection()} title="Next section">Sec ⏭</button>
+		{/if}
+	</div>
+
+	{#if hasCues && !compact}
+		<div class="sentence-row">
+			<button class="ctrl-btn small" onclick={() => controller.prevCue()} title="Previous sentence">◀ Sentence</button>
+			<button class="ctrl-btn small" onclick={() => controller.repeatCue()} title="Repeat current">Repeat ↻</button>
+			<label class="sentence-skip-toggle">
+				<input type="checkbox" checked={controller.sentenceSkip} onchange={(e) => controller.setSentenceSkip((e.target as HTMLInputElement).checked)} />
+				Sentence skip
+			</label>
+		</div>
+	{/if}
+
+	{#if !compact}
+		<div class="scrubber-row">
+			<input
+				type="range"
+				min={0}
+				max={controller.duration || 1}
+				step={0.1}
+				value={controller.currentTime}
+				oninput={(e) => controller.seekTo(parseFloat((e.target as HTMLInputElement).value))}
+				class="scrubber"
+			/>
+			<div class="time-labels">
+				<span>{formatTime(controller.currentTime)}</span>
+				<span>{formatTime(controller.duration)}</span>
+			</div>
+		</div>
+
+		<div class="speed-row">
+			<button class="speed-btn" onclick={cycleSpeed}>{controller.playbackRate}×</button>
+		</div>
+	{/if}
+
+	{#if !compact}
+		<details class="download-section">
+			<summary>Download</summary>
+			<div class="download-links">
+				<a class="download-all-btn" href={api.audioZipUrl(audio.lesson_id)} download>Download All Sections</a>
+				{#each audio.sections as sec (sec.audio_id)}
+					<a class="section-dl-btn" href={api.audioUrl(sec.audio_id)} download>{sec.title}</a>
+				{/each}
+			</div>
+		</details>
+	{/if}
+</section>
+
+<style>
+	.player {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+	.player.compact {
+		gap: 0.5rem;
+	}
+	.section-info {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		font-size: 0.85rem;
+		color: var(--color-muted);
+	}
+	.section-title {
+		font-weight: 600;
+	}
+	.section-count {
+		font-size: 0.8rem;
+	}
+	.current-line {
+		font-size: 1.3rem;
+		font-weight: 700;
+		line-height: 1.4;
+		padding: 0.5rem 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.transport-row {
+		display: flex;
+		justify-content: center;
+		gap: 0.5rem;
+	}
+	.ctrl-btn {
+		min-width: 48px;
+		min-height: 44px;
+		padding: 0.5rem 0.75rem;
+		background: var(--color-surface-2);
+		color: var(--color-text);
+		border: none;
+		border-radius: var(--radius-pill, 999px);
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.15s ease;
+	}
+	.ctrl-btn:hover {
+		background: var(--color-primary);
+		color: var(--color-on-primary);
+	}
+	.play-btn {
+		min-width: 56px;
+		font-size: 1.1rem;
+		background: var(--color-primary);
+		color: var(--color-on-primary);
+	}
+	.small {
+		min-width: 0;
+		min-height: 36px;
+		padding: 0.35rem 0.65rem;
+		font-size: 0.8rem;
+	}
+	.sentence-row {
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+	.sentence-skip-toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.3rem;
+		font-size: 0.8rem;
+		color: var(--color-muted);
+		cursor: pointer;
+	}
+	.sentence-skip-toggle input {
+		cursor: pointer;
+	}
+	.scrubber-row {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+	}
+	.scrubber {
+		width: 100%;
+		cursor: pointer;
+	}
+	.time-labels {
+		display: flex;
+		justify-content: space-between;
+		font-size: 0.75rem;
+		color: var(--color-muted);
+	}
+	.speed-row {
+		display: flex;
+		justify-content: center;
+	}
+	.speed-btn {
+		min-width: 56px;
+		min-height: 40px;
+		padding: 0.35rem 0.8rem;
+		background: var(--color-surface-2);
+		color: var(--color-text);
+		border: 1px solid var(--color-border, #ddd);
+		border-radius: var(--radius-pill, 999px);
+		font-size: 0.9rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.speed-btn:hover {
+		background: var(--color-primary);
+		color: var(--color-on-primary);
+		border-color: var(--color-primary);
+	}
+	.download-section {
+		margin-top: 0.5rem;
+	}
+	summary {
+		cursor: pointer;
+		font-size: 0.85rem;
+		color: var(--color-muted);
+	}
+	.download-links {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-top: 0.5rem;
+	}
+	.download-all-btn {
+		display: block;
+		min-height: 44px;
+		line-height: 44px;
+		padding: 0 1.25rem;
+		background: var(--color-primary);
+		color: var(--color-on-primary);
+		border-radius: 4px;
+		text-decoration: none;
+		font-size: 0.9rem;
+		font-weight: 600;
+	}
+	.download-all-btn:hover {
+		filter: brightness(0.9);
+	}
+	.section-dl-btn {
+		padding: 0.4rem 0.9rem;
+		background: var(--color-secondary);
+		color: var(--color-on-primary);
+		border-radius: 4px;
+		text-decoration: none;
+		font-size: 0.85rem;
+	}
+	.section-dl-btn:hover {
+		filter: brightness(0.85);
+	}
+</style>
