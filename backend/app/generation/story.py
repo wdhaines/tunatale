@@ -92,7 +92,10 @@ class StoryGenerator:
         )
 
         logger.info("Generating story for day %d (%s)", curriculum_day.day, strategy.value)
-        raw = await self._llm.complete(user_prompt, system_prompt=system_prompt, temperature=0.7, max_tokens=4096)
+        # 5500 (not 4096) leaves headroom for gpt-oss reasoning tokens (~1400 on a
+        # story-sized prompt at reasoning_effort=low) on top of the ~3200-token JSON
+        # payload; a plain instruct model just never uses the extra ceiling.
+        raw = await self._llm.complete(user_prompt, system_prompt=system_prompt, temperature=0.7, max_tokens=5500)
         data = self._parse_json(raw)
         lesson = self._parse_response(data, language=language)
         return lesson

@@ -9,7 +9,13 @@ import pytest
 import respx
 from httpx import Response
 
-from app.llm.client import GROQ_API_URL, OLLAMA_DEFAULT_URL, LLMClient, LLMError
+from app.llm.client import (
+    GROQ_API_URL,
+    OLLAMA_DEFAULT_URL,
+    LLMClient,
+    LLMError,
+    reasoning_params_for_model,
+)
 
 OLLAMA_GENERATE_URL = f"{OLLAMA_DEFAULT_URL}/api/generate"
 OLLAMA_TAGS_URL = f"{OLLAMA_DEFAULT_URL}/api/tags"
@@ -318,6 +324,23 @@ class TestExtraBodyParams:
             await client.complete("q", system_prompt="You are helpful.")
         payload = json.loads(route.calls[0].request.content)
         assert any(m["role"] == "system" for m in payload["messages"])
+
+
+class TestReasoningParamsForModel:
+    """gpt-oss reasoning models need reasoning_effort=low or they burn the whole
+    completion budget on hidden reasoning and return empty content."""
+
+    def test_gpt_oss_120b_gets_low_effort(self):
+        assert reasoning_params_for_model("openai/gpt-oss-120b") == {"reasoning_effort": "low"}
+
+    def test_gpt_oss_20b_gets_low_effort(self):
+        assert reasoning_params_for_model("openai/gpt-oss-20b") == {"reasoning_effort": "low"}
+
+    def test_non_reasoning_model_gets_none(self):
+        assert reasoning_params_for_model("llama-3.3-70b-versatile") is None
+
+    def test_llama_4_scout_gets_none(self):
+        assert reasoning_params_for_model("meta-llama/llama-4-scout-17b-16e-instruct") is None
 
 
 class TestHealth:

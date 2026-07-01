@@ -20,6 +20,21 @@ OLLAMA_DEFAULT_URL = "http://localhost:11434"
 OLLAMA_DEFAULT_MODEL = "llama3.2"
 
 
+def reasoning_params_for_model(model: str) -> dict | None:
+    """Extra Groq body params a given model needs, or None for plain instruct models.
+
+    gpt-oss models are reasoning models: at the default effort they spend the
+    entire ``max_completion_tokens`` budget on hidden reasoning tokens and return
+    empty ``content``. Pinning ``reasoning_effort="low"`` (the floor Groq accepts —
+    only low/medium/high are valid) keeps reasoning small enough that the JSON
+    payload actually gets emitted. Setting this also flips the client to send
+    ``max_completion_tokens`` instead of ``max_tokens`` (see ``_call_groq``).
+    """
+    if "gpt-oss" in model:
+        return {"reasoning_effort": "low"}
+    return None
+
+
 def _parse_reset_duration(s: str) -> float:
     """Parse Groq's x-ratelimit-reset-requests header, e.g. '2s', '500ms', '1m30s' → seconds."""
     total = 0.0

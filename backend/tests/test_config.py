@@ -13,7 +13,7 @@ def test_settings_defaults(monkeypatch, tmp_path):
     assert s.groq_api_key == ""
     assert s.database_url == "sqlite:///./tunatale_sl.db"
     assert s.llm_mode == "mock"
-    assert s.llm_model == "llama-3.3-70b-versatile"
+    assert s.llm_model == "openai/gpt-oss-120b"
 
 
 def test_settings_from_env(monkeypatch):

@@ -20,7 +20,12 @@ class Settings(BaseSettings):
     # ``target_language``. ``target_language`` is the default when no header is sent.
     database_urls: dict[str, str] = {}
     llm_mode: str = "mock"  # mock | live | record | patch
-    llm_model: str = "llama-3.3-70b-versatile"
+    # gpt-oss-120b replaces llama-3.3-70b-versatile (deprecated by Groq 2026-06-30).
+    # It is a reasoning model — main.py pins reasoning_effort=low via
+    # reasoning_params_for_model() so it emits content instead of burning the whole
+    # budget on reasoning. Free-tier TPM is 8000; WIDER story gen fits, DEEPER (bigger
+    # prompt) can approach the ceiling.
+    llm_model: str = "openai/gpt-oss-120b"
 
     target_language: str = "sl"
 

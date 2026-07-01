@@ -21,7 +21,7 @@ from app.generation.curriculum import CurriculumGenerator  # noqa: E402
 from app.generation.story import StoryGenerator  # noqa: E402
 from app.languages import get_language, get_preprocessor  # noqa: E402
 from app.llm.cassette import CassetteLLMClient  # noqa: E402
-from app.llm.client import LLMClient  # noqa: E402
+from app.llm.client import LLMClient, reasoning_params_for_model  # noqa: E402
 from app.models.lesson import SectionType  # noqa: E402
 from app.srs.database import SRSDatabase  # noqa: E402
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for  # noqa: E402
@@ -90,7 +90,11 @@ def _language_db_map() -> dict[str, str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    real_client = LLMClient(groq_api_key=settings.groq_api_key, groq_model=settings.llm_model)
+    real_client = LLMClient(
+        groq_api_key=settings.groq_api_key,
+        groq_model=settings.llm_model,
+        groq_extra_body_params=reasoning_params_for_model(settings.llm_model),
+    )
     cassette_path = Path("tests/cassettes/e2e.json")
 
     # Wrap with cassettes unless explicitly in live mode
