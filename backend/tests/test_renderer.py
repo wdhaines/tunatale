@@ -428,11 +428,6 @@ class TestLessonRendererCues:
         positions: list[int] = []
         search_from = 0
         for marker in markers:
-            if marker == 0.0:
-                # Clip boundary for silence: find first zero after the previous
-                # non-zero run.  We use the end of the search range.
-                positions.append(0)
-                continue
             mask = np.abs(samples[search_from:, 0] - marker) < 0.001
             matches = np.where(mask)[0]
             if len(matches) == 0:
@@ -515,33 +510,37 @@ class TestLessonRendererCues:
             ],
         )
 
-        # Assign unique marker for each clip in render order
+        # Assign a unique marker AND a unique duration for each clip in render
+        # order — varied durations mean a systematic end-frame bug (e.g. end
+        # computed as start + constant) cannot hide behind uniform clips.
         all_phrases: list[dict] = [
-            {"key": (None, 0), "text": lesson.title, "marker": 0.1},
+            {"key": (None, 0), "text": lesson.title, "marker": 0.1, "duration_ms": 150},
         ]
         for sec_idx, sec in enumerate(lesson.sections):
             for ph_idx, _ in enumerate(sec.phrases):
-                marker = 0.1 * (len(all_phrases) + 1)
-                all_phrases.append({"key": (sec_idx, ph_idx), "text": sec.phrases[ph_idx].text, "marker": marker})
+                n = len(all_phrases)
+                all_phrases.append(
+                    {
+                        "key": (sec_idx, ph_idx),
+                        "text": sec.phrases[ph_idx].text,
+                        "marker": 0.1 * (n + 1),
+                        "duration_ms": 150 + 70 * n,
+                    }
+                )
 
-        # Build marker lookup by (section_idx, phrase_idx) → marker
-        key_to_marker: dict[tuple[int | None, int], float] = {p["key"]: p["marker"] for p in all_phrases}
-
-        called_paths: list[str] = []
+        # Lookup by (section_idx, phrase_idx) — synthesis is concurrent, so the
+        # clip identity must come from the temp-file path, not call order.
+        by_key: dict[tuple[int | None, int], dict] = {p["key"]: p for p in all_phrases}
 
         async def fake_synth(text, voice_id, output_path, rate="+0%"):
-            called_paths.append(output_path.stem)
-            # Determine marker from the file path
             stem = output_path.stem
             if stem == "title":
-                marker = key_to_marker[(None, 0)]
+                spec = by_key[(None, 0)]
             else:
                 # s{section_idx}_p{phrase_idx}
                 parts = stem.split("_")
-                sec = int(parts[0][1:])
-                ph = int(parts[1][1:])
-                marker = key_to_marker.get((sec, ph), 0.5)
-            output_path.write_bytes(_make_wav_bytes(duration_ms=_PHRASE_DURATION_MS, marker=marker))
+                spec = by_key[(int(parts[0][1:]), int(parts[1][1:]))]
+            output_path.write_bytes(_make_wav_bytes(duration_ms=spec["duration_ms"], marker=spec["marker"]))
 
         mock_tts = AsyncMock()
         mock_tts.synthesize = fake_synth
@@ -555,20 +554,24 @@ class TestLessonRendererCues:
 
         # Read the actual output buffer
         buf, buf_rate = sf.read(str(output), dtype="float32", always_2d=True)
-        assert buf_rate > 0
 
-        # Measure where each marker starts in the buffer
-        marker_order = [p["marker"] for p in all_phrases]
-        measured_frames = self._measure_clip_starts(buf, buf_rate, marker_order)
-
+        # Every cue must be locatable in the buffer as a contiguous run of its
+        # marker value, and BOTH start_ms and end_ms must match the measured
+        # run. No skips — an unfound marker is a failure, not a pass.
+        assert len(cues) == len(all_phrases)
         for i, cue in enumerate(cues):
-            expected_frame = measured_frames[i]
-            if expected_frame == 0:
-                continue  # skip markers that weren't found (silence-only entries)
+            spec = all_phrases[i]
+            idx = np.where(np.abs(buf[:, 0] - spec["marker"]) < 0.003)[0]
+            assert len(idx) > 0, f"Cue {i} '{cue.text}': marker {spec['marker']} not found in buffer"
+            assert idx[-1] - idx[0] + 1 == len(idx), f"Cue {i} '{cue.text}': marker run not contiguous"
 
-            measured_start_ms = round(expected_frame / buf_rate * 1000)
+            measured_start_ms = round(idx[0] / buf_rate * 1000)
+            measured_end_ms = round((idx[-1] + 1) / buf_rate * 1000)
             assert abs(cue.start_ms - measured_start_ms) <= 2, (
                 f"Cue {i} '{cue.text}': expected start_ms ≈ {measured_start_ms}, got {cue.start_ms}"
+            )
+            assert abs(cue.end_ms - measured_end_ms) <= 2, (
+                f"Cue {i} '{cue.text}': expected end_ms ≈ {measured_end_ms}, got {cue.end_ms}"
             )
 
     async def test_render_cues_include_boundary_silence_in_offsets(self, tmp_path):
@@ -609,8 +612,14 @@ class TestLessonRendererCues:
         # Measure the three markers
         measured = self._measure_clip_starts(buf, buf_rate, [0.1, 0.2, 0.3])
 
-        # Title starts at 0
-        assert measured[0] == 0 or abs(cues[0].start_ms - 0) <= 2
+        # Each cue's start must match its measured buffer position (title at 0;
+        # the other two found strictly after it — 0 would mean "not found").
+        assert cues[0].start_ms == 0
+        assert measured[1] > 0 and measured[2] > 0, "section markers not found in buffer"
+        for cue, frame in zip(cues[1:3], measured[1:3], strict=True):
+            assert abs(cue.start_ms - round(frame / buf_rate * 1000)) <= 2, (
+                f"'{cue.text}': start_ms {cue.start_ms} vs measured {round(frame / buf_rate * 1000)}"
+            )
 
         # Second section should start well after first + pause + boundary
         # The boundary is 3000ms, which at 11025 Hz = ~33075 frames
