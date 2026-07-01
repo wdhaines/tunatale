@@ -2385,11 +2385,46 @@ def _make_mock_lesson_with_sections() -> Lesson:
 
 
 def _fake_render(lesson, full_path, section_paths=None):
-    """Fake renderer.render: writes minimal audio bytes to all output paths."""
+    """Fake renderer.render: writes minimal audio bytes and returns mock cues."""
     full_path.write_bytes(b"audio")
     if section_paths:
         for sp in section_paths:
             sp.write_bytes(b"section audio")
+    from app.audio.cues import Cue
+
+    cues = [
+        Cue(
+            index=0,
+            start_ms=0,
+            end_ms=1000,
+            section_index=None,
+            section_type=None,
+            phrase_index=0,
+            role="narrator",
+            language_code="en",
+            text=lesson.title,
+            ref={"kind": "narration"},
+        )
+    ]
+    idx = 1
+    for si, section in enumerate(lesson.sections):
+        for pi, phrase in enumerate(section.phrases):
+            cues.append(
+                Cue(
+                    index=idx,
+                    start_ms=idx * 1000,
+                    end_ms=(idx + 1) * 1000,
+                    section_index=si,
+                    section_type=section.section_type.value,
+                    phrase_index=pi,
+                    role=phrase.role,
+                    language_code=phrase.language_code,
+                    text=phrase.text,
+                    ref={"kind": "line", "target_index": 0},
+                )
+            )
+            idx += 1
+    return cues
 
 
 class TestAudioEndpoints:
@@ -2494,6 +2529,60 @@ class TestAudioEndpoints:
             # Audio IDs should be different (new cohort)
             assert resp1.json()["audio_id"] != resp2.json()["audio_id"]
 
+    async def test_render_returns_cues_in_post_response(self, tmp_path):
+        """POST /api/audio/render includes cues in the response body."""
+        from app.storage.store import ContentStore
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=_fake_render)
+
+        mock_lesson = _make_mock_lesson_with_sections()
+        store = ContentStore(":memory:")
+        lesson_id = "lesson-cues-post"
+        store.save_lesson(lesson_id, "some-curriculum-id", 1, mock_lesson)
+
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+
+        assert response.status_code == 202
+        data = response.json()
+        assert "cues" in data
+        assert len(data["cues"]) > 0
+        first = data["cues"][0]
+        assert "start_ms" in first
+        assert "end_ms" in first
+        assert "index" in first
+        assert "text" in first
+
+    async def test_render_persists_cues_in_store(self, tmp_path):
+        """After render, cues are persisted on the full-lesson audio row."""
+        from app.storage.store import ContentStore
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=_fake_render)
+
+        mock_lesson = _make_mock_lesson_with_sections()
+        store = ContentStore(":memory:")
+        lesson_id = "lesson-cues-persist"
+        store.save_lesson(lesson_id, "some-curriculum-id", 1, mock_lesson)
+
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+
+        assert response.status_code == 202
+        data = response.json()
+        full_row = store.get_audio_file_row(data["audio_id"])
+        assert full_row is not None
+        assert full_row["cues_json"] is not None
+
     async def test_get_lesson_audio_endpoint(self, tmp_path):
         """GET /api/audio/lesson/{lesson_id} returns existing audio files list."""
         from app.storage.store import ContentStore
@@ -2520,6 +2609,54 @@ class TestAudioEndpoints:
         assert "audio_id" in data
         assert "sections" in data
         assert len(data["sections"]) == len(mock_lesson.sections)
+
+    async def test_get_lesson_audio_includes_cues(self, tmp_path):
+        """GET /api/audio/lesson/{id} includes cues in the response."""
+        from app.storage.store import ContentStore
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=_fake_render)
+
+        mock_lesson = _make_mock_lesson_with_sections()
+        store = ContentStore(":memory:")
+        lesson_id = "lesson-cues-get"
+        store.save_lesson(lesson_id, "some-curriculum-id", 1, mock_lesson)
+
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+            response = await client.get(f"/api/audio/lesson/{lesson_id}")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "cues" in data
+        assert len(data["cues"]) > 0
+
+    async def test_get_lesson_audio_returns_null_cues_for_old_lesson(self, tmp_path):
+        """GET /api/audio/lesson/{id} returns cues:null for lessons without manifest."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        lesson_id = "old-no-cues"
+
+        # Insert a full-lesson row with cues_json=NULL (simulating pre-manifest lesson)
+        store.save_audio_file("old-full-id", lesson_id, "/tmp/old.wav")
+        store.save_audio_file(
+            "old-sec-id", lesson_id, "/tmp/old-sec.wav", section_index=0, section_type="natural_speed"
+        )
+
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(f"/api/audio/lesson/{lesson_id}")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "cues" in data
+        assert data["cues"] is None
 
     async def test_get_lesson_audio_returns_404_when_not_rendered(self):
         """GET /api/audio/lesson/{lesson_id} returns 404 when no audio exists."""
