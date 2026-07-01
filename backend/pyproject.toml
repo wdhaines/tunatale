@@ -36,6 +36,13 @@ dependencies = [
 # this stays a valid specifier regardless of which desktop Anki the user runs.
 anki = ["anki"]
 classla = ["classla==2.2.1"]
+# Opt-in Stanford Stanza analyzer — the Norwegian (Bokmål/Nynorsk) analogue of the
+# classla Slovene extra, and Stanza is the upstream project classla forks. Same
+# extra-not-group treatment (keeps PyTorch out of CI; the torch==2.12.0 override
+# below is shared). Install: `uv sync --all-groups --extra stanza`, then download
+# the model once: `uv run python -c "import stanza; stanza.download('nb')"`, then
+# set lemmatizer_type=stanza. See docs/walkthrough.md §22.2.
+stanza = ["stanza"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
@@ -54,11 +61,17 @@ dev = [
 ]
 
 [tool.uv]
-# classla 2.2.1 pins torch<=2.6, which has no cp314 (Python 3.14) wheel — torch
-# only gained 3.14 support at 2.12. Override the pin so the `classla` extra
-# resolves on 3.14. Inert unless that extra is synced (torch isn't pulled
-# otherwise), so `uv sync --all-groups` stays PyTorch-free. See walkthrough §22.2.
-override-dependencies = ["torch==2.12.0"]
+# Two 3.14 pin-overrides, both inert unless a heavy extra (classla/stanza/anki) is
+# synced — protobuf/torch aren't pulled by the default `uv sync --all-groups`, so it
+# stays PyTorch-free. See walkthrough §22.2.
+#   torch:    classla 2.2.1 pins torch<=2.6, which has no cp314 wheel — torch only
+#             gained 3.14 support at 2.12.
+#   protobuf: classla 2.2.1 pins protobuf==4.21.2, whose google._upb C extension has
+#             no cp314 wheel and dies with "Metaclasses with custom tp_new are not
+#             supported" at import. classla tolerates it (imports protobuf lazily);
+#             `import stanza` does NOT (it eagerly pulls google.protobuf via its
+#             CoreNLP server bindings), so stanza needs a 3.14-capable protobuf.
+override-dependencies = ["torch==2.12.0", "protobuf>=5.29"]
 
 [tool.ruff]
 target-version = "py314"

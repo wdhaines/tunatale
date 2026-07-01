@@ -747,6 +747,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="Run @pytest.mark.classla tests (exercises the real classla Slovene pipeline).",
     )
     parser.addoption(
+        "--run-stanza",
+        action="store_true",
+        default=False,
+        help="Run @pytest.mark.stanza tests (exercises the real Stanza Norwegian pipeline).",
+    )
+    parser.addoption(
         "--run-peer-sync",
         action="store_true",
         default=False,
@@ -765,6 +771,10 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     config.addinivalue_line(
         "markers",
+        "stanza: requires --run-stanza (exercises the real Stanza Norwegian pipeline).",
+    )
+    config.addinivalue_line(
+        "markers",
         "peer_sync: requires --run-peer-sync (drives Anki sync subprocess against a self-host server).",
     )
 
@@ -775,6 +785,11 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         for item in items:
             if "classla" in item.keywords:
                 item.add_marker(skip_classla)
+    if not config.getoption("--run-stanza"):
+        skip_stanza = pytest.mark.skip(reason="--run-stanza not specified")
+        for item in items:
+            if "stanza" in item.keywords:
+                item.add_marker(skip_stanza)
     if not config.getoption("--run-peer-sync"):
         skip_peer_sync = pytest.mark.skip(reason="--run-peer-sync not specified")
         for item in items:

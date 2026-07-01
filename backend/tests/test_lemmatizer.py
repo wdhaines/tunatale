@@ -8,6 +8,7 @@ from app.srs.database import SRSDatabase
 from app.srs.lemmatizer import (
     ClasslaLemmatizer,
     LowercaseLemmatizer,
+    StanzaLemmatizer,
     TokenAnalysis,
     _deserialize_analyses,
     _parse_morphology,
@@ -205,6 +206,60 @@ class TestGetLemmatizer:
         assert "classla not installed" in caplog.text
         get_lemmatizer.cache_clear()
 
+    def test_stanza_config_returns_stanza(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "lemmatizer_type", "stanza")
+        monkeypatch.setattr(settings, "target_language", "no")
+        import types
+
+        fake_stanza = types.ModuleType("stanza")
+
+        class FakePipeline:
+            pass
+
+        fake_stanza.Pipeline = FakePipeline
+        monkeypatch.setitem(__import__("sys").modules, "stanza", fake_stanza)
+        get_lemmatizer.cache_clear()
+        lemmatizer = get_lemmatizer()
+        assert isinstance(lemmatizer, StanzaLemmatizer)
+        # Wired to the process's active language (single-language-per-process).
+        assert lemmatizer._language_code == "no"
+        # TT "no" maps to Stanza's Bokmål code.
+        assert lemmatizer._stanza_code == "nb"
+        get_lemmatizer.cache_clear()
+
+    def test_stanza_import_error_falls_back(self, monkeypatch, caplog):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "lemmatizer_type", "stanza")
+        monkeypatch.delitem(__import__("sys").modules, "stanza", raising=False)
+        import builtins
+
+        original_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "stanza":
+                raise ImportError("No module named stanza")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        get_lemmatizer.cache_clear()
+        lemmatizer = get_lemmatizer()
+        assert isinstance(lemmatizer, LowercaseLemmatizer)
+        assert "stanza not installed" in caplog.text
+        get_lemmatizer.cache_clear()
+
+
+def test_stanza_lang_code_mapping():
+    """TT language codes map to Stanza's model codes (``no`` → Bokmål ``nb``)."""
+    from app.srs.lemmatizer import _STANZA_LANG_CODES
+
+    assert _STANZA_LANG_CODES["no"] == "nb"
+    assert _STANZA_LANG_CODES["nn"] == "nn"
+    # Unknown codes pass through unchanged (Stanza uses ISO codes for most langs).
+    assert StanzaLemmatizer("sl")._stanza_code == "sl"
+
 
 def test_suite_pins_lowercase_lemmatizer_regardless_of_env():
     """Regression: the autouse _settings_overrides fixture pins the lemmatizer to
@@ -287,6 +342,57 @@ class TestClasslaIntegration:
         first = classla_lemmatizer.analyze_sentence("Sem v hotelu.", "sl")
         second = classla_lemmatizer.analyze_sentence("Sem v hotelu.", "sl")
         assert second is first
+
+
+@pytest.fixture(scope="session")
+def stanza_lemmatizer():
+    """Session-scoped StanzaLemmatizer — one pipeline load for all stanza tests.
+
+    Requires ``stanza`` installed (``uv sync --all-groups --extra stanza``) and the
+    Norwegian Bokmål model downloaded (``uv run python -c "import stanza;
+    stanza.download('nb')"``).
+    """
+    pytest.importorskip("stanza")
+    from app.srs.lemmatizer import StanzaLemmatizer
+
+    lem = StanzaLemmatizer("no")
+    # Trigger one-time lazy pipeline load so the first test doesn't pay the cost.
+    lem.analyze_sentence("test", "no")
+    return lem
+
+
+@pytest.mark.stanza
+class TestStanzaIntegration:
+    """Opt-in tests exercising the real Stanza Norwegian Bokmål pipeline.
+
+    Gated behind ``@pytest.mark.stanza`` (skipped unless ``--run-stanza`` is
+    passed) plus ``pytest.importorskip("stanza")`` so a run without stanza stays
+    green. These are the Norwegian analogue of ``TestClasslaIntegration``.
+    """
+
+    def test_lemmatizes_present_tense_verb(self, stanza_lemmatizer):
+        # "tenker" (present) → "tenke" (infinitive/lemma). This is exactly the
+        # collapse the lowercase lemmatizer misses (each tense becomes its own card).
+        results = stanza_lemmatizer.analyze_sentence("Jeg tenker på deg.", "no")
+        lookup = {r.surface.casefold(): r for r in results}
+        assert lookup["tenker"].lemma == "tenke"
+
+    def test_lemmatizes_modal_verbs(self, stanza_lemmatizer):
+        # "vil" → "ville", "kan" → "kunne" (the modals the user flagged in the SRS).
+        results = stanza_lemmatizer.analyze_sentence("Jeg vil, men jeg kan ikke.", "no")
+        lookup = {r.surface.casefold(): r for r in results}
+        assert lookup["vil"].lemma == "ville"
+        assert lookup["kan"].lemma == "kunne"
+
+    def test_analyze_sentence_is_cached(self, stanza_lemmatizer):
+        first = stanza_lemmatizer.analyze_sentence("Jeg tenker.", "no")
+        second = stanza_lemmatizer.analyze_sentence("Jeg tenker.", "no")
+        assert second is first
+
+    def test_other_language_falls_back_to_lowercase(self, stanza_lemmatizer):
+        # The Norwegian pipeline lowercases codes it isn't wired for, matching
+        # ClasslaLemmatizer's cross-language behavior.
+        assert stanza_lemmatizer.lemmatize("Tenker", "en") == "tenker"
 
 
 class TestStubLemmatizer:

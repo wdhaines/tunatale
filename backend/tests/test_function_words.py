@@ -601,9 +601,14 @@ class TestNorwegianFunctionWords:
     def test_pos_does_not_catch_content_word(self):
         assert is_function_word("hund", "no", upos="NOUN") is False
 
-    def test_clozes_only_verbs_are_vaere_and_ha(self):
-        assert is_clozes_only_verb("være", "no") is True
-        assert is_clozes_only_verb("ha", "no") is True
+    def test_norwegian_has_no_clozes_only_verbs(self):
+        # Norwegian has no person/number conjugation, so the clozes-only mechanism
+        # (built for Slovene biti's sem/si/je person-forms) doesn't apply. være/ha
+        # are ordinary base-card verbs: er→være, har→ha resolve to the base card
+        # like every other verb. Was ["være", "ha"] (a copy of the Slovene biti
+        # pattern) — it suppressed the existing base cards and nothing resolved.
+        assert is_clozes_only_verb("være", "no") is False
+        assert is_clozes_only_verb("ha", "no") is False
 
     def test_regular_verb_is_not_clozes_only(self):
         assert is_clozes_only_verb("snakke", "no") is False

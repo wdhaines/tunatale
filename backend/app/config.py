@@ -69,7 +69,9 @@ class Settings(BaseSettings):
     anki_model_name: str = ""
     forvo_api_key: str = ""
     pixabay_api_key: str = ""
-    lemmatizer_type: str = "lowercase"  # lowercase | classla
+    # lowercase (default) | classla (Slovene) | stanza (Norwegian + other Stanza
+    # langs, wired to target_language). One engine per process — see get_lemmatizer.
+    lemmatizer_type: str = "lowercase"
 
     anki_new_per_day_default: int = 20
     anki_reviews_per_day_default: int = 200

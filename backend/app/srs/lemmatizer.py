@@ -72,26 +72,37 @@ class LowercaseLemmatizer:
         ]
 
 
-# ── Slovene morphological analyzer (classla, opt-in) ──────────────────────────
+# ── Stanza-family morphological analyzers (classla / stanza, opt-in) ──────────
+
+# TT language codes → Stanza model codes. Stanza's codes mostly match TT's, except
+# Norwegian: TT stores "no" (the macrolanguage) but Stanza ships separate Bokmål
+# ("nb") and Nynorsk ("nn") models. The user's content is Bokmål, so "no" → "nb".
+# Codes not listed pass through unchanged (Stanza uses ISO codes for most langs).
+_STANZA_LANG_CODES: dict[str, str] = {
+    "no": "nb",
+    "nb": "nb",
+    "nn": "nn",
+}
 
 
-class ClasslaLemmatizer:  # pragma: no cover — requires classla/PyTorch; opt-in only
-    """Slovene lemmatizer backed by CLASSLA-Stanza.
+class _StanzaFamilyLemmatizer:  # pragma: no cover — requires PyTorch pipeline; opt-in only
+    """Shared sentence-aware lemmatizer logic for the Stanza family.
 
-    Requires ``classla`` (PyTorch-based pipeline for South Slavic languages).
-    Not imported in CI — instantiate only when the user explicitly opts in
-    via config (lemmatizer_type="classla") and has the model downloaded.
+    CLASSLA is a fork of Stanford Stanza, so both expose the identical document
+    API — ``doc.sentences[i].words[j]`` with ``.lemma`` / ``.upos`` / ``.feats`` in
+    the Universal Dependencies scheme — and ``_parse_morphology`` / ``_parse_person``
+    apply unchanged to both. Subclasses supply only the package name (for
+    cache-version keying) and the ``_ensure_pipeline`` builder.
 
-    Usage::
-
-        lem = ClasslaLemmatizer()
-        lem.analyze("mize", "sl")  # → ("miza", "Gen", "Sing")
-        lem.lemmatize("mize", "sl")  # → "miza"
+    Not imported in CI — instantiate only when the user explicitly opts in via
+    config (``lemmatizer_type="classla"|"stanza"``) with the model downloaded.
     """
 
-    def __init__(self, language_code: str = "sl") -> None:
+    _package_name: str = ""
+
+    def __init__(self, language_code: str) -> None:
         self._language_code = language_code
-        self._nlp: ClasslaPipeline | None = None
+        self._nlp: object | None = None
         # Resolve the persistent-cache version eagerly (the package version is
         # available without loading the ~15s model). Callers read this via
         # model_version_for() *before* the first analyze; computing it lazily in
@@ -101,27 +112,17 @@ class ClasslaLemmatizer:  # pragma: no cover — requires classla/PyTorch; opt-i
         from importlib.metadata import version as _pkg_ver
 
         try:
-            self._cache_version: str = _pkg_ver("classla")
+            self._cache_version: str = _pkg_ver(self._package_name)
         except PackageNotFoundError:
-            self._cache_version = "classla-unknown"
+            self._cache_version = f"{self._package_name}-unknown"
         # Lesson text is stable across requests; cache analyses by sentence so the
         # transcript endpoint doesn't re-run the NLP pipeline on every state-change
         # refetch (~3.6s → DB-only once warmed). Keyed by exact text, so edited
         # sentences re-analyze. Bounded by the user's distinct lesson sentences.
         self._sentence_cache: dict[str, list[TokenAnalysis]] = {}
 
-    def _ensure_pipeline(self) -> ClasslaPipeline:
-        if self._nlp is None:
-            import classla
-
-            # Models must already be present under CLASSLA_RESOURCES_DIR (default
-            # ~/classla_resources); run `classla.download(self._language_code)`
-            # once if missing. Pipeline does not reliably auto-fetch across versions.
-            self._nlp = classla.Pipeline(
-                self._language_code,
-                processors="tokenize,pos,lemma",
-            )
-        return self._nlp
+    def _ensure_pipeline(self) -> object:
+        raise NotImplementedError  # subclass builds the language-specific pipeline
 
     def lemmatize(self, word: str, language_code: str) -> str:
         if language_code != self._language_code:
@@ -147,7 +148,7 @@ class ClasslaLemmatizer:  # pragma: no cover — requires classla/PyTorch; opt-i
         except IndexError, AttributeError:
             return word.lower(), "", ""
 
-    def analyze_sentence(self, sentence: str, language_code: str) -> list[TokenAnalysis]:  # pragma: no cover
+    def analyze_sentence(self, sentence: str, language_code: str) -> list[TokenAnalysis]:
         if language_code != self._language_code:
             return [
                 TokenAnalysis(surface=t, lemma=t.lower(), upos="", case="", number="", person="", gender="")
@@ -177,6 +178,82 @@ class ClasslaLemmatizer:  # pragma: no cover — requires classla/PyTorch; opt-i
                 )
         self._sentence_cache[sentence] = results
         return results
+
+
+class ClasslaLemmatizer(_StanzaFamilyLemmatizer):  # pragma: no cover — requires classla/PyTorch; opt-in only
+    """Slovene lemmatizer backed by CLASSLA-Stanza.
+
+    Requires ``classla`` (PyTorch-based pipeline for South Slavic languages).
+    Not imported in CI — instantiate only when the user explicitly opts in
+    via config (lemmatizer_type="classla") and has the model downloaded.
+
+    Usage::
+
+        lem = ClasslaLemmatizer()
+        lem.analyze("mize", "sl")  # → ("miza", "Gen", "Sing")
+        lem.lemmatize("mize", "sl")  # → "miza"
+    """
+
+    _package_name = "classla"
+
+    def __init__(self, language_code: str = "sl") -> None:
+        super().__init__(language_code)
+
+    def _ensure_pipeline(self) -> object:
+        if self._nlp is None:
+            import classla
+
+            # Models must already be present under CLASSLA_RESOURCES_DIR (default
+            # ~/classla_resources); run `classla.download(self._language_code)`
+            # once if missing. Pipeline does not reliably auto-fetch across versions.
+            self._nlp = classla.Pipeline(
+                self._language_code,
+                processors="tokenize,pos,lemma",
+            )
+        return self._nlp
+
+
+class StanzaLemmatizer(_StanzaFamilyLemmatizer):  # pragma: no cover — requires stanza/PyTorch; opt-in only
+    """Sentence-aware lemmatizer backed by Stanford Stanza.
+
+    Stanza is the upstream project CLASSLA forks; it ships UD models for many
+    languages CLASSLA lacks, notably Norwegian Bokmål (``nb``) / Nynorsk (``nn``).
+    Used for Norwegian the way ClasslaLemmatizer is used for Slovene — so
+    ``tenker``→``tenke``, ``vil``→``ville``, ``kan``→``kunne`` collapse onto one
+    lemma card instead of spawning a separate card per inflected surface.
+
+    TT language codes are mapped to Stanza's (``no`` → ``nb``). Not imported in
+    CI — instantiate only when the user opts in (lemmatizer_type="stanza") and has
+    run ``stanza.download("nb")``.
+
+    Usage::
+
+        lem = StanzaLemmatizer("no")
+        lem.lemmatize("tenker", "no")  # → "tenke"
+    """
+
+    _package_name = "stanza"
+
+    def __init__(self, language_code: str = "no") -> None:
+        super().__init__(language_code)
+        self._stanza_code = _STANZA_LANG_CODES.get(language_code, language_code)
+
+    def _ensure_pipeline(self) -> object:
+        if self._nlp is None:
+            import stanza
+
+            # Models must already be present in Stanza's default cache (macOS:
+            # ~/Library/Caches/stanza/<ver>); run `stanza.download(self._stanza_code)`
+            # once if missing. download_method=None disables Stanza's per-construct
+            # network update check (mirrors classla's pre-downloaded contract);
+            # verbose=False silences per-load logging.
+            self._nlp = stanza.Pipeline(
+                lang=self._stanza_code,
+                processors="tokenize,pos,lemma",
+                download_method=None,
+                verbose=False,
+            )
+        return self._nlp
 
 
 def _parse_morphology(feats: str) -> tuple[str, str, str]:
@@ -211,14 +288,6 @@ def _parse_person(feats: str) -> str:
     return ""
 
 
-# Avoid importing classla at module level (CI guard).
-# The type alias lets us reference the type without a top-level import.
-try:
-    from classla import Pipeline as ClasslaPipeline
-except ImportError:  # pragma: no cover — optional dep; classla presence is environment-dependent
-    ClasslaPipeline = None  # type: ignore[misc,assignment]
-
-
 # ── Factory ────────────────────────────────────────────────────────────────
 
 
@@ -227,8 +296,14 @@ def get_lemmatizer() -> Lemmatizer:
     """Return a cached lemmatizer based on ``settings.lemmatizer_type``.
 
     * ``"lowercase"`` (default) — ``LowercaseLemmatizer``
-    * ``"classla"`` — ``ClasslaLemmatizer``, falling back to ``LowercaseLemmatizer``
-      with a logged warning if classla is not importable.
+    * ``"classla"`` — ``ClasslaLemmatizer`` (Slovene), falling back to
+      ``LowercaseLemmatizer`` with a logged warning if classla is not importable.
+    * ``"stanza"`` — ``StanzaLemmatizer`` wired to ``settings.target_language``
+      (Norwegian and other Stanza-supported languages), same fallback.
+
+    One lemmatizer per process: the app runs a single ``target_language`` per
+    process (``.env`` flips ``target_language`` + ``database_url`` together), so the
+    Slovene process sets ``classla`` and the Norwegian process sets ``stanza``.
     """
     from app.config import settings
 
@@ -245,6 +320,19 @@ def get_lemmatizer() -> Lemmatizer:
                 "(pins classla==2.2.1; the torch==2.12.0 override for Python 3.14 is "
                 "baked into pyproject.toml). Then set lemmatizer_type=classla. "
                 "See docs/walkthrough.md §22.2."
+            )
+    elif lemmatizer_type == "stanza":
+        try:
+            import stanza  # noqa: F401 — check importability at factory time
+
+            return StanzaLemmatizer(settings.target_language)
+        except ImportError:
+            _logger.warning(
+                "stanza not installed; falling back to LowercaseLemmatizer. "
+                "Install the opt-in extra: `uv sync --all-groups --extra stanza` "
+                "(the torch==2.12.0 override for Python 3.14 is shared with classla). "
+                'Then download the model — `uv run python -c "import stanza; '
+                "stanza.download('nb')\"` — and set lemmatizer_type=stanza."
             )
     return LowercaseLemmatizer()
 
