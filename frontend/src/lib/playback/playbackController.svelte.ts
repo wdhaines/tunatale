@@ -140,8 +140,21 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   }
 
   function doSeek(time: number) {
-    audioEl.currentTime = Math.max(0, Math.min(time, audioEl.duration || 0));
+    // Pre-metadata duration is NaN/0 — don't clamp every seek to 0 then.
+    const max =
+      Number.isFinite(audioEl.duration) && audioEl.duration > 0 ? audioEl.duration : Infinity;
+    audioEl.currentTime = Math.max(0, Math.min(time, max));
     updatePositionState();
+  }
+
+  // Per-lesson resume: read the saved position now, but APPLY it only when
+  // loadedmetadata delivers the real duration. Restoring at init raced the
+  // scrubber (max still 1, value clamped) so the thumb showed the resume
+  // position as the track start and back-scrubbing clamped to it.
+  const savedResume = storage.getItem(`tt-resume-${lessonId}`);
+  let pendingResume: number | null = savedResume ? parseFloat(savedResume) : null;
+  if (pendingResume !== null && (isNaN(pendingResume) || pendingResume <= 0)) {
+    pendingResume = null;
   }
 
   // Audio event listeners
@@ -150,6 +163,13 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   });
   audioEl.addEventListener("loadedmetadata", () => {
     duration = audioEl.duration;
+    if (pendingResume !== null) {
+      if (pendingResume < audioEl.duration) {
+        audioEl.currentTime = pendingResume;
+        currentTime = pendingResume;
+      }
+      pendingResume = null;
+    }
     updatePositionState();
   });
   audioEl.addEventListener("play", () => {
@@ -159,7 +179,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   audioEl.addEventListener("pause", () => {
     if (destroyed) return;
     playing = false;
-    storage.setItem(`tt-resume-${lessonId}`, String(audioEl.currentTime));
+    saveResume();
     if (mediaSession) mediaSession.playbackState = "paused";
     updatePositionState();
   });
@@ -173,16 +193,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     updatePositionState();
   });
 
-  // Resume position
-  const saved = storage.getItem(`tt-resume-${lessonId}`);
-  if (saved) {
-    const pos = parseFloat(saved);
-    if (!isNaN(pos) && pos > 0 && pos < (audioEl.duration || Infinity)) {
-      audioEl.currentTime = pos;
-      currentTime = pos;
-    }
-  }
-
+  audioEl.preload = "metadata";
   audioEl.src = deps.audioUrl;
 
   // MediaSession wiring
@@ -250,6 +261,9 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   const RESUME_KEY = `tt-resume-${lessonId}`;
 
   function saveResume() {
+    // While a restore is still pending (metadata never arrived), position 0
+    // is meaningless — writing it would clobber the real saved spot.
+    if (pendingResume !== null) return;
     storage.setItem(RESUME_KEY, String(audioEl.currentTime));
   }
 

@@ -770,29 +770,63 @@ describe("playbackController", () => {
       expect(fakeLocalStorage.setItem).toHaveBeenCalledWith("tt-resume-l1", "12.5");
     });
 
-    it("restores position from localStorage on init", () => {
+    it("does NOT touch position before loadedmetadata (scrubber would desync)", () => {
+      // Restoring pre-metadata left the range input at max=1 with a stale
+      // value — the "shows 4:27 as position 0" bug. The restore must wait
+      // for real duration.
       fakeLocalStorage.setItem("tt-resume-l1", "8.3");
-      const ctrl = createController({ storage: fakeLocalStorage, lessonId: "l1" });
-      expect(audioEl.currentTime).toBe(8.3);
+      const noMetaAudio = makeFakeAudio({ duration: NaN });
+      const ctrl = createController({ storage: fakeLocalStorage, audioEl: noMetaAudio });
+      expect(noMetaAudio.currentTime).toBe(0);
+      expect(ctrl.currentTime).toBe(0);
     });
 
-    it("restores position when audio duration is 0 (Infinity fallback)", () => {
-      // When audio.duration is 0 (no loadedmetadata yet), the guard is
-      // pos < (0 || Infinity) which is always true for finite pos.
-      fakeLocalStorage.setItem("tt-resume-l1", "5.5");
-      const zeroDurAudio = makeFakeAudio({ duration: 0 });
-      createController({
-        storage: fakeLocalStorage,
-        lessonId: "l1",
-        audioEl: zeroDurAudio,
-      });
-      expect(zeroDurAudio.currentTime).toBe(5.5);
+    it("restores position when loadedmetadata delivers the duration", () => {
+      fakeLocalStorage.setItem("tt-resume-l1", "8.3");
+      const ctrl = createController({ storage: fakeLocalStorage, lessonId: "l1" });
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(audioEl.currentTime).toBe(8.3);
+      expect(ctrl.currentTime).toBe(8.3);
+      expect(ctrl.duration).toBe(100);
+    });
+
+    it("discards a saved position past the end of the audio", () => {
+      fakeLocalStorage.setItem("tt-resume-l1", "150");
+      const ctrl = createController({ storage: fakeLocalStorage, lessonId: "l1" });
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(audioEl.currentTime).toBe(0);
+      expect(ctrl.currentTime).toBe(0);
+    });
+
+    it("restores only once (later metadata reloads don't rewind)", () => {
+      fakeLocalStorage.setItem("tt-resume-l1", "8.3");
+      const ctrl = createController({ storage: fakeLocalStorage, lessonId: "l1" });
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      audioEl.currentTime = 42;
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(audioEl.currentTime).toBe(42);
+    });
+
+    it("destroy before loadedmetadata keeps the stored resume intact", () => {
+      fakeLocalStorage.setItem("tt-resume-l1", "8.3");
+      const noMetaAudio = makeFakeAudio({ duration: NaN });
+      const ctrl = createController({ storage: fakeLocalStorage, audioEl: noMetaAudio });
+      ctrl.destroy();
+      expect(fakeLocalStorage.getItem("tt-resume-l1")).toBe("8.3");
+    });
+
+    it("seeking before metadata is not clamped to 0", () => {
+      const noMetaAudio = makeFakeAudio({ duration: NaN });
+      const ctrl = createController({ audioEl: noMetaAudio });
+      ctrl.seekTo(30);
+      expect(noMetaAudio.currentTime).toBe(30);
     });
 
     it("uses different keys for different lessons", () => {
       fakeLocalStorage.setItem("tt-resume-l1", "5.0");
       fakeLocalStorage.setItem("tt-resume-l2", "10.0");
       const ctrl = createController({ storage: fakeLocalStorage, lessonId: "l2" });
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
       expect(audioEl.currentTime).toBe(10.0);
     });
   });
