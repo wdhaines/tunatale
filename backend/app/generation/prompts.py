@@ -346,3 +346,109 @@ class PromptBuilder:
             cefr_level=cefr_level,
             num_days=num_days,
         )
+
+
+# ── Planner prompts ───────────────────────────────────────────────────────
+
+PLANNER_SYSTEM_PROMPT = """\
+You are a language curriculum planner helping a learner build a study plan.
+
+Pedagogical approach:
+- Apply Krashen's i+1: each day should be just beyond the learner's current level
+- Foundation first: build practical vocabulary before introducing complexity
+- The Pimsleur 4-section lesson shape (TRANSLATED, KEY_PHRASES, SLOW_SPEED, NATURAL_SPEED) \
+is fixed — you decide only the per-day theme, collocations, learning objective, and story guidance
+
+Reply conversationally. When proposing days, include exactly one fenced ```json block of the form:
+{"days": [{"day": N, "title": "\u2026", "focus": "\u2026", "collocations": ["\u2026"], \
+"learning_objective": "\u2026", "story_guidance": "\u2026"}]}
+When only discussing, include no JSON. 3\u20138 collocations per day."""
+
+
+def build_planner_turn_prompt(
+    *,
+    topic: str,
+    cefr_level: str,
+    language_name: str,
+    language_code: str,
+    days: list,
+    learner_snapshot: str,
+    feedback: list[dict],
+    chat: list[dict],
+    batch_size: int,
+    start_day: int,
+) -> str:
+    """Build the full user prompt for one planner turn.
+
+    Pure function, fully deterministic: no datetime / randomness / dict-order
+    dependence.  All sections are produced in the fixed order specified below.
+
+    PLANNER messages in *chat* are expected to be prose-only
+    (``PlannerTurn.reply`` already strips JSON blocks).
+    """
+    parts: list[str] = []
+
+    # 1  Header
+    parts.append(f"Topic: {topic}")
+    parts.append(f"CEFR Level: {cefr_level}")
+    parts.append(f"Language: {language_name} ({language_code})")
+    parts.append("")
+
+    # 2  Committed plan — last 14 full blocks, older as title lines
+    parts.append("## Committed Plan")
+    parts.append("")
+
+    sorted_days = sorted(days, key=lambda d: d.day)
+    if not sorted_days:
+        parts.append("(none yet)")
+        parts.append("")
+    else:
+        cutoff = len(sorted_days) - 14
+        if cutoff > 0:
+            for d in sorted_days[:cutoff]:
+                parts.append(f"Day {d.day}: {d.title}")
+            parts.append("")
+        for d in sorted_days[max(0, cutoff) :]:
+            parts.append(f"Day {d.day} \u2014 {d.title}")
+            parts.append(f"  Focus: {d.focus}")
+            parts.append(f"  Collocations: {', '.join(d.collocations)}")
+            parts.append(f"  Learning Objective: {d.learning_objective}")
+            parts.append(f"  Story Guidance: {d.story_guidance}")
+            parts.append("")
+
+    # 3  Learner snapshot (verbatim)
+    parts.append("## Learner Snapshot")
+    parts.append("")
+    parts.append(learner_snapshot)
+    parts.append("")
+
+    # 4  Feedback
+    parts.append("## Feedback")
+    parts.append("")
+    if not feedback:
+        parts.append("(none)")
+    else:
+        sorted_feedback = sorted(feedback, key=lambda f: f.get("day", 0))
+        for entry in sorted_feedback:
+            day = entry.get("day", "?")
+            note = entry.get("note", "")
+            parts.append(f"- Day {day}: {note}")
+    parts.append("")
+
+    # 5  Conversation — last 12 messages, older elided
+    parts.append("## Conversation")
+    parts.append("")
+    recent = chat[-12:] if chat else []
+    if len(chat) > 12:
+        parts.append("(... older messages elided ...)")
+    if recent:
+        for msg in recent:
+            role_label = msg.get("role", "unknown").upper()
+            content = msg.get("content", "")
+            parts.append(f"{role_label}: {content}")
+        parts.append("")
+
+    # 6  Closing instruction
+    parts.append(f"If proposing, propose exactly {batch_size} days starting at day {start_day}.")
+
+    return "\n".join(parts)

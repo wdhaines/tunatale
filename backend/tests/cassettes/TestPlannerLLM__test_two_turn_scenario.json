@@ -1,0 +1,19 @@
+{
+  "recorded_at": "2026-07-02T19:01:03.049209+00:00",
+  "calls": [
+    {
+      "prompt_hash": "sha256:f497b10251d0aca3",
+      "prompt_preview": "Topic: Visiting Ljubljana CEFR Level: A2 Language: Slovene (sl)  ## Committed Pl",
+      "max_tokens": 5500,
+      "response": "Let's start planning your Slovene study plan for visiting Ljubljana. Since you're at the A2 level, we'll focus on practical vocabulary and basic sentence structures. For the first three days, we'll cover essential topics like introductions, asking for directions, and basic phrases for navigating the city.\n\n```json\n{\n  \"days\": [\n    {\n      \"day\": 1,\n      \"title\": \"Introduction to Ljubljana\",\n      \"focus\": \"Basic introductions and greetings\",\n      \"collocations\": [\"Zdravo\", \"Kako si?\", \"Jaz sem\", \"Prijazen sem\"],\n      \"learning_objective\": \"Introduce yourself and greet others in Slovene\",\n      \"story_guidance\": \"Imagine arriving in Ljubljana and meeting a local for the first time\"\n    },\n    {\n      \"day\": 2,\n      \"title\": \"Asking for Directions\",\n      \"focus\": \"Basic directions and locations\",\n      \"collocations\": [\"Kje je\", \"Levo\", \"Desno\", \"Naprej\", \"Nazaj\"],\n      \"learning_objective\": \"Ask for and understand basic directions in Slovene\",\n      \"story_guidance\": \"You're lost in the city and need to ask someone for directions to the main square\"\n    },\n    {\n      \"day\": 3,\n      \"title\": \"Exploring the City\",\n      \"focus\": \"Vocabulary for popular attractions\",\n      \"collocations\": [\"Grad\", \"Most\", \"Trg\", \"Park\", \"Muzej\"],\n      \"learning_objective\": \"Learn basic vocabulary for popular attractions in Ljubljana\",\n      \"story_guidance\": \"You're planning your day in Ljubljana and want to visit some of the main sights\"\n    }\n  ]\n}\n```\n\nHow do these initial days sound? Should we make any adjustments before proceeding?",
+      "provider": "groq"
+    },
+    {
+      "prompt_hash": "sha256:47eedbc821bdc868",
+      "prompt_preview": "Topic: Visiting Ljubljana CEFR Level: A2 Language: Slovene (sl)  ## Committed Pl",
+      "max_tokens": 5500,
+      "response": "I think the initial days provide a solid foundation for your Slovene study plan. Considering your feedback on Day 1, we could indeed incorporate more food vocabulary in the subsequent days. \n\nLet's proceed with planning the next three days, focusing on themes that build upon your current knowledge. Here's a proposal for days 4-6:\n```json\n{\"days\": [\n  {\"day\": 4, \"title\": \"Food and Drink\", \"focus\": \"Ordering at a caf\u00e9\", \"collocations\": [\"Kavica\", \"\u010caj\", \"Voda\", \"Kruh\", \"Mleko\"], \"learning_objective\": \"Order food and drinks in Slovene\", \"story_guidance\": \"You're sitting at a charming caf\u00e9 in Ljubljana and want to order a traditional Slovene coffee and pastry\"},\n  {\"day\": 5, \"title\": \"Shopping and Markets\", \"focus\": \"Vocabulary for basic shopping\", \"collocations\": [\"Tr\u017enica\", \"Cena\", \"Denar\", \"Pla\u010dilo\", \"Rabat\"], \"learning_objective\": \"Learn basic vocabulary for shopping in Slovene\", \"story_guidance\": \"You're exploring the Ljubljana market and want to buy some local products\"},\n  {\"day\": 6, \"title\": \"Accommodation and Safety\", \"focus\": \"Basic phrases for hotel and emergencies\", \"collocations\": [\"Hotel\", \"Soba\", \"Klju\u010d\", \"Pomoc\", \"Policija\"], \"learning_objective\": \"Learn basic phrases for checking into a hotel and dealing with emergencies in Slovene\", \"story_guidance\": \"You've just arrived at your hotel and need to check-in, or you've encountered an emergency situation in the city\"}\n]}\n```\nThese days should help you build upon your existing knowledge and provide you with practical vocabulary for navigating everyday situations in Ljubljana. What are your thoughts on this proposal?",
+      "provider": "groq"
+    }
+  ]
+}
