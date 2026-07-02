@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 
+from app.generation.json_parsing import parse_json_object
 from app.generation.prompts import _build_cefr_block, build_story_system_prompt, get_strategy_prompt
 from app.generation.section_builder import (
     build_key_phrases_section,
@@ -21,19 +20,6 @@ from app.srs.lemmatizer import get_lemmatizer, lemmatize_surfaces_in_context
 from app.srs.tokenizer import tokenize
 
 logger = logging.getLogger(__name__)
-
-# Reasoning models (e.g. qwen3) emit <think>…</think> before the answer; strip it
-# so it can't swallow the JSON object during brace-extraction.
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
-
-
-def _strip_fences(raw: str) -> str:
-    """Strip markdown code fences from an LLM response."""
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*\n?", "", raw)
-        raw = re.sub(r"\n?```\s*$", "", raw)
-        raw = raw.strip()
-    return raw
 
 
 class StoryGenerationError(Exception):
@@ -102,26 +88,10 @@ class StoryGenerator:
 
     @staticmethod
     def _parse_json(raw: str) -> dict:
-        # Model-agnostic: drop <think> reasoning, code fences, and any prose the model
-        # wraps around the JSON (gpt-oss prepends "**Lesson Title:** …"; others append
-        # commentary). Try the cleaned string, then the first balanced {…} span.
-        cleaned = _strip_fences(_THINK_RE.sub("", raw).strip())
-        candidates = [cleaned]
-        start, end = cleaned.find("{"), cleaned.rfind("}")
-        if start != -1 and end > start:
-            candidates.append(cleaned[start : end + 1])
-        last_error: json.JSONDecodeError | None = None
-        for candidate in candidates:
-            try:
-                return json.loads(candidate)
-            except json.JSONDecodeError as e:
-                last_error = e
-        logger.error(
-            "LLM returned unparseable response (len=%d): %r",
-            len(cleaned),
-            cleaned[:500],
-        )
-        raise StoryGenerationError(f"LLM returned invalid JSON: {last_error}") from last_error
+        try:
+            return parse_json_object(raw)
+        except ValueError as e:
+            raise StoryGenerationError(str(e)) from e
 
     def _parse_response(self, data: dict, language: Language) -> Lesson:
         key_phrases = data.get("key_phrases", [])

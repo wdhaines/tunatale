@@ -1483,7 +1483,13 @@ class SRSDatabase:
         order_expr = f"c.{order_by}" if order_by in parent_columns else f"d_filter.{direction_columns[order_by]}"
 
         count_sql = f"SELECT COUNT(*) FROM collocations c {join} {where}"
-        rows_sql = f"SELECT c.* FROM collocations c {join} {where} ORDER BY {order_expr} {order_dir} LIMIT ? OFFSET ?"
+        # Content-based tie-breakers: without them, which tied rows survive the
+        # LIMIT depends on rowid (insertion) order — nondeterministic for callers
+        # like build_learner_snapshot that need a pure function of DB contents.
+        rows_sql = (
+            f"SELECT c.* FROM collocations c {join} {where} "
+            f"ORDER BY {order_expr} {order_dir}, c.text ASC, c.id ASC LIMIT ? OFFSET ?"
+        )
 
         with self._get_conn() as conn:
             total = conn.execute(count_sql, join_params + params).fetchone()[0]
