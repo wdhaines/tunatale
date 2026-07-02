@@ -64,7 +64,7 @@
 </script>
 
 <section class="player" class:compact>
-	{#if hasCues && !compact}
+	{#if hasCues}
 		<div class="section-info">
 			<span class="section-title">{ctrl.currentSectionTitle || 'Audio'}</span>
 			<span class="section-count">
@@ -72,9 +72,12 @@
 			</span>
 		</div>
 
-		<div class="current-line" title={ctrl.currentCue?.text ?? ''}>
-			{ctrl.currentCue?.text ?? ''}
-		</div>
+		{#if !compact}
+			<!-- Compact (Read mode) omits the subtitle line — the synced transcript is it. -->
+			<div class="current-line" title={ctrl.currentCue?.text ?? ''}>
+				{ctrl.currentCue?.text ?? ''}
+			</div>
+		{/if}
 	{/if}
 
 	<div class="transport-row">
@@ -91,7 +94,7 @@
 		{/if}
 	</div>
 
-	{#if hasCues && !compact}
+	{#if hasCues}
 		<div class="sentence-row">
 			<button class="ctrl-btn small" onclick={() => ctrl.prevCue()} title="Previous sentence">◀ Sentence</button>
 			<button class="ctrl-btn small" onclick={() => ctrl.repeatCue()} title="Repeat current">Repeat ↻</button>
@@ -102,27 +105,25 @@
 		</div>
 	{/if}
 
-	{#if !compact}
-		<div class="scrubber-row">
-			<input
-				type="range"
-				min={0}
-				max={ctrl.duration || 1}
-				step={0.1}
-				value={ctrl.currentTime}
-				oninput={(e) => ctrl.seekTo(parseFloat((e.target as HTMLInputElement).value))}
-				class="scrubber"
-			/>
-			<div class="time-labels">
-				<span>{formatTime(ctrl.currentTime)}</span>
-				<span>{formatTime(ctrl.duration)}</span>
-			</div>
+	<div class="scrubber-row">
+		<input
+			type="range"
+			min={0}
+			max={ctrl.duration || 1}
+			step={0.1}
+			value={ctrl.currentTime}
+			oninput={(e) => ctrl.seekTo(parseFloat((e.target as HTMLInputElement).value))}
+			class="scrubber"
+		/>
+		<div class="time-labels">
+			<span>{formatTime(ctrl.currentTime)}</span>
+			<span>{formatTime(ctrl.duration)}</span>
 		</div>
+	</div>
 
-		<div class="speed-row">
-			<button class="speed-btn" onclick={cycleSpeed}>{ctrl.playbackRate}×</button>
-		</div>
-	{/if}
+	<div class="speed-row">
+		<button class="speed-btn" onclick={cycleSpeed}>{ctrl.playbackRate}×</button>
+	</div>
 
 	{#if !compact}
 		<details class="download-section">

@@ -186,6 +186,26 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(container.querySelector("audio")).toBeFalsy();
   });
 
+  it("keeps ONE LessonPlayer alive across Listen↔Read switches (playback survives)", async () => {
+    const pauseSpy = vi.spyOn(HTMLAudioElement.prototype, "pause");
+    const { getByText, container } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+    expect(container.querySelectorAll(".player").length).toBe(1);
+
+    await fireEvent.click(getByText("Listen"));
+    await fireEvent.click(getByText("Read"));
+
+    // Mode switches only flip the `compact` prop — no destroy, no pause.
+    expect(pauseSpy).not.toHaveBeenCalled();
+    expect(container.querySelectorAll(".player").length).toBe(1);
+    // Compact in Read mode, full in Listen mode, always inside a card.
+    expect(container.querySelector(".card .player.compact")).toBeTruthy();
+    await fireEvent.click(getByText("Listen"));
+    expect(container.querySelector(".card .player:not(.compact)")).toBeTruthy();
+    pauseSpy.mockRestore();
+  });
+
   it("destroys and recreates LessonPlayer when audio_id changes (lesson nav)", async () => {
     const pauseSpy = vi.spyOn(HTMLAudioElement.prototype, "pause");
     const { rerender } = render(Page, {

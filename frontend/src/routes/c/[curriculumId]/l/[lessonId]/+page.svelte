@@ -368,13 +368,11 @@
 
 	{#if audio}
 		{#key audio.audio_id}
-			{#if mode === 'listen'}
-				<section class="card">
-					<LessonPlayer {audio} lessonTitle={data.lesson.title} bind:controller={playbackController} />
-				</section>
-			{:else}
-				<LessonPlayer {audio} compact lessonTitle={data.lesson.title} bind:controller={playbackController} />
-			{/if}
+			<!-- ONE persistent player across modes: only the `compact` prop flips on
+			     Listen↔Read, so the controller (and playback) survives the switch. -->
+			<section class="card">
+				<LessonPlayer {audio} compact={mode !== 'listen'} lessonTitle={data.lesson.title} bind:controller={playbackController} />
+			</section>
 		{/key}
 	{/if}
 

@@ -103,15 +103,28 @@ describe("LessonPlayer", () => {
   });
 
   describe("compact mode", () => {
-    it("hides section info, sentence row, scrubber, and download section", () => {
+    it("hides only the current-line subtitle and downloads; keeps all controls", () => {
       const { container } = render(LessonPlayer, {
         props: { audio: audioWithCues, compact: true },
       });
+      // Subtitle display is the transcript's job in Read mode.
+      expect(container.querySelector(".current-line")).toBeFalsy();
+      expect(container.querySelector(".download-section")).toBeFalsy();
+      // Full control parity with Listen mode.
+      expect(container.querySelector(".section-info")).toBeTruthy();
+      expect(container.querySelector(".sentence-row")).toBeTruthy();
+      expect(container.querySelector(".scrubber-row")).toBeTruthy();
+      expect(container.querySelector(".speed-row")).toBeTruthy();
+    });
+
+    it("compact without cues hides cue-driven rows but keeps scrubber and speed", () => {
+      const { container } = render(LessonPlayer, {
+        props: { audio: audioWithCuesNull, compact: true },
+      });
       expect(container.querySelector(".section-info")).toBeFalsy();
       expect(container.querySelector(".sentence-row")).toBeFalsy();
-      expect(container.querySelector(".scrubber-row")).toBeFalsy();
-      expect(container.querySelector(".speed-row")).toBeFalsy();
-      expect(container.querySelector(".download-section")).toBeFalsy();
+      expect(container.querySelector(".scrubber-row")).toBeTruthy();
+      expect(container.querySelector(".speed-row")).toBeTruthy();
     });
 
     it("still renders transport row in compact mode", () => {
