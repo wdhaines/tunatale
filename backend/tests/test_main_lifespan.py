@@ -25,6 +25,7 @@ async def test_lifespan_populates_app_state(tmp_path, monkeypatch):
         assert test_app.state.content_store is not None
         assert test_app.state.language is not None
         assert test_app.state.curriculum_generator is not None
+        assert test_app.state.curriculum_planner is not None
         assert test_app.state.story_generator is not None
         assert test_app.state.renderer is not None
         assert test_app.state.audio_dir is not None

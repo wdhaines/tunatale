@@ -4,11 +4,21 @@ from __future__ import annotations
 
 import re
 import uuid
+from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.api.models import GenerateCurriculumRequest, ImportPlanRequest
-from app.storage.plan_io import export_plan, import_plan
+from app.api.models import (
+    GenerateCurriculumRequest,
+    ImportPlanRequest,
+    PlanFeedbackRequest,
+    PlanTurnRequest,
+    StartPlanRequest,
+)
+from app.generation.planner import PlannerError
+from app.models.curriculum import Curriculum, CurriculumDay
+from app.srs.planner_snapshot import build_learner_snapshot
+from app.storage.plan_io import export_plan, get_planner_state, import_plan, mint_curriculum_id
 
 router = APIRouter(prefix="/api/curriculum", tags=["curriculum"])
 
@@ -58,6 +68,105 @@ async def import_curriculum_plan(body: ImportPlanRequest, request: Request):
         "language_code": curriculum.language_code,
         "days": len(curriculum.days),
     }
+
+
+def _get_curriculum_or_404(store, curriculum_id: str) -> Curriculum:
+    curriculum = store.get_curriculum(curriculum_id)
+    if curriculum is None:
+        raise HTTPException(status_code=404, detail="Curriculum not found")
+    return curriculum
+
+
+@router.post("/plan", status_code=201)
+async def start_plan(body: StartPlanRequest, request: Request):
+    """LLM-free: mint an id and save an empty curriculum with empty planner state."""
+    store = request.state.content_store
+    curriculum_id = mint_curriculum_id(body.topic)
+    curriculum = Curriculum(
+        id=curriculum_id,
+        topic=body.topic,
+        language_code=request.state.language_code,
+        cefr_level=body.cefr_level,
+        metadata={"planner": {"chat": [], "proposed": None, "feedback": []}},
+    )
+    store.save_curriculum(curriculum_id, curriculum)
+    return {
+        "id": curriculum_id,
+        "topic": curriculum.topic,
+        "language_code": curriculum.language_code,
+        "cefr_level": curriculum.cefr_level,
+        "days": 0,
+    }
+
+
+@router.post("/{curriculum_id}/plan/turn", status_code=200)
+async def plan_turn(curriculum_id: str, body: PlanTurnRequest, request: Request):
+    """One planner chat turn: snapshot → LLM → append chat, set/replace proposed."""
+    store = request.state.content_store
+    curriculum = _get_curriculum_or_404(store, curriculum_id)
+    planner = request.app.state.curriculum_planner
+
+    snapshot = build_learner_snapshot(request.state.srs_db)
+    try:
+        turn = await planner.turn(
+            curriculum=curriculum,
+            user_message=body.message,
+            batch_size=body.batch_size,
+            learner_snapshot=snapshot,
+            language=request.state.language,
+        )
+    except PlannerError as e:
+        # Nothing is persisted for a failed turn — the user retries in chat.
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    state = get_planner_state(curriculum)
+    state["chat"].append({"role": "user", "content": body.message})
+    state["chat"].append({"role": "planner", "content": turn.reply})
+    if turn.proposed_days is not None:
+        # A new proposing turn replaces any prior proposal (latest-wins);
+        # a pure-chat turn leaves the existing proposal in place.
+        state["proposed"] = {
+            "start_day": turn.proposed_days[0].day,
+            "days": [asdict(d) for d in turn.proposed_days],
+        }
+    curriculum.metadata["planner"] = state
+    store.save_curriculum(curriculum_id, curriculum)
+    return {"reply": turn.reply, "proposed": state["proposed"]}
+
+
+@router.post("/{curriculum_id}/plan/commit", status_code=200)
+async def plan_commit(curriculum_id: str, request: Request):
+    """Append the proposed batch to the committed days and clear the proposal."""
+    store = request.state.content_store
+    curriculum = _get_curriculum_or_404(store, curriculum_id)
+    state = get_planner_state(curriculum)
+    proposed = state.get("proposed")
+    if not proposed:
+        raise HTTPException(status_code=409, detail="No proposed batch to commit")
+
+    days = [CurriculumDay(**d) for d in proposed["days"]]
+    curriculum.days.extend(days)
+    first, last = days[0].day, days[-1].day
+    label = f"day {first}" if first == last else f"days {first}-{last}"
+    state["chat"].append({"role": "event", "content": f"Committed {label}."})
+    state["proposed"] = None
+    curriculum.metadata["planner"] = state
+    store.save_curriculum(curriculum_id, curriculum)
+    return {"id": curriculum_id, "days": len(curriculum.days)}
+
+
+@router.post("/{curriculum_id}/plan/feedback", status_code=200)
+async def plan_feedback(curriculum_id: str, body: PlanFeedbackRequest, request: Request):
+    """Record listening feedback for a committed day; it enters the next turn's prompt."""
+    store = request.state.content_store
+    curriculum = _get_curriculum_or_404(store, curriculum_id)
+    if body.day not in {d.day for d in curriculum.days}:
+        raise HTTPException(status_code=404, detail=f"Unknown day {body.day}")
+    state = get_planner_state(curriculum)
+    state["feedback"].append({"day": body.day, "note": body.note})
+    curriculum.metadata["planner"] = state
+    store.save_curriculum(curriculum_id, curriculum)
+    return {"feedback": state["feedback"]}
 
 
 @router.get("", status_code=200)

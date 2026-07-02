@@ -95,6 +95,21 @@ class ImportPlanRequest(BaseModel):
     days: list
 
 
+class StartPlanRequest(BaseModel):
+    topic: str
+    cefr_level: str = "A2"
+
+
+class PlanTurnRequest(BaseModel):
+    message: str
+    batch_size: int = 5
+
+
+class PlanFeedbackRequest(BaseModel):
+    day: int
+    note: str
+
+
 class InflectionClozeRequest(BaseModel):
     surface: str
     lemma: str

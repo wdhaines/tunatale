@@ -19,7 +19,7 @@ from app.models.curriculum import Curriculum, CurriculumDay
 from app.storage.store import ContentStore
 
 
-def _mint_curriculum_id(topic: str) -> str:
+def mint_curriculum_id(topic: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:50]
     return f"{slug}-{uuid.uuid4().hex[:8]}"
 
@@ -153,7 +153,7 @@ def import_plan(store: ContentStore, file: dict) -> tuple[str, Curriculum]:
             raise KeyError(f"Curriculum not found: {curriculum_id}")
         metadata = existing.metadata
     else:
-        curriculum_id = _mint_curriculum_id(topic)
+        curriculum_id = mint_curriculum_id(topic)
         metadata = {}
 
     curriculum = Curriculum(
