@@ -1,3 +1,4 @@
+import { untrack } from "svelte";
 import type { Cue, LessonAudio } from "$lib/api";
 
 export interface PlaybackController {
@@ -202,7 +203,9 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     try {
       ms.metadata = new MediaMetadata({
         title: deps.lessonTitle || "",
-        artist: currentSectionTitle || "",
+        // Intentional initial-value read (untrack): this seeds the metadata once
+        // at init; the timeupdate listener below keeps the artist fresh.
+        artist: untrack(() => currentSectionTitle) || "",
       });
     } catch {
       // MediaMetadata not available (jsdom, some browsers)

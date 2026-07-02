@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { LessonAudio } from '$lib/api';
 	import { maybePrefetchLesson } from '$lib/sw/prefetch';
@@ -18,18 +18,24 @@
 
 	let { audio, compact = false, lessonTitle = '', controller = $bindable(null) }: Props = $props();
 
-	const totalSections = audio.sections.length;
+	// audio/lessonTitle are fixed for the life of an instance — the page recreates
+	// the player via {#key audio.audio_id} — so snapshot them once at init.
+	// untrack marks the initial-value reads as intentional (state_referenced_locally).
+	const init = untrack(() => ({ audio, lessonTitle }));
+
+	const totalSections = init.audio.sections.length;
 
 	const ctrl = createPlaybackController({
-		lessonId: audio.lesson_id,
-		lessonTitle: lessonTitle || audio.lesson_id,
-		audioUrl: api.audioUrl(audio.audio_id),
-		audio
+		lessonId: init.audio.lesson_id,
+		lessonTitle: init.lessonTitle || init.audio.lesson_id,
+		audioUrl: api.audioUrl(init.audio.audio_id),
+		audio: init.audio
 	});
 
 	controller = ctrl;
 
-	const hasCues = audio.cues !== null && audio.cues !== undefined && audio.cues.length > 0;
+	const hasCues =
+		init.audio.cues !== null && init.audio.cues !== undefined && init.audio.cues.length > 0;
 
 	const SPEED_OPTIONS = [0.7, 0.8, 0.85, 0.9, 0.95, 1.0];
 
