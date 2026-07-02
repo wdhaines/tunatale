@@ -81,6 +81,20 @@ class GenerateCurriculumRequest(BaseModel):
     num_days: int = 7
 
 
+class ImportPlanRequest(BaseModel):
+    """Self-describing plan file for curriculum authoring.
+
+    ``days`` stays a free list — its schema is validated by
+    ``plan_io.validate_plan_days`` so errors carry field paths.
+    """
+
+    id: str | None = None
+    topic: str
+    language_code: str
+    cefr_level: str
+    days: list
+
+
 class InflectionClozeRequest(BaseModel):
     surface: str
     lemma: str

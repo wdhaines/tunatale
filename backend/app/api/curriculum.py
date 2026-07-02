@@ -7,7 +7,8 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.api.models import GenerateCurriculumRequest
+from app.api.models import GenerateCurriculumRequest, ImportPlanRequest
+from app.storage.plan_io import export_plan, import_plan
 
 router = APIRouter(prefix="/api/curriculum", tags=["curriculum"])
 
@@ -42,6 +43,23 @@ async def generate_curriculum(body: GenerateCurriculumRequest, request: Request)
     }
 
 
+@router.post("/import", status_code=201)
+async def import_curriculum_plan(body: ImportPlanRequest, request: Request):
+    store = request.state.content_store
+    try:
+        cid, curriculum = import_plan(store, body.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
+    return {
+        "id": cid,
+        "topic": curriculum.topic,
+        "language_code": curriculum.language_code,
+        "days": len(curriculum.days),
+    }
+
+
 @router.get("", status_code=200)
 async def list_curricula(request: Request):
     store = request.state.content_store
@@ -68,6 +86,15 @@ async def get_curriculum_progress(curriculum_id: str, request: Request):
     if store.get_curriculum(curriculum_id) is None:
         raise HTTPException(status_code=404, detail="Curriculum not found")
     return store.get_lesson_days(curriculum_id)
+
+
+@router.get("/{curriculum_id}/source", status_code=200)
+async def get_curriculum_source(curriculum_id: str, request: Request):
+    store = request.state.content_store
+    try:
+        return export_plan(store, curriculum_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Curriculum not found") from None
 
 
 @router.get("/{curriculum_id}/days/{day}/lesson", status_code=200)
