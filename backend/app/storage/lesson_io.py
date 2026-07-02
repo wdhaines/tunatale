@@ -28,6 +28,12 @@ def _require(entry: object, path: str, fields: tuple[str, ...]) -> None:
     for field in fields:
         if field not in entry:
             raise ValueError(f"{path} is missing required field '{field}'")
+        value = entry[field]
+        # Every required field becomes TTS text (or a voice-map key); an empty
+        # or non-string value passes a bare presence check but fails much later
+        # at render time with an opaque error, so reject it here by name.
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{path}.{field} must be a non-empty string")
 
 
 def validate_story(story: object) -> None:
@@ -35,10 +41,15 @@ def validate_story(story: object) -> None:
 
     Requirements mirror the hard key accesses in ``build_lesson_from_story``
     and the section builders — including ``lines[].translation``, which
-    ``build_translated_section`` reads unconditionally.
+    ``build_translated_section`` reads unconditionally. Required fields must be
+    non-empty strings: they all end up as TTS phrases (a "" line renders fine
+    at import and then breaks audio rendering).
     """
     if not isinstance(story, dict):
         raise ValueError("story must be a JSON object")
+    title = story.get("title")
+    if title is not None and (not isinstance(title, str) or not title.strip()):
+        raise ValueError("title must be a non-empty string when present")
     key_phrases = story.get("key_phrases", [])
     scenes = story.get("scenes", [])
     if not isinstance(key_phrases, list):

@@ -52,6 +52,9 @@
 	// lesson — otherwise audio/transcript show stale content after navigation.
 	$effect(() => {
 		audio = data.audio;
+		// A render started on the previous lesson must not leave the new lesson's
+		// Render button stuck on "Rendering…".
+		audioLoading = false;
 		const provided = data.transcript;
 		if (provided !== null) {
 			// Supplied by load (or passed directly in a test) — render it as-is.
@@ -60,33 +63,43 @@
 		}
 		// Not preloaded: fetch client-side so the lesson shell renders immediately
 		// instead of blocking on the (classla-backed) transcript endpoint, which can
-		// take many seconds on a cold backend.
+		// take many seconds on a cold backend. That latency means a lesson→lesson
+		// navigation can outrun the fetch — drop responses for a lesson we've left,
+		// or lesson A's late transcript would clobber lesson B's.
 		const lessonId = data.lesson.id;
 		transcript = null;
 		transcriptLoading = true;
 		error = '';
 		api.getLessonTranscript(lessonId)
 			.then((t) => {
-				transcript = t;
+				if (data.lesson.id === lessonId) transcript = t;
 			})
 			.catch((e) => {
-				error = e instanceof Error ? e.message : String(e);
+				if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
 			})
 			.finally(() => {
-				transcriptLoading = false;
+				if (data.lesson.id === lessonId) transcriptLoading = false;
 			});
 	});
 
 	async function handleRenderAudio() {
+		// Rendering takes tens of seconds (full-lesson TTS); the user may navigate
+		// to another lesson meanwhile. Everything after an await re-checks that
+		// this lesson is still the one on screen before touching page state.
+		const lessonId = data.lesson.id;
 		audioLoading = true;
 		error = '';
 		try {
-			audio = await api.renderAudio(data.lesson.id);
-			transcript = await api.getLessonTranscript(data.lesson.id);
+			const rendered = await api.renderAudio(lessonId);
+			if (data.lesson.id !== lessonId) return;
+			audio = rendered;
+			const t = await api.getLessonTranscript(lessonId);
+			if (data.lesson.id !== lessonId) return;
+			transcript = t;
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
 		} finally {
-			audioLoading = false;
+			if (data.lesson.id === lessonId) audioLoading = false;
 		}
 	}
 
@@ -116,10 +129,12 @@
 	async function handleSyncResult() {
 		syncStatus = 'Synced with AnkiWeb';
 		error = '';
+		const lessonId = data.lesson.id;
 		try {
-			transcript = await api.getLessonTranscript(data.lesson.id);
+			const t = await api.getLessonTranscript(lessonId);
+			if (data.lesson.id === lessonId) transcript = t;
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
 		}
 	}
 
@@ -128,15 +143,17 @@
 	});
 
 	async function handleMarkListened() {
+		const lessonId = data.lesson.id;
 		listenLoading = true;
 		error = '';
 		try {
-			const result = await api.markAsListened(data.lesson.id, {});
+			const result = await api.markAsListened(lessonId, {});
 			listenResult = result;
-			listenedStore.add(data.lesson.id);
-			transcript = await api.getLessonTranscript(data.lesson.id);
+			listenedStore.add(lessonId);
+			const t = await api.getLessonTranscript(lessonId);
+			if (data.lesson.id === lessonId) transcript = t;
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
 		} finally {
 			listenLoading = false;
 		}
@@ -341,21 +358,20 @@
 <svelte:window onresize={measureNav} />
 
 <main>
-	<header class="lesson-header">
-		<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
-		<h1>{data.lesson.title}</h1>
-		{#if syncStatus}
-			<p class="sync-status">{syncStatus}</p>
-		{/if}
-		{#if error}
-			<p class="error">{error}</p>
-		{/if}
-	</header>
-
 	<!-- The sticky card owns everything the user reaches for mid-lesson: the
-	     Read/Listen toggle and (once rendered) the player. It sticks below the
-	     global nav so neither scrolls out of reach. -->
+	     lesson title, Read/Listen toggle, and (once rendered) the player. It
+	     sticks below the global nav so nothing the user needs scrolls away. -->
 	<section class="card player-card" style="top: {navHeight}px">
+		<div class="player-title-area">
+			<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
+			<h1>{data.lesson.title}</h1>
+			{#if syncStatus}
+				<p class="sync-status">{syncStatus}</p>
+			{/if}
+			{#if error}
+				<p class="error">{error}</p>
+			{/if}
+		</div>
 		<div class="mode-row">
 			<div class="toggle-pill">
 				<button class:active={mode === 'read'} onclick={() => lessonModePref.set('read')}>Read</button>
@@ -452,10 +468,11 @@
 		flex-direction: column;
 		gap: 1.25rem;
 	}
-	.lesson-header {
+	.player-title-area {
 		display: flex;
 		flex-direction: column;
 		gap: 0.35rem;
+		margin-bottom: 0.5rem;
 	}
 	.breadcrumb {
 		display: inline-block;

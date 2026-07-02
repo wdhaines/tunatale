@@ -257,6 +257,15 @@ describe("LessonPlayer", () => {
       fireEvent.click(btn);
     });
 
+    it("fires nextCue on sentence forward click", () => {
+      // Sentence stepping must work both ways from the on-screen controls —
+      // next-sentence is not only a headset (sentence-skip) affordance.
+      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
+      const btn = container.querySelector<HTMLButtonElement>('button[title="Next sentence"]')!;
+      expect(btn).toBeTruthy();
+      fireEvent.click(btn);
+    });
+
     it("toggles sentence skip checkbox", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
       const checkbox = container.querySelector<HTMLInputElement>(

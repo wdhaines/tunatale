@@ -143,6 +143,64 @@ class TestValidateStory:
         with pytest.raises(ValueError, match=r"key_phrases\[0\]"):
             validate_story(story)
 
+    # Empty/whitespace values pass a bare presence check but blow up much
+    # later — at TTS render time (edge-tts on "" text) — with an opaque error.
+    # Import is the seam where a hand-edited Story JSON must be told clearly.
+
+    def test_key_phrase_empty_phrase_rejected(self):
+        story = _story()
+        story["key_phrases"][0]["phrase"] = ""
+        with pytest.raises(ValueError, match=r"key_phrases\[0\].*phrase.*non-empty"):
+            validate_story(story)
+
+    def test_key_phrase_whitespace_translation_rejected(self):
+        story = _story()
+        story["key_phrases"][1]["translation"] = "   "
+        with pytest.raises(ValueError, match=r"key_phrases\[1\].*translation.*non-empty"):
+            validate_story(story)
+
+    def test_scene_empty_label_rejected(self):
+        story = _story()
+        story["scenes"][1]["label"] = ""
+        with pytest.raises(ValueError, match=r"scenes\[1\].*label.*non-empty"):
+            validate_story(story)
+
+    def test_line_empty_text_rejected(self):
+        story = _story()
+        story["scenes"][0]["lines"][1]["text"] = ""
+        with pytest.raises(ValueError, match=r"scenes\[0\].lines\[1\].*text.*non-empty"):
+            validate_story(story)
+
+    def test_line_empty_translation_rejected(self):
+        # A legacy export can emit "" translations (see
+        # test_export_line_without_known_translation_gets_empty_string); import
+        # must point the author at the exact line instead of failing at render.
+        story = _story()
+        story["scenes"][0]["lines"][0]["translation"] = ""
+        with pytest.raises(ValueError, match=r"scenes\[0\].lines\[0\].*translation.*non-empty"):
+            validate_story(story)
+
+    def test_line_non_string_speaker_rejected(self):
+        # speaker_warnings calls line["speaker"].lower() — a non-string would
+        # 500 with an AttributeError after import succeeded.
+        story = _story()
+        story["scenes"][0]["lines"][0]["speaker"] = 42
+        with pytest.raises(ValueError, match=r"scenes\[0\].lines\[0\].*speaker.*non-empty"):
+            validate_story(story)
+
+    def test_empty_title_rejected(self):
+        # Optional field, but when present it becomes the TTS'd lesson title
+        # and the id slug — "" must not slip through.
+        story = _story()
+        story["title"] = ""
+        with pytest.raises(ValueError, match="title.*non-empty"):
+            validate_story(story)
+
+    def test_absent_title_still_allowed(self):
+        story = _story()
+        del story["title"]
+        validate_story(story)
+
 
 class TestExportLesson:
     def test_missing_lesson_raises_key_error(self, store):

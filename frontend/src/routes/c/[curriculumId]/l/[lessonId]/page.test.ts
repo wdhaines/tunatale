@@ -357,6 +357,121 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       });
       expect(await findByText("plain transcript error")).toBeTruthy();
     });
+
+    it("ignores a stale transcript response after navigating to another lesson", async () => {
+      // The transcript endpoint can take many seconds on a cold backend (the
+      // whole reason it's fetched client-side). Navigating lesson→lesson while
+      // lesson A's fetch is in flight must not let A's late response clobber
+      // lesson B's transcript.
+      let resolveA!: (t: TranscriptData) => void;
+      let resolveB!: (t: TranscriptData) => void;
+      mockGetTranscript
+        .mockReturnValueOnce(new Promise<TranscriptData>((r) => (resolveA = r)))
+        .mockReturnValueOnce(new Promise<TranscriptData>((r) => (resolveB = r)));
+
+      const { rerender, queryByText, findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: null } },
+      });
+
+      const lessonB = { ...lesson, id: "l2", title: "Day 2: Fish", day: 2 };
+      await rerender({
+        data: { curriculum, lesson: lessonB, audio: null, transcript: null },
+      });
+
+      // Lesson A's slow response lands after navigation — must be dropped.
+      resolveA(transcript);
+      await waitFor(() => expect(mockGetTranscript).toHaveBeenCalledWith("l2"));
+      expect(queryByText("a coffee please")).toBeFalsy();
+
+      const transcriptB = {
+        lesson_id: "l2",
+        key_phrases: [{ phrase: "riba", translation: "a fish" }],
+        dialogue_lines: [],
+      };
+      resolveB(transcriptB);
+      expect(await findByText("a fish")).toBeTruthy();
+      expect(queryByText("a coffee please")).toBeFalsy();
+    });
+
+    it("keeps the loading placeholder when a stale fetch settles after navigation", async () => {
+      // The stale fetch's `finally` must not clear transcriptLoading for the
+      // NEW lesson whose own fetch is still in flight.
+      let rejectA!: (e: unknown) => void;
+      mockGetTranscript
+        .mockReturnValueOnce(new Promise<TranscriptData>((_r, rej) => (rejectA = rej)))
+        .mockReturnValueOnce(new Promise<TranscriptData>(() => {}));
+
+      const { rerender, queryByText, getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: null } },
+      });
+
+      const lessonB = { ...lesson, id: "l2", title: "Day 2: Fish", day: 2 };
+      await rerender({
+        data: { curriculum, lesson: lessonB, audio, transcript: null },
+      });
+
+      rejectA(new Error("stale lesson A failure"));
+      await waitFor(() => expect(mockGetTranscript).toHaveBeenCalledWith("l2"));
+      // Neither A's error nor its `finally` may leak into B's view:
+      expect(queryByText("stale lesson A failure")).toBeFalsy();
+      expect(getByText(/Preparing word states/)).toBeTruthy();
+    });
+  });
+
+  it("drops the post-render transcript when navigation happens between the two fetches", async () => {
+    // handleRenderAudio awaits renderAudio, then getLessonTranscript. Navigating
+    // in that window must not let lesson A's transcript land on lesson B.
+    mockRenderAudio.mockResolvedValueOnce(audio);
+    let resolveTranscript!: (t: TranscriptData) => void;
+    mockGetTranscript.mockReturnValueOnce(
+      new Promise<TranscriptData>((r) => (resolveTranscript = r)),
+    );
+
+    const { rerender, getByText, queryByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio: null, transcript } },
+    });
+    await fireEvent.click(getByText("Render Audio"));
+    await waitFor(() => expect(mockGetTranscript).toHaveBeenCalledWith("l1"));
+
+    const lessonB = { ...lesson, id: "l2", title: "Day 2: Fish", day: 2 };
+    const transcriptB = {
+      lesson_id: "l2",
+      key_phrases: [{ phrase: "riba", translation: "a fish" }],
+      dialogue_lines: [],
+    };
+    await rerender({
+      data: { curriculum, lesson: lessonB, audio: null, transcript: transcriptB },
+    });
+
+    resolveTranscript(transcript); // lesson A's transcript arrives late
+    await waitFor(() => expect(getByText("a fish")).toBeTruthy());
+    expect(queryByText("a coffee please")).toBeFalsy();
+  });
+
+  it("ignores a stale renderAudio response after navigating to another lesson", async () => {
+    // Rendering takes tens of seconds (full-lesson TTS). Navigating away while
+    // it runs must not attach lesson A's player/audio to lesson B's page.
+    let resolveRender!: (a: typeof audio) => void;
+    mockRenderAudio.mockReturnValueOnce(new Promise<typeof audio>((r) => (resolveRender = r)));
+
+    const { rerender, getByText, container } = render(Page, {
+      props: { data: { curriculum, lesson, audio: null, transcript } },
+    });
+    await fireEvent.click(getByText("Render Audio"));
+
+    const lessonB = { ...lesson, id: "l2", title: "Day 2: Fish", day: 2 };
+    const transcriptB = { lesson_id: "l2", key_phrases: [], dialogue_lines: [] };
+    await rerender({
+      data: { curriculum, lesson: lessonB, audio: null, transcript: transcriptB },
+    });
+
+    resolveRender(audio); // lesson A's render completes late
+    await waitFor(() => {
+      // Lesson B still shows its Render Audio button, not lesson A's player.
+      expect(getByText("Render Audio")).toBeTruthy();
+      expect((getByText("Render Audio") as HTMLButtonElement).disabled).toBe(false);
+    });
+    expect(container.querySelector(".player")).toBeFalsy();
   });
 
   it("shows the transcript text before audio is rendered", () => {

@@ -372,6 +372,49 @@ describe("playbackController", () => {
       expect(audioEl.currentTime).toBe(before);
     });
 
+    it("treats consecutive narration cues as separate skip groups", () => {
+      // The backend emits narration refs WITHOUT target_index ({"kind": "narration"}),
+      // matching real manifests: lesson title + section title are adjacent narration
+      // cues and must NOT merge into one group (a shared "narration-undefined" key
+      // would make sentence-skip jump past the section announcement).
+      const narrationCues: Cue[] = [
+        makeCue({
+          index: 0,
+          start_ms: 0,
+          end_ms: 500,
+          section_index: null,
+          section_type: null,
+          text: "Day 1: Coffee",
+          ref: { kind: "narration" },
+        }),
+        makeCue({
+          index: 1,
+          start_ms: 500,
+          end_ms: 1000,
+          section_index: 0,
+          text: "Key Phrases",
+          ref: { kind: "narration" },
+        }),
+        makeCue({
+          index: 2,
+          start_ms: 1000,
+          end_ms: 1500,
+          section_index: 0,
+          text: "kavo prosim",
+          ref: { kind: "key_phrase", target_index: 0 },
+        }),
+      ];
+      const lessonAud: LessonAudio = { ...lessonAudio, cues: narrationCues };
+      const ctrl = createController({ audio: lessonAud });
+      audioEl.currentTime = 0;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(ctrl.currentCue?.index).toBe(0);
+
+      // Steps to the section-title narration (cue 1), not past it to cue 2
+      ctrl.nextCue();
+      expect(audioEl.currentTime).toBeCloseTo(0.5, 3);
+    });
+
     it("nextCue/prevCue are no-ops when cues is null", () => {
       const noCuesAudio: LessonAudio = { ...lessonAudio, cues: null };
       const ctrl = createController({ audio: noCuesAudio });

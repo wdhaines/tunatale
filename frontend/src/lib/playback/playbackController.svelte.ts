@@ -38,7 +38,10 @@ interface Deps {
 }
 
 function getRefGroupKey(cue: Cue): string {
-  if (!cue.ref) return `raw-${cue.index}`;
+  // Refs without a target (narration) don't identify a shared entity, so each
+  // such cue is its own group — otherwise adjacent-but-distinct narration cues
+  // (lesson title + section title) would merge into one sentence-skip stop.
+  if (!cue.ref || cue.ref.target_index == null) return `raw-${cue.index}`;
   return `${cue.ref.kind}-${cue.ref.target_index}`;
 }
 

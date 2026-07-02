@@ -97,6 +97,7 @@
 		<div class="sentence-row">
 			<button class="ctrl-btn small" onclick={() => ctrl.prevCue()} title="Previous sentence">◀ Sentence</button>
 			<button class="ctrl-btn small" onclick={() => ctrl.repeatCue()} title="Repeat current">Repeat ↻</button>
+			<button class="ctrl-btn small" onclick={() => ctrl.nextCue()} title="Next sentence">Sentence ▶</button>
 			<label class="sentence-skip-toggle">
 				<input type="checkbox" checked={ctrl.sentenceSkip} onchange={(e) => ctrl.setSentenceSkip((e.target as HTMLInputElement).checked)} />
 				Sentence skip

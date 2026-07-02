@@ -158,7 +158,9 @@ interface SectionAudio {
 
 export interface CueRef {
   kind: "line" | "key_phrase" | "narration";
-  target_index: number;
+  // Absent on narration refs — the backend emits {"kind": "narration"} with no
+  // target (see app/audio/cues.py); only line/key_phrase refs carry an index.
+  target_index?: number;
 }
 
 export interface Cue {
