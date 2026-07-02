@@ -13,15 +13,9 @@ vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...ar
 vi.mock("$lib/api", () => ({
   api: {
     listCurricula: vi.fn(),
-    generateCurriculum: vi.fn(),
+    startPlan: vi.fn(),
     getCurriculumProgress: vi.fn(),
   },
-}));
-
-// Mock $lib/storage (used by CurriculumForm)
-vi.mock("$lib/storage", () => ({
-  saveFormPreferences: vi.fn(),
-  loadFormPreferences: vi.fn().mockReturnValue(null),
 }));
 
 // Mock $lib/stores/listened.svelte — same signal the lesson page uses
@@ -32,7 +26,7 @@ vi.mock("$lib/stores/listened.svelte", () => ({
 import { api } from "$lib/api";
 import { listenedStore } from "$lib/stores/listened.svelte";
 const mockListCurricula = vi.mocked(api.listCurricula);
-const mockGenerate = vi.mocked(api.generateCurriculum);
+const mockStartPlan = vi.mocked(api.startPlan);
 const mockGetCurriculumProgress = vi.mocked(api.getCurriculumProgress);
 const mockListenedHas = vi.mocked(listenedStore.has);
 
@@ -198,46 +192,83 @@ describe("Per-curriculum progress", () => {
 });
 
 describe("New curriculum disclosure", () => {
-  it("keeps the generate form hidden until '+ New curriculum' is clicked", async () => {
+  it("keeps the plan form hidden until '+ New curriculum' is clicked", async () => {
     const { getByRole, queryByText } = render(Page);
     await waitFor(() => expect(mockListCurricula).toHaveBeenCalled());
-    expect(queryByText("Generate Curriculum")).toBeNull();
+    expect(queryByText("Plan a curriculum")).toBeNull();
 
     await fireEvent.click(getByRole("button", { name: "+ New curriculum" }));
-    expect(getByRole("heading", { name: "Generate Curriculum" })).toBeTruthy();
+    expect(getByRole("heading", { name: "Plan a curriculum" })).toBeTruthy();
   });
 
   it("toggles the form closed again via Cancel", async () => {
     const { getByRole, queryByText } = render(Page);
     await fireEvent.click(getByRole("button", { name: "+ New curriculum" }));
-    expect(queryByText("Generate Curriculum")).not.toBeNull();
+    expect(queryByText("Plan a curriculum")).not.toBeNull();
 
     await fireEvent.click(getByRole("button", { name: "Cancel" }));
-    expect(queryByText("Generate Curriculum")).toBeNull();
+    expect(queryByText("Plan a curriculum")).toBeNull();
   });
 
-  it("generates a curriculum, prepends it to the list, and navigates", async () => {
-    mockGenerate.mockResolvedValue({
+  it("disables Start planning until a topic is entered", async () => {
+    const { getByRole } = render(Page);
+    await fireEvent.click(getByRole("button", { name: "+ New curriculum" }));
+    const startButton = getByRole("button", { name: "Start planning" }) as HTMLButtonElement;
+    expect(startButton.disabled).toBe(true);
+  });
+
+  it("starts a plan, prepends it to the list, and navigates to the chat", async () => {
+    mockStartPlan.mockResolvedValue({
       id: "new-id",
       topic: "New Topic",
       language_code: "sl",
-      days: 7,
+      cefr_level: "B1",
+      days: 0,
     });
-    const { getByRole, getByPlaceholderText, findByText } = render(Page);
+    const { getByRole, getByPlaceholderText, getByLabelText, findByText } = render(Page);
 
     await fireEvent.click(getByRole("button", { name: "+ New curriculum" }));
     await fireEvent.input(getByPlaceholderText(/ordering coffee/i), {
       target: { value: "New Topic" },
     });
-    await fireEvent.click(getByRole("button", { name: "Generate" }));
+    await fireEvent.change(getByLabelText(/cefr level/i), { target: { value: "B1" } });
+    await fireEvent.click(getByRole("button", { name: "Start planning" }));
 
     await waitFor(() => {
-      expect(mockGenerate).toHaveBeenCalledWith("New Topic", "A2", 7);
-      expect(mockGoto).toHaveBeenCalledWith("/c/new-id");
+      expect(mockStartPlan).toHaveBeenCalledWith("New Topic", "B1");
+      expect(mockGoto).toHaveBeenCalledWith("/c/new-id/plan");
     });
     // Optimistically prepended as a link in the library
     expect(
       (await findByText("New Topic", { selector: ".topic" })).closest("a")?.getAttribute("href"),
     ).toBe("/c/new-id");
+  });
+
+  it("shows the error and stays open when startPlan fails", async () => {
+    mockStartPlan.mockRejectedValue(new Error("POST /api/curriculum/plan: boom"));
+    const { getByRole, getByPlaceholderText, findByText } = render(Page);
+
+    await fireEvent.click(getByRole("button", { name: "+ New curriculum" }));
+    await fireEvent.input(getByPlaceholderText(/ordering coffee/i), {
+      target: { value: "Topic" },
+    });
+    await fireEvent.click(getByRole("button", { name: "Start planning" }));
+
+    expect(await findByText(/boom/)).toBeTruthy();
+    expect(getByRole("heading", { name: "Plan a curriculum" })).toBeTruthy();
+    expect(mockGoto).not.toHaveBeenCalled();
+  });
+
+  it("shows a stringified error when startPlan rejects with a non-Error", async () => {
+    mockStartPlan.mockRejectedValue("bad thing");
+    const { getByRole, getByPlaceholderText, findByText } = render(Page);
+
+    await fireEvent.click(getByRole("button", { name: "+ New curriculum" }));
+    await fireEvent.input(getByPlaceholderText(/ordering coffee/i), {
+      target: { value: "Topic" },
+    });
+    await fireEvent.click(getByRole("button", { name: "Start planning" }));
+
+    expect(await findByText("bad thing")).toBeTruthy();
   });
 });

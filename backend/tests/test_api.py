@@ -122,7 +122,57 @@ class TestCurriculumEndpoints:
         data = response.json()
         assert data["id"] == "coffee-abc"
         assert data["topic"] == "coffee"
-        assert data["days"] == 1
+        assert data["cefr_level"] == "A2"
+        assert data["proposed"] is None
+        assert data["days"] == [
+            {
+                "day": 1,
+                "title": "Day 1",
+                "focus": "greetings",
+                "collocations": ["zdravo"],
+                "learning_objective": "greet",
+                "story_guidance": "café",
+            }
+        ]
+
+    async def test_get_curriculum_days_sorted_and_proposed_exposed(self):
+        """days come back sorted by day number; a pending proposal is included."""
+        from app.storage.store import ContentStore
+
+        proposed = {
+            "start_day": 3,
+            "days": [
+                {
+                    "day": 3,
+                    "title": "Day 3",
+                    "focus": "food",
+                    "collocations": ["kava"],
+                    "learning_objective": "order",
+                    "story_guidance": "",
+                }
+            ],
+        }
+        store = ContentStore(":memory:")
+        curriculum = Curriculum(
+            id="test-c",
+            topic="coffee",
+            language_code="sl",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(day=2, title="Day 2", focus="f2", learning_objective="o2", collocations=["b"]),
+                CurriculumDay(day=1, title="Day 1", focus="f1", learning_objective="o1", collocations=["a"]),
+            ],
+            metadata={"planner": {"chat": [], "proposed": proposed, "feedback": []}},
+        )
+        store.save_curriculum("coffee-abc", curriculum)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/curriculum/coffee-abc")
+
+        data = response.json()
+        assert [d["day"] for d in data["days"]] == [1, 2]
+        assert data["proposed"] == proposed
 
     async def test_list_curricula_returns_200(self):
         from app.storage.store import ContentStore

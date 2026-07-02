@@ -10,7 +10,23 @@ vi.mock("$lib/stores/listened.svelte", () => ({
   listenedStore: { has: vi.fn().mockReturnValue(false) },
 }));
 
-const curriculum: CurriculumSummary = { id: "c1", topic: "Coffee", language_code: "sl", days: 3 };
+const day = (n: number) => ({
+  day: n,
+  title: `Title ${n}`,
+  focus: `focus ${n}`,
+  collocations: ["kava"],
+  learning_objective: `obj ${n}`,
+  story_guidance: "",
+});
+
+const curriculum: CurriculumSummary = {
+  id: "c1",
+  topic: "Coffee",
+  language_code: "sl",
+  cefr_level: "A2",
+  days: [day(1), day(2), day(3)],
+  proposed: null,
+};
 
 describe("DayPicker", () => {
   it("renders one button per day", () => {
@@ -23,10 +39,19 @@ describe("DayPicker", () => {
     expect(buttons[2].textContent).toContain("Day 3");
   });
 
+  it("shows each day's title on its button", () => {
+    const { getAllByRole } = render(DayPicker, {
+      props: { curriculum, onSelectDay: vi.fn() },
+    });
+    const buttons = getAllByRole("button");
+    expect(buttons[0].textContent).toContain("Title 1");
+    expect(buttons[2].textContent).toContain("Title 3");
+  });
+
   it("calls onSelectDay with the correct day when clicked", async () => {
     const onSelectDay = vi.fn().mockResolvedValue(undefined);
     const { getByText } = render(DayPicker, { props: { curriculum, onSelectDay } });
-    await fireEvent.click(getByText("Day 2"));
+    await fireEvent.click(getByText(/Day 2 ·/));
     expect(onSelectDay).toHaveBeenCalledWith(2);
   });
 

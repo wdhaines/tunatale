@@ -129,6 +129,149 @@ describe("TunaTaleAPI", () => {
       );
     });
 
+    it("startPlan calls POST /api/curriculum/plan", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue(
+            mockOk({ id: "trip-1", topic: "trip", language_code: "sl", cefr_level: "B1", days: 0 }),
+          ),
+      );
+
+      const result = await api.startPlan("trip", "B1");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/curriculum/plan`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ topic: "trip", cefr_level: "B1" }),
+        }),
+      );
+      expect(result.id).toBe("trip-1");
+      expect(result.cefr_level).toBe("B1");
+    });
+
+    it("startPlan defaults cefr_level to A2", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue(
+            mockOk({ id: "t-1", topic: "t", language_code: "sl", cefr_level: "A2", days: 0 }),
+          ),
+      );
+
+      await api.startPlan("t");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/curriculum/plan`,
+        expect.objectContaining({ body: JSON.stringify({ topic: "t", cefr_level: "A2" }) }),
+      );
+    });
+
+    it("planTurn calls POST /api/curriculum/:id/plan/turn", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(mockOk({ reply: "Here you go", proposed: null })),
+      );
+
+      const result = await api.planTurn("trip-1", "plan 3 days", 3);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/curriculum/trip-1/plan/turn`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ message: "plan 3 days", batch_size: 3 }),
+        }),
+      );
+      expect(result.reply).toBe("Here you go");
+      expect(result.proposed).toBeNull();
+    });
+
+    it("planTurn defaults batch_size to 5 and surfaces 502 detail", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(mockFailBody({ detail: "Expected 5 days, got 1" }, 502)),
+      );
+
+      await expect(api.planTurn("trip-1", "plan")).rejects.toThrow(
+        "POST /api/curriculum/trip-1/plan/turn: Expected 5 days, got 1",
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/curriculum/trip-1/plan/turn`,
+        expect.objectContaining({ body: JSON.stringify({ message: "plan", batch_size: 5 }) }),
+      );
+    });
+
+    it("commitPlan calls POST /api/curriculum/:id/plan/commit", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ id: "trip-1", days: 3 })));
+
+      const result = await api.commitPlan("trip-1");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/curriculum/trip-1/plan/commit`,
+        expect.objectContaining({ method: "POST" }),
+      );
+      expect(result.days).toBe(3);
+    });
+
+    it("sendPlanFeedback calls POST /api/curriculum/:id/plan/feedback", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(mockOk({ feedback: [{ day: 2, note: "too fast" }] })),
+      );
+
+      const result = await api.sendPlanFeedback("trip-1", 2, "too fast");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/curriculum/trip-1/plan/feedback`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ day: 2, note: "too fast" }),
+        }),
+      );
+      expect(result.feedback).toHaveLength(1);
+    });
+
+    it("getPlanSource calls GET /api/curriculum/:id/source", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            id: "trip-1",
+            topic: "trip",
+            language_code: "sl",
+            cefr_level: "A2",
+            days: [],
+          }),
+        ),
+      );
+
+      const result = await api.getPlanSource("trip-1");
+
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/curriculum/trip-1/source`);
+      expect(result.id).toBe("trip-1");
+    });
+
+    it("importPlan calls POST /api/curriculum/import", async () => {
+      const file = { topic: "trip", language_code: "sl", cefr_level: "A2", days: [] };
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue(mockOk({ id: "trip-9", topic: "trip", language_code: "sl", days: 0 })),
+      );
+
+      const result = await api.importPlan(file);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/curriculum/import`,
+        expect.objectContaining({ method: "POST", body: JSON.stringify(file) }),
+      );
+      expect(result.id).toBe("trip-9");
+    });
+
     it("getLessonByDay calls GET /api/curriculum/:cid/days/:n/lesson", async () => {
       const mockDetail = {
         id: "l1",

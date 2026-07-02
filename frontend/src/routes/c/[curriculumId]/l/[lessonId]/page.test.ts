@@ -70,7 +70,23 @@ const mockIgnoreLemma = vi.mocked(api.ignoreLemma);
 const mockUnignoreLemma = vi.mocked(api.unignoreLemma);
 const mockRestoreKnown = vi.mocked(api.restoreKnown);
 
-const curriculum = { id: "cid-1", topic: "Coffee", language_code: "sl", days: 3 };
+const curriculum = {
+  id: "cid-1",
+  topic: "Coffee",
+  language_code: "sl",
+  cefr_level: "A2",
+  days: [
+    {
+      day: 1,
+      title: "Title 1",
+      focus: "f",
+      collocations: ["kava"],
+      learning_objective: "o",
+      story_guidance: "",
+    },
+  ],
+  proposed: null,
+};
 const lesson = {
   id: "l1",
   day: 1,

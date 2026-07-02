@@ -28,7 +28,23 @@ const mockGetLessonByDay = vi.mocked(api.getLessonByDay);
 const mockGenerateStory = vi.mocked(api.generateStory);
 const mockGetLesson = vi.mocked(api.getLesson);
 
-const curriculum = { id: "cid-1", topic: "Coffee", language_code: "sl", days: 3 };
+const day = (n: number) => ({
+  day: n,
+  title: `Title ${n}`,
+  focus: `focus ${n}`,
+  collocations: ["kava"],
+  learning_objective: `obj ${n}`,
+  story_guidance: "",
+});
+
+const curriculum = {
+  id: "cid-1",
+  topic: "Coffee",
+  language_code: "sl",
+  cefr_level: "A2",
+  days: [day(1), day(2), day(3)],
+  proposed: null,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -38,8 +54,15 @@ describe("/c/[curriculumId] page", () => {
   it("renders curriculum topic and day buttons", () => {
     const { getByText } = render(Page, { props: { data: { curriculum } } });
     expect(getByText("Coffee")).toBeTruthy();
-    expect(getByText("Day 1")).toBeTruthy();
-    expect(getByText("Day 3")).toBeTruthy();
+    expect(getByText(/Day 1/)).toBeTruthy();
+    expect(getByText(/Day 3/)).toBeTruthy();
+  });
+
+  it("shows the committed day count and a link to the planner chat", () => {
+    const { getByText, getByRole } = render(Page, { props: { data: { curriculum } } });
+    expect(getByText(/3 days/)).toBeTruthy();
+    const planLink = getByRole("link", { name: /plan next days/i }) as HTMLAnchorElement;
+    expect(planLink.getAttribute("href")).toBe("/c/cid-1/plan");
   });
 
   it("navigates to lesson URL when cached lesson exists", async () => {
@@ -54,7 +77,7 @@ describe("/c/[curriculumId] page", () => {
     mockGetLessonByDay.mockResolvedValue(lesson);
 
     const { getByText } = render(Page, { props: { data: { curriculum } } });
-    await fireEvent.click(getByText("Day 1"));
+    await fireEvent.click(getByText(/Day 1 ·/));
 
     await waitFor(() => {
       expect(mockGoto).toHaveBeenCalledWith("/c/cid-1/l/l1");
@@ -76,7 +99,7 @@ describe("/c/[curriculumId] page", () => {
     mockGetLesson.mockResolvedValue(lesson);
 
     const { getByText } = render(Page, { props: { data: { curriculum } } });
-    await fireEvent.click(getByText("Day 2"));
+    await fireEvent.click(getByText(/Day 2 ·/));
 
     await waitFor(() => {
       expect(mockGenerateStory).toHaveBeenCalledWith("cid-1", 2);
@@ -89,7 +112,7 @@ describe("/c/[curriculumId] page", () => {
     mockGenerateStory.mockRejectedValue(new Error("LLM offline"));
 
     const { getByText, findByText } = render(Page, { props: { data: { curriculum } } });
-    await fireEvent.click(getByText("Day 1"));
+    await fireEvent.click(getByText(/Day 1 ·/));
 
     expect(await findByText("LLM offline")).toBeTruthy();
   });
@@ -99,7 +122,7 @@ describe("/c/[curriculumId] page", () => {
     mockGenerateStory.mockRejectedValue("string error value");
 
     const { getByText, findByText } = render(Page, { props: { data: { curriculum } } });
-    await fireEvent.click(getByText("Day 1"));
+    await fireEvent.click(getByText(/Day 1 ·/));
 
     expect(await findByText("string error value")).toBeTruthy();
   });

@@ -24,7 +24,7 @@ test('frontend proxies /api to backend', async ({ request }) => {
 	expect(body.status).toBe('ok');
 });
 
-test('generate curriculum flow', async ({ page, request }) => {
+test('start curriculum plan flow', async ({ page, request }) => {
 	const health = await request.get('http://localhost:8001/api/health');
 	test.skip(!health.ok(), 'Backend not available');
 
@@ -36,13 +36,13 @@ test('generate curriculum flow', async ({ page, request }) => {
 	await page.getByRole('button', { name: '+ New curriculum' }).click();
 	await expect(page.getByPlaceholder('e.g. ordering coffee in Ljubljana')).toBeVisible();
 	await page.getByPlaceholder('e.g. ordering coffee in Ljubljana').fill('ordering coffee');
-	await expect(page.getByRole('button', { name: 'Generate' })).toBeEnabled();
-	await page.getByRole('button', { name: 'Generate' }).click();
+	await expect(page.getByRole('button', { name: 'Start planning' })).toBeEnabled();
+	await page.getByRole('button', { name: 'Start planning' }).click();
 
-	// After curriculum generates, should navigate to /c/:id
-	await expect(page).toHaveURL(/\/c\/[a-z0-9-]+$/, { timeout: 30000 });
-	// Day picker should be visible
-	await expect(page.getByText('Day 1')).toBeVisible();
+	// startPlan is LLM-free: navigates straight to the planner chat
+	await expect(page).toHaveURL(/\/c\/[a-z0-9-]+\/plan$/, { timeout: 15000 });
+	await expect(page.getByPlaceholder('Message the planner…')).toBeVisible();
+	await expect(page.getByRole('button', { name: /Plan the next \d+ days/ })).toBeVisible();
 });
 
 test('review page loads', async ({ page }) => {

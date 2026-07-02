@@ -1,8 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import CurriculumForm from '$lib/components/CurriculumForm.svelte';
-	import type { CurriculumSummary } from '$lib/api';
 	import { api } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import { languageStore } from '$lib/stores/language.svelte';
@@ -29,6 +27,29 @@
 	let listError = $state('');
 	let showForm = $state(false);
 	let progressById: Record<string, CardProgress> = $state({});
+
+	// Mini-form for starting a new plan (chat-based; replaces one-shot generation)
+	let planTopic = $state('');
+	let planCefr = $state('A2');
+	let planStarting = $state(false);
+	let planError = $state('');
+
+	async function handleStartPlan() {
+		planStarting = true;
+		planError = '';
+		try {
+			const created = await api.startPlan(planTopic.trim(), planCefr);
+			curricula = [
+				{ id: created.id, topic: created.topic, created_at: new Date().toISOString() },
+				...curricula
+			];
+			await goto(`/c/${created.id}/plan`);
+		} catch (e) {
+			planError = e instanceof Error ? e.message : String(e);
+		} finally {
+			planStarting = false;
+		}
+	}
 
 	onMount(async () => {
 		try {
@@ -84,14 +105,6 @@
 			year: 'numeric'
 		});
 	}
-
-	async function handleGenerate(curriculum: CurriculumSummary) {
-		curricula = [
-			{ id: curriculum.id, topic: curriculum.topic, created_at: new Date().toISOString() },
-			...curricula
-		];
-		await goto(`/c/${curriculum.id}`);
-	}
 </script>
 
 <main>
@@ -106,7 +119,32 @@
 	</header>
 
 	{#if showForm}
-		<CurriculumForm onGenerate={handleGenerate} />
+		<section class="plan-form card">
+			<h2>Plan a curriculum</h2>
+			<label>
+				Topic
+				<input bind:value={planTopic} placeholder="e.g. ordering coffee in Ljubljana" />
+			</label>
+			<label>
+				CEFR Level
+				<select bind:value={planCefr}>
+					<option>A1</option>
+					<option>A2</option>
+					<option>B1</option>
+					<option>B2</option>
+				</select>
+			</label>
+			<button
+				class="start-btn"
+				onclick={handleStartPlan}
+				disabled={planStarting || !planTopic.trim()}
+			>
+				{planStarting ? 'Starting…' : 'Start planning'}
+			</button>
+			{#if planError}
+				<p class="error">{planError}</p>
+			{/if}
+		</section>
 	{/if}
 
 	{#if listLoading}
@@ -288,6 +326,50 @@
 	.error {
 		color: var(--color-danger);
 		margin: 0;
+	}
+	.plan-form {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		padding: 1.25rem;
+		margin-bottom: 1.25rem;
+	}
+	.plan-form h2 {
+		margin: 0;
+		font-size: 1.2rem;
+		font-weight: 700;
+	}
+	.plan-form label {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+		font-size: 0.85rem;
+		color: var(--color-muted);
+	}
+	.plan-form input,
+	.plan-form select {
+		padding: 0.5rem 0.65rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		font: inherit;
+		font-size: 0.92rem;
+		background: var(--color-surface);
+		color: var(--color-text);
+	}
+	.start-btn {
+		align-self: flex-start;
+		padding: 0.55rem 1.1rem;
+		border: none;
+		border-radius: var(--radius-pill);
+		background: var(--color-primary);
+		color: var(--color-on-primary);
+		font-size: 0.9rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.start-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	@media (min-width: 641px) {

@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import type { CurriculumSummary } from '$lib/api';
+	import type { CurriculumCreated } from '$lib/api';
 	import { saveFormPreferences, loadFormPreferences } from '$lib/storage';
 
 	interface Props {
-		onGenerate: (curriculum: CurriculumSummary) => void;
+		onGenerate: (curriculum: CurriculumCreated) => void;
 	}
 
 	let { onGenerate }: Props = $props();

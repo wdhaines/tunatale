@@ -39,8 +39,12 @@
 	<a class="back" href="/">← Lessons</a>
 	<section class="curriculum-section card">
 		<h2>{data.curriculum.topic}</h2>
-		<p class="meta">{data.curriculum.days} days · {data.curriculum.language_code.toUpperCase()}</p>
+		<p class="meta">
+			{data.curriculum.days.length}
+			{data.curriculum.days.length === 1 ? 'day' : 'days'} · {data.curriculum.language_code.toUpperCase()}
+		</p>
 		<DayPicker curriculum={data.curriculum} onSelectDay={handleSelectDay} {progress} />
+		<a class="plan-link" href="/c/{data.curriculum.id}/plan">Plan next days →</a>
 		{#if error}
 			<p class="error">{error}</p>
 		{/if}
@@ -81,5 +85,16 @@
 	.error {
 		color: var(--color-danger);
 		margin-top: 0.75rem;
+	}
+	.plan-link {
+		display: inline-block;
+		margin-top: 1rem;
+		color: var(--color-primary);
+		text-decoration: none;
+		font-size: 0.9rem;
+		font-weight: 600;
+	}
+	.plan-link:hover {
+		text-decoration: underline;
 	}
 </style>

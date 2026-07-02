@@ -31,15 +31,14 @@
 </script>
 
 <div class="days">
-	{#each Array(curriculum.days) as _, i (i)}
-		{@const day = i + 1}
-		{@const state = dayState(day)}
+	{#each curriculum.days as d (d.day)}
+		{@const state = dayState(d.day)}
 		<button
 			class="day-btn state-{state}"
-			onclick={() => handleClick(day)}
+			onclick={() => handleClick(d.day)}
 			disabled={loadingDay !== null}
 		>
-			{loadingDay === day ? '…' : state === 'listened' ? `✓ Day ${day}` : `Day ${day}`}
+			{loadingDay === d.day ? '…' : state === 'listened' ? `✓ Day ${d.day} · ${d.title}` : `Day ${d.day} · ${d.title}`}
 		</button>
 	{/each}
 </div>

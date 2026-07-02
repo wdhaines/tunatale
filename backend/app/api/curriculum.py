@@ -185,7 +185,9 @@ async def get_curriculum(curriculum_id: str, request: Request):
         "id": curriculum_id,
         "topic": curriculum.topic,
         "language_code": curriculum.language_code,
-        "days": len(curriculum.days),
+        "cefr_level": curriculum.cefr_level,
+        "days": sorted((asdict(d) for d in curriculum.days), key=lambda d: d["day"]),
+        "proposed": get_planner_state(curriculum)["proposed"],
     }
 
 

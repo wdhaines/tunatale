@@ -31,11 +31,49 @@ export interface LanguagesResponse {
   active: string;
 }
 
+export interface DayPlan {
+  day: number;
+  title: string;
+  focus: string;
+  collocations: string[];
+  learning_objective: string;
+  story_guidance: string;
+}
+
+export interface ProposedBatch {
+  start_day: number;
+  days: DayPlan[];
+}
+
 export interface CurriculumSummary {
   id: string;
   topic: string;
   language_code: string;
+  cefr_level: string;
+  days: DayPlan[];
+  proposed: ProposedBatch | null;
+}
+
+/** POST /generate and /plan return a day COUNT, not day objects. */
+export interface CurriculumCreated {
+  id: string;
+  topic: string;
+  language_code: string;
+  cefr_level?: string;
   days: number;
+}
+
+export interface PlanTurnResponse {
+  reply: string;
+  proposed: ProposedBatch | null;
+}
+
+export interface PlanSource {
+  id: string;
+  topic: string;
+  language_code: string;
+  cefr_level: string;
+  days: DayPlan[];
 }
 
 interface SectionSummary {
@@ -322,7 +360,7 @@ export class TunaTaleAPI {
     topic: string,
     cefrLevel = "A2",
     numDays = 7,
-  ): Promise<CurriculumSummary> {
+  ): Promise<CurriculumCreated> {
     return this.request("/api/curriculum/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -340,6 +378,54 @@ export class TunaTaleAPI {
 
   async getCurriculumProgress(id: string): Promise<DayProgress[]> {
     return this.request(`/api/curriculum/${id}/progress`);
+  }
+
+  async startPlan(topic: string, cefrLevel = "A2"): Promise<CurriculumCreated> {
+    return this.request("/api/curriculum/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic, cefr_level: cefrLevel }),
+    });
+  }
+
+  async planTurn(id: string, message: string, batchSize = 5): Promise<PlanTurnResponse> {
+    return this.request(`/api/curriculum/${id}/plan/turn`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, batch_size: batchSize }),
+    });
+  }
+
+  async commitPlan(id: string): Promise<{ id: string; days: number }> {
+    return this.request(`/api/curriculum/${id}/plan/commit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+  }
+
+  async sendPlanFeedback(
+    id: string,
+    day: number,
+    note: string,
+  ): Promise<{ feedback: Array<{ day: number; note: string }> }> {
+    return this.request(`/api/curriculum/${id}/plan/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ day, note }),
+    });
+  }
+
+  async getPlanSource(id: string): Promise<PlanSource> {
+    return this.request(`/api/curriculum/${id}/source`);
+  }
+
+  async importPlan(file: Omit<PlanSource, "id"> & { id?: string }): Promise<CurriculumCreated> {
+    return this.request("/api/curriculum/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(file),
+    });
   }
 
   async getLessonByDay(curriculumId: string, day: number): Promise<LessonDetail> {
