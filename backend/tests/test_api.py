@@ -18,7 +18,6 @@ def _clean_app_state():
     for attr in (
         "content_store",
         "language",
-        "curriculum_generator",
         "story_generator",
         "renderer",
         "audio_dir",
@@ -40,49 +39,6 @@ class TestHealth:
 
 class TestCurriculumEndpoints:
     """Tests for curriculum CRUD endpoints."""
-
-    async def test_generate_curriculum_returns_201(self, monkeypatch):
-        from app.storage.store import ContentStore
-
-        mock_curriculum = Curriculum(
-            id="test-id",
-            topic="ordering coffee",
-            language_code="sl",
-            cefr_level="A2",
-            days=[
-                CurriculumDay(
-                    day=1,
-                    title="First day",
-                    focus="greetings",
-                    learning_objective="say hello",
-                    story_guidance="use dober dan",
-                    collocations=["dober dan"],
-                )
-            ],
-        )
-
-        mock_generator = AsyncMock()
-        mock_generator.generate = AsyncMock(return_value=mock_curriculum)
-
-        app.state.curriculum_generator = mock_generator
-        app.state.language = Language.slovene()
-        app.state.content_store = ContentStore(":memory:")
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post(
-                "/api/curriculum/generate",
-                json={"topic": "ordering coffee", "cefr_level": "A2", "num_days": 1},
-            )
-
-        assert response.status_code == 201
-        data = response.json()
-        assert "id" in data
-        assert data["id"].startswith("ordering-coffee"), f"Expected slug prefix, got: {data['id']}"
-        assert data["topic"] == "ordering coffee"
-        # Verify persisted
-        restored = app.state.content_store.get_curriculum(data["id"])
-        assert restored is not None
-        assert restored.topic == "ordering coffee"
 
     async def test_get_curriculum_returns_404_when_missing(self):
         from app.storage.store import ContentStore

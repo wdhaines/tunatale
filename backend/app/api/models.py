@@ -75,12 +75,6 @@ class RenderAudioRequest(BaseModel):
 # ── Curriculum models ────────────────────────────────────────────────────────
 
 
-class GenerateCurriculumRequest(BaseModel):
-    topic: str
-    cefr_level: str = "A2"
-    num_days: int = 7
-
-
 class ImportPlanRequest(BaseModel):
     """Self-describing plan file for curriculum authoring.
 

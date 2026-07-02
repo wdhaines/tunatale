@@ -9,7 +9,7 @@ import Page from "./+page.svelte";
 const mockGoto = vi.fn();
 vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
 
-// Mock $lib/api — listCurricula (this page) + generateCurriculum (CurriculumForm)
+// Mock $lib/api — listCurricula (this page)
 vi.mock("$lib/api", () => ({
   api: {
     listCurricula: vi.fn(),

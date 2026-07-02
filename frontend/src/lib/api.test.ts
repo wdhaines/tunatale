@@ -64,32 +64,6 @@ describe("TunaTaleAPI", () => {
   });
 
   describe("curriculum", () => {
-    it("generateCurriculum calls POST /api/curriculum/generate", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi
-          .fn()
-          .mockResolvedValue(mockOk({ id: "abc", topic: "coffee", language_code: "sl", days: 3 })),
-      );
-
-      const result = await api.generateCurriculum("coffee", "A2", 3);
-
-      expect(fetch).toHaveBeenCalledWith(
-        `${BASE}/api/curriculum/generate`,
-        expect.objectContaining({ method: "POST" }),
-      );
-      expect(result.id).toBe("abc");
-      expect(result.topic).toBe("coffee");
-    });
-
-    it("generateCurriculum throws on non-ok response", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail()));
-
-      await expect(api.generateCurriculum("coffee")).rejects.toThrow(
-        "POST /api/curriculum/generate: Internal Server Error",
-      );
-    });
-
     it("listCurricula calls GET /api/curriculum", async () => {
       vi.stubGlobal(
         "fetch",
@@ -1256,7 +1230,7 @@ describe("TunaTaleAPI language header", () => {
   it("merges X-TT-Language into a POST's existing headers", async () => {
     localStorage.setItem("tt-language", "no");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ id: "x" })));
-    await api.generateCurriculum("coffee");
+    await api.startPlan("coffee");
     const init = (fetch as unknown as { mock: { calls: unknown[][] } }).mock
       .calls[0][1] as RequestInit;
     expect((init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");

@@ -24,13 +24,12 @@ async def test_lifespan_populates_app_state(tmp_path, monkeypatch):
         assert test_app.state.srs_db is not None
         assert test_app.state.content_store is not None
         assert test_app.state.language is not None
-        assert test_app.state.curriculum_generator is not None
         assert test_app.state.curriculum_planner is not None
         assert test_app.state.story_generator is not None
         assert test_app.state.renderer is not None
         assert test_app.state.audio_dir is not None
         # In mock mode, the LLM client should be wrapped with CassetteLLMClient
-        assert isinstance(test_app.state.curriculum_generator._llm, CassetteLLMClient)
+        assert isinstance(test_app.state.curriculum_planner._llm, CassetteLLMClient)
 
     # After exiting the context the databases should be closed cleanly (no exception)
 
@@ -47,7 +46,7 @@ async def test_lifespan_live_mode_uses_raw_client(tmp_path, monkeypatch):
     test_app = FastAPI()
 
     async with lifespan(test_app):
-        assert not isinstance(test_app.state.curriculum_generator._llm, CassetteLLMClient)
+        assert not isinstance(test_app.state.curriculum_planner._llm, CassetteLLMClient)
 
 
 async def test_lifespan_warmup_failure_does_not_abort(tmp_path, monkeypatch):

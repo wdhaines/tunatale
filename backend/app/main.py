@@ -17,7 +17,6 @@ from app.audio.edge_tts import EdgeTTSService  # noqa: E402
 from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
 from app.audio.renderer import LessonRenderer  # noqa: E402
 from app.config import settings  # noqa: E402
-from app.generation.curriculum import CurriculumGenerator  # noqa: E402
 from app.generation.planner import CurriculumPlanner  # noqa: E402
 from app.generation.story import StoryGenerator  # noqa: E402
 from app.languages import get_language, get_preprocessor  # noqa: E402
@@ -129,7 +128,6 @@ async def lifespan(app: FastAPI):
     app.state.language = languages[default_code]
 
     app.state.llm = llm
-    app.state.curriculum_generator = CurriculumGenerator(llm)
     app.state.curriculum_planner = CurriculumPlanner(llm)
     app.state.story_generator = StoryGenerator(llm)
     app.state.renderer = LessonRenderer(

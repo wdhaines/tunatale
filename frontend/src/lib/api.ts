@@ -356,18 +356,6 @@ export class TunaTaleAPI {
     return res.json();
   }
 
-  async generateCurriculum(
-    topic: string,
-    cefrLevel = "A2",
-    numDays = 7,
-  ): Promise<CurriculumCreated> {
-    return this.request("/api/curriculum/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ topic, cefr_level: cefrLevel, num_days: numDays }),
-    });
-  }
-
   async listCurricula(): Promise<Array<{ id: string; topic: string; created_at: string }>> {
     return this.request("/api/curriculum");
   }
