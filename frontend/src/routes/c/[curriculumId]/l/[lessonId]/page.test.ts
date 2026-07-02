@@ -224,6 +224,25 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     }
   });
 
+  it("keeps the Read/Listen toggle inside the sticky player card (audio present)", () => {
+    const { container } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+    // The toggle must survive scrolling: it lives in the sticky card, not the header.
+    expect(container.querySelector(".card.player-card .toggle-pill")).toBeTruthy();
+    expect(container.querySelectorAll(".toggle-pill").length).toBe(1);
+  });
+
+  it("renders the sticky card with toggle and Render Audio when audio is missing", () => {
+    const { container } = render(Page, {
+      props: { data: { curriculum, lesson, audio: null, transcript: null } },
+    });
+    const card = container.querySelector(".card.player-card");
+    expect(card).toBeTruthy();
+    expect(card!.querySelector(".toggle-pill")).toBeTruthy();
+    expect(card!.textContent).toContain("Render Audio");
+  });
+
   it("destroys and recreates LessonPlayer when audio_id changes (lesson nav)", async () => {
     const pauseSpy = vi.spyOn(HTMLAudioElement.prototype, "pause");
     const { rerender } = render(Page, {
@@ -457,41 +476,12 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     });
   });
 
-  it("shows plural phrases label when a section has more than one phrase", () => {
-    const lessonMultiPhrase = {
-      ...lesson,
-      sections: [
-        {
-          type: "key_phrases",
-          phrases: [
-            { text: "kavo prosim", role: "female-1", language_code: "sl", voice_id: "v1" },
-            { text: "hvala", role: "female-1", language_code: "sl", voice_id: "v1" },
-          ],
-        },
-      ],
-    };
-    const { getByText } = render(Page, {
-      props: { data: { curriculum, lesson: lessonMultiPhrase, audio: null, transcript: null } },
+  it("does not render per-section phrase counts (header is title-only)", () => {
+    const { container, queryByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio: null, transcript: null } },
     });
-    expect(getByText(/2 phrases/)).toBeTruthy();
-  });
-
-  it("falls back to raw section type when not in SECTION_TITLES dictionary", () => {
-    // Exercises `{SECTION_TITLES[section.type] ?? section.type}` fallback at L167.
-    // "unknown_type" isn't a key in the dictionary, so the raw value renders.
-    const lessonOddType = {
-      ...lesson,
-      sections: [
-        {
-          type: "unknown_type",
-          phrases: [{ text: "x", role: "female-1", language_code: "sl", voice_id: "v1" }],
-        },
-      ],
-    };
-    const { container } = render(Page, {
-      props: { data: { curriculum, lesson: lessonOddType, audio: null, transcript: null } },
-    });
-    expect(container.textContent).toContain("unknown_type");
+    expect(container.querySelector(".section-meta")).toBeFalsy();
+    expect(queryByText(/1 phrase/)).toBeFalsy();
   });
 
   describe("handleWordClick", () => {
@@ -1495,6 +1485,54 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       );
 
       expect(await findByText("plain phrase error")).toBeTruthy();
+    });
+  });
+
+  describe("lesson tools (collapsed rare actions)", () => {
+    const audioWithSections = {
+      audio_id: "a1",
+      lesson_id: "l1",
+      sections: [
+        { audio_id: "s1", section_index: 0, section_type: "key_phrases", title: "Key Phrases" },
+        {
+          audio_id: "s2",
+          section_index: 1,
+          section_type: "natural_speed",
+          title: "Natural Speed",
+        },
+      ],
+    };
+
+    it("tucks Regenerate and Downloads into a closed details", () => {
+      const { container } = render(Page, {
+        props: { data: { curriculum, lesson, audio: audioWithSections, transcript } },
+      });
+      const tools = container.querySelector<HTMLDetailsElement>("details.tools-card");
+      expect(tools).toBeTruthy();
+      expect(tools!.open).toBe(false);
+      expect(tools!.textContent).toContain("Regenerate Day 1");
+      expect(tools!.textContent).toContain("Download All Sections");
+      expect(tools!.textContent).toContain("Key Phrases");
+      expect(tools!.textContent).toContain("Natural Speed");
+    });
+
+    it("download links point at the zip and per-section audio endpoints", () => {
+      const { container } = render(Page, {
+        props: { data: { curriculum, lesson, audio: audioWithSections, transcript } },
+      });
+      const all = container.querySelector<HTMLAnchorElement>(".download-all-btn")!;
+      expect(all.getAttribute("href")).toBe("/api/audio/lesson/l1/zip");
+      const sections = container.querySelectorAll<HTMLAnchorElement>(".section-dl-btn");
+      expect(sections.length).toBe(2);
+      expect(sections[0].getAttribute("href")).toBe("/api/audio/s1");
+    });
+
+    it("offers no download links when the lesson has no audio", () => {
+      const { container, queryByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: null } },
+      });
+      expect(container.querySelector("details.tools-card")).toBeTruthy();
+      expect(queryByText("Download All Sections")).toBeFalsy();
     });
   });
 

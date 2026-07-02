@@ -127,17 +127,6 @@
 		</div>
 	{/if}
 
-	{#if !compact}
-		<details class="download-section">
-			<summary>Download</summary>
-			<div class="download-links">
-				<a class="download-all-btn" href={api.audioZipUrl(audio.lesson_id)} download>Download All Sections</a>
-				{#each audio.sections as sec (sec.audio_id)}
-					<a class="section-dl-btn" href={api.audioUrl(sec.audio_id)} download>{sec.title}</a>
-				{/each}
-			</div>
-		</details>
-	{/if}
 </section>
 
 <style>
@@ -178,6 +167,7 @@
 	.ctrl-btn {
 		min-width: 48px;
 		min-height: 44px;
+		white-space: nowrap;
 		padding: 0.5rem 0.75rem;
 		background: var(--color-surface-2);
 		color: var(--color-text);
@@ -258,44 +248,15 @@
 		color: var(--color-on-primary);
 		border-color: var(--color-primary);
 	}
-	.download-section {
-		margin-top: 0.5rem;
-	}
-	summary {
-		cursor: pointer;
-		font-size: 0.85rem;
-		color: var(--color-muted);
-	}
-	.download-links {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin-top: 0.5rem;
-	}
-	.download-all-btn {
-		display: block;
-		min-height: 44px;
-		line-height: 44px;
-		padding: 0 1.25rem;
-		background: var(--color-primary);
-		color: var(--color-on-primary);
-		border-radius: 4px;
-		text-decoration: none;
-		font-size: 0.9rem;
-		font-weight: 600;
-	}
-	.download-all-btn:hover {
-		filter: brightness(0.9);
-	}
-	.section-dl-btn {
-		padding: 0.4rem 0.9rem;
-		background: var(--color-secondary);
-		color: var(--color-on-primary);
-		border-radius: 4px;
-		text-decoration: none;
-		font-size: 0.85rem;
-	}
-	.section-dl-btn:hover {
-		filter: brightness(0.85);
+	/* Keep the five transport pills on one tidy line down to small phones:
+	   never let a label wrap inside its pill, and tighten spacing instead. */
+	@media (max-width: 430px) {
+		.transport-row {
+			gap: 0.35rem;
+		}
+		.ctrl-btn {
+			padding: 0.5rem 0.6rem;
+			font-size: 0.8rem;
+		}
 	}
 </style>

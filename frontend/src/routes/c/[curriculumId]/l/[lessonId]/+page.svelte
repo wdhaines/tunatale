@@ -15,13 +15,6 @@
 
 	let { data }: { data: PageData } = $props();
 
-	const SECTION_TITLES: Record<string, string> = {
-		key_phrases: 'Key Phrases',
-		natural_speed: 'Natural Speed',
-		slow_speed: 'Slow Speed',
-		translated: 'Translated'
-	};
-
 	// Read/Listen mode is a persisted preference that defaults by viewport (Listen
 	// on mobile, Read on desktop) rather than an unconditional 'read' that landed
 	// mobile users in the wrong mode. Seeds on mount like the theme/prefetch prefs.
@@ -348,44 +341,41 @@
 <svelte:window onresize={measureNav} />
 
 <main>
-	<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
-
-	<section class="card">
+	<header class="lesson-header">
+		<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
 		<h1>{data.lesson.title}</h1>
-		<p class="section-meta">
-			{#each data.lesson.sections as section, i (i)}
-				{SECTION_TITLES[section.type] ?? section.type} — {section.phrases.length} phrase{section.phrases.length === 1 ? '' : 's'}{i < data.lesson.sections.length - 1 ? ' · ' : ''}
-			{/each}
-		</p>
-
-		<div class="toggle-pill">
-			<button class:active={mode === 'read'} onclick={() => lessonModePref.set('read')}>Read</button>
-			<button class:active={mode === 'listen'} onclick={() => lessonModePref.set('listen')}>Listen</button>
-		</div>
-
-		{#if !audio}
-			<button onclick={handleRenderAudio} disabled={audioLoading}>
-				{audioLoading ? 'Rendering…' : 'Render Audio'}
-			</button>
-		{/if}
 		{#if syncStatus}
 			<p class="sync-status">{syncStatus}</p>
 		{/if}
 		{#if error}
 			<p class="error">{error}</p>
 		{/if}
-	</section>
+	</header>
 
-	{#if audio}
-		{#key audio.audio_id}
-			<!-- ONE persistent player across modes: only the `compact` prop flips on
-			     Listen↔Read, so the controller (and playback) survives the switch.
-			     Sticky header: line-jumping in Read mode keeps the transport in reach. -->
-			<section class="card player-card" style="top: {navHeight}px">
+	<!-- The sticky card owns everything the user reaches for mid-lesson: the
+	     Read/Listen toggle and (once rendered) the player. It sticks below the
+	     global nav so neither scrolls out of reach. -->
+	<section class="card player-card" style="top: {navHeight}px">
+		<div class="mode-row">
+			<div class="toggle-pill">
+				<button class:active={mode === 'read'} onclick={() => lessonModePref.set('read')}>Read</button>
+				<button class:active={mode === 'listen'} onclick={() => lessonModePref.set('listen')}>Listen</button>
+			</div>
+		</div>
+		{#if audio}
+			{#key audio.audio_id}
+				<!-- ONE persistent player across modes: only the `compact` prop flips on
+				     Listen↔Read, so the controller (and playback) survives the switch. -->
 				<LessonPlayer {audio} compact={mode !== 'listen'} lessonTitle={data.lesson.title} bind:controller={playbackController} />
-			</section>
-		{/key}
-	{/if}
+			{/key}
+		{:else}
+			<div class="render-row">
+				<button onclick={handleRenderAudio} disabled={audioLoading}>
+					{audioLoading ? 'Rendering…' : 'Render Audio'}
+				</button>
+			</div>
+		{/if}
+	</section>
 
 	{#if mode === 'listen'}
 		<section class="card listen-card">
@@ -430,7 +420,18 @@
 		</section>
 	{/if}
 
-	<section class="card">
+	<!-- Rare actions live folded away: downloads for offline use, regeneration
+	     as the destructive-ish last resort. -->
+	<details class="card tools-card">
+		<summary>Lesson tools</summary>
+		{#if audio}
+			<div class="download-links">
+				<a class="download-all-btn" href={api.audioZipUrl(audio.lesson_id)} download>Download All Sections</a>
+				{#each audio.sections as sec (sec.audio_id)}
+					<a class="section-dl-btn" href={api.audioUrl(sec.audio_id)} download>{sec.title}</a>
+				{/each}
+			</div>
+		{/if}
 		<p class="muted">
 			Regenerating rewrites this day's dialogue with the current prompt (better declension &amp;
 			conjugation coverage). Existing cards stay; new vocabulary and morphology drills are added when
@@ -439,7 +440,7 @@
 		<button class="regen-btn" onclick={handleRegenerate} disabled={regenLoading}>
 			{regenLoading ? 'Regenerating…' : `Regenerate Day ${data.lesson.day}`}
 		</button>
-	</section>
+	</details>
 </main>
 
 <style>
@@ -450,6 +451,11 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1.25rem;
+	}
+	.lesson-header {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
 	}
 	.breadcrumb {
 		display: inline-block;
@@ -462,15 +468,10 @@
 		color: var(--color-primary);
 	}
 	h1 {
-		margin-top: 0;
+		margin: 0;
 		font-size: 1.4rem;
 		font-weight: 800;
 		letter-spacing: -0.01em;
-	}
-	.section-meta {
-		margin: 0.5rem 0 0;
-		font-size: 0.9rem;
-		color: var(--color-muted);
 	}
 	button {
 		margin-top: 0.75rem;
@@ -492,12 +493,12 @@
 	}
 	.error {
 		color: var(--color-danger);
-		margin-top: 0.5rem;
+		margin: 0;
 	}
 	.sync-status {
 		color: var(--color-muted);
 		font-size: 0.85rem;
-		margin-top: 0.5rem;
+		margin: 0;
 	}
 	.muted {
 		color: var(--color-muted);
@@ -511,10 +512,21 @@
 	.regen-btn:not(:disabled):hover {
 		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
 	}
+	.mode-row {
+		display: flex;
+		justify-content: center;
+		margin-bottom: 0.75rem;
+	}
+	.render-row {
+		display: flex;
+		justify-content: center;
+	}
+	.render-row button {
+		margin-top: 0;
+	}
 	.toggle-pill {
 		display: flex;
 		gap: 0;
-		margin-top: 0.75rem;
 		background: var(--color-surface-2);
 		border-radius: var(--radius-pill);
 		padding: 2px;
@@ -572,5 +584,48 @@
 		color: var(--color-success);
 		font-size: 0.85rem;
 		margin: 0;
+	}
+	.tools-card summary {
+		cursor: pointer;
+		font-size: 0.9rem;
+		font-weight: 600;
+		color: var(--color-muted);
+	}
+	.tools-card[open] summary {
+		margin-bottom: 0.75rem;
+	}
+	.tools-card .muted {
+		margin: 0.75rem 0 0;
+	}
+	.download-links {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+	.download-all-btn {
+		display: block;
+		min-height: 44px;
+		line-height: 44px;
+		padding: 0 1.25rem;
+		background: var(--color-primary);
+		color: var(--color-on-primary);
+		border-radius: 4px;
+		text-decoration: none;
+		font-size: 0.9rem;
+		font-weight: 600;
+	}
+	.download-all-btn:hover {
+		filter: brightness(0.9);
+	}
+	.section-dl-btn {
+		padding: 0.4rem 0.9rem;
+		background: var(--color-secondary);
+		color: var(--color-on-primary);
+		border-radius: 4px;
+		text-decoration: none;
+		font-size: 0.85rem;
+	}
+	.section-dl-btn:hover {
+		filter: brightness(0.85);
 	}
 </style>

@@ -146,29 +146,13 @@ describe("LessonPlayer", () => {
     });
   });
 
-  describe("downloads", () => {
-    it("renders download section when not compact", () => {
-      const { container } = render(LessonPlayer, { props: { audio: audioWithSections } });
-      const details = container.querySelector(".download-section");
-      expect(details).toBeTruthy();
-    });
-
-    it("renders Download All Sections link", () => {
-      const { getByText } = render(LessonPlayer, { props: { audio: audioWithSections } });
-      expect(getByText("Download All Sections")).toBeTruthy();
-    });
-
-    it("renders individual section links inside download section", () => {
-      const { getByText } = render(LessonPlayer, { props: { audio: audioWithSections } });
-      expect(getByText("Key Phrases")).toBeTruthy();
-      expect(getByText("Natural Speed")).toBeTruthy();
-    });
-
-    it("no download section when compact", () => {
-      const { container } = render(LessonPlayer, {
-        props: { audio: audioWithSections, compact: true },
+  describe("downloads (moved to the lesson page's collapsed tools)", () => {
+    it("renders no download UI even when not compact", () => {
+      const { container, queryByText } = render(LessonPlayer, {
+        props: { audio: audioWithSections },
       });
       expect(container.querySelector(".download-section")).toBeFalsy();
+      expect(queryByText("Download All Sections")).toBeFalsy();
     });
   });
 
