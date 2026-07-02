@@ -1,6 +1,14 @@
 # Lesson Authoring — Story-JSON round-trip (design)
 
-Status: **design settled, not yet implemented** (2026-06-30) — see "Settled decisions" below
+Status: **implemented** (2026-07-01) — `app/storage/lesson_io.py` + `GET /api/story/{id}/source` /
+`POST /api/story/import`; the build step is the module-level `build_lesson_from_story`
+(`app/generation/story.py`). One deliberate deviation from decision #4's mechanism: the exact
+Story JSON is persisted inside `generation_metadata["story"]` (stashed by the build step itself)
+rather than a new `lessons.story_json` column — no schema migration, and *both* generated and
+imported lessons carry their exact source, so export is byte-exact for anything built after
+2026-07-01; reconstruction remains the fallback for older rows. Validation additionally requires
+`lines[].translation` (build_translated_section hard-accesses it), and import responses carry
+`warnings` for speakers missing from the voice map.
 
 ## Motivation
 

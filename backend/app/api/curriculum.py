@@ -2,20 +2,12 @@
 
 from __future__ import annotations
 
-import re
-import uuid
-
 from fastapi import APIRouter, HTTPException, Request
 
 from app.api.models import GenerateCurriculumRequest
+from app.generation.ids import mint_id
 
 router = APIRouter(prefix="/api/curriculum", tags=["curriculum"])
-
-
-def _slug(text: str) -> str:
-    text = text.lower()
-    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
-    return text[:50]
 
 
 @router.post("/generate", status_code=201)
@@ -31,7 +23,7 @@ async def generate_curriculum(body: GenerateCurriculumRequest, request: Request)
         num_days=body.num_days,
     )
 
-    curriculum_id = f"{_slug(body.topic)}-{uuid.uuid4().hex[:8]}"
+    curriculum_id = mint_id(body.topic)
     store.save_curriculum(curriculum_id, curriculum)
 
     return {

@@ -340,6 +340,58 @@ class TestStoryGeneration:
         assert "oprostite" in system_prompt.lower()
 
 
+class TestBuildLessonFromStory:
+    """The Story-JSON → Lesson build step is a module-level function.
+
+    Lesson authoring (docs/lesson-authoring.md) imports a hand-edited Story
+    JSON through the SAME build step generation uses — so the step must be
+    callable without constructing a StoryGenerator (no LLM client).
+    """
+
+    def test_build_lesson_from_story_is_module_level(self, language):
+        from app.generation.story import build_lesson_from_story
+
+        data = json.loads(_mock_story_response(include_glosses=True))
+        lesson = build_lesson_from_story(data, language=language)
+        assert isinstance(lesson, Lesson)
+        assert lesson.title == "Ordering Coffee"
+        assert [s.section_type for s in lesson.sections] == [
+            SectionType.KEY_PHRASES,
+            SectionType.NATURAL_SPEED,
+            SectionType.SLOW_SPEED,
+            SectionType.TRANSLATED,
+        ]
+
+    def test_parse_response_delegates_to_module_function(self, generator, language):
+        from app.generation.story import build_lesson_from_story
+
+        data = json.loads(_mock_story_response(include_glosses=True))
+        via_method = generator._parse_response(data, language=language)
+        via_function = build_lesson_from_story(data, language=language)
+        assert via_method == via_function
+
+    def test_build_stashes_exact_story_source_in_metadata(self, language):
+        """The input Story JSON is persisted verbatim as generation_metadata['story'].
+
+        Authoring export returns this exact source instead of reconstructing —
+        so a freshly generated or imported lesson round-trips byte-for-byte
+        (docs/lesson-authoring.md decision #4).
+        """
+        from app.generation.story import build_lesson_from_story
+
+        data = json.loads(_mock_story_response(include_glosses=True))
+        lesson = build_lesson_from_story(data, language=language)
+        assert lesson.generation_metadata["story"] == data
+
+    def test_stashed_story_source_is_a_copy(self, language):
+        from app.generation.story import build_lesson_from_story
+
+        data = json.loads(_mock_story_response(include_glosses=True))
+        lesson = build_lesson_from_story(data, language=language)
+        data["scenes"][0]["lines"][0]["text"] = "MUTATED"
+        assert lesson.generation_metadata["story"]["scenes"][0]["lines"][0]["text"] == "Dober dan!"
+
+
 class TestNorwegianStoryGeneration:
     """Norwegian listening-lesson generation: voices, syllabifier routing, prompt.
 

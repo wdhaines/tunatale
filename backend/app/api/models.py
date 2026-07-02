@@ -65,6 +65,18 @@ class GenerateStoryRequest(BaseModel):
     strategy: str = "WIDER"
 
 
+class ImportLessonRequest(BaseModel):
+    """Self-describing Story-JSON file (docs/lesson-authoring.md).
+
+    `story` stays a free dict — its schema is validated by
+    `lesson_io.validate_story` so errors carry field paths.
+    """
+
+    curriculum_id: str
+    day: int
+    story: dict
+
+
 # ── Audio models ────────────────────────────────────────────────────────────
 
 

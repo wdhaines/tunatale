@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
@@ -124,77 +125,92 @@ class StoryGenerator:
         raise StoryGenerationError(f"LLM returned invalid JSON: {last_error}") from last_error
 
     def _parse_response(self, data: dict, language: Language) -> Lesson:
-        key_phrases = data.get("key_phrases", [])
-        scenes = data.get("scenes", [])
-        title = data.get("title", "Lesson")
+        return build_lesson_from_story(data, language=language)
 
-        if not key_phrases and not scenes:
-            raise StoryGenerationError("LLM response missing 'key_phrases' and 'scenes'")
 
-        narrator_voice = language.tts_voice_map.get("narrator", "en-US-GuyNeural")
+def build_lesson_from_story(data: dict, language: Language) -> Lesson:
+    """Build a Lesson from Story JSON — the ONE Story-JSON → Lesson build step.
 
-        sections = [
-            build_key_phrases_section(key_phrases, language.tts_voice_map, narrator_voice, language.code),
-            build_natural_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
-            build_slow_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
-            build_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
-        ]
+    Used by generation (via ``StoryGenerator._parse_response``) and by lesson
+    authoring import (``app.storage.lesson_io``), so authored and generated
+    lessons are identical in shape. See docs/lesson-authoring.md.
+    """
+    key_phrases = data.get("key_phrases", [])
+    scenes = data.get("scenes", [])
+    title = data.get("title", "Lesson")
 
-        kp_infos = [KeyPhraseInfo(phrase=kp["phrase"], translation=kp["translation"]) for kp in key_phrases]
+    if not key_phrases and not scenes:
+        raise StoryGenerationError("LLM response missing 'key_phrases' and 'scenes'")
 
-        glosses = data.get("dialogue_glosses", [])
-        lemmatizer = get_lemmatizer()
+    narrator_voice = language.tts_voice_map.get("narrator", "en-US-GuyNeural")
 
-        # Sentence-aware surface→lemma map (prevents POS-blind fallback
-        # where single-word lemmatize miskeys e.g. "hotel" → as verb "hoteti"
-        # instead of noun "hotel").
-        surface_lemma: dict[str, str] = {}
-        for scene in scenes:
-            for line in scene.get("lines", []):
-                text = line.get("text", "").strip()
-                if not text:
-                    continue
-                surfaces = tokenize(text)
-                lemmas = lemmatize_surfaces_in_context(surfaces, text, lemmatizer, language.code)
-                for s, lem in zip(surfaces, lemmas, strict=True):
-                    surface_lemma.setdefault(s.lower(), lem)
+    sections = [
+        build_key_phrases_section(key_phrases, language.tts_voice_map, narrator_voice, language.code),
+        build_natural_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
+        build_slow_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
+        build_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
+    ]
 
-        token_glosses: dict[str, str] = {}
-        glossed_surfaces: set[str] = set()
-        for g in glosses:
-            raw_key = g.get("word") or g.get("lemma", "")
-            translation = g.get("translation", "")
-            if raw_key and translation:
-                glossed_surfaces.add(raw_key.lower())
-                lemma = surface_lemma.get(raw_key.lower(), raw_key)
-                # Surface key preserves the specific conjugated translation
-                # (e.g. "boste" → "you will", "bom" → "I will").
-                token_glosses[raw_key] = translation
-                # Lemma key provides a fallback generic translation
-                # (e.g. "biti" → "you will" from whichever surface came first).
-                token_glosses.setdefault(lemma, translation)
+    kp_infos = [KeyPhraseInfo(phrase=kp["phrase"], translation=kp["translation"]) for kp in key_phrases]
 
-        missing = [s for s in surface_lemma if s not in glossed_surfaces]
-        if missing:
-            _missing_log(missing, language.code)
+    glosses = data.get("dialogue_glosses", [])
+    lemmatizer = get_lemmatizer()
 
-        sentence_translations: dict[str, str] = {}
-        for scene in scenes:
-            for line in scene.get("lines", []):
-                l2 = line.get("text", "").strip()
-                en = line.get("translation", "").strip()
-                if l2 and en:
-                    sentence_translations[l2] = en
+    # Sentence-aware surface→lemma map (prevents POS-blind fallback
+    # where single-word lemmatize miskeys e.g. "hotel" → as verb "hoteti"
+    # instead of noun "hotel").
+    surface_lemma: dict[str, str] = {}
+    for scene in scenes:
+        for line in scene.get("lines", []):
+            text = line.get("text", "").strip()
+            if not text:
+                continue
+            surfaces = tokenize(text)
+            lemmas = lemmatize_surfaces_in_context(surfaces, text, lemmatizer, language.code)
+            for s, lem in zip(surfaces, lemmas, strict=True):
+                surface_lemma.setdefault(s.lower(), lem)
 
-        return Lesson(
-            title=title,
-            language_code=language.code,
-            sections=sections,
-            narrator_voice=narrator_voice,
-            key_phrases=kp_infos,
-            generation_metadata={
-                "token_glosses": token_glosses,
-                "sentence_translations": sentence_translations,
-                "morphology_focus": data.get("morphology_focus", []),
-            },
-        )
+    token_glosses: dict[str, str] = {}
+    glossed_surfaces: set[str] = set()
+    for g in glosses:
+        raw_key = g.get("word") or g.get("lemma", "")
+        translation = g.get("translation", "")
+        if raw_key and translation:
+            glossed_surfaces.add(raw_key.lower())
+            lemma = surface_lemma.get(raw_key.lower(), raw_key)
+            # Surface key preserves the specific conjugated translation
+            # (e.g. "boste" → "you will", "bom" → "I will").
+            token_glosses[raw_key] = translation
+            # Lemma key provides a fallback generic translation
+            # (e.g. "biti" → "you will" from whichever surface came first).
+            token_glosses.setdefault(lemma, translation)
+
+    missing = [s for s in surface_lemma if s not in glossed_surfaces]
+    if missing:
+        _missing_log(missing, language.code)
+
+    sentence_translations: dict[str, str] = {}
+    for scene in scenes:
+        for line in scene.get("lines", []):
+            l2 = line.get("text", "").strip()
+            en = line.get("translation", "").strip()
+            if l2 and en:
+                sentence_translations[l2] = en
+
+    return Lesson(
+        title=title,
+        language_code=language.code,
+        sections=sections,
+        narrator_voice=narrator_voice,
+        key_phrases=kp_infos,
+        generation_metadata={
+            "token_glosses": token_glosses,
+            "sentence_translations": sentence_translations,
+            "morphology_focus": data.get("morphology_focus", []),
+            # Exact Story-JSON source (docs/lesson-authoring.md decision #4):
+            # export returns this verbatim; reconstruction is only the fallback
+            # for lessons stored before it existed. Deep copy so later caller
+            # mutations can't corrupt the persisted source.
+            "story": copy.deepcopy(data),
+        },
+    )

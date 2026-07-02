@@ -4,27 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
-import uuid
 
 import anyio
 from fastapi import APIRouter, HTTPException, Request
 
-from app.api.models import GenerateStoryRequest
+from app.api.models import GenerateStoryRequest, ImportLessonRequest
+from app.generation.ids import mint_id
 from app.models.lesson import Lesson, SectionType
 from app.models.strategy import ContentStrategy
 from app.srs.database import SRSDatabase
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for
+from app.storage.lesson_io import export_lesson, import_lesson, speaker_warnings
 
 _logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/story", tags=["generation"])
-
-
-def _slug(text: str) -> str:
-    text = text.lower()
-    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
-    return text[:50]
 
 
 async def _prewarm_lesson(lesson: Lesson, srs_db: SRSDatabase) -> None:
@@ -87,7 +81,7 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
         cefr_level=curriculum.cefr_level,
     )
 
-    lesson_id = f"{_slug(lesson.title)}-{uuid.uuid4().hex[:8]}"
+    lesson_id = mint_id(lesson.title)
     store.save_lesson(lesson_id, body.curriculum_id, body.day, lesson)
 
     # Pre-warm the analysis cache off the request path
@@ -97,6 +91,51 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
 
     sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
     return {"id": lesson_id, "title": lesson.title, "sections": sections}
+
+
+@router.post("/import", status_code=201)
+async def import_story(body: ImportLessonRequest, request: Request):
+    """Rebuild a Lesson from an edited Story-JSON file (docs/lesson-authoring.md).
+
+    Same shape as generate_story's response, plus `warnings` (e.g. a speaker
+    missing from the voice map, which would silently fall back to the narrator).
+    """
+    store = request.state.content_store
+    if store.get_curriculum(body.curriculum_id) is None:
+        raise HTTPException(status_code=404, detail="Curriculum not found")
+
+    language = request.state.language
+    try:
+        lesson_id, lesson = import_lesson(
+            store,
+            {"curriculum_id": body.curriculum_id, "day": body.day, "story": body.story},
+            language,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    # Same background pre-warm as generation, so the transcript view is warm.
+    srs_db = getattr(request.app.state, "srs_db", None)
+    if srs_db is not None:
+        asyncio.create_task(_prewarm_lesson(lesson, srs_db))
+
+    sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
+    return {
+        "id": lesson_id,
+        "title": lesson.title,
+        "sections": sections,
+        "warnings": speaker_warnings(body.story, language),
+    }
+
+
+@router.get("/{lesson_id}/source", status_code=200)
+async def get_lesson_source(lesson_id: str, request: Request):
+    """Export a lesson as its editable, self-describing Story-JSON file."""
+    store = request.state.content_store
+    try:
+        return export_lesson(store, lesson_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Lesson not found") from None
 
 
 @router.get("/{lesson_id}", status_code=200)
