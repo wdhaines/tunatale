@@ -15,6 +15,7 @@ export interface PlaybackController {
   togglePlay(): void;
   seekBy(delta: number): void;
   seekTo(time: number): void;
+  seekToCue(cue: Cue): void;
   nextSection(): void;
   prevSection(): void;
   nextCue(): void;
@@ -371,6 +372,9 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     },
     seekTo(time: number) {
       doSeek(time);
+    },
+    seekToCue(cue: Cue) {
+      doSeek(cue.start_ms / 1000);
     },
     nextSection,
     prevSection,

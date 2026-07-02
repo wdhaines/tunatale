@@ -5,6 +5,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import LessonPlayer from "./LessonPlayer.svelte";
 import type { LessonAudio } from "$lib/api";
+import type { PlaybackController } from "$lib/playback/playbackController.svelte";
 
 vi.mock("$lib/api", () => ({
   api: {
@@ -263,6 +264,22 @@ describe("LessonPlayer", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
       const scrubber = container.querySelector<HTMLInputElement>(".scrubber")!;
       fireEvent.input(scrubber, { target: { value: "5.0" } });
+    });
+  });
+
+  describe("bindable controller", () => {
+    it("accepts a controller bindable prop without error", () => {
+      const { container } = render(LessonPlayer, {
+        props: { audio: audioWithCues, controller: null },
+      });
+      expect(container.querySelector(".play-btn")).toBeTruthy();
+    });
+
+    it("unmount does not throw (cleanup nulls the controller)", () => {
+      const { unmount } = render(LessonPlayer, {
+        props: { audio: audioWithCues, controller: null },
+      });
+      expect(() => unmount()).not.toThrow();
     });
   });
 });

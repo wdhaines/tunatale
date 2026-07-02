@@ -5,6 +5,7 @@
 	import type { LessonAudio, TranscriptData } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import LessonPlayer from '$lib/components/LessonPlayer.svelte';
+	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import Transcript from '$lib/components/Transcript.svelte';
 	import TranscriptPlaceholder from '$lib/components/TranscriptPlaceholder.svelte';
 	import { syncStore } from '$lib/stores/sync.svelte';
@@ -39,6 +40,8 @@
 	let regenLoading = $state(false);
 	let syncStatus = $state('');
 	let error = $state('');
+
+	let playbackController = $state<PlaybackController | null>(null);
 
 	let isListened = $derived(listenedStore.has(data.lesson.id));
 
@@ -367,10 +370,10 @@
 		{#key audio.audio_id}
 			{#if mode === 'listen'}
 				<section class="card">
-					<LessonPlayer {audio} lessonTitle={data.lesson.title} />
+					<LessonPlayer {audio} lessonTitle={data.lesson.title} bind:controller={playbackController} />
 				</section>
 			{:else}
-				<LessonPlayer {audio} compact lessonTitle={data.lesson.title} />
+				<LessonPlayer {audio} compact lessonTitle={data.lesson.title} bind:controller={playbackController} />
 			{/if}
 		{/key}
 	{/if}
@@ -406,6 +409,8 @@
 					undoableItemId={undoable?.itemId ?? null}
 					onCollocationUndo={(spanId) => handleUndoGrade(spanId, 'recognition')}
 					onCreatePhrase={handleCreatePhrase}
+					controller={playbackController}
+					cues={audio?.cues ?? null}
 					tooltipActions={tooltipActions}
 				/>
 			{:else if transcriptLoading}

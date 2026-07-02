@@ -13,28 +13,31 @@
 		audio: LessonAudio;
 		compact?: boolean;
 		lessonTitle?: string;
+		controller?: PlaybackController | null;
 	}
 
-	let { audio, compact = false, lessonTitle = '' }: Props = $props();
+	let { audio, compact = false, lessonTitle = '', controller = $bindable(null) }: Props = $props();
 
 	const totalSections = audio.sections.length;
 
-	let controller = createPlaybackController({
+	const ctrl = createPlaybackController({
 		lessonId: audio.lesson_id,
 		lessonTitle: lessonTitle || audio.lesson_id,
 		audioUrl: api.audioUrl(audio.audio_id),
 		audio
 	});
 
+	controller = ctrl;
+
 	const hasCues = audio.cues !== null && audio.cues !== undefined && audio.cues.length > 0;
 
 	const SPEED_OPTIONS = [0.7, 0.8, 0.85, 0.9, 0.95, 1.0];
 
 	function cycleSpeed() {
-		const current = controller.playbackRate;
+		const current = ctrl.playbackRate;
 		const idx = SPEED_OPTIONS.indexOf(current);
 		const next = SPEED_OPTIONS[(idx + 1) % SPEED_OPTIONS.length];
-		controller.setRate(next);
+		ctrl.setRate(next);
 	}
 
 	function formatTime(s: number): string {
@@ -54,7 +57,8 @@
 		});
 
 		return () => {
-			controller.destroy();
+			ctrl.destroy();
+			controller = null;
 		};
 	});
 </script>
@@ -62,37 +66,37 @@
 <section class="player" class:compact>
 	{#if hasCues && !compact}
 		<div class="section-info">
-			<span class="section-title">{controller.currentSectionTitle || 'Audio'}</span>
+			<span class="section-title">{ctrl.currentSectionTitle || 'Audio'}</span>
 			<span class="section-count">
-				{controller.currentSectionIndex != null ? controller.currentSectionIndex + 1 : '-'}/{totalSections}
+				{ctrl.currentSectionIndex != null ? ctrl.currentSectionIndex + 1 : '-'}/{totalSections}
 			</span>
 		</div>
 
-		<div class="current-line" title={controller.currentCue?.text ?? ''}>
-			{controller.currentCue?.text ?? ''}
+		<div class="current-line" title={ctrl.currentCue?.text ?? ''}>
+			{ctrl.currentCue?.text ?? ''}
 		</div>
 	{/if}
 
 	<div class="transport-row">
 		{#if hasCues}
-			<button class="ctrl-btn" onclick={() => controller.prevSection()} title="Previous section">⏮ Sec</button>
+			<button class="ctrl-btn" onclick={() => ctrl.prevSection()} title="Previous section">⏮ Sec</button>
 		{/if}
-		<button class="ctrl-btn" onclick={() => controller.seekBy(-10)} title="Rewind 10s">◀10s</button>
-		<button class="ctrl-btn play-btn" onclick={() => controller.togglePlay()} title={controller.playing ? 'Pause' : 'Play'}>
-			{controller.playing ? '⏸' : '▶'}
+		<button class="ctrl-btn" onclick={() => ctrl.seekBy(-10)} title="Rewind 10s">◀10s</button>
+		<button class="ctrl-btn play-btn" onclick={() => ctrl.togglePlay()} title={ctrl.playing ? 'Pause' : 'Play'}>
+			{ctrl.playing ? '⏸' : '▶'}
 		</button>
-		<button class="ctrl-btn" onclick={() => controller.seekBy(10)} title="Forward 10s">10s▶</button>
+		<button class="ctrl-btn" onclick={() => ctrl.seekBy(10)} title="Forward 10s">10s▶</button>
 		{#if hasCues}
-			<button class="ctrl-btn" onclick={() => controller.nextSection()} title="Next section">Sec ⏭</button>
+			<button class="ctrl-btn" onclick={() => ctrl.nextSection()} title="Next section">Sec ⏭</button>
 		{/if}
 	</div>
 
 	{#if hasCues && !compact}
 		<div class="sentence-row">
-			<button class="ctrl-btn small" onclick={() => controller.prevCue()} title="Previous sentence">◀ Sentence</button>
-			<button class="ctrl-btn small" onclick={() => controller.repeatCue()} title="Repeat current">Repeat ↻</button>
+			<button class="ctrl-btn small" onclick={() => ctrl.prevCue()} title="Previous sentence">◀ Sentence</button>
+			<button class="ctrl-btn small" onclick={() => ctrl.repeatCue()} title="Repeat current">Repeat ↻</button>
 			<label class="sentence-skip-toggle">
-				<input type="checkbox" checked={controller.sentenceSkip} onchange={(e) => controller.setSentenceSkip((e.target as HTMLInputElement).checked)} />
+				<input type="checkbox" checked={ctrl.sentenceSkip} onchange={(e) => ctrl.setSentenceSkip((e.target as HTMLInputElement).checked)} />
 				Sentence skip
 			</label>
 		</div>
@@ -103,20 +107,20 @@
 			<input
 				type="range"
 				min={0}
-				max={controller.duration || 1}
+				max={ctrl.duration || 1}
 				step={0.1}
-				value={controller.currentTime}
-				oninput={(e) => controller.seekTo(parseFloat((e.target as HTMLInputElement).value))}
+				value={ctrl.currentTime}
+				oninput={(e) => ctrl.seekTo(parseFloat((e.target as HTMLInputElement).value))}
 				class="scrubber"
 			/>
 			<div class="time-labels">
-				<span>{formatTime(controller.currentTime)}</span>
-				<span>{formatTime(controller.duration)}</span>
+				<span>{formatTime(ctrl.currentTime)}</span>
+				<span>{formatTime(ctrl.duration)}</span>
 			</div>
 		</div>
 
 		<div class="speed-row">
-			<button class="speed-btn" onclick={cycleSpeed}>{controller.playbackRate}×</button>
+			<button class="speed-btn" onclick={cycleSpeed}>{ctrl.playbackRate}×</button>
 		</div>
 	{/if}
 

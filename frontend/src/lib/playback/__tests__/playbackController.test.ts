@@ -933,4 +933,30 @@ describe("playbackController", () => {
       expect(ctrl.sentenceSkip).toBe(true);
     });
   });
+
+  describe("seekToCue", () => {
+    it("seeks to cue.start_ms / 1000", () => {
+      const ctrl = createController();
+      const cue = basicCues[3]; // index 3, start_ms 2500
+      ctrl.seekToCue(cue);
+      expect(audioEl.currentTime).toBeCloseTo(2.5, 3);
+    });
+
+    it("clamps to 0 when start_ms is 0", () => {
+      const ctrl = createController();
+      audioEl.currentTime = 10;
+      const cue = basicCues[0]; // start_ms 0
+      ctrl.seekToCue(cue);
+      expect(audioEl.currentTime).toBe(0);
+    });
+
+    it("calls updatePositionState via doSeek", () => {
+      const mediaSession = makeFakeMediaSession();
+      const ctrl = createController({ mediaSession: mediaSession as unknown as MediaSession });
+      vi.clearAllMocks();
+      const cue = basicCues[2]; // start_ms 1500
+      ctrl.seekToCue(cue);
+      expect(mediaSession.setPositionState).toHaveBeenCalled();
+    });
+  });
 });
