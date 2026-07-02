@@ -100,6 +100,16 @@ describe("LessonPlayer", () => {
       expect(container.querySelector(".section-info")).toBeTruthy();
       expect(container.querySelector(".current-line")).toBeTruthy();
     });
+
+    it("renders the current line BELOW the controls (sticky-header layout)", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
+      const speedRow = container.querySelector(".speed-row")!;
+      const currentLine = container.querySelector(".current-line")!;
+      // current-line after the last control row → subtitle sits nearest the content
+      expect(
+        speedRow.compareDocumentPosition(currentLine) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
   });
 
   describe("compact mode", () => {

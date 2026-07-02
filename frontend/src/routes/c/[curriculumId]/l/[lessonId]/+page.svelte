@@ -43,6 +43,14 @@
 
 	let playbackController = $state<PlaybackController | null>(null);
 
+	// The player card sticks below the layout's sticky nav; measure the nav so
+	// the offset tracks its real (wrap-dependent) height.
+	let navHeight = $state(0);
+	function measureNav() {
+		navHeight = document.querySelector('.global-nav')?.clientHeight ?? 0;
+	}
+	onMount(measureNav);
+
 	let isListened = $derived(listenedStore.has(data.lesson.id));
 
 	// SvelteKit reuses this component on same-route param changes (e.g. the
@@ -337,6 +345,8 @@
 	}
 </script>
 
+<svelte:window onresize={measureNav} />
+
 <main>
 	<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
 
@@ -369,8 +379,9 @@
 	{#if audio}
 		{#key audio.audio_id}
 			<!-- ONE persistent player across modes: only the `compact` prop flips on
-			     Listen↔Read, so the controller (and playback) survives the switch. -->
-			<section class="card">
+			     Listen↔Read, so the controller (and playback) survives the switch.
+			     Sticky header: line-jumping in Read mode keeps the transport in reach. -->
+			<section class="card player-card" style="top: {navHeight}px">
 				<LessonPlayer {audio} compact={mode !== 'listen'} lessonTitle={data.lesson.title} bind:controller={playbackController} />
 			</section>
 		{/key}
@@ -528,6 +539,11 @@
 	}
 	.toggle-pill button:not(.active):hover {
 		color: var(--color-text);
+	}
+	.player-card {
+		position: sticky;
+		/* Above transcript content + tooltips (z 10), below the global nav (z 50). */
+		z-index: 20;
 	}
 	.listen-card {
 		display: flex;

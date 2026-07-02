@@ -206,6 +206,24 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     pauseSpy.mockRestore();
   });
 
+  it("wraps the player in a sticky card offset below the global nav", () => {
+    // Simulate the layout's sticky nav so the offset-measure path runs.
+    const nav = document.createElement("nav");
+    nav.className = "global-nav";
+    document.body.appendChild(nav);
+    try {
+      const { container } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      const card = container.querySelector(".card.player-card") as HTMLElement;
+      expect(card).toBeTruthy();
+      // top offset mirrors the measured nav height (0 in jsdom, but set)
+      expect(card.style.top).toBe("0px");
+    } finally {
+      nav.remove();
+    }
+  });
+
   it("destroys and recreates LessonPlayer when audio_id changes (lesson nav)", async () => {
     const pauseSpy = vi.spyOn(HTMLAudioElement.prototype, "pause");
     const { rerender } = render(Page, {

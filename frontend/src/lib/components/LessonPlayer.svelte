@@ -71,13 +71,6 @@
 				{ctrl.currentSectionIndex != null ? ctrl.currentSectionIndex + 1 : '-'}/{totalSections}
 			</span>
 		</div>
-
-		{#if !compact}
-			<!-- Compact (Read mode) omits the subtitle line — the synced transcript is it. -->
-			<div class="current-line" title={ctrl.currentCue?.text ?? ''}>
-				{ctrl.currentCue?.text ?? ''}
-			</div>
-		{/if}
 	{/if}
 
 	<div class="transport-row">
@@ -124,6 +117,15 @@
 	<div class="speed-row">
 		<button class="speed-btn" onclick={cycleSpeed}>{ctrl.playbackRate}×</button>
 	</div>
+
+	{#if hasCues && !compact}
+		<!-- Subtitle sits BELOW the controls: the player is a sticky header, so the
+		     line reads nearest the content. Compact (Read mode) omits it — the
+		     synced transcript is the subtitle there. -->
+		<div class="current-line" title={ctrl.currentCue?.text ?? ''}>
+			{ctrl.currentCue?.text ?? ''}
+		</div>
+	{/if}
 
 	{#if !compact}
 		<details class="download-section">
