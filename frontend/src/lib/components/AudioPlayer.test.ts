@@ -13,6 +13,12 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
+vi.mock("$lib/sw/prefetch", () => ({
+  maybePrefetchLesson: vi.fn().mockResolvedValue(undefined),
+}));
+
+import { maybePrefetchLesson } from "$lib/sw/prefetch";
+
 const audioWithNoSections: LessonAudio = { audio_id: "a1", lesson_id: "l1", sections: [] };
 const audioWithSections: LessonAudio = {
   audio_id: "a1",
@@ -70,5 +76,18 @@ describe("AudioPlayer", () => {
     const links = Array.from(details!.querySelectorAll("a")) as HTMLAnchorElement[];
     expect(links[0].href).toContain("/api/audio/s1");
     expect(links[1].href).toContain("/api/audio/s2");
+  });
+
+  it("prefetches again when the audio prop changes (backlog #36)", async () => {
+    // SvelteKit reuses the component on same-route param nav; a mount-only
+    // prefetch would never cache the next lesson's audio.
+    const spy = vi.mocked(maybePrefetchLesson);
+    spy.mockClear();
+    const { rerender } = render(AudioPlayer, { props: { audio: audioWithNoSections } });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0]).toEqual(["/api/audio/a1"]);
+    await rerender({ audio: { audio_id: "a2", lesson_id: "l2", sections: [] } });
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy.mock.calls[1][0]).toEqual(["/api/audio/a2"]);
   });
 });

@@ -8,8 +8,14 @@ const STORAGE_KEY = "prefetchOnWifi";
 
 function createPrefetchPrefStore() {
   let enabled = $state(true);
+  // Lazy self-init: consumers deeper in the tree (AudioPlayer) mount before
+  // the layout's onMount calls init(), so the first `enabled` read must apply
+  // a stored opt-out itself or a direct lesson-page load prefetches anyway.
+  let initialized = false;
 
   function init(): void {
+    initialized = true;
+    if (typeof localStorage === "undefined") return;
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored !== null) {
       enabled = stored === "true";
@@ -17,6 +23,7 @@ function createPrefetchPrefStore() {
   }
 
   function set(next: boolean): void {
+    initialized = true;
     enabled = next;
     localStorage.setItem(STORAGE_KEY, String(next));
   }
@@ -27,6 +34,7 @@ function createPrefetchPrefStore() {
 
   return {
     get enabled(): boolean {
+      if (!initialized) init();
       return enabled;
     },
     init,

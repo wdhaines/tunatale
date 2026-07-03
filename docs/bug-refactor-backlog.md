@@ -591,7 +591,7 @@ if present. Per the dead-code-audit rule, re-grep both names across app AND
 tests before deleting. Guardrail: `./test.sh` (a stray consumer would fail at
 import/attribute time).
 
-## 36. OPEN — Wifi-prefetch opt-out ignored on direct lesson-page loads (+ no re-prefetch on lesson→lesson nav)
+## 36. FIXED — Wifi-prefetch opt-out ignored on direct lesson-page loads (+ no re-prefetch on lesson→lesson nav)
 
 **Bug (two parts).** `frontend/src/lib/components/AudioPlayer.svelte` +
 `frontend/src/lib/stores/prefetchPref.svelte.ts`:
@@ -614,10 +614,12 @@ import/attribute time).
    skips already-cached URLs — verify that guard exists in `prefetch.ts`;
    add it if not).
 
-**Guardrail tests.** Store: with `localStorage.prefetchOnWifi = "false"`,
-first read of `enabled` (no `init()` call) → false. Player
-(`AudioPlayer.test.ts`): rerender with a new `audio` prop → prefetch called
-again with the new URLs.
+**Fixed 2026-07-03.** Store lazily self-inits on first `enabled` read
+(`initialized` flag; `set()` also marks initialized); AudioPlayer's prefetch
+moved from `onMount` to an `$effect` tracking `audio` (the already-cached
+guard in `prefetch.ts` makes re-runs idempotent). Tests: "first enabled read
+applies a stored opt-out without an init() call" (fresh module via
+`vi.resetModules`), "prefetches again when the audio prop changes".
 
 ---
 

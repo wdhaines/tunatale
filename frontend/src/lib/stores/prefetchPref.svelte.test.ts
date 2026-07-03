@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { prefetchPrefStore } from "./prefetchPref.svelte";
 
 beforeEach(() => {
@@ -42,5 +42,27 @@ describe("prefetchPrefStore", () => {
     expect(localStorage.getItem("prefetchOnWifi")).toBe("false");
     prefetchPrefStore.toggle();
     expect(prefetchPrefStore.enabled).toBe(true);
+  });
+
+  it("lazy init without localStorage (SSR) keeps the default", async () => {
+    vi.resetModules();
+    vi.stubGlobal("localStorage", undefined);
+    try {
+      const { prefetchPrefStore: fresh } = await import("./prefetchPref.svelte");
+      expect(fresh.enabled).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("first enabled read applies a stored opt-out without an init() call (backlog #36)", async () => {
+    // AudioPlayer's onMount runs BEFORE the layout's onMount (children mount
+    // first), so the store must lazily self-init on first read or a direct
+    // lesson-page load prefetches despite the user's opt-out.
+    vi.resetModules();
+    localStorage.clear();
+    localStorage.setItem("prefetchOnWifi", "false");
+    const { prefetchPrefStore: fresh } = await import("./prefetchPref.svelte");
+    expect(fresh.enabled).toBe(false);
   });
 });

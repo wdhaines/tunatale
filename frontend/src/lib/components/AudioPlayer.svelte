@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { LessonAudio } from '$lib/api';
 	import { maybePrefetchLesson } from '$lib/sw/prefetch';
@@ -17,7 +16,10 @@
 	// replays offline later for free. No-op when Cache Storage / wifi-detection
 	// is unavailable (all gating lives in maybePrefetchLesson). See
 	// docs/offline-audio-plan.md Phase 4.
-	onMount(() => {
+	// $effect (not onMount): SvelteKit reuses this component on same-route param
+	// nav, so the prefetch must track the `audio` prop or the next lesson's
+	// audio is never cached. Already-cached URLs are skipped in the helper.
+	$effect(() => {
 		const nav = navigator as Navigator & { connection?: NetworkInformationLike };
 		const urls = [audio.audio_id, ...audio.sections.map((s) => s.audio_id)].map((id) =>
 			api.audioUrl(id)
