@@ -471,3 +471,84 @@ class TestOllamaEdgeCases:
             respx.post(OLLAMA_GENERATE_URL).mock(side_effect=httpx.TimeoutException("timeout"))
             with pytest.raises(LLMError, match="timed out"):
                 await client.complete("q")
+
+
+class TestConnectionAndMalformedFallback:
+    """A ConnectError or a 2xx with an unexpected body must raise LLMError so the
+    Groq → fallback → Ollama chain engages, not escape as a raw exception (backlog 30)."""
+
+    async def test_groq_connect_error_falls_back_to_ollama(self):
+        """A transport error (not just timeout) from Groq engages the fallback."""
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(side_effect=httpx.ConnectError("connection refused"))
+            respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("fallback")))
+            result = await client.complete("q")
+        assert result == "fallback"
+
+    async def test_groq_connect_error_uses_fallback_client(self):
+        """ConnectError reaches the configured fallback_client, not the caller."""
+        fallback = MagicMock()
+        fallback.complete = AsyncMock(return_value="from fallback client")
+        client = LLMClient(groq_api_key="test-key", fallback_client=fallback, max_retries_429=0)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(side_effect=httpx.ConnectError("refused"))
+            result = await client.complete("q")
+        assert result == "from fallback client"
+        fallback.complete.assert_called_once()
+
+    async def test_groq_malformed_json_body_falls_back(self):
+        """A 200 whose body isn't JSON raises LLMError (not JSONDecodeError) → fallback."""
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, text="not json at all"))
+            respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("fallback")))
+            result = await client.complete("q")
+        assert result == "fallback"
+
+    async def test_groq_missing_choices_key_falls_back(self):
+        """A 200 with an unexpected shape raises LLMError (not KeyError) → fallback."""
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, json={"unexpected": True}))
+            respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("fallback")))
+            result = await client.complete("q")
+        assert result == "fallback"
+
+    async def test_groq_null_content_falls_back(self):
+        """A 200 with content=null raises LLMError (not TypeError in the think-strip) → fallback."""
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(
+                return_value=Response(200, json={"choices": [{"message": {"content": None}}]})
+            )
+            respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("fallback")))
+            result = await client.complete("q")
+        assert result == "fallback"
+
+    async def test_groq_malformed_body_no_fallback_raises_llmerror(self):
+        """With no working backend, a malformed Groq body still surfaces as LLMError."""
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, json={"unexpected": True}))
+            respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(500, json={}))
+            with pytest.raises(LLMError, match="malformed"):
+                await client.complete("q")
+
+    async def test_ollama_read_error_raises_llmerror(self):
+        """A non-connect/non-timeout transport error from Ollama raises LLMError, not a raw error."""
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
+            respx.post(OLLAMA_GENERATE_URL).mock(side_effect=httpx.ReadError("read failed"))
+            with pytest.raises(LLMError, match="All LLM backends failed"):
+                await client.complete("q")
+
+    async def test_ollama_malformed_body_raises_llmerror(self):
+        """A 200 from Ollama with no 'response' key raises LLMError, not KeyError."""
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
+            respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json={"no_response_key": 1}))
+            with pytest.raises(LLMError, match="malformed"):
+                await client.complete("q")

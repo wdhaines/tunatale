@@ -18,20 +18,23 @@ ROI = user-facing value ÷ effort, with risk as a gate. Owner tags:
 **[Claude]** = keep in-house — parity/danger-zone, a cassette re-record, or an
 unresolved load-bearing decision. **[BP]** = Big-Pickle-ready — prescriptive
 brief + guardrail test, outside the Anki/sync danger zone (the standing
-[[feedback_big_pickle_readiness_rubric]]). Of the 21 OPEN items, 19 are
-BP-ready; Claude keeps #10, #18, and the two danger-zone observations.
+[[feedback_big_pickle_readiness_rubric]]). Of the 18 remaining OPEN items, 16
+are BP-ready; **the only items that genuinely need Claude** are #10 and #18
+(both force a cassette re-record) and the two danger-zone observations (parity
+code — oracle harness green before/after). #25 is BP-drafts-Claude-reviews.
+Everything in Tiers 1–3 below is dispatchable to Big Pickle as-is.
 
 ### Tier 1 — do next (real bugs, low→medium cost, high ROI)
 
 | # | Owner | Item | Why it's high ROI |
 |---|-------|------|-------------------|
 | ~~16~~ | ✅ | Planner chat loses draft on failed turn | **FIXED 2026-07-03** (commit 834f476) — `send()` restores the draft, `handleSend` returns `bool`. |
-| 28 | BP | Card media pipeline Slovene-hardcoded | Actively wrong *today*: Norwegian cards get Slovene Forvo/TTS/cloze audio. Media-args only — no reconcile/USN (doc already vetted it BP-safe). Pin `PIXABAY_API_KEY` empty in tests. |
-| 10 | Claude | `generate_word_gloss` POS-blind | Wrong-sense glosses now (hotel→"to want") — the exact ambiguity sentence-aware lemmatization was meant to kill. Needs a prompt-injection decision + cassette re-record. |
-| 30 | BP | LLM fallback chain bypassed | Groq→fallback→Ollama resilience silently doesn't engage on `ConnectError`/malformed body. Clean respx tests. |
+| ~~28~~ | ✅ | Card media pipeline Slovene-hardcoded | **FIXED 2026-07-03** (commit 11022e0) — `get_tts_voice` registry helper; `language_code` threaded through Forvo/TTS/cloze. e2e `generate-norwegian.spec.ts` asserts nb-NO voices. |
+| ~~30~~ | ✅ | LLM fallback chain bypassed | **FIXED 2026-07-03** — `_call_groq`/`_call_ollama` broaden to `httpx.TransportError` + wrap body-parse → `LLMError`; fallback chain engages. 8 respx tests. |
 | 34 | BP | Double-tap = double grade | Real mobile bug: burns the undo snapshot / flashes a 409. One shared in-flight flag, mirrors `DrillCard`. |
 | 17 | BP | Duplicate collocation crashes proposal panel | LLM plausibly repeats a collocation → Svelte keyed-each throws → panel won't render. Server-side dedup in `_validate_collocations`. |
 | 14 | BP | Re-render deletes audio rows before rendering + disk leak | Failed re-render → 404 though old files exist; every re-render leaks the old UUID files. |
+| 10 | Claude | `generate_word_gloss` POS-blind | Wrong-sense glosses now (hotel→"to want") — the exact ambiguity sentence-aware lemmatization was meant to kill. Needs a prompt-injection decision + cassette re-record. **Batch with #18** (both re-record). |
 
 ### Tier 2 — medium ROI
 
@@ -552,10 +555,26 @@ tests keep passing unchanged (default behavior for "sl" is identical).
 Big Pickle. If item 11's `_extract_mp3_url(word)` unused-param cleanup lands
 first, coordinate (same file).
 
-## 30. OPEN [→ BP · T1] — LLM fallback chain bypassed by connection errors and malformed bodies
+## 30. FIXED — LLM fallback chain bypassed by connection errors and malformed bodies
 
-**Bug (robustness).** `app/llm/client.py::_call_groq` catches only
-`httpx.TimeoutException` (line ~212). Two other failure shapes escape as raw
+**Fixed 2026-07-03.** `_call_groq`'s `http.post` catch broadened from
+`httpx.TimeoutException` to `httpx.TransportError` (its superclass — covers
+connect/read/protocol errors too; the timeout-specific message is kept via an
+`isinstance` check). The body-parse (`response.json()` + `choices[0].message.
+content` + think-strip) is wrapped in `try/except (ValueError, KeyError,
+IndexError, TypeError) → LLMError("Groq returned malformed response body")` —
+`ValueError` covers `json.JSONDecodeError`, and a `null` content is caught as
+the `re.sub` `TypeError`. Same two fixes applied to `_call_ollama`: a new
+`except httpx.TransportError` after the connect (auto-start) and timeout
+branches, and a wrapped body-parse. All paths raise `LLMError` so
+`complete()`'s fallback chain engages. Tests (respx): Groq `ConnectError` →
+Ollama/fallback-client engages; Groq 200 with non-JSON / missing `choices` /
+`null` content → fallback; no-fallback malformed → `LLMError`; Ollama
+`ReadError` and missing-`response`-key → `LLMError`. 8 new tests in
+`TestConnectionAndMalformedFallback`; 100% coverage held; `./test.sh` green.
+
+**Original brief (robustness).** `app/llm/client.py::_call_groq` caught only
+`httpx.TimeoutException` (line ~212). Two other failure shapes escaped as raw
 exceptions, skipping the entire Groq → fallback_client → Ollama chain that
 exists precisely for network resilience:
 1. `httpx.ConnectError` / other transport errors from `http.post` (network

@@ -209,20 +209,27 @@ class LLMClient:
                 start = time.monotonic()
                 try:
                     response = await http.post(GROQ_API_URL, headers=headers, json=body)
-                except httpx.TimeoutException as err:
+                except httpx.TransportError as err:
+                    # TransportError covers timeout AND connect/read/protocol errors
+                    # (network down, DNS failure, connection refused). All must raise
+                    # LLMError so complete()'s fallback chain engages — a raw
+                    # ConnectError would escape it entirely.
                     latency_ms = int((time.monotonic() - start) * 1000)
-                    msg = f"Groq timed out after {self.timeout}s"
+                    if isinstance(err, httpx.TimeoutException):
+                        status: str = "timeout"
+                        msg = f"Groq timed out after {self.timeout}s"
+                    else:
+                        status = "connect_error"
+                        msg = f"Groq transport error: {err}"
                     self._fire_callback(
                         provider="groq",
                         model=self.groq_model,
                         latency_ms=latency_ms,
-                        status="timeout",
+                        status=status,
                         prompt=prompt,
                         error=msg,
                     )
-                    raise LLMError(
-                        msg, [self._make_attempt("groq", self.groq_model, "timeout", msg, latency_ms)]
-                    ) from err
+                    raise LLMError(msg, [self._make_attempt("groq", self.groq_model, status, msg, latency_ms)]) from err
                 latency_ms = int((time.monotonic() - start) * 1000)
 
                 # Log rate-limit headers
@@ -286,9 +293,26 @@ class LLMClient:
                         msg, [self._make_attempt("groq", self.groq_model, response.status_code, msg, latency_ms)]
                     )
 
-                data = response.json()
-                content = data["choices"][0]["message"]["content"]
-                content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                try:
+                    data = response.json()
+                    content = data["choices"][0]["message"]["content"]
+                    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                except (ValueError, KeyError, IndexError, TypeError) as err:
+                    # 2xx with an unexpected body (non-JSON, missing keys, null
+                    # content) must raise LLMError, not escape as a decode/key
+                    # error, so the fallback chain engages.
+                    msg = "Groq returned malformed response body"
+                    self._fire_callback(
+                        provider="groq",
+                        model=self.groq_model,
+                        latency_ms=latency_ms,
+                        status="malformed",
+                        prompt=prompt,
+                        error=msg,
+                    )
+                    raise LLMError(
+                        msg, [self._make_attempt("groq", self.groq_model, "malformed", msg, latency_ms)]
+                    ) from err
                 self.last_provider = "groq"
                 logger.info("Groq success: model=%s latency=%dms", self.groq_model, latency_ms)
 
@@ -455,6 +479,23 @@ class LLMClient:
                 is_fallback=is_fallback,
             )
             raise LLMError(msg, [self._make_attempt("ollama", self.ollama_model, "timeout", msg, latency_ms)]) from err
+        except httpx.TransportError as err:
+            # Read/protocol errors (not connect — that auto-starts above — nor
+            # timeout) must also raise LLMError, not escape uncaught.
+            latency_ms = int((time.monotonic() - start) * 1000)
+            msg = f"Ollama transport error at {self.ollama_url}: {err}"
+            self._fire_callback(
+                provider="ollama",
+                model=self.ollama_model,
+                latency_ms=latency_ms,
+                status="connect_error",
+                prompt=prompt,
+                error=msg,
+                is_fallback=is_fallback,
+            )
+            raise LLMError(
+                msg, [self._make_attempt("ollama", self.ollama_model, "connect_error", msg, latency_ms)]
+            ) from err
 
         latency_ms = int((time.monotonic() - start) * 1000)
 
@@ -473,8 +514,23 @@ class LLMClient:
                 msg, [self._make_attempt("ollama", self.ollama_model, response.status_code, msg, latency_ms)]
             )
 
-        data = response.json()
-        result = data["response"].strip()
+        try:
+            data = response.json()
+            result = data["response"].strip()
+        except (ValueError, KeyError, IndexError, TypeError) as err:
+            msg = "Ollama returned malformed response body"
+            self._fire_callback(
+                provider="ollama",
+                model=self.ollama_model,
+                latency_ms=latency_ms,
+                status="malformed",
+                prompt=prompt,
+                error=msg,
+                is_fallback=is_fallback,
+            )
+            raise LLMError(
+                msg, [self._make_attempt("ollama", self.ollama_model, "malformed", msg, latency_ms)]
+            ) from err
         logger.info("Ollama success: model=%s latency=%dms", self.ollama_model, latency_ms)
         self.last_provider = "ollama"
         self._fire_callback(
