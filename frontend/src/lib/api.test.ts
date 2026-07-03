@@ -1131,6 +1131,29 @@ describe("TunaTaleAPI", () => {
       );
     });
 
+    it("surfaces FastAPI validation errors (list-shaped detail) with field and message", async () => {
+      // FastAPI 422s put detail as a LIST of {loc, msg, type} objects, not a string.
+      const detail = [
+        { loc: ["body", "batch_size"], msg: "Input should be less than or equal to 14", type: "less_than_equal" },
+      ];
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFailBody({ detail }, 422, "")));
+
+      await expect(api.peerSync()).rejects.toThrow(
+        "batch_size: Input should be less than or equal to 14",
+      );
+    });
+
+    it("handles degenerate validation-error entries (missing loc or msg)", async () => {
+      const detail = [
+        { msg: "field required" }, // no loc
+        { loc: ["body", "day"] }, // no msg
+        { loc: "not-an-array", msg: "weird loc" },
+      ];
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFailBody({ detail }, 422, "")));
+
+      await expect(api.peerSync()).rejects.toThrow("field required; weird loc");
+    });
+
     it("falls back to HTTP <status> when there is no detail and no statusText", async () => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFailBody({}, 409, "")));
 

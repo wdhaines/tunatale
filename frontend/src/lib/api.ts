@@ -347,7 +347,19 @@ export class TunaTaleAPI {
       try {
         const body = await res.json();
         const d = (body as { detail?: unknown }).detail;
-        if (typeof d === "string") detail = d;
+        if (typeof d === "string") {
+          detail = d;
+        } else if (Array.isArray(d)) {
+          // FastAPI validation errors (422) put detail as a list of
+          // {loc, msg, type} objects — surface "field: message" lines.
+          detail = d
+            .map((e: { loc?: unknown[]; msg?: string }) => {
+              const field = Array.isArray(e.loc) ? String(e.loc[e.loc.length - 1]) : "";
+              return field && e.msg ? `${field}: ${e.msg}` : (e.msg ?? "");
+            })
+            .filter(Boolean)
+            .join("; ");
+        }
       } catch {
         /* error response body wasn't JSON */
       }
