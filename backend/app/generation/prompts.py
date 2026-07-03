@@ -349,10 +349,15 @@ def build_planner_turn_prompt(
     # 4  Feedback
     parts.append("## Feedback")
     parts.append("")
-    if not feedback:
+    # Filter feedback to only reference days that still exist in the curriculum.
+    # A re-import that removed/renumbered days leaves orphaned feedback entries
+    # that would inject stale references into every future turn.
+    existing_days = {d.day for d in days}
+    filtered = [f for f in feedback if f.get("day") in existing_days]
+    if not filtered:
         parts.append("(none)")
     else:
-        sorted_feedback = sorted(feedback, key=lambda f: f.get("day", 0))
+        sorted_feedback = sorted(filtered, key=lambda f: f.get("day", 0))
         for entry in sorted_feedback:
             day = entry.get("day", "?")
             note = entry.get("note", "")

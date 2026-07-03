@@ -356,13 +356,17 @@ class TestBuildPlannerTurnPrompt:
 
     def test_feedback_sorted_by_day(self):
         """Feedback entries are sorted by day regardless of input order."""
+        days = [
+            CurriculumDay(day=3, title="t", focus="f", collocations=["a"], learning_objective="o"),
+            CurriculumDay(day=5, title="t", focus="f", collocations=["a"], learning_objective="o"),
+        ]
         feedback_a = [{"day": 5, "note": "b"}, {"day": 3, "note": "a"}]
         r_a = build_planner_turn_prompt(
             topic="t",
             cefr_level="A1",
             language_name="T",
             language_code="t",
-            days=[],
+            days=days,
             learner_snapshot="s",
             feedback=feedback_a,
             chat=[],
@@ -400,7 +404,10 @@ class TestBuildPlannerTurnPrompt:
             cefr_level="A1",
             language_name="T",
             language_code="t",
-            days=[],
+            days=[
+                CurriculumDay(day=3, title="t", focus="f", collocations=["a"], learning_objective="o"),
+                CurriculumDay(day=5, title="t", focus="f", collocations=["a"], learning_objective="o"),
+            ],
             learner_snapshot="s",
             chat=[],
             batch_size=1,
@@ -513,3 +520,21 @@ class TestBuildPlannerTurnPrompt:
             start_day=1,
         )
         assert "Živjo! Kako si? 123" in result
+
+    def test_orphaned_feedback_day_filtered_out(self):
+        """Feedback for a day that no longer exists is excluded from the prompt."""
+        days = [CurriculumDay(day=2, title="t", focus="f", collocations=["a"], learning_objective="o")]
+        result = build_planner_turn_prompt(
+            topic="t",
+            cefr_level="A1",
+            language_name="T",
+            language_code="t",
+            days=days,
+            learner_snapshot="s",
+            feedback=[{"day": 2, "note": "still exists"}, {"day": 9, "note": "orphaned"}],
+            chat=[],
+            batch_size=1,
+            start_day=1,
+        )
+        assert "- Day 2: still exists" in result
+        assert "Day 9" not in result
