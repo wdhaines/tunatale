@@ -135,11 +135,14 @@ class StoryGenerator:
             raw_key = g.get("word") or g.get("lemma", "")
             translation = g.get("translation", "")
             if raw_key and translation:
-                glossed_surfaces.add(raw_key.lower())
-                lemma = surface_lemma.get(raw_key.lower(), raw_key)
+                # Keys are lowercase — every consumer looks up surface.lower()
+                # or a lowercase lemma (transcript.py, api/srs.py).
+                key = raw_key.lower()
+                glossed_surfaces.add(key)
+                lemma = surface_lemma.get(key, key)
                 # Surface key preserves the specific conjugated translation
                 # (e.g. "boste" → "you will", "bom" → "I will").
-                token_glosses[raw_key] = translation
+                token_glosses[key] = translation
                 # Lemma key provides a fallback generic translation
                 # (e.g. "biti" → "you will" from whichever surface came first).
                 token_glosses.setdefault(lemma, translation)

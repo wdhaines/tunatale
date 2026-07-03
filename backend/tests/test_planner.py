@@ -14,6 +14,7 @@ class StubLLM:
     """Minimal async LLM stub — NOT a mock/patch, passes the boundary check."""
 
     response: str
+    prompt_seen: str | None = None
 
     async def complete(
         self,
@@ -22,6 +23,7 @@ class StubLLM:
         temperature: float = 0.7,
         max_tokens: int = 256,
     ) -> str:
+        self.prompt_seen = prompt
         return self.response
 
 
@@ -44,6 +46,25 @@ def _empty_curriculum(**kw) -> Curriculum:
 
 
 class TestCurriculumPlanner:
+    async def test_user_message_reaches_prompt(self):
+        """The current user message must appear in the LLM prompt.
+
+        Regression: the API appends the user message to persisted chat only
+        AFTER the turn, so the planner must inject it itself — otherwise the
+        LLM only ever sees the conversation up to the *previous* turn.
+        """
+        llm = StubLLM("ok, noted")
+        planner = CurriculumPlanner(llm)
+        await planner.turn(
+            curriculum=_empty_curriculum(),
+            user_message="Focus day 2 on market food",
+            batch_size=3,
+            learner_snapshot="(no tracked vocabulary)",
+            language=Language.slovene(),
+        )
+        assert llm.prompt_seen is not None
+        assert "USER: Focus day 2 on market food" in llm.prompt_seen
+
     async def test_pure_chat_reply(self):
         planner = CurriculumPlanner(StubLLM("That sounds great! Let's focus on that."))
         result = await planner.turn(

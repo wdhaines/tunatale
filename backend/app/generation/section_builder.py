@@ -72,10 +72,6 @@ def build_word_breakdown(phrase_text: str, language_code: str = "sl") -> list[st
                 breakdown.append(syllables[i])
                 if i < len(syllables) - 1:
                     breakdown.append("".join(syllables[i:]))
-                elif (
-                    i == 0
-                ):  # pragma: no cover — unreachable: when len(syllables)>1 and i==0, the `i < len-1` branch always fires
-                    breakdown.append("".join(syllables))
         else:
             breakdown.append(word)
 

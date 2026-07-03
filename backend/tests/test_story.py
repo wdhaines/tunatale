@@ -150,6 +150,27 @@ class TestStoryGeneration:
         assert glosses.get("dober") == "good"
         assert glosses.get("dan") == "day"
 
+    async def test_capitalized_gloss_word_keys_lowercase(self, language):
+        """Capitalized gloss words must land under lowercase keys.
+
+        Every consumer looks up ``surface.lower()`` / lowercase lemma
+        (transcript.py, api/srs.py). A capitalized inflected form
+        ("Boste" → lemma "biti" under classla) or a glossed word absent
+        from the dialogue ("Hvala") otherwise strands under its original-case
+        key and the surface-specific translation is silently lost.
+        """
+        raw = _mock_story_response(include_glosses=True)
+        data = json.loads(raw)
+        data["dialogue_glosses"].append({"word": "Hvala", "translation": "thanks"})
+        client = MagicMock()
+        client.complete = AsyncMock(return_value=json.dumps(data))
+        gen = StoryGenerator(llm_client=client)
+        day = _make_curriculum_day()
+        lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        glosses = lesson.generation_metadata.get("token_glosses", {})
+        assert glosses.get("hvala") == "thanks"
+        assert "Hvala" not in glosses
+
     async def test_dialogue_glosses_present(self, language):
         # Glosses are stored in generation_metadata
         client = MagicMock()

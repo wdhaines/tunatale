@@ -77,6 +77,10 @@ class CurriculumPlanner:
 
         state = get_planner_state(curriculum)
 
+        # Persisted chat holds only completed turns (the API appends the user
+        # message after the turn succeeds), so inject the current message here.
+        chat = [*state.get("chat", []), {"role": "user", "content": user_message}]
+
         user_prompt = build_planner_turn_prompt(
             topic=curriculum.topic,
             cefr_level=curriculum.cefr_level,
@@ -85,7 +89,7 @@ class CurriculumPlanner:
             days=curriculum.days,
             learner_snapshot=learner_snapshot,
             feedback=state.get("feedback", []),
-            chat=state.get("chat", []),
+            chat=chat,
             batch_size=batch_size,
             start_day=start_day,
         )
