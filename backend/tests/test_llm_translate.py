@@ -85,7 +85,7 @@ class TestGenerateWordGloss:
 
     @pytest.mark.asyncio
     async def test_verb_lemma_uses_bare_form_prompt(self):
-        """A verb lemma (no feature) → prompt is the lemma + bare-form instruction."""
+        """A verb lemma (no feature) → prompt is 'lemma (POS)' + bare-form instruction."""
         mock_client = AsyncMock()
         mock_client.complete.return_value = "show"
 
@@ -94,9 +94,31 @@ class TestGenerateWordGloss:
         )
         assert result == "show"
         kwargs = mock_client.complete.call_args.kwargs
-        assert kwargs["prompt"] == "pokazati"
+        assert kwargs["prompt"] == "pokazati (VERB)"  # POS threaded through (backlog 10)
         sp = kwargs["system_prompt"].lower()
         assert "without" in sp and "to" in sp  # bare-form instruction
+
+    @pytest.mark.asyncio
+    async def test_base_card_gloss_includes_pos_for_disambiguation(self):
+        """A base-card gloss threads the POS so an ambiguous lemma is disambiguated.
+
+        Guards backlog 10: 'hotel' (NOUN) must reach the LLM tagged as a noun,
+        not glossed POS-blind as the verb 'to want'.
+        """
+        mock_client = AsyncMock()
+        mock_client.complete.return_value = "hotel"
+
+        await generate_word_gloss(mock_client, surface="hotel", lemma="hotel", source_lang="sl", pos="NOUN")
+        assert mock_client.complete.call_args.kwargs["prompt"] == "hotel (NOUN)"
+
+    @pytest.mark.asyncio
+    async def test_base_card_gloss_omits_pos_when_absent(self):
+        """With no POS supplied, the base-card prompt stays the bare lemma."""
+        mock_client = AsyncMock()
+        mock_client.complete.return_value = "stay"
+
+        await generate_word_gloss(mock_client, surface="ostati", lemma="ostati", source_lang="sl")
+        assert mock_client.complete.call_args.kwargs["prompt"] == "ostati"
 
     @pytest.mark.asyncio
     async def test_inflection_feature_glosses_the_form(self):

@@ -74,7 +74,10 @@ async def generate_word_gloss(
             f"{source_lang} word. For verbs, use the bare form WITHOUT a leading 'to' "
             "(e.g. 'show', not 'to show'). No quotes, no explanation, no trailing period."
         )
-        prompt = lemma
+        # Include the part of speech so an ambiguous lemma is glossed in the
+        # right sense — e.g. "hotel" (NOUN) must not come back as the verb "to
+        # want" (backlog 10). Mirrors the feature branch's "{surface} ({feature})".
+        prompt = f"{lemma} ({pos})" if pos else lemma
     try:
         result = await client.complete(
             prompt=prompt,
