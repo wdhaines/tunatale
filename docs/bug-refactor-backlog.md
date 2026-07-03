@@ -298,6 +298,60 @@ one-time re-record of all cassettes:
 appear). Also reseed any e2e fixtures derived from cassettes (`playwright`
 uses `LLM_MODE=mock` against the same files).
 
+## 19. OPEN — Pixabay image extension detection mislabels `.jpeg` and defaults to `.png`
+
+**Nit.** `backend/app/anki/media/pixabay.py:479` —
+`ext = "jpg" if "jpg" in img_url.lower() else "png"`. A `.jpeg` URL doesn't
+contain the substring `"jpg"`, so it's saved with a `.png` extension (and any
+unknown format also defaults to png). Harmless for display (renderers sniff
+bytes) but wrong metadata in the Anki media dir. Fix:
+`ext = "png" if img_url.lower().split("?")[0].endswith(".png") else "jpg"`
+(jpg is Pixabay's dominant format — make it the default). One unit test with a
+`.jpeg` URL and one with `.png?query=x`.
+
+## 20. OPEN — Lifespan uses CWD-relative paths (`tests/cassettes/e2e.json`, `output/audio`)
+
+**Fragility (same class as the 2026-06-08 `_tt_settings` relative-db bug).**
+`backend/app/main.py::lifespan` builds `Path("tests/cassettes/e2e.json")` and
+`app.state.audio_dir = Path("output/audio")` relative to the process CWD. A
+server started from the repo root instead of `backend/` writes audio to a
+different directory, and mock-mode startup crashes on the missing cassette
+(`CassetteLLMClient.__init__` reads it eagerly). Works today only because
+every launcher happens to cd into `backend/` first. Fix: anchor both to the
+backend package dir (`Path(__file__).parent.parent / …`) or make them
+Pydantic settings with absolute defaults, mirroring how `_tt_settings` was
+fixed. Guardrail: a unit test asserting `app.state.audio_dir.is_absolute()`
+after lifespan startup (and same for the cassette path attribute if exposed).
+
+## 21. OPEN — Renderer's preprocessor pinned to the default language (latent multi-language bug)
+
+**Latent bug / trap.** `backend/app/main.py:133` builds ONE `LessonRenderer`
+with `get_preprocessor(default_code)`; `render_audio` uses it for every
+lesson regardless of `lesson.language_code`. Harmless today because both
+`SlovenePreprocessor` and `NorwegianPreprocessor` are pass-throughs — but the
+first language that adds a real transform will silently apply the wrong
+language's preprocessing in multi-language mode (`database_urls` set). This
+violates the repo's own "no hardcoded language logic — use language plugins"
+convention at the wiring level. Fix: resolve the preprocessor at render time
+from the lesson's language — either pass `preprocessor` into
+`renderer.render(...)` per call, or give `LessonRenderer` a
+`code → TextPreprocessor` mapping (build from `get_preprocessor` for each
+configured language at startup). Guardrail test: two-language app state, a
+recording preprocessor stub per language, render a lesson of each language,
+assert each stub saw only its own language's phrases.
+
+## 22. FIXED — Listened-lessons migration re-ran on every hydrate, clobbering newer data
+
+`frontend/src/lib/stores/listened.svelte.ts::loadIds` checked the legacy
+`tunatale:home` key *first* and never removed it — so for any browser that
+still had the legacy key (i.e. the actual user's), every page load re-ran the
+migration and reset `tunatale:listened-lessons` to the old snapshot,
+discarding every lesson marked listened since the migration. Fixed: migrate
+only when the new key is absent, and `removeItem(LEGACY_HOME_KEY)` after a
+successful migration. Regression tests: "does not re-run the migration once
+the new key exists (no clobber)" + "removes the legacy key after a successful
+migration" in `listened.test.ts`.
+
 ---
 
 ## Danger-zone observations (NOT for Big Pickle — needs owner decision)

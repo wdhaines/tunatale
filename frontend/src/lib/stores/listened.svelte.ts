@@ -10,18 +10,24 @@ const LEGACY_HOME_KEY = "tunatale:home";
 function loadIds(): Set<string> {
   // Note: only called from hydrate(), which already guards typeof window !== 'undefined'
   try {
-    // Migrate from old key on first access
-    const legacy = localStorage.getItem(LEGACY_HOME_KEY);
-    if (legacy) {
-      const parsed = JSON.parse(legacy);
-      if (Array.isArray(parsed?.listenedLessonIds)) {
-        const ids = new Set<string>(parsed.listenedLessonIds);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify([...ids]));
-        return ids;
-      }
-    }
+    // Migrate from the old key only while the new key doesn't exist yet, and
+    // remove the old key afterwards — otherwise every hydrate re-runs the
+    // migration and resets the set to the legacy snapshot, dropping lessons
+    // marked listened since.
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return new Set();
+    if (raw === null) {
+      const legacy = localStorage.getItem(LEGACY_HOME_KEY);
+      if (legacy) {
+        const parsed = JSON.parse(legacy);
+        if (Array.isArray(parsed?.listenedLessonIds)) {
+          const ids = new Set<string>(parsed.listenedLessonIds);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify([...ids]));
+          localStorage.removeItem(LEGACY_HOME_KEY);
+          return ids;
+        }
+      }
+      return new Set();
+    }
     return new Set(JSON.parse(raw) as string[]);
   } catch {
     return new Set();

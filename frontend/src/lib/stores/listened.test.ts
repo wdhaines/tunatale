@@ -63,6 +63,24 @@ describe("listenedStore", () => {
     expect(JSON.parse(raw!)).toContain("old-lesson-1");
   });
 
+  it("does not re-run the migration once the new key exists (no clobber)", async () => {
+    // Regression: the legacy key was never removed, so every hydrate re-ran the
+    // migration and reset the listened set to the old snapshot — losing every
+    // lesson marked listened since.
+    localStorage.setItem(LEGACY_HOME_KEY, JSON.stringify({ listenedLessonIds: ["old-lesson"] }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(["old-lesson", "newer-lesson"]));
+
+    const store = await freshStore();
+    expect(store.has("newer-lesson")).toBe(true);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toContain("newer-lesson");
+  });
+
+  it("removes the legacy key after a successful migration", async () => {
+    localStorage.setItem(LEGACY_HOME_KEY, JSON.stringify({ listenedLessonIds: ["old-lesson-1"] }));
+    await freshStore();
+    expect(localStorage.getItem(LEGACY_HOME_KEY)).toBeNull();
+  });
+
   it("ignores legacy key if listenedLessonIds is missing", async () => {
     localStorage.setItem(LEGACY_HOME_KEY, JSON.stringify({ other: [] }));
     const store = await freshStore();
