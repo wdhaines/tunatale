@@ -862,10 +862,17 @@ async def create_item(body: CreateItemRequest, request: Request):
     if existing is not None:
         raise HTTPException(status_code=409, detail=f"Item already exists: {body.text!r}")
     db.add_collocation(unit, language_code=body.language_code)
-    rows, _ = db.list_collocations(search=body.text, limit=1)
-    if not rows:
+    # Exact guid lookup (like _persist_new_card) — the LIKE-search used before
+    # could return a superstring row ("Dober dan" for "dan") and attach the new
+    # card's media to it.
+    guid = compute_guid(unit.text, body.language_code, unit.disambig_key or "")
+    row_id = db.get_collocation_id_by_guid(guid)
+    if row_id is None:  # pragma: no cover — defensive; add_collocation just inserted
         raise HTTPException(status_code=500, detail="Failed to retrieve created item")
-    row_id, item, lang = rows[0]
+    result = db.get_collocation_by_id(row_id)
+    if result is None:  # pragma: no cover — defensive; id came from get_collocation_id_by_guid
+        raise HTTPException(status_code=500, detail="Failed to retrieve created item")
+    _, item, lang = result
     # Complete the card now (image + audio) so it renders in /review without a
     # sync — the user added it in TunaTale; it shouldn't depend on Anki.
     llm = getattr(request.app.state, "llm", None)

@@ -1712,6 +1712,25 @@ class TestAudioUrlGrammarNote:
 class TestCreateItemWithSourceContext:
     """Tests for POST /api/srs/items with source context and LLM auto-translate."""
 
+    async def test_create_item_returns_the_new_item_not_a_substring_match(self, api_app_state):
+        """The post-insert lookup must be exact, not the LIKE %text% search:
+        adding "dan" when "Dober dan" exists returned the WRONG row ("Dober
+        dan" sorts first) — and attached the new card's media to it."""
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        db.add_collocation(
+            SyntacticUnit(text="Dober dan", translation="good day", word_count=2, difficulty=1, source="test"),
+            language_code="sl",
+        )
+        payload = {"text": "dan", "language_code": "sl", "word_count": 1, "translation": "day"}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/srs/items", json=payload)
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["text"] == "dan"
+        assert data["translation"] == "day"
+
     async def test_create_item_with_source_context(self, api_app_state):
         """POST with source_sentence, source_lesson_id, source_line_index stores them."""
         payload = {
@@ -1786,26 +1805,6 @@ class TestCreateItemWithSourceContext:
         assert resp.status_code == 201
         data = resp.json()
         assert data["text"] == "test word"
-
-    async def test_create_item_raises_500_if_item_not_found_after_insert(self, api_app_state, monkeypatch):
-        """POST raises 500 if add_collocation succeeds but item can't be retrieved."""
-        db = api_app_state
-
-        # Patch list_collocations to return empty (rows, total) after successful add
-        def mock_list(*args, **kwargs):
-            return [], 0
-
-        monkeypatch.setattr(db, "list_collocations", mock_list)
-
-        payload = {
-            "text": "test",
-            "language_code": "sl",
-            "word_count": 1,
-        }
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/items", json=payload)
-        assert resp.status_code == 500
-        assert "Failed to retrieve created item" in resp.json()["detail"]
 
 
 class TestLearningStatePriority:

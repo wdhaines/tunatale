@@ -393,6 +393,27 @@ warm-up (`main.py::_warm_from_lessons`) warming each configured language.
 (importability-fallback aside), and that the transcript endpoint threads the
 request language's lemmatizer.
 
+## 26. FIXED — `POST /items` looked up the just-created item by LIKE-search → wrong row
+
+`create_item` (`backend/app/api/srs.py`) retrieved the row it had just
+inserted via `list_collocations(search=text, limit=1)` — a `LIKE %text%`
+match ordered by text. Adding `"dan"` while `"Dober dan"` existed returned
+the superstring row ("D" < "d" in SQLite's BINARY collation), so the endpoint
+returned the wrong item AND attached the new card's image/audio to it
+(`_generate_add_time_media(row_id, …)`). Fixed with the exact guid lookup
+`_persist_new_card` already uses. Test:
+`test_create_item_returns_the_new_item_not_a_substring_match`. (The old
+"mock list_collocations empty → 500" test covered the removed lookup and was
+deleted; the defensive guid branches carry the same pragma precedent as
+`_persist_new_card`.)
+
+## 27. FIXED — Frontend dropped FastAPI list-shaped validation details
+
+`frontend/src/lib/api.ts::request()` only surfaced string `body.detail`;
+FastAPI 422s carry a list of `{loc, msg, type}` — every validation error
+showed as a bare "HTTP 422". Now rendered as "field: message" lines. Tests in
+`api.test.ts` (list-shaped + degenerate entries).
+
 ## 24. FIXED — Add-time media fetch blocked the event loop for seconds per card
 
 `app/anki/media/pipeline.py::fetch_card_media` is async but called its

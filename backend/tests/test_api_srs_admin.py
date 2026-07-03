@@ -261,17 +261,6 @@ class TestCreateItem:
         assert item is not None
         assert item.syntactic_unit.translation == "thank you"
 
-    async def test_create_item_returns_500_when_db_list_fails(self, monkeypatch):
-        """Defensive guard: if list_collocations returns nothing after add, return 500."""
-        db = _db()
-        monkeypatch.setattr(db, "list_collocations", lambda **kwargs: ([], 0))
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post(
-                "/api/srs/items",
-                json={"text": "hvala", "language_code": "sl", "word_count": 1},
-            )
-        assert response.status_code == 500
-
 
 class TestTranscriptEnrichment:
     """Tests that GET /api/srs/lesson/{id}/transcript returns enriched WordToken fields."""
