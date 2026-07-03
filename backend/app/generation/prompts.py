@@ -371,6 +371,12 @@ def build_planner_turn_prompt(
             content = msg.get("content", "")
             parts.append(f"{role_label}: {content}")
         parts.append("")
+    else:
+        # Nearly unreachable in the turn path (the current user message is
+        # injected into chat before the prompt is built), but keep the section
+        # non-blank for symmetry with every other "(none yet)" section.
+        parts.append("(none yet)")
+        parts.append("")
 
     # 6  Closing instruction
     parts.append(f"If proposing, propose exactly {batch_size} days starting at day {start_day}.")

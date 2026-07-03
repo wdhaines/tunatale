@@ -200,6 +200,23 @@ class TestBuildPlannerTurnPrompt:
         # fmt: on
         assert result == expected
 
+    def test_empty_chat_renders_none_yet(self):
+        """Backlog #6: an empty conversation renders '(none yet)', not a blank section."""
+        result = build_planner_turn_prompt(
+            topic="t",
+            cefr_level="A1",
+            language_name="T",
+            language_code="t",
+            days=[],
+            learner_snapshot="s",
+            feedback=[],
+            chat=[],
+            batch_size=1,
+            start_day=1,
+        )
+        conversation = result.split("## Conversation")[1].split("If proposing,")[0]
+        assert "(none yet)" in conversation
+
     def test_section_order(self):
         """Sections appear in the fixed order, never reordered."""
         result = build_planner_turn_prompt(

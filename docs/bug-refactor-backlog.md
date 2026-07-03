@@ -68,7 +68,7 @@ pydantic). Mirror the frontend bounds.
 → 422; `batch_size=1` and `=14` accepted (existing stub-planner test fixture
 `test_api_curriculum_plan.py` shows how to fake the planner).
 
-## 4. OPEN — `split_reply_and_json` gives up on the last fence instead of trying earlier ones
+## 4. FIXED — `split_reply_and_json` gives up on the last fence instead of trying earlier ones
 
 **Robustness.** `backend/app/generation/json_parsing.py::split_reply_and_json`
 iterates fences in reverse and **raises** on the first JSON-looking fence whose
@@ -82,10 +82,11 @@ fence parses and at least one JSON-tagged (`lang_tag == "json"`) fence existed.
 Keep the bare-fence (` ``` ` + `{`) heuristic as a candidate but never let it
 alone trigger the error path.
 
-**Guardrail tests** (`backend/tests/test_json_parsing.py` or wherever
-`split_reply_and_json` tests live): valid json fence followed by an invalid
-bare `{`-fence → returns the valid dict; reply whose only json-tagged fence is
-malformed → still raises ValueError.
+**Fixed 2026-07-03.** Malformed/non-dict fences now `continue` to the
+next-earlier candidate; ValueError only when a `json`-tagged fence existed and
+nothing parsed. Tests: `test_split_reply_json_valid_fence_before_invalid_bare_fence_wins`,
+`…before_malformed_json_fence_wins`, `…only_malformed_bare_fence_no_raise`
+(plus the two pre-existing raise tests still pass unchanged).
 
 ## 5. OPEN — Story/section parsing can raise bare `KeyError` → 500
 
@@ -108,14 +109,13 @@ skip-and-log: one bad key phrase shouldn't waste an otherwise good generation.
 **Guardrail test.** Feed `_parse_response` a payload with one good and one
 field-missing key phrase → lesson builds with the good one, warning logged.
 
-## 6. OPEN — Planner turn prompt: empty-conversation section renders headerless blank
+## 6. FIXED — Planner turn prompt: empty-conversation section renders headerless blank
 
-**Cosmetic/prompt-quality.** `build_planner_turn_prompt`
-(`backend/app/generation/prompts.py`) writes the `## Conversation` header, and
-when `chat` is empty appends nothing — unlike every other section which renders
-`(none)` / `(none yet)`. After fix #1 the chat always contains at least the
-current user message, so this is now nearly unreachable — verify and either add
-`(none)` for symmetry or leave with a comment. Lowest priority.
+**Cosmetic/prompt-quality.** `build_planner_turn_prompt` wrote the
+`## Conversation` header and nothing under it when `chat` was empty. Fixed
+2026-07-03: renders `(none yet)` for symmetry (with a comment noting the
+branch is nearly unreachable post-fix-#1). No cassette impact — the turn path
+always has ≥1 chat message. Test: `test_empty_chat_renders_none_yet`.
 
 ## 7. FIXED — `/api/story/generate`: invalid strategy and LLM failures both surface as raw 500s
 
@@ -300,16 +300,14 @@ one-time re-record of all cassettes:
 appear). Also reseed any e2e fixtures derived from cassettes (`playwright`
 uses `LLM_MODE=mock` against the same files).
 
-## 19. OPEN — Pixabay image extension detection mislabels `.jpeg` and defaults to `.png`
+## 19. FIXED — Pixabay image extension detection mislabels `.jpeg` and defaults to `.png`
 
-**Nit.** `backend/app/anki/media/pixabay.py:479` —
-`ext = "jpg" if "jpg" in img_url.lower() else "png"`. A `.jpeg` URL doesn't
-contain the substring `"jpg"`, so it's saved with a `.png` extension (and any
-unknown format also defaults to png). Harmless for display (renderers sniff
-bytes) but wrong metadata in the Anki media dir. Fix:
+**Nit.** `backend/app/anki/media/pixabay.py` — the old
+`"jpg" in url` substring check saved `.jpeg` URLs (and any unknown format)
+with a `.png` extension. Fixed 2026-07-03:
 `ext = "png" if img_url.lower().split("?")[0].endswith(".png") else "jpg"`
-(jpg is Pixabay's dominant format — make it the default). One unit test with a
-`.jpeg` URL and one with `.png?query=x`.
+(jpg is Pixabay's dominant format → the default). Tests:
+`test_jpeg_url_gets_jpg_ext_not_png`, `test_png_url_with_query_string_gets_png_ext`.
 
 ## 20. OPEN — Lifespan uses CWD-relative paths (`tests/cassettes/e2e.json`, `output/audio`)
 

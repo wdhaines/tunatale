@@ -191,6 +191,40 @@ class TestFetchPixabayImage:
         _, ext, _ = result
         assert ext == "png"
 
+    def test_jpeg_url_gets_jpg_ext_not_png(self):
+        """Backlog #19: '.jpeg' doesn't contain 'jpg', so the old substring check
+        mislabelled it png. jpg is Pixabay's dominant format — it is the default."""
+        hits = [
+            {
+                "likes": 10,
+                "views": 100,
+                "tags": "tree",
+                "imageType": "photo",
+                "webformatURL": "https://cdn.pixabay.com/photo/tree.jpeg",
+            }
+        ]
+        client = self._client(hits, b"fake")
+        result = fetch_pixabay_image("tree", api_key="key123", http_client=client)
+        assert result is not None
+        _, ext, _ = result
+        assert ext == "jpg"
+
+    def test_png_url_with_query_string_gets_png_ext(self):
+        hits = [
+            {
+                "likes": 10,
+                "views": 100,
+                "tags": "tree",
+                "imageType": "photo",
+                "webformatURL": "https://cdn.pixabay.com/photo/tree.png?w=300",
+            }
+        ]
+        client = self._client(hits, b"fake")
+        result = fetch_pixabay_image("tree", api_key="key123", http_client=client)
+        assert result is not None
+        _, ext, _ = result
+        assert ext == "png"
+
     def test_returns_none_when_no_hits(self):
         client = self._client([])
         result = fetch_pixabay_image("tree", api_key="key123", http_client=client)

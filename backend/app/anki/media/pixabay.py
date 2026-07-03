@@ -476,7 +476,10 @@ def fetch_pixabay_image(
             return None
         r = client.get(img_url, timeout=15)
         r.raise_for_status()
-        ext = "jpg" if "jpg" in img_url.lower() else "png"
+        # jpg is Pixabay's dominant format, so it's the default; only a real
+        # .png path (query string aside) gets png. The old `"jpg" in url`
+        # substring check mislabelled .jpeg files as png.
+        ext = "png" if img_url.lower().split("?")[0].endswith(".png") else "jpg"
         return r.content, ext, img_url
     except Exception:
         return None

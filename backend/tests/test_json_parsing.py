@@ -190,6 +190,38 @@ def test_split_reply_json_non_json_fence_skipped_falls_to_bare_brace():
     assert "```python" in prose  # non-JSON fence stays in prose
 
 
+def test_split_reply_json_valid_fence_before_invalid_bare_fence_wins():
+    """Backlog #4: a malformed later fence must not discard an earlier valid one.
+
+    The LLM often appends a pseudo-code sketch after the real proposal; the
+    parser previously raised on the last (malformed) fence and failed the turn.
+    """
+    raw = '```json\n{"days": 4}\n```\nHere is a sketch:\n```\n{pseudo-code, not json}\n```'
+    prose, data = split_reply_and_json(raw)
+    assert data == {"days": 4}
+    assert "Here is a sketch:" in prose
+
+
+def test_split_reply_json_valid_fence_before_malformed_json_fence_wins():
+    """An earlier valid ```json fence wins over a later malformed ```json fence."""
+    raw = '```json\n{"days": 4}\n```\nor maybe:\n```json\n{oops}\n```'
+    prose, data = split_reply_and_json(raw)
+    assert data == {"days": 4}
+
+
+def test_split_reply_json_only_malformed_bare_fence_no_raise():
+    """A malformed bare {-fence with no json-tagged fence anywhere must not raise.
+
+    (The bare-brace fallback spans first-{…last-}, which here swallows the fence
+    content and fails to parse — so no data is recovered, but the turn survives
+    as prose instead of erroring.)
+    """
+    raw = 'Some text\n```\n{not json}\n```\nand a plan {"days": 6} inline.'
+    prose, data = split_reply_and_json(raw)
+    assert data is None
+    assert "Some text" in prose
+
+
 def test_split_reply_json_bare_brace_parses_as_non_dict_returns_prose():
     """A brace span with 'days' that parses as JSON but not a dict is treated as prose."""
     raw = 'Some text ["days", 3] and more.'
