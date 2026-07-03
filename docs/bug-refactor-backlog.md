@@ -547,6 +547,41 @@ Also: the class docstring says "max 3 concurrent" but
 existing EdgeTTS tests): `Communicate.save` raising `NoAudioReceived` twice
 then succeeding → synthesize succeeds; raising 3× → RuntimeError.
 
+## 33. OPEN — Cards page: stale-response race + double fetch on search
+
+**Nit (UX edge).** `frontend/src/routes/cards/+page.svelte`:
+1. No in-flight guard/sequence token on `loadItems()` — a slow response can
+   land after a newer one (rapid page-next clicks, or search racing the
+   `$effect`) and overwrite `items`/`total` with stale data. Fix: module-level
+   `let fetchSeq = 0`, capture `const seq = ++fetchSeq` at call start, and only
+   assign results `if (seq === fetchSeq)`.
+2. `onSearchInput`'s debounce callback sets `page = 0` **and** calls
+   `loadItems()` — when the user was on page > 0, the page change also
+   triggers the tracking `$effect` → two concurrent fetches (which is how race
+   (1) gets exercised). Fix: the callback should only set `lastSearch`/`page`
+   and let the `$effect` fetch — add `lastSearch` to the effect's tracked
+   deps; drop the direct `loadItems()` call.
+
+**Guardrail test** (`cards/page.test.ts` pattern, mock `api.listSRSItems`
+with controllable promises): resolve call A after call B → items reflect B.
+
+## 34. OPEN — Lesson-page word taps have no in-flight guard (double-tap = double grade)
+
+**Bug (mobile UX).** `frontend/src/routes/c/[curriculumId]/l/[lessonId]/+page.svelte::handleWordClick`
+(and `handleCollocationStateChange`) fire `submitDrill`/`createBaseCard`
+directly on tap with no in-flight guard — unlike `DrillCard`, which has the
+`inFlight` state exactly for this. A double-tap on a due word submits two
+'good' grades (the second advances the card twice and burns the single-level
+undo snapshot); on an unknown word it calls `createBaseCard` twice (second
+returns 409 → error banner flashes for a successful action).
+
+**Fix.** Mirror DrillCard: `let wordActionInFlight = $state(false)`; early
+return when true, set in `try`/clear in `finally`, wrapping both handlers
+(one shared flag is right — these actions all mutate the same transcript).
+
+**Guardrail test** (`[lessonId]/page.test.ts` pattern): mock `submitDrill`
+with a hanging promise, dispatch two clicks, assert one call.
+
 ---
 
 ## Danger-zone observations (NOT for Big Pickle — needs owner decision)
