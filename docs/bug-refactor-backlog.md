@@ -582,6 +582,45 @@ return when true, set in `try`/clear in `finally`, wrapping both handlers
 **Guardrail test** (`[lessonId]/page.test.ts` pattern): mock `submitDrill`
 with a hanging promise, dispatch two clicks, assert one call.
 
+## 35. OPEN — Dead config fields: `anki_connect_url`, `forvo_api_key`
+
+**Cleanup.** `backend/app/config.py` still declares `anki_connect_url`
+(anki-connect integration was archived — see the dead-code-audit memory) and
+`forvo_api_key` (the Forvo fetcher scrapes HTML; it never used an API key).
+Grep confirms zero references outside `config.py` in both `app/` and `tests/`
+(2026-07-03). Delete both fields; also remove any mention from `.env.example`
+if present. Per the dead-code-audit rule, re-grep both names across app AND
+tests before deleting. Guardrail: `./test.sh` (a stray consumer would fail at
+import/attribute time).
+
+## 36. OPEN — Wifi-prefetch opt-out ignored on direct lesson-page loads (+ no re-prefetch on lesson→lesson nav)
+
+**Bug (two parts).** `frontend/src/lib/components/AudioPlayer.svelte` +
+`frontend/src/lib/stores/prefetchPref.svelte.ts`:
+1. **Opt-out race.** The store defaults `enabled = true`; the stored opt-out
+   is only applied by `init()`, which the **layout's** `onMount` calls — but
+   Svelte runs child `onMount` before the parent layout's, so on a first
+   paint directly on a lesson route (bookmarked lesson URL, PWA reopen,
+   refresh) AudioPlayer's `onMount` reads `enabled === true` and
+   `maybePrefetchLesson` downloads the lesson audio even though the user
+   turned "Auto-download on wifi" OFF. Fix in the store: lazy self-init —
+   `let initialized = false`; in the `enabled` getter (and `init()`), if
+   `!initialized && typeof localStorage !== "undefined"`, read the key and
+   set `initialized = true`. Keep `init()` for explicit seeding (settings
+   page toggle tests already cover `set`/`toggle`).
+2. **Stale-prop prefetch.** The prefetch runs in `onMount` with the mount-time
+   `audio` prop, but SvelteKit reuses the component on same-route param nav
+   (the lesson page's own `$effect` comment documents this) — navigating
+   lesson→lesson never prefetches the new lesson. Fix: replace the `onMount`
+   with an `$effect` tracking `audio` (idempotent: `maybePrefetchLesson`
+   skips already-cached URLs — verify that guard exists in `prefetch.ts`;
+   add it if not).
+
+**Guardrail tests.** Store: with `localStorage.prefetchOnWifi = "false"`,
+first read of `enabled` (no `init()` call) → false. Player
+(`AudioPlayer.test.ts`): rerender with a new `audio` prop → prefetch called
+again with the new URLs.
+
 ---
 
 ## Danger-zone observations (NOT for Big Pickle — needs owner decision)
