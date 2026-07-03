@@ -83,9 +83,14 @@ def _validate_collocations(entry: dict, path: str) -> None:
         raise ValueError(f"{path} is missing required field 'collocations'")
     if not isinstance(coll, list) or not coll:
         raise ValueError(f"{path}.collocations must be a non-empty list of non-empty strings")
+    seen: set[str] = set()
     for j, c in enumerate(coll):
         if not isinstance(c, str) or not c.strip():
             raise ValueError(f"{path}.collocations[{j}] must be a non-empty string")
+        key = c.strip().lower()
+        if key in seen:
+            raise ValueError(f"{path}.collocations[{j}] duplicates earlier entry {c!r}")
+        seen.add(key)
 
 
 def _require_field(

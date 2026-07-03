@@ -258,6 +258,13 @@ class TestValidatePlanDays:
         with pytest.raises(ValueError, match=r"days\[1\].day must be 6 \(got 7\)"):
             validate_plan_days(days, start_day=5)
 
+    def test_collocations_case_insensitive_duplicate_rejected(self):
+        days = [
+            {"day": 1, "title": "Day One", "focus": "t", "collocations": ["a", "A"], "learning_objective": "o"},
+        ]
+        with pytest.raises(ValueError, match=r"days\[0\].collocations\[1\] duplicates"):
+            validate_plan_days(days)
+
 
 class TestExportPlan:
     def test_unknown_id_raises_key_error(self, store):
