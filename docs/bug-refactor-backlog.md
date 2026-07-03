@@ -31,9 +31,9 @@ Everything in Tiers 1–3 below is dispatchable to Big Pickle as-is.
 | ~~16~~ | ✅ | Planner chat loses draft on failed turn | **FIXED 2026-07-03** (commit 834f476) — `send()` restores the draft, `handleSend` returns `bool`. |
 | ~~28~~ | ✅ | Card media pipeline Slovene-hardcoded | **FIXED 2026-07-03** (commit 11022e0) — `get_tts_voice` registry helper; `language_code` threaded through Forvo/TTS/cloze. e2e `generate-norwegian.spec.ts` asserts nb-NO voices. |
 | ~~30~~ | ✅ | LLM fallback chain bypassed | **FIXED 2026-07-03** — `_call_groq`/`_call_ollama` broaden to `httpx.TransportError` + wrap body-parse → `LLMError`; fallback chain engages. 8 respx tests. |
-| 34 | BP | Double-tap = double grade | Real mobile bug: burns the undo snapshot / flashes a 409. One shared in-flight flag, mirrors `DrillCard`. |
-| 17 | BP | Duplicate collocation crashes proposal panel | LLM plausibly repeats a collocation → Svelte keyed-each throws → panel won't render. Server-side dedup in `_validate_collocations`. |
-| 14 | BP | Re-render deletes audio rows before rendering + disk leak | Failed re-render → 404 though old files exist; every re-render leaks the old UUID files. |
+| ~~34~~ | ✅ | Double-tap = double grade | **FIXED 2026-07-03** — `wordActionInFlight` guard + `$effect`-driven refetch in `+page.svelte`. |
+| ~~17~~ | ✅ | Duplicate collocation crashes proposal panel | **FIXED 2026-07-03** — case-insensitive dedup in `_validate_collocations`. |
+| ~~14~~ | ✅ | Re-render deletes audio rows before rendering + disk leak | **FIXED 2026-07-03** — save old rows before render, delete rows+files only after render succeeds. `backend/app/api/audio.py`. |
 | 10 | Claude | `generate_word_gloss` POS-blind | Wrong-sense glosses now (hotel→"to want") — the exact ambiguity sentence-aware lemmatization was meant to kill. Needs a prompt-injection decision + cassette re-record. **Batch with #18** (both re-record). |
 
 ### Tier 2 — medium ROI
@@ -42,7 +42,7 @@ Everything in Tiers 1–3 below is dispatchable to Big Pickle as-is.
 |---|-------|------|------|
 | 5 | BP | Story parse bare `KeyError` → 500 | Skip-and-log malformed key phrases. |
 | 31 | BP | EdgeTTS retry misses edge-tts/aiohttp types | Transient 403/empty-audio fails whole render. Verify base-class names vs the pinned edge-tts first. |
-| 33 | BP | Cards page stale-response race + double fetch | Sequence-token guard + let the `$effect` own the fetch. |
+| ~~33~~ | ✅ | Cards page stale-response race + double fetch | **FIXED 2026-07-03** — `fetchSeq` token guard + `$effect`-driven refetch in `+page.svelte`. |
 | 20 | BP | Lifespan CWD-relative paths | Same class as the `_tt_settings` relative-db bug; anchor to `__file__`. |
 
 ### Tier 3 — low ROI cleanup (batch when a BP is idle; existing tests are the guardrail)
@@ -51,10 +51,10 @@ Everything in Tiers 1–3 below is dispatchable to Big Pickle as-is.
 |---|-------|------|
 | 35 | BP | Dead config fields (`anki_connect_url`, `forvo_api_key`) — trivial, grep already clean |
 | 8 | BP | Extract `serialize_lesson` (dup response dicts) |
-| 15 | BP | Extract `_resolve_topic_day` / `_section_title` (dup blocks in audio API) |
+| ~~15~~ | ✅ | Extract `_resolve_topic_day` / `_section_title` (dup blocks in audio API) | **FIXED 2026-07-03** — `backend/app/api/audio.py`. |
 | 29 | BP | `cloze_tts` → public `SRSDatabase` helpers (stop reaching into `_get_conn`) |
 | 11 | BP | Drop 4 vestigial params (ruff ARG) |
-| 32 | BP | Filter orphaned planner feedback at prompt-build |
+| ~~32~~ | ✅ | Filter orphaned planner feedback at prompt-build | **FIXED 2026-07-03** — `build_planner_turn_prompt` filters `feedback` against `existing_days`. |
 | 13-fu | BP | One-shot lowercase `token_glosses` migration for pre-fix lessons |
 | 21 | BP | Renderer preprocessor per-language (latent; harmless while both pass-through) |
 | 25 | BP* | `get_lemmatizer` per-language (latent; *biggest/riskiest BP — Claude reviews the request-scoping change) |
