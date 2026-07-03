@@ -101,6 +101,19 @@ def get_deck_name(code: str) -> str:
     return deck_name
 
 
+def get_tts_voice(code: str, role: str = "female-1") -> str:
+    """Return the EdgeTTS voice for *code*'s *role* (default the primary female voice).
+
+    The single place card-media / cloze audio resolves which voice to synthesize
+    in, so a non-Slovene card never gets Slovene TTS. Raises ``KeyError`` for an
+    unknown code and ``ValueError`` when the language defines no voice for *role*.
+    """
+    voice = get_language(code).tts_voice_map.get(role)
+    if not voice:
+        raise ValueError(f"Language {code!r} has no {role!r} TTS voice configured")
+    return voice
+
+
 def get_vocab_notetype(code: str) -> VocabNotetype | None:
     """Return the TT-managed vocab notetype TT mints *code*'s cards into.
 

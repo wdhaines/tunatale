@@ -485,10 +485,28 @@ via `anyio.to_thread.run_sync`. Regression test:
 (asserts a concurrent task keeps ticking while a 200 ms fetch runs; was 0
 ticks before the fix).
 
-## 28. OPEN [→ BP · T1] — Card media pipeline is Slovene-hardcoded (Forvo scrape, TTS voice, cloze voice)
+## 28. FIXED — Card media pipeline is Slovene-hardcoded (Forvo scrape, TTS voice, cloze voice)
 
-**Bug (multi-language; companion to #21/#25 — same wiring class).** Three
-hardcodings make every non-Slovene card get Slovene audio:
+**Fixed 2026-07-03.** New registry helper `get_tts_voice(code, role="female-1")`
+in `app/languages.py` is the single place card-media/cloze audio resolves a
+voice. `fetch_forvo_audio(word, *, language_code=...)` scrapes
+`language-container-{code}`; `fetch_card_media` / `generate_vocab_media` thread
+`language_code` and default `tts_voice` from the registry; `_build_media_fn`
+(`app/api/anki.py`) passes `settings.target_language` (peer-sync's
+`_tt_settings` sets it per request); all three `synthesize_cloze_audios` call
+sites in `api/srs.py` pass `voice=get_tts_voice(lesson.language_code)` and
+`_generate_add_time_media` takes `language_code`. Slovene behavior byte-identical
+(default `"sl"`). Tests: `test_languages.py` (`get_tts_voice` happy/KeyError/
+ValueError), `test_anki_media_forvo.py` (only-`no`-container returns URL for
+`"no"`, None for `"sl"`), `test_anki_media_pipeline.py` (voice resolved from
+`language_code`, explicit override still wins, Forvo gets the code),
+`test_vocab_media.py` + `test_api.py` (Norwegian card asserts
+`nb-NO-PernilleNeural`). `PIXABAY_API_KEY` pinned empty in the media tests.
+Full backend suite green at 100% coverage; `./test.sh` green (log tail + commit
+below).
+
+**Original brief (multi-language; companion to #21/#25 — same wiring class).**
+Three hardcodings made every non-Slovene card get Slovene audio:
 
 1. `app/anki/media/forvo.py::fetch_forvo_audio` scrapes only the
    `language-container-sl` section of the Forvo page. For a Norwegian word it

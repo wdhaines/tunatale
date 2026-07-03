@@ -92,6 +92,33 @@ async def test_stores_image_and_audio(media_dir) -> None:
     assert kinds == {"audio_forvo", "image"}
 
 
+async def test_threads_language_code_to_fetch(media_dir) -> None:
+    """Backlog #28: the card's language_code reaches fetch_card_media so a
+    Norwegian card resolves the Norwegian voice / Forvo section."""
+    db = _FakeDB()
+    captured: dict[str, str] = {}
+
+    async def _query(*_a, **_k):
+        return "q"
+
+    async def _fetch(*_a, language_code, **_k):
+        captured["language_code"] = language_code
+        return MediaResult()
+
+    await vocab_media.generate_vocab_media(
+        db,
+        7,
+        "snakke",
+        "to speak",
+        llm=object(),
+        pixabay_key="k",
+        language_code="no",
+        _query_fn=_query,
+        _fetch_fn=_fetch,
+    )
+    assert captured["language_code"] == "no"
+
+
 async def test_forvo_audio_prefix_follows_target_language(media_dir, monkeypatch) -> None:
     """Forvo audio filename prefix is the active language code (so Norwegian
     Forvo audio is no_*.mp3, matching the sync fetch path)."""

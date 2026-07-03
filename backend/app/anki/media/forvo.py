@@ -1,4 +1,4 @@
-"""Forvo audio scraper — fetches Slovenian pronunciations."""
+"""Forvo audio scraper — fetches pronunciations for a given language."""
 
 from __future__ import annotations
 
@@ -28,15 +28,16 @@ def _make_client() -> httpx.Client:
     return httpx.Client(headers=_DEFAULT_HEADERS)
 
 
-def _extract_mp3_url(html: str, word: str) -> str | None:
-    """Parse Forvo HTML for a Slovenian Play() call. Returns URL or None."""
-    sl_idx = max(
-        html.find("id='language-container-sl'"),
-        html.find('id="language-container-sl"'),
+def _extract_mp3_url(html: str, word: str, *, language_code: str = "sl") -> str | None:
+    """Parse Forvo HTML for a Play() call in *language_code*'s section. URL or None."""
+    container = f"language-container-{language_code}"
+    lang_idx = max(
+        html.find(f"id='{container}'"),
+        html.find(f'id="{container}"'),
     )
-    if sl_idx == -1:
+    if lang_idx == -1:
         return None
-    chunk = html[sl_idx : sl_idx + 3000]
+    chunk = html[lang_idx : lang_idx + 3000]
     if "<article" not in chunk:
         return None
     match = re.search(r"Play\([^,]+,'([A-Za-z0-9+/=]+)'", chunk)
@@ -49,15 +50,15 @@ def _extract_mp3_url(html: str, word: str) -> str | None:
     return f"{_AUDIO_BASE}/{path}"
 
 
-def fetch_forvo_audio(word: str, *, http_client: httpx.Client | None = None) -> bytes | None:
-    """Download Slovenian pronunciation from Forvo. Returns MP3 bytes or None."""
+def fetch_forvo_audio(word: str, *, language_code: str = "sl", http_client: httpx.Client | None = None) -> bytes | None:
+    """Download the *language_code* pronunciation from Forvo. MP3 bytes or None."""
     owned = http_client is None
     client = http_client or _make_client()
     try:
         encoded = urllib.parse.quote(word)
         resp = client.get(f"{_FORVO_BASE}/word/{encoded}/", timeout=15)
         resp.raise_for_status()
-        mp3_url = _extract_mp3_url(resp.text, word)
+        mp3_url = _extract_mp3_url(resp.text, word, language_code=language_code)
         if mp3_url is None:
             return None
         r = client.get(mp3_url, timeout=20)

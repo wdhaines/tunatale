@@ -30,6 +30,10 @@ def _build_media_fn(llm, db):
             word,
             english,
             pixabay_key=settings.pixabay_api_key,
+            # settings.target_language is the language being synced (peer_sync's
+            # _tt_settings sets it per request) — resolve the TTS voice / Forvo
+            # section from it so a Norwegian card isn't voiced in Slovene.
+            language_code=settings.target_language,
             used_image_urls=used_image_urls,
             image_query=image_query,
         )

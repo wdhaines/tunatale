@@ -28,6 +28,7 @@ from app.api.models import (
 )
 from app.audio.cloze_tts import synthesize_cloze_audios
 from app.common.guid import compute_guid
+from app.languages import get_tts_voice
 from app.llm.translate import generate_word_gloss, translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -186,7 +187,7 @@ def _triples_to_dicts(db, triples: list[tuple[int, SRSItem, str]]) -> list[dict]
 
 
 async def _generate_add_time_media(
-    db, llm, coll_id: int, unit: SyntacticUnit, *, used_image_urls: set[str] | None = None
+    db, llm, coll_id: int, unit: SyntacticUnit, *, language_code: str, used_image_urls: set[str] | None = None
 ) -> None:
     """Fetch image + word audio for a freshly-created vocab card, inline.
 
@@ -209,6 +210,7 @@ async def _generate_add_time_media(
         unit.translation,
         llm=llm,
         pixabay_key=settings.pixabay_api_key,
+        language_code=language_code,
         source_sentence=unit.source_sentence or "",
         grammar=unit.grammar or "",
         used_image_urls=used_image_urls,
@@ -494,14 +496,22 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 coll = db.get_collocation_by_lemma_with_id(lemma)
                 new_id, _ = coll
                 try:
-                    await synthesize_cloze_audios(db, new_id, sent, lemma_to_first_surface.get(lemma, lemma))
+                    await synthesize_cloze_audios(
+                        db,
+                        new_id,
+                        sent,
+                        lemma_to_first_surface.get(lemma, lemma),
+                        voice=get_tts_voice(lesson.language_code),
+                    )
                 except Exception:
                     _logger.warning("Failed to synthesize cloze audio for %r", lemma)
             else:
                 # Mirror the cloze sibling above: the row was just inserted, so
                 # the lookup always resolves. Complete the vocab card inline.
                 new_id, _ = db.get_collocation_by_lemma_with_id(lemma)
-                await _generate_add_time_media(db, llm, new_id, unit, used_image_urls=used_image_urls)
+                await _generate_add_time_media(
+                    db, llm, new_id, unit, language_code=lesson.language_code, used_image_urls=used_image_urls
+                )
             created_count += 1
         else:
             # ── Existing row — skip cloze, grade recognition for eligible vocab ──
@@ -524,7 +534,13 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 sent = lemma_to_sentence.get(lemma, "")
                 if sent and not db.get_sentence_audio_filename(existing_id):
                     try:
-                        await synthesize_cloze_audios(db, existing_id, sent, lemma_to_first_surface.get(lemma, lemma))
+                        await synthesize_cloze_audios(
+                            db,
+                            existing_id,
+                            sent,
+                            lemma_to_first_surface.get(lemma, lemma),
+                            voice=get_tts_voice(lesson.language_code),
+                        )
                     except Exception:
                         _logger.warning("Failed to synthesize cloze audio for %r", lemma)
                 continue
@@ -581,7 +597,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             kp_id = db.get_collocation_id_by_guid(
                 compute_guid(unit.text, lesson.language_code, unit.disambig_key or "")
             )
-            await _generate_add_time_media(db, llm, kp_id, unit, used_image_urls=used_image_urls)
+            await _generate_add_time_media(
+                db, llm, kp_id, unit, language_code=lesson.language_code, used_image_urls=used_image_urls
+            )
             created_count += 1
         else:
             if existing.syntactic_unit.card_type == "cloze":
@@ -876,7 +894,7 @@ async def create_item(body: CreateItemRequest, request: Request):
     # Complete the card now (image + audio) so it renders in /review without a
     # sync — the user added it in TunaTale; it shouldn't depend on Anki.
     llm = getattr(request.app.state, "llm", None)
-    await _generate_add_time_media(db, llm, row_id, unit)
+    await _generate_add_time_media(db, llm, row_id, unit, language_code=body.language_code)
     img = db.get_image_filename(row_id)
     image_url = f"/api/srs/media/{img}" if img else None
     aud = db.get_audio_filename(row_id)
@@ -912,12 +930,12 @@ async def _persist_new_card(
 
     if synthesize and was_created:
         try:
-            await synthesize_cloze_audios(db, coll_id, audio_sentence, audio_word)
+            await synthesize_cloze_audios(db, coll_id, audio_sentence, audio_word, voice=get_tts_voice(language_code))
         except Exception:
             _logger.warning("Failed to synthesize cloze audio for %r", unit.text)
 
     if was_created:
-        await _generate_add_time_media(db, llm, coll_id, unit)
+        await _generate_add_time_media(db, llm, coll_id, unit, language_code=language_code)
 
     result = db.get_collocation_by_id(coll_id)
     if result is None:  # pragma: no cover — defensive; id came from get_collocation_id_by_guid

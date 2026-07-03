@@ -73,6 +73,7 @@ async def generate_vocab_media(
     *,
     llm: Any,
     pixabay_key: str,
+    language_code: str = "sl",
     source_sentence: str = "",
     grammar: str = "",
     used_image_urls: set[str] | None = None,
@@ -108,6 +109,7 @@ async def generate_vocab_media(
             word,
             english,
             pixabay_key=pixabay_key,
+            language_code=language_code,
             used_image_urls=used_image_urls,
             image_query=image_query,
         )

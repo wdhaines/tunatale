@@ -3399,7 +3399,7 @@ class TestClozeTTSIntegration:
         """New function-word cloze card is created even if TTS fails."""
         import app.api.srs as srs_mod
 
-        async def _broken_synth(db, collocation_id, sentence, word):
+        async def _broken_synth(db, collocation_id, sentence, word, *, voice=None):
             raise RuntimeError("TTS failed")
 
         monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", _broken_synth)
@@ -3451,13 +3451,52 @@ class TestClozeTTSIntegration:
         coll = db.get_collocation_by_lemma("kje")
         assert coll is not None
 
+    async def test_listen_threads_language_voice_into_cloze_synth(self, monkeypatch):
+        """Backlog #28: cloze audio is synthesized in the lesson language's voice,
+        not the hardcoded Slovene default (guards the srs.py call-site wiring)."""
+        import app.api.srs as srs_mod
+
+        captured: list[str | None] = []
+
+        async def _capture(db, collocation_id, sentence, word, *, voice=None):
+            captured.append(voice)
+
+        monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", _capture)
+
+        from app.models.lesson import Lesson, Phrase, Section, SectionType
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="Kje je banka?", voice_id="female-1", language_code="sl", role="female-1")],
+                )
+            ],
+            key_phrases=[],
+        )
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-ctv", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-ctv"})
+        assert response.status_code == 200
+        # Every synth call for a Slovene lesson uses the Slovene voice.
+        assert captured and all(v == "sl-SI-PetraNeural" for v in captured)
+
     async def test_listen_tolerates_synthesizer_error_existing_cloze(self, monkeypatch):
         """Existing cloze card audio backfill failure doesn't crash the endpoint."""
         import app.api.srs as srs_mod
 
         calls = [0]
 
-        async def _succeed_once_then_fail(db, collocation_id, sentence, word):
+        async def _succeed_once_then_fail(db, collocation_id, sentence, word, *, voice=None):
             calls[0] += 1
             if calls[0] > 1:
                 raise RuntimeError("TTS failed on second call")

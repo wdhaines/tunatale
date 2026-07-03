@@ -67,6 +67,21 @@ class TestExtractMp3Url:
         assert isinstance(client, httpx.Client)
         client.close()
 
+    def test_matches_requested_language_container(self):
+        # Backlog #28: a Norwegian card must scrape the "no" section, not "sl".
+        b64 = _b64("audios/mp3/norsk.mp3")
+        html = f'<div id="language-container-no"><article><span onclick="Play(1,\'{b64}\')"></span></article></div>'
+        assert (
+            _extract_mp3_url(html, "hotell", language_code="no") == "https://audio00.forvo.com/mp3/audios/mp3/norsk.mp3"
+        )
+
+    def test_returns_none_when_only_other_language_container_present(self):
+        # A "no"-only page must NOT hand back a URL when Slovene is requested —
+        # this is the bug where a dual-language word ("hotel") got the wrong voice.
+        b64 = _b64("audios/mp3/norsk.mp3")
+        html = f'<div id="language-container-no"><article><span onclick="Play(1,\'{b64}\')"></span></article></div>'
+        assert _extract_mp3_url(html, "hotell", language_code="sl") is None
+
 
 # ── fetch_forvo_audio ──────────────────────────────────────────────────────────
 

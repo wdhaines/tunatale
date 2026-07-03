@@ -4,8 +4,29 @@ import pytest
 
 from app.audio.preprocessing.norwegian import NorwegianPreprocessor
 from app.audio.preprocessing.slovene import SlovenePreprocessor
-from app.languages import get_deck_name, get_language, get_preprocessor, get_vocab_notetype
+from app.languages import get_deck_name, get_language, get_preprocessor, get_tts_voice, get_vocab_notetype
 from app.models.language import Language
+
+
+class TestGetTtsVoice:
+    def test_returns_slovene_female_voice_by_default(self):
+        # The default role ("female-1") must equal the old hardcoded DEFAULT_VOICE
+        # so every media caller relying on the "sl" default keeps its behavior.
+        assert get_tts_voice("sl") == "sl-SI-PetraNeural"
+
+    def test_returns_norwegian_female_voice(self):
+        assert get_tts_voice("no") == "nb-NO-PernilleNeural"
+
+    def test_returns_requested_role(self):
+        assert get_tts_voice("no", role="male-1") == "nb-NO-FinnNeural"
+
+    def test_raises_keyerror_for_unknown_code(self):
+        with pytest.raises(KeyError, match="xyz"):
+            get_tts_voice("xyz")
+
+    def test_raises_valueerror_for_missing_role(self):
+        with pytest.raises(ValueError, match="no-such-role"):
+            get_tts_voice("sl", role="no-such-role")
 
 
 class TestGetLanguage:

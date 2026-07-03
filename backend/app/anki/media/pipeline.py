@@ -9,10 +9,12 @@ from typing import Any
 
 import anyio
 
+from app.languages import get_tts_voice
+
 from .forvo import fetch_forvo_audio
 from .normalize import normalize_audio
 from .pixabay import fetch_pixabay_image
-from .tts import DEFAULT_VOICE, generate_tts_audio
+from .tts import generate_tts_audio
 
 
 @dataclass
@@ -29,8 +31,9 @@ async def fetch_card_media(
     english: str,
     *,
     pixabay_key: str,
+    language_code: str = "sl",
     http_client: Any = None,
-    tts_voice: str = DEFAULT_VOICE,
+    tts_voice: str | None = None,
     normalize: bool = True,
     used_image_urls: set[str] | None = None,
     image_query: str | None = None,
@@ -53,18 +56,23 @@ async def fetch_card_media(
     tts_fn = _tts_fn or generate_tts_audio
     pixabay_fn = _pixabay_fn or fetch_pixabay_image
     norm_fn = _normalize_fn or normalize_audio
+    # Resolve the synthesis voice from the card's language so a non-Slovene card
+    # never gets Slovene TTS. Callers may still override explicitly (tests).
+    voice = tts_voice or get_tts_voice(language_code)
 
     result = MediaResult()
 
     # Forvo / Pixabay / normalize are synchronous (httpx.Client, ffmpeg
     # subprocess) — offload to a worker thread so a slow fetch doesn't block
     # the event loop and stall every other in-flight request.
-    audio = await anyio.to_thread.run_sync(partial(forvo_fn, word, http_client=http_client))
+    audio = await anyio.to_thread.run_sync(
+        partial(forvo_fn, word, language_code=language_code, http_client=http_client)
+    )
     if audio is not None:
         result.audio_source = "forvo"
         result.audio_bytes = audio
     else:
-        audio = await tts_fn(word, voice=tts_voice)
+        audio = await tts_fn(word, voice=voice)
         if audio is not None:
             result.audio_source = "tts"
             result.audio_bytes = audio

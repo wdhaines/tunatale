@@ -18,7 +18,7 @@ def _make_fakes(
 ):
     """Return (forvo_fn, tts_fn, pixabay_fn, normalize_fn) configured fakes."""
 
-    def fake_forvo(word, *, http_client=None):
+    def fake_forvo(word, *, language_code="sl", http_client=None):
         return forvo_returns
 
     async def fake_tts(text, *, voice=None):
@@ -34,6 +34,72 @@ def _make_fakes(
 
 
 # ── TestFetchCardMedia ─────────────────────────────────────────────────────────
+
+
+class TestLanguageThreading:
+    """Backlog #28: language_code selects the Forvo section + TTS voice."""
+
+    async def test_resolves_tts_voice_from_language_code(self):
+        captured_voice: list[str | None] = []
+
+        def fake_forvo(word, *, language_code="sl", http_client=None):
+            return None  # force TTS fallback
+
+        async def recording_tts(text, *, voice=None):
+            captured_voice.append(voice)
+            return b"tts_mp3"
+
+        await fetch_card_media(
+            "hotell",
+            "hotel",
+            pixabay_key="key",
+            language_code="no",
+            _forvo_fn=fake_forvo,
+            _tts_fn=recording_tts,
+            _pixabay_fn=lambda *a, **k: None,
+        )
+        assert captured_voice == ["nb-NO-PernilleNeural"]
+
+    async def test_threads_language_code_to_forvo(self):
+        captured_lang: list[str] = []
+
+        def recording_forvo(word, *, language_code="sl", http_client=None):
+            captured_lang.append(language_code)
+            return b"forvo_mp3"
+
+        async def fake_tts(text, *, voice=None):
+            return None
+
+        await fetch_card_media(
+            "hotell",
+            "hotel",
+            pixabay_key="key",
+            language_code="no",
+            _forvo_fn=recording_forvo,
+            _tts_fn=fake_tts,
+            _pixabay_fn=lambda *a, **k: None,
+            _normalize_fn=lambda b, **k: b,
+        )
+        assert captured_lang == ["no"]
+
+    async def test_explicit_tts_voice_overrides_language_default(self):
+        captured_voice: list[str | None] = []
+
+        async def recording_tts(text, *, voice=None):
+            captured_voice.append(voice)
+            return b"tts_mp3"
+
+        await fetch_card_media(
+            "voda",
+            "water",
+            pixabay_key="key",
+            language_code="no",
+            tts_voice="custom-voice",
+            _forvo_fn=lambda *a, **k: None,
+            _tts_fn=recording_tts,
+            _pixabay_fn=lambda *a, **k: None,
+        )
+        assert captured_voice == ["custom-voice"]
 
 
 class TestFetchCardMedia:
@@ -383,7 +449,7 @@ class TestEventLoopLiveness:
                 await asyncio.sleep(0.01)
                 ticks += 1
 
-        def slow_forvo(word, *, http_client=None):
+        def slow_forvo(word, *, language_code="sl", http_client=None):
             time.sleep(0.2)  # simulates a slow Forvo HTTP round-trip
             return b"audio"
 
