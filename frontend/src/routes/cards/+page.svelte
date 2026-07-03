@@ -13,6 +13,7 @@
 	let page = $state(0);
 	let items = $state<SRSItemDetail[]>([]);
 	let total = $state(0);
+	let fetchSeq = 0;
 	let selected = $state<Set<number>>(new Set());
 	let editingId = $state<number | null>(null);
 	let editText = $state('');
@@ -32,6 +33,7 @@
 	let lastSearch = $state('');
 
 	async function loadItems() {
+		const seq = ++fetchSeq;
 		loading = true;
 		error = null;
 		try {
@@ -47,13 +49,14 @@
 				api.listSRSItems(params),
 				api.fetchQueueStats().catch(() => null),
 			]);
+			if (seq !== fetchSeq) return;
 			items = data.items;
 			total = data.total;
 			if (stats) queueStats = stats;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
-			loading = false;
+			if (seq === fetchSeq) loading = false;
 		}
 	}
 
@@ -63,7 +66,8 @@
 		const _order = order;
 		const _page = page;
 		const _stateFilter = stateFilter;
-		void _sort, _order, _page, _stateFilter;
+		const _lastSearch = lastSearch;
+		void _sort, _order, _page, _stateFilter, _lastSearch;
 		loadItems();
 	});
 
@@ -71,8 +75,6 @@
 		clearTimeout(debounceTimer);
 		debounceTimer = setTimeout(() => {
 			lastSearch = search;
-			page = 0;
-			loadItems();
 		}, 250);
 	}
 

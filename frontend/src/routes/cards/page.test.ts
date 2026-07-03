@@ -74,9 +74,53 @@ describe("cards/+page.svelte", () => {
     expect(await findByText("hvala")).toBeTruthy();
   });
 
+  it("stale-response race: a slow earlier fetch does not overwrite a fast later fetch", async () => {
+    let resolveStale: (v: unknown) => void;
+    const stalePromise = new Promise((resolve) => {
+      resolveStale = resolve;
+    });
+    // Distinct payloads so the assertion can tell which fetch won.
+    const staleItems = {
+      items: [makeSRSItemDetail({ id: 1, text: "STALE-DATA" })],
+      total: 1,
+    };
+    const freshItems = {
+      items: [makeSRSItemDetail({ id: 2, text: "hvala" })],
+      total: 1,
+    };
+    // Earlier fetch is slow (stale); the later fetch resolves immediately (fresh).
+    mockList
+      .mockReturnValueOnce(stalePromise as ReturnType<typeof api.listSRSItems>)
+      .mockReturnValueOnce(Promise.resolve(freshItems));
+
+    const { findByText, queryByText } = render(CardsPage);
+    await vi.waitFor(() => {
+      expect(mockList).toHaveBeenCalledTimes(2);
+    });
+    // The later (fresh) fetch lands first and renders.
+    await findByText("hvala");
+
+    // The earlier (stale) fetch resolves LAST, with different data — the
+    // sequence-token guard must discard it rather than clobber the fresh rows.
+    resolveStale!(staleItems);
+    // Fully drain the stale resolution (promise chain + Svelte DOM flush) so
+    // that IF the guard were missing, STALE-DATA would have rendered by now.
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+    await flushMicrotasks();
+    expect(queryByText("STALE-DATA")).toBeNull();
+    expect(await findByText("hvala")).toBeTruthy();
+  });
+
   it("formats due_at as a short human-readable date (no raw ISO)", async () => {
     mockList.mockResolvedValue({
-      items: [makeSRSItemDetail({ id: 1, text: "Bog", due_at: "2026-09-15T04:00:00+00:00" })],
+      items: [
+        makeSRSItemDetail({
+          id: 1,
+          text: "Bog",
+          due_at: "2026-09-15T04:00:00+00:00",
+        }),
+      ],
       total: 1,
     });
     const { findByText, queryByText } = render(CardsPage);
@@ -131,7 +175,10 @@ describe("cards/+page.svelte", () => {
   });
 
   it("typing in search re-queries after debounce", async () => {
-    mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: "zdravo" })], total: 1 });
+    mockList.mockResolvedValue({
+      items: [makeSRSItemDetail({ id: 1, text: "zdravo" })],
+      total: 1,
+    });
     const { getByPlaceholderText } = render(CardsPage);
     const input = getByPlaceholderText(/Search/);
 
@@ -147,7 +194,10 @@ describe("cards/+page.svelte", () => {
   });
 
   it("clicking column header flips sort order", async () => {
-    mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: "a" })], total: 1 });
+    mockList.mockResolvedValue({
+      items: [makeSRSItemDetail({ id: 1, text: "a" })],
+      total: 1,
+    });
     const { findByText } = render(CardsPage);
 
     // Wait for initial load
@@ -163,9 +213,17 @@ describe("cards/+page.svelte", () => {
   });
 
   it("clicking Edit, changing inputs, clicking Save calls updateSRSItem", async () => {
-    const item = makeSRSItemDetail({ id: 42, text: "zdravo", translation: "trans_zdravo" });
+    const item = makeSRSItemDetail({
+      id: 42,
+      text: "zdravo",
+      translation: "trans_zdravo",
+    });
     mockList.mockResolvedValue({ items: [item], total: 1 });
-    mockUpdate.mockResolvedValue({ ...item, text: "Zdravo!", translation: "Hello!" });
+    mockUpdate.mockResolvedValue({
+      ...item,
+      text: "Zdravo!",
+      translation: "Hello!",
+    });
 
     const { findByText, findByLabelText, getAllByRole } = render(CardsPage);
     await findByText("zdravo");
@@ -185,7 +243,10 @@ describe("cards/+page.svelte", () => {
     await fireEvent.click(saveBtn);
 
     await waitFor(() => {
-      expect(mockUpdate).toHaveBeenCalledWith(42, { text: "Zdravo!", translation: "Hello!" });
+      expect(mockUpdate).toHaveBeenCalledWith(42, {
+        text: "Zdravo!",
+        translation: "Hello!",
+      });
     });
   });
 
@@ -476,7 +537,11 @@ describe("cards/+page.svelte", () => {
   });
 
   it("shows Unsuspend button for a suspended item and calls suspendSRSItem(id, false)", async () => {
-    const item = makeSRSItemDetail({ id: 20, text: "kava", state: "suspended" });
+    const item = makeSRSItemDetail({
+      id: 20,
+      text: "kava",
+      state: "suspended",
+    });
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockSuspend.mockResolvedValue({ ...item, state: "new" });
 
@@ -493,7 +558,10 @@ describe("cards/+page.svelte", () => {
   });
 
   it("clicking same sort column twice flips order from asc to desc then back to asc", async () => {
-    mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: "a" })], total: 1 });
+    mockList.mockResolvedValue({
+      items: [makeSRSItemDetail({ id: 1, text: "a" })],
+      total: 1,
+    });
 
     const { findByText } = render(CardsPage);
     await findByText("a");
@@ -518,7 +586,10 @@ describe("cards/+page.svelte", () => {
   });
 
   it("clicking a different sort column changes sort to that column", async () => {
-    mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: "a" })], total: 1 });
+    mockList.mockResolvedValue({
+      items: [makeSRSItemDetail({ id: 1, text: "a" })],
+      total: 1,
+    });
 
     const { findByText } = render(CardsPage);
     await findByText("a");
@@ -605,7 +676,10 @@ describe("cards/+page.svelte", () => {
 
   it("clicking next/prev pagination changes the page", async () => {
     // total > PAGE_SIZE (50) to enable next button
-    mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: "a" })], total: 100 });
+    mockList.mockResolvedValue({
+      items: [makeSRSItemDetail({ id: 1, text: "a" })],
+      total: 100,
+    });
 
     const { findByText } = render(CardsPage);
     await findByText("page 1 / 2");
@@ -624,7 +698,10 @@ describe("cards/+page.svelte", () => {
   });
 
   it("clicking state, due, and reps sort columns each trigger a reload", async () => {
-    mockList.mockResolvedValue({ items: [makeSRSItemDetail({ id: 1, text: "a" })], total: 1 });
+    mockList.mockResolvedValue({
+      items: [makeSRSItemDetail({ id: 1, text: "a" })],
+      total: 1,
+    });
 
     const { findByText } = render(CardsPage);
     await findByText("a");
@@ -709,7 +786,11 @@ describe("cards/+page.svelte", () => {
     });
 
     it("clicking the trigger opens a menu with aria-expanded=true and the four actions", async () => {
-      const item = makeSRSItemDetail({ id: 1, text: "zdravo", state: "review" });
+      const item = makeSRSItemDetail({
+        id: 1,
+        text: "zdravo",
+        state: "review",
+      });
       mockList.mockResolvedValue({ items: [item], total: 1 });
 
       const { findByText, findByLabelText, getByRole } = render(CardsPage);
@@ -807,7 +888,11 @@ describe("cards/+page.svelte", () => {
     });
 
     it("selecting Edit from the menu closes the menu and enters edit mode", async () => {
-      const item = makeSRSItemDetail({ id: 1, text: "zdravo", translation: "hello" });
+      const item = makeSRSItemDetail({
+        id: 1,
+        text: "zdravo",
+        translation: "hello",
+      });
       mockList.mockResolvedValue({ items: [item], total: 1 });
 
       const { findByText, findByLabelText, queryByRole } = render(CardsPage);
@@ -840,7 +925,11 @@ describe("cards/+page.svelte", () => {
     });
 
     it("menu items are real buttons with role=menuitem", async () => {
-      const item = makeSRSItemDetail({ id: 1, text: "zdravo", state: "review" });
+      const item = makeSRSItemDetail({
+        id: 1,
+        text: "zdravo",
+        state: "review",
+      });
       mockList.mockResolvedValue({ items: [item], total: 1 });
 
       const { findByText, findByLabelText, getAllByRole } = render(CardsPage);
