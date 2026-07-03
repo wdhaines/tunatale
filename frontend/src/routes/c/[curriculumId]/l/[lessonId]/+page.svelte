@@ -39,6 +39,7 @@
 	let regenLoading = $state(false);
 	let syncStatus = $state('');
 	let error = $state('');
+	let wordActionInFlight = $state(false);
 
 	let isListened = $derived(listenedStore.has(data.lesson.id));
 
@@ -146,6 +147,8 @@
 	);
 
 	async function handleWordClick(word: import('$lib/api').WordToken, lineIndex: number) {
+		if (wordActionInFlight) return;
+		wordActionInFlight = true;
 		error = '';
 		try {
 			if (word.active_state === 'unknown') {
@@ -181,10 +184,14 @@
 			queueStatsStore.refresh();
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			wordActionInFlight = false;
 		}
 	}
 
 	async function handleCollocationStateChange(span_id: number) {
+		if (wordActionInFlight) return;
+		wordActionInFlight = true;
 		error = '';
 		try {
 			await api.submitDrill(span_id, 'recognition', 'good');
@@ -192,6 +199,8 @@
 			transcript = await api.getLessonTranscript(data.lesson.id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			wordActionInFlight = false;
 		}
 	}
 

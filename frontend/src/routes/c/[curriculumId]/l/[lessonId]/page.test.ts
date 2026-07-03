@@ -765,6 +765,30 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       });
     });
 
+    it("double-click guard prevents a second submission while the first is in-flight", async () => {
+      const t = makeTranscriptWithWord({
+        active_state: "learning",
+        active_direction: "recognition",
+        is_due: true,
+        srs_item_id: 42,
+      });
+      // Return a hanging promise so the first call stays in-flight.
+      mockSubmitDrill.mockReturnValue(new Promise(() => {}));
+      mockGetTranscript.mockResolvedValue(t);
+
+      const { findByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: t } },
+      });
+
+      const btn = await findByRole("button", { name: "Got it ✓" });
+      await fireEvent.click(btn);
+      await fireEvent.click(btn);
+
+      await vi.waitFor(() => {
+        expect(mockSubmitDrill).toHaveBeenCalledTimes(1);
+      });
+    });
+
     it("shows error when submitDrill throws", async () => {
       const t = makeTranscriptWithWord({
         active_state: "learning",
@@ -854,6 +878,23 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await waitFor(() => {
         expect(mockSubmitDrill).toHaveBeenCalledWith(77, "recognition", "good");
         expect(mockGetTranscript).toHaveBeenCalledWith("l1");
+      });
+    });
+
+    it("double-tap guard prevents a second collocation submission", async () => {
+      mockSubmitDrill.mockReturnValue(new Promise(() => {}));
+      mockGetTranscript.mockResolvedValue(transcriptWithCollocation);
+
+      const { findByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: transcriptWithCollocation } },
+      });
+
+      const btn = await findByRole("button", { name: "Got it ✓" });
+      await fireEvent.click(btn);
+      await fireEvent.click(btn);
+
+      await vi.waitFor(() => {
+        expect(mockSubmitDrill).toHaveBeenCalledTimes(1);
       });
     });
 
