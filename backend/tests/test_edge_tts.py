@@ -3,6 +3,9 @@
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import aiohttp
+import edge_tts
+
 from app.audio.edge_tts import EdgeTTSService
 from app.audio.ports import TTSService
 
@@ -123,6 +126,58 @@ async def test_synthesize_retries_on_transient_error(tmp_path):
         async def maybe_fail(path):
             if attempt < 2:
                 raise ConnectionResetError("transient")
+            Path(path).write_bytes(b"audio")
+
+        mock.save = maybe_fail
+        return mock
+
+    with patch("app.audio.edge_tts.edge_tts.Communicate", side_effect=make_communicate):
+        await svc.synthesize("test", "sl-SI-PetraNeural", output)
+
+    assert output.exists()
+    assert attempt == 2
+
+
+async def test_synthesize_retries_on_edge_tts_exception(tmp_path):
+    """EdgeTTSException (e.g. NoAudioReceived) triggers retry."""
+    svc = EdgeTTSService()
+    output = tmp_path / "out.mp3"
+    attempt = 0
+
+    def make_communicate(text, voice, rate):
+        nonlocal attempt
+        attempt += 1
+        mock = AsyncMock()
+
+        async def maybe_fail(path):
+            if attempt < 2:
+                raise edge_tts.exceptions.NoAudioReceived("empty")
+            Path(path).write_bytes(b"audio")
+
+        mock.save = maybe_fail
+        return mock
+
+    with patch("app.audio.edge_tts.edge_tts.Communicate", side_effect=make_communicate):
+        await svc.synthesize("test", "sl-SI-PetraNeural", output)
+
+    assert output.exists()
+    assert attempt == 2
+
+
+async def test_synthesize_retries_on_aiohttp_client_error(tmp_path):
+    """aiohttp.ClientError triggers retry."""
+    svc = EdgeTTSService()
+    output = tmp_path / "out.mp3"
+    attempt = 0
+
+    def make_communicate(text, voice, rate):
+        nonlocal attempt
+        attempt += 1
+        mock = AsyncMock()
+
+        async def maybe_fail(path):
+            if attempt < 2:
+                raise aiohttp.ClientError("transient http error")
             Path(path).write_bytes(b"audio")
 
         mock.save = maybe_fail

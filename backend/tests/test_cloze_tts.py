@@ -202,6 +202,35 @@ async def test_synthesize_marks_audio_dirty(monkeypatch, tmp_path):
     assert "audio" in dirty.split(",")
 
 
+async def test_synthesize_handles_missing_guid_gracefully(monkeypatch, tmp_path):
+    """When get_guid_by_collocation_id returns None, synthesize does not crash."""
+    from unittest.mock import MagicMock
+
+    from app.srs.database import SRSDatabase
+
+    db = SRSDatabase(":memory:")
+    collocation_id = _add_cloze_collocation(db)
+
+    async def _fake_tts(text, voice="sl-SI-PetraNeural"):
+        return b"fake-mp3"
+
+    import app.audio.cloze_tts as cloze_tts_mod
+
+    monkeypatch.setattr(cloze_tts_mod, "generate_tts_audio", _fake_tts)
+    db.add_dirty_field = MagicMock()
+    monkeypatch.setattr(db, "get_guid_by_collocation_id", lambda _: None)
+
+    await synthesize_cloze_audios(db, collocation_id, "Odprto je vsak dan", "vsak", media_dir=tmp_path)
+
+    with db._get_conn() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM media WHERE collocation_id = ?",
+            (collocation_id,),
+        ).fetchone()[0]
+    assert count == 2  # sentence + word: wrote_sentence is True, but dirty-field skipped
+    db.add_dirty_field.assert_not_called()
+
+
 async def test_synthesize_idempotent_dirty_marking(monkeypatch, tmp_path):
     """Re-running synthesize_cloze_audios does not duplicate the 'audio' token in dirty_fields."""
     from app.srs.database import SRSDatabase

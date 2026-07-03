@@ -28,7 +28,7 @@ def _make_client() -> httpx.Client:
     return httpx.Client(headers=_DEFAULT_HEADERS)
 
 
-def _extract_mp3_url(html: str, word: str, *, language_code: str = "sl") -> str | None:
+def _extract_mp3_url(html: str, *, language_code: str = "sl") -> str | None:
     """Parse Forvo HTML for a Play() call in *language_code*'s section. URL or None."""
     container = f"language-container-{language_code}"
     lang_idx = max(
@@ -58,7 +58,7 @@ def fetch_forvo_audio(word: str, *, language_code: str = "sl", http_client: http
         encoded = urllib.parse.quote(word)
         resp = client.get(f"{_FORVO_BASE}/word/{encoded}/", timeout=15)
         resp.raise_for_status()
-        mp3_url = _extract_mp3_url(resp.text, word, language_code=language_code)
+        mp3_url = _extract_mp3_url(resp.text, language_code=language_code)
         if mp3_url is None:
             return None
         r = client.get(mp3_url, timeout=20)

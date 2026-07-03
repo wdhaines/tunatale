@@ -41,7 +41,7 @@ def _minimal_lesson() -> Lesson:
 def _make_renderer(mock_tts):
     return LessonRenderer(
         tts=mock_tts,
-        preprocessor=SlovenePreprocessor(),
+        preprocessors={"sl": SlovenePreprocessor()},
         pause_calculator=NaturalPauseCalculator(),
     )
 
@@ -103,7 +103,7 @@ class TestLessonRenderer:
         # WAV baseline for size comparison
         wav_rdr = LessonRenderer(
             tts=mock_tts,
-            preprocessor=SlovenePreprocessor(),
+            preprocessors={"sl": SlovenePreprocessor()},
             pause_calculator=NaturalPauseCalculator(),
         )
         wav_out = tmp_path / "lesson.wav"
@@ -111,7 +111,7 @@ class TestLessonRenderer:
 
         opus_rdr = LessonRenderer(
             tts=mock_tts,
-            preprocessor=SlovenePreprocessor(),
+            preprocessors={"sl": SlovenePreprocessor()},
             pause_calculator=NaturalPauseCalculator(),
             delivery_codec="opus",
             delivery_bitrate="28k",
@@ -136,7 +136,7 @@ class TestLessonRenderer:
 
         rdr = LessonRenderer(
             tts=mock_tts,
-            preprocessor=SlovenePreprocessor(),
+            preprocessors={"sl": SlovenePreprocessor()},
             pause_calculator=NaturalPauseCalculator(),
             delivery_codec="opus",
         )
@@ -206,7 +206,7 @@ class TestLessonRenderer:
 
         rdr = LessonRenderer(
             tts=mock_tts,
-            preprocessor=SlovenePreprocessor(),
+            preprocessors={"sl": SlovenePreprocessor()},
             pause_calculator=zero_calc,
         )
         output = tmp_path / "nopause.wav"

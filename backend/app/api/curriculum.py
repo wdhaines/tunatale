@@ -6,6 +6,7 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.api._serializers import serialize_lesson
 from app.api.models import (
     ImportPlanRequest,
     PlanFeedbackRequest,
@@ -192,19 +193,4 @@ async def get_lesson_by_day(curriculum_id: str, day: int, request: Request):
     if result is None:
         raise HTTPException(status_code=404, detail=f"No lesson found for day {day}")
     lesson_id, lesson = result
-    return {
-        "id": lesson_id,
-        "title": lesson.title,
-        "language_code": lesson.language_code,
-        "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in lesson.key_phrases],
-        "sections": [
-            {
-                "type": s.section_type.value,
-                "phrases": [
-                    {"text": p.text, "role": p.role, "language_code": p.language_code, "voice_id": p.voice_id}
-                    for p in s.phrases
-                ],
-            }
-            for s in lesson.sections
-        ],
-    }
+    return serialize_lesson(lesson_id, lesson)

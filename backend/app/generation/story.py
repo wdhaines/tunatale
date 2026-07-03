@@ -110,7 +110,17 @@ class StoryGenerator:
             build_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
         ]
 
-        kp_infos = [KeyPhraseInfo(phrase=kp["phrase"], translation=kp["translation"]) for kp in key_phrases]
+        kp_infos = []
+        for kp in key_phrases:
+            if not isinstance(kp, dict):
+                logger.warning("Skipping non-dict key phrase: %r", kp)
+                continue
+            phrase = kp.get("phrase", "")
+            translation = kp.get("translation", "")
+            if not phrase or not translation:
+                logger.warning("Skipping key phrase with missing phrase or translation: %r", kp)
+                continue
+            kp_infos.append(KeyPhraseInfo(phrase=phrase, translation=translation))
 
         glosses = data.get("dialogue_glosses", [])
         lemmatizer = get_lemmatizer()

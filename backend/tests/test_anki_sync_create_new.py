@@ -752,7 +752,6 @@ class TestSyncCreateNewRouting:
         morph_cloze_sentence = make_morphology_cloze_text(
             "Ljubljano",
             "ljubljana",
-            "noun:acc:sg",
             "Grem v Ljubljano s prijateljem.",
         )
         grammar_hint = format_morphology_hint("ljubljana", "noun:acc:sg")

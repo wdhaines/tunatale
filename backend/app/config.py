@@ -65,9 +65,7 @@ class Settings(BaseSettings):
     # anki/protobuf breaks on the latest.
     anki_subprocess_python: str = "3.14"
 
-    anki_connect_url: str = "http://127.0.0.1:8765"
     anki_model_name: str = ""
-    forvo_api_key: str = ""
     pixabay_api_key: str = ""
     # lowercase (default) | classla (Slovene) | stanza (Norwegian + other Stanza
     # langs, wired to target_language). One engine per process — see get_lemmatizer.

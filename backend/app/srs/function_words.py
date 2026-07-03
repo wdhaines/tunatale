@@ -245,7 +245,6 @@ def format_morphology_hint(lemma: str, feature: str) -> str:
 def make_morphology_cloze_text(
     surface: str,
     lemma: str,
-    feature: str,
     source_sentence: str,
 ) -> str:
     """Wrap ``surface`` with a plain cloze: ``{{c1::sem}}``.

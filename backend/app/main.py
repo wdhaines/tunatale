@@ -95,7 +95,8 @@ async def lifespan(app: FastAPI):
         groq_model=settings.llm_model,
         groq_extra_body_params=reasoning_params_for_model(settings.llm_model),
     )
-    cassette_path = Path("tests/cassettes/e2e.json")
+    _BACKEND_DIR = Path(__file__).parent.parent
+    cassette_path = _BACKEND_DIR / "tests/cassettes/e2e.json"
 
     # Wrap with cassettes unless explicitly in live mode
     if settings.llm_mode != "live":
@@ -130,14 +131,15 @@ async def lifespan(app: FastAPI):
     app.state.llm = llm
     app.state.curriculum_planner = CurriculumPlanner(llm)
     app.state.story_generator = StoryGenerator(llm)
+    preprocessors = {code: get_preprocessor(code) for code in db_map}
     app.state.renderer = LessonRenderer(
         tts=EdgeTTSService(),
-        preprocessor=get_preprocessor(default_code),
+        preprocessors=preprocessors,
         pause_calculator=NaturalPauseCalculator(),
         delivery_codec=settings.audio_delivery_codec,
         delivery_bitrate=settings.audio_delivery_bitrate,
     )
-    app.state.audio_dir = Path("output/audio")
+    app.state.audio_dir = _BACKEND_DIR / "output/audio"
 
     # Warm the lemmatizer in the background so the first /listen or /transcript request
     # doesn't pay the model-load cost. Critically, this must NOT be awaited before the

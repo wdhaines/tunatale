@@ -95,13 +95,13 @@ class LessonRenderer:
     def __init__(
         self,
         tts: TTSService,
-        preprocessor: TextPreprocessor,
+        preprocessors: dict[str, TextPreprocessor],
         pause_calculator: NaturalPauseCalculator,
         delivery_codec: str = "wav",
         delivery_bitrate: str = "28k",
     ) -> None:
         self._tts = tts
-        self._preprocessor = preprocessor
+        self._preprocessors = preprocessors
         self._calc = pause_calculator
         self._delivery_codec = delivery_codec
         self._delivery_bitrate = delivery_bitrate
@@ -118,21 +118,21 @@ class LessonRenderer:
         else:
             path.write_bytes(encode_audio(audio.samples, audio.rate, self._delivery_codec, self._delivery_bitrate))
 
-    async def _render_section(self, section: Section, tmp: Path, section_idx: int) -> _Audio:
+    async def _render_section(self, section: Section, tmp: Path, section_idx: int, language_code: str = "sl") -> _Audio:
         """Render a single section to an audio buffer (no boundary silence).
 
         Args:
             section: The Section to render.
             tmp: Temp directory for intermediate TTS files.
             section_idx: Index used for temp file naming.
+            language_code: Language code for preprocessor lookup.
 
         Returns:
             Audio buffer containing all phrases with inter-phrase pauses.
         """
+        preprocessor = self._preprocessors.get(language_code, next(iter(self._preprocessors.values())))
         phrase_files = [tmp / f"s{section_idx}_p{i}.mp3" for i in range(len(section.phrases))]
-        processed_texts = [
-            self._preprocessor.preprocess(phrase.text, section.section_type) for phrase in section.phrases
-        ]
+        processed_texts = [preprocessor.preprocess(phrase.text, section.section_type) for phrase in section.phrases]
 
         # Synthesize all phrases in this section concurrently.
         # EdgeTTSService._semaphore limits total concurrent requests globally.
@@ -195,7 +195,10 @@ class LessonRenderer:
             t0 = time.perf_counter()
             section_audios: list[_Audio] = list(
                 await asyncio.gather(
-                    *[self._render_section(section, tmp, i) for i, section in enumerate(lesson.sections)]
+                    *[
+                        self._render_section(section, tmp, i, language_code=lesson.language_code)
+                        for i, section in enumerate(lesson.sections)
+                    ]
                 )
             )
             logger.debug("All sections TTS → %.0f ms", (time.perf_counter() - t0) * 1000)

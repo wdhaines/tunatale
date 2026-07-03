@@ -18,11 +18,11 @@ ROI = user-facing value ÷ effort, with risk as a gate. Owner tags:
 **[Claude]** = keep in-house — parity/danger-zone, a cassette re-record, or an
 unresolved load-bearing decision. **[BP]** = Big-Pickle-ready — prescriptive
 brief + guardrail test, outside the Anki/sync danger zone (the standing
-[[feedback_big_pickle_readiness_rubric]]). Of the 18 remaining OPEN items, 16
-are BP-ready; **the only items that genuinely need Claude** are #10 and #18
-(both force a cassette re-record) and the two danger-zone observations (parity
-code — oracle harness green before/after). #25 is BP-drafts-Claude-reviews.
-Everything in Tiers 1–3 below is dispatchable to Big Pickle as-is.
+[[feedback_big_pickle_readiness_rubric]]). **The only item that genuinely needs
+Claude** is now **#18** (the cassette re-record — #10 landed without one) plus
+the two danger-zone observations (parity code — oracle harness green
+before/after). #25 is BP-drafts-Claude-reviews. Everything else in Tiers 1–3 is
+dispatchable to Big Pickle as-is.
 
 ### Tier 1 — do next (real bugs, low→medium cost, high ROI)
 
@@ -34,43 +34,42 @@ Everything in Tiers 1–3 below is dispatchable to Big Pickle as-is.
 | ~~34~~ | ✅ | Double-tap = double grade | **FIXED 2026-07-03** — `wordActionInFlight` guard + `$effect`-driven refetch in `+page.svelte`. |
 | ~~17~~ | ✅ | Duplicate collocation crashes proposal panel | **FIXED 2026-07-03** — case-insensitive dedup in `_validate_collocations`. |
 | ~~14~~ | ✅ | Re-render deletes audio rows before rendering + disk leak | **FIXED 2026-07-03** — save old rows before render, delete rows+files only after render succeeds. `backend/app/api/audio.py`. |
-| 10 | Claude | `generate_word_gloss` POS-blind | Wrong-sense glosses now (hotel→"to want") — the exact ambiguity sentence-aware lemmatization was meant to kill. Needs a prompt-injection decision + cassette re-record. **Batch with #18** (both re-record). |
+| ~~10~~ | ✅ | `generate_word_gloss` POS-blind | **FIXED 2026-07-03** (commit 3e9de9c) — base-card prompt is now `f"{lemma} ({pos})"`. No re-record needed (gloss is AsyncMock-stubbed, not cassette-backed), so the "batch with #18" note is moot. |
 
 ### Tier 2 — medium ROI
 
 | # | Owner | Item | Note |
 |---|-------|------|------|
-| 5 | BP | Story parse bare `KeyError` → 500 | Skip-and-log malformed key phrases. |
-| 31 | BP | EdgeTTS retry misses edge-tts/aiohttp types | Transient 403/empty-audio fails whole render. Verify base-class names vs the pinned edge-tts first. |
+| ~~5~~ | ✅ | Story parse bare `KeyError` → 500 | **FIXED 2026-07-03** — `.get()` + skip-and-log with `logger.warning` in `section_builder.py` and `story.py`. Guardrail tests in `test_section_builder.py` / `test_story.py`. |
+| ~~31~~ | ✅ | EdgeTTS retry misses edge-tts/aiohttp types | **FIXED 2026-07-03** — retries `EdgeTTSException` + `aiohttp.ClientError`; docstring `max 10 concurrent` fixed. Guardrail tests in `test_edge_tts.py`. |
 | ~~33~~ | ✅ | Cards page stale-response race + double fetch | **FIXED 2026-07-03** — `fetchSeq` token guard + `$effect`-driven refetch in `+page.svelte`. |
-| 20 | BP | Lifespan CWD-relative paths | Same class as the `_tt_settings` relative-db bug; anchor to `__file__`. |
+| ~~20~~ | ✅ | Lifespan CWD-relative paths | **FIXED 2026-07-03** — paths anchored to `__file__` in `main.py`. Guardrail: `app.state.audio_dir.is_absolute()` after lifespan startup. |
 
 ### Tier 3 — low ROI cleanup (batch when a BP is idle; existing tests are the guardrail)
 
 | # | Owner | Item |
 |---|-------|------|
-| 35 | BP | Dead config fields (`anki_connect_url`, `forvo_api_key`) — trivial, grep already clean |
-| 8 | BP | Extract `serialize_lesson` (dup response dicts) |
+| ~~35~~ | ✅ | Dead config fields (`anki_connect_url`, `forvo_api_key`) — trivial, grep already clean | **FIXED 2026-07-03** |
+| ~~8~~ | ✅ | Extract `serialize_lesson` (dup response dicts) | **FIXED 2026-07-03** — `app/api/_serializers.py`; both `get_lesson` and `get_lesson_by_day` use it. |
 | ~~15~~ | ✅ | Extract `_resolve_topic_day` / `_section_title` (dup blocks in audio API) | **FIXED 2026-07-03** — `backend/app/api/audio.py`. |
-| 29 | BP | `cloze_tts` → public `SRSDatabase` helpers (stop reaching into `_get_conn`) |
-| 11 | BP | Drop 4 vestigial params (ruff ARG) |
+| ~~29~~ | ✅ | `cloze_tts` → public `SRSDatabase` helpers (stop reaching into `_get_conn`) | **FIXED 2026-07-03** — added `has_media_row`, `get_guid_by_collocation_id` on `SRSDatabase`. |
+| ~~11~~ | ✅ | Drop 4 vestigial params (ruff ARG) | **FIXED 2026-07-03** |
 | ~~32~~ | ✅ | Filter orphaned planner feedback at prompt-build | **FIXED 2026-07-03** — `build_planner_turn_prompt` filters `feedback` against `existing_days`. |
-| 13-fu | BP | One-shot lowercase `token_glosses` migration for pre-fix lessons |
-| 21 | BP | Renderer preprocessor per-language (latent; harmless while both pass-through) |
+| ~~13-fu~~ | ✅ | One-shot lowercase `token_glosses` migration for pre-fix lessons | **FIXED 2026-07-03** — `app/storage/lowercase_glosses.py` + guardrail tests. |
+| ~~21~~ | ✅ | Renderer preprocessor per-language (latent; harmless while both pass-through) | **FIXED 2026-07-03** — `LessonRenderer` takes `dict[str, TextPreprocessor]`; `_render_section` receives `language_code`. |
 | 25 | BP* | `get_lemmatizer` per-language (latent; *biggest/riskiest BP — Claude reviews the request-scoping change) |
 
 ### Tier 4 — owner-only (Claude), scheduled separately
 
 | # | Owner | Item | Why not BP |
 |---|-------|------|-----------|
-| 18 | Claude | Cassette hash ignores `system_prompt` | Trivial code change but forces a **full cassette re-record** (GROQ_API_KEY + rate-limit babysitting). |
+| 18 | Claude | Cassette hash ignores `system_prompt` | Small code change but forces a live re-record of both cassettes (Groq). **DEFERRED until BP's `fix/backlog-sweep` batch is committed + tree green** — needs a clean full gate to verify and would break the shared cassette mock tests during the record window. Full brief + fresh-chat prompt: §18 below. |
 | — | Claude | 4 AM rollover constant in 3 places (de-dup) | Parity code; oracle harness green before/after. See danger-zone notes. |
 | — | Claude | `date.today()` midnight-vs-4am audit (~10 sites) | Per-call-site parity judgment. See danger-zone notes. |
 
-**Cassette-affecting batch:** #10 and #18 both change LLM prompts/hashes → do
-them in one `--llm-mode=record` session (`export $(grep '^GROQ_API_KEY='
-backend/.env)`), one test file at a time to dodge Groq free-tier 429s, then
-verify plain mock-mode `uv run pytest` is green.
+**Cassette-affecting batch — now just #18.** #10 landed 2026-07-03 with **no**
+re-record (its gloss path is AsyncMock-stubbed, not cassette-backed). #18 remains
+the sole cassette re-record; see §18 for the full plan and the fresh-chat prompt.
 
 ---
 
@@ -152,7 +151,7 @@ nothing parsed. Tests: `test_split_reply_json_valid_fence_before_invalid_bare_fe
 `…before_malformed_json_fence_wins`, `…only_malformed_bare_fence_no_raise`
 (plus the two pre-existing raise tests still pass unchanged).
 
-## 5. OPEN [→ BP · T2] — Story/section parsing can raise bare `KeyError` → 500
+## 5. FIXED [→ BP · T2] — Story/section parsing can raise bare `KeyError` → 500
 
 **Robustness.** `backend/app/generation/story.py::_parse_response` line
 `KeyPhraseInfo(phrase=kp["phrase"], translation=kp["translation"])` trusts LLM
@@ -198,7 +197,7 @@ always has ≥1 chat message. Test: `test_empty_chat_renders_none_yet`.
 `strategy="SIDEWAYS"` → 422; stub generator raising `StoryGenerationError`
 → 502 with the message in `detail`.
 
-## 8. OPEN [→ BP · T3] — Duplicate lesson-serialization dicts
+## 8. FIXED [→ BP · T3] — Duplicate lesson-serialization dicts
 
 **Refactor.** `backend/app/api/generation.py::get_lesson` and
 `backend/app/api/curriculum.py::get_lesson_by_day` build the identical
@@ -216,25 +215,26 @@ it finishes (documented asyncio footgun). Keep a module-level
 `_background_tasks: set[asyncio.Task]` — `task = asyncio.create_task(...);
 _background_tasks.add(task); task.add_done_callback(_background_tasks.discard)`.
 
-## 10. OPEN [→ Claude · T1] — `generate_word_gloss` accepts `pos` but never uses it (POS-blind glosses)
+## 10. FIXED — `generate_word_gloss` was POS-blind (accepted `pos`, never used it)
 
-**Bug (quality).** `backend/app/llm/translate.py::generate_word_gloss` takes
-`pos` ("advisory context" per docstring) and both callers compute and pass a
-real UPOS (`backend/app/api/srs.py:977`, `:1510`) — but `pos` never enters
-either prompt. So the gloss LLM call is POS-blind: lemma `hotel` with
-`pos=NOUN` can still be glossed as the verb "to want" (the exact ambiguity
-class that motivated sentence-aware lemmatization). Fix: when `pos` is
-non-empty, include it in the base-card prompt, e.g. `prompt = f"{lemma} ({pos})"`
-or append "The word is a {pos}." to the system prompt.
+**Fixed 2026-07-03** (commit 3e9de9c). The base-card branch now builds
+`prompt = f"{lemma} ({pos})" if pos else lemma` (mirroring the feature branch's
+`f"{surface} ({feature})"`), so an ambiguous lemma reaches the LLM tagged —
+`hotel` (NOUN) no longer risks the verb-"to want" gloss. Production caller
+`api/srs.py` passes `pos=upos` on the base-card path; the inflection caller uses
+`feature` (no pos needed). **No cassette re-record:** `generate_word_gloss` is
+exercised only by AsyncMock stubs in `test_llm_translate.py`, not the cassette
+system. Tests: `test_verb_lemma_uses_bare_form_prompt` (now expects
+`"pokazati (VERB)"`), `test_base_card_gloss_includes_pos_for_disambiguation`,
+`test_base_card_gloss_omits_pos_when_absent`. Verified in isolation (translate.py
+100%, 12/12 translate tests, 3208/3209 backend green — the 1 fail was BP's
+concurrent in-progress work).
 
-**⚠️ Cassette impact:** changing the prompt changes cassette hashes. After the
-fix run `uv run pytest --llm-mode=patch` with `GROQ_API_KEY` exported from
-`backend/.env` (`export $(grep '^GROQ_API_KEY=' .env)`) to re-record affected
-cassettes; verify a plain `uv run pytest` (mock mode) passes afterward. If no
-cassette-backed test covers these prompts, add the unit assertion only
-(stub LLM capturing the prompt, assert the POS appears).
+**Original bug (quality).** `generate_word_gloss` took `pos` ("advisory
+context") and a caller computed a real UPOS, but `pos` never entered the prompt,
+so the base-card gloss was POS-blind.
 
-## 11. OPEN [→ BP · T3] — Vestigial unused parameters (ruff ARG sweep)
+## 11. FIXED [→ BP · T3] — Vestigial unused parameters (ruff ARG sweep)
 
 **Refactor.** `uv run ruff check app --select ARG` finds four genuinely
 vestigial parameters (the rest are intentional interface params):
@@ -275,16 +275,12 @@ absent from the dialogue stranded entirely. `regloss_lessons.py` already
 lowercased — the two writers disagreed. Fixed in `story.py` (lowercase key +
 lemma fallback); test `test_story.py::test_capitalized_gloss_word_keys_lowercase`.
 
-**OPEN follow-up (Big Pickle).** Lessons generated before the fix still carry
-original-case keys in `generation_metadata["token_glosses"]` in the content
-store. One-shot repair, mirroring the `regloss_lessons.py` walk-and-rewrite
-shape: for each stored lesson, rebuild the map as
-`{k.lower(): v for k, v in glosses.items()}` (first-wins on collisions,
-skip-and-count lessons already all-lowercase), save back via
-`store.save_lesson`. Guardrail test: store a lesson with a `"Hvala"` key,
-run the migration, assert only `"hvala"` remains and other metadata intact.
+**FIXED follow-up (Big Pickle, 2026-07-03).** `app/storage/lowercase_glosses.py`:
+walks all stored lessons, rebuilds token_glosses with lowercase keys
+(first-wins on collisions), skips lessons already all-lowercase.
+Guardrail tests in `test_lowercase_glosses.py`.
 
-## 14. OPEN [→ BP · T1] — Re-render deletes the lesson's audio rows before rendering; old files leak
+## 14. FIXED [→ BP · T1] — Re-render deletes the lesson's audio rows before rendering; old files leak
 
 **Bug (two parts).** `backend/app/api/audio.py::render_audio`:
 1. `store.delete_audio_files_for_lesson(...)` runs *before*
@@ -304,7 +300,7 @@ run the migration, assert only `"hvala"` remains and other metadata intact.
 renderer that raises → old rows still listed by `GET /api/audio/lesson/{id}`;
 successful re-render → old file paths gone from disk, new ones present.
 
-## 15. OPEN [→ BP · T3] — Duplicated topic/day resolution + section-title mapping in audio API
+## 15. FIXED [→ BP · T3] — Duplicated topic/day resolution + section-title mapping in audio API
 
 **Refactor.** `backend/app/api/audio.py` repeats two blocks verbatim:
 - lines ~148–159 and ~195–206: resolve `(topic, day)` for a lesson id via
@@ -330,7 +326,7 @@ Tests (TDD-red before the fix, in `PlannerChat.test.ts`): "restores the draft
 when onSend reports failure", "leaves the textarea empty when onSend succeeds",
 "does not clobber a newly-typed draft when the failed send resolves".
 
-## 17. OPEN [→ BP · T1] — Duplicate collocations in one proposed day crash the keyed each-block
+## 17. FIXED [→ BP · T1] — Duplicate collocations in one proposed day crash the keyed each-block
 
 **Bug (edge).** `ProposedBatch.svelte` renders `{#each d.collocations as c (c)}`
 — keyed by value. `validate_plan_days` doesn't enforce uniqueness, and an LLM
@@ -349,19 +345,42 @@ pattern in `backend/tests/test_planner.py`).
 
 ## 18. OPEN [→ Claude · T4] — Cassette hash ignores `system_prompt` (stale replays after system-prompt edits)
 
+**⏸ DEFERRED (decided 2026-07-03)** until Big Pickle's `fix/backlog-sweep` batch
+is committed and the tree is green — the fix needs a clean full `./test.sh` to
+verify, and changing the hash breaks the shared cassette mock tests until the
+re-record completes (would trip BP's own gate runs). BP's current items
+(#5/#11/#29) don't touch any LLM *prompt*, so a later re-record won't be
+invalidated by them. A copy-paste fresh-chat prompt to execute this lives in
+memory `[[project_backlog_18_cassette_rehash_pending]]`.
+
 **Test-fidelity gap.** `backend/app/llm/cassette.py::_hash_prompt` hashes only
-the user prompt. Editing a *system* prompt (e.g. `PLANNER_SYSTEM_PROMPT`,
+the user prompt. Editing a *system* prompt (e.g. `PLANNER_SYSTEM_PROMPT`, the
 story system prompt) does not invalidate cassettes — mock-mode tests keep
-replaying responses recorded under the old instructions and stay green when
-they should demand a re-record. Fix: hash
-`f"{system_prompt or ''}\x00{prompt}"` (and bump a `"version"` field in the
-cassette JSON so old files fail loudly with the re-record hint). Requires a
-one-time re-record of all cassettes:
-`export $(grep '^GROQ_API_KEY=' backend/.env)` then
-`uv run pytest --llm-mode=record --no-cov` for the cassette-marked tests
-(watch Groq free-tier rate limits — run test files one at a time if 429s
-appear). Also reseed any e2e fixtures derived from cassettes (`playwright`
-uses `LLM_MODE=mock` against the same files).
+replaying responses recorded under the old instructions and stay green when they
+should demand a re-record.
+
+**The code fix (small, deterministic):** hash `f"{system_prompt or ''}\x00{prompt}"`;
+thread `system_prompt` through `_replay`, the record path in `complete`, and
+`_patch`; add a `"version"` field to the cassette JSON and fail loudly on load
+when it mismatches (clear re-record hint instead of a cryptic per-hash miss).
+Unit-test in `test_llm_cassette.py` with temp cassettes (isolated).
+
+**The re-record (the hard part — live Groq):** only **2 cassette files** exist.
+- `TestPlannerLLM__test_two_turn_scenario.json` — easy: `export $(grep
+  '^GROQ_API_KEY=' backend/.env)` then `uv run pytest tests/test_planner_llm.py
+  --llm-mode=record --no-cov`. Asserts only day counts/numbers, not content →
+  low-risk.
+- `tests/cassettes/e2e.json` — **6 mixed Slovene+Norwegian entries**
+  (curriculum-gen, story-gen, translate), loaded by `app/main.py` lifespan for
+  BOTH the port-8001 (sl) and port-8002 (no) Playwright backends. **GOTCHA: the
+  two backends share this one file and each rewrites it on every call in record
+  mode — recording both concurrently CLOBBERS it.** Re-record single-process,
+  one backend at a time (`LLM_MODE=record TARGET_LANGUAGE=… uvicorn …`, drive the
+  spec's exact requests). The Norwegian spec asserts only structure (nb-NO voices
+  from the plugin, sections present) → robust to a non-deterministic re-record.
+
+**Verify:** full `./test.sh` green in mock mode (planner mock test + the
+Playwright specs replay the new cassettes). Watch Groq free-tier 429s.
 
 ## 19. FIXED — Pixabay image extension detection mislabels `.jpeg` and defaults to `.png`
 
@@ -372,7 +391,7 @@ with a `.png` extension. Fixed 2026-07-03:
 (jpg is Pixabay's dominant format → the default). Tests:
 `test_jpeg_url_gets_jpg_ext_not_png`, `test_png_url_with_query_string_gets_png_ext`.
 
-## 20. OPEN [→ BP · T2] — Lifespan uses CWD-relative paths (`tests/cassettes/e2e.json`, `output/audio`)
+## 20. FIXED [→ BP · T2] — Lifespan uses CWD-relative paths (`tests/cassettes/e2e.json`, `output/audio`)
 
 **Fragility (same class as the 2026-06-08 `_tt_settings` relative-db bug).**
 `backend/app/main.py::lifespan` builds `Path("tests/cassettes/e2e.json")` and
@@ -386,7 +405,7 @@ Pydantic settings with absolute defaults, mirroring how `_tt_settings` was
 fixed. Guardrail: a unit test asserting `app.state.audio_dir.is_absolute()`
 after lifespan startup (and same for the cassette path attribute if exposed).
 
-## 21. OPEN [→ BP · T3] — Renderer's preprocessor pinned to the default language (latent multi-language bug)
+## 21. FIXED [→ BP · T3] — Renderer's preprocessor pinned to the default language (latent multi-language bug)
 
 **Latent bug / trap.** `backend/app/main.py:133` builds ONE `LessonRenderer`
 with `get_preprocessor(default_code)`; `render_audio` uses it for every
@@ -597,7 +616,7 @@ falls through to a stub fallback_client and returns its answer; mock a 200
 with `{"unexpected": true}` → same fallback engagement; with no fallback →
 LLMError (not KeyError) raised.
 
-## 29. OPEN [→ BP · T3] — `cloze_tts.py` reaches into `db._get_conn()` (private) twice
+## 29. FIXED [→ BP · T3] — `cloze_tts.py` reaches into `db._get_conn()` (private) twice
 
 **Refactor.** `app/audio/cloze_tts.py` opens raw connections via the private
 `db._get_conn()` for two one-line queries: `_missing_media_row` (media-row
@@ -608,7 +627,7 @@ first — a guid-by-id helper may already exist), then delete
 `_missing_media_row`. Behavior-preserving; existing cloze-TTS tests are the
 guardrail.
 
-## 32. OPEN [→ BP · T3] — Orphaned planner feedback survives plan re-import (residual of item 2's class)
+## 32. FIXED [→ BP · T3] — Orphaned planner feedback survives plan re-import (residual of item 2's class)
 
 **Nit (prompt quality).** `import_plan` (`backend/app/storage/plan_io.py`) now
 clears the stale *proposal* on re-import (item 2), but deliberately keeps
@@ -623,7 +642,7 @@ stored rows (a later import may restore the day). Guardrail: prompt built
 with feedback for day 9 on a 3-day curriculum omits the day-9 note; feedback
 for day 2 still renders.
 
-## 31. OPEN [→ BP · T2] — EdgeTTS retry misses edge-tts/aiohttp exception types
+## 31. FIXED [→ BP · T2] — EdgeTTS retry misses edge-tts/aiohttp exception types
 
 **Robustness.** `app/audio/edge_tts.py::_synthesize_with_retry` retries only
 `(ConnectionResetError, ConnectionError, OSError)`. edge-tts is built on
@@ -642,7 +661,7 @@ Also: the class docstring says "max 3 concurrent" but
 existing EdgeTTS tests): `Communicate.save` raising `NoAudioReceived` twice
 then succeeding → synthesize succeeds; raising 3× → RuntimeError.
 
-## 33. OPEN [→ BP · T2] — Cards page: stale-response race + double fetch on search
+## 33. FIXED [→ BP · T2] — Cards page: stale-response race + double fetch on search
 
 **Nit (UX edge).** `frontend/src/routes/cards/+page.svelte`:
 1. No in-flight guard/sequence token on `loadItems()` — a slow response can
@@ -660,7 +679,7 @@ then succeeding → synthesize succeeds; raising 3× → RuntimeError.
 **Guardrail test** (`cards/page.test.ts` pattern, mock `api.listSRSItems`
 with controllable promises): resolve call A after call B → items reflect B.
 
-## 34. OPEN [→ BP · T1] — Lesson-page word taps have no in-flight guard (double-tap = double grade)
+## 34. FIXED [→ BP · T1] — Lesson-page word taps have no in-flight guard (double-tap = double grade)
 
 **Bug (mobile UX).** `frontend/src/routes/c/[curriculumId]/l/[lessonId]/+page.svelte::handleWordClick`
 (and `handleCollocationStateChange`) fire `submitDrill`/`createBaseCard`
@@ -677,7 +696,7 @@ return when true, set in `try`/clear in `finally`, wrapping both handlers
 **Guardrail test** (`[lessonId]/page.test.ts` pattern): mock `submitDrill`
 with a hanging promise, dispatch two clicks, assert one call.
 
-## 35. OPEN [→ BP · T3] — Dead config fields: `anki_connect_url`, `forvo_api_key`
+## 35. FIXED [→ BP · T3] — Dead config fields: `anki_connect_url`, `forvo_api_key`
 
 **Cleanup.** `backend/app/config.py` still declares `anki_connect_url`
 (anki-connect integration was archived — see the dead-code-audit memory) and

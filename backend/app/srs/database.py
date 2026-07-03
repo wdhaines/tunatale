@@ -611,6 +611,12 @@ class SRSDatabase:
             row = conn.execute("SELECT id FROM collocations WHERE guid = ?", (guid,)).fetchone()
             return row[0] if row else None
 
+    def get_guid_by_collocation_id(self, collocation_id: int) -> str | None:
+        """Return the guid for a collocation row id, or None."""
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT guid FROM collocations WHERE id = ?", (collocation_id,)).fetchone()
+            return row["guid"] if row else None
+
     def get_collocation_by_anki_note_id(self, anki_note_id: int) -> SRSItem | None:
         with self._get_conn() as conn:
             row = conn.execute("SELECT * FROM collocations WHERE anki_note_id = ? LIMIT 1", (anki_note_id,)).fetchone()
@@ -994,6 +1000,15 @@ class SRSDatabase:
                 (collocation_id,),
             ).fetchone()
         return row["filename"] if row is not None else None
+
+    def has_media_row(self, collocation_id: int, kind: str) -> bool:
+        """Return True if at least one media row exists for (collocation_id, kind)."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM media WHERE collocation_id = ? AND kind = ? LIMIT 1",
+                (collocation_id, kind),
+            ).fetchone()
+        return row is not None
 
     def get_created_at_by_guid(self, guid: str) -> str | None:
         """Return the ISO timestamp from collocations.created_at for the given guid,

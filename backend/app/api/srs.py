@@ -334,7 +334,7 @@ async def undo_grade(item_id: int, direction: str, request: Request):
 
 
 @router.get("/media/{filename}", status_code=200)
-async def serve_media(filename: str, request: Request):
+async def serve_media(filename: str):
     media_dir = _MEDIA_DIR
     file_path = (media_dir / filename).resolve()
     # is_relative_to, not str.startswith — a prefix check passes for sibling
@@ -1547,7 +1547,7 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
 
     # 4. Build + create (mirrors /listen morphology-cloze block)
     disambig = f"morph:{body.feature.replace(':', '-')}"
-    cloze_sent = make_morphology_cloze_text(body.surface, body.lemma, body.feature, body.sentence)
+    cloze_sent = make_morphology_cloze_text(body.surface, body.lemma, body.sentence)
     grammar_hint = format_morphology_hint(body.lemma, body.feature)
     unit = SyntacticUnit(
         text=body.surface,

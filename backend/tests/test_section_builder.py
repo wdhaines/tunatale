@@ -247,3 +247,96 @@ def test_translated_section_starts_with_title_phrase():
     assert first.role == "narrator"
     assert first.voice_id == NARRATOR_VOICE
     assert first.language_code == "en"
+
+
+# ── Malformed-input resilience (backlog #5) ──────────────────────────────
+
+
+def test_key_phrases_skips_missing_fields():
+    """A key phrase entry missing phrase/translation or a non-dict entry is skipped; good ones survive."""
+    items = [
+        {"phrase": "hvala", "translation": "thank you"},
+        {"phrase": "", "translation": "empty"},
+        {"not_a_phrase": "broken"},
+        42,
+        {"phrase": "prosim", "translation": "please"},
+    ]
+    section = build_key_phrases_section(items, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    texts = [p.text for p in section.phrases]
+    assert "hvala" in texts
+    assert "prosim" in texts
+    assert "empty" not in texts
+
+
+def test_natural_speed_skips_malformed_scene_and_line():
+    """A scene missing its label or a line missing speaker/text is skipped, plus non-dict entries."""
+    scenes = [
+        {"label": "Good", "lines": [{"speaker": "f1", "text": "Dober dan", "translation": "Good day"}]},
+        {"not_a_label": 42, "lines": []},
+        {"label": "", "lines": [{"speaker": "f1", "text": "Empty label"}]},
+        42,
+        {
+            "label": "Bad lines",
+            "lines": [
+                {"speaker": "f1", "text": "Hello", "translation": "Zdravo"},
+                {"speaker": "", "text": "No speaker"},
+                {"speaker": "f1", "text": "", "translation": "No text"},
+                "not a dict",
+            ],
+        },
+    ]
+    section = build_natural_speed_section(scenes, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    texts = [p.text for p in section.phrases]
+    assert "Good" in texts  # scene label
+    assert "Dober dan" in texts
+    assert "Hello" in texts
+    assert "Empty label" not in texts
+    assert "Bad lines" in texts
+    assert "No speaker" not in texts
+    assert "No text" not in texts
+
+
+def test_slow_speed_skips_malformed_line():
+    """Slow-speed builder skips malformed scenes and lines (non-dict, missing label, missing fields)."""
+    scenes = [
+        {"label": "Scene", "lines": [{"speaker": "f1", "text": "Kava prosim", "translation": "Coffee please"}]},
+        {"not_a_label": True},
+        {"label": "", "lines": []},
+        42,
+        {
+            "label": "Bad lines",
+            "lines": [
+                {"missing": "speaker"},
+                {"speaker": "f1", "text": ""},
+                "not a dict",
+            ],
+        },
+    ]
+    section = build_slow_speed_section(scenes, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    texts = [p.text for p in section.phrases]
+    assert "Kava ... prosim" in texts
+    assert "Scene" in texts
+    assert "Bad lines" in texts
+
+
+def test_translated_skips_line_without_translation():
+    """Translated-section builder skips malformed scenes and lines (non-dict, missing fields)."""
+    scenes = [
+        {"label": "S1", "lines": [{"speaker": "f1", "text": "Dober dan", "translation": "Good day"}]},
+        {"not_a_label": True},
+        {"label": "", "lines": []},
+        42,
+        {
+            "label": "S2",
+            "lines": [
+                {"speaker": "f1", "text": "Has it", "translation": "Ima"},
+                {"speaker": "f1", "text": "No translation"},
+                "not a dict",
+            ],
+        },
+    ]
+    section = build_translated_section(scenes, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    l2_texts = [p.text for p in section.phrases if p.language_code == "sl"]
+    assert "Dober dan" in l2_texts
+    assert "Has it" in l2_texts
+    assert "No translation" not in l2_texts

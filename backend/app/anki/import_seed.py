@@ -169,7 +169,6 @@ def refresh_media_from_conn(
 
 def _build_directions(
     cards: list[AnkiCard],
-    note_id: int,
 ) -> dict[Direction, DirectionState]:
     """Build a {Direction: DirectionState} map from the cards for one note.
 
@@ -329,7 +328,7 @@ def import_seed(
                 lemma=l2_text.lower() if word_count == 1 else None,
             )
             note_cards = card_map.get(note.id, [])
-            directions = _build_directions(note_cards, note.id)
+            directions = _build_directions(note_cards)
 
             is_new = existing is None
             coll_id = db.upsert_by_guid(unit, language_code, directions, anki_note_id=note.id)

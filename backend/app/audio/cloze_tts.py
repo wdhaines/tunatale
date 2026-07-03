@@ -50,7 +50,7 @@ async def synthesize_cloze_audios(
             logger.warning("Failed to synthesize sentence audio for %r", sentence[:60])
 
     wrote_sentence = False
-    if _missing_media_row(db, collocation_id, "audio_tts_sentence") and sentence_path.exists():
+    if not db.has_media_row(collocation_id, "audio_tts_sentence") and sentence_path.exists():
         size_bytes = sentence_path.stat().st_size
         sha = hashlib.sha256(sentence_path.read_bytes()).hexdigest()
         db.add_media(
@@ -81,7 +81,7 @@ async def synthesize_cloze_audios(
         else:
             logger.warning("Failed to synthesize word audio for %r", word)
 
-    if _missing_media_row(db, collocation_id, "audio_tts") and word_path.exists():
+    if not db.has_media_row(collocation_id, "audio_tts") and word_path.exists():
         size_bytes = word_path.stat().st_size
         sha = hashlib.sha256(word_path.read_bytes()).hexdigest()
         db.add_media(
@@ -95,16 +95,6 @@ async def synthesize_cloze_audios(
         )
 
     if wrote_sentence:
-        with db._get_conn() as conn:
-            guid = conn.execute("SELECT guid FROM collocations WHERE id = ?", (collocation_id,)).fetchone()["guid"]
-        db.add_dirty_field(guid, "audio")
-
-
-def _missing_media_row(db, collocation_id: int, kind: str) -> bool:
-    """Return True if no media row exists for (collocation_id, kind)."""
-    with db._get_conn() as conn:
-        row = conn.execute(
-            "SELECT 1 FROM media WHERE collocation_id = ? AND kind = ? LIMIT 1",
-            (collocation_id, kind),
-        ).fetchone()
-    return row is None
+        guid = db.get_guid_by_collocation_id(collocation_id)
+        if guid:
+            db.add_dirty_field(guid, "audio")

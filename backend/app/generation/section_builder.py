@@ -6,8 +6,12 @@ transform that raw data into the four structured Lesson sections deterministical
 
 from __future__ import annotations
 
+import logging
+
 from app.generation.syllabify import syllabify_word
 from app.models.lesson import Phrase, Section, SectionType
+
+logger = logging.getLogger(__name__)
 
 # Type aliases for plain-dict inputs from parsed LLM JSON
 KeyPhrase = dict  # {"phrase": str, "translation": str}
@@ -109,8 +113,14 @@ def build_key_phrases_section(
     ]
 
     for kp in key_phrases:
-        phrase_text = kp["phrase"]
-        translation = kp["translation"]
+        if not isinstance(kp, dict):
+            logger.warning("Skipping non-dict key phrase: %r", kp)
+            continue
+        phrase_text = kp.get("phrase", "")
+        translation = kp.get("translation", "")
+        if not phrase_text or not translation:
+            logger.warning("Skipping key phrase with missing phrase or translation: %r", kp)
+            continue
 
         phrases.append(Phrase(text=phrase_text, voice_id=female_1_voice, language_code=l2_code))
         phrases.append(Phrase(text=translation, voice_id=narrator_voice, language_code="en", role="narrator"))
@@ -134,11 +144,25 @@ def build_natural_speed_section(
     ]
 
     for scene in scenes:
-        phrases.append(Phrase(text=scene["label"], voice_id=narrator_voice, language_code="en", role="narrator"))
+        if not isinstance(scene, dict):
+            logger.warning("Skipping non-dict scene: %r", scene)
+            continue
+        scene_label = scene.get("label", "")
+        if not scene_label:
+            logger.warning("Skipping scene with missing label: %r", scene)
+            continue
+        phrases.append(Phrase(text=scene_label, voice_id=narrator_voice, language_code="en", role="narrator"))
         for line in scene.get("lines", []):
-            speaker = line["speaker"].lower()
+            if not isinstance(line, dict):
+                logger.warning("Skipping non-dict dialogue line: %r", line)
+                continue
+            speaker = line.get("speaker", "").lower()
+            text = line.get("text", "")
+            if not speaker or not text:
+                logger.warning("Skipping dialogue line with missing speaker or text: %r", line)
+                continue
             voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
-            phrases.append(Phrase(text=line["text"], voice_id=voice_id, language_code=l2_code, role=speaker))
+            phrases.append(Phrase(text=text, voice_id=voice_id, language_code=l2_code, role=speaker))
 
     return Section(section_type=SectionType.NATURAL_SPEED, phrases=phrases)
 
@@ -157,11 +181,25 @@ def build_slow_speed_section(
     ]
 
     for scene in scenes:
-        phrases.append(Phrase(text=scene["label"], voice_id=narrator_voice, language_code="en", role="narrator"))
+        if not isinstance(scene, dict):
+            logger.warning("Skipping non-dict scene: %r", scene)
+            continue
+        scene_label = scene.get("label", "")
+        if not scene_label:
+            logger.warning("Skipping scene with missing label: %r", scene)
+            continue
+        phrases.append(Phrase(text=scene_label, voice_id=narrator_voice, language_code="en", role="narrator"))
         for line in scene.get("lines", []):
-            speaker = line["speaker"].lower()
+            if not isinstance(line, dict):
+                logger.warning("Skipping non-dict dialogue line: %r", line)
+                continue
+            speaker = line.get("speaker", "").lower()
+            text = line.get("text", "")
+            if not speaker or not text:
+                logger.warning("Skipping dialogue line with missing speaker or text: %r", line)
+                continue
             voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
-            slowed = " ... ".join(line["text"].split())
+            slowed = " ... ".join(text.split())
             phrases.append(Phrase(text=slowed, voice_id=voice_id, language_code=l2_code, role=speaker))
 
     return Section(section_type=SectionType.SLOW_SPEED, phrases=phrases)
@@ -181,13 +219,26 @@ def build_translated_section(
     ]
 
     for scene in scenes:
-        phrases.append(Phrase(text=scene["label"], voice_id=narrator_voice, language_code="en", role="narrator"))
+        if not isinstance(scene, dict):
+            logger.warning("Skipping non-dict scene: %r", scene)
+            continue
+        scene_label = scene.get("label", "")
+        if not scene_label:
+            logger.warning("Skipping scene with missing label: %r", scene)
+            continue
+        phrases.append(Phrase(text=scene_label, voice_id=narrator_voice, language_code="en", role="narrator"))
         for line in scene.get("lines", []):
-            speaker = line["speaker"].lower()
+            if not isinstance(line, dict):
+                logger.warning("Skipping non-dict dialogue line: %r", line)
+                continue
+            speaker = line.get("speaker", "").lower()
+            text = line.get("text", "")
+            translation = line.get("translation", "")
+            if not speaker or not text or not translation:
+                logger.warning("Skipping dialogue line with missing speaker, text, or translation: %r", line)
+                continue
             voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
-            phrases.append(Phrase(text=line["text"], voice_id=voice_id, language_code=l2_code, role=speaker))
-            phrases.append(
-                Phrase(text=line["translation"], voice_id=narrator_voice, language_code="en", role="narrator")
-            )
+            phrases.append(Phrase(text=text, voice_id=voice_id, language_code=l2_code, role=speaker))
+            phrases.append(Phrase(text=translation, voice_id=narrator_voice, language_code="en", role="narrator"))
 
     return Section(section_type=SectionType.TRANSLATED, phrases=phrases)

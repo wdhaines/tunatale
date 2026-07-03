@@ -327,6 +327,32 @@ class TestStoryGeneration:
         assert "omitted" in args[0]
         assert "boste" in args[3]  # sample string includes the word
 
+    async def test_parse_response_skips_malformed_key_phrases(self, language):
+        """_parse_response skips key-phrase entries missing phrase/translation or non-dict."""
+        from app.generation.story import StoryGenerator
+
+        generator = StoryGenerator(llm_client=MagicMock())
+        data = {
+            "title": "Test",
+            "key_phrases": [
+                {"phrase": "hvala", "translation": "thanks"},
+                {"phrase": "", "translation": "empty"},
+                {"not_a_phrase": "broken"},
+                42,
+                {"phrase": "prosim", "translation": "please"},
+            ],
+            "scenes": [
+                {
+                    "label": "S1",
+                    "lines": [{"speaker": "f1", "text": "Dober dan", "translation": "Good day"}],
+                },
+            ],
+        }
+        lesson = generator._parse_response(data, language=language)
+        assert len(lesson.key_phrases) == 2
+        assert lesson.key_phrases[0].phrase == "hvala"
+        assert lesson.key_phrases[1].phrase == "prosim"
+
     async def test_parse_response_logs_when_word_missing_from_glosses(self, language):
         from app.generation.story import StoryGenerator
 

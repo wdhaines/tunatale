@@ -8,6 +8,7 @@ import logging
 import shutil
 from pathlib import Path
 
+import aiohttp
 import edge_tts
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ class EdgeTTSService:
     """Microsoft Edge TTS adapter.
 
     Implements the TTSService Protocol with:
-    - Rate limiting (200 ms between requests, max 3 concurrent)
+    - Rate limiting (200 ms between requests, max 10 concurrent)
     - Optional file-based caching (keyed on text + voice + rate)
     - Retry on transient errors
     """
@@ -80,7 +81,13 @@ class EdgeTTSService:
             try:
                 await self._do_synthesize(text, voice_id, output_path, rate)
                 return
-            except (ConnectionResetError, ConnectionError, OSError) as exc:
+            except (
+                ConnectionResetError,
+                ConnectionError,
+                OSError,
+                edge_tts.exceptions.EdgeTTSException,
+                aiohttp.ClientError,
+            ) as exc:
                 last_error = exc
                 logger.warning("EdgeTTS transient error (attempt %d): %s", attempt + 1, exc)
                 await asyncio.sleep(0.5 * (2**attempt))

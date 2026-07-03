@@ -295,7 +295,6 @@ class TestMakeMorphologyClozeText:
         result = make_morphology_cloze_text(
             "sem",
             "biti",
-            "verb:1sg",
             "Jaz sem doma.",
         )
         assert result == "Jaz {{c1::sem}} doma."
@@ -304,7 +303,6 @@ class TestMakeMorphologyClozeText:
         result = make_morphology_cloze_text(
             "Ljubljani",
             "Ljubljana",
-            "noun:loc:sg",
             "Sem v Ljubljani.",
         )
         assert result == "Sem v Ljubljan{{c1::i}}."
@@ -313,19 +311,17 @@ class TestMakeMorphologyClozeText:
         result = make_morphology_cloze_text(
             "lepa",
             "lep",
-            "adj:nom:f:sg",
             "Hiša je lepa.",
         )
         assert result == "Hiša je lep{{c1::a}}."
 
     def test_empty_sentence(self):
-        assert make_morphology_cloze_text("sem", "biti", "verb:1sg", "") == ""
+        assert make_morphology_cloze_text("sem", "biti", "") == ""
 
     def test_idempotent_already_clozed(self):
         result = make_morphology_cloze_text(
             "sem",
             "biti",
-            "verb:1sg",
             "Jaz {{c1::sem}} doma.",
         )
         assert result == "Jaz {{c1::sem}} doma."
@@ -334,7 +330,6 @@ class TestMakeMorphologyClozeText:
         result = make_morphology_cloze_text(
             "",
             "biti",
-            "verb:1sg",
             "Jaz sem doma.",
         )
         assert result == "Jaz sem doma."
@@ -343,7 +338,6 @@ class TestMakeMorphologyClozeText:
         result = make_morphology_cloze_text(
             "je",
             "biti",
-            "verb:3sg",
             "On je tu, ona je tam.",
         )
         assert result == "On {{c1::je}} tu, ona {{c1::je}} tam."
@@ -352,7 +346,6 @@ class TestMakeMorphologyClozeText:
         result = make_morphology_cloze_text(
             "Ljubljano",
             "Ljubljana",
-            "noun:acc:sg",
             "Grem v Ljubljano.",
         )
         assert result == "Grem v Ljubljan{{c1::o}}."
@@ -361,7 +354,6 @@ class TestMakeMorphologyClozeText:
         result = make_morphology_cloze_text(
             "sem",
             "biti",
-            "",
             "Jaz sem doma.",
         )
         assert result == "Jaz {{c1::sem}} doma."
@@ -370,7 +362,6 @@ class TestMakeMorphologyClozeText:
         result = make_morphology_cloze_text(
             "delam",
             "delati",
-            "verb:1sg",
             "Jaz delam doma.",
         )
         assert result == "Jaz dela{{c1::m}} doma."
@@ -379,7 +370,6 @@ class TestMakeMorphologyClozeText:
         result = make_morphology_cloze_text(
             "mestu",
             "mesto",
-            "noun:loc:sg",
             "Sem v mestu.",
         )
         assert result == "Sem v mest{{c1::u}}."
@@ -388,7 +378,6 @@ class TestMakeMorphologyClozeText:
         result = make_morphology_cloze_text(
             "lepa",
             "lep",
-            "adj:nom:f:sg",
             "Hiša je lepa.",
         )
         assert result == "Hiša je lep{{c1::a}}."
@@ -397,7 +386,6 @@ class TestMakeMorphologyClozeText:
         result = make_morphology_cloze_text(
             "Ljubljano",
             "Ljubljana",
-            "noun:acc:sg",
             "Grem v Ljubljano.",
         )
         assert result == "Grem v Ljubljan{{c1::o}}."
@@ -406,7 +394,6 @@ class TestMakeMorphologyClozeText:
         result = make_morphology_cloze_text(
             "sem",
             "biti",
-            "verb:1sg",
             "Jaz sem doma.",
         )
         assert result == "Jaz {{c1::sem}} doma."

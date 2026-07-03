@@ -10,6 +10,7 @@ import uuid
 import anyio
 from fastapi import APIRouter, HTTPException, Request
 
+from app.api._serializers import serialize_lesson
 from app.api.models import GenerateStoryRequest
 from app.generation.story import StoryGenerationError
 from app.models.lesson import Lesson, SectionType
@@ -117,20 +118,4 @@ async def get_lesson(lesson_id: str, request: Request):
     if row is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
     lesson = Lesson.from_json(row["data_json"])
-    return {
-        "id": lesson_id,
-        "day": row["day"],
-        "title": lesson.title,
-        "language_code": lesson.language_code,
-        "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in lesson.key_phrases],
-        "sections": [
-            {
-                "type": s.section_type.value,
-                "phrases": [
-                    {"text": p.text, "role": p.role, "language_code": p.language_code, "voice_id": p.voice_id}
-                    for p in s.phrases
-                ],
-            }
-            for s in lesson.sections
-        ],
-    }
+    return serialize_lesson(lesson_id, lesson, day=row["day"])

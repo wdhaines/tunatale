@@ -522,11 +522,8 @@ class TestMediaEndpoint:
 
         from app.api.srs import serve_media
 
-        class _FakeReq:
-            pass
-
         with pytest.raises(HTTPException) as exc_info:
-            await serve_media("..", _FakeReq())  # type: ignore[arg-type]
+            await serve_media("..")
         assert exc_info.value.status_code == 400
 
     async def test_sibling_prefix_dir_traversal_400(self, tmp_path, monkeypatch):
@@ -545,11 +542,8 @@ class TestMediaEndpoint:
         (evil_dir / "secret.txt").write_text("leaked")
         monkeypatch.setattr(srs_mod, "_MEDIA_DIR", media_dir)
 
-        class _FakeReq:
-            pass
-
         with pytest.raises(HTTPException) as exc_info:
-            await serve_media("../media-evil/secret.txt", _FakeReq())  # type: ignore[arg-type]
+            await serve_media("../media-evil/secret.txt")
         assert exc_info.value.status_code == 400
 
     async def test_existing_file_returns_200(self, tmp_path, monkeypatch):

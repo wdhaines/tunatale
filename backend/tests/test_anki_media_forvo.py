@@ -33,32 +33,32 @@ class TestExtractMp3Url:
     def test_returns_url_with_double_quote_container(self):
         b64 = _b64("audios/mp3/abc123.mp3")
         html = _make_forvo_html(b64, use_single_quotes=False)
-        url = _extract_mp3_url(html, "test")
+        url = _extract_mp3_url(html)
         assert url == "https://audio00.forvo.com/mp3/audios/mp3/abc123.mp3"
 
     def test_returns_url_with_single_quote_container(self):
         b64 = _b64("audios/mp3/xyz.mp3")
         html = _make_forvo_html(b64, use_single_quotes=True)
-        url = _extract_mp3_url(html, "test")
+        url = _extract_mp3_url(html)
         assert url == "https://audio00.forvo.com/mp3/audios/mp3/xyz.mp3"
 
     def test_returns_none_when_no_slovenian_section(self):
         html = "<html><div>no slovenian here</div></html>"
-        assert _extract_mp3_url(html, "test") is None
+        assert _extract_mp3_url(html) is None
 
     def test_returns_none_when_no_article_in_chunk(self):
         html = '<div id="language-container-sl"><span>no article tag</span></div>'
-        assert _extract_mp3_url(html, "test") is None
+        assert _extract_mp3_url(html) is None
 
     def test_returns_none_when_no_play_call(self):
         html = '<div id="language-container-sl"><article><p>no play call</p></article></div>'
-        assert _extract_mp3_url(html, "test") is None
+        assert _extract_mp3_url(html) is None
 
     def test_returns_none_when_base64_decodes_to_invalid_utf8(self):
         # b"\xff\xfe" encodes to "//4=" in base64 (valid base64 chars, invalid UTF-8)
         invalid_utf8_b64 = "//4="
         html = f'<div id="language-container-sl"><article><span onclick="Play(1,\'{invalid_utf8_b64}\')"></span></article></div>'
-        assert _extract_mp3_url(html, "test") is None
+        assert _extract_mp3_url(html) is None
 
     def test_make_client_returns_httpx_client(self):
         from app.anki.media.forvo import _make_client
@@ -71,16 +71,14 @@ class TestExtractMp3Url:
         # Backlog #28: a Norwegian card must scrape the "no" section, not "sl".
         b64 = _b64("audios/mp3/norsk.mp3")
         html = f'<div id="language-container-no"><article><span onclick="Play(1,\'{b64}\')"></span></article></div>'
-        assert (
-            _extract_mp3_url(html, "hotell", language_code="no") == "https://audio00.forvo.com/mp3/audios/mp3/norsk.mp3"
-        )
+        assert _extract_mp3_url(html, language_code="no") == "https://audio00.forvo.com/mp3/audios/mp3/norsk.mp3"
 
     def test_returns_none_when_only_other_language_container_present(self):
         # A "no"-only page must NOT hand back a URL when Slovene is requested —
         # this is the bug where a dual-language word ("hotel") got the wrong voice.
         b64 = _b64("audios/mp3/norsk.mp3")
         html = f'<div id="language-container-no"><article><span onclick="Play(1,\'{b64}\')"></span></article></div>'
-        assert _extract_mp3_url(html, "hotell", language_code="sl") is None
+        assert _extract_mp3_url(html, language_code="sl") is None
 
 
 # ── fetch_forvo_audio ──────────────────────────────────────────────────────────
