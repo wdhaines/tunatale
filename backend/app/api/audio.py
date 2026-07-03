@@ -27,14 +27,35 @@ def _sanitize_filename(name: str) -> str:
     return name or "audio"
 
 
+def _section_title(section_type: str) -> str:
+    """Resolve a section type string to a human-readable title, falling back raw."""
+    try:
+        st = SectionType(section_type)
+        return SECTION_TITLES.get(st, section_type)
+    except ValueError:
+        return section_type
+
+
+def _resolve_topic_day(store, lesson_id: str) -> tuple[str, int]:
+    """Resolve (topic, day) for a lesson, falling back to ('audio', 1)."""
+    topic = "audio"
+    day = 1
+    lesson_row = store.get_lesson_row(lesson_id)
+    if lesson_row is not None:
+        day = lesson_row["day"]
+        curriculum = store.get_curriculum(lesson_row["curriculum_id"])
+        if curriculum is not None:
+            topic = curriculum.topic
+        else:
+            lesson = store.get_lesson(lesson_id)
+            topic = lesson.title
+    return topic, day
+
+
 def _build_section_filename(topic: str, day: int, section_index: int, section_type: str, ext: str = ".wav") -> str:
     """Build a context-rich section filename: {Topic}_Day{DD}_{NN}_{Title}{ext}."""
     safe_topic = _sanitize_filename(topic)
-    try:
-        st = SectionType(section_type)
-        title = SECTION_TITLES.get(st, section_type)
-    except ValueError:
-        title = section_type
+    title = _section_title(section_type)
     safe_title = _sanitize_filename(title)
     return f"{safe_topic}_Day{day:02d}_{section_index + 1:02d}_{safe_title}{ext}"
 
@@ -46,8 +67,12 @@ async def render_audio(body: RenderAudioRequest, request: Request):
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
 
-    # Delete stale rows so re-render replaces, not appends
-    store.delete_audio_files_for_lesson(body.lesson_id)
+    # Keep old rows and file paths so a failed render doesn't leave the lesson
+    # without audio rows (old files are still on disk, but the DB rows would
+    # be gone).  Clean up old DB rows and disk files only after the new render
+    # succeeds — the render writes to fresh UUID paths so nothing collides.
+    old_rows = store.list_audio_files_for_lesson(body.lesson_id)
+    old_file_paths = [r["file_path"] for r in old_rows]
 
     renderer = request.app.state.renderer
     audio_dir: Path = request.app.state.audio_dir
@@ -64,6 +89,11 @@ async def render_audio(body: RenderAudioRequest, request: Request):
 
     await renderer.render(lesson, full_path, section_paths=section_paths)
 
+    # Delete old rows before inserting new ones — the render writes to fresh
+    # UUID paths so nothing collides, and at this point old rows are the only
+    # rows for this lesson in the DB.
+    store.delete_audio_files_for_lesson(body.lesson_id)
+
     # Persist full lesson row
     store.save_audio_file(audio_id, body.lesson_id, str(full_path))
 
@@ -76,6 +106,10 @@ async def render_audio(body: RenderAudioRequest, request: Request):
             section_index=i,
             section_type=section.section_type.value,
         )
+
+    # Render succeeded — clean up orphaned old files from disk
+    for fp in old_file_paths:
+        Path(fp).unlink(missing_ok=True)
 
     sections = [
         {
@@ -107,11 +141,7 @@ async def get_lesson_audio(lesson_id: str, request: Request):
     sections = []
     for r in section_rows:
         section_type_str = r["section_type"] or ""
-        try:
-            st = SectionType(section_type_str)
-            title = SECTION_TITLES.get(st, section_type_str)
-        except ValueError:
-            title = section_type_str
+        title = _section_title(section_type_str)
         sections.append(
             {
                 "audio_id": r["id"],
@@ -145,19 +175,7 @@ async def download_lesson_zip(lesson_id: str, request: Request):
         if not Path(r["file_path"]).exists():
             raise HTTPException(status_code=404, detail=f"Audio file missing: {r['file_path']}")
 
-    # Resolve topic and day for naming
-    topic = "audio"
-    day = 1
-    lesson_row = store.get_lesson_row(lesson_id)
-    if lesson_row is not None:
-        day = lesson_row["day"]
-        curriculum = store.get_curriculum(lesson_row["curriculum_id"])
-        if curriculum is not None:
-            topic = curriculum.topic
-        else:
-            lesson = store.get_lesson(lesson_id)
-            topic = lesson.title  # lesson_row exists → lesson exists
-
+    topic, day = _resolve_topic_day(store, lesson_id)
     safe_topic = _sanitize_filename(topic)
 
     # Build ZIP in memory: full lesson file first (sorts as _00_), then sections
@@ -193,17 +211,7 @@ async def get_audio(audio_id: str, request: Request):
 
     # Build a friendly download filename with curriculum context
     lesson_id = row["lesson_id"]
-    topic = "audio"
-    day = 1
-    lesson_row = store.get_lesson_row(lesson_id)
-    if lesson_row is not None:
-        day = lesson_row["day"]
-        curriculum = store.get_curriculum(lesson_row["curriculum_id"])
-        if curriculum is not None:
-            topic = curriculum.topic
-        else:
-            lesson = store.get_lesson(lesson_id)
-            topic = lesson.title  # lesson_row exists → lesson exists
+    topic, day = _resolve_topic_day(store, lesson_id)
 
     # Derive extension + media type from the actual stored file, so pre-existing
     # WAV files and newly-rendered compressed files both serve correctly.

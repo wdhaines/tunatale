@@ -2743,6 +2743,77 @@ class TestAudioEndpoints:
             # Audio IDs should be different (new cohort)
             assert resp1.json()["audio_id"] != resp2.json()["audio_id"]
 
+    async def test_failed_rerender_preserves_existing_rows(self, tmp_path):
+        """A render that raises must not leave the lesson without audio rows.
+
+        Guards backlog 14: the old code deleted rows *before* rendering, so a
+        render failure 404'd the lesson even though the old files were still on
+        disk. Now rows are deleted only after a successful render.
+        """
+        from app.storage.store import ContentStore
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=_fake_render)
+
+        mock_lesson = _make_mock_lesson_with_sections()
+        store = ContentStore(":memory:")
+        lesson_id = "lesson-failed-rerender"
+        store.save_lesson(lesson_id, "some-curriculum-id", 1, mock_lesson)
+
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        expected_count = len(mock_lesson.sections) + 1
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp1 = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+            assert resp1.status_code == 202
+            assert len(store.list_audio_files_for_lesson(lesson_id)) == expected_count
+
+            # Second render fails mid-flight.
+            mock_renderer.render = AsyncMock(side_effect=RuntimeError("edge-tts blew up"))
+            with pytest.raises(RuntimeError):
+                await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+
+            # The old rows must survive — the lesson still has its audio.
+            after_fail = store.list_audio_files_for_lesson(lesson_id)
+            assert len(after_fail) == expected_count, "failed render wiped the existing audio rows"
+
+    async def test_successful_rerender_unlinks_old_files(self, tmp_path):
+        """A successful re-render removes the previous cohort's files from disk.
+
+        Guards backlog 14 part 2: every render mints new UUID paths, so without
+        an explicit unlink the old files leaked forever.
+        """
+        from pathlib import Path
+
+        from app.storage.store import ContentStore
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=_fake_render)
+
+        mock_lesson = _make_mock_lesson_with_sections()
+        store = ContentStore(":memory:")
+        lesson_id = "lesson-unlink-old"
+        store.save_lesson(lesson_id, "some-curriculum-id", 1, mock_lesson)
+
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+            old_paths = [r["file_path"] for r in store.list_audio_files_for_lesson(lesson_id)]
+            assert old_paths and all(Path(p).exists() for p in old_paths)
+
+            await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+            new_paths = [r["file_path"] for r in store.list_audio_files_for_lesson(lesson_id)]
+
+            assert all(not Path(p).exists() for p in old_paths), "old cohort files were not unlinked"
+            assert all(Path(p).exists() for p in new_paths), "new cohort files should be on disk"
+            assert set(old_paths).isdisjoint(new_paths)
+
     async def test_get_lesson_audio_endpoint(self, tmp_path):
         """GET /api/audio/lesson/{lesson_id} returns existing audio files list."""
         from app.storage.store import ContentStore
