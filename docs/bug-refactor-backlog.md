@@ -25,7 +25,7 @@ BP-ready; Claude keeps #10, #18, and the two danger-zone observations.
 
 | # | Owner | Item | Why it's high ROI |
 |---|-------|------|-------------------|
-| 16 | BP | Planner chat loses draft on failed turn | Guardrail tests **already written** (uncommitted red on `PlannerChat.test.ts`) — remaining work is a ~10-line `send()` restore + `handleSend` returning `bool`. Near-zero cost. |
+| ~~16~~ | ✅ | Planner chat loses draft on failed turn | **FIXED 2026-07-03** (commit 834f476) — `send()` restores the draft, `handleSend` returns `bool`. |
 | 28 | BP | Card media pipeline Slovene-hardcoded | Actively wrong *today*: Norwegian cards get Slovene Forvo/TTS/cloze audio. Media-args only — no reconcile/USN (doc already vetted it BP-safe). Pin `PIXABAY_API_KEY` empty in tests. |
 | 10 | Claude | `generate_word_gloss` POS-blind | Wrong-sense glosses now (hotel→"to want") — the exact ambiguity sentence-aware lemmatization was meant to kill. Needs a prompt-injection decision + cassette re-record. |
 | 30 | BP | LLM fallback chain bypassed | Groq→fallback→Ollama resilience silently doesn't engage on `ConnectError`/malformed body. Clean respx tests. |
@@ -311,22 +311,21 @@ successful re-render → old file paths gone from disk, new ones present.
   ValueError fallback. Extract `_section_title(section_type: str) -> str`.
 Behavior-preserving; existing audio endpoint tests are the guardrail.
 
-## 16. OPEN [→ BP · T1] — Planner chat: failed turn silently discards the typed message
+## 16. FIXED — Planner chat: failed turn silently discards the typed message
 
-**UX bug.** `frontend/src/lib/components/PlannerChat.svelte::send()` clears
+**UX bug.** `frontend/src/lib/components/PlannerChat.svelte::send()` cleared
 `draft` before `await onSend(message)`. The parent (`plan/+page.svelte
 handleSend`) catches API failures and shows the error banner, but nothing
-re-surfaces the message — the user retypes it from scratch (and the backend
+re-surfaced the message — the user retyped it from scratch (and the backend
 deliberately persists nothing for a failed turn).
 
-**Fix.** Make `onSend` return `Promise<boolean>` (parent's `handleSend`
-returns `false` on caught error, `true` otherwise); in `send()`, restore
-`draft = message` when the result is `false` (only if the user hasn't typed
-something new meanwhile: `if (!draft) draft = message`).
-
-**Guardrail test** (`frontend/src/lib/components/PlannerChat.svelte.test.ts`
-pattern; TDD per house rules): onSend rejects/returns false → textarea value
-is the original message; success → stays empty.
+**Fixed 2026-07-03** (commit 834f476). `onSend` now returns a boolean
+(`handleSend` returns `true` on success, `false` on caught error); `send()`
+restores `draft = message` when the result is `false` **and** the user hasn't
+started a new draft meanwhile (`if (ok === false && !draft) draft = message`).
+Tests (TDD-red before the fix, in `PlannerChat.test.ts`): "restores the draft
+when onSend reports failure", "leaves the textarea empty when onSend succeeds",
+"does not clobber a newly-typed draft when the failed send resolves".
 
 ## 17. OPEN [→ BP · T1] — Duplicate collocations in one proposed day crash the keyed each-block
 
