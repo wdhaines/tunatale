@@ -427,6 +427,126 @@ via `anyio.to_thread.run_sync`. Regression test:
 (asserts a concurrent task keeps ticking while a 200 ms fetch runs; was 0
 ticks before the fix).
 
+## 28. OPEN — Card media pipeline is Slovene-hardcoded (Forvo scrape, TTS voice, cloze voice)
+
+**Bug (multi-language; companion to #21/#25 — same wiring class).** Three
+hardcodings make every non-Slovene card get Slovene audio:
+
+1. `app/anki/media/forvo.py::fetch_forvo_audio` scrapes only the
+   `language-container-sl` section of the Forvo page. For a Norwegian word it
+   usually finds nothing (→ TTS fallback), but for words that exist in both
+   languages ("hotel", "bank") it attaches the **Slovenian** pronunciation to
+   the Norwegian card.
+2. `app/anki/media/pipeline.py::fetch_card_media` defaults
+   `tts_voice=DEFAULT_VOICE` (`"sl-SI-PetraNeural"`, `tts.py:7`) and **no
+   caller passes a voice**: neither `generate_vocab_media`
+   (`vocab_media.py:107`) nor the peer-sync `_build_media_fn`
+   (`app/api/anki.py:20`) → Norwegian vocab cards get Slovene-voice TTS.
+3. `app/audio/cloze_tts.py::synthesize_cloze_audios` defaults
+   `voice="sl-SI-PetraNeural"` and none of its three `app/api/srs.py` callers
+   (497, 527, 915) pass a voice → Norwegian cloze sentence/word audio is
+   Slovene-voiced.
+
+**Fix (thread `language_code`, resolve voice from the registry).**
+- Add a helper next to the registry (`app/languages.py`):
+  `get_tts_voice(code: str) -> str` returning
+  `get_language(code).tts_voice_map["female-1"]` (the map every language
+  defines; raise ValueError if missing, mirroring `get_preprocessor`).
+- `fetch_forvo_audio(word, *, language_code: str, ...)` → search
+  `language-container-{language_code}` (keep both quote variants). Update the
+  one prod call in `pipeline.py` and tests.
+- `fetch_card_media(..., language_code: str)` — derive
+  `tts_voice = get_tts_voice(language_code)` when the caller doesn't override,
+  and pass `language_code` to the Forvo fn. (Keep the explicit `tts_voice`
+  kwarg for tests.)
+- `generate_vocab_media(..., language_code)` — callers already know it:
+  `app/api/srs.py::_generate_add_time_media` has the unit/lesson language;
+  `_build_media_fn` (`app/api/anki.py`) uses `settings.target_language`
+  (per-request `_tt_settings` already sets it for peer-sync).
+- `synthesize_cloze_audios(..., voice=get_tts_voice(lang))` at the three
+  `api/srs.py` call sites (each has the lesson/request language in scope).
+
+**Guardrail tests.** `fetch_forvo_audio` with a page containing only a `no`
+container + `language_code="no"` → returns the URL; `language_code="sl"` →
+None. A `generate_vocab_media` call with `language_code="no"` and a stubbed
+`_fetch_fn` asserting `tts_voice == "nb-NO-PernilleNeural"`. Existing Slovene
+tests keep passing unchanged (default behavior for "sl" is identical).
+
+**Note:** does NOT touch reconcile/USN logic — media fetch args only. Safe for
+Big Pickle. If item 11's `_extract_mp3_url(word)` unused-param cleanup lands
+first, coordinate (same file).
+
+## 30. OPEN — LLM fallback chain bypassed by connection errors and malformed bodies
+
+**Bug (robustness).** `app/llm/client.py::_call_groq` catches only
+`httpx.TimeoutException` (line ~212). Two other failure shapes escape as raw
+exceptions, skipping the entire Groq → fallback_client → Ollama chain that
+exists precisely for network resilience:
+1. `httpx.ConnectError` / other transport errors from `http.post` (network
+   down, DNS failure, connection refused) — propagates uncaught.
+2. A 2xx response with an unexpected body: `response.json()` raises
+   `json.JSONDecodeError`, or `data["choices"][0]["message"]["content"]`
+   raises `KeyError`/`IndexError`/`TypeError`.
+
+**Fix.** Broaden the except to `httpx.TransportError` (superclass covering
+timeout + connect + read errors — keep the timeout-specific message for
+`TimeoutException` if you like), and wrap the body-parse in
+`try/except (ValueError, KeyError, IndexError, TypeError) → LLMError("Groq
+returned malformed response body", …)`. Both must raise `LLMError` so
+`complete()`'s fallback chain engages. Same audit for `_call_ollama` (its
+`http.post` + body parse have the same shape).
+
+**Guardrail tests** (respx, mirroring the existing 429/timeout tests in the
+LLMClient test file): mock a `httpx.ConnectError` side effect → `complete()`
+falls through to a stub fallback_client and returns its answer; mock a 200
+with `{"unexpected": true}` → same fallback engagement; with no fallback →
+LLMError (not KeyError) raised.
+
+## 29. OPEN — `cloze_tts.py` reaches into `db._get_conn()` (private) twice
+
+**Refactor.** `app/audio/cloze_tts.py` opens raw connections via the private
+`db._get_conn()` for two one-line queries: `_missing_media_row` (media-row
+existence) and the guid lookup at line 99. Add two public helpers on
+`SRSDatabase` (`app/srs/database.py`): `has_media_row(collocation_id, kind) ->
+bool` and `get_guid_by_collocation_id(collocation_id) -> str | None` (check
+first — a guid-by-id helper may already exist), then delete
+`_missing_media_row`. Behavior-preserving; existing cloze-TTS tests are the
+guardrail.
+
+## 32. OPEN — Orphaned planner feedback survives plan re-import (residual of item 2's class)
+
+**Nit (prompt quality).** `import_plan` (`backend/app/storage/plan_io.py`) now
+clears the stale *proposal* on re-import (item 2), but deliberately keeps
+`feedback` — whose entries reference day numbers (`{"day": N, "note": …}`).
+A re-import that removes/renumbers days leaves feedback pointing at days that
+no longer exist, and `build_planner_turn_prompt` (`prompts.py:352`) injects
+ALL feedback (no existing-day filter, no cap — unlike chat's last-12
+truncation) into every future turn. Fix non-destructively at prompt-build:
+in `plan_turn` (`app/api/curriculum.py`) or inside the prompt builder, filter
+`feedback` to `{d.day for d in curriculum.days}` before rendering — keep the
+stored rows (a later import may restore the day). Guardrail: prompt built
+with feedback for day 9 on a 3-day curriculum omits the day-9 note; feedback
+for day 2 still renders.
+
+## 31. OPEN — EdgeTTS retry misses edge-tts/aiohttp exception types
+
+**Robustness.** `app/audio/edge_tts.py::_synthesize_with_retry` retries only
+`(ConnectionResetError, ConnectionError, OSError)`. edge-tts is built on
+aiohttp and raises its own hierarchy: `edge_tts.exceptions.NoAudioReceived`,
+`WebSocketError`, and aiohttp's `WSServerHandshakeError`/`ClientResponseError`
+(NOT OSError subclasses — only `ClientOSError` is). A transient EdgeTTS 403
+handshake rejection or empty-audio response fails the whole lesson render on
+the first attempt instead of retrying. Fix: add
+`edge_tts.exceptions.EdgeTTSException` and `aiohttp.ClientError` to the retry
+tuple (import aiohttp is already a transitive dep of edge-tts; verify the
+exact base-class names against the pinned edge-tts version before writing).
+Also: the class docstring says "max 3 concurrent" but
+`MAX_CONCURRENT_REQUESTS = 10` — fix the comment while there.
+
+**Guardrail test** (pytest-mock at the edge_tts.Communicate boundary, like
+existing EdgeTTS tests): `Communicate.save` raising `NoAudioReceived` twice
+then succeeding → synthesize succeeds; raising 3× → RuntimeError.
+
 ---
 
 ## Danger-zone observations (NOT for Big Pickle — needs owner decision)
