@@ -1134,7 +1134,11 @@ describe("TunaTaleAPI", () => {
     it("surfaces FastAPI validation errors (list-shaped detail) with field and message", async () => {
       // FastAPI 422s put detail as a LIST of {loc, msg, type} objects, not a string.
       const detail = [
-        { loc: ["body", "batch_size"], msg: "Input should be less than or equal to 14", type: "less_than_equal" },
+        {
+          loc: ["body", "batch_size"],
+          msg: "Input should be less than or equal to 14",
+          type: "less_than_equal",
+        },
       ];
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFailBody({ detail }, 422, "")));
 
