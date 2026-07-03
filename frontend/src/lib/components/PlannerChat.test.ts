@@ -91,4 +91,39 @@ describe("PlannerChat", () => {
     (component as unknown as { focusInput: () => void }).focusInput();
     expect(document.activeElement).toBe(getByPlaceholderText(/message the planner/i));
   });
+
+  it("restores the draft when onSend reports failure (backlog #16)", async () => {
+    // A failed turn persists nothing server-side; the typed message must come
+    // back instead of forcing a retype.
+    const { getByRole, getByPlaceholderText } = setup({
+      onSend: vi.fn().mockResolvedValue(false),
+    });
+    const textarea = getByPlaceholderText(/message the planner/i) as HTMLTextAreaElement;
+    await fireEvent.input(textarea, { target: { value: "add food day" } });
+    await fireEvent.click(getByRole("button", { name: "Send" }));
+    await vi.waitFor(() => expect(textarea.value).toBe("add food day"));
+  });
+
+  it("leaves the textarea empty when onSend succeeds", async () => {
+    const { getByRole, getByPlaceholderText } = setup({
+      onSend: vi.fn().mockResolvedValue(true),
+    });
+    const textarea = getByPlaceholderText(/message the planner/i) as HTMLTextAreaElement;
+    await fireEvent.input(textarea, { target: { value: "add food day" } });
+    await fireEvent.click(getByRole("button", { name: "Send" }));
+    expect(textarea.value).toBe("");
+  });
+
+  it("does not clobber a newly-typed draft when the failed send resolves", async () => {
+    let resolveSend!: (ok: boolean) => void;
+    const onSend = vi.fn(() => new Promise<boolean>((r) => (resolveSend = r)));
+    const { getByRole, getByPlaceholderText } = setup({ onSend });
+    const textarea = getByPlaceholderText(/message the planner/i) as HTMLTextAreaElement;
+    await fireEvent.input(textarea, { target: { value: "first message" } });
+    await fireEvent.click(getByRole("button", { name: "Send" }));
+    await fireEvent.input(textarea, { target: { value: "second draft" } });
+    resolveSend(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(textarea.value).toBe("second draft");
+  });
 });

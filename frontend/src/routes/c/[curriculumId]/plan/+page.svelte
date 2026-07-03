@@ -29,15 +29,17 @@
 	let error = $state('');
 	let chat: PlannerChat;
 
-	async function handleSend(message: string) {
+	async function handleSend(message: string): Promise<boolean> {
 		pending = true;
 		error = '';
 		try {
 			const turn = await api.planTurn(data.curriculum.id, message, batchSize);
 			messages = appendTurn(messages, message, turn.reply);
 			proposed = turn.proposed;
+			return true;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
+			return false;
 		} finally {
 			pending = false;
 		}

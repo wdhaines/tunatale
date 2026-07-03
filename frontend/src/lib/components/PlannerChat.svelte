@@ -6,7 +6,7 @@
 		messages: ChatMessage[];
 		pending: boolean;
 		batchSize: number;
-		onSend: (message: string) => void | Promise<void>;
+		onSend: (message: string) => boolean | Promise<boolean>;
 	}
 
 	let { messages, pending, batchSize = $bindable(), onSend }: Props = $props();
@@ -24,7 +24,11 @@
 		if (!canSend) return;
 		const message = draft.trim();
 		draft = '';
-		await onSend(message);
+		const ok = await onSend(message);
+		// A failed turn persists nothing server-side; restore the typed message
+		// so the user doesn't have to retype it — but only if they haven't
+		// already started a new draft while the turn was in flight.
+		if (ok === false && !draft) draft = message;
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
