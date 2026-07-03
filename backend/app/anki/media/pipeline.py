@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
+
+import anyio
 
 from .forvo import fetch_forvo_audio
 from .normalize import normalize_audio
@@ -53,7 +56,10 @@ async def fetch_card_media(
 
     result = MediaResult()
 
-    audio = forvo_fn(word, http_client=http_client)
+    # Forvo / Pixabay / normalize are synchronous (httpx.Client, ffmpeg
+    # subprocess) — offload to a worker thread so a slow fetch doesn't block
+    # the event loop and stall every other in-flight request.
+    audio = await anyio.to_thread.run_sync(partial(forvo_fn, word, http_client=http_client))
     if audio is not None:
         result.audio_source = "forvo"
         result.audio_bytes = audio
@@ -64,16 +70,19 @@ async def fetch_card_media(
             result.audio_bytes = audio
 
     if result.audio_bytes is not None and normalize:
-        result.audio_bytes = norm_fn(result.audio_bytes)
+        result.audio_bytes = await anyio.to_thread.run_sync(norm_fn, result.audio_bytes)
 
     # image_query == "" is the explicit "abstract word, no image" skip sentinel.
     if image_query != "":
-        img = pixabay_fn(
-            english,
-            api_key=pixabay_key,
-            http_client=http_client,
-            used_urls=frozenset(used_image_urls) if used_image_urls is not None else frozenset(),
-            query=image_query,
+        img = await anyio.to_thread.run_sync(
+            partial(
+                pixabay_fn,
+                english,
+                api_key=pixabay_key,
+                http_client=http_client,
+                used_urls=frozenset(used_image_urls) if used_image_urls is not None else frozenset(),
+                query=image_query,
+            )
         )
         if img is not None:
             result.image_bytes, result.image_ext, result.image_url = img

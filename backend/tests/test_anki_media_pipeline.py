@@ -364,3 +364,41 @@ class TestFetchCardMedia:
             _normalize_fn=norm_fn,
         )
         assert received == [None]
+
+
+class TestEventLoopLiveness:
+    async def test_blocking_fetchers_do_not_block_event_loop(self):
+        """Forvo/Pixabay/normalize are synchronous (httpx.Client, ffmpeg
+        subprocess); the pipeline must offload them to a worker thread —
+        otherwise every add-time media fetch freezes ALL in-flight requests
+        (the lesson page fires several API calls at once)."""
+        import asyncio
+        import time
+
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        def slow_forvo(word, *, http_client=None):
+            time.sleep(0.2)  # simulates a slow Forvo HTTP round-trip
+            return b"audio"
+
+        _, tts_fn, pixabay_fn, norm_fn = _make_fakes()
+        task = asyncio.create_task(ticker())
+        await asyncio.sleep(0)  # let the ticker start
+        await fetch_card_media(
+            "voda",
+            "water",
+            pixabay_key="key",
+            _forvo_fn=slow_forvo,
+            _tts_fn=tts_fn,
+            _pixabay_fn=pixabay_fn,
+            _normalize_fn=norm_fn,
+        )
+        ticks_during = ticks
+        task.cancel()
+        assert ticks_during >= 3, f"event loop was blocked during the fetch (ticks={ticks_during})"

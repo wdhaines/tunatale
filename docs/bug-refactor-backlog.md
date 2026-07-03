@@ -365,6 +365,19 @@ exits 0 but writes an empty file). Tests:
 `test_empty_ffmpeg_output_returns_original_bytes` (both mock at the
 `subprocess.run` boundary only).
 
+## 24. FIXED — Add-time media fetch blocked the event loop for seconds per card
+
+`app/anki/media/pipeline.py::fetch_card_media` is async but called its
+synchronous fetchers inline: Forvo (blocking `httpx.Client`), Pixabay
+(blocking), and `normalize_audio` (two ffmpeg subprocesses). Every add-time
+media fetch (`POST /items`, `/listen`, peer-sync media_fn) froze ALL
+in-flight requests for the duration — the same hazard the codebase already
+offloads the lemmatizer to a worker thread for. Now each sync fetcher runs
+via `anyio.to_thread.run_sync`. Regression test:
+`TestEventLoopLiveness::test_blocking_fetchers_do_not_block_event_loop`
+(asserts a concurrent task keeps ticking while a 200 ms fetch runs; was 0
+ticks before the fix).
+
 ---
 
 ## Danger-zone observations (NOT for Big Pickle — needs owner decision)
