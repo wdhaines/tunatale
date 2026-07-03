@@ -32,11 +32,16 @@ echo "Running backend + frontend suites in parallel..."
   set -e
   cd "$ROOT/backend"
 
+  # --no-cache: ruff's file cache is keyed on mtime and races on newly-added
+  # files — a file created in the same coarse mtime window as a prior cache
+  # write is treated as already-scanned, so its violations pass silently (~50%
+  # of runs; verified 2026-07-03). CI is immune (fresh checkout, no cache); this
+  # brings the local pre-commit gate up to CI's reliability. Cost is sub-second.
   echo "=== Ruff lint ==="
-  uv run ruff check app tests scripts
+  uv run ruff check --no-cache app tests scripts
 
   echo "=== Ruff format check ==="
-  uv run ruff format --check app tests scripts
+  uv run ruff format --check --no-cache app tests scripts
 
   echo "=== Mock boundary check ==="
   uv run python scripts/check_mock_boundaries.py
