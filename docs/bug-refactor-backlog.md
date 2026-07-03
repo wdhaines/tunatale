@@ -367,6 +367,32 @@ exits 0 but writes an empty file). Tests:
 `test_empty_ffmpeg_output_returns_original_bytes` (both mock at the
 `subprocess.run` boundary only).
 
+## 25. OPEN — `get_lemmatizer()` singleton breaks in multi-language mode (companion to #21)
+
+**Latent bug / trap.** `backend/app/srs/lemmatizer.py::get_lemmatizer` is
+`@lru_cache(maxsize=1)` and its docstring's premise is "one `target_language`
+per process" — but multi-language mode (`settings.database_urls`, per-request
+`X-TT-Language` middleware in `main.py`) runs BOTH languages in one process.
+There, every request gets the single cached lemmatizer for the configured
+`lemmatizer_type`/`target_language` — e.g. Norwegian transcripts analyzed by
+the Slovene classla model (or silently by the lowercase fallback). Same wiring
+class as item #21 (renderer preprocessor).
+
+**Fix sketch (bigger than #21 — verify call-site behavior as you go).** Make
+the factory per-language: `get_lemmatizer(language_code)` with an
+`lru_cache`-per-code (classla for "sl", stanza for "no", lowercase otherwise —
+the mapping can live in `app/languages.py` next to the preprocessor factory).
+Callers already carry `language_code` (`lemmatize_surfaces_in_context`,
+`analyze_sentence_cached`, `extract_transcript`, `api/srs.py`'s module-level
+`_lemmatizer`); the module-level `_lemmatizer` in `api/srs.py` must become
+per-request (resolve from `request.state.language_code`). Keep the
+warm-up (`main.py::_warm_from_lessons`) warming each configured language.
+
+**Guardrail test.** Two-language settings; assert `get_lemmatizer("sl")` and
+`get_lemmatizer("no")` return different instances of the right classes
+(importability-fallback aside), and that the transcript endpoint threads the
+request language's lemmatizer.
+
 ## 24. FIXED — Add-time media fetch blocked the event loop for seconds per card
 
 `app/anki/media/pipeline.py::fetch_card_media` is async but called its
