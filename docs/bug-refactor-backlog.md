@@ -52,7 +52,7 @@ downstream tolerates duplicate day numbers (`get_lesson_by_day`, day sorting,
   `chat`/`feedback` intact but `proposed is None`.
 - Normal turn→commit flow still passes (no false 409).
 
-## 3. OPEN — `batch_size` unvalidated server-side
+## 3. FIXED — `batch_size` unvalidated server-side
 
 **Bug.** `PlanTurnRequest.batch_size` (`backend/app/api/models.py`) is a bare
 `int = 5`. The frontend clamps to 1–14 (`frontend/src/lib/planner.ts
@@ -115,7 +115,7 @@ when `chat` is empty appends nothing — unlike every other section which render
 current user message, so this is now nearly unreachable — verify and either add
 `(none)` for symmetry or leave with a comment. Lowest priority.
 
-## 7. OPEN — `/api/story/generate`: invalid strategy and LLM failures both surface as raw 500s
+## 7. FIXED — `/api/story/generate`: invalid strategy and LLM failures both surface as raw 500s
 
 **Bug (two parts).** In `backend/app/api/generation.py::generate_story`:
 1. `ContentStrategy[body.strategy]` raises bare `KeyError` for anything but
@@ -141,7 +141,7 @@ Extract one `serialize_lesson(lesson_id, lesson, *, day=None)` helper (either
 module or a small `app/api/_serializers.py`) and call it from both. Pure
 behavior-preserving; existing endpoint tests are the guardrail.
 
-## 9. OPEN — Fire-and-forget `asyncio.create_task` without a strong reference
+## 9. FIXED — Fire-and-forget `asyncio.create_task` without a strong reference
 
 **Latent bug.** `backend/app/api/generation.py:96` —
 `asyncio.create_task(_prewarm_lesson(...))` discards the task reference; the
@@ -187,7 +187,7 @@ on the intentional plugin-interface sites (`lemmatizer.py`,
 `audio/preprocessing/*.py`, `translate.py` until item 10 lands) so the class
 of bug fixed in item 1 (accepted-but-ignored argument) can't silently recur.
 
-## 12. OPEN — `serve_media` path guard uses bare `startswith`
+## 12. FIXED — `serve_media` path guard uses bare `startswith`
 
 **Hardening.** `backend/app/api/srs.py::serve_media` rejects traversal with
 `str(file_path).startswith(str(media_dir.resolve()))` — the classic prefix
@@ -248,6 +248,56 @@ successful re-render → old file paths gone from disk, new ones present.
   ValueError fallback. Extract `_section_title(section_type: str) -> str`.
 Behavior-preserving; existing audio endpoint tests are the guardrail.
 
+## 16. OPEN — Planner chat: failed turn silently discards the typed message
+
+**UX bug.** `frontend/src/lib/components/PlannerChat.svelte::send()` clears
+`draft` before `await onSend(message)`. The parent (`plan/+page.svelte
+handleSend`) catches API failures and shows the error banner, but nothing
+re-surfaces the message — the user retypes it from scratch (and the backend
+deliberately persists nothing for a failed turn).
+
+**Fix.** Make `onSend` return `Promise<boolean>` (parent's `handleSend`
+returns `false` on caught error, `true` otherwise); in `send()`, restore
+`draft = message` when the result is `false` (only if the user hasn't typed
+something new meanwhile: `if (!draft) draft = message`).
+
+**Guardrail test** (`frontend/src/lib/components/PlannerChat.svelte.test.ts`
+pattern; TDD per house rules): onSend rejects/returns false → textarea value
+is the original message; success → stays empty.
+
+## 17. OPEN — Duplicate collocations in one proposed day crash the keyed each-block
+
+**Bug (edge).** `ProposedBatch.svelte` renders `{#each d.collocations as c (c)}`
+— keyed by value. `validate_plan_days` doesn't enforce uniqueness, and an LLM
+proposing the same collocation twice in a day is entirely plausible → Svelte
+throws on duplicate keys and the proposal panel fails to render.
+
+**Fix (server-side, preferred).** In `_validate_collocations`
+(`backend/app/storage/plan_io.py`), reject duplicates case-insensitively
+(`days[i].collocations[j] duplicates an earlier entry`) — the planner already
+maps validation errors to a retryable 502, and imports get a clear 422.
+Optionally also key the each-block by index for belt-and-suspenders.
+
+**Guardrail tests:** `validate_plan_days` with `["a", "A"]` → ValueError;
+planner turn whose JSON repeats a collocation → PlannerError (existing stub
+pattern in `backend/tests/test_planner.py`).
+
+## 18. OPEN — Cassette hash ignores `system_prompt` (stale replays after system-prompt edits)
+
+**Test-fidelity gap.** `backend/app/llm/cassette.py::_hash_prompt` hashes only
+the user prompt. Editing a *system* prompt (e.g. `PLANNER_SYSTEM_PROMPT`,
+story system prompt) does not invalidate cassettes — mock-mode tests keep
+replaying responses recorded under the old instructions and stay green when
+they should demand a re-record. Fix: hash
+`f"{system_prompt or ''}\x00{prompt}"` (and bump a `"version"` field in the
+cassette JSON so old files fail loudly with the re-record hint). Requires a
+one-time re-record of all cassettes:
+`export $(grep '^GROQ_API_KEY=' backend/.env)` then
+`uv run pytest --llm-mode=record --no-cov` for the cassette-marked tests
+(watch Groq free-tier rate limits — run test files one at a time if 429s
+appear). Also reseed any e2e fixtures derived from cassettes (`playwright`
+uses `LLM_MODE=mock` against the same files).
+
 ---
 
 ## Danger-zone observations (NOT for Big Pickle — needs owner decision)
@@ -259,3 +309,18 @@ Behavior-preserving; existing audio endpoint tests are the guardrail.
   `anki_rollover.py` helper, all three call sites) is the highest-value de-dup
   named in `.claude/rules/anki-queue-parity.md`, but it touches parity code —
   do it with the oracle harness green before/after, not as a drive-by.
+
+- **`date.today()` (midnight-local) still feeds several request paths that
+  Layer 67 didn't cover.** Verified concretely: the reading-transcript `is_due`
+  / `collocation_is_due` flags (`api/srs.py:635` → `transcript.py::_is_due`,
+  `due_at.date() <= today`) use the midnight boundary, while the badges/queue
+  use the 4 AM-anchored Anki day (`_anki_day_bounds_utc`). In the
+  `[midnight, 4 AM)` window the transcript bolds words as due that the review
+  surfaces don't serve yet — same divergence class as the Layer-67 badge
+  undercount, on a lower-stakes surface (cosmetic bolding, self-corrects at
+  4 AM). ~10 more `date.today()` call sites in `api/srs.py` (221, 436, 759,
+  769, 1086, 1362, 1449, 1580…) deserve the same audit: for each, decide
+  "calendar day is right here" vs "Anki day is right here." Any fix should
+  route through ONE shared `anki_today()` helper (see the 3-places item
+  above), with per-call-site sign-off — not a mechanical replace. Parity-
+  sensitive; keep out of Big Pickle's hands.

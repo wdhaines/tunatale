@@ -573,6 +573,59 @@ class TestStoryEndpoints:
             )
         assert response.status_code == 404
 
+    async def test_generate_story_invalid_strategy_422(self):
+        """An unknown strategy must be a validation error, not a KeyError 500."""
+        from app.storage.store import ContentStore
+
+        app.state.content_store = ContentStore(":memory:")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/story/generate",
+                json={"curriculum_id": "c1", "day": 1, "strategy": "SIDEWAYS"},
+            )
+        assert response.status_code == 422
+
+    async def test_generate_story_llm_failure_502(self):
+        """Malformed LLM output (StoryGenerationError) maps to 502, mirroring
+        how plan_turn maps PlannerError — never a raw 500 traceback."""
+        from app.generation.story import StoryGenerationError
+        from app.storage.store import ContentStore
+
+        mock_generator = AsyncMock()
+        mock_generator.generate = AsyncMock(side_effect=StoryGenerationError("LLM returned invalid JSON"))
+
+        store = ContentStore(":memory:")
+        store.save_curriculum(
+            "c1",
+            Curriculum(
+                id="c1",
+                topic="coffee",
+                language_code="sl",
+                cefr_level="A2",
+                days=[
+                    CurriculumDay(
+                        day=1,
+                        title="Day 1",
+                        focus="greetings",
+                        learning_objective="greet",
+                        story_guidance="café",
+                        collocations=["zdravo"],
+                    )
+                ],
+            ),
+        )
+        app.state.content_store = store
+        app.state.story_generator = mock_generator
+        app.state.language = Language.slovene()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/story/generate",
+                json={"curriculum_id": "c1", "day": 1, "strategy": "WIDER"},
+            )
+        assert response.status_code == 502
+        assert "invalid JSON" in response.json()["detail"]
+
     async def test_generate_story_returns_201(self, monkeypatch):
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore

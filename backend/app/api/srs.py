@@ -335,7 +335,9 @@ async def undo_grade(item_id: int, direction: str, request: Request):
 async def serve_media(filename: str, request: Request):
     media_dir = _MEDIA_DIR
     file_path = (media_dir / filename).resolve()
-    if not str(file_path).startswith(str(media_dir.resolve())):
+    # is_relative_to, not str.startswith — a prefix check passes for sibling
+    # directories whose name extends the media dir's ("media" vs "media-evil").
+    if not file_path.is_relative_to(media_dir.resolve()):
         raise HTTPException(status_code=400, detail="Invalid filename")
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Media file not found")

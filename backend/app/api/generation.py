@@ -11,6 +11,7 @@ import anyio
 from fastapi import APIRouter, HTTPException, Request
 
 from app.api.models import GenerateStoryRequest
+from app.generation.story import StoryGenerationError
 from app.models.lesson import Lesson, SectionType
 from app.models.strategy import ContentStrategy
 from app.srs.database import SRSDatabase
@@ -19,6 +20,10 @@ from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_ve
 _logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/story", tags=["generation"])
+
+# Strong refs to fire-and-forget pre-warm tasks: the event loop only keeps a
+# weak reference, so an un-anchored task can be garbage-collected mid-flight.
+_background_tasks: set[asyncio.Task] = set()
 
 
 def _slug(text: str) -> str:
@@ -80,12 +85,16 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
     language = request.state.language
     generator = request.app.state.story_generator
 
-    lesson = await generator.generate(
-        curriculum_day=curriculum_day,
-        language=language,
-        strategy=strategy,
-        cefr_level=curriculum.cefr_level,
-    )
+    try:
+        lesson = await generator.generate(
+            curriculum_day=curriculum_day,
+            language=language,
+            strategy=strategy,
+            cefr_level=curriculum.cefr_level,
+        )
+    except StoryGenerationError as e:
+        # Malformed LLM output — nothing persisted; the user retries.
+        raise HTTPException(status_code=502, detail=str(e)) from e
 
     lesson_id = f"{_slug(lesson.title)}-{uuid.uuid4().hex[:8]}"
     store.save_lesson(lesson_id, body.curriculum_id, body.day, lesson)
@@ -93,7 +102,9 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
     # Pre-warm the analysis cache off the request path
     srs_db = getattr(request.app.state, "srs_db", None)
     if srs_db is not None:
-        asyncio.create_task(_prewarm_lesson(lesson, srs_db))
+        task = asyncio.create_task(_prewarm_lesson(lesson, srs_db))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
     sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
     return {"id": lesson_id, "title": lesson.title, "sections": sections}

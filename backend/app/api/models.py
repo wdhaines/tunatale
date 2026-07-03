@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 # ── SRS models ──────────────────────────────────────────────────────────────
 
@@ -62,7 +64,7 @@ class IgnoreLemmaRequest(BaseModel):
 class GenerateStoryRequest(BaseModel):
     curriculum_id: str
     day: int = 1
-    strategy: str = "WIDER"
+    strategy: Literal["WIDER", "DEEPER"] = "WIDER"
 
 
 # ── Audio models ────────────────────────────────────────────────────────────
@@ -96,7 +98,9 @@ class StartPlanRequest(BaseModel):
 
 class PlanTurnRequest(BaseModel):
     message: str
-    batch_size: int = 5
+    # Mirrors the frontend clamp (clampBatchSize, 1..14) — 0 days is meaningless
+    # and large values ask the LLM for more days than the token budget can hold.
+    batch_size: int = Field(5, ge=1, le=14)
 
 
 class PlanFeedbackRequest(BaseModel):

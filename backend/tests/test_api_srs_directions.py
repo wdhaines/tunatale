@@ -529,6 +529,29 @@ class TestMediaEndpoint:
             await serve_media("..", _FakeReq())  # type: ignore[arg-type]
         assert exc_info.value.status_code == 400
 
+    async def test_sibling_prefix_dir_traversal_400(self, tmp_path, monkeypatch):
+        """A bare startswith() prefix check passes for a SIBLING directory whose
+        name extends the media dir's ("media" vs "media-evil") — the guard must
+        use is_relative_to, not string prefixing."""
+        from fastapi import HTTPException
+
+        import app.api.srs as srs_mod
+        from app.api.srs import serve_media
+
+        media_dir = tmp_path / "media"
+        media_dir.mkdir()
+        evil_dir = tmp_path / "media-evil"
+        evil_dir.mkdir()
+        (evil_dir / "secret.txt").write_text("leaked")
+        monkeypatch.setattr(srs_mod, "_MEDIA_DIR", media_dir)
+
+        class _FakeReq:
+            pass
+
+        with pytest.raises(HTTPException) as exc_info:
+            await serve_media("../media-evil/secret.txt", _FakeReq())  # type: ignore[arg-type]
+        assert exc_info.value.status_code == 400
+
     async def test_existing_file_returns_200(self, tmp_path, monkeypatch):
         import app.api.srs as srs_mod
 

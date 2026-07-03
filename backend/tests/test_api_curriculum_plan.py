@@ -119,6 +119,28 @@ class TestStartPlan:
 
 
 class TestPlanTurn:
+    @pytest.mark.parametrize("bad_size", [0, -1, 15])
+    async def test_turn_batch_size_out_of_bounds_422(self, bad_size):
+        """batch_size mirrors the frontend clamp (1..14); the API must reject
+        what the UI can never send (0 days, or 500 days into a 5500-token budget)."""
+        _setup(curriculum=_planned_curriculum(), planner=StubPlanner(result=PlannerTurn(reply="hi", proposed_days=None)))
+        async with _client() as client:
+            response = await client.post(
+                "/api/curriculum/trip/plan/turn", json={"message": "hi", "batch_size": bad_size}
+            )
+        assert response.status_code == 422
+
+    async def test_turn_batch_size_bounds_accepted(self):
+        planner = StubPlanner(result=PlannerTurn(reply="hi", proposed_days=None))
+        _setup(curriculum=_planned_curriculum(), planner=planner)
+        async with _client() as client:
+            for ok_size in (1, 14):
+                response = await client.post(
+                    "/api/curriculum/trip/plan/turn", json={"message": "hi", "batch_size": ok_size}
+                )
+                assert response.status_code == 200
+        assert [c["batch_size"] for c in planner.calls] == [1, 14]
+
     async def test_turn_unknown_curriculum_404(self):
         _setup(planner=StubPlanner(result=PlannerTurn(reply="hi", proposed_days=None)))
         async with _client() as client:
