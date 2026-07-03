@@ -64,7 +64,7 @@ def _main() -> None:  # pragma: no cover — CLI wiring, run once
     import argparse
 
     parser = argparse.ArgumentParser(description="Lowercase token_glosses keys in all stored lessons.")
-    args = parser.parse_args()
+    parser.parse_args()
 
     from app.config import settings
 
