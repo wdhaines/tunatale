@@ -1,6 +1,6 @@
 """Tests for the one-shot lowercase-token_glosses migration."""
 
-from app.models.lesson import Lesson, Phrase, Section, SectionType
+from app.models.lesson import Lesson, Section, SectionType
 from app.storage.lowercase_glosses import _is_lowercase, _lowercase_keys, lowercase_glosses
 from app.storage.store import ContentStore
 
