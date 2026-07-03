@@ -86,6 +86,34 @@ class TestNormalizeAudio:
         assert result == b"r"
         assert stats_seen[0] == {}  # empty stats passed through
 
+    def test_ffmpeg_failure_returns_original_bytes(self, monkeypatch):
+        """A failed loudnorm pass must fail soft to the ORIGINAL audio —
+        returning the empty/partial temp file's bytes would save corrupt
+        (typically zero-byte) pronunciation audio into the Anki media dir."""
+        calls = [0]
+
+        def fake_run(cmd, *, capture_output=False, text=False):
+            calls[0] += 1
+            # First call = measure pass (success, no json → one-pass fallback);
+            # second call = apply pass, which fails without writing output.
+            rc = 0 if calls[0] == 1 else 1
+            return subprocess.CompletedProcess(cmd, rc, stdout="", stderr="boom")
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+        result = normalize_audio(b"original_mp3")
+        assert result == b"original_mp3"
+
+    def test_empty_ffmpeg_output_returns_original_bytes(self, monkeypatch):
+        """ffmpeg exiting 0 but writing nothing (or an empty file) must also
+        fall back to the original bytes."""
+
+        def fake_run(cmd, *, capture_output=False, text=False):
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="no json here")
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+        result = normalize_audio(b"original_mp3")
+        assert result == b"original_mp3"
+
     def test_cleans_up_temp_files(self, monkeypatch, tmp_path):
         created: list[str] = []
 
@@ -167,7 +195,7 @@ class TestNormalizeAudio:
         cmds: list[list[str]] = []
         monkeypatch.setattr(
             "subprocess.run",
-            lambda cmd, **kw: (cmds.append(cmd), subprocess.CompletedProcess(cmd, 0, "", "")),
+            lambda cmd, **kw: (cmds.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1],
         )
 
         from app.anki.media.normalize import _apply_normalization
@@ -185,7 +213,7 @@ class TestNormalizeAudio:
         cmds: list[list[str]] = []
         monkeypatch.setattr(
             "subprocess.run",
-            lambda cmd, **kw: (cmds.append(cmd), subprocess.CompletedProcess(cmd, 0, "", "")),
+            lambda cmd, **kw: (cmds.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1],
         )
 
         from app.anki.media.normalize import _apply_normalization

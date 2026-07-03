@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import tempfile
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 TARGET_LUFS = -23.0
 TARGET_LRA = 7.0
@@ -54,15 +57,22 @@ def _apply_normalization(src: Path, dst: Path, stats: dict, target_lufs: float) 
             f":measured_I={il}:measured_LRA={lra}:measured_TP={tp}"
             f":measured_thresh={thr}:offset={off}:linear=true:print_format=none"
         )
-    subprocess.run(
+    result = subprocess.run(
         ["ffmpeg", "-y", "-i", str(src), "-af", af, "-ar", "44100", "-b:a", "128k", str(dst)],
         capture_output=True,
         text=True,
     )
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg loudnorm failed ({result.returncode}): {result.stderr[-300:]}")
 
 
 def normalize_audio(src_bytes: bytes, *, target_lufs: float = TARGET_LUFS) -> bytes:
-    """Two-pass EBU R128 normalization. Returns normalized MP3 bytes."""
+    """Two-pass EBU R128 normalization. Returns normalized MP3 bytes.
+
+    Fails soft: if ffmpeg errors or produces an empty file, the ORIGINAL bytes
+    are returned unchanged — un-normalized audio beats corrupt/zero-byte audio
+    in the Anki media dir.
+    """
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as src_f:
         src_path = Path(src_f.name)
         src_f.write(src_bytes)
@@ -74,8 +84,16 @@ def normalize_audio(src_bytes: bytes, *, target_lufs: float = TARGET_LUFS) -> by
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as dst_f:
             dst_path = Path(dst_f.name)
 
-        _apply_normalization(src_path, dst_path, stats, target_lufs)
-        return dst_path.read_bytes()
+        try:
+            _apply_normalization(src_path, dst_path, stats, target_lufs)
+        except RuntimeError:
+            logger.warning("Loudness normalization failed — keeping original audio", exc_info=True)
+            return src_bytes
+        normalized = dst_path.read_bytes()
+        if not normalized:
+            logger.warning("Loudness normalization produced an empty file — keeping original audio")
+            return src_bytes
+        return normalized
     finally:
         src_path.unlink(missing_ok=True)
         if dst_path is not None:

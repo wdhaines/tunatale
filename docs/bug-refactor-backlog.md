@@ -352,6 +352,19 @@ successful migration. Regression tests: "does not re-run the migration once
 the new key exists (no clobber)" + "removes the legacy key after a successful
 migration" in `listened.test.ts`.
 
+## 23. FIXED — Loudness normalization saved corrupt bytes when ffmpeg failed
+
+`app/anki/media/normalize.py::_apply_normalization` never checked ffmpeg's
+exit code, and `normalize_audio` returned whatever was in the destination temp
+file — so a failed loudnorm pass (bad input, codec issue) returned zero-byte /
+partial bytes that the media pipeline then saved as the card's pronunciation
+audio in the Anki media dir. Now `_apply_normalization` raises on non-zero
+exit and `normalize_audio` fails soft to the ORIGINAL bytes (also when ffmpeg
+exits 0 but writes an empty file). Tests:
+`test_ffmpeg_failure_returns_original_bytes`,
+`test_empty_ffmpeg_output_returns_original_bytes` (both mock at the
+`subprocess.run` boundary only).
+
 ---
 
 ## Danger-zone observations (NOT for Big Pickle — needs owner decision)
