@@ -151,7 +151,13 @@ def import_plan(store: ContentStore, file: dict) -> tuple[str, Curriculum]:
         existing = store.get_curriculum(curriculum_id)
         if existing is None:
             raise KeyError(f"Curriculum not found: {curriculum_id}")
-        metadata = existing.metadata
+        metadata = copy.deepcopy(existing.metadata)
+        # A pending proposal was numbered against the pre-import day list; the
+        # import may renumber/remove days, so committing it afterwards would
+        # produce colliding day numbers. Chat and feedback stay (the hand-edit
+        # round-trip contract); the proposal is dropped.
+        if isinstance(metadata.get("planner"), dict):
+            metadata["planner"]["proposed"] = None
     else:
         curriculum_id = mint_curriculum_id(topic)
         metadata = {}

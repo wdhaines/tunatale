@@ -249,6 +249,24 @@ class TestPlanCommit:
             response = await client.post("/api/curriculum/trip/plan/commit", json={})
         assert response.status_code == 409
 
+    async def test_commit_stale_proposal_409_and_days_unchanged(self):
+        """A proposal numbered against a day list that has since changed (e.g. a
+        plan re-import removed days) must 409, not append colliding day numbers."""
+        stale = {"start_day": 3, "days": [asdict(_day(3))]}  # curriculum only has day 1
+        curriculum = _planned_curriculum(proposed=stale)
+        curriculum.days.append(_day(1))
+        store = _setup(curriculum)
+
+        async with _client() as client:
+            response = await client.post("/api/curriculum/trip/plan/commit", json={})
+
+        assert response.status_code == 409
+        assert "stale" in response.json()["detail"].lower()
+        saved = store.get_curriculum("trip")
+        assert [d.day for d in saved.days] == [1]
+        # The stale proposal is left in place — the user re-proposes via chat.
+        assert saved.metadata["planner"]["proposed"] == stale
+
     async def test_commit_appends_days_clears_proposed_adds_event(self):
         proposed = {"start_day": 3, "days": [asdict(_day(3)), asdict(_day(4))]}
         curriculum = _planned_curriculum(proposed=proposed)

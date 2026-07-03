@@ -346,6 +346,29 @@ class TestImportPlan:
         assert curriculum.metadata["planner"]["chat"] == [{"role": "user", "content": "hello"}]
         assert curriculum.days[0].title == "Updated Day"
 
+    def test_same_id_clears_stale_proposal_keeps_chat_and_feedback(self, store):
+        """A pending proposal was numbered against the pre-import day list; a
+        re-import can renumber/remove days, so committing it afterwards would
+        produce colliding day numbers. Import keeps chat/feedback (the hand-edit
+        round-trip contract) but drops the proposal."""
+        existing = _curriculum()
+        existing.metadata = {
+            "planner": {
+                "chat": [{"role": "user", "content": "hello"}],
+                "proposed": {"start_day": 3, "days": [{"day": 3}]},
+                "feedback": [{"day": 1, "note": "great"}],
+            }
+        }
+        store.save_curriculum(existing.id, existing)
+
+        _, curriculum = import_plan(store, _plan_dict())
+
+        planner = curriculum.metadata["planner"]
+        assert planner["proposed"] is None
+        assert planner["chat"] == [{"role": "user", "content": "hello"}]
+        assert planner["feedback"] == [{"day": 1, "note": "great"}]
+        assert store.get_curriculum(existing.id).metadata["planner"]["proposed"] is None
+
     def test_unknown_given_id_raises_key_error(self, store):
         file = _plan_dict(id="no-such-id")
         with pytest.raises(KeyError):

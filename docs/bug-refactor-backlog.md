@@ -23,7 +23,7 @@ Fixed in `backend/app/generation/planner.py` (inject
 regression test `test_planner.py::test_user_message_reaches_prompt`; cassette
 `TestPlannerLLM__test_two_turn_scenario.json` re-recorded.
 
-## 2. OPEN — Stale planner proposal survives plan import → duplicate day numbers on commit
+## 2. FIXED — Stale planner proposal survives plan import → duplicate day numbers on commit
 
 **Bug.** `import_plan` (`backend/app/storage/plan_io.py`) deliberately
 preserves `existing.metadata` (chat state) when re-importing an existing
@@ -35,7 +35,9 @@ appends days whose numbers collide with or gap the committed days. Nothing
 downstream tolerates duplicate day numbers (`get_lesson_by_day`, day sorting,
 `plan_turn`'s `start_day = max(...) + 1`).
 
-**Fix (two parts, both):**
+**Fixed 2026-07-02** (both parts below, plus guardrail tests
+`test_commit_stale_proposal_409_and_days_unchanged` and
+`test_same_id_clears_stale_proposal_keeps_chat_and_feedback`):
 1. In `plan_commit`, before extending, require
    `proposed["days"][0]["day"] == max((d.day for d in curriculum.days), default=0) + 1`;
    otherwise raise HTTP 409 `"Proposed batch is stale — ask the planner to re-propose"`.

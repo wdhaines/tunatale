@@ -111,6 +111,16 @@ async def plan_commit(curriculum_id: str, request: Request):
     if not proposed:
         raise HTTPException(status_code=409, detail="No proposed batch to commit")
 
+    # The proposal was numbered against the day list at turn time; if the
+    # committed days changed since (e.g. a plan re-import), appending it would
+    # collide with or gap the existing day numbers.
+    expected_start = max((d.day for d in curriculum.days), default=0) + 1
+    if proposed["days"][0]["day"] != expected_start:
+        raise HTTPException(
+            status_code=409,
+            detail="Proposed batch is stale — the committed days changed since it was proposed; ask the planner to re-propose",
+        )
+
     days = [CurriculumDay(**d) for d in proposed["days"]]
     curriculum.days.extend(days)
     first, last = days[0].day, days[-1].day
