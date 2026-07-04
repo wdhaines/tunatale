@@ -9,10 +9,21 @@ here loudly instead of as an obscure AttributeError elsewhere.
 from app.srs.database import SRSDatabase
 from app.srs.db_base import SRSDatabaseBase
 from app.srs.db_histogram import DbHistogramMixin
+from app.srs.db_ignored_lemmas import DbIgnoredLemmasMixin
 from app.srs.db_kv_cache import DbKvCacheMixin
+from app.srs.db_lemma_cache import DbLemmaCacheMixin
 from app.srs.db_media import DbMediaMixin
+from app.srs.db_sync_conflicts import DbSyncConflictsMixin
 
-_EXPECTED_BASES = [DbMediaMixin, DbKvCacheMixin, DbHistogramMixin, SRSDatabaseBase]
+_EXPECTED_BASES = [
+    DbMediaMixin,
+    DbKvCacheMixin,
+    DbHistogramMixin,
+    DbLemmaCacheMixin,
+    DbIgnoredLemmasMixin,
+    DbSyncConflictsMixin,
+    SRSDatabaseBase,
+]
 
 
 def test_mixin_composition() -> None:
