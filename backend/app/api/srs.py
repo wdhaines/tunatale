@@ -50,19 +50,16 @@ from app.srs.queue_engine import _fnv1a_64_i64 as _fnv1a_64_i64
 from app.srs.queue_engine import _merge_by_retrievability_ascending as _merge_by_retrievability_ascending
 from app.srs.queue_engine import _merge_directions as _merge_directions
 from app.srs.queue_engine import _spread_mix as _spread_mix
+from app.srs.queue_engine import assemble_review_queue as assemble_review_queue
 from app.srs.queue_engine import build_and_freeze_main_queue as build_and_freeze_main_queue
 from app.srs.queue_stats import (
     advance_learning_cutoff,
     build_live_load_balancer,
-    clear_session_main_queue,
-    get_session_main_queue,
     resolve_bury_new,
     resolve_col_crt,
     resolve_daily_new_cap,
     resolve_daily_review_cap,
     resolve_fsrs_params,
-    resolve_learning_cutoff,
-    set_session_main_queue,
 )
 from app.srs.tokenizer import tokenize
 from app.srs.transcript import extract_transcript
@@ -1346,165 +1343,7 @@ async def get_review_queue(request: Request, response: Response, session_start: 
     response.headers["Cache-Control"] = "no-store"
 
     db = request.state.srs_db
-    today = datetime.date.today()
-    now = datetime.datetime.now(datetime.UTC)
-
-    if session_start:
-        advance_learning_cutoff(db, now)
-        # Anki parity: deck-open also rebuilds the frozen main queue, not just
-        # the learning cutoff. The frontend fires session_start=1 exactly when
-        # the user navigates to /review (fresh mount / refresh / new tab) —
-        # that's TT's deck-open analog. Without rebuilding here, TT's queue
-        # stays frozen at the last sync_pull moment while Anki rebuilds on
-        # every reopen, and the two apps' intersperser positions drift
-        # irreversibly until next sync.
-        clear_session_main_queue(db)
-        build_and_freeze_main_queue(db)
-
-    # Build live_main via the shared helper (also called by sync_pull eager
-    # rebuild). The unbury sweep runs inside _compute_live_main.
-    live_main = _compute_live_main(db)
-
-    # Learning cards live alongside main — gather them separately so they can
-    # surface as queue=1 (ready) at the head and queue=1-future (pending) at
-    # the tail. Anki's queue dispatcher dispatches intraday-learning first
-    # (queue/mod.rs:149-157).
-    learning_rec = db.get_learning_items(direction=Direction.RECOGNITION)
-    learning_prod = db.get_learning_items(direction=Direction.PRODUCTION)
-    learning_cards: list[tuple[int, SRSItem, str, Direction]] = [
-        (row_id, item, lang, Direction.RECOGNITION) for row_id, item, lang in learning_rec
-    ]
-    learning_cards.extend((row_id, item, lang, Direction.PRODUCTION) for row_id, item, lang in learning_prod)
-
-    # Sort learning cards by TT's `due_at` (authoritative after a fresh grade,
-    # before sync has refreshed Anki's `anki_due`), then anki_due, then
-    # anki_card_id ASC, then row id. Anki's queue=1 sort is `(reps==0, due)`
-    # only (rslib scheduler/queue/learning.rs cmp_by_reps_then_due); the
-    # underlying SQL has no ORDER BY, so SQLite's stable scan order — effectively
-    # cards.id ASC — is the de-facto final tiebreak. We mirror that with
-    # anki_card_id; stability is intentionally NOT in the key because two cards
-    # lapsed in the same review session share `due_at`/`anki_due` to the second,
-    # and Anki ignores stability for ordering.
-    _SENTINEL_FUTURE = datetime.datetime.max.replace(tzinfo=datetime.UTC)
-    learning_cards.sort(
-        key=lambda t: (
-            t[1].directions[t[3]].due_at is None,
-            t[1].directions[t[3]].due_at or _SENTINEL_FUTURE,
-            t[1].directions[t[3]].anki_due is None,
-            t[1].directions[t[3]].anki_due or 0,
-            t[1].directions[t[3]].anki_card_id is None,
-            t[1].directions[t[3]].anki_card_id or 0,
-            t[0],
-        ),
-    )
-
-    # Split learning into ready (past-due / null due_at) vs pending (future).
-    # Anki parity: compare due_at against a frozen `cutoff` (Anki's
-    # `current_learning_cutoff`), not live `now`. The cutoff is initialized to
-    # `now` on first call and only advances on grade events / sync ingest, so a
-    # learning card whose timer expires *between* grades stays pending until the
-    # next grade — matching Anki's "card on screen is sticky" behavior.
-    cutoff = resolve_learning_cutoff(db, fallback=now)
-    ready_learning: list[tuple[int, SRSItem, str, Direction]] = []
-    pending_learning: list[tuple[int, SRSItem, str, Direction]] = []
-    for t in learning_cards:
-        ds = t[1].directions[t[3]]
-        if ds.due_at is None or ds.due_at <= cutoff:
-            ready_learning.append(t)
-        else:
-            pending_learning.append(t)
-
-    # `live_main` was computed above by `_compute_live_main` (spread already applied).
-
-    # Anki parity: freeze the main queue per day. Anki builds `main` once at
-    # deck-open and pops the head as cards are graded — it does NOT re-run the
-    # intersperser on every grade. Without this freeze, TT recomputes the order
-    # on every poll and always serves the lowest-R review next, diverging from
-    # Anki whenever the intersperser would have placed a new card mid-sequence
-    # (e.g. with 109 reviews + 30 new, Anki's intersperser puts the first new
-    # card at position 3 — TT must surface it at that position too, not just
-    # whenever counts shift).
-    cached_order = get_session_main_queue(db, today)
-    key_to_tuple = {(t[0], t[3].value): t for t in live_main}
-    if cached_order is None:
-        ordered_main = live_main
-        set_session_main_queue(db, today, [(t[0], t[3].value) for t in live_main])
-    else:
-        seen_keys: set[tuple[int, str]] = set()
-        ordered_main = []
-        for cid, dir_str in cached_order:
-            key = (cid, dir_str)
-            if key in seen_keys or key not in key_to_tuple:
-                continue
-            seen_keys.add(key)
-            ordered_main.append(key_to_tuple[key])
-        # Anki parity for mid-day latecomers: only NEW-state cards may be
-        # tail-appended (mid-day imports via /listen — a TT-only UX allowance).
-        # REVIEW-state cards joining live_main without being in the cache are
-        # state transitions (learning→review graduation, formerly buried→active);
-        # Anki drops these from today's queue entirely
-        # (rslib scheduler/queue/learning.rs:60-77 — maybe_requeue_learning_card
-        # returns None for non-intraday-learning cards). The legitimate path for
-        # review-state changes is cache invalidation on sync / deck-config change,
-        # which rebuilds the frozen order from current state on the next call.
-        for t in live_main:
-            if (t[0], t[3].value) not in seen_keys:
-                dstate = t[1].directions[t[3]]
-                if dstate.state == SRSState.NEW:
-                    ordered_main.append(t)
-
-    # Anki parity: counts.all_zero() auto-bump. (Layer 36 trigger 4)
-    # `CardQueues::counts()` in rslib/scheduler/queue/mod.rs:187-196 advances the
-    # cutoff whenever the visible counts are all zero — so a pending learning
-    # card whose timer ripens between grades surfaces on the next fetch without
-    # the user having to grade. We mirror that here: if ready_learning AND
-    # ordered_main are both empty, and any pending learning card's due_at is
-    # past `now`, advance cutoff to `now` and re-split. Preserves the
-    # "card on screen is sticky" invariant: when main has items, the freeze
-    # stays in place (test_review_queue_auto_bump_skipped_when_main_has_items).
-    if not ready_learning and not ordered_main and pending_learning:
-        any_ripe = any(
-            t[1].directions[t[3]].due_at is not None and t[1].directions[t[3]].due_at <= now for t in pending_learning
-        )
-        if any_ripe:
-            advance_learning_cutoff(db, now)
-            cutoff = now
-            ready_learning = []
-            new_pending = []
-            for t in learning_cards:
-                ds = t[1].directions[t[3]]
-                if ds.due_at is None or ds.due_at <= cutoff:
-                    ready_learning.append(t)
-                else:
-                    new_pending.append(t)
-            pending_learning = new_pending
-
-    # Anki parity "collapse" (rslib/.../queue/learning.rs:94-113): when main
-    # is empty and the head of pending_learning was just graded
-    # (last_review == cutoff), shift it past the next-soonest pending card so
-    # the user doesn't see the same card immediately after grading. Anki does
-    # this in `requeue_learning_entry` by bumping the entry's `due` to
-    # `next.due + 1s`; we swap positions for the same effect since we rebuild
-    # the queue from disk each request.
-    if not ordered_main and len(pending_learning) >= 2:
-        head_t = pending_learning[0]
-        next_t = pending_learning[1]
-        head_ds = head_t[1].directions[head_t[3]]
-        next_ds = next_t[1].directions[next_t[3]]
-        cutoff_ahead = cutoff + datetime.timedelta(seconds=1200)
-        if (
-            head_ds.last_review == cutoff
-            and head_ds.due_at is not None
-            and head_ds.due_at <= cutoff_ahead
-            and next_ds.due_at is not None
-            and next_ds.due_at >= head_ds.due_at
-            and next_ds.due_at + datetime.timedelta(seconds=1) < cutoff_ahead
-        ):
-            pending_learning[0], pending_learning[1] = pending_learning[1], pending_learning[0]
-
-    # 5. Ready learning first (Anki queue=1 priority), then reviews/new,
-    #    then pending learning (cards waiting on their step timer).
-    ordered = ready_learning + ordered_main + pending_learning
+    ordered = assemble_review_queue(db, session_start=session_start)
 
     # POS is a disambiguator: show it only where a surface spans >=2 word classes.
     # Computed once per language present in the queue, then passed per item.
