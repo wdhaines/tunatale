@@ -15,11 +15,13 @@ from app.srs.db_ignored_lemmas import DbIgnoredLemmasMixin
 from app.srs.db_kv_cache import DbKvCacheMixin
 from app.srs.db_lemma_cache import DbLemmaCacheMixin
 from app.srs.db_media import DbMediaMixin
+from app.srs.db_queue import DbQueueMixin
 from app.srs.db_sync_conflicts import DbSyncConflictsMixin
 
 _EXPECTED_BASES = [
     DbCollocationsMixin,
     DbDirectionsMixin,
+    DbQueueMixin,
     DbMediaMixin,
     DbKvCacheMixin,
     DbHistogramMixin,
