@@ -8,8 +8,9 @@ here loudly instead of as an obscure AttributeError elsewhere.
 
 from app.srs.database import SRSDatabase
 from app.srs.db_base import SRSDatabaseBase
+from app.srs.db_media import DbMediaMixin
 
-_EXPECTED_BASES = [SRSDatabaseBase]
+_EXPECTED_BASES = [DbMediaMixin, SRSDatabaseBase]
 
 
 def test_mixin_composition() -> None:

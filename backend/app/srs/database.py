@@ -12,7 +12,6 @@ from __future__ import annotations
 import sqlite3
 import time as _time
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Any
 
 from app.anki.rollover import due_at_rollover_utc
 from app.common.guid import compute_guid
@@ -31,9 +30,10 @@ from app.srs.db_base import _NON_REVIEWABLE_STATES as _NON_REVIEWABLE_STATES
 from app.srs.db_base import SRSDatabaseBase as SRSDatabaseBase
 from app.srs.db_base import _anki_day_bounds_utc as _anki_day_bounds_utc
 from app.srs.db_base import _parse_last_review as _parse_last_review
+from app.srs.db_media import DbMediaMixin as DbMediaMixin
 
 
-class SRSDatabase(SRSDatabaseBase):
+class SRSDatabase(DbMediaMixin, SRSDatabaseBase):
     """SQLite-backed SRS repository.
 
     Use `:memory:` as db_path for in-memory test databases.
@@ -634,43 +634,6 @@ class SRSDatabase(SRSDatabaseBase):
                 (start_iso, end_iso, today.isoformat()),
             ).fetchall()
             return {r[0] for r in rows}
-
-    def get_image_filename(self, collocation_id: int) -> str | None:
-        """Return the filename of the first image media row for a collocation, or None."""
-        with self._get_conn() as conn:
-            row = conn.execute(
-                "SELECT filename FROM media WHERE collocation_id = ? AND kind = 'image' ORDER BY id DESC LIMIT 1",
-                (collocation_id,),
-            ).fetchone()
-        return row["filename"] if row is not None else None
-
-    def get_audio_filename(self, collocation_id: int) -> str | None:
-        """Return the filename of the preferred audio media row (forvo > tts), or None."""
-        with self._get_conn() as conn:
-            row = conn.execute(
-                "SELECT filename FROM media WHERE collocation_id = ? AND kind IN ('audio_forvo','audio_tts') "
-                "ORDER BY CASE kind WHEN 'audio_forvo' THEN 0 ELSE 1 END LIMIT 1",
-                (collocation_id,),
-            ).fetchone()
-        return row["filename"] if row is not None else None
-
-    def get_sentence_audio_filename(self, collocation_id: int) -> str | None:
-        """Return filename of the audio_tts_sentence media row, or None."""
-        with self._get_conn() as conn:
-            row = conn.execute(
-                "SELECT filename FROM media WHERE collocation_id = ? AND kind = 'audio_tts_sentence' LIMIT 1",
-                (collocation_id,),
-            ).fetchone()
-        return row["filename"] if row is not None else None
-
-    def has_media_row(self, collocation_id: int, kind: str) -> bool:
-        """Return True if at least one media row exists for (collocation_id, kind)."""
-        with self._get_conn() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM media WHERE collocation_id = ? AND kind = ? LIMIT 1",
-                (collocation_id, kind),
-            ).fetchone()
-        return row is not None
 
     def get_created_at_by_guid(self, guid: str) -> str | None:
         """Return the ISO timestamp from collocations.created_at for the given guid,
@@ -1482,119 +1445,6 @@ class SRSDatabase(SRSDatabaseBase):
 
             self._commit(conn)
         return direction_resets, note_resets
-
-    def add_media(
-        self,
-        collocation_id: int,
-        kind: str,
-        filename: str,
-        path: str,
-        anki_filename: str,
-        sha256: str,
-        size_bytes: int,
-    ) -> int:
-        """Insert a media row. Returns the new media id."""
-        with self._get_conn() as conn:
-            cursor = conn.execute(
-                """
-                INSERT INTO media (collocation_id, kind, filename, path, anki_filename, sha256, bytes)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (collocation_id, kind, filename, path, anki_filename, sha256, size_bytes),
-            )
-            self._commit(conn)
-            return cursor.lastrowid
-
-    def find_media_by_anki_filename(self, anki_filename: str, *, collocation_id: int) -> dict[str, Any] | None:
-        """Return the media row for the given Anki filename on a specific collocation, or None.
-
-        Scoped by ``collocation_id`` so that two collocations referencing the
-        same filename (e.g. ``img_yes.jpg`` shared between ``ja`` and ``da``)
-        don't cross-contaminate during sync.
-        """
-        with self._get_conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM media WHERE anki_filename = ? AND collocation_id = ?",
-                (anki_filename, collocation_id),
-            ).fetchone()
-        return dict(row) if row is not None else None
-
-    def delete_stale_media_for_kind(self, collocation_id: int, kind: str, keep_anki_filenames: set[str]) -> int:
-        """Delete media rows on this collocation/kind whose anki_filename isn't in
-        ``keep_anki_filenames``. Used by import_seed to collapse the row set down
-        to what Anki currently references. Returns the number of rows deleted.
-
-        Empty keep set is treated as a no-op — defense against accidentally
-        nuking all rows when the caller's per-pass tracking failed to record
-        anything. Use ``delete_all_media_for_kind`` for the intentional
-        "kind vanished from the note" case.
-        """
-        if not keep_anki_filenames:
-            return 0
-        placeholders = ",".join("?" * len(keep_anki_filenames))
-        with self._get_conn() as conn:
-            cur = conn.execute(
-                f"DELETE FROM media WHERE collocation_id = ? AND kind = ? AND anki_filename NOT IN ({placeholders})",
-                (collocation_id, kind, *keep_anki_filenames),
-            )
-            self._commit(conn)
-            return cur.rowcount
-
-    def delete_all_media_for_kind(self, collocation_id: int, kind: str) -> int:
-        """Delete every media row of ``kind`` on this collocation. Returns
-        the number of rows deleted.
-
-        Distinct from ``delete_stale_media_for_kind(..., set())`` (which is a
-        defensive no-op): this method is the explicit collapse path used when
-        a note no longer references any media of a given kind. The canonical
-        case is a note whose image field switched from ``<img src="paste-…">``
-        to ``<img src="data:…">`` (per RFC 2397 the latter has no file in
-        ``collection.media/``); the prior file row must collapse so the UI
-        stops serving the old picture.
-        """
-        with self._get_conn() as conn:
-            cur = conn.execute(
-                "DELETE FROM media WHERE collocation_id = ? AND kind = ?",
-                (collocation_id, kind),
-            )
-            self._commit(conn)
-            return cur.rowcount
-
-    def list_media_kinds_for_collocation(self, collocation_id: int) -> set[str]:
-        """Return the set of distinct media kinds currently recorded on this
-        collocation. Used by the refresh-media path to decide which kinds need
-        a cleanup pass — including kinds that have vanished from the Anki note
-        (otherwise their stale rows would persist forever).
-        """
-        with self._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT DISTINCT kind FROM media WHERE collocation_id = ?",
-                (collocation_id,),
-            ).fetchall()
-        return {r[0] for r in rows}
-
-    def find_media_by_sha256(self, collocation_id: int, kind: str, sha256: str) -> dict[str, Any] | None:
-        """Return the media row matching ``(collocation_id, kind, sha256)``, or None.
-
-        Used by the refresh-media path to recognize inline (``data:`` URI)
-        images on re-import: those have no Anki filename to dedupe against, so
-        we identify them content-wise instead.
-        """
-        with self._get_conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM media WHERE collocation_id = ? AND kind = ? AND sha256 = ?",
-                (collocation_id, kind, sha256),
-            ).fetchone()
-        return dict(row) if row is not None else None
-
-    def update_media_file(self, row_id: int, sha256: str, size_bytes: int) -> None:
-        """Update sha256 and size_bytes for an existing media row (used by refresh-media)."""
-        with self._get_conn() as conn:
-            conn.execute(
-                "UPDATE media SET sha256 = ?, bytes = ? WHERE id = ?",
-                (sha256, size_bytes, row_id),
-            )
-            self._commit(conn)
 
     def list_dirty(
         self,
