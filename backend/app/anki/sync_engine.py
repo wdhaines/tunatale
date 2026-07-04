@@ -694,7 +694,7 @@ class AnkiSync:
         The eager rebuild aligns the freeze moments. Layer 29.
         """
         if not dry_run:
-            from app.api.srs import build_and_freeze_main_queue
+            from app.srs.queue_engine import build_and_freeze_main_queue
             from app.srs.queue_stats import clear_session_main_queue
 
             clear_session_main_queue(self._db)
