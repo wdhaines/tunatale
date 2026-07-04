@@ -30,10 +30,12 @@ from app.srs.db_base import _NON_REVIEWABLE_STATES as _NON_REVIEWABLE_STATES
 from app.srs.db_base import SRSDatabaseBase as SRSDatabaseBase
 from app.srs.db_base import _anki_day_bounds_utc as _anki_day_bounds_utc
 from app.srs.db_base import _parse_last_review as _parse_last_review
+from app.srs.db_histogram import DbHistogramMixin as DbHistogramMixin
+from app.srs.db_kv_cache import DbKvCacheMixin as DbKvCacheMixin
 from app.srs.db_media import DbMediaMixin as DbMediaMixin
 
 
-class SRSDatabase(DbMediaMixin, SRSDatabaseBase):
+class SRSDatabase(DbMediaMixin, DbKvCacheMixin, DbHistogramMixin, SRSDatabaseBase):
     """SQLite-backed SRS repository.
 
     Use `:memory:` as db_path for in-memory test databases.
@@ -1860,49 +1862,6 @@ class SRSDatabase(DbMediaMixin, SRSDatabaseBase):
             rows = conn.execute("SELECT * FROM sync_conflicts ORDER BY id").fetchall()
             return [dict(r) for r in rows]
 
-    def set_anki_state_cache(self, key: str, value: str) -> None:
-        """Upsert a key/value pair in the Anki state cache with the current UTC timestamp."""
-        from datetime import datetime
-
-        updated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
-        with self._get_conn() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO anki_state_cache (key, value, updated_at) VALUES (?, ?, ?)",
-                (key, value, updated_at),
-            )
-            self._commit(conn)
-
-    def set_anki_state_cache_raw(self, key: str, value: str, updated_at: str) -> None:
-        """Test helper: upsert a cache row with caller-specified updated_at.
-
-        Production code uses set_anki_state_cache (stamps current UTC time).
-        This variant is for tests that need to simulate stale or corrupt
-        timestamps without reaching into the SQLite connection.
-        """
-        with self._get_conn() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO anki_state_cache (key, value, updated_at) VALUES (?, ?, ?)",
-                (key, value, updated_at),
-            )
-            self._commit(conn)
-
-    def get_anki_state_cache(self, key: str) -> tuple[str, str] | None:
-        """Return (value, updated_at) for the given key, or None if absent."""
-        with self._get_conn() as conn:
-            row = conn.execute(
-                "SELECT value, updated_at FROM anki_state_cache WHERE key = ?",
-                (key,),
-            ).fetchone()
-        if row is None:
-            return None
-        return (row["value"], row["updated_at"])
-
-    def delete_anki_state_cache(self, key: str) -> None:
-        """Remove the cache row for `key` (idempotent — no-op when absent)."""
-        with self._get_conn() as conn:
-            conn.execute("DELETE FROM anki_state_cache WHERE key = ?", (key,))
-            self._commit(conn)
-
     def set_dirty_fields(self, guid: str, fields_str: str) -> None:
         """Set dirty_fields for the collocation identified by guid."""
         with self._get_conn() as conn:
@@ -2228,57 +2187,6 @@ class SRSDatabase(DbMediaMixin, SRSDatabaseBase):
                 (collocation_id, direction.value),
             ).fetchone()
             return row[0] if row and row[0] is not None else None
-
-    def get_load_balancer_histogram(self, today: int, days: int) -> list[tuple[int, int | None, int]]:
-        """Return ``(anki_card_id, anki_note_id, anki_due)`` for every direction
-        whose ``anki_due`` falls in the col-day window ``[today, today + days)``.
-
-        Mirrors Anki's ``get_all_cards_due_in_range(today, today + LOAD_BALANCE_DAYS)``
-        (load_balancer.rs): NO queue filter, so suspended review cards in range are
-        included. Learning/new cards fall out naturally — their ``anki_due`` is NULL
-        (unsynced) or a (re)learning timestamp far outside ``[today, today+days)``.
-        Unsynced rows (no ``anki_card_id``) are skipped: they aren't Anki cards yet.
-        """
-        with self._get_conn() as conn:
-            rows = conn.execute(
-                """
-                SELECT cd.anki_card_id, c.anki_note_id, cd.anki_due
-                FROM collocation_directions cd
-                JOIN collocations c ON cd.collocation_id = c.id
-                WHERE cd.anki_due IS NOT NULL
-                  AND cd.anki_due >= ? AND cd.anki_due < ?
-                  AND cd.anki_card_id IS NOT NULL
-                """,
-                (today, today + days),
-            ).fetchall()
-        return [(r[0], r[1], r[2]) for r in rows]
-
-    def get_load_balancer_session_replay(self) -> list[tuple[int, int | None, int]]:
-        """Return ``(anki_card_id, anki_note_id, interval)`` for each direction graded
-        in TT since the last sync (``dirty_fsrs=1``), using its most recent tt_revlog
-        ``interval``.
-
-        These grades moved ``due_at`` but NOT ``anki_due`` (which stays frozen at the
-        last sync), so they're absent from the ``anki_due`` histogram and must be
-        ``add_card``'d explicitly to mirror Anki's per-answer histogram mutation
-        (never-remove). ``interval`` is days-from-grade, which equals days-from-today
-        for the common intraday session; a cross-day-unsynced grade is at most ±1 day
-        stale and self-heals at the next sync (bounded drift, queue-parity rule 1).
-        """
-        with self._get_conn() as conn:
-            rows = conn.execute(
-                """
-                SELECT cd.anki_card_id, c.anki_note_id, r.interval
-                FROM collocation_directions cd
-                JOIN collocations c ON cd.collocation_id = c.id
-                JOIN tt_revlog r ON r.id = (
-                    SELECT MAX(id) FROM tt_revlog
-                    WHERE collocation_id = cd.collocation_id AND direction = cd.direction
-                )
-                WHERE cd.dirty_fsrs = 1 AND cd.anki_card_id IS NOT NULL
-                """,
-            ).fetchall()
-        return [(r[0], r[1], r[2]) for r in rows]
 
     def append_manual_revlog(
         self,
