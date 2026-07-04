@@ -226,9 +226,9 @@ If your fix is going to compute X, and one of these helpers already computes som
 | `_next_difficulty` | `app/srs/fsrs.py` | FSRS difficulty update with linear damping + reversion. |
 | `_schedule_with_steps` | `app/srs/fsrs.py` | LEARNING/RELEARNING step transitions + Layer 41 single-step Hard delay. |
 | `_pack_left` / `_parse_left` | `app/srs/fsrs.py` | Anki's `cards.left = today_left*1000 + total_remaining` encoding. |
-| `_merge_by_retrievability_ascending` | `app/api/srs.py` | R-asc queue sort + FNV tiebreaker (Layer 37). |
-| `_merge_directions` | `app/api/srs.py` | Cross-direction gather + sibling-bury + Template stable-sort (Layer 28). |
-| `_fnv1a_64_i64` | `app/api/srs.py` | Anki's tiebreaker hash; required identical port. |
+| `_merge_by_retrievability_ascending` | `app/srs/queue_engine.py` | R-asc queue sort + FNV tiebreaker (Layer 37). |
+| `_merge_directions` | `app/srs/queue_engine.py` | Cross-direction gather + sibling-bury + Template stable-sort (Layer 28). |
+| `_fnv1a_64_i64` | `app/srs/queue_engine.py` | Anki's tiebreaker hash; required identical port. |
 | `_pull_merge_direction` | `app/anki/sync.py` | Per-card sync_pull merge (post Phase 1.3 extraction). |
 | `_direction_differs` | `app/anki/sync.py` | Field-by-field diff for sync write-back; must include `left`, `due_at`, `prior_state`, `bury_kind`, `anki_card_mod` (rule 6, Layer 17, Layer 37). |
 | `_resolve_prior_state` / `_grade_prior_state` | `app/anki/sync.py` + `app/srs/fsrs.py` | Sticky-NEW `prior_state` (Layers 20-22). |
@@ -237,6 +237,6 @@ If your fix is going to compute X, and one of these helpers already computes som
 | `_bury_kind_from_queue` | `app/anki/sync.py` | `queue=-2/-3 → 'sched'` mapping (Layer 35, Layer 39). |
 | `_queue_to_state` | `app/anki/sync.py` | `cards.queue → SRSState`, trusts queue not reps (Layer 30). |
 | `_read_config_value_from_deck_config_table` | `app/srs/queue_stats.py` | Unified deck-config protobuf/legacy-JSON reader (Phase 1.1). Use this for any new deck-config field. |
-| `count_new_available_collocations` | `app/srs/database.py` | Bury-aware new-badge count: NEW directions minus collocations with a graded-today / learning / review-due-today sibling (`bury_new`, Layer 64). Mirror image of `count_review_due_collocations`. `count_new_available` (raw `COUNT(*)`) stays for the overfetch upper bound only. |
-| `unbury_if_needed` | `app/srs/database.py` | Daily unbury sweep (Layers 27, 35). |
-| `clear_session_main_queue` + `build_and_freeze_main_queue` | `app/srs/queue_stats.py` + `app/api/srs.py` | Session-queue cache management (Layers 4, 7, 29). |
+| `count_new_available_collocations` | `app/srs/db_counts.py` | Bury-aware new-badge count: NEW directions minus collocations with a graded-today / learning / review-due-today sibling (`bury_new`, Layer 64). Mirror image of `count_review_due_collocations`. `count_new_available` (raw `COUNT(*)`) stays for the overfetch upper bound only. |
+| `unbury_if_needed` | `app/srs/db_queue.py` | Daily unbury sweep (Layers 27, 35). |
+| `clear_session_main_queue` + `build_and_freeze_main_queue` | `app/srs/queue_stats.py` + `app/srs/queue_engine.py` | Session-queue cache management (Layers 4, 7, 29). |

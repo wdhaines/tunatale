@@ -192,7 +192,7 @@ Moved to `docs/anki-parity-diagnostics.md` (snapshot-the-DBs, live badges + queu
 
 **Goal: minimize the cost of *holding* the mirror — behavior-preserving only.** Two cost drivers:
 1. **Duplication** — the same mirror logic living in N places (the two-branch R formula, the 21-helper table; the 4 AM rollover was single-sourced into `app/anki/rollover.py` 2026-07-03 — follow that pattern). Single-source it so the next Layer is applied once, not N times. Highest value, lowest risk. (The "Pre-Layer checklist" exists to compensate for exactly this — fix the cause.)
-2. **Illegibility** — the `database.py` / `api/srs.py` god-modules make the mirror hard to find and easy to re-duplicate. Decompose by concern **opportunistically** (when already in there for another reason), never a big-bang teardown of parity code.
+2. **Illegibility** — RESOLVED for `database.py` (god-module split, 2026-07-04): it is now a ~60-line composition facade over per-concern mixins (`db_base` infra + `db_collocations`, `db_directions`, `db_queue`, `db_counts`, `db_revlog`, `db_sync`, plus the inert `db_media`/`db_kv_cache`/`db_histogram`/`db_lemma_cache`/`db_ignored_lemmas`/`db_sync_conflicts`); import and patch through `app.srs.database` as before. `api/srs.py` had its queue engine extracted to `app/srs/queue_engine.py` in the same effort; what remains there is HTTP-layer code. Keep decomposing by concern **opportunistically** (when already in there for another reason), never a big-bang teardown of parity code.
 
 The **oracle harness** (TT output == Anki output) and the **soak** (FSRS bit-exactness) are the safety nets that make de-dup / decompose safe — keep them green, expand the harness. They are the asset that lets you simplify *without* losing the mirror.
 
@@ -229,7 +229,7 @@ Phase 1's elapsed-days collapse (commit `3ec0aa5`) and Phase 2.2.1's Layer 42 fi
 
 **Step 1: name the divergence.** What's TT computing that doesn't match Anki? Be specific about *which output* — a stability number, a queue position, a badge count, a state transition.
 
-**Step 2: scan the load-bearing helpers for an existing implementation.** If your fix is going to compute X, and one of these helpers already computes something X-shaped, the fix should extend the helper, not reimplement it elsewhere. The full helper↔path↔coverage table (21 helpers across `fsrs.py` / `srs.py` / `sync.py` / `queue_stats.py` / `database.py`) is in `docs/anki-parity-diagnostics.md` §"Load-bearing helpers" — read it before writing any new stability/difficulty/queue/sync code.
+**Step 2: scan the load-bearing helpers for an existing implementation.** If your fix is going to compute X, and one of these helpers already computes something X-shaped, the fix should extend the helper, not reimplement it elsewhere. The full helper↔path↔coverage table (21 helpers across `fsrs.py` / `queue_engine.py` / `sync.py` / `queue_stats.py` / the `db_*` mixins) is in `docs/anki-parity-diagnostics.md` §"Load-bearing helpers" — read it before writing any new stability/difficulty/queue/sync code.
 
 **Step 3: ask the duplication question.** *"Would my fix compute or branch on the same thing one of those helpers already does?"* If yes:
 - **Factor first.** Extend the existing helper (or extract a shared sub-helper, like `_elapsed_days_for_fsrs` did for Layers 11/15/40) before writing the fix at the new call site.
