@@ -18,11 +18,11 @@ ROI = user-facing value ÷ effort, with risk as a gate. Owner tags:
 **[Claude]** = keep in-house — parity/danger-zone, a cassette re-record, or an
 unresolved load-bearing decision. **[BP]** = Big-Pickle-ready — prescriptive
 brief + guardrail test, outside the Anki/sync danger zone (the standing
-[[feedback_big_pickle_readiness_rubric]]). **The only item that genuinely needs
-Claude** is now **#18** (the cassette re-record — #10 landed without one) plus
-the two danger-zone observations (parity code — oracle harness green
-before/after). #25 is BP-drafts-Claude-reviews. Everything else in Tiers 1–3 is
-dispatchable to Big Pickle as-is.
+[[feedback_big_pickle_readiness_rubric]]). #18 (the cassette re-record) landed
+2026-07-04; the remaining in-house items are the two danger-zone observations
+(parity code — oracle harness green before/after). #25 is
+BP-drafts-Claude-reviews. Everything else in Tiers 1–3 is dispatchable to Big
+Pickle as-is.
 
 ### Tier 1 — do next (real bugs, low→medium cost, high ROI)
 
@@ -63,13 +63,13 @@ dispatchable to Big Pickle as-is.
 
 | # | Owner | Item | Why not BP |
 |---|-------|------|-----------|
-| 18 | Claude | Cassette hash ignores `system_prompt` | Small code change but forces a live re-record of both cassettes (Groq). **DEFERRED until BP's `fix/backlog-sweep` batch is committed + tree green** — needs a clean full gate to verify and would break the shared cassette mock tests during the record window. Full brief + fresh-chat prompt: §18 below. |
+| ~~18~~ | ✅ | Cassette hash ignores `system_prompt` | **FIXED 2026-07-04** (branch `fix/backlog-sweep`) — hash includes `system_prompt`, cassette JSON is versioned (v2) with a loud load-time mismatch error, both shared cassettes re-recorded live (Groq `llama-3.3-70b`). Empirically only 2 story entries in `e2e.json` were live; the 4 dead curriculum/translate entries were dropped. See §18. |
 | ~~—~~ | ✅ | 4 AM rollover constant in 3 places (de-dup) | **FIXED 2026-07-03** — `app/anki/rollover.py` single-sources the local-day helpers (`local_today_rollover`, `anki_day_bounds_utc`, `anki_today`) + the `due_at_rollover_utc` 4am-UTC convention; legacy names (`_local_today_4am`, `_anki_day_bounds_utc`) are identity aliases; hardcoded `rollover_hour=4` defaults (fsrs ×3, sqlite_reader) and eight `time(4, 0)` literals routed through it. Identity + source-ratchet pins in `test_rollover_hour_single_source.py`. Oracle 66/66 green before AND after. |
 | — | Claude | `date.today()` midnight-vs-4am audit (~10 sites) | Per-call-site parity judgment. See danger-zone notes. **Routing target now exists**: `app.anki.rollover.anki_today()`. |
 
-**Cassette-affecting batch — now just #18.** #10 landed 2026-07-03 with **no**
-re-record (its gloss path is AsyncMock-stubbed, not cassette-backed). #18 remains
-the sole cassette re-record; see §18 for the full plan and the fresh-chat prompt.
+**Cassette-affecting batch — done.** #10 landed 2026-07-03 with **no** re-record
+(its gloss path is AsyncMock-stubbed, not cassette-backed). #18 landed 2026-07-04
+with the live re-record of both cassettes; see §18 for what actually got recorded.
 
 ---
 
@@ -343,17 +343,35 @@ Optionally also key the each-block by index for belt-and-suspenders.
 planner turn whose JSON repeats a collocation → PlannerError (existing stub
 pattern in `backend/tests/test_planner.py`).
 
-## 18. OPEN [→ Claude · T4] — Cassette hash ignores `system_prompt` (stale replays after system-prompt edits)
+## 18. FIXED — Cassette hash ignores `system_prompt` (stale replays after system-prompt edits)
 
-**⏸ DEFERRED (decided 2026-07-03)** until Big Pickle's `fix/backlog-sweep` batch
-is committed and the tree is green — the fix needs a clean full `./test.sh` to
-verify, and changing the hash breaks the shared cassette mock tests until the
-re-record completes (would trip BP's own gate runs). BP's current items
-(#5/#11/#29) don't touch any LLM *prompt*, so a later re-record won't be
-invalidated by them. A copy-paste fresh-chat prompt to execute this lives in
-memory `[[project_backlog_18_cassette_rehash_pending]]`.
+**FIXED 2026-07-04** (branch `fix/backlog-sweep`). `_hash_prompt` now hashes
+`f"{system_prompt or ''}\x00{prompt}"` and is threaded through `_replay`, the
+`complete` record branch, and `_patch`. `save()` stamps `"version": 2` and
+`__init__` raises a loud, re-record-hinting `RuntimeError` when a loaded
+mock/patch cassette isn't version 2 (so a stale cassette fails instead of
+silently replaying). New unit tests: `test_hash_prompt_includes_system_prompt`,
+`test_version_mismatch_raises_on_load`, `test_saved_cassette_carries_current_version`
+(all use temp cassettes).
 
-**Test-fidelity gap.** `backend/app/llm/cassette.py::_hash_prompt` hashes only
+**Re-record — reality was simpler than the brief.** Both shared cassettes were
+re-recorded live against Groq (`llama-3.3-70b-versatile`; the default
+`gpt-oss-120b` 413s at `max_tokens=5500` on the 8k free-tier budget, and its
+Ollama fallback returns non-JSON). The planner cassette re-recorded trivially
+(`pytest --llm-mode=record`). For `e2e.json`, an audit of the current Playwright
+suite showed the **only** LLM-backed call it makes is `POST /api/story/generate`
+(both `seedCurriculumWithLesson` and `generate-norwegian.spec.ts` use
+`curriculum/import`, which is LLM-free; nothing calls `curriculum/generate` or
+`translate` anymore). So of the old 6 entries only the **2 story entries** (sl
+from `SL_DAY_CAPTURE`, no from `NO_DAY_CAPTURE`) were live — the 3
+curriculum-generate + 1 translate entries were dead leftovers and were dropped.
+The re-record fired the two story requests against per-language record-mode
+backends and unioned the results (concurrent record clobbers the shared file).
+Full `./test.sh` green (backend 3230 passed / 100% cov, frontend 763 / 100%
+gate, 15/15 Playwright incl. the Norwegian nb-NO-voice assertions on the fresh
+cassette).
+
+**Test-fidelity gap (original).** `backend/app/llm/cassette.py::_hash_prompt` hashes only
 the user prompt. Editing a *system* prompt (e.g. `PLANNER_SYSTEM_PROMPT`, the
 story system prompt) does not invalidate cassettes — mock-mode tests keep
 replaying responses recorded under the old instructions and stay green when they

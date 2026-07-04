@@ -21,9 +21,23 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .client import LLMClient
 
+# Cassette JSON schema version. Bump when the prompt-hash algorithm changes so
+# stale cassettes fail loudly on load instead of silently replaying responses
+# recorded under a different hashing scheme.
+#   v1 (implicit, no "version" key) — hashed the user prompt only.
+#   v2 — hashes system_prompt + user prompt, so editing a system prompt
+#        invalidates the cassette and demands a re-record.
+CASSETTE_VERSION = 2
 
-def _hash_prompt(prompt: str) -> str:
-    return "sha256:" + hashlib.sha256(prompt.encode()).hexdigest()[:16]
+
+def _hash_prompt(prompt: str, system_prompt: str | None = None) -> str:
+    """Hash a request over BOTH the system and user prompts.
+
+    A NUL separator keeps the two fields unambiguous. A None system prompt and
+    an empty string both mean "no system instructions" and hash identically.
+    """
+    payload = f"{system_prompt or ''}\x00{prompt}"
+    return "sha256:" + hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
 class CassetteLLMClient:
@@ -46,6 +60,13 @@ class CassetteLLMClient:
 
         if mode in ("mock", "patch"):
             data = json.loads(cassette_path.read_text())
+            version = data.get("version")
+            if version != CASSETTE_VERSION:
+                raise RuntimeError(
+                    f"Cassette {cassette_path} is version {version!r}, expected {CASSETTE_VERSION}. "
+                    "The prompt-hash format changed (it now includes the system prompt), so the "
+                    "recorded hashes are stale. Re-record with --llm-mode=record."
+                )
             for entry in data["calls"]:
                 h = entry["prompt_hash"]
                 self._playback_by_hash.setdefault(h, []).append(entry)
@@ -60,7 +81,7 @@ class CassetteLLMClient:
         max_tokens: int = 256,
     ) -> str:
         if self._mode == "mock":
-            return self._replay(prompt)
+            return self._replay(prompt, system_prompt)
         if self._mode == "patch":
             return await self._patch(
                 prompt, system_prompt=system_prompt, temperature=temperature, max_tokens=max_tokens
@@ -73,7 +94,7 @@ class CassetteLLMClient:
         if self._mode == "record":
             self._calls.append(
                 {
-                    "prompt_hash": _hash_prompt(prompt),
+                    "prompt_hash": _hash_prompt(prompt, system_prompt),
                     "prompt_preview": prompt[:80].replace("\n", " "),
                     "max_tokens": max_tokens,
                     "response": response,
@@ -83,8 +104,8 @@ class CassetteLLMClient:
             self.save()
         return response
 
-    def _replay(self, prompt: str) -> str:
-        h = _hash_prompt(prompt)
+    def _replay(self, prompt: str, system_prompt: str | None = None) -> str:
+        h = _hash_prompt(prompt, system_prompt)
         entries = self._playback_by_hash.get(h)
         if not entries:
             raise RuntimeError(
@@ -101,7 +122,7 @@ class CassetteLLMClient:
         return entry["response"]
 
     async def _patch(self, prompt: str, **kwargs) -> str:
-        h = _hash_prompt(prompt)
+        h = _hash_prompt(prompt, kwargs.get("system_prompt"))
         entries = self._playback_by_hash.get(h)
         if entries:
             idx = self._playback_used.get(h, 0)
@@ -131,6 +152,7 @@ class CassetteLLMClient:
             return
         self._cassette_path.parent.mkdir(parents=True, exist_ok=True)
         data = {
+            "version": CASSETTE_VERSION,
             "recorded_at": datetime.datetime.now(datetime.UTC).isoformat(),
             "calls": self._calls,
         }
