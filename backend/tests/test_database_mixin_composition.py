@@ -18,6 +18,7 @@ from app.srs.db_lemma_cache import DbLemmaCacheMixin
 from app.srs.db_media import DbMediaMixin
 from app.srs.db_queue import DbQueueMixin
 from app.srs.db_revlog import DbRevlogMixin
+from app.srs.db_sync import DbSyncMixin
 from app.srs.db_sync_conflicts import DbSyncConflictsMixin
 
 _EXPECTED_BASES = [
@@ -26,6 +27,7 @@ _EXPECTED_BASES = [
     DbQueueMixin,
     DbCountsMixin,
     DbRevlogMixin,
+    DbSyncMixin,
     DbMediaMixin,
     DbKvCacheMixin,
     DbHistogramMixin,
