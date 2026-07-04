@@ -9,6 +9,7 @@ here loudly instead of as an obscure AttributeError elsewhere.
 from app.srs.database import SRSDatabase
 from app.srs.db_base import SRSDatabaseBase
 from app.srs.db_collocations import DbCollocationsMixin
+from app.srs.db_counts import DbCountsMixin
 from app.srs.db_directions import DbDirectionsMixin
 from app.srs.db_histogram import DbHistogramMixin
 from app.srs.db_ignored_lemmas import DbIgnoredLemmasMixin
@@ -22,6 +23,7 @@ _EXPECTED_BASES = [
     DbCollocationsMixin,
     DbDirectionsMixin,
     DbQueueMixin,
+    DbCountsMixin,
     DbMediaMixin,
     DbKvCacheMixin,
     DbHistogramMixin,
