@@ -63,7 +63,7 @@ Pickle as-is.
 
 | # | Owner | Item | Why not BP |
 |---|-------|------|-----------|
-| ~~18~~ | ✅ | Cassette hash ignores `system_prompt` | **FIXED 2026-07-04** (branch `fix/backlog-sweep`) — hash includes `system_prompt`, cassette JSON is versioned (v2) with a loud load-time mismatch error, both shared cassettes re-recorded live (Groq `llama-3.3-70b`). Empirically only 2 story entries in `e2e.json` were live; the 4 dead curriculum/translate entries were dropped. See §18. |
+| ~~18~~ | ✅ | Cassette hash ignores `system_prompt` | **FIXED 2026-07-04** (branch `fix/backlog-sweep`) — hash includes `system_prompt`, cassette JSON is versioned (v2) with a loud load-time mismatch error. Re-recorded on the **production model gpt-oss-120b** (llama is deprecated), which required story `max_tokens` 5500→4096 (free-tier 8k TPM cap) and a `_extract_punct_pairs` fix (gpt-oss en-dash dialogue crashed `/transcript`). Only 2 story entries in `e2e.json` were live; 4 dead curriculum/translate entries dropped. See §18. |
 | ~~—~~ | ✅ | 4 AM rollover constant in 3 places (de-dup) | **FIXED 2026-07-03** — `app/anki/rollover.py` single-sources the local-day helpers (`local_today_rollover`, `anki_day_bounds_utc`, `anki_today`) + the `due_at_rollover_utc` 4am-UTC convention; legacy names (`_local_today_4am`, `_anki_day_bounds_utc`) are identity aliases; hardcoded `rollover_hour=4` defaults (fsrs ×3, sqlite_reader) and eight `time(4, 0)` literals routed through it. Identity + source-ratchet pins in `test_rollover_hour_single_source.py`. Oracle 66/66 green before AND after. |
 | — | Claude | `date.today()` midnight-vs-4am audit (~10 sites) | Per-call-site parity judgment. See danger-zone notes. **Routing target now exists**: `app.anki.rollover.anki_today()`. |
 
@@ -354,21 +354,32 @@ silently replaying). New unit tests: `test_hash_prompt_includes_system_prompt`,
 `test_version_mismatch_raises_on_load`, `test_saved_cassette_carries_current_version`
 (all use temp cassettes).
 
-**Re-record — reality was simpler than the brief.** Both shared cassettes were
-re-recorded live against Groq (`llama-3.3-70b-versatile`; the default
-`gpt-oss-120b` 413s at `max_tokens=5500` on the 8k free-tier budget, and its
-Ollama fallback returns non-JSON). The planner cassette re-recorded trivially
-(`pytest --llm-mode=record`). For `e2e.json`, an audit of the current Playwright
-suite showed the **only** LLM-backed call it makes is `POST /api/story/generate`
-(both `seedCurriculumWithLesson` and `generate-norwegian.spec.ts` use
-`curriculum/import`, which is LLM-free; nothing calls `curriculum/generate` or
-`translate` anymore). So of the old 6 entries only the **2 story entries** (sl
-from `SL_DAY_CAPTURE`, no from `NO_DAY_CAPTURE`) were live — the 3
-curriculum-generate + 1 translate entries were dead leftovers and were dropped.
-The re-record fired the two story requests against per-language record-mode
-backends and unioned the results (concurrent record clobbers the shared file).
-Full `./test.sh` green (backend 3230 passed / 100% cov, frontend 763 / 100%
-gate, 15/15 Playwright incl. the Norwegian nb-NO-voice assertions on the fresh
+**Re-record — reality was simpler than the brief.** For `e2e.json`, an audit of
+the current Playwright suite showed the **only** LLM-backed call it makes is
+`POST /api/story/generate` (both `seedCurriculumWithLesson` and
+`generate-norwegian.spec.ts` use `curriculum/import`, which is LLM-free; nothing
+calls `curriculum/generate` or `translate` anymore). So of the old 6 entries only
+the **2 story entries** (sl from `SL_DAY_CAPTURE`, no from `NO_DAY_CAPTURE`) were
+live — the 3 curriculum-generate + 1 translate entries were dead leftovers and
+were dropped. The re-record fired the two story requests against per-language
+record-mode backends and unioned the results (concurrent record clobbers the
+shared file). The planner cassette re-recorded trivially (`pytest --llm-mode=record`).
+
+**Recorded on the production model — gpt-oss-120b, NOT the deprecated llama.**
+(A first pass mistakenly recorded on `llama-3.3-70b-versatile` off a stale memory;
+llama was deprecated by Groq 2026-06-30 — commit `337be40`.) Making gpt-oss work
+took two prod fixes, both landed alongside: (1) **story `max_tokens` 5500 → 4096** —
+gpt-oss's free-tier budget is 8000 tokens/request and Groq reserves
+`prompt + max_completion_tokens` up front, so the ~2800-token Slovene story system
+prompt + 5500 = ~8300 → hard 413 → Ollama junk fallback; measured completion need
+is only ~1900, so 4096 fits with headroom. (2) **`_extract_punct_pairs` rewrite** —
+gpt-oss dialogue used a standalone en-dash (`"Koliko stane? – Dve kavi ..."`), which
+`tokenize()` drops but `str.split()` keeps, so the old positional `zip(split, surfaces,
+strict=True)` crashed the `/transcript` endpoint; now it walks the text per surface,
+aligned 1:1 with `surfaces`. Also fixed the `cassette_llm` fixture to record against
+`settings.llm_model` (was the bare llama default). Full `./test.sh` green (backend 3234
+passed / 100% cov, frontend 763 / 100% gate, 15/15 Playwright incl. the Norwegian
+nb-NO-voice assertions and the review-ahead transcript path on the fresh gpt-oss
 cassette).
 
 **Test-fidelity gap (original).** `backend/app/llm/cassette.py::_hash_prompt` hashes only

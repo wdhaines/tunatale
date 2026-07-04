@@ -65,19 +65,37 @@ class TranscriptData:
     dialogue_lines: list[DialogueLine] = field(default_factory=list)
 
 
-def _extract_punct_pairs(raw_tokens: list[str], surfaces: list[str]) -> list[tuple[str, str]]:
-    """Extract prefix/suffix punctuation around each surface in its raw token.
+def _extract_punct_pairs(text: str, surfaces: list[str]) -> list[tuple[str, str]]:
+    """Extract prefix/suffix punctuation around each surface, walking the raw text.
 
-    Each raw token contains the surface as a contiguous substring (case-insensitive).
-    Returns list of (prefix_punct, suffix_punct) tuples.
+    Surfaces come from ``tokenize()``, which drops standalone punctuation (an
+    en-dash "–" as its own whitespace token) and splits on boundaries that
+    ``str.split()`` does not — so ``text.split()`` and ``surfaces`` are NOT
+    positionally 1:1 in general (an LLM line like ``"Koliko stane? – Dve kavi."``
+    splits to 5 tokens but tokenizes to 4). Locating each surface in ``text`` in
+    order keeps the returned list aligned exactly 1:1 with ``surfaces``: for each
+    surface, the punctuation is the non-space run before/after it within its
+    whitespace-delimited token. A cursor advances past each match so a repeated
+    surface resolves to successive occurrences. Returns one (prefix, suffix) per
+    surface (``("", "")`` for a surface not found in ``text``).
     """
     pairs: list[tuple[str, str]] = []
-    for raw, surf in zip(raw_tokens, surfaces, strict=True):
-        idx = raw.lower().find(surf.lower())
+    lower = text.lower()
+    pos = 0
+    for surf in surfaces:
+        idx = lower.find(surf.lower(), pos)
         if idx == -1:
             pairs.append(("", ""))
-        else:
-            pairs.append((raw[:idx], raw[idx + len(surf) :]))
+            continue
+        end = idx + len(surf)
+        tok_start = idx
+        while tok_start > 0 and not text[tok_start - 1].isspace():
+            tok_start -= 1
+        tok_end = end
+        while tok_end < len(text) and not text[tok_end].isspace():
+            tok_end += 1
+        pairs.append((text[tok_start:idx], text[end:tok_end]))
+        pos = end
     return pairs
 
 
@@ -242,9 +260,9 @@ def extract_transcript(
                 surfaces, phrase.text, lemmatizer, lesson.language_code, db, model_version
             )
 
-            # Extract punctuation from raw tokens for display
-            raw_tokens = phrase.text.split()
-            punct_pairs = _extract_punct_pairs(raw_tokens, surfaces)
+            # Extract punctuation around each surface for display (aligned to
+            # surfaces, robust to standalone-punctuation tokens tokenize() drops).
+            punct_pairs = _extract_punct_pairs(phrase.text, surfaces)
 
             # Run lemmatizer analyze_sentence once per phrase for inflectable detection
             phrase_analyses = analyze_sentence_cached(db, lemmatizer, phrase.text, lesson.language_code, model_version)
