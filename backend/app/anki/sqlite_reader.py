@@ -8,11 +8,13 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from app.anki.field_map import get_profile
 from app.anki.protobuf_wire import review_due_at_for_col_day
+from app.anki.rollover import due_at_rollover_utc
+from app.config import ANKI_ROLLOVER_HOUR
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import BackField
 
@@ -81,7 +83,7 @@ def compute_due_at(queue: int, due_raw: int, col_crt: int, card_type: int = 0) -
         return review_due_at_for_col_day(col_crt, due_raw)
     if effective_queue == 1:
         return datetime.fromtimestamp(due_raw, tz=UTC)
-    return datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+    return due_at_rollover_utc(date.today())
 
 
 def find_deck_id(conn: sqlite3.Connection, deck_name: str) -> int | None:
@@ -346,7 +348,7 @@ def _compute_last_review(
     due_raw: int,
     ivl: int,
     col_crt: int,
-    rollover_hour: int = 4,
+    rollover_hour: int = ANKI_ROLLOVER_HOUR,
 ) -> datetime | None:
     """Compute last_review datetime (midnight UTC) for queue 2/3 cards.
 

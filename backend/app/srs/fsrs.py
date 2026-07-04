@@ -12,6 +12,7 @@ from functools import cache
 import numpy as np
 
 from app.anki.protobuf_wire import compute_anki_day_index, review_due_at_for_col_day
+from app.config import ANKI_ROLLOVER_HOUR
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSItem, SRSState
 from app.srs._anki_rng import ChaCha12Rng, random_range_f32, random_range_u32
 
@@ -73,7 +74,7 @@ def _review_due_at_from_interval(
     interval: int,
     col_crt: int | None,
     now: datetime,
-    rollover_hour: int = 4,
+    rollover_hour: int = ANKI_ROLLOVER_HOUR,
 ) -> datetime:
     """Compute day-level (REVIEW state) due_at, matching sync_pull's convention.
 
@@ -259,7 +260,7 @@ def _elapsed_days_for_fsrs(
     last_review: datetime | date | None,
     ref_now: datetime,
     col_crt: int | None = None,
-    rollover_hour: int = 4,
+    rollover_hour: int = ANKI_ROLLOVER_HOUR,
 ) -> float:
     """Mirror Anki's `extract_fsrs_retrievability` dual branch for elapsed time.
 
@@ -300,7 +301,7 @@ def _grade_elapsed_days(
     last_review: datetime | date | None,
     ref_now: datetime,
     col_crt: int | None = None,
-    rollover_hour: int = 4,
+    rollover_hour: int = ANKI_ROLLOVER_HOUR,
 ) -> int:
     """Layer 50: grade-time ``days_elapsed`` is INTEGER col-day diff.
 

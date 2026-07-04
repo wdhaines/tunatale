@@ -16,8 +16,8 @@ from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.anki.rollover import anki_day_bounds_utc, due_at_rollover_utc
 from app.common.guid import compute_guid
-from app.config import ANKI_ROLLOVER_HOUR
 from app.models.srs_item import (
     Direction,
     DirectionState,
@@ -40,23 +40,9 @@ def _parse_last_review(value: str | None) -> datetime | None:
     return dt
 
 
-def _anki_day_bounds_utc(today: date, now: datetime | None = None) -> tuple[str, str]:
-    """Return the UTC [start, end) ISO bounds of the Anki day anchored on `today`.
-
-    The window runs from `ANKI_ROLLOVER_HOUR` local on `today` to the same hour
-    the next day. When the wall-clock `now` is *before* today's rollover, the
-    active Anki day is still yesterday's, so the anchor shifts back one day —
-    matching what `_local_today_4am` does for sync-side counts. Counting on the
-    local-midnight boundary instead silently sibling-buries cards graded in the
-    `[midnight, rollover)` window that Anki still treats as graded yesterday
-    (the 66-vs-73 review-badge divergence, 2026-06-02).
-    """
-    local_tz = datetime.now().astimezone().tzinfo
-    now = (now or datetime.now(local_tz)).astimezone(local_tz)
-    day_start = datetime.combine(today, time(ANKI_ROLLOVER_HOUR), tzinfo=local_tz)
-    if now < day_start:
-        day_start -= timedelta(days=1)
-    return day_start.astimezone(UTC).isoformat(), (day_start + timedelta(days=1)).astimezone(UTC).isoformat()
+# Single-sourced in app.anki.rollover; the legacy name stays importable here
+# for existing call sites and tests.
+_anki_day_bounds_utc = anki_day_bounds_utc
 
 
 # v0 base schema. Fresh DBs go through v0 → v1 → v2 via migrations so every
@@ -394,7 +380,7 @@ class SRSDatabase:
                 directions = [Direction.PRODUCTION]
             else:
                 directions = [Direction.RECOGNITION, Direction.PRODUCTION]
-            today_due_at = datetime.combine(date.today(), time(4, 0), tzinfo=UTC).isoformat()
+            today_due_at = due_at_rollover_utc(date.today()).isoformat()
             for direction in directions:
                 conn.execute(
                     """
@@ -1122,7 +1108,7 @@ class SRSDatabase:
         next pull silently clobbered (2026-06-04). Mirrors
         ``set_state_by_id(NEW)``, which already marks dirty.
         """
-        today_due_at = datetime.combine(date.today(), time(4, 0), tzinfo=UTC).isoformat()
+        today_due_at = due_at_rollover_utc(date.today()).isoformat()
         if direction is None:
             sql = f"UPDATE collocation_directions SET {_NEW_RESET_SET}, dirty_fsrs = 1 WHERE collocation_id = ?"
             params = (today_due_at, row_id)
@@ -1170,7 +1156,7 @@ class SRSDatabase:
         """
         dirty_clause = ", dirty_fsrs = 1" if mark_dirty else ""
         if state == SRSState.NEW:
-            today_due_at = datetime.combine(date.today(), time(4, 0), tzinfo=UTC).isoformat()
+            today_due_at = due_at_rollover_utc(date.today()).isoformat()
             set_clause = f"{_NEW_RESET_SET}{dirty_clause}, introduced_at = NULL, prior_state = NULL"
             params_head: tuple[object, ...] = (today_due_at,)
         elif state in (SRSState.LEARNING, SRSState.RELEARNING, SRSState.REVIEW, SRSState.KNOWN):
@@ -1328,7 +1314,7 @@ class SRSDatabase:
         This matches the "no FSRS grade" intent but creates a silent asymmetry
         between TT and Anki views.
         """
-        today_due_at = datetime.combine(date.today(), time(4, 0), tzinfo=UTC).isoformat()
+        today_due_at = due_at_rollover_utc(date.today()).isoformat()
         now = datetime.now(UTC)
         now_ms = int(now.timestamp() * 1000)
         now_iso = now.isoformat()
@@ -2650,7 +2636,7 @@ class SRSDatabase:
                 return starting_state
             return DirectionState(
                 direction=direction,
-                due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+                due_at=due_at_rollover_utc(date.today()),
             )
 
         guid = coll["guid"] if coll else None
@@ -2658,7 +2644,7 @@ class SRSDatabase:
         card_type = coll["card_type"] or "vocab" if coll else "vocab"
 
         other_dir = Direction.PRODUCTION if direction == Direction.RECOGNITION else Direction.RECOGNITION
-        now_4am = datetime.combine(date.today(), time(ANKI_ROLLOVER_HOUR, 0), tzinfo=UTC)
+        now_4am = due_at_rollover_utc(date.today())
         # Incremental: forward-step from the stored state. Otherwise: from NEW.
         start_state = (
             starting_state

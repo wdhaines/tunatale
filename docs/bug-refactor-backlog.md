@@ -64,8 +64,8 @@ dispatchable to Big Pickle as-is.
 | # | Owner | Item | Why not BP |
 |---|-------|------|-----------|
 | 18 | Claude | Cassette hash ignores `system_prompt` | Small code change but forces a live re-record of both cassettes (Groq). **DEFERRED until BP's `fix/backlog-sweep` batch is committed + tree green** — needs a clean full gate to verify and would break the shared cassette mock tests during the record window. Full brief + fresh-chat prompt: §18 below. |
-| — | Claude | 4 AM rollover constant in 3 places (de-dup) | Parity code; oracle harness green before/after. See danger-zone notes. |
-| — | Claude | `date.today()` midnight-vs-4am audit (~10 sites) | Per-call-site parity judgment. See danger-zone notes. |
+| ~~—~~ | ✅ | 4 AM rollover constant in 3 places (de-dup) | **FIXED 2026-07-03** — `app/anki/rollover.py` single-sources the local-day helpers (`local_today_rollover`, `anki_day_bounds_utc`, `anki_today`) + the `due_at_rollover_utc` 4am-UTC convention; legacy names (`_local_today_4am`, `_anki_day_bounds_utc`) are identity aliases; hardcoded `rollover_hour=4` defaults (fsrs ×3, sqlite_reader) and eight `time(4, 0)` literals routed through it. Identity + source-ratchet pins in `test_rollover_hour_single_source.py`. Oracle 66/66 green before AND after. |
+| — | Claude | `date.today()` midnight-vs-4am audit (~10 sites) | Per-call-site parity judgment. See danger-zone notes. **Routing target now exists**: `app.anki.rollover.anki_today()`. |
 
 **Cassette-affecting batch — now just #18.** #10 landed 2026-07-03 with **no**
 re-record (its gloss path is AsyncMock-stubbed, not cassette-backed). #18 remains
@@ -741,13 +741,17 @@ applies a stored opt-out without an init() call" (fresh module via
 
 ## Danger-zone observations (NOT for Big Pickle — needs owner decision)
 
-- **4 AM rollover constant lives in 3 places** (`app/srs/database.py`
-  `_anki_day_bounds_utc`, `app/anki/sync*` `_local_today_4am`, protobuf wire
-  helpers). Known from Layer 67; the maintenance strategy explicitly calls for
-  single-sourcing mirror logic. A behavior-preserving extraction (one
-  `anki_rollover.py` helper, all three call sites) is the highest-value de-dup
-  named in `.claude/rules/anki-queue-parity.md`, but it touches parity code —
-  do it with the oracle harness green before/after, not as a drive-by.
+- **FIXED 2026-07-03 — 4 AM rollover single-sourced in `app/anki/rollover.py`.**
+  Was: `database._anki_day_bounds_utc`, `sync_common._local_today_4am`, hardcoded
+  `rollover_hour: int = 4` defaults (fsrs ×3, sqlite_reader), and eight
+  `time(4, 0)` due_at literals across five files. Now: one leaf module (stdlib +
+  `app.config` only — importable from any layer) hosts `local_today_rollover`,
+  `anki_day_bounds_utc`, `anki_today`, `due_at_rollover_utc`; legacy names are
+  identity aliases so all imports/tests kept working. `protobuf_wire` keeps the
+  separate col-day domain (Layer 54 — two domains by design).
+  `test_rollover_hour_single_source.py` pins helper identity and adds a
+  source-scan ratchet (`time(4,` / `rollover_hour: int = 4` banned in the swept
+  modules). Oracle harness 66/66 green before AND after; full suite 100% cov.
 
 - **`date.today()` (midnight-local) still feeds several request paths that
   Layer 67 didn't cover.** Verified concretely: the reading-transcript `is_due`

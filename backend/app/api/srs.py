@@ -6,13 +6,14 @@ import datetime
 import json
 import logging
 import re
-from datetime import UTC, time, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import anyio
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 
+from app.anki.rollover import due_at_rollover_utc
 from app.api.models import (
     BulkDeleteRequest,
     CreateBaseCardRequest,
@@ -1111,7 +1112,7 @@ async def set_item_state(item_id: int, body: SetStateRequest, request: Request):
         dr = params.desired_retention
         stability = stability_for_interval(max_ivl, dr)
         due_date = datetime.date.today() + timedelta(days=max_ivl)
-        due_at = datetime.datetime.combine(due_date, time(4, 0), tzinfo=UTC)
+        due_at = due_at_rollover_utc(due_date)
         db.mark_known(item_id, due_at=due_at, stability=stability)
     else:
         db.set_state_by_id(item_id, _STATE_MAP[body.state])

@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time
 from enum import Enum
 
+from app.anki.rollover import due_at_rollover_utc
+
 from .syntactic_unit import SyntacticUnit
 
 
@@ -155,7 +157,7 @@ class SRSItem:
             self.directions = directions
         else:
             rec_due = due_date if due_date is not None else date.today()
-            recognition_due_at = datetime.combine(rec_due, time(4, 0), tzinfo=UTC)
+            recognition_due_at = due_at_rollover_utc(rec_due)
             self.directions = {
                 Direction.RECOGNITION: DirectionState(
                     direction=Direction.RECOGNITION,

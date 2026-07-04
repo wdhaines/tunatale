@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime
 
+from app.anki.rollover import local_today_rollover
 from app.anki.sqlite_reader import extract_translation
-from app.config import ANKI_ROLLOVER_HOUR
 from app.models.syntactic_unit import BackField
 
 KNOWN_ANKI_SCHEMA_VER = 18
@@ -214,19 +214,6 @@ def _ms_to_datetime(ms: int | None) -> datetime | None:
     return datetime.fromtimestamp(ms / 1000, tz=UTC) if ms is not None else None
 
 
-def _local_today_4am(now: datetime | None = None) -> datetime:
-    """Return the datetime of today's 4 AM rollover in local timezone.
-
-    Mirrors Anki's day-cutoff concept — entries with a revlog.id before this
-    timestamp are "before today" for the purpose of counting introductions.
-    Returns the most recent 4 AM (yesterday if before 4 AM today).
-    Accepts an optional *now* override for testability.
-    """
-    now = now or datetime.now()
-    if now.tzinfo is None:
-        now = now.astimezone()
-    local_tz = now.tzinfo
-    today_4am = datetime.combine(now.date(), time(ANKI_ROLLOVER_HOUR), tzinfo=local_tz)
-    if now < today_4am:
-        today_4am = datetime.combine(now.date() - timedelta(days=1), time(ANKI_ROLLOVER_HOUR), tzinfo=local_tz)
-    return today_4am
+# Single-sourced in app.anki.rollover; the legacy name stays importable here
+# (and via the app.anki.sync facade) for existing call sites and tests.
+_local_today_4am = local_today_rollover
