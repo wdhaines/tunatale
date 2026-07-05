@@ -53,6 +53,8 @@ class CassetteLLMClient:
         self._cassette_path = cassette_path
         self._real_client = real_client
         self.last_provider: str | None = None
+        self.last_finish_reason: str | None = None
+        self.last_usage: dict = {}
 
         self._calls: list[dict] = []
         self._playback_by_hash: dict[str, list[dict]] = {}
@@ -91,6 +93,8 @@ class CassetteLLMClient:
             prompt, system_prompt=system_prompt, temperature=temperature, max_tokens=max_tokens
         )
         self.last_provider = self._real_client.last_provider
+        self.last_finish_reason = getattr(self._real_client, "last_finish_reason", None)
+        self.last_usage = getattr(self._real_client, "last_usage", None) or {}
         if self._mode == "record":
             self._calls.append(
                 {

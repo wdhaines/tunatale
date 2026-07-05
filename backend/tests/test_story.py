@@ -387,6 +387,105 @@ class TestStoryGeneration:
         assert "oprostite" in system_prompt.lower()
 
 
+def _make_metadata_client(
+    responses: list[str],
+    finish_reason: str | None = None,
+    provider: str | None = "groq",
+    usage: dict | None = None,
+) -> MagicMock:
+    """LLM-client stub exposing the LLMClient metadata surface (last_finish_reason /
+    last_provider / last_usage) the generator's retry logic reads."""
+    client = MagicMock()
+    client.complete = AsyncMock(side_effect=responses)
+    client.last_finish_reason = finish_reason
+    client.last_provider = provider
+    client.last_usage = usage
+    return client
+
+
+class TestStoryGenerationResilience:
+    """Retry-once on unparseable LLM JSON, with truncation/rate-limit diagnosis.
+
+    The 2026-07-05 Norwegian planner failure ("Expecting ',' delimiter … char
+    13756") was a response cut off mid-JSON — either Groq truncating at the
+    max_tokens cap (finish_reason=length) or the Ollama junk-JSON fallback after
+    exhausted 429 retries. One attempt → hard 502 gave the user neither a retry
+    nor a diagnosis; these pin both.
+    """
+
+    async def test_retry_on_invalid_json_succeeds(self, language):
+        client = _make_metadata_client(["not json", _mock_story_response()])
+        gen = StoryGenerator(llm_client=client)
+        lesson = await gen.generate(
+            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER
+        )
+        assert isinstance(lesson, Lesson)
+        assert client.complete.call_count == 2
+
+    async def test_invalid_json_twice_raises_after_two_attempts(self, language):
+        from app.generation.story import StoryGenerationError
+
+        client = _make_metadata_client(["not json", "still not json"])
+        gen = StoryGenerator(llm_client=client)
+        with pytest.raises(StoryGenerationError):
+            await gen.generate(curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER)
+        assert client.complete.call_count == 2
+
+    async def test_truncated_response_bumps_retry_max_tokens(self, language):
+        """On finish_reason=length the retry raises max_tokens to the real headroom:
+        Groq's 8000-token free-tier budget minus the measured prompt_tokens (minus a
+        margin). The Norwegian story prompt is far smaller than the Slovene one, so
+        the fixed 4096 cap wastes budget exactly when the story runs long."""
+        client = _make_metadata_client(
+            ['{"title": "cut off', _mock_story_response()],
+            finish_reason="length",
+            usage={"prompt_tokens": 1500},
+        )
+        gen = StoryGenerator(llm_client=client)
+        lesson = await gen.generate(
+            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER
+        )
+        assert isinstance(lesson, Lesson)
+        assert client.complete.call_args_list[0].kwargs["max_tokens"] == 4096
+        assert client.complete.call_args_list[1].kwargs["max_tokens"] == 8000 - 1500 - 128
+
+    async def test_truncated_retry_never_shrinks_max_tokens(self, language):
+        """A huge prompt (Slovene morphology block) leaves less headroom than the
+        current cap — keep 4096 rather than retrying with a smaller budget."""
+        client = _make_metadata_client(
+            ['{"title": "cut off', _mock_story_response()],
+            finish_reason="length",
+            usage={"prompt_tokens": 7900},
+        )
+        gen = StoryGenerator(llm_client=client)
+        await gen.generate(curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER)
+        assert client.complete.call_args_list[1].kwargs["max_tokens"] == 4096
+
+    async def test_truncated_error_message_mentions_truncation(self, language):
+        from app.generation.story import StoryGenerationError
+
+        client = _make_metadata_client(
+            ['{"title": "cut off', '{"title": "cut off again'],
+            finish_reason="length",
+            usage=None,  # client without usage info (e.g. cassette replay)
+        )
+        gen = StoryGenerator(llm_client=client)
+        with pytest.raises(StoryGenerationError, match="truncated"):
+            await gen.generate(curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER)
+        # No usage info → no basis for a bump; retry keeps the same cap.
+        assert client.complete.call_args_list[1].kwargs["max_tokens"] == 4096
+
+    async def test_ollama_fallback_error_mentions_rate_limit(self, language):
+        """Junk JSON from the offline Ollama fallback means Groq was unavailable
+        (typically exhausted 429 retries) — say so instead of a bare JSON error."""
+        from app.generation.story import StoryGenerationError
+
+        client = _make_metadata_client(["junk", "more junk"], provider="ollama")
+        gen = StoryGenerator(llm_client=client)
+        with pytest.raises(StoryGenerationError, match="Ollama.*rate-limited"):
+            await gen.generate(curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER)
+
+
 class TestBuildLessonFromStory:
     """The Story-JSON → Lesson build step is a module-level function.
 

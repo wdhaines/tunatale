@@ -92,6 +92,11 @@ class LLMClient:
         self.on_call = on_call
         self.fallback_client = fallback_client
         self.last_provider: str | None = None
+        # Metadata of the most recent successful completion. finish_reason=="length"
+        # means the content was cut off at the completion-token cap — callers that
+        # parse the content as JSON use this to distinguish truncation from junk.
+        self.last_finish_reason: str | None = None
+        self.last_usage: dict = {}
         self._next_call_at: float = 0.0
         self._groq_call_delay: float = 0.0
         self._last_429_at: float = 0.0
@@ -157,12 +162,19 @@ class LLMClient:
             logger.warning("Groq failed, trying fallback: %s", e)
             if self.fallback_client is not None:
                 try:
-                    return await self.fallback_client.complete(
+                    result = await self.fallback_client.complete(
                         prompt, system_prompt=system_prompt, temperature=temperature, max_tokens=max_tokens
                     )
                 except LLMError as fe:
                     attempts.extend(fe.attempts)
                     logger.warning("Fallback client also failed: %s", fe)
+                else:
+                    # Mirror the winning client's metadata so callers reading
+                    # last_provider/last_finish_reason see the response they got.
+                    self.last_provider = getattr(self.fallback_client, "last_provider", None)
+                    self.last_finish_reason = getattr(self.fallback_client, "last_finish_reason", None)
+                    self.last_usage = getattr(self.fallback_client, "last_usage", None) or {}
+                    return result
 
         try:
             return await self._call_ollama(
@@ -324,6 +336,13 @@ class LLMClient:
                         msg, [self._make_attempt("groq", self.groq_model, "malformed", msg, latency_ms)]
                     ) from err
                 self.last_provider = "groq"
+                self.last_finish_reason = data["choices"][0].get("finish_reason")
+                self.last_usage = data.get("usage") or {}
+                if self.last_finish_reason == "length":
+                    logger.warning(
+                        "Groq response truncated at the completion-token cap (finish_reason=length, cap=%s)",
+                        body.get("max_completion_tokens") or body.get("max_tokens"),
+                    )
                 logger.info("Groq success: model=%s latency=%dms", self.groq_model, latency_ms)
 
                 if self.on_call:
@@ -543,6 +562,8 @@ class LLMClient:
             ) from err
         logger.info("Ollama success: model=%s latency=%dms", self.ollama_model, latency_ms)
         self.last_provider = "ollama"
+        self.last_finish_reason = None
+        self.last_usage = {}
         self._fire_callback(
             provider="ollama",
             model=self.ollama_model,

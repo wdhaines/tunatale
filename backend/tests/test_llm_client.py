@@ -277,6 +277,65 @@ class TestFallbackChain:
         assert result == "fallback"
 
 
+class TestResponseMetadata:
+    """Tests for finish_reason/usage capture — the truncation-detection surface."""
+
+    async def test_finish_reason_and_usage_recorded(self, client):
+        resp = {
+            "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 42, "completion_tokens": 7},
+        }
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, json=resp))
+            await client.complete("q")
+        assert client.last_finish_reason == "stop"
+        assert client.last_usage == {"prompt_tokens": 42, "completion_tokens": 7}
+
+    async def test_truncated_finish_reason_logs_warning(self, client, caplog):
+        resp = {"choices": [{"message": {"content": '{"partial": '}, "finish_reason": "length"}]}
+        with respx.mock, caplog.at_level("WARNING", logger="app.llm.client"):
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, json=resp))
+            await client.complete("q")
+        assert client.last_finish_reason == "length"
+        assert any("truncated" in r.message for r in caplog.records)
+
+    async def test_missing_finish_reason_and_usage_default(self, client):
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, json=_make_groq_response("ok")))
+            await client.complete("q")
+        assert client.last_finish_reason is None
+        assert client.last_usage == {}
+
+    async def test_ollama_success_resets_metadata(self):
+        """A stale 'length' from an earlier Groq call must not survive an Ollama
+        fallback success — callers use last_finish_reason to classify the response
+        they just received."""
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client.last_finish_reason = "length"
+        client.last_usage = {"prompt_tokens": 999}
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
+            respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("ok")))
+            await client.complete("q")
+        assert client.last_finish_reason is None
+        assert client.last_usage == {}
+
+    async def test_fallback_client_metadata_mirrored(self):
+        fallback = MagicMock()
+        fallback.complete = AsyncMock(return_value="fb")
+        fallback.last_provider = "groq"
+        fallback.last_finish_reason = "length"
+        fallback.last_usage = {"prompt_tokens": 9}
+        client = LLMClient(groq_api_key="test-key", fallback_client=fallback, max_retries_429=0)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
+            result = await client.complete("q")
+        assert result == "fb"
+        assert client.last_provider == "groq"
+        assert client.last_finish_reason == "length"
+        assert client.last_usage == {"prompt_tokens": 9}
+
+
 class TestExtraBodyParams:
     """Tests for reasoning_effort and max_completion_tokens extra body params."""
 

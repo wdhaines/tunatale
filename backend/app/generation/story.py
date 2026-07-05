@@ -22,6 +22,13 @@ from app.srs.tokenizer import tokenize
 
 logger = logging.getLogger(__name__)
 
+# Groq's free-tier gpt-oss budget: prompt_tokens + max_completion_tokens are
+# reserved against 8000 tokens per request (over → hard 413, not a retryable 429).
+_GROQ_FREE_TIER_REQUEST_BUDGET = 8000
+# Headroom kept when re-deriving max_tokens from measured prompt_tokens.
+_TRUNCATION_RETRY_MARGIN = 128
+_STORY_MAX_TOKENS = 4096
+
 
 class StoryGenerationError(Exception):
     pass
@@ -88,10 +95,48 @@ class StoryGenerator:
         # ~1900 completion tokens, finishing cleanly well inside 4096 — the earlier
         # "reasoning ~1400 + JSON ~3200" estimate that justified 5500 was wrong. 4096
         # keeps prompt+budget ~6900 under the cap with headroom for prompt growth.
-        raw = await self._llm.complete(user_prompt, system_prompt=system_prompt, temperature=0.7, max_tokens=4096)
-        data = self._parse_json(raw)
-        lesson = self._parse_response(data, language=language)
-        return lesson
+        # When a response IS truncated (finish_reason=length — reasoning spike, or a
+        # smaller-prompt language like Norwegian writing a longer story), the retry
+        # below re-derives the cap from the measured prompt_tokens.
+        max_tokens = _STORY_MAX_TOKENS
+        failure: StoryGenerationError | None = None
+        for attempt in range(2):
+            raw = await self._llm.complete(
+                user_prompt, system_prompt=system_prompt, temperature=0.7, max_tokens=max_tokens
+            )
+            try:
+                data = self._parse_json(raw)
+            except StoryGenerationError as e:
+                truncated = getattr(self._llm, "last_finish_reason", None) == "length"
+                failure = self._enrich_parse_failure(e, truncated=truncated, max_tokens=max_tokens)
+                if truncated:
+                    max_tokens = self._bump_max_tokens_after_truncation(max_tokens)
+                logger.warning("Story JSON parse failed on attempt %d/2: %s", attempt + 1, failure)
+                continue
+            return self._parse_response(data, language=language)
+        raise failure
+
+    def _enrich_parse_failure(
+        self, error: StoryGenerationError, *, truncated: bool, max_tokens: int
+    ) -> StoryGenerationError:
+        """Attach the diagnosis a bare json.JSONDecodeError message can't carry."""
+        if truncated:
+            return StoryGenerationError(
+                f"{error} — response truncated at max_tokens={max_tokens} (finish_reason=length)"
+            )
+        if getattr(self._llm, "last_provider", None) == "ollama":
+            return StoryGenerationError(
+                f"{error} — from the offline Ollama fallback; Groq was unavailable (likely rate-limited), retry shortly"
+            )
+        return error
+
+    def _bump_max_tokens_after_truncation(self, current: int) -> int:
+        """Re-derive the completion cap from the measured prompt size, never shrinking."""
+        usage = getattr(self._llm, "last_usage", None)
+        prompt_tokens = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+        if isinstance(prompt_tokens, int) and prompt_tokens > 0:
+            return max(current, _GROQ_FREE_TIER_REQUEST_BUDGET - prompt_tokens - _TRUNCATION_RETRY_MARGIN)
+        return current
 
     @staticmethod
     def _parse_json(raw: str) -> dict:
