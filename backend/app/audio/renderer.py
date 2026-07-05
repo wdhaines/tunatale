@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from app.audio.cues import Cue, CueTiming, build_cue_manifest
 from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.ports import TTSService
 from app.audio.preprocessing.base import TextPreprocessor
@@ -118,7 +119,9 @@ class LessonRenderer:
         else:
             path.write_bytes(encode_audio(audio.samples, audio.rate, self._delivery_codec, self._delivery_bitrate))
 
-    async def _render_section(self, section: Section, tmp: Path, section_idx: int, language_code: str = "sl") -> _Audio:
+    async def _render_section(
+        self, section: Section, tmp: Path, section_idx: int, language_code: str = "sl"
+    ) -> tuple[_Audio, list[tuple[int, int, int]]]:
         """Render a single section to an audio buffer (no boundary silence).
 
         Args:
@@ -128,7 +131,9 @@ class LessonRenderer:
             language_code: Language code for preprocessor lookup.
 
         Returns:
-            Audio buffer containing all phrases with inter-phrase pauses.
+            Tuple of (Audio buffer, per-phrase timing).
+            Timing entries are (phrase_index, start_frame, end_frame) relative
+            to the section start, in frames (not ms).
         """
         preprocessor = self._preprocessors.get(language_code, next(iter(self._preprocessors.values())))
         phrase_files = [tmp / f"s{section_idx}_p{i}.mp3" for i in range(len(section.phrases))]
@@ -143,11 +148,19 @@ class LessonRenderer:
             ]
         )
 
-        # Assemble in phrase order (order is preserved by the pre-allocated paths)
+        # Assemble in phrase order while tracking frame positions.
+        # Offsets are accumulated in frames (not ms) to avoid cumulative drift.
         parts: list[_Audio] = []
+        section_cues: list[tuple[int, int, int]] = []
+        current_frame = 0  # frames relative to section start
+
         for i, phrase in enumerate(section.phrases):
             phrase_audio = _read_audio(phrase_files[i])
+            start_frame = current_frame
+            end_frame = current_frame + len(phrase_audio.samples)
+            section_cues.append((i, start_frame, end_frame))
             parts.append(phrase_audio)
+            current_frame = end_frame
 
             pause_ms = self._calc.get_phrase_pause(
                 audio_duration_s=phrase_audio.duration_ms / 1000.0,
@@ -156,16 +169,18 @@ class LessonRenderer:
                 language_code=phrase.language_code,
             )
             if pause_ms > 0:
-                parts.append(_silence(pause_ms, phrase_audio))
+                pause = _silence(pause_ms, phrase_audio)
+                parts.append(pause)
+                current_frame += len(pause.samples)
 
-        return _concat(parts)
+        return _concat(parts), section_cues
 
     async def render(
         self,
         lesson: Lesson,
         output_path: Path,
         section_paths: list[Path] | None = None,
-    ) -> None:
+    ) -> list[Cue]:
         """Render *lesson* to *output_path* as a valid WAV file.
 
         Optionally writes per-section WAV files to *section_paths* (one per
@@ -177,6 +192,9 @@ class LessonRenderer:
             output_path: Destination file path for the full lesson (written as WAV).
             section_paths: Optional list of paths for per-section output WAVs.
                            Must have same length as lesson.sections if provided.
+
+        Returns:
+            Timing manifest (list of Cue objects) for the rendered lesson.
         """
         t_start = time.perf_counter()
 
@@ -193,14 +211,14 @@ class LessonRenderer:
             # Render all sections concurrently — phrases within each section are
             # also parallelised; EdgeTTSService._semaphore caps total concurrency.
             t0 = time.perf_counter()
-            section_audios: list[_Audio] = list(
-                await asyncio.gather(
-                    *[
-                        self._render_section(section, tmp, i, language_code=lesson.language_code)
-                        for i, section in enumerate(lesson.sections)
-                    ]
-                )
+            section_results = await asyncio.gather(
+                *[
+                    self._render_section(section, tmp, i, language_code=lesson.language_code)
+                    for i, section in enumerate(lesson.sections)
+                ]
             )
+            section_audios = [r[0] for r in section_results]
+            section_cue_lists = [r[1] for r in section_results]
             logger.debug("All sections TTS → %.0f ms", (time.perf_counter() - t0) * 1000)
 
             if section_paths is not None:
@@ -220,6 +238,34 @@ class LessonRenderer:
                 parts.append(sec_audio)
             combined = _concat(parts)
 
+            # Build cue manifest with absolute frame offsets.
+            # Accumulate offsets in frames (never sum float ms per phrase).
+            timing_entries: list[CueTiming] = [
+                CueTiming(
+                    section_index=None,
+                    phrase_index=0,
+                    start_frame=0,
+                    end_frame=len(title_audio.samples),
+                )
+            ]
+            current_abs_frame = len(title_audio.samples) + len(boundary.samples)
+            for sec_idx, (sec_audio, sec_cues) in enumerate(zip(section_audios, section_cue_lists, strict=True)):
+                for ph_idx, rel_start, rel_end in sec_cues:
+                    timing_entries.append(
+                        CueTiming(
+                            section_index=sec_idx,
+                            phrase_index=ph_idx,
+                            start_frame=current_abs_frame + rel_start,
+                            end_frame=current_abs_frame + rel_end,
+                        )
+                    )
+                current_abs_frame += len(sec_audio.samples)
+                if sec_idx < len(section_audios) - 1:
+                    current_abs_frame += len(boundary.samples)
+
+            rate = int(title_audio.rate)
+            cues = build_cue_manifest(lesson, timing_entries, rate)
+
         output_path.parent.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
         self._write_audio(output_path, combined)
@@ -230,3 +276,5 @@ class LessonRenderer:
             round(combined.duration_ms),
             (time.perf_counter() - t_start) * 1000,
         )
+
+        return cues

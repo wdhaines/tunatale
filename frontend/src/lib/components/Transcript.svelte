@@ -3,8 +3,9 @@
 	import Tooltip from './Tooltip.svelte';
 	import type { TooltipActions } from './Tooltip.svelte';
 	import { api } from '$lib/api';
-	import type { LessonDetail, TranscriptData, WordToken } from '$lib/api';
-	import { buildScenes, fallbackScenes } from '$lib/transcriptScenes';
+	import type { Cue, LessonDetail, TranscriptData, WordToken } from '$lib/api';
+	import { buildScenes, fallbackScenes, cueHighlight, findSeekCue, findKeyPhraseSeekCue } from '$lib/transcriptScenes';
+	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { masteryBackgroundColor, masteryColor } from '$lib/mastery';
 
 	interface CreatePhraseArgs {
@@ -31,6 +32,8 @@
 		onCollocationUndo?: (span_id: number) => void | Promise<void>;
 		onCreatePhrase?: (args: CreatePhraseArgs) => void | Promise<void>;
 		tooltipActions?: TooltipActions;
+		controller?: PlaybackController | null;
+		cues?: Cue[] | null;
 	}
 
 	let {
@@ -41,7 +44,9 @@
 		undoableItemId = null,
 		onCollocationUndo,
 		onCreatePhrase,
-		tooltipActions
+		tooltipActions,
+		controller = null,
+		cues = null
 	}: Props = $props();
 
 	type WordSegment = { type: 'word'; word: WordToken } | { type: 'collocation'; words: WordToken[]; span_id: number };
@@ -379,6 +384,32 @@
 		}
 		return fallbackScenes(transcript.dialogue_lines);
 	});
+
+	// --- Synced subtitle state (Phase 3) ---
+	// The controller's getters are $state-backed, so plain deriveds track them.
+	let currentCue = $derived(controller?.currentCue ?? null);
+	let currentSectionIndex = $derived(controller?.currentSectionIndex ?? null);
+
+	let activeRef = $derived(cueHighlight(currentCue));
+
+	// Plain (non-reactive) memo: writing it inside the effect must not re-run it.
+	let prevScrollKey = '';
+	$effect(() => {
+		const ref = activeRef;
+		const key = ref ? `${ref.kind}:${ref.target_index}` : '';
+		if (ref && key !== prevScrollKey) {
+			prevScrollKey = key;
+			// Capture `ref` — activeRef can flip to null before the frame fires.
+			requestAnimationFrame(() => {
+				const sel = ref.kind === 'line'
+					? '.dialogue-line.active-line'
+					: '.key-phrases-list li.active-kp';
+				document.querySelector(sel)?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+			});
+		} else if (!key) {
+			prevScrollKey = '';
+		}
+	});
 </script>
 
 <svelte:window onkeydown={handleAltKeyDown} onkeyup={handleAltKeyUp} />
@@ -388,10 +419,14 @@
 		<div class="transcript-section">
 			<h3>Key Phrases</h3>
 			<ul class="key-phrases-list">
-				{#each transcript.key_phrases as kp (kp.phrase)}
-					<li>
+				{#each transcript.key_phrases as kp, kpIdx (kp.phrase)}
+					{@const seekCue = controller && cues ? findKeyPhraseSeekCue(cues, kpIdx) : null}
+					<li class:active-kp={activeRef?.kind === 'key_phrase' && activeRef.target_index === kpIdx}>
 						<span class="kp-phrase">{kp.phrase}</span>
 						<span class="kp-translation">{kp.translation}</span>
+						{#if seekCue}
+							<button class="seek-btn" onclick={() => controller!.seekToCue(seekCue!)}>▶</button>
+						{/if}
 					</li>
 				{/each}
 			</ul>
@@ -482,7 +517,14 @@
 					{@const lineIndex = line.transcriptIndex}
 					{@const segments = groupIntoSegments(line.words)}
 					{@const lineSentence = transcript.dialogue_lines[lineIndex]?.sentence ?? ''}
-					<div class="dialogue-line">
+					{@const isActiveLine = activeRef?.kind === 'line' && activeRef.target_index === lineIndex}
+					{@const isActiveSlow = isActiveLine && currentCue?.section_type === 'slow_speed'}
+					{@const isActiveTranslated = isActiveLine && currentCue?.section_type === 'translated'}
+					{@const seekCue = controller && cues ? findSeekCue(cues, lineIndex, currentSectionIndex) : null}
+					<div class="dialogue-line" class:active-line={isActiveLine}>
+						{#if seekCue}
+							<button class="seek-btn" onclick={() => controller!.seekToCue(seekCue!)}>▶</button>
+						{/if}
 						<span class="dialogue-role">
 							<span
 								class="dialogue-role-chip speaker-{speakerIndex(line.role) % 4}"
@@ -567,10 +609,10 @@
 									{/if}
 								{/each}
 							</span>
-							{#if showSlow && line.slowText}
+							{#if (showSlow || isActiveSlow) && line.slowText}
 								<div class="line-slow">{line.slowText}</div>
 							{/if}
-							{#if showInterlinear && line.translatedText}
+							{#if (showInterlinear || isActiveTranslated) && line.translatedText}
 								<div class="line-interlinear">{line.translatedText}</div>
 							{/if}
 						</div>
@@ -771,6 +813,10 @@
 		color: var(--color-muted);
 		font-style: italic;
 	}
+	.key-phrases-list .seek-btn {
+		margin-left: auto;
+		align-self: center;
+	}
 	.scene-header {
 		margin: 1.25rem 0 0.5rem;
 		padding: 0.45rem 0.75rem;
@@ -785,6 +831,34 @@
 	}
 	.scene-header:first-of-type {
 		margin-top: 0.5rem;
+	}
+	.dialogue-line.active-line {
+		background: rgba(37, 99, 235, 0.06);
+		border-left: 3px solid var(--color-primary, #2563eb);
+		padding-left: 0.5rem;
+		border-radius: 0 4px 4px 0;
+	}
+	.key-phrases-list li.active-kp {
+		background: rgba(37, 99, 235, 0.06);
+		border-left: 3px solid var(--color-primary, #2563eb);
+		padding-left: 0.5rem;
+		padding-right: 0.5rem;
+	}
+	.seek-btn {
+		background: transparent;
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		cursor: pointer;
+		font-size: 0.75rem;
+		padding: 0.1rem 0.35rem;
+		line-height: 1;
+		color: var(--color-muted);
+		transition: color 0.1s, border-color 0.1s;
+		min-height: 28px;
+	}
+	.seek-btn:hover {
+		color: var(--color-primary);
+		border-color: var(--color-primary);
 	}
 	.dialogue-line {
 		display: flex;

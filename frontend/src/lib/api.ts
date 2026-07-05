@@ -194,10 +194,31 @@ interface SectionAudio {
   title: string;
 }
 
+export interface CueRef {
+  kind: "line" | "key_phrase" | "narration";
+  // Absent on narration refs — the backend emits {"kind": "narration"} with no
+  // target (see app/audio/cues.py); only line/key_phrase refs carry an index.
+  target_index?: number;
+}
+
+export interface Cue {
+  index: number;
+  start_ms: number;
+  end_ms: number;
+  section_index: number | null;
+  section_type: string | null;
+  phrase_index: number;
+  role: string;
+  language_code: string;
+  text: string;
+  ref: CueRef | null;
+}
+
 export interface LessonAudio {
   audio_id: string;
   lesson_id: string;
   sections: SectionAudio[];
+  cues?: Cue[] | null;
 }
 
 interface DirectionState {

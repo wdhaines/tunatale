@@ -41,7 +41,7 @@ export default defineConfig({
 	test: {
 		include: ['src/**/*.{test,spec}.{js,ts}', 'tests/**/*.test.ts'],
 		environment: 'jsdom',
-		setupFiles: ['@testing-library/svelte/vitest'],
+		setupFiles: ['@testing-library/svelte/vitest', './tests/vitest-setup.ts'],
 		coverage: {
 			provider: 'v8',
 			// `json` writes `coverage/coverage-final.json` which

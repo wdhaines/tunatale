@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import io
+import json
 import re
 import uuid
 import zipfile
+from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -87,15 +89,16 @@ async def render_audio(body: RenderAudioRequest, request: Request):
     section_ids = [str(uuid.uuid4()) for _ in lesson.sections]
     section_paths = [audio_dir / f"{sid}.{ext}" for sid in section_ids]
 
-    await renderer.render(lesson, full_path, section_paths=section_paths)
+    cues = await renderer.render(lesson, full_path, section_paths=section_paths)
+    cues_json = json.dumps([asdict(c) for c in cues], ensure_ascii=False)
 
     # Delete old rows before inserting new ones — the render writes to fresh
     # UUID paths so nothing collides, and at this point old rows are the only
     # rows for this lesson in the DB.
     store.delete_audio_files_for_lesson(body.lesson_id)
 
-    # Persist full lesson row
-    store.save_audio_file(audio_id, body.lesson_id, str(full_path))
+    # Persist full lesson row (with cues manifest)
+    store.save_audio_file(audio_id, body.lesson_id, str(full_path), cues_json=cues_json)
 
     # Persist per-section rows
     for i, (sid, section) in enumerate(zip(section_ids, lesson.sections, strict=True)):
@@ -121,7 +124,12 @@ async def render_audio(body: RenderAudioRequest, request: Request):
         for i, (sid, section) in enumerate(zip(section_ids, lesson.sections, strict=True))
     ]
 
-    return {"audio_id": audio_id, "lesson_id": body.lesson_id, "sections": sections}
+    return {
+        "audio_id": audio_id,
+        "lesson_id": body.lesson_id,
+        "sections": sections,
+        "cues": json.loads(cues_json),
+    }
 
 
 @router.get("/lesson/{lesson_id}", status_code=200)
@@ -151,10 +159,16 @@ async def get_lesson_audio(lesson_id: str, request: Request):
             }
         )
 
+    cues: list | None = None
+    raw = full_row.get("cues_json")
+    if raw is not None:
+        cues = json.loads(raw)
+
     return {
         "audio_id": full_row["id"],
         "lesson_id": lesson_id,
         "sections": sections,
+        "cues": cues,
     }
 
 

@@ -8,17 +8,27 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+from app.audio.cues import Cue
 from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.preprocessing.slovene import SlovenePreprocessor
 from app.audio.renderer import LessonRenderer
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 
+# Shared test helpers
+_PHRASE_RATE = 11025
+_PHRASE_DURATION_MS = 200
+_PHRASE_FRAMES = round(_PHRASE_DURATION_MS / 1000 * _PHRASE_RATE)
 
-def _make_wav_bytes(duration_ms: int = 100, rate: int = 11025) -> bytes:
-    """Generate minimal valid (silent) WAV bytes via soundfile."""
+
+def _make_wav_bytes(duration_ms: int = 100, rate: int = 11025, marker: float = 0.0) -> bytes:
+    """Generate minimal WAV bytes via soundfile.
+
+    When *marker* is non-zero every sample equals *marker*, making it
+    detectable in the concatenated buffer.  Default (0.0) is silent audio.
+    """
     buf = BytesIO()
     frames = round(duration_ms / 1000 * rate)
-    sf.write(buf, np.zeros((frames, 1), dtype="float32"), rate, format="WAV", subtype="PCM_16")
+    sf.write(buf, np.full((frames, 1), marker, dtype="float32"), rate, format="WAV", subtype="PCM_16")
     return buf.getvalue()
 
 
@@ -396,3 +406,256 @@ class TestLessonNarratorVoice:
         lesson = Lesson(title="X", language_code="sl", narrator_voice="en-US-AriaNeural")
         restored = Lesson.from_json(lesson.to_json())
         assert restored.narrator_voice == "en-US-AriaNeural"
+
+
+class TestLessonRendererCues:
+    """Tests that render() returns accurate cue offsets.
+
+    Offsets are validated against MEASURED sample positions in the actual WAV
+    buffer (not re-derived from the same arithmetic).
+    """
+
+    def _make_rendered_lesson(self, lesson: Lesson) -> Lesson:
+        """Create a standardised multi-section lesson for cue tests."""
+        return lesson
+
+    def _measure_clip_starts(self, samples: np.ndarray, rate: int, markers: list[float]) -> list[int]:
+        """Scan *samples* for transitions to each *marker* value.
+
+        Returns list of frame positions (0 = not found) in the same order as
+        *markers*. Each marker value is a constant written into its clip.
+        """
+        positions: list[int] = []
+        search_from = 0
+        for marker in markers:
+            mask = np.abs(samples[search_from:, 0] - marker) < 0.001
+            matches = np.where(mask)[0]
+            if len(matches) == 0:
+                positions.append(0)
+            else:
+                frame = search_from + matches[0]
+                positions.append(frame)
+                search_from = frame + 1
+        return positions
+
+    async def test_render_returns_cue_list(self, tmp_path):
+        """render() returns a non-empty list of Cue objects."""
+        lesson = Lesson(
+            title="Cue Test",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="zdravo", voice_id="sl-SI-PetraNeural", language_code="sl")],
+                ),
+            ],
+        )
+        fake_audio = _make_wav_bytes(duration_ms=_PHRASE_DURATION_MS, marker=0.1)
+        mock_tts = AsyncMock()
+
+        async def fake_synth(text, voice_id, output_path, rate="+0%"):
+            output_path.write_bytes(fake_audio)
+
+        mock_tts.synthesize = fake_synth
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"sl": SlovenePreprocessor()},
+            pause_calculator=NaturalPauseCalculator(),
+        )
+        output = tmp_path / "lesson.wav"
+        cues = await rdr.render(lesson, output)
+
+        assert isinstance(cues, list)
+        assert len(cues) > 0
+        assert isinstance(cues[0], Cue)
+
+    async def test_render_cues_title_first_at_frame_zero(self, tmp_path):
+        """First cue is the lesson title starting at frame 0."""
+        lesson = Lesson(title="Start Here", language_code="sl")
+        mock_tts = AsyncMock()
+
+        async def fake_synth(text, voice_id, output_path, rate="+0%"):
+            output_path.write_bytes(_make_wav_bytes(duration_ms=_PHRASE_DURATION_MS, marker=0.1))
+
+        mock_tts.synthesize = fake_synth
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"sl": SlovenePreprocessor()},
+            pause_calculator=NaturalPauseCalculator(),
+        )
+        output = tmp_path / "lesson.wav"
+        cues = await rdr.render(lesson, output)
+
+        assert cues[0].section_index is None
+        assert cues[0].phrase_index == 0
+        assert cues[0].start_ms == 0
+
+    async def test_render_cue_offsets_match_measured_buffer(self, tmp_path):
+        """Cue start_ms/end_ms match positions measured in the actual WAV buffer.
+
+        Each fake clip uses a unique non-zero sample value so the test can
+        locate it in the concatenated output.
+        """
+        lesson = Lesson(
+            title="Match Me",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text="eno", voice_id="sl-SI-PetraNeural", language_code="sl"),
+                        Phrase(text="dve", voice_id="sl-SI-PetraNeural", language_code="sl"),
+                    ],
+                ),
+            ],
+        )
+
+        # Assign a unique marker AND a unique duration for each clip in render
+        # order — varied durations mean a systematic end-frame bug (e.g. end
+        # computed as start + constant) cannot hide behind uniform clips.
+        all_phrases: list[dict] = [
+            {"key": (None, 0), "text": lesson.title, "marker": 0.1, "duration_ms": 150},
+        ]
+        for sec_idx, sec in enumerate(lesson.sections):
+            for ph_idx, _ in enumerate(sec.phrases):
+                n = len(all_phrases)
+                all_phrases.append(
+                    {
+                        "key": (sec_idx, ph_idx),
+                        "text": sec.phrases[ph_idx].text,
+                        "marker": 0.1 * (n + 1),
+                        "duration_ms": 150 + 70 * n,
+                    }
+                )
+
+        # Lookup by (section_idx, phrase_idx) — synthesis is concurrent, so the
+        # clip identity must come from the temp-file path, not call order.
+        by_key: dict[tuple[int | None, int], dict] = {p["key"]: p for p in all_phrases}
+
+        async def fake_synth(text, voice_id, output_path, rate="+0%"):
+            stem = output_path.stem
+            if stem == "title":
+                spec = by_key[(None, 0)]
+            else:
+                # s{section_idx}_p{phrase_idx}
+                parts = stem.split("_")
+                spec = by_key[(int(parts[0][1:]), int(parts[1][1:]))]
+            output_path.write_bytes(_make_wav_bytes(duration_ms=spec["duration_ms"], marker=spec["marker"]))
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synth
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"sl": SlovenePreprocessor()},
+            pause_calculator=NaturalPauseCalculator(),
+        )
+        output = tmp_path / "lesson.wav"
+        cues = await rdr.render(lesson, output)
+
+        # Read the actual output buffer
+        buf, buf_rate = sf.read(str(output), dtype="float32", always_2d=True)
+
+        # Every cue must be locatable in the buffer as a contiguous run of its
+        # marker value, and BOTH start_ms and end_ms must match the measured
+        # run. No skips — an unfound marker is a failure, not a pass.
+        assert len(cues) == len(all_phrases)
+        for i, cue in enumerate(cues):
+            spec = all_phrases[i]
+            idx = np.where(np.abs(buf[:, 0] - spec["marker"]) < 0.003)[0]
+            assert len(idx) > 0, f"Cue {i} '{cue.text}': marker {spec['marker']} not found in buffer"
+            assert idx[-1] - idx[0] + 1 == len(idx), f"Cue {i} '{cue.text}': marker run not contiguous"
+
+            measured_start_ms = round(idx[0] / buf_rate * 1000)
+            measured_end_ms = round((idx[-1] + 1) / buf_rate * 1000)
+            assert abs(cue.start_ms - measured_start_ms) <= 2, (
+                f"Cue {i} '{cue.text}': expected start_ms ≈ {measured_start_ms}, got {cue.start_ms}"
+            )
+            assert abs(cue.end_ms - measured_end_ms) <= 2, (
+                f"Cue {i} '{cue.text}': expected end_ms ≈ {measured_end_ms}, got {cue.end_ms}"
+            )
+
+    async def test_render_cues_include_boundary_silence_in_offsets(self, tmp_path):
+        """Cue offsets account for the 3000ms boundary silence between sections."""
+        lesson = Lesson(
+            title="B",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="prvi", voice_id="sl-SI-PetraNeural", language_code="sl")],
+                ),
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="drugi", voice_id="sl-SI-PetraNeural", language_code="sl")],
+                ),
+            ],
+        )
+
+        markers: dict[str, float] = {"B": 0.1, "prvi": 0.2, "drugi": 0.3}
+
+        async def fake_synth(text, voice_id, output_path, rate="+0%"):
+            marker = markers.get(text, 0.5)
+            output_path.write_bytes(_make_wav_bytes(duration_ms=_PHRASE_DURATION_MS, marker=marker))
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synth
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"sl": SlovenePreprocessor()},
+            pause_calculator=NaturalPauseCalculator(),
+        )
+        output = tmp_path / "lesson.wav"
+        cues = await rdr.render(lesson, output)
+
+        buf, buf_rate = sf.read(str(output), dtype="float32", always_2d=True)
+
+        # Measure the three markers
+        measured = self._measure_clip_starts(buf, buf_rate, [0.1, 0.2, 0.3])
+
+        # Each cue's start must match its measured buffer position (title at 0;
+        # the other two found strictly after it — 0 would mean "not found").
+        assert cues[0].start_ms == 0
+        assert measured[1] > 0 and measured[2] > 0, "section markers not found in buffer"
+        for cue, frame in zip(cues[1:3], measured[1:3], strict=True):
+            assert abs(cue.start_ms - round(frame / buf_rate * 1000)) <= 2, (
+                f"'{cue.text}': start_ms {cue.start_ms} vs measured {round(frame / buf_rate * 1000)}"
+            )
+
+        # Second section should start well after first + pause + boundary
+        # The boundary is 3000ms, which at 11025 Hz = ~33075 frames
+        boundary_frames = round(3000 / 1000 * buf_rate)
+        gap = measured[2] - measured[1]
+        # Expected: 200ms clip + pause + 3000ms boundary
+        expected_gap_frames = _PHRASE_FRAMES + round(500 / 1000 * buf_rate) + boundary_frames  # ~500ms pause for L2
+        assert abs(gap - expected_gap_frames) <= 100, (
+            f"Gap between sections ≈ {gap} frames, expected ≈ {expected_gap_frames}"
+        )
+
+    async def test_render_existing_callers_still_work(self, tmp_path):
+        """Callers that ignore the return value still get a valid WAV file."""
+        lesson = Lesson(
+            title="Compat",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="test", voice_id="sl-SI-PetraNeural", language_code="sl")],
+                ),
+            ],
+        )
+        fake_audio = _make_wav_bytes()
+        mock_tts = AsyncMock()
+
+        async def fake_synth(text, voice_id, output_path, rate="+0%"):
+            output_path.write_bytes(fake_audio)
+
+        mock_tts.synthesize = fake_synth
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"sl": SlovenePreprocessor()},
+            pause_calculator=NaturalPauseCalculator(),
+        )
+        output = tmp_path / "lesson.wav"
+        _ = await rdr.render(lesson, output)  # ignore return value
+        assert output.exists()
+        assert output.stat().st_size > 0

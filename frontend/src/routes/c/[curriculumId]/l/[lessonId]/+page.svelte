@@ -4,7 +4,8 @@
 	import { api } from '$lib/api';
 	import type { LessonAudio, TranscriptData } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
-	import AudioPlayer from '$lib/components/AudioPlayer.svelte';
+	import LessonPlayer from '$lib/components/LessonPlayer.svelte';
+	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import Transcript from '$lib/components/Transcript.svelte';
 	import TranscriptPlaceholder from '$lib/components/TranscriptPlaceholder.svelte';
 	import { syncStore } from '$lib/stores/sync.svelte';
@@ -13,13 +14,6 @@
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
-
-	const SECTION_TITLES: Record<string, string> = {
-		key_phrases: 'Key Phrases',
-		natural_speed: 'Natural Speed',
-		slow_speed: 'Slow Speed',
-		translated: 'Translated'
-	};
 
 	// Read/Listen mode is a persisted preference that defaults by viewport (Listen
 	// on mobile, Read on desktop) rather than an unconditional 'read' that landed
@@ -41,6 +35,16 @@
 	let error = $state('');
 	let wordActionInFlight = $state(false);
 
+	let playbackController = $state<PlaybackController | null>(null);
+
+	// The player card sticks below the layout's sticky nav; measure the nav so
+	// the offset tracks its real (wrap-dependent) height.
+	let navHeight = $state(0);
+	function measureNav() {
+		navHeight = document.querySelector('.global-nav')?.clientHeight ?? 0;
+	}
+	onMount(measureNav);
+
 	let isListened = $derived(listenedStore.has(data.lesson.id));
 
 	// SvelteKit reuses this component on same-route param changes (e.g. the
@@ -49,6 +53,9 @@
 	// lesson — otherwise audio/transcript show stale content after navigation.
 	$effect(() => {
 		audio = data.audio;
+		// A render started on the previous lesson must not leave the new lesson's
+		// Render button stuck on "Rendering…".
+		audioLoading = false;
 		const provided = data.transcript;
 		if (provided !== null) {
 			// Supplied by load (or passed directly in a test) — render it as-is.
@@ -57,33 +64,43 @@
 		}
 		// Not preloaded: fetch client-side so the lesson shell renders immediately
 		// instead of blocking on the (classla-backed) transcript endpoint, which can
-		// take many seconds on a cold backend.
+		// take many seconds on a cold backend. That latency means a lesson→lesson
+		// navigation can outrun the fetch — drop responses for a lesson we've left,
+		// or lesson A's late transcript would clobber lesson B's.
 		const lessonId = data.lesson.id;
 		transcript = null;
 		transcriptLoading = true;
 		error = '';
 		api.getLessonTranscript(lessonId)
 			.then((t) => {
-				transcript = t;
+				if (data.lesson.id === lessonId) transcript = t;
 			})
 			.catch((e) => {
-				error = e instanceof Error ? e.message : String(e);
+				if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
 			})
 			.finally(() => {
-				transcriptLoading = false;
+				if (data.lesson.id === lessonId) transcriptLoading = false;
 			});
 	});
 
 	async function handleRenderAudio() {
+		// Rendering takes tens of seconds (full-lesson TTS); the user may navigate
+		// to another lesson meanwhile. Everything after an await re-checks that
+		// this lesson is still the one on screen before touching page state.
+		const lessonId = data.lesson.id;
 		audioLoading = true;
 		error = '';
 		try {
-			audio = await api.renderAudio(data.lesson.id);
-			transcript = await api.getLessonTranscript(data.lesson.id);
+			const rendered = await api.renderAudio(lessonId);
+			if (data.lesson.id !== lessonId) return;
+			audio = rendered;
+			const t = await api.getLessonTranscript(lessonId);
+			if (data.lesson.id !== lessonId) return;
+			transcript = t;
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
 		} finally {
-			audioLoading = false;
+			if (data.lesson.id === lessonId) audioLoading = false;
 		}
 	}
 
@@ -113,10 +130,12 @@
 	async function handleSyncResult() {
 		syncStatus = 'Synced with AnkiWeb';
 		error = '';
+		const lessonId = data.lesson.id;
 		try {
-			transcript = await api.getLessonTranscript(data.lesson.id);
+			const t = await api.getLessonTranscript(lessonId);
+			if (data.lesson.id === lessonId) transcript = t;
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
 		}
 	}
 
@@ -125,15 +144,17 @@
 	});
 
 	async function handleMarkListened() {
+		const lessonId = data.lesson.id;
 		listenLoading = true;
 		error = '';
 		try {
-			const result = await api.markAsListened(data.lesson.id, {});
+			const result = await api.markAsListened(lessonId, {});
 			listenResult = result;
-			listenedStore.add(data.lesson.id);
-			transcript = await api.getLessonTranscript(data.lesson.id);
+			listenedStore.add(lessonId);
+			const t = await api.getLessonTranscript(lessonId);
+			if (data.lesson.id === lessonId) transcript = t;
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
 		} finally {
 			listenLoading = false;
 		}
@@ -343,59 +364,45 @@
 	}
 </script>
 
+<svelte:window onresize={measureNav} />
+
 <main>
-	<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
-
-	<section class="card">
-		<h1>{data.lesson.title}</h1>
-		<p class="section-meta">
-			{#each data.lesson.sections as section, i (i)}
-				{SECTION_TITLES[section.type] ?? section.type} — {section.phrases.length} phrase{section.phrases.length === 1 ? '' : 's'}{i < data.lesson.sections.length - 1 ? ' · ' : ''}
-			{/each}
-		</p>
-
-		<div class="toggle-pill">
-			<button class:active={mode === 'read'} onclick={() => lessonModePref.set('read')}>Read</button>
-			<button class:active={mode === 'listen'} onclick={() => lessonModePref.set('listen')}>Listen</button>
+	<!-- The sticky card owns everything the user reaches for mid-lesson: the
+	     lesson title, Read/Listen toggle, and (once rendered) the player. It
+	     sticks below the global nav so nothing the user needs scrolls away. -->
+	<section class="card player-card" style="top: {navHeight}px">
+		<div class="player-title-area">
+			<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
+			<h1>{data.lesson.title}</h1>
+			{#if syncStatus}
+				<p class="sync-status">{syncStatus}</p>
+			{/if}
+			{#if error}
+				<p class="error">{error}</p>
+			{/if}
 		</div>
-
-		{#if !audio}
-			<button onclick={handleRenderAudio} disabled={audioLoading}>
-				{audioLoading ? 'Rendering…' : 'Render Audio'}
-			</button>
-		{/if}
-		{#if syncStatus}
-			<p class="sync-status">{syncStatus}</p>
-		{/if}
-		{#if error}
-			<p class="error">{error}</p>
+		<div class="mode-row">
+			<div class="toggle-pill">
+				<button class:active={mode === 'read'} onclick={() => lessonModePref.set('read')}>Read</button>
+				<button class:active={mode === 'listen'} onclick={() => lessonModePref.set('listen')}>Listen</button>
+			</div>
+		</div>
+		{#if audio}
+			{#key audio.audio_id}
+				<!-- ONE persistent player across modes: only the `compact` prop flips on
+				     Listen↔Read, so the controller (and playback) survives the switch. -->
+				<LessonPlayer {audio} compact={mode !== 'listen'} lessonTitle={data.lesson.title} bind:controller={playbackController} />
+			{/key}
+		{:else}
+			<div class="render-row">
+				<button onclick={handleRenderAudio} disabled={audioLoading}>
+					{audioLoading ? 'Rendering…' : 'Render Audio'}
+				</button>
+			</div>
 		{/if}
 	</section>
 
-	{#if audio}
-		<AudioPlayer {audio} />
-	{/if}
-
-	{#if mode === 'read'}
-		<section class="card">
-			{#if transcript}
-				<Transcript
-					{transcript}
-					lesson={data.lesson}
-					onWordClick={handleWordClick}
-					onCollocationStateChange={handleCollocationStateChange}
-					undoableItemId={undoable?.itemId ?? null}
-					onCollocationUndo={(spanId) => handleUndoGrade(spanId, 'recognition')}
-					onCreatePhrase={handleCreatePhrase}
-					tooltipActions={tooltipActions}
-				/>
-			{:else if transcriptLoading}
-				<TranscriptPlaceholder lesson={data.lesson} />
-			{:else}
-				<p class="muted">No transcript available.</p>
-			{/if}
-		</section>
-	{:else}
+	{#if mode === 'listen'}
 		<section class="card listen-card">
 			<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened} disabled={listenLoading}>
 				{#if listenLoading}
@@ -415,7 +422,41 @@
 		</section>
 	{/if}
 
-	<section class="card">
+	{#if mode === 'read'}
+		<section class="card">
+			{#if transcript}
+				<Transcript
+					{transcript}
+					lesson={data.lesson}
+					onWordClick={handleWordClick}
+					onCollocationStateChange={handleCollocationStateChange}
+					undoableItemId={undoable?.itemId ?? null}
+					onCollocationUndo={(spanId) => handleUndoGrade(spanId, 'recognition')}
+					onCreatePhrase={handleCreatePhrase}
+					controller={playbackController}
+					cues={audio?.cues ?? null}
+					tooltipActions={tooltipActions}
+				/>
+			{:else if transcriptLoading}
+				<TranscriptPlaceholder lesson={data.lesson} />
+			{:else}
+				<p class="muted">No transcript available.</p>
+			{/if}
+		</section>
+	{/if}
+
+	<!-- Rare actions live folded away: downloads for offline use, regeneration
+	     as the destructive-ish last resort. -->
+	<details class="card tools-card">
+		<summary>Lesson tools</summary>
+		{#if audio}
+			<div class="download-links">
+				<a class="download-all-btn" href={api.audioZipUrl(audio.lesson_id)} download>Download All Sections</a>
+				{#each audio.sections as sec (sec.audio_id)}
+					<a class="section-dl-btn" href={api.audioUrl(sec.audio_id)} download>{sec.title}</a>
+				{/each}
+			</div>
+		{/if}
 		<p class="muted">
 			Regenerating rewrites this day's dialogue with the current prompt (better declension &amp;
 			conjugation coverage). Existing cards stay; new vocabulary and morphology drills are added when
@@ -424,7 +465,7 @@
 		<button class="regen-btn" onclick={handleRegenerate} disabled={regenLoading}>
 			{regenLoading ? 'Regenerating…' : `Regenerate Day ${data.lesson.day}`}
 		</button>
-	</section>
+	</details>
 </main>
 
 <style>
@@ -435,6 +476,12 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1.25rem;
+	}
+	.player-title-area {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+		margin-bottom: 0.5rem;
 	}
 	.breadcrumb {
 		display: inline-block;
@@ -447,15 +494,10 @@
 		color: var(--color-primary);
 	}
 	h1 {
-		margin-top: 0;
+		margin: 0;
 		font-size: 1.4rem;
 		font-weight: 800;
 		letter-spacing: -0.01em;
-	}
-	.section-meta {
-		margin: 0.5rem 0 0;
-		font-size: 0.9rem;
-		color: var(--color-muted);
 	}
 	button {
 		margin-top: 0.75rem;
@@ -477,12 +519,12 @@
 	}
 	.error {
 		color: var(--color-danger);
-		margin-top: 0.5rem;
+		margin: 0;
 	}
 	.sync-status {
 		color: var(--color-muted);
 		font-size: 0.85rem;
-		margin-top: 0.5rem;
+		margin: 0;
 	}
 	.muted {
 		color: var(--color-muted);
@@ -496,10 +538,21 @@
 	.regen-btn:not(:disabled):hover {
 		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
 	}
+	.mode-row {
+		display: flex;
+		justify-content: center;
+		margin-bottom: 0.75rem;
+	}
+	.render-row {
+		display: flex;
+		justify-content: center;
+	}
+	.render-row button {
+		margin-top: 0;
+	}
 	.toggle-pill {
 		display: flex;
 		gap: 0;
-		margin-top: 0.75rem;
 		background: var(--color-surface-2);
 		border-radius: var(--radius-pill);
 		padding: 2px;
@@ -524,6 +577,11 @@
 	}
 	.toggle-pill button:not(.active):hover {
 		color: var(--color-text);
+	}
+	.player-card {
+		position: sticky;
+		/* Above transcript content + tooltips (z 10), below the global nav (z 50). */
+		z-index: 20;
 	}
 	.listen-card {
 		display: flex;
@@ -552,5 +610,48 @@
 		color: var(--color-success);
 		font-size: 0.85rem;
 		margin: 0;
+	}
+	.tools-card summary {
+		cursor: pointer;
+		font-size: 0.9rem;
+		font-weight: 600;
+		color: var(--color-muted);
+	}
+	.tools-card[open] summary {
+		margin-bottom: 0.75rem;
+	}
+	.tools-card .muted {
+		margin: 0.75rem 0 0;
+	}
+	.download-links {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+	.download-all-btn {
+		display: block;
+		min-height: 44px;
+		line-height: 44px;
+		padding: 0 1.25rem;
+		background: var(--color-primary);
+		color: var(--color-on-primary);
+		border-radius: 4px;
+		text-decoration: none;
+		font-size: 0.9rem;
+		font-weight: 600;
+	}
+	.download-all-btn:hover {
+		filter: brightness(0.9);
+	}
+	.section-dl-btn {
+		padding: 0.4rem 0.9rem;
+		background: var(--color-secondary);
+		color: var(--color-on-primary);
+		border-radius: 4px;
+		text-decoration: none;
+		font-size: 0.85rem;
+	}
+	.section-dl-btn:hover {
+		filter: brightness(0.85);
 	}
 </style>

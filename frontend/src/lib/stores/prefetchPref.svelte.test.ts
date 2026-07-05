@@ -56,7 +56,7 @@ describe("prefetchPrefStore", () => {
   });
 
   it("first enabled read applies a stored opt-out without an init() call (backlog #36)", async () => {
-    // AudioPlayer's onMount runs BEFORE the layout's onMount (children mount
+    // LessonPlayer's onMount runs BEFORE the layout's onMount (children mount
     // first), so the store must lazily self-init on first read or a direct
     // lesson-page load prefetches despite the user's opt-out.
     vi.resetModules();

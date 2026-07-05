@@ -260,6 +260,61 @@ class TestSectionAudioStorage:
             new_row = store.get_audio_file_row("new1")
             assert new_row["section_index"] == 0
 
+    def test_schema_migration_adds_cues_json_column(self, tmp_path):
+        """ContentStore adds cues_json column when opening a pre-cues schema DB."""
+        import sqlite3
+
+        db_file = str(tmp_path / "pre-cues.db")
+
+        # Create DB with schema that has section_index/section_type but no cues_json
+        conn = sqlite3.connect(db_file)
+        conn.execute("""
+            CREATE TABLE audio_files (
+                id TEXT PRIMARY KEY,
+                lesson_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                section_index INTEGER,
+                section_type TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute(
+            "INSERT INTO audio_files (id, lesson_id, file_path, section_index, section_type) VALUES ('old1', 'l1', '/old.wav', 0, 'key_phrases')"
+        )
+        conn.commit()
+        conn.close()
+
+        # Opening with ContentStore should add cues_json
+        ContentStore(db_file).close()
+        conn2 = sqlite3.connect(db_file)
+        cols = {r[1] for r in conn2.execute("PRAGMA table_info(audio_files)").fetchall()}
+        conn2.close()
+        assert "cues_json" in cols, "cues_json column should have been added"
+
+        # Existing data is preserved via a new store instance
+        with ContentStore(db_file) as store2:
+            row = store2.get_audio_file_row("old1")
+        assert row is not None
+        assert row["section_index"] == 0
+        assert row["section_type"] == "key_phrases"
+
+    def test_schema_migration_cues_json_read_write(self, tmp_path):
+        """cues_json can be read/written via save/get_audio_file_row."""
+        from app.storage.store import ContentStore
+
+        db_file = str(tmp_path / "cues-rw.db")
+        store = ContentStore(db_file)
+        store.save_audio_file("test1", "l1", "/test.wav", section_index=0, section_type="natural_speed")
+
+        # Access cues_json through raw SQL to verify column exists
+        with store._file_conn() as conn:
+            conn.execute(
+                "UPDATE audio_files SET cues_json = ? WHERE id = ?",
+                ('[{"start_ms": 0, "end_ms": 1000}]', "test1"),
+            )
+        row = store.get_audio_file_row("test1")
+        assert row["cues_json"] == '[{"start_ms": 0, "end_ms": 1000}]'
+
 
 class TestLessonDays:
     """Tests for get_lesson_days bulk query."""

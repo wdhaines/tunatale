@@ -5,7 +5,9 @@ import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import Transcript from "./Transcript.svelte";
 import { api } from "$lib/api";
-import type { LessonDetail, TranscriptData } from "$lib/api";
+import type { Cue, LessonDetail, TranscriptData } from "$lib/api";
+import type { PlaybackController } from "$lib/playback/playbackController.svelte";
+import { findSeekCue, findKeyPhraseSeekCue } from "$lib/transcriptScenes";
 
 vi.mock("$lib/api", () => ({
   api: { translateTerm: vi.fn() },
@@ -2406,6 +2408,354 @@ describe("Transcript", () => {
       const classA = chips[0].className;
       const classB = chips[1].className;
       expect(classA).not.toBe(classB);
+    });
+  });
+
+  // ─── Synced subtitle tests (Phase 3) ────────────────────────────────
+
+  const phraseLineLesson: LessonDetail = {
+    id: "l1",
+    day: 1,
+    title: "test",
+    language_code: "sl",
+    key_phrases: [],
+    sections: [
+      {
+        type: "natural_speed",
+        phrases: [
+          { text: "Natural Speed", role: "narrator", language_code: "en", voice_id: "v" },
+          { text: "Scene 1", role: "narrator", language_code: "en", voice_id: "v" },
+          { text: "zdravo", role: "female-1", language_code: "sl", voice_id: "v" },
+          { text: "hvala", role: "female-1", language_code: "sl", voice_id: "v" },
+        ],
+      },
+      {
+        type: "slow_speed",
+        phrases: [{ text: "zdra...vo", role: "female-1", language_code: "sl", voice_id: "v" }],
+      },
+      {
+        type: "translated",
+        phrases: [
+          { text: "zdravo", role: "female-1", language_code: "sl", voice_id: "v" },
+          { text: "Hello", role: "narrator", language_code: "en", voice_id: "v" },
+        ],
+      },
+    ],
+  };
+
+  function wordToken(surface: string) {
+    return {
+      surface,
+      lemma: surface.toLowerCase(),
+      srs_state: "new" as const,
+      srs_item_id: null,
+      translation: null,
+      collocation_span_id: null,
+      collocation_start: false,
+      collocation_srs_state: null,
+      collocation_lemma: null,
+      collocation_translation: null,
+      card_type: null,
+      active_state: "new" as const,
+      active_direction: null,
+      is_due: false,
+      progress: null,
+      inflectable: false,
+      inflection_feature: null,
+      known_marked: false,
+    };
+  }
+
+  const multiLineTranscript: TranscriptData = {
+    lesson_id: "l1",
+    key_phrases: [
+      { phrase: "dober dan", translation: "good day" },
+      { phrase: "hvala", translation: "thank you" },
+    ],
+    dialogue_lines: [
+      { role: "female-1", sentence: "", words: [wordToken("zdravo")] },
+      { role: "female-1", sentence: "", words: [wordToken("hvala")] },
+    ],
+  };
+
+  function makeCue(overrides: Partial<Cue> & { index: number }): Cue {
+    return {
+      start_ms: 0,
+      end_ms: 1000,
+      section_index: 0,
+      section_type: "natural_speed",
+      phrase_index: 0,
+      role: "narrator",
+      language_code: "en",
+      text: "test",
+      ref: null,
+      ...overrides,
+    };
+  }
+
+  const testCues: Cue[] = [
+    makeCue({
+      index: 0,
+      start_ms: 0,
+      section_index: 0,
+      section_type: "natural_speed",
+      ref: { kind: "line", target_index: 0 },
+      text: "zdravo",
+    }),
+    makeCue({
+      index: 1,
+      start_ms: 1000,
+      section_index: 1,
+      section_type: "slow_speed",
+      ref: { kind: "line", target_index: 0 },
+      text: "zdra...vo",
+    }),
+    makeCue({
+      index: 2,
+      start_ms: 2000,
+      section_index: 2,
+      section_type: "translated",
+      ref: { kind: "line", target_index: 0 },
+      text: "Hello",
+    }),
+    makeCue({
+      index: 3,
+      start_ms: 3000,
+      section_index: 0,
+      section_type: "natural_speed",
+      ref: { kind: "line", target_index: 1 },
+      text: "hvala",
+    }),
+    makeCue({
+      index: 4,
+      start_ms: 0,
+      section_index: 0,
+      section_type: "key_phrases",
+      ref: { kind: "key_phrase", target_index: 0 },
+      text: "dober dan",
+    }),
+    makeCue({
+      index: 5,
+      start_ms: 500,
+      section_index: 0,
+      section_type: "key_phrases",
+      ref: { kind: "key_phrase", target_index: 0 },
+      text: "dober dan",
+    }),
+    makeCue({
+      index: 6,
+      start_ms: 100,
+      section_index: 0,
+      section_type: "narration",
+      ref: { kind: "narration", target_index: 0 },
+      text: "narrator",
+    }),
+  ];
+
+  function makeFakeController(initialCue: Cue | null = null): PlaybackController {
+    return {
+      currentCue: initialCue,
+      currentSectionIndex: initialCue?.section_index ?? null,
+      seekToCue: vi.fn(),
+    } as unknown as PlaybackController;
+  }
+
+  function renderWithController(initialCue: Cue | null, controllerCues: Cue[] = testCues) {
+    const ctrl = makeFakeController(initialCue);
+    return {
+      ctrl,
+      ...render(Transcript, {
+        props: defaultProps({
+          transcript: multiLineTranscript,
+          lesson: phraseLineLesson,
+          controller: ctrl,
+          cues: controllerCues,
+        }),
+      }),
+    };
+  }
+
+  describe("synced subtitle — highlight", () => {
+    it("highlights a dialogue line when currentCue ref kind=line with matching target_index", () => {
+      const { container } = renderWithController(testCues[0]); // line 0, natural_speed
+      const lines = container.querySelectorAll(".dialogue-line");
+      expect(lines[0].classList.contains("active-line")).toBe(true);
+      expect(lines[1].classList.contains("active-line")).toBe(false);
+    });
+
+    it("highlights no lines when currentCue is null", () => {
+      const { container } = renderWithController(null);
+      const lines = container.querySelectorAll(".dialogue-line");
+      expect(lines[0].classList.contains("active-line")).toBe(false);
+      expect(lines[1].classList.contains("active-line")).toBe(false);
+    });
+
+    it("highlights the second line when currentCue targets line index 1", () => {
+      const { container } = renderWithController(testCues[3]); // line 1, natural_speed
+      const lines = container.querySelectorAll(".dialogue-line");
+      expect(lines[0].classList.contains("active-line")).toBe(false);
+      expect(lines[1].classList.contains("active-line")).toBe(true);
+    });
+
+    it("highlights a key phrase row when currentCue ref kind=key_phrase", () => {
+      const { container } = renderWithController(testCues[4]); // key_phrase 0
+      const kpItems = container.querySelectorAll(".key-phrases-list li");
+      expect(kpItems[0].classList.contains("active-kp")).toBe(true);
+      expect(kpItems[1].classList.contains("active-kp")).toBe(false);
+    });
+
+    it("does not highlight for a narration cue", () => {
+      const { container } = renderWithController(testCues[6]); // narration
+      const lines = container.querySelectorAll(".dialogue-line");
+      expect(lines[0].classList.contains("active-line")).toBe(false);
+      expect(lines[1].classList.contains("active-line")).toBe(false);
+    });
+
+    it("highlight persists when currentCue is set (simulates mid-pause hold)", () => {
+      const { container } = renderWithController(testCues[1]); // slow_speed, line 0
+      const lines = container.querySelectorAll(".dialogue-line");
+      expect(lines[0].classList.contains("active-line")).toBe(true);
+    });
+
+    it("reveals slowText on active line when section_type is slow_speed with global toggle off", () => {
+      const { container } = renderWithController(testCues[1]); // slow_speed, line 0
+      const slowEl = container.querySelector(".line-slow");
+      expect(slowEl).not.toBeNull();
+      expect(slowEl!.textContent).toContain("zdra...vo");
+    });
+
+    it("does NOT reveal slowText on non-active line during slow_speed cue", () => {
+      const { container } = renderWithController(testCues[1]); // slow_speed, line 0
+      // Only the first dialogue line has slowText in our scene; it IS the active line.
+      // The second line has no slowText so there should be exactly one .line-slow.
+      const slowEls = container.querySelectorAll(".line-slow");
+      expect(slowEls.length).toBe(1);
+    });
+
+    it("reveals translatedText on active line when section_type is translated with global toggle off", () => {
+      const { container } = renderWithController(testCues[2]); // translated, line 0
+      const interlinearEl = container.querySelector(".line-interlinear");
+      expect(interlinearEl).not.toBeNull();
+      expect(interlinearEl!.textContent).toContain("Hello");
+    });
+
+    it("does not reveal slow/translated text when controller is null", () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({
+          transcript: multiLineTranscript,
+          lesson: phraseLineLesson,
+          controller: null,
+          cues: testCues,
+        }),
+      });
+      expect(container.querySelector(".line-slow")).toBeNull();
+      expect(container.querySelector(".line-interlinear")).toBeNull();
+    });
+  });
+
+  describe("synced subtitle — seek buttons", () => {
+    it("renders a seek button per dialogue line when controller and cues are present", () => {
+      const { container } = renderWithController(testCues[0]);
+      const seekBtns = container.querySelectorAll(".dialogue-line .seek-btn");
+      // Two dialogue lines, both have line 0 and line 1 cues in testCues
+      expect(seekBtns.length).toBe(2);
+    });
+
+    it("renders a seek button per key phrase row when controller and cues are present", () => {
+      const { container } = renderWithController(testCues[0]);
+      const kpBtns = container.querySelectorAll(".key-phrases-list .seek-btn");
+      // testCues only has key_phrase for index 0, so only 1 button
+      expect(kpBtns.length).toBe(1);
+    });
+
+    it("does not render seek buttons when controller is null", () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({
+          transcript: multiLineTranscript,
+          lesson: phraseLineLesson,
+          controller: null,
+          cues: testCues,
+        }),
+      });
+      expect(container.querySelector(".seek-btn")).toBeNull();
+    });
+
+    it("does not render seek buttons when cues is null", () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({
+          transcript: multiLineTranscript,
+          lesson: phraseLineLesson,
+          controller: makeFakeController(null),
+          cues: null,
+        }),
+      });
+      expect(container.querySelector(".seek-btn")).toBeNull();
+    });
+
+    it("does not render seek buttons when cues is empty", () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({
+          transcript: multiLineTranscript,
+          lesson: phraseLineLesson,
+          controller: makeFakeController(null),
+          cues: [],
+        }),
+      });
+      expect(container.querySelector(".seek-btn")).toBeNull();
+    });
+
+    it("tapping a dialogue line seek button calls seekToCue with the matching cue", () => {
+      const ctrl = makeFakeController(testCues[0]);
+      const { container } = render(Transcript, {
+        props: defaultProps({
+          transcript: multiLineTranscript,
+          lesson: phraseLineLesson,
+          controller: ctrl,
+          cues: testCues,
+        }),
+      });
+      const seekBtns = container.querySelectorAll(".dialogue-line .seek-btn");
+      // First seek button is for line index 0 (first dialogue line)
+      fireEvent.click(seekBtns[0]);
+      // Should seek to the first cue matching line 0 (testCues[0] = natural_speed)
+      const expected = findSeekCue(testCues, 0, testCues[0].section_index);
+      expect(ctrl.seekToCue).toHaveBeenCalledWith(expected);
+    });
+
+    it("tapping a key phrase seek button calls seekToCue with the matching cue", () => {
+      const ctrl = makeFakeController(testCues[4]);
+      const { container } = render(Transcript, {
+        props: defaultProps({
+          transcript: multiLineTranscript,
+          lesson: phraseLineLesson,
+          controller: ctrl,
+          cues: testCues,
+        }),
+      });
+      const kpBtn = container.querySelector(".key-phrases-list .seek-btn")!;
+      fireEvent.click(kpBtn);
+      const expected = findKeyPhraseSeekCue(testCues, 0);
+      expect(ctrl.seekToCue).toHaveBeenCalledWith(expected);
+    });
+  });
+
+  describe("synced subtitle — regression (word/collocation taps preserved)", () => {
+    it("word click still fires onWordClick when controller is present", async () => {
+      const onWordClick = vi.fn();
+      const unknownTranscript: TranscriptData = JSON.parse(JSON.stringify(multiLineTranscript));
+      unknownTranscript.dialogue_lines[0].words[0].active_state = "unknown";
+      const { getByRole } = render(Transcript, {
+        props: defaultProps({
+          transcript: unknownTranscript,
+          lesson: phraseLineLesson,
+          controller: makeFakeController(null),
+          cues: testCues,
+          onWordClick,
+        }),
+      });
+      await fireEvent.keyDown(window, { key: "Alt" });
+      await fireEvent.click(getByRole("button", { name: "Start learning" }));
+      expect(onWordClick).toHaveBeenCalledWith(expect.objectContaining({ lemma: "zdravo" }), 0);
     });
   });
 });

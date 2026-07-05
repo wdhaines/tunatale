@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS audio_files (
 _AUDIO_FILES_MIGRATION_COLUMNS = [
     ("section_index", "INTEGER"),
     ("section_type", "TEXT"),
+    ("cues_json", "TEXT"),
 ]
 
 
@@ -229,12 +230,13 @@ class ContentStore:
         *,
         section_index: int | None = None,
         section_type: str | None = None,
+        cues_json: str | None = None,
     ) -> None:
         with self._get_conn() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO audio_files (id, lesson_id, file_path, section_index, section_type)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (audio_id, lesson_id, file_path, section_index, section_type),
+                "INSERT OR REPLACE INTO audio_files (id, lesson_id, file_path, section_index, section_type, cues_json)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (audio_id, lesson_id, file_path, section_index, section_type, cues_json),
             )
             if self._in_memory:
                 conn.commit()
@@ -243,7 +245,7 @@ class ContentStore:
         """Return all fields for an audio_files row, or None if not found."""
         with self._get_conn() as conn:
             row = conn.execute(
-                "SELECT id, lesson_id, file_path, section_index, section_type FROM audio_files WHERE id = ?",
+                "SELECT id, lesson_id, file_path, section_index, section_type, cues_json FROM audio_files WHERE id = ?",
                 (audio_id,),
             ).fetchone()
         if row is None:
@@ -258,7 +260,7 @@ class ContentStore:
         """
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT id, lesson_id, file_path, section_index, section_type FROM audio_files"
+                "SELECT id, lesson_id, file_path, section_index, section_type, cues_json FROM audio_files"
                 " WHERE lesson_id = ?"
                 " ORDER BY section_index IS NOT NULL, section_index ASC",
                 (lesson_id,),

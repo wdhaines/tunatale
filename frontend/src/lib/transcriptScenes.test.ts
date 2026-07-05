@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { buildScenes, fallbackScenes } from "./transcriptScenes";
-import type { DialogueLine, LessonDetail } from "./api";
+import {
+  buildScenes,
+  fallbackScenes,
+  cueHighlight,
+  findSeekCue,
+  findKeyPhraseSeekCue,
+} from "./transcriptScenes";
+import type { Cue, CueRef, DialogueLine, LessonDetail } from "./api";
 
 function word(surface: string) {
   return {
@@ -224,5 +230,166 @@ describe("fallbackScenes", () => {
     const scenes = fallbackScenes([]);
     expect(scenes).toHaveLength(1);
     expect(scenes[0].lines).toEqual([]);
+  });
+});
+
+function makeCue(overrides: Partial<Cue> & { index: number }): Cue {
+  return {
+    start_ms: 0,
+    end_ms: 1000,
+    section_index: 0,
+    section_type: "natural_speed",
+    phrase_index: 0,
+    role: "narrator",
+    language_code: "en",
+    text: "test",
+    ref: null,
+    ...overrides,
+  };
+}
+
+describe("cueHighlight", () => {
+  it("returns ref for a line cue", () => {
+    const cue = makeCue({ index: 0, ref: { kind: "line", target_index: 3 } });
+    expect(cueHighlight(cue)).toEqual({ kind: "line", target_index: 3 });
+  });
+
+  it("returns ref for a key_phrase cue", () => {
+    const cue = makeCue({ index: 0, ref: { kind: "key_phrase", target_index: 1 } });
+    expect(cueHighlight(cue)).toEqual({ kind: "key_phrase", target_index: 1 });
+  });
+
+  it("returns null for a narration cue", () => {
+    const cue = makeCue({ index: 0, ref: { kind: "narration", target_index: 0 } });
+    expect(cueHighlight(cue)).toBeNull();
+  });
+
+  it("returns null when ref is null", () => {
+    const cue = makeCue({ index: 0, ref: null });
+    expect(cueHighlight(cue)).toBeNull();
+  });
+
+  it("returns null when cue is null", () => {
+    expect(cueHighlight(null)).toBeNull();
+  });
+});
+
+describe("findSeekCue", () => {
+  const cues: Cue[] = [
+    makeCue({
+      index: 0,
+      start_ms: 0,
+      section_index: 0,
+      section_type: "natural_speed",
+      ref: { kind: "line", target_index: 0 },
+    }),
+    makeCue({
+      index: 1,
+      start_ms: 1000,
+      section_index: 1,
+      section_type: "slow_speed",
+      ref: { kind: "line", target_index: 0 },
+    }),
+    makeCue({
+      index: 2,
+      start_ms: 2000,
+      section_index: 2,
+      section_type: "translated",
+      ref: { kind: "line", target_index: 0 },
+    }),
+    makeCue({
+      index: 3,
+      start_ms: 3000,
+      section_index: 1,
+      section_type: "slow_speed",
+      ref: { kind: "line", target_index: 1 },
+    }),
+  ];
+
+  it("returns the cue in the matching section when currentSectionIndex is provided", () => {
+    const result = findSeekCue(cues, 0, 1);
+    expect(result).not.toBeNull();
+    expect(result!.index).toBe(1);
+    expect(result!.section_type).toBe("slow_speed");
+  });
+
+  it("returns the first occurrence when currentSectionIndex is null", () => {
+    const result = findSeekCue(cues, 0, null);
+    expect(result).not.toBeNull();
+    expect(result!.index).toBe(0);
+  });
+
+  it("returns the first occurrence when no cue matches the section", () => {
+    const result = findSeekCue(cues, 0, 999);
+    expect(result).not.toBeNull();
+    expect(result!.index).toBe(0);
+  });
+
+  it("returns null when no cue matches the lineIndex", () => {
+    const result = findSeekCue(cues, 42, null);
+    expect(result).toBeNull();
+  });
+
+  it("returns the FIRST cue of the line's group within the current section", () => {
+    // Translated section: line n has TWO cues refing it — the L2 phrase, then
+    // the narrator's English translation. Tap-to-seek must land on the L2
+    // phrase (group start), not the translation.
+    const translatedCues: Cue[] = [
+      makeCue({
+        index: 10,
+        start_ms: 10_000,
+        section_index: 3,
+        section_type: "translated",
+        language_code: "sl",
+        role: "female-1",
+        ref: { kind: "line", target_index: 0 },
+      }),
+      makeCue({
+        index: 11,
+        start_ms: 12_000,
+        section_index: 3,
+        section_type: "translated",
+        language_code: "en",
+        role: "narrator",
+        ref: { kind: "line", target_index: 0 },
+      }),
+    ];
+    const result = findSeekCue(translatedCues, 0, 3);
+    expect(result).not.toBeNull();
+    expect(result!.index).toBe(10);
+  });
+
+  it("returns null for empty cues array", () => {
+    const result = findSeekCue([], 0, null);
+    expect(result).toBeNull();
+  });
+
+  it("returns null for lineIndex that never appears", () => {
+    const result = findSeekCue(cues, 5, 0);
+    expect(result).toBeNull();
+  });
+});
+
+describe("findKeyPhraseSeekCue", () => {
+  const cues: Cue[] = [
+    makeCue({ index: 0, start_ms: 0, ref: { kind: "key_phrase", target_index: 0 } }),
+    makeCue({ index: 1, start_ms: 500, ref: { kind: "key_phrase", target_index: 0 } }),
+    makeCue({ index: 2, start_ms: 1000, ref: { kind: "key_phrase", target_index: 1 } }),
+  ];
+
+  it("returns the first cue matching the key_phrase index", () => {
+    const result = findKeyPhraseSeekCue(cues, 0);
+    expect(result).not.toBeNull();
+    expect(result!.index).toBe(0);
+  });
+
+  it("returns null when no cue matches", () => {
+    const result = findKeyPhraseSeekCue(cues, 5);
+    expect(result).toBeNull();
+  });
+
+  it("returns null for empty cues array", () => {
+    const result = findKeyPhraseSeekCue([], 0);
+    expect(result).toBeNull();
   });
 });
