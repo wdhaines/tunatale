@@ -74,7 +74,7 @@ Both apps freeze the main review queue and never re-sort mid-session (Anki `Card
 
 5. **Two-branch R formula.** `extract_fsrs_retrievability` has lrt branch (sub-day fractional elapsed) and day-level fallback (integer-day elapsed). TT mirrors both in `compute_retrievability`.
 
-6. **Sync must merge both directions.** `sync_push` defers to Anki when Anki is ahead (graduated or smaller `total_remaining`). `sync_pull` defers to Anki when Anki is ahead. `_direction_differs` must include `left`, `due_at`, `prior_state`, `bury_kind`, `anki_card_mod` so self-heal writes actually fire.
+6. **Sync must merge both directions.** `sync_push` defers to Anki when Anki is ahead (graduated or smaller `total_remaining`). `sync_pull` defers to Anki when Anki is ahead. `_direction_differs` must compare `left`, `due_at`, `prior_state`, `bury_kind`, `anki_card_mod` so self-heal writes actually fire — since 2026-07-05 it (and `_DIR_COLUMNS`) derives from the field registry `app/srs/direction_fields.py`; register new columns there with an explicit `sync_comparable` decision, never hand-edit either list (`tests/test_direction_fields.py` pins registry ↔ schema ↔ model ↔ diff).
 
 7. **`prior_state='new'` is sticky.** Set on intro by `_resolve_prior_state` (sync) or `_grade_prior_state` (TT). Persists across same-state-class grades and LEARNING→REVIEW graduation. Released only on REVIEW→RELEARNING (lapse) for revlog `type=1` correctness. **Do not** overwrite `prior_state='new'` without checking new state.
 
@@ -109,7 +109,7 @@ Both apps freeze the main review queue and never re-sort mid-session (Anki `Card
 
 14. **NULL R-value sorts at `desired_retention` (Layer 38).** Cards with no FSRS memory_state (`cards.data='{}'`) are placed by Anki at the position `desired_retention` occupies in R-asc — between R<dr and R>dr, NOT NULLs-first, NOT NULLs-last. `compute_retrievability` returns `desired_retention` (default 0.9) instead of None. Cached at sync via `refresh_desired_retention` (**proto field 37**, NOT field 40 = `historical_retention`, a pre-Layer-38 footgun).
 
-15. **`anki_card_mod` must be in `_direction_differs` (Layer 37).** FNV tiebreaker `fnvhash(cards.id, cards.mod)` is appended to every Anki `review_order_sql` variant (`rslib/.../card/mod.rs:897`). Anki bumps `cards.mod` for non-FSRS reasons (sync mtime, housekeeping, bury); if the diff misses the bump, TT's FNV hash drifts. Keep `or local.anki_card_mod != candidate.anki_card_mod` — it's an ORDER BY input.
+15. **`anki_card_mod` must be in `_direction_differs` (Layer 37).** FNV tiebreaker `fnvhash(cards.id, cards.mod)` is appended to every Anki `review_order_sql` variant (`rslib/.../card/mod.rs:897`). Anki bumps `cards.mod` for non-FSRS reasons (sync mtime, housekeeping, bury); if the diff misses the bump, TT's FNV hash drifts. Keep `anki_card_mod` marked `sync_comparable=True` in `app/srs/direction_fields.py` — it's an ORDER BY input.
 
 ## Divergence playbook
 

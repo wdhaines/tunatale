@@ -15,6 +15,7 @@ from pathlib import Path
 from app.anki.rollover import anki_day_bounds_utc
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit, deserialize_extras
+from app.srs.direction_fields import DIRECTION_FIELDS
 from app.srs.migrations import migrate
 
 
@@ -113,30 +114,9 @@ CREATE TABLE IF NOT EXISTS image_query_cache (
 """
 
 # Columns on `collocation_directions` mapped onto a DirectionState.
-# due_date dropped in v25 — due_at is the single source of truth.
-_DIR_COLUMNS = (
-    "stability",
-    "fsrs_difficulty",
-    "due_at",
-    "reps",
-    "lapses",
-    "state",
-    "last_review",
-    "last_review_time_ms",
-    "anki_card_id",
-    "anki_card_mod",
-    "anki_due",
-    "dirty_fsrs",
-    "last_synced_at",
-    "last_rating",
-    "left",
-    "prior_state",
-    "prior_left",
-    "prior_stability",
-    "introduced_at",
-    "bury_kind",
-    "fsrs_force_next",
-)
+# Derived from the field registry (app/srs/direction_fields.py) — register new
+# columns there, never append here.
+_DIR_COLUMNS = tuple(f.column for f in DIRECTION_FIELDS)
 
 # States that should never surface in the due queue regardless of due_date.
 _NON_REVIEWABLE_STATES = ("new", "suspended", "known", "buried")

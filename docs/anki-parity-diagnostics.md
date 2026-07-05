@@ -230,7 +230,7 @@ If your fix is going to compute X, and one of these helpers already computes som
 | `_merge_directions` | `app/srs/queue_engine.py` | Cross-direction gather + sibling-bury + Template stable-sort (Layer 28). |
 | `_fnv1a_64_i64` | `app/srs/queue_engine.py` | Anki's tiebreaker hash; required identical port. |
 | `_pull_merge_direction` | `app/anki/sync.py` | Per-card sync_pull merge (post Phase 1.3 extraction). |
-| `_direction_differs` | `app/anki/sync.py` | Field-by-field diff for sync write-back; must include `left`, `due_at`, `prior_state`, `bury_kind`, `anki_card_mod` (rule 6, Layer 17, Layer 37). |
+| `_direction_differs` | `app/anki/sync.py` | Field-by-field diff for sync write-back (rule 6, Layers 17/35/37). Derived from `app/srs/direction_fields.py` (`sync_comparable` flags) since 2026-07-05 — register new fields there, don't hand-edit the diff. |
 | `_resolve_prior_state` / `_grade_prior_state` | `app/anki/sync.py` + `app/srs/fsrs.py` | Sticky-NEW `prior_state` (Layers 20-22). |
 | `_resolve_introduced_at` | `app/anki/sync.py` | One-shot intro stamp (Layer 26). |
 | `_anki_step_ahead` | `app/anki/sync.py` | "Anki's `left` is further along than TT's" check (Layers 18, 19). |

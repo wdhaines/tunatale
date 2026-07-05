@@ -34,6 +34,7 @@ from app.config import settings
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
 from app.models.syntactic_unit import SyntacticUnit, serialize_extras
 from app.srs.database import SRSDatabase
+from app.srs.direction_fields import SYNC_COMPARABLE_MODEL_FIELDS
 from app.srs.fsrs import is_day_level_last_review
 from app.srs.queue_stats import resolve_bury_new, resolve_bury_review, resolve_learning_steps, resolve_relearning_steps
 
@@ -46,35 +47,14 @@ _log = logging.getLogger("app.anki.sync")
 def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool:
     """Return True only if a sync-relevant field changed between local and candidate.
 
-    Excludes last_synced_at and last_rating from the comparison so benign
-    timestamp updates don't trigger a spurious write. Includes `left` and
-    `due_at` so step-state advances on learning cards aren't silently skipped
-    when the merge picked up Anki's value but other fields happened to match.
+    The compared set derives from the field registry
+    (``app/srs/direction_fields.py`` — ``sync_comparable=True`` entries, with
+    per-field reasons there). Excluded fields (e.g. last_synced_at,
+    last_rating) don't trigger a write on their own, so benign bookkeeping
+    updates stay no-ops. Never hand-enumerate fields here again — Layers
+    17/35/37 were each a field missing from this list.
     """
-    return (
-        local.state != candidate.state
-        or local.stability != candidate.stability
-        or local.difficulty != candidate.difficulty
-        or local.due_at != candidate.due_at
-        or local.reps != candidate.reps
-        or local.lapses != candidate.lapses
-        or local.dirty_fsrs != candidate.dirty_fsrs
-        or local.anki_card_id != candidate.anki_card_id
-        or local.anki_due != candidate.anki_due
-        or local.last_review != candidate.last_review
-        or local.left != candidate.left
-        or local.prior_state != candidate.prior_state
-        # Without bury_kind in the diff, a state-matched / kind-only flip
-        # (e.g. migration's pessimistic 'user' default vs candidate 'sched')
-        # is silently no-op'd, locking the row in the wrong kind forever.
-        or local.bury_kind != candidate.bury_kind
-        # anki_card_mod feeds the FNV tiebreaker in
-        # _merge_by_retrievability_ascending (Anki's `fnvhash(id, mod)`).
-        # When Anki bumps cards.mod for any reason that doesn't change other
-        # FSRS fields (housekeeping, server sync, etc.), the tiebreak input
-        # drifts and TT serves a different card than Anki from R-tied pools.
-        or local.anki_card_mod != candidate.anki_card_mod
-    )
+    return any(getattr(local, name) != getattr(candidate, name) for name in SYNC_COMPARABLE_MODEL_FIELDS)
 
 
 def _resolve_prior_state(
