@@ -65,8 +65,7 @@ DIRECTION_FIELDS: tuple[DirectionField, ...] = (
         "anki_card_mod",
         "anki_card_mod",
         True,
-        "Layer 37: FNV tiebreaker input (Anki's fnvhash(id, mod)) — an un-synced mod bump drifts the "
-        "R-tied sort order",
+        "Layer 37: FNV tiebreaker input (Anki's fnvhash(id, mod)) — an un-synced mod bump drifts the R-tied sort order",
     ),
     DirectionField("anki_due", "anki_due", True, "Anki-side due; new-card gather order input (Layer 25/28)"),
     DirectionField("dirty_fsrs", "dirty_fsrs", True, "push bookkeeping; a cleared/raised flag must persist"),
@@ -105,9 +104,7 @@ DIRECTION_FIELDS: tuple[DirectionField, ...] = (
         True,
         "Layer 35 follow-up: kind-only flips (sched↔user) were silent no-ops, locking rows in the wrong kind",
     ),
-    DirectionField(
-        "fsrs_force_next", "fsrs_force_next", False, "TT-only one-shot push flag; never synced from Anki"
-    ),
+    DirectionField("fsrs_force_next", "fsrs_force_next", False, "TT-only one-shot push flag; never synced from Anki"),
 )
 
 # collocation_directions columns deliberately NOT mirrored onto DirectionState.

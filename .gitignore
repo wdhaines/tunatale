@@ -69,9 +69,7 @@ backend/cache/
 # Imported Anki media (per-user, large)
 backend/media/
 
-# Generated outputs and ad-hoc scripts
+# Generated outputs. (Ad-hoc script ignores moved to backend/scripts/.gitignore
+# — a root-level "backend/scripts/*" glob broke ruff's local file discovery.)
 backend/output/
-backend/scripts/*
-!backend/scripts/check_mock_boundaries.py
-!backend/scripts/__init__.py
 frontend/test-results/

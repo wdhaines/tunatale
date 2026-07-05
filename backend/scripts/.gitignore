@@ -1,0 +1,14 @@
+# Ad-hoc / one-shot scripts are local-only; only the checker + package marker
+# (and this file) are tracked. Moved here from the root .gitignore
+# ("backend/scripts/*"): ruff's gitignore-respecting walker (the `ignore`
+# crate) misapplied that root-level glob to the app/ and tests/ walks when run
+# from backend/, silently shrinking lint+format discovery to 4 files
+# ("N files already formatted" with tiny N is the tell). A per-directory
+# .gitignore only ever applies to walks inside scripts/, so git semantics are
+# unchanged and ruff discovery is correct everywhere.
+# (anki_archive/ predates the ignore rule and stays tracked; tracked files
+# override gitignore. It remains outside ruff scope, same as CI today.)
+*
+!check_mock_boundaries.py
+!__init__.py
+!.gitignore
