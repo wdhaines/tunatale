@@ -5,12 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from app.llm.cassette import CassetteLLMClient, _hash_prompt
+from app.llm.cassette import CASSETTE_VERSION, CassetteLLMClient, _hash_prompt
 
 
-def _write_cassette(path: Path, calls: list[dict]) -> None:
+def _write_cassette(path: Path, calls: list[dict], version: int | None = CASSETTE_VERSION) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"recorded_at": "2026-01-01T00:00:00+00:00", "calls": calls}))
+    payload: dict = {"recorded_at": "2026-01-01T00:00:00+00:00", "calls": calls}
+    if version is not None:
+        payload["version"] = version
+    path.write_text(json.dumps(payload))
 
 
 @pytest.fixture
@@ -27,6 +30,55 @@ def test_hash_prompt_is_deterministic():
 
 def test_hash_prompt_different_prompts():
     assert _hash_prompt("a") != _hash_prompt("b")
+
+
+def test_hash_prompt_includes_system_prompt():
+    """Same user prompt + different system prompts must NOT collide.
+
+    Before this, editing a system prompt left the cassette hash unchanged, so
+    mock-mode tests kept replaying responses recorded under stale instructions.
+    """
+    prompt = "identical user prompt"
+    h_none = _hash_prompt(prompt)
+    h_a = _hash_prompt(prompt, "system A")
+    h_b = _hash_prompt(prompt, "system B")
+    # Three distinct system-prompt contexts → three distinct hashes.
+    assert len({h_none, h_a, h_b}) == 3
+    # A None system prompt and an empty-string system prompt collapse together
+    # (both mean "no system instructions").
+    assert _hash_prompt(prompt, None) == _hash_prompt(prompt, "")
+
+
+async def test_version_mismatch_raises_on_load(cassette_dir):
+    """Loading a cassette whose version != CASSETTE_VERSION fails loudly with a hint."""
+    cassette_path = cassette_dir / "stale.json"
+    # A pre-versioning cassette (no "version" key) is treated as a mismatch.
+    _write_cassette(cassette_path, [], version=None)
+    with pytest.raises(RuntimeError, match="(?i)re-record"):
+        CassetteLLMClient(mode="mock", cassette_path=cassette_path)
+
+    # An explicitly wrong version also fails.
+    _write_cassette(cassette_path, [], version=CASSETTE_VERSION - 1)
+    with pytest.raises(RuntimeError, match=str(CASSETTE_VERSION)):
+        CassetteLLMClient(mode="patch", cassette_path=cassette_path)
+
+
+async def test_saved_cassette_carries_current_version(cassette_dir):
+    """record mode stamps the current version into the saved JSON."""
+
+    class FakeClient:
+        last_provider = "groq"
+
+        async def complete(self, prompt, system_prompt=None, temperature=None, max_tokens=256):
+            return "recorded"
+
+    cassette_path = cassette_dir / "versioned.json"
+    client = CassetteLLMClient(mode="record", cassette_path=cassette_path, real_client=FakeClient())
+    await client.complete("hello", system_prompt="be terse")
+    data = json.loads(cassette_path.read_text())
+    assert data["version"] == CASSETTE_VERSION
+    # The recorded hash reflects the system prompt (round-trips through _hash_prompt).
+    assert data["calls"][0]["prompt_hash"] == _hash_prompt("hello", "be terse")
 
 
 async def test_mock_mode_replays_cassette(cassette_dir, tmp_path):

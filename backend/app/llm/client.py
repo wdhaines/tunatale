@@ -15,7 +15,10 @@ import httpx
 logger = logging.getLogger(__name__)
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
+# gpt-oss-120b is the production default (llama-3.3-70b-versatile was deprecated by
+# Groq 2026-06-30). It's a reasoning model, so __init__ auto-derives its
+# reasoning_effort via reasoning_params_for_model() unless the caller passes params.
+GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
 OLLAMA_DEFAULT_URL = "http://localhost:11434"
 OLLAMA_DEFAULT_MODEL = "llama3.2"
 
@@ -78,7 +81,14 @@ class LLMClient:
         self.max_retry_after_s = max_retry_after_s
         self.ollama_url = ollama_url
         self.ollama_model = ollama_model
-        self.groq_extra_body_params = groq_extra_body_params
+        # Derive reasoning params from the model when the caller didn't pass any, so
+        # a model-only construction (e.g. LLMClient(groq_model=settings.llm_model))
+        # still gets reasoning_effort=low for gpt-oss instead of burning the whole
+        # completion budget on reasoning and returning empty content. An explicit
+        # value (including {}) is respected as-is.
+        self.groq_extra_body_params = (
+            groq_extra_body_params if groq_extra_body_params is not None else reasoning_params_for_model(groq_model)
+        )
         self.on_call = on_call
         self.fallback_client = fallback_client
         self.last_provider: str | None = None

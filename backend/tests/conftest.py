@@ -858,9 +858,18 @@ async def cassette_llm(request: pytest.FixtureRequest, llm_mode: str):
     if not api_key:
         pytest.skip("GROQ_API_KEY not set — cannot run in live/record/patch mode.")
 
-    from app.llm.client import LLMClient
+    from app.config import settings
+    from app.llm.client import LLMClient, reasoning_params_for_model
 
-    real_client = LLMClient(groq_api_key=api_key)
+    # Record against the SAME model production uses (settings.llm_model, currently
+    # gpt-oss-120b), with its reasoning params — otherwise cassettes are recorded
+    # under a different model than the app actually runs. The bare LLMClient default
+    # is the now-deprecated llama-3.3-70b-versatile.
+    real_client = LLMClient(
+        groq_api_key=api_key,
+        groq_model=settings.llm_model,
+        groq_extra_body_params=reasoning_params_for_model(settings.llm_model),
+    )
     client = CassetteLLMClient(mode=llm_mode, cassette_path=cassette_path, real_client=real_client)
     yield client
     client.save()

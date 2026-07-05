@@ -18,10 +18,10 @@ present + logically correct, every cited guardrail test exists and passes;
 found and closed in the same audit: #20's promised `is_absolute()` guardrail
 assertion was missing from `test_main_lifespan.py` (the fix itself was in
 place) — added. #25 re-confirmed still OPEN. Cosmetic doc drift corrected in
-place (#2/#17 quoted error strings, #12 test names, #29 mixin paths). **Branch note**: #18 exists ONLY on
-`fix/backlog-sweep` (commits `08e9d45`→`f37baaf`, incl. the gpt-oss cassette
-re-record); everything else is on `refactor/god-module-split`. The two branches
-diverged at `ffa6ae9` and neither is merged to main yet.
+place (#2/#17 quoted error strings, #12 test names, #29 mixin paths).
+**Branch note (resolved 2026-07-05)**: `refactor/god-module-split` and
+`fix/backlog-sweep` (which alone carried #18, incl. the gpt-oss cassette
+re-record) are both merged to `main` — everything in this doc is on `main`.
 
 ---
 

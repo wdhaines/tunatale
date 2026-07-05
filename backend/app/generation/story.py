@@ -78,10 +78,16 @@ class StoryGenerator:
         )
 
         logger.info("Generating story for day %d (%s)", curriculum_day.day, strategy.value)
-        # 5500 (not 4096) leaves headroom for gpt-oss reasoning tokens (~1400 on a
-        # story-sized prompt at reasoning_effort=low) on top of the ~3200-token JSON
-        # payload; a plain instruct model just never uses the extra ceiling.
-        raw = await self._llm.complete(user_prompt, system_prompt=system_prompt, temperature=0.7, max_tokens=5500)
+        # 4096, NOT 5500. gpt-oss-120b's free-tier budget is 8000 tokens/request and
+        # Groq reserves prompt_tokens + max_completion_tokens against it up front, so a
+        # request over 8000 is a hard 413 (not a retryable 429). The story system prompt
+        # is ~2800 tokens (the Slovene morphology-tagging block), so 5500 → ~8300 → 413,
+        # which then falls through to the Ollama junk-JSON fallback. Measured on the real
+        # prompt at reasoning_effort=low: reasoning is negligible and the JSON payload is
+        # ~1900 completion tokens, finishing cleanly well inside 4096 — the earlier
+        # "reasoning ~1400 + JSON ~3200" estimate that justified 5500 was wrong. 4096
+        # keeps prompt+budget ~6900 under the cap with headroom for prompt growth.
+        raw = await self._llm.complete(user_prompt, system_prompt=system_prompt, temperature=0.7, max_tokens=4096)
         data = self._parse_json(raw)
         lesson = self._parse_response(data, language=language)
         return lesson

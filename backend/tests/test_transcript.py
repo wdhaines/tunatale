@@ -208,6 +208,23 @@ class TestExtractTranscript:
         assert [w.prefix_punct for w in words] == ["", "", ""]
         assert [w.suffix_punct for w in words] == ["", "", "?"]
 
+    def test_standalone_dash_between_clauses_does_not_crash(self):
+        """A standalone en-dash is its own whitespace token but has no surface, so
+        tokenize() yields fewer tokens than str.split(). The transcript must still
+        build with punctuation aligned to surfaces.
+
+        Regression: gpt-oss dialogue ('Koliko stane? – Dve kavi ...') crashed
+        _extract_punct_pairs with a zip strict-length ValueError (surfaces shorter
+        than str.split()); llama output happened to avoid the standalone dash.
+        """
+        lesson = _make_lesson([("female-1", "Koliko stane? – Dve kavi.")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        words = result.dialogue_lines[0].words
+        # The dash carries no surface — it is dropped, not mis-aligned into a word.
+        assert [w.surface for w in words] == ["Koliko", "stane", "Dve", "kavi"]
+        assert [w.prefix_punct for w in words] == ["", "", "", ""]
+        assert [w.suffix_punct for w in words] == ["", "?", "", "."]
+
     def test_role_preserved_on_dialogue_line(self):
         lesson = _make_lesson([("male-1", "Zdravo.")])
         result = extract_transcript(lesson, self.db, self.lemmatizer)
@@ -1282,9 +1299,26 @@ class TestExtractPunctPairs:
     """Tests for _extract_punct_pairs edge cases."""
 
     def test_surface_not_found_returns_empty(self):
-        """When surface is not a substring of a raw token, both punct fields are empty."""
-        result = _extract_punct_pairs(["foo"], ["bar"])
+        """When a surface is not a substring of the text, both punct fields are empty."""
+        result = _extract_punct_pairs("foo", ["bar"])
         assert result == [("", "")]
+
+    def test_standalone_punctuation_token_is_skipped(self):
+        """Surfaces come from tokenize() (drops standalone punctuation like an
+        en-dash); the punct list stays aligned to surfaces even though
+        str.split() would count the dash as a token."""
+        text = "Koliko stane? – Dve kavi."
+        surfaces = ["Koliko", "stane", "Dve", "kavi"]
+        assert _extract_punct_pairs(text, surfaces) == [("", ""), ("", "?"), ("", ""), ("", ".")]
+
+    def test_prefix_and_suffix_punct_around_surface(self):
+        """Punctuation both before and after a surface within its token is captured."""
+        assert _extract_punct_pairs("«Dve» kavi.", ["Dve", "kavi"]) == [("«", "»"), ("", ".")]
+
+    def test_repeated_surface_advances_cursor(self):
+        """A surface repeated in the line resolves to successive occurrences, not
+        the same one twice."""
+        assert _extract_punct_pairs("kavo, kavo!", ["kavo", "kavo"]) == [("", ","), ("", "!")]
 
 
 class TestBitiTranscriptSpecialCase:

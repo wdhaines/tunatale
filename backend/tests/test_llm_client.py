@@ -11,6 +11,7 @@ from httpx import Response
 
 from app.llm.client import (
     GROQ_API_URL,
+    GROQ_DEFAULT_MODEL,
     OLLAMA_DEFAULT_URL,
     LLMClient,
     LLMError,
@@ -290,6 +291,35 @@ class TestExtraBodyParams:
         payload = json.loads(route.calls[0].request.content)
         assert payload.get("reasoning_effort") == "medium"
 
+    async def test_default_model_is_gpt_oss_and_auto_derives_reasoning_effort(self):
+        """The default model is the reasoning model gpt-oss-120b (llama is deprecated),
+        and a model-only client auto-derives reasoning_effort=low so it emits content
+        instead of an empty reasoning-only response."""
+        assert GROQ_DEFAULT_MODEL == "openai/gpt-oss-120b"
+        client = LLMClient(groq_api_key="test-key")  # no explicit extra params
+        assert client.groq_extra_body_params == {"reasoning_effort": "low"}
+        with respx.mock:
+            route = respx.post(GROQ_API_URL).mock(return_value=Response(200, json=_make_groq_response("ok")))
+            await client.complete("q", max_tokens=1024)
+        payload = json.loads(route.calls[0].request.content)
+        assert payload["model"] == "openai/gpt-oss-120b"
+        assert payload["reasoning_effort"] == "low"
+        assert payload["max_completion_tokens"] == 1024
+        assert "max_tokens" not in payload
+
+    async def test_non_reasoning_model_sends_plain_max_tokens(self):
+        """A non-reasoning model (auto-derived params are None) sends plain max_tokens
+        with no reasoning_effort — the instruct-model request shape."""
+        client = LLMClient(groq_api_key="test-key", groq_model="llama-3.3-70b-versatile")
+        assert client.groq_extra_body_params is None
+        with respx.mock:
+            route = respx.post(GROQ_API_URL).mock(return_value=Response(200, json=_make_groq_response("ok")))
+            await client.complete("q", max_tokens=777)
+        payload = json.loads(route.calls[0].request.content)
+        assert payload["max_tokens"] == 777
+        assert "max_completion_tokens" not in payload
+        assert "reasoning_effort" not in payload
+
     async def test_groq_extra_body_params_with_max_completion_tokens_explicit(self):
         """When extra_body_params already contains max_completion_tokens, don't override (189->194 False branch)."""
         client = LLMClient(
@@ -439,6 +469,20 @@ class TestCallbacks:
             respx.post(GROQ_API_URL).mock(return_value=Response(200, json=_make_groq_response("ok")))
             await client.complete("q")
         assert calls[0].get("reasoning_effort") == "medium"
+
+    async def test_on_call_omits_reasoning_effort_for_non_reasoning_model(self):
+        """A non-reasoning model has no reasoning_effort param, so the callback info
+        omits the key (132->134 False branch)."""
+        calls = []
+        client = LLMClient(
+            groq_api_key="test-key",
+            groq_model="llama-3.3-70b-versatile",
+            on_call=calls.append,
+        )
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, json=_make_groq_response("ok")))
+            await client.complete("q")
+        assert "reasoning_effort" not in calls[0]
 
 
 class TestOllamaEdgeCases:
