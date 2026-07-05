@@ -10,6 +10,19 @@ the record). See **Priority & ownership** below for the ROI-ranked dispatch
 order and the Claude/Big-Pickle owner split (updated 2026-07-03). Each OPEN
 entry's header also carries its `[→ owner · tier]` tag.
 
+**Verification audit 2026-07-05** (three Opus subagents: frontend items,
+backend media/audio/LLM items, generation/planner/API items): every FIXED item
+was re-checked against the code on `refactor/god-module-split` (all fixes
+present + logically correct, every cited guardrail test exists and passes;
+~925 targeted backend/frontend tests green across the three sweeps). One gap
+found and closed in the same audit: #20's promised `is_absolute()` guardrail
+assertion was missing from `test_main_lifespan.py` (the fix itself was in
+place) — added. #25 re-confirmed still OPEN. Cosmetic doc drift corrected in
+place (#2/#17 quoted error strings, #12 test names, #29 mixin paths). **Branch note**: #18 exists ONLY on
+`fix/backlog-sweep` (commits `08e9d45`→`f37baaf`, incl. the gpt-oss cassette
+re-record); everything else is on `refactor/god-module-split`. The two branches
+diverged at `ffa6ae9` and neither is merged to main yet.
+
 ---
 
 ## Priority & ownership (ROI-ranked) — updated 2026-07-03
@@ -18,11 +31,11 @@ ROI = user-facing value ÷ effort, with risk as a gate. Owner tags:
 **[Claude]** = keep in-house — parity/danger-zone, a cassette re-record, or an
 unresolved load-bearing decision. **[BP]** = Big-Pickle-ready — prescriptive
 brief + guardrail test, outside the Anki/sync danger zone (the standing
-[[feedback_big_pickle_readiness_rubric]]). **The only item that genuinely needs
-Claude** is now **#18** (the cassette re-record — #10 landed without one) plus
-the two danger-zone observations (parity code — oracle harness green
-before/after). #25 is BP-drafts-Claude-reviews. Everything else in Tiers 1–3 is
-dispatchable to Big Pickle as-is.
+[[feedback_big_pickle_readiness_rubric]]). #18 (the cassette re-record) landed
+2026-07-04; the remaining in-house items are the two danger-zone observations
+(parity code — oracle harness green before/after). #25 is
+BP-drafts-Claude-reviews. Everything else in Tiers 1–3 is dispatchable to Big
+Pickle as-is.
 
 ### Tier 1 — do next (real bugs, low→medium cost, high ROI)
 
@@ -52,7 +65,7 @@ dispatchable to Big Pickle as-is.
 | ~~35~~ | ✅ | Dead config fields (`anki_connect_url`, `forvo_api_key`) — trivial, grep already clean | **FIXED 2026-07-03** |
 | ~~8~~ | ✅ | Extract `serialize_lesson` (dup response dicts) | **FIXED 2026-07-03** — `app/api/_serializers.py`; both `get_lesson` and `get_lesson_by_day` use it. |
 | ~~15~~ | ✅ | Extract `_resolve_topic_day` / `_section_title` (dup blocks in audio API) | **FIXED 2026-07-03** — `backend/app/api/audio.py`. |
-| ~~29~~ | ✅ | `cloze_tts` → public `SRSDatabase` helpers (stop reaching into `_get_conn`) | **FIXED 2026-07-03** — added `has_media_row`, `get_guid_by_collocation_id` on `SRSDatabase`. |
+| ~~29~~ | ✅ | `cloze_tts` → public `SRSDatabase` helpers (stop reaching into `_get_conn`) | **FIXED 2026-07-03** — added `has_media_row`, `get_guid_by_collocation_id` on `SRSDatabase` (post god-module split these live in the `db_media` / `db_collocations` mixins). |
 | ~~11~~ | ✅ | Drop 4 vestigial params (ruff ARG) | **FIXED 2026-07-03** |
 | ~~32~~ | ✅ | Filter orphaned planner feedback at prompt-build | **FIXED 2026-07-03** — `build_planner_turn_prompt` filters `feedback` against `existing_days`. |
 | ~~13-fu~~ | ✅ | One-shot lowercase `token_glosses` migration for pre-fix lessons | **FIXED 2026-07-03** — `app/storage/lowercase_glosses.py` + guardrail tests. |
@@ -63,13 +76,13 @@ dispatchable to Big Pickle as-is.
 
 | # | Owner | Item | Why not BP |
 |---|-------|------|-----------|
-| 18 | Claude | Cassette hash ignores `system_prompt` | Small code change but forces a live re-record of both cassettes (Groq). **DEFERRED until BP's `fix/backlog-sweep` batch is committed + tree green** — needs a clean full gate to verify and would break the shared cassette mock tests during the record window. Full brief + fresh-chat prompt: §18 below. |
+| ~~18~~ | ✅ | Cassette hash ignores `system_prompt` | **FIXED 2026-07-04** (branch `fix/backlog-sweep`) — hash includes `system_prompt`, cassette JSON is versioned (v2) with a loud load-time mismatch error. Re-recorded on the **production model gpt-oss-120b** (llama is deprecated), which required story `max_tokens` 5500→4096 (free-tier 8k TPM cap) and a `_extract_punct_pairs` fix (gpt-oss en-dash dialogue crashed `/transcript`). Only 2 story entries in `e2e.json` were live; 4 dead curriculum/translate entries dropped. See §18. |
 | ~~—~~ | ✅ | 4 AM rollover constant in 3 places (de-dup) | **FIXED 2026-07-03** — `app/anki/rollover.py` single-sources the local-day helpers (`local_today_rollover`, `anki_day_bounds_utc`, `anki_today`) + the `due_at_rollover_utc` 4am-UTC convention; legacy names (`_local_today_4am`, `_anki_day_bounds_utc`) are identity aliases; hardcoded `rollover_hour=4` defaults (fsrs ×3, sqlite_reader) and eight `time(4, 0)` literals routed through it. Identity + source-ratchet pins in `test_rollover_hour_single_source.py`. Oracle 66/66 green before AND after. |
 | — | Claude | `date.today()` midnight-vs-4am audit (~10 sites) | Per-call-site parity judgment. See danger-zone notes. **Routing target now exists**: `app.anki.rollover.anki_today()`. |
 
-**Cassette-affecting batch — now just #18.** #10 landed 2026-07-03 with **no**
-re-record (its gloss path is AsyncMock-stubbed, not cassette-backed). #18 remains
-the sole cassette re-record; see §18 for the full plan and the fresh-chat prompt.
+**Cassette-affecting batch — done.** #10 landed 2026-07-03 with **no** re-record
+(its gloss path is AsyncMock-stubbed, not cassette-backed). #18 landed 2026-07-04
+with the live re-record of both cassettes; see §18 for what actually got recorded.
 
 ---
 
@@ -103,7 +116,9 @@ downstream tolerates duplicate day numbers (`get_lesson_by_day`, day sorting,
 `test_same_id_clears_stale_proposal_keeps_chat_and_feedback`):
 1. In `plan_commit`, before extending, require
    `proposed["days"][0]["day"] == max((d.day for d in curriculum.days), default=0) + 1`;
-   otherwise raise HTTP 409 `"Proposed batch is stale — ask the planner to re-propose"`.
+   otherwise raise HTTP 409 `"Proposed batch is stale — the committed days
+   changed since it was proposed; ask the planner to re-propose"` (actual
+   string per the 2026-07-05 audit).
 2. In `import_plan`, when reusing existing metadata, clear the proposal:
    `metadata = {**existing.metadata}`, and if it has a `"planner"` dict, set
    `planner["proposed"] = None` (deep-copy first; don't mutate the stored object).
@@ -262,6 +277,9 @@ decodes `%2F` in path params, so `..%2F` sequences do reach `resolve()`.
 Single-user local app → low severity, but the correct check is one line:
 `file_path.is_relative_to(media_dir.resolve())`. Add a test asserting a
 crafted `..%2F..%2F` filename and a sibling-prefix path both 400.
+(Audit 2026-07-05: those tests exist as `test_path_traversal_guard` and
+`test_sibling_prefix_dir_traversal_400` in
+`backend/tests/test_api_srs_directions.py` — not `test_api_srs.py`.)
 
 ## 13. FIXED — `token_glosses` written with original-case keys, read with lowercase keys
 
@@ -335,7 +353,8 @@ throws on duplicate keys and the proposal panel fails to render.
 
 **Fix (server-side, preferred).** In `_validate_collocations`
 (`backend/app/storage/plan_io.py`), reject duplicates case-insensitively
-(`days[i].collocations[j] duplicates an earlier entry`) — the planner already
+(actual message: `days[i].collocations[j] duplicates earlier entry {c!r}`,
+per the 2026-07-05 audit) — the planner already
 maps validation errors to a retryable 502, and imports get a clear 422.
 Optionally also key the each-block by index for belt-and-suspenders.
 
@@ -343,17 +362,46 @@ Optionally also key the each-block by index for belt-and-suspenders.
 planner turn whose JSON repeats a collocation → PlannerError (existing stub
 pattern in `backend/tests/test_planner.py`).
 
-## 18. OPEN [→ Claude · T4] — Cassette hash ignores `system_prompt` (stale replays after system-prompt edits)
+## 18. FIXED — Cassette hash ignores `system_prompt` (stale replays after system-prompt edits)
 
-**⏸ DEFERRED (decided 2026-07-03)** until Big Pickle's `fix/backlog-sweep` batch
-is committed and the tree is green — the fix needs a clean full `./test.sh` to
-verify, and changing the hash breaks the shared cassette mock tests until the
-re-record completes (would trip BP's own gate runs). BP's current items
-(#5/#11/#29) don't touch any LLM *prompt*, so a later re-record won't be
-invalidated by them. A copy-paste fresh-chat prompt to execute this lives in
-memory `[[project_backlog_18_cassette_rehash_pending]]`.
+**FIXED 2026-07-04** (branch `fix/backlog-sweep`). `_hash_prompt` now hashes
+`f"{system_prompt or ''}\x00{prompt}"` and is threaded through `_replay`, the
+`complete` record branch, and `_patch`. `save()` stamps `"version": 2` and
+`__init__` raises a loud, re-record-hinting `RuntimeError` when a loaded
+mock/patch cassette isn't version 2 (so a stale cassette fails instead of
+silently replaying). New unit tests: `test_hash_prompt_includes_system_prompt`,
+`test_version_mismatch_raises_on_load`, `test_saved_cassette_carries_current_version`
+(all use temp cassettes).
 
-**Test-fidelity gap.** `backend/app/llm/cassette.py::_hash_prompt` hashes only
+**Re-record — reality was simpler than the brief.** For `e2e.json`, an audit of
+the current Playwright suite showed the **only** LLM-backed call it makes is
+`POST /api/story/generate` (both `seedCurriculumWithLesson` and
+`generate-norwegian.spec.ts` use `curriculum/import`, which is LLM-free; nothing
+calls `curriculum/generate` or `translate` anymore). So of the old 6 entries only
+the **2 story entries** (sl from `SL_DAY_CAPTURE`, no from `NO_DAY_CAPTURE`) were
+live — the 3 curriculum-generate + 1 translate entries were dead leftovers and
+were dropped. The re-record fired the two story requests against per-language
+record-mode backends and unioned the results (concurrent record clobbers the
+shared file). The planner cassette re-recorded trivially (`pytest --llm-mode=record`).
+
+**Recorded on the production model — gpt-oss-120b, NOT the deprecated llama.**
+(A first pass mistakenly recorded on `llama-3.3-70b-versatile` off a stale memory;
+llama was deprecated by Groq 2026-06-30 — commit `337be40`.) Making gpt-oss work
+took two prod fixes, both landed alongside: (1) **story `max_tokens` 5500 → 4096** —
+gpt-oss's free-tier budget is 8000 tokens/request and Groq reserves
+`prompt + max_completion_tokens` up front, so the ~2800-token Slovene story system
+prompt + 5500 = ~8300 → hard 413 → Ollama junk fallback; measured completion need
+is only ~1900, so 4096 fits with headroom. (2) **`_extract_punct_pairs` rewrite** —
+gpt-oss dialogue used a standalone en-dash (`"Koliko stane? – Dve kavi ..."`), which
+`tokenize()` drops but `str.split()` keeps, so the old positional `zip(split, surfaces,
+strict=True)` crashed the `/transcript` endpoint; now it walks the text per surface,
+aligned 1:1 with `surfaces`. Also fixed the `cassette_llm` fixture to record against
+`settings.llm_model` (was the bare llama default). Full `./test.sh` green (backend 3234
+passed / 100% cov, frontend 763 / 100% gate, 15/15 Playwright incl. the Norwegian
+nb-NO-voice assertions and the review-ahead transcript path on the fresh gpt-oss
+cassette).
+
+**Test-fidelity gap (original).** `backend/app/llm/cassette.py::_hash_prompt` hashes only
 the user prompt. Editing a *system* prompt (e.g. `PLANNER_SYSTEM_PROMPT`, the
 story system prompt) does not invalidate cassettes — mock-mode tests keep
 replaying responses recorded under the old instructions and stay green when they
@@ -404,6 +452,13 @@ backend package dir (`Path(__file__).parent.parent / …`) or make them
 Pydantic settings with absolute defaults, mirroring how `_tt_settings` was
 fixed. Guardrail: a unit test asserting `app.state.audio_dir.is_absolute()`
 after lifespan startup (and same for the cassette path attribute if exposed).
+
+**Audit note 2026-07-05.** The code fix was in place (`main.py` anchors both
+paths to `__file__`), but the guardrail above had never been written —
+`test_main_lifespan.py` only asserted `audio_dir is not None`, which a
+CWD-relative path also satisfies. The `is_absolute()` assertion was added to
+`test_lifespan_populates_app_state` during the audit; a revert of the
+anchoring is now actually caught.
 
 ## 21. FIXED [→ BP · T3] — Renderer's preprocessor pinned to the default language (latent multi-language bug)
 
@@ -625,7 +680,9 @@ existence) and the guid lookup at line 99. Add two public helpers on
 bool` and `get_guid_by_collocation_id(collocation_id) -> str | None` (check
 first — a guid-by-id helper may already exist), then delete
 `_missing_media_row`. Behavior-preserving; existing cloze-TTS tests are the
-guardrail.
+guardrail. (Post god-module split, 2026-07-04: the helpers live in the mixins —
+`has_media_row` in `app/srs/db_media.py`, `get_guid_by_collocation_id` in
+`app/srs/db_collocations.py` — still reachable via `SRSDatabase`.)
 
 ## 32. FIXED [→ BP · T3] — Orphaned planner feedback survives plan re-import (residual of item 2's class)
 
@@ -755,14 +812,16 @@ applies a stored opt-out without an init() call" (fresh module via
 
 - **`date.today()` (midnight-local) still feeds several request paths that
   Layer 67 didn't cover.** Verified concretely: the reading-transcript `is_due`
-  / `collocation_is_due` flags (`api/srs.py:635` → `transcript.py::_is_due`,
+  / `collocation_is_due` flags (`api/srs.py:657` → `transcript.py::_is_due`,
   `due_at.date() <= today`) use the midnight boundary, while the badges/queue
   use the 4 AM-anchored Anki day (`_anki_day_bounds_utc`). In the
   `[midnight, 4 AM)` window the transcript bolds words as due that the review
   surfaces don't serve yet — same divergence class as the Layer-67 badge
   undercount, on a lower-stakes surface (cosmetic bolding, self-corrects at
-  4 AM). ~10 more `date.today()` call sites in `api/srs.py` (221, 436, 759,
-  769, 1086, 1362, 1449, 1580…) deserve the same audit: for each, decide
+  4 AM). ~10 more `date.today()` call sites deserve the same audit — after the
+  2026-07-04 queue-engine extraction they're split across `api/srs.py`
+  (225, 442, 657, 781, 791, 1115) and `app/srs/queue_engine.py`
+  (199, 286, 301), plus `transcript.py:208`: for each, decide
   "calendar day is right here" vs "Anki day is right here." Any fix should
   route through ONE shared `anki_today()` helper (see the 3-places item
   above), with per-call-site sign-off — not a mechanical replace. Parity-

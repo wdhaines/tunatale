@@ -28,6 +28,10 @@ async def test_lifespan_populates_app_state(tmp_path, monkeypatch):
         assert test_app.state.story_generator is not None
         assert test_app.state.renderer is not None
         assert test_app.state.audio_dir is not None
+        # Backlog #20 guardrail: lifespan paths must be anchored to the package
+        # dir, not the process CWD — a relative Path("output/audio") regression
+        # would pass `is not None` but fail here.
+        assert test_app.state.audio_dir.is_absolute()
         # In mock mode, the LLM client should be wrapped with CassetteLLMClient
         assert isinstance(test_app.state.curriculum_planner._llm, CassetteLLMClient)
 
