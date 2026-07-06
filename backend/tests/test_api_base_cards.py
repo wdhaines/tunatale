@@ -25,7 +25,7 @@ def _stub_verb(monkeypatch, surface: str, lemma: str) -> None:
 
     stub = StubLemmatizer()
     stub.set_analysis(surface, lemma, upos="VERB")
-    monkeypatch.setattr(srs_mod, "_lemmatizer", stub)
+    monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
 
 
 class TestCreateBaseCard:
@@ -193,7 +193,7 @@ class TestCreateBaseCard:
 
         stub = StubLemmatizer()
         stub.set_analysis("ga", "on", upos="PRON")
-        monkeypatch.setattr(srs_mod, "_lemmatizer", stub)
+        monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(

@@ -185,7 +185,7 @@ def build_lesson_from_story(data: dict, language: Language) -> Lesson:
         kp_infos.append(KeyPhraseInfo(phrase=phrase, translation=translation))
 
     glosses = data.get("dialogue_glosses", [])
-    lemmatizer = get_lemmatizer()
+    lemmatizer = get_lemmatizer(language.code)
 
     # Sentence-aware surface→lemma map (prevents POS-blind fallback
     # where single-word lemmatize miskeys e.g. "hotel" → as verb "hoteti"

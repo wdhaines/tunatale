@@ -35,7 +35,7 @@ async def _prewarm_lesson(lesson: Lesson, srs_db: SRSDatabase) -> None:
     classla load for this content.
     """
     try:
-        lemmatizer = get_lemmatizer()
+        lemmatizer = get_lemmatizer(lesson.language_code)
         model_version = model_version_for(lemmatizer)
         if not model_version:
             return

@@ -52,10 +52,13 @@ def _settings_overrides(monkeypatch, tmp_path):
     and the keep-30 retention cap pruned every real 17 MB snapshot.
 
     Also pins the lemmatizer to the deterministic ``lowercase`` default so the
-    suite never depends on the developer's ``.env`` ``lemmatizer_type`` (a local
-    ``classla`` flag would change computed lemmas and break lemma-sensitive tests).
-    The module-level ``app.api.srs._lemmatizer`` is bound once at import, so it is
-    re-bound here too; tests that want a stub still monkeypatch it themselves.
+    suite never depends on the developer's ``.env`` ``lemmatizer_type`` OR on which
+    NLP engines happen to be installed (a local ``classla`` flag, or classla being
+    importable, would change computed lemmas and break lemma-sensitive tests). With
+    the gate pinned to ``lowercase``, ``get_lemmatizer(code)`` returns
+    ``LowercaseLemmatizer`` for every language; the ``lru_cache`` is cleared so no
+    stale engine leaks across tests. Tests that want a stub monkeypatch
+    ``app.api.srs.get_lemmatizer`` themselves.
     """
     from app.config import settings
     from app.srs.lemmatizer import get_lemmatizer
@@ -115,7 +118,6 @@ def _settings_overrides(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "sync_password", os.environ.get("sync_password") or "test-sync-pw")  # noqa: SIM112
     monkeypatch.setattr(settings, "lemmatizer_type", "lowercase")
     get_lemmatizer.cache_clear()
-    monkeypatch.setattr("app.api.srs._lemmatizer", get_lemmatizer())
 
 
 @pytest.fixture(autouse=True)

@@ -158,18 +158,21 @@ class TestParsePerson:
 
 
 class TestGetLemmatizer:
-    def test_default_is_lowercase(self, monkeypatch):
+    def test_gate_off_is_lowercase_for_every_language(self, monkeypatch):
+        """``lemmatizer_type="lowercase"`` is the global off-switch: every language
+        gets ``LowercaseLemmatizer`` regardless of its registry engine."""
         from app.config import settings
 
         monkeypatch.setattr(settings, "lemmatizer_type", "lowercase")
         get_lemmatizer.cache_clear()
-        lemmatizer = get_lemmatizer()
-        assert isinstance(lemmatizer, LowercaseLemmatizer)
+        for code in ("sl", "no", "en", "unknown"):
+            assert isinstance(get_lemmatizer(code), LowercaseLemmatizer)
         get_lemmatizer.cache_clear()
 
-    def test_classla_config_returns_classla(self, monkeypatch):
+    def test_classla_for_slovene_when_gate_open(self, monkeypatch):
         from app.config import settings
 
+        # Any non-lowercase value opens the gate; the engine is chosen per language.
         monkeypatch.setattr(settings, "lemmatizer_type", "classla")
         import types
 
@@ -181,8 +184,9 @@ class TestGetLemmatizer:
         fake_classla.Pipeline = FakePipeline
         monkeypatch.setitem(__import__("sys").modules, "classla", fake_classla)
         get_lemmatizer.cache_clear()
-        lemmatizer = get_lemmatizer()
+        lemmatizer = get_lemmatizer("sl")
         assert isinstance(lemmatizer, ClasslaLemmatizer)
+        assert lemmatizer._language_code == "sl"
         get_lemmatizer.cache_clear()
 
     def test_classla_import_error_falls_back(self, monkeypatch, caplog):
@@ -201,16 +205,15 @@ class TestGetLemmatizer:
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
         get_lemmatizer.cache_clear()
-        lemmatizer = get_lemmatizer()
+        lemmatizer = get_lemmatizer("sl")
         assert isinstance(lemmatizer, LowercaseLemmatizer)
         assert "classla not installed" in caplog.text
         get_lemmatizer.cache_clear()
 
-    def test_stanza_config_returns_stanza(self, monkeypatch):
+    def test_stanza_for_norwegian_when_gate_open(self, monkeypatch):
         from app.config import settings
 
         monkeypatch.setattr(settings, "lemmatizer_type", "stanza")
-        monkeypatch.setattr(settings, "target_language", "no")
         import types
 
         fake_stanza = types.ModuleType("stanza")
@@ -221,9 +224,9 @@ class TestGetLemmatizer:
         fake_stanza.Pipeline = FakePipeline
         monkeypatch.setitem(__import__("sys").modules, "stanza", fake_stanza)
         get_lemmatizer.cache_clear()
-        lemmatizer = get_lemmatizer()
+        lemmatizer = get_lemmatizer("no")
         assert isinstance(lemmatizer, StanzaLemmatizer)
-        # Wired to the process's active language (single-language-per-process).
+        # Built for the requested language, not a process-wide default.
         assert lemmatizer._language_code == "no"
         # TT "no" maps to Stanza's Bokmål code.
         assert lemmatizer._stanza_code == "nb"
@@ -245,9 +248,43 @@ class TestGetLemmatizer:
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
         get_lemmatizer.cache_clear()
-        lemmatizer = get_lemmatizer()
+        lemmatizer = get_lemmatizer("no")
         assert isinstance(lemmatizer, LowercaseLemmatizer)
         assert "stanza not installed" in caplog.text
+        get_lemmatizer.cache_clear()
+
+    def test_per_language_engines_in_one_process(self, monkeypatch):
+        """Guardrail (item #25): with the gate open, ``get_lemmatizer`` returns a
+        DIFFERENT engine per language in the SAME process — the multi-language bug.
+
+        A Slovene request gets classla, a Norwegian request gets stanza, and English
+        (no registry engine) stays lowercase. The ``lru_cache`` is keyed per code, so
+        both live side by side.
+        """
+        import types
+
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "lemmatizer_type", "classla")  # any non-lowercase → gate open
+
+        fake_classla = types.ModuleType("classla")
+        fake_classla.Pipeline = type("FakePipeline", (), {})
+        fake_stanza = types.ModuleType("stanza")
+        fake_stanza.Pipeline = type("FakePipeline", (), {})
+        monkeypatch.setitem(__import__("sys").modules, "classla", fake_classla)
+        monkeypatch.setitem(__import__("sys").modules, "stanza", fake_stanza)
+
+        get_lemmatizer.cache_clear()
+        sl_lem = get_lemmatizer("sl")
+        no_lem = get_lemmatizer("no")
+        en_lem = get_lemmatizer("en")
+
+        assert isinstance(sl_lem, ClasslaLemmatizer)
+        assert isinstance(no_lem, StanzaLemmatizer)
+        assert isinstance(en_lem, LowercaseLemmatizer)
+        assert sl_lem is not no_lem
+        # Cached per code: re-resolving returns the same instance.
+        assert get_lemmatizer("sl") is sl_lem
         get_lemmatizer.cache_clear()
 
 
@@ -262,18 +299,20 @@ def test_stanza_lang_code_mapping():
 
 
 def test_suite_pins_lowercase_lemmatizer_regardless_of_env():
-    """Regression: the autouse _settings_overrides fixture pins the lemmatizer to
-    lowercase so the suite never depends on the developer's .env lemmatizer_type.
+    """Regression: the autouse _settings_overrides fixture pins the lemmatizer gate
+    to lowercase so the suite never depends on the developer's .env lemmatizer_type
+    OR on which NLP engines are installed.
 
-    Without the pin, `lemmatizer_type=classla` in a local .env leaks into the
-    suite and breaks lemma-sensitive listen/story/transcript tests (caught by a
-    full ./test.sh run after the flag was set in .env)."""
-    import app.api.srs as srs_mod
+    Without the pin, `lemmatizer_type=classla` in a local .env (or classla merely
+    being importable) leaks into the suite and breaks lemma-sensitive
+    listen/story/transcript tests (caught by a full ./test.sh run after the flag was
+    set in .env). With the gate off, every language resolves to LowercaseLemmatizer."""
     from app.config import settings
-    from app.srs.lemmatizer import LowercaseLemmatizer
+    from app.srs.lemmatizer import LowercaseLemmatizer, get_lemmatizer
 
     assert settings.lemmatizer_type == "lowercase"
-    assert isinstance(srs_mod._lemmatizer, LowercaseLemmatizer)
+    assert isinstance(get_lemmatizer("sl"), LowercaseLemmatizer)
+    assert isinstance(get_lemmatizer("no"), LowercaseLemmatizer)
 
 
 @pytest.fixture(scope="session")

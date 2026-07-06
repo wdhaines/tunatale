@@ -757,7 +757,7 @@ class TestStoryEndpoints:
         class _CachingLemmatizer(LowercaseLemmatizer):
             _cache_version = "test-v1"
 
-        monkeypatch.setattr("app.api.generation.get_lemmatizer", lambda: _CachingLemmatizer())
+        monkeypatch.setattr("app.api.generation.get_lemmatizer", lambda code: _CachingLemmatizer())
 
         srs_db = SRSDatabase(":memory:")
         try:
@@ -794,7 +794,7 @@ class TestStoryEndpoints:
                 call_count += 1
                 return super().analyze_sentence(sentence, language_code)
 
-        monkeypatch.setattr("app.api.generation.get_lemmatizer", lambda: _CountingLemmatizer())
+        monkeypatch.setattr("app.api.generation.get_lemmatizer", lambda code: _CountingLemmatizer())
 
         srs_db = SRSDatabase(":memory:")
         try:
@@ -824,7 +824,7 @@ class TestStoryEndpoints:
         class _CachingLemmatizer(LowercaseLemmatizer):
             _cache_version = "test-v1"
 
-        monkeypatch.setattr("app.api.generation.get_lemmatizer", lambda: _CachingLemmatizer())
+        monkeypatch.setattr("app.api.generation.get_lemmatizer", lambda code: _CachingLemmatizer())
 
         srs_db = SRSDatabase(":memory:")
         try:
@@ -848,7 +848,7 @@ class TestStoryEndpoints:
             ],
         )
 
-        def _raise():
+        def _raise(code):
             raise RuntimeError("boom")
 
         monkeypatch.setattr("app.api.generation.get_lemmatizer", _raise)
@@ -1366,9 +1366,12 @@ class TestSRSEndpoints:
         app.state.srs_db = db
         app.state.content_store = store
 
+        import app.api.srs as srs_mod
+
         stub = StubLemmatizer()
         stub.set_sentence("Dobrodošli", [TokenAnalysis(surface="Dobrodošli", lemma="dobrodošel")])
-        monkeypatch.setattr("app.api.srs._lemmatizer", stub)
+        # Inject the stub as the per-language engine (Slovene lesson → get_lemmatizer("sl")).
+        monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
@@ -1645,7 +1648,7 @@ class TestListenClozeIntegration:
 
         stub = StubLemmatizer()
         stub.set_analysis("ste", "biti", upos="AUX")
-        monkeypatch.setattr(srs_mod, "_lemmatizer", stub)
+        monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
         monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", AsyncMock())
 
         db = await self._setup_lesson(phrase_text="Zdravo kje ste")
@@ -1673,7 +1676,7 @@ class TestListenClozeIntegration:
         stub.set_lemma("sem", "biti")
         stub.set_analysis("ste", "biti", upos="AUX")
         stub.set_analysis("sem", "biti", upos="AUX")
-        monkeypatch.setattr(srs_mod, "_lemmatizer", stub)
+        monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
         audio_mock = AsyncMock()
         monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", audio_mock)
 
@@ -2717,6 +2720,48 @@ class TestTranscriptEndpoint:
             response = await client.get("/api/srs/lesson/nonexistent/transcript")
 
         assert response.status_code == 404
+
+    async def test_threads_lesson_language_to_lemmatizer(self, monkeypatch):
+        """Guardrail (item #25): the transcript endpoint resolves the lemmatizer for
+        the LESSON's language, not a process-wide default — so a Norwegian lesson is
+        analyzed with the Norwegian engine even when both languages share one process.
+        """
+        import app.api.srs as srs_mod
+        from app.srs.database import SRSDatabase
+        from app.srs.lemmatizer import LowercaseLemmatizer
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Dag 1",
+            language_code="no",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="Hei.", voice_id="female-1", language_code="no", role="female-1")],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-no", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        captured: list[str] = []
+
+        def _spy(code: str):
+            captured.append(code)
+            return LowercaseLemmatizer()
+
+        monkeypatch.setattr(srs_mod, "get_lemmatizer", _spy)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/lesson/lesson-no/transcript")
+
+        assert response.status_code == 200
+        assert captured == ["no"], f"expected the lemmatizer resolved for 'no', got {captured}"
 
     async def test_l2_filter_excludes_english_narrator(self):
         from app.srs.database import SRSDatabase

@@ -34,7 +34,7 @@ logging.getLogger("app.audio.renderer").setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
-async def _warm_lemmatizer(srs_db: SRSDatabase, content_store: ContentStore) -> None:
+async def _warm_lemmatizer(srs_dbs: dict[str, SRSDatabase], content_stores: dict[str, ContentStore]) -> None:
     """Fill the persistent sentence-analysis cache from stored lessons.
 
     Iterates every stored lesson's natural-speed L2 sentences through
@@ -43,18 +43,22 @@ async def _warm_lemmatizer(srs_db: SRSDatabase, content_store: ContentStore) -> 
     - **Every subsequent restart:** all cache hits → the model is never loaded at
       startup → admin list and everything else are instant.
 
-    Runs as a background ``asyncio.create_task`` so uvicorn binds the port immediately.
-    Swallows its own errors so a missing model degrades to on-demand loading.
+    Warms **each configured language** with its own lemmatizer (multi-language mode
+    runs both in one process), so the Slovene classla cache and the Norwegian stanza
+    cache both fill. Runs as a background ``asyncio.create_task`` so uvicorn binds the
+    port immediately. Swallows per-language errors so a missing model for one language
+    degrades to on-demand loading without aborting the others.
     """
-    try:
-        lemmatizer = get_lemmatizer()
-        model_version = model_version_for(lemmatizer)
-        if not model_version:
-            return  # cheap lemmatizer; nothing to warm
-        lessons = content_store.list_lessons()
-        await anyio.to_thread.run_sync(_warm_from_lessons, lessons, srs_db, lemmatizer, model_version)
-    except Exception:
-        logger.warning("Lemmatizer warm-up failed — continuing with on-demand loading")
+    for code, srs_db in srs_dbs.items():
+        try:
+            lemmatizer = get_lemmatizer(code)
+            model_version = model_version_for(lemmatizer)
+            if not model_version:
+                continue  # cheap lemmatizer; nothing to warm
+            lessons = content_stores[code].list_lessons()
+            await anyio.to_thread.run_sync(_warm_from_lessons, lessons, srs_db, lemmatizer, model_version)
+        except Exception:
+            logger.warning("Lemmatizer warm-up failed for %s — continuing with on-demand loading", code)
 
 
 def _warm_from_lessons(
@@ -149,7 +153,7 @@ async def lifespan(app: FastAPI):
     # event, so the port never binds and every frontend /api/* request is refused until
     # "Done loading processors!". As a background task, the port binds immediately and
     # classla still warms eagerly. A no-op for the default lowercase lemmatizer.
-    warmup_task = asyncio.create_task(_warm_lemmatizer(app.state.srs_db, app.state.content_store))
+    warmup_task = asyncio.create_task(_warm_lemmatizer(srs_dbs, content_stores))
 
     logger.info("TunaTale backend starting up")
     yield

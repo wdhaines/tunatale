@@ -80,7 +80,10 @@ def _balancer_add(balancer: object | None, *, card_id: int | None, note_id: int 
 router = APIRouter(prefix="/api/srs", tags=["srs"])
 _MEDIA_DIR = Path(__file__).parent.parent.parent / "media"
 
-_lemmatizer = get_lemmatizer()
+# The lemmatizer is resolved per-request from the content's language_code, never a
+# process-wide singleton — multi-language mode (settings.database_urls) serves both
+# languages from one process, so a frozen import-time lemmatizer would analyze e.g.
+# Norwegian transcripts with the Slovene model. See get_lemmatizer(language_code).
 
 _WORD_RATING_MAP: dict[str, Rating] = {
     "again": Rating.AGAIN,
@@ -411,7 +414,8 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # the whole biti paradigm (ste/smo/so) without enumerating surfaces.
     surface_to_upos: dict[str, str] = {}
 
-    model_version = model_version_for(_lemmatizer)
+    lemmatizer = get_lemmatizer(lesson.language_code)
+    model_version = model_version_for(lemmatizer)
 
     def _analyze_phrases(section: Section) -> None:
         # Runs the (classla) lemmatizer over the lesson's L2 phrases, filling the
@@ -423,9 +427,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 continue
             surfaces = tokenize(phrase.text)
             phrase_lemmas = lemmatize_surfaces_in_context(
-                surfaces, phrase.text, _lemmatizer, lesson.language_code, db, model_version
+                surfaces, phrase.text, lemmatizer, lesson.language_code, db, model_version
             )
-            for ta in analyze_sentence_cached(db, _lemmatizer, phrase.text, lesson.language_code, model_version):
+            for ta in analyze_sentence_cached(db, lemmatizer, phrase.text, lesson.language_code, model_version):
                 surface_to_upos.setdefault(ta.surface.casefold(), ta.upos)
             for surface, lemma in zip(surfaces, phrase_lemmas, strict=True):
                 unique_lemmas.add(lemma)
@@ -659,7 +663,8 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
     # seconds — especially right after restart before the warm-up finishes. Offload it
     # to a worker thread so it doesn't block the event loop and stall every other
     # in-flight request (the lesson page fires several API calls at once).
-    transcript = await anyio.to_thread.run_sync(extract_transcript, lesson, db, _lemmatizer, today)
+    lemmatizer = get_lemmatizer(lesson.language_code)
+    transcript = await anyio.to_thread.run_sync(extract_transcript, lesson, db, lemmatizer, today)
 
     return {
         "lesson_id": lesson_id,
@@ -980,8 +985,9 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
     # inflected function form (classla "sem" → lemma "biti") classifies via its
     # surface even when the dictionary lemma isn't itself a function word.
     # Offload the (classla) lemmatizer off the event loop — see get_lesson_transcript.
-    mv = model_version_for(_lemmatizer)
-    analyses = await anyio.to_thread.run_sync(analyze_sentence_cached, db, _lemmatizer, body.sentence, lang, mv)
+    lemmatizer = get_lemmatizer(lang)
+    mv = model_version_for(lemmatizer)
+    analyses = await anyio.to_thread.run_sync(analyze_sentence_cached, db, lemmatizer, body.sentence, lang, mv)
     upos = next((ta.upos for ta in analyses if ta.surface.casefold() == body.surface.casefold()), None)
     # Check both lemma and surface with the surface's upos (a single-word click).
     upos_map = {lemma.casefold(): upos, body.surface.casefold(): upos} if upos else None
