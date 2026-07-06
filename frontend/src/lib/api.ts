@@ -416,6 +416,27 @@ export interface ActivityResponse {
   events: ActivityEvent[];
 }
 
+// ── Story source / import ──────────────────────────────────────────────
+
+export interface StorySourceResponse {
+  curriculum_id: string;
+  day: number;
+  story: Record<string, unknown>;
+}
+
+export interface ImportStoryPayload {
+  curriculum_id: string;
+  day: number;
+  story: Record<string, unknown>;
+}
+
+export interface ImportStoryResponse {
+  id: string;
+  title: string;
+  sections: Array<{ type: string; phrase_count: number }>;
+  warnings: string[];
+}
+
 export interface PeerSyncResult {
   auth_success: boolean;
   pull_required: number | null;
@@ -655,6 +676,18 @@ export class TunaTaleAPI {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ day, strategy }),
+    });
+  }
+
+  async getStorySource(lessonId: string): Promise<StorySourceResponse> {
+    return this.request(`/api/story/${lessonId}/source`);
+  }
+
+  async importStory(payload: ImportStoryPayload): Promise<ImportStoryResponse> {
+    return this.request("/api/story/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     });
   }
 

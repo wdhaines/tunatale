@@ -11,6 +11,8 @@
 	import { syncStore } from '$lib/stores/sync.svelte';
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
 	import { lessonModePref } from '$lib/stores/lessonModePref.svelte';
+	import { pipelineStore } from '$lib/stores/pipeline.svelte';
+	import LessonSourcePanel from '$lib/components/LessonSourcePanel.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -141,6 +143,18 @@
 
 	$effect(() => {
 		if (syncStore.lastResult) handleSyncResult();
+	});
+
+	// Pipeline lifecycle: poll render status while on this page; stop on destroy.
+	$effect(() => {
+		const cid = data.curriculum.id;
+		pipelineStore.start(cid);
+		return () => pipelineStore.stop();
+	});
+
+	let thisDayPipeline = $derived.by(() => {
+		if (!pipelineStore.status?.active) return null;
+		return pipelineStore.status.days.find((d) => d.day === data.lesson.day) ?? null;
 	});
 
 	async function handleMarkListened() {
@@ -398,6 +412,9 @@
 				<button onclick={handleRenderAudio} disabled={audioLoading}>
 					{audioLoading ? 'Rendering…' : 'Render Audio'}
 				</button>
+				{#if thisDayPipeline && !audioLoading}
+					<span class="pipeline-state state-{thisDayPipeline.state}">{thisDayPipeline.state}</span>
+				{/if}
 			</div>
 		{/if}
 	</section>
@@ -466,6 +483,13 @@
 			{regenLoading ? 'Regenerating…' : `Regenerate Day ${data.lesson.day}`}
 		</button>
 	</details>
+
+	<LessonSourcePanel
+		lessonId={data.lesson.id}
+		curriculumId={data.curriculum.id}
+		day={data.lesson.day}
+		onImported={(newLessonId) => goto(`/c/${data.curriculum.id}/l/${newLessonId}`)}
+	/>
 </main>
 
 <style>
@@ -546,9 +570,38 @@
 	.render-row {
 		display: flex;
 		justify-content: center;
+		align-items: center;
+		gap: 0.5rem;
 	}
 	.render-row button {
 		margin-top: 0;
+	}
+	.pipeline-state {
+		font-size: 0.75rem;
+		font-weight: 600;
+		padding: 0.15rem 0.5rem;
+		border-radius: var(--radius-pill);
+		text-transform: capitalize;
+	}
+	.state-queued {
+		background: var(--color-surface-2);
+		color: var(--color-muted);
+	}
+	.state-generating {
+		background: color-mix(in srgb, var(--color-info) 14%, transparent);
+		color: var(--color-info);
+	}
+	.state-rendering {
+		background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+		color: var(--color-accent);
+	}
+	.state-ready {
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
+	}
+	.state-failed {
+		background: color-mix(in srgb, var(--color-danger) 14%, transparent);
+		color: var(--color-danger);
 	}
 	.toggle-pill {
 		display: flex;

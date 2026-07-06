@@ -137,10 +137,37 @@ fall through to cached lesson), DayPicker (`pipelineStates` prop → pulse/dange
   mount/focus/30s refreshes were deleted): hosting pages now refresh on mount and the
   plan page after every planner turn.
 
+## Phase 3 — Lesson source panel + render badge (landed 2026-07-06)
+
+Frontend-only. New: `lessonSource.ts` (formatSource / buildClaudePrompt pure helpers),
+`LessonSourcePanel.svelte` (lazy source fetch on first open, Copy JSON / Copy prompt via
+navigator.clipboard, paste + JSON.parse guard, import with inline 422 detail and
+warnings), `tests/lesson-source.spec.ts`. Modified: lesson page (hosts the panel below
+the regenerate details; pipeline badge next to the Render button while this day's job is
+in flight, via the pipelineStore singleton started/stopped with the page), `api.ts`
+(getStorySource / importStory), `tests/helpers.ts` (CANNED_STORY — mirrors backend
+`test_api.py::_story()` — and seedWithCannedStory: curriculum + lesson via
+POST /api/story/import, no LLM/cassette dependency).
+
+**Post-review fixes (Fable, 2026-07-06):**
+- Import-with-warnings used to render the warnings AND call onImported in the same
+  breath — the page navigated away before anyone could read them. Navigation is now
+  deferred behind a "Continue to imported lesson →" button when warnings exist; editing
+  the pasted text resets back to Import. (BP's own test fixtures asserted both
+  "warnings shown" and "navigated" — dead UI pinned green.)
+- The Playwright spec route-mocked the ENTIRE round-trip (source GET, import POST, the
+  new lesson's load data) — the one integration the phase exists to deliver was faked,
+  so a frontend/backend schema mismatch would stay green. Rewritten against the real
+  backend: real source GET, a real warned import (unknown speaker `alien-9` →
+  deterministic speaker_warnings hit, deferred navigation asserted), then a real clean
+  import asserting navigation to the freshly minted lesson. Only the pipeline endpoint
+  stays mocked (real imports enqueue render jobs that never run under
+  PIPELINE_AUTOSTART=false).
+
 ## What's next
 
-Phase 3 (lesson source panel) per the plan at
-`~/.claude/plans/iterative-crunching-popcorn.md`.
+All planned phases (0–3) of the greedy-pipeline effort are done. Remaining ideas live
+in `docs/ui-review-backlog.md` and the plan's deferred items.
 
 ## Gates before commit
 

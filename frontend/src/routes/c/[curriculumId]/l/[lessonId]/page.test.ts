@@ -25,9 +25,15 @@ vi.mock("$lib/api", () => ({
     generateStory: vi.fn(),
     ignoreLemma: vi.fn(),
     unignoreLemma: vi.fn(),
+    getStorySource: vi.fn(),
+    importStory: vi.fn(),
     audioUrl: vi.fn((id: string) => `/api/audio/${id}`),
     audioZipUrl: vi.fn((lessonId: string) => `/api/audio/lesson/${lessonId}/zip`),
   },
+}));
+
+vi.mock("$lib/stores/pipeline.svelte", () => ({
+  pipelineStore: { status: null, start: vi.fn(), stop: vi.fn() },
 }));
 
 vi.mock("$lib/stores/listened.svelte", () => ({
@@ -42,6 +48,7 @@ import type { TranscriptData } from "$lib/api";
 import { listenedStore } from "$lib/stores/listened.svelte";
 import { syncStore } from "$lib/stores/sync.svelte";
 import { lessonModePref } from "$lib/stores/lessonModePref.svelte";
+import { pipelineStore } from "$lib/stores/pipeline.svelte";
 import Page from "./+page.svelte";
 
 /** Stub window.matchMedia (jsdom doesn't implement it). `mobile` drives the
@@ -67,6 +74,8 @@ const mockCreateInflectionCloze = vi.mocked(api.createInflectionCloze);
 const mockSubmitDrill = vi.mocked(api.submitDrill);
 const mockUndoGrade = vi.mocked(api.undoGrade);
 const mockGenerateStory = vi.mocked(api.generateStory);
+const mockGetStorySource = vi.mocked(api.getStorySource);
+const mockImportStory = vi.mocked(api.importStory);
 const mockIgnoreLemma = vi.mocked(api.ignoreLemma);
 const mockUnignoreLemma = vi.mocked(api.unignoreLemma);
 const mockRestoreKnown = vi.mocked(api.restoreKnown);
@@ -294,7 +303,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     mockRenderAudio.mockResolvedValue(audio);
     mockGetTranscript.mockRejectedValue(new Error("transcript unavailable"));
 
-    const { getByText, findByText, queryByText, container } = render(Page, {
+    const { getByText, queryByText, container } = render(Page, {
       props: { data: { curriculum, lesson, audio: null, transcript: null } },
     });
     await fireEvent.click(getByText("Render Audio"));
@@ -1705,6 +1714,109 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       });
       expect(container.querySelector("details.tools-card")).toBeTruthy();
       expect(queryByText("Download All Sections")).toBeFalsy();
+    });
+  });
+
+  describe("pipeline integration", () => {
+    it("starts pipeline on mount with curriculum id", () => {
+      render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: null } },
+      });
+      expect(pipelineStore.start).toHaveBeenCalledWith("cid-1");
+    });
+
+    it("stops pipeline via effect cleanup on unmount", () => {
+      const { unmount } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: null } },
+      });
+      unmount();
+      expect(pipelineStore.stop).toHaveBeenCalled();
+    });
+
+    it("shows pipeline state badge when this day is in the pipeline", () => {
+      (pipelineStore as any).status = {
+        active: true,
+        days: [
+          {
+            day: 1,
+            state: "rendering",
+            lesson_id: null,
+            has_audio: false,
+            error: null,
+            retryable: null,
+            detail: null,
+          },
+        ],
+      };
+      const { container } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: null } },
+      });
+      expect(container.querySelector(".pipeline-state")?.textContent).toContain("rendering");
+    });
+
+    it("does not show pipeline badge when pipeline is inactive", () => {
+      (pipelineStore as any).status = { active: false, days: [] };
+      const { container } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: null } },
+      });
+      expect(container.querySelector(".pipeline-state")).toBeFalsy();
+    });
+  });
+
+  describe("lesson source panel", () => {
+    it("renders a collapsed LessonSourcePanel after the tools card", () => {
+      const { container } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      const toolsCard = container.querySelector("details.tools-card");
+      expect(toolsCard).toBeTruthy();
+      const sourcePanel = container.querySelector<HTMLDetailsElement>(
+        "details.lesson-source-panel",
+      );
+      expect(sourcePanel).toBeTruthy();
+      expect(sourcePanel!.textContent).toContain("edit with Claude");
+      expect(sourcePanel!.open).toBe(false);
+    });
+
+    it("imports story through LessonSourcePanel and navigates to the new lesson", async () => {
+      mockGetStorySource.mockResolvedValue({
+        curriculum_id: "cid-1",
+        day: 1,
+        story: { title: "Kavarna" },
+      });
+      mockImportStory.mockResolvedValue({
+        id: "new-l1",
+        title: "Day 1 v2",
+        sections: [],
+        warnings: [],
+      });
+
+      const { container } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: null } },
+      });
+
+      const sourceSummary = container.querySelector(
+        "details.lesson-source-panel summary",
+      ) as HTMLElement;
+      await fireEvent.click(sourceSummary);
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-testid="copy-json"]')).toBeTruthy();
+      });
+
+      const textarea = container.querySelector(
+        "details.lesson-source-panel textarea",
+      ) as HTMLElement;
+      await fireEvent.input(textarea, {
+        target: { value: JSON.stringify({ title: "Kavarna v2" }) },
+      });
+
+      const importBtn = container.querySelector('[data-testid="import-btn"]') as HTMLElement;
+      await fireEvent.click(importBtn);
+
+      await waitFor(() => {
+        expect(mockGoto).toHaveBeenCalledWith("/c/cid-1/l/new-l1");
+      });
     });
   });
 

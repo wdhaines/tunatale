@@ -320,6 +320,67 @@ describe("TunaTaleAPI", () => {
 
       await expect(api.getLesson("missing")).rejects.toThrow("GET /api/story/missing: Not Found");
     });
+
+    it("getStorySource calls GET /api/story/:id/source", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue(
+            mockOk({ curriculum_id: "cid-1", day: 1, story: { title: "Kavarna" } }),
+          ),
+      );
+
+      const result = await api.getStorySource("l1");
+
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/story/l1/source`);
+      expect(result.curriculum_id).toBe("cid-1");
+      expect(result.story).toEqual({ title: "Kavarna" });
+    });
+
+    it("getStorySource throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Not Found")));
+
+      await expect(api.getStorySource("l1")).rejects.toThrow("GET /api/story/l1/source: Not Found");
+    });
+
+    it("importStory calls POST /api/story/import", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            id: "new-l1",
+            title: "Day 1 v2",
+            sections: [],
+            warnings: ["speaker 'barman' is not in the sl voice map"],
+          }),
+        ),
+      );
+
+      const result = await api.importStory({
+        curriculum_id: "cid-1",
+        day: 1,
+        story: { title: "Kavarna v2" },
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/story/import`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ curriculum_id: "cid-1", day: 1, story: { title: "Kavarna v2" } }),
+        }),
+      );
+      expect(result.id).toBe("new-l1");
+      expect(result.warnings).toHaveLength(1);
+    });
+
+    it("importStory throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Bad Request")));
+
+      await expect(api.importStory({ curriculum_id: "cid-1", day: 1, story: {} })).rejects.toThrow(
+        "POST /api/story/import: Bad Request",
+      );
+    });
   });
 
   describe("audio", () => {

@@ -58,6 +58,68 @@ const SL_DAY_CAPTURE = {
 		"You are a tourist in Ljubljana and you want to order a coffee in a local café",
 };
 
+/**
+ * Canonical minimal story (matches backend test_api.py::TestLessonAuthoringEndpoints._story).
+ * No LLM needed — used by seedWithCannedStory for cassette-free seeding.
+ */
+export const CANNED_STORY = {
+	title: 'Ordering Coffee',
+	key_phrases: [{ phrase: 'dober dan', translation: 'good day' }],
+	scenes: [
+		{
+			label: 'At the Café',
+			lines: [
+				{ speaker: 'female-1', text: 'Dober dan!', translation: 'Good day!' },
+				{ speaker: 'male-1', text: 'Prosim kavo.', translation: 'A coffee please.' },
+			],
+		},
+	],
+	dialogue_glosses: [{ word: 'kavo', translation: 'coffee' }],
+	morphology_focus: [],
+};
+
+/** One curriculum day for an e2e-specific topic (no cassette dependency). */
+function makeDay(topic: string) {
+	return {
+		day: 1,
+		title: 'Day 1',
+		focus: topic,
+		collocations: ['dober dan'],
+		learning_objective: 'greet and order',
+		story_guidance: `Practice ordering ${topic}`,
+	};
+}
+
+/**
+ * Seed a curriculum + lesson via direct imports (no LLM) so the test avoids
+ * consuming the shared e2e.json cassette. Topic must be unique per spec to
+ * prevent cross-spec data collisions.
+ */
+export async function seedWithCannedStory(
+	request: APIRequestContext,
+	topic: string,
+): Promise<{ curriculumId: string; lessonId: string }> {
+	const currRes = await request.post(`${BACKEND}/api/curriculum/import`, {
+		data: {
+			topic,
+			language_code: 'sl',
+			cefr_level: 'A2',
+			days: [makeDay(topic)],
+		},
+	});
+	if (!currRes.ok())
+		throw new Error(`curriculum import failed: ${currRes.status()} ${await currRes.text()}`);
+	const curriculum = await currRes.json();
+
+	const impRes = await request.post(`${BACKEND}/api/story/import`, {
+		data: { curriculum_id: curriculum.id, day: 1, story: CANNED_STORY },
+	});
+	if (!impRes.ok())
+		throw new Error(`story import failed: ${impRes.status()} ${await impRes.text()}`);
+	const { id: lessonId } = await impRes.json();
+	return { curriculumId: curriculum.id, lessonId };
+}
+
 export async function seedCurriculumWithLesson(
 	request: APIRequestContext,
 	opts: { topic: string },
