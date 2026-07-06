@@ -6,6 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.generation.planner import PlannerError, PlannerTurn
+from app.llm.activity import ActivityLog
 from app.main import app
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.language import Language
@@ -19,7 +20,7 @@ def _clean_app_state():
         resource = getattr(app.state, attr, None)
         if resource is not None:
             resource.close()
-    for attr in ("content_store", "language", "srs_db", "curriculum_planner"):
+    for attr in ("content_store", "language", "srs_db", "curriculum_planner", "pipeline"):
         if hasattr(app.state, attr):
             delattr(app.state, attr)
 
@@ -267,11 +268,25 @@ class TestPlanCommit:
         # The stale proposal is left in place — the user re-proposes via chat.
         assert saved.metadata["planner"]["proposed"] == stale
 
-    async def test_commit_appends_days_clears_proposed_adds_event(self):
+    async def test_commit_appends_days_clears_proposed_adds_event(self, tmp_path):
+        from app.generation.pipeline import LessonPipeline
+
         proposed = {"start_day": 3, "days": [asdict(_day(3)), asdict(_day(4))]}
         curriculum = _planned_curriculum(proposed=proposed)
         curriculum.days.extend([_day(1), _day(2)])
         store = _setup(curriculum)
+
+        pipeline = LessonPipeline(
+            story_generator=None,
+            renderer=None,
+            audio_dir=tmp_path,
+            content_stores={"sl": store},
+            languages={"sl": Language.slovene()},
+            srs_dbs={},
+            activity_log=ActivityLog(maxlen=100),
+            llm_client=None,
+        )
+        app.state.pipeline = pipeline
 
         async with _client() as client:
             response = await client.post("/api/curriculum/trip/plan/commit", json={})
@@ -285,6 +300,9 @@ class TestPlanCommit:
         planner_state = saved.metadata["planner"]
         assert planner_state["proposed"] is None
         assert planner_state["chat"] == [{"role": "event", "content": "Committed days 3-4."}]
+
+        assert pipeline._jobs[("sl", "trip", 3)]["state"] == "queued"
+        assert pipeline._jobs[("sl", "trip", 4)]["state"] == "queued"
 
     async def test_commit_single_day_event_message(self):
         proposed = {"start_day": 1, "days": [asdict(_day(1))]}

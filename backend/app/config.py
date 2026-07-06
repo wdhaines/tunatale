@@ -90,6 +90,8 @@ class Settings(BaseSettings):
     audio_delivery_codec: str = "opus"  # opus | aac | mp3 | wav
     audio_delivery_bitrate: str = "28k"
 
+    pipeline_autostart: bool = True
+
 
 settings = Settings()
 

@@ -12,6 +12,7 @@ export default defineConfig({
 			timeout: 30000,
 			env: {
 				LLM_MODE: 'mock',
+				PIPELINE_AUTOSTART: 'false',
 				DATABASE_URL: 'sqlite:///./tunatale-test.db',
 				// Redirect the Phase-5 multi-language map at test DBs. _language_db_map()
 				// returns settings.database_urls verbatim when non-empty and IGNORES
@@ -55,6 +56,7 @@ export default defineConfig({
 			timeout: 30000,
 			env: {
 				LLM_MODE: 'mock',
+				PIPELINE_AUTOSTART: 'false',
 				DATABASE_URL: 'sqlite:///./tunatale-test-no.db',
 				// See the 8001 block: every language key must be redirected at a test DB
 				// (pydantic deep-merges this dict with the developer's .env), or e2e leaks

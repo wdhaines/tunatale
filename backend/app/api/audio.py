@@ -5,17 +5,15 @@ from __future__ import annotations
 import io
 import json
 import re
-import uuid
 import zipfile
-from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
 from app.api.models import RenderAudioRequest
-from app.audio.transcode import CODEC_EXT, EXT_MEDIA_TYPE
-from app.config import settings
+from app.audio.render_service import render_lesson_audio
+from app.audio.transcode import EXT_MEDIA_TYPE
 from app.generation.section_builder import SECTION_TITLES
 from app.models.lesson import SectionType
 
@@ -69,67 +67,13 @@ async def render_audio(body: RenderAudioRequest, request: Request):
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
 
-    # Keep old rows and file paths so a failed render doesn't leave the lesson
-    # without audio rows (old files are still on disk, but the DB rows would
-    # be gone).  Clean up old DB rows and disk files only after the new render
-    # succeeds — the render writes to fresh UUID paths so nothing collides.
-    old_rows = store.list_audio_files_for_lesson(body.lesson_id)
-    old_file_paths = [r["file_path"] for r in old_rows]
-
-    renderer = request.app.state.renderer
-    audio_dir: Path = request.app.state.audio_dir
-    audio_dir.mkdir(parents=True, exist_ok=True)
-
-    # Allocate UUIDs for full lesson and each section. The extension matches the
-    # configured delivery codec so serving can infer the media type from the suffix.
-    ext = CODEC_EXT.get(settings.audio_delivery_codec, "wav")
-    audio_id = str(uuid.uuid4())
-    full_path = audio_dir / f"{audio_id}.{ext}"
-
-    section_ids = [str(uuid.uuid4()) for _ in lesson.sections]
-    section_paths = [audio_dir / f"{sid}.{ext}" for sid in section_ids]
-
-    cues = await renderer.render(lesson, full_path, section_paths=section_paths)
-    cues_json = json.dumps([asdict(c) for c in cues], ensure_ascii=False)
-
-    # Delete old rows before inserting new ones — the render writes to fresh
-    # UUID paths so nothing collides, and at this point old rows are the only
-    # rows for this lesson in the DB.
-    store.delete_audio_files_for_lesson(body.lesson_id)
-
-    # Persist full lesson row (with cues manifest)
-    store.save_audio_file(audio_id, body.lesson_id, str(full_path), cues_json=cues_json)
-
-    # Persist per-section rows
-    for i, (sid, section) in enumerate(zip(section_ids, lesson.sections, strict=True)):
-        store.save_audio_file(
-            sid,
-            body.lesson_id,
-            str(section_paths[i]),
-            section_index=i,
-            section_type=section.section_type.value,
-        )
-
-    # Render succeeded — clean up orphaned old files from disk
-    for fp in old_file_paths:
-        Path(fp).unlink(missing_ok=True)
-
-    sections = [
-        {
-            "audio_id": sid,
-            "section_index": i,
-            "section_type": section.section_type.value,
-            "title": SECTION_TITLES.get(section.section_type, section.section_type.value),
-        }
-        for i, (sid, section) in enumerate(zip(section_ids, lesson.sections, strict=True))
-    ]
-
-    return {
-        "audio_id": audio_id,
-        "lesson_id": body.lesson_id,
-        "sections": sections,
-        "cues": json.loads(cues_json),
-    }
+    return await render_lesson_audio(
+        store=store,
+        renderer=request.app.state.renderer,
+        audio_dir=request.app.state.audio_dir,
+        lesson_id=body.lesson_id,
+        lesson=lesson,
+    )
 
 
 @router.get("/lesson/{lesson_id}", status_code=200)

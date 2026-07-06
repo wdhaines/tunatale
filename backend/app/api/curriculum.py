@@ -130,6 +130,13 @@ async def plan_commit(curriculum_id: str, request: Request):
     state["proposed"] = None
     curriculum.metadata["planner"] = state
     store.save_curriculum(curriculum_id, curriculum)
+
+    # Enqueue pipeline jobs for the newly committed days
+    pipeline = getattr(request.app.state, "pipeline", None)
+    if pipeline is not None:
+        for day_entry in days:
+            pipeline.enqueue(request.state.language_code, curriculum_id, day_entry.day, "generate")
+
     return {"id": curriculum_id, "days": len(curriculum.days)}
 
 

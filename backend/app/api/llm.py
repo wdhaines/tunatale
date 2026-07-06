@@ -74,6 +74,15 @@ async def rate_limit_status(request: Request) -> dict:
     return _status_payload(_unwrap(request))
 
 
+@router.get("/activity", status_code=200)
+async def llm_activity(request: Request, since: int = 0) -> dict:
+    log = getattr(request.app.state, "activity_log", None)
+    if log is None:
+        return {"latest": 0, "events": []}
+    events, latest = log.events_since(since)
+    return {"latest": latest, "events": events}
+
+
 @router.post("/rate-limit/probe")
 async def rate_limit_probe(request: Request) -> dict:
     client = _unwrap(request)

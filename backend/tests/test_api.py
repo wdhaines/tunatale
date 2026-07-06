@@ -22,6 +22,7 @@ def _clean_app_state():
         "renderer",
         "audio_dir",
         "srs_db",
+        "pipeline",
     ):
         if hasattr(app.state, attr):
             delattr(app.state, attr)
@@ -627,6 +628,8 @@ class TestStoryEndpoints:
         assert "invalid JSON" in response.json()["detail"]
 
     async def test_generate_story_returns_201(self, monkeypatch):
+        from app.generation.pipeline import LessonPipeline
+        from app.llm.activity import ActivityLog
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
 
@@ -669,6 +672,18 @@ class TestStoryEndpoints:
         store.save_curriculum(curriculum_id, mock_curriculum)
         app.state.content_store = store
 
+        pipeline = LessonPipeline(
+            story_generator=None,
+            renderer=None,
+            audio_dir=None,
+            content_stores={"sl": store},
+            languages={"sl": Language.slovene()},
+            srs_dbs={},
+            activity_log=ActivityLog(maxlen=100),
+            llm_client=None,
+        )
+        app.state.pipeline = pipeline
+
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/story/generate",
@@ -682,6 +697,9 @@ class TestStoryEndpoints:
         assert "sections" in data
         # Verify lesson was persisted
         assert store.get_lesson(data["id"]) is not None
+        # Verify pipeline enqueued a render job
+        assert pipeline._jobs[("sl", "test-curriculum-id", 1)]["state"] == "queued"
+        assert pipeline._jobs[("sl", "test-curriculum-id", 1)]["kind"] == "render"
         app.state.srs_db.close()
 
     async def test_generate_story_no_srs_db_still_succeeds(self, monkeypatch):
@@ -935,12 +953,26 @@ class TestLessonAuthoringEndpoints:
         assert response.status_code == 404
 
     async def test_import_creates_lesson_and_mirrors_generate_response(self):
+        from app.generation.pipeline import LessonPipeline
+        from app.llm.activity import ActivityLog
         from app.srs.database import SRSDatabase
 
         store = self._store_with_curriculum()
         app.state.content_store = store
         app.state.language = Language.slovene()
         app.state.srs_db = SRSDatabase(":memory:")
+
+        pipeline = LessonPipeline(
+            story_generator=None,
+            renderer=None,
+            audio_dir=None,
+            content_stores={"sl": store},
+            languages={"sl": Language.slovene()},
+            srs_dbs={},
+            activity_log=ActivityLog(maxlen=100),
+            llm_client=None,
+        )
+        app.state.pipeline = pipeline
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
@@ -955,6 +987,9 @@ class TestLessonAuthoringEndpoints:
         assert len(data["sections"]) == 4
         assert data["warnings"] == []
         assert store.get_lesson(data["id"]) is not None
+        # Verify pipeline enqueued a render job
+        assert pipeline._jobs[("sl", "c1", 1)]["state"] == "queued"
+        assert pipeline._jobs[("sl", "c1", 1)]["kind"] == "render"
         app.state.srs_db.close()
         del app.state.srs_db
 

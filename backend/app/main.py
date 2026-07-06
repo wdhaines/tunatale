@@ -17,9 +17,11 @@ from app.audio.edge_tts import EdgeTTSService  # noqa: E402
 from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
 from app.audio.renderer import LessonRenderer  # noqa: E402
 from app.config import settings  # noqa: E402
+from app.generation.pipeline import LessonPipeline  # noqa: E402
 from app.generation.planner import CurriculumPlanner  # noqa: E402
 from app.generation.story import StoryGenerator  # noqa: E402
 from app.languages import get_language, get_preprocessor  # noqa: E402
+from app.llm.activity import ActivityLog  # noqa: E402
 from app.llm.cassette import CassetteLLMClient  # noqa: E402
 from app.llm.client import LLMClient, reasoning_params_for_model  # noqa: E402
 from app.llm.usage_ledger import UsageLedger  # noqa: E402
@@ -95,11 +97,13 @@ def _language_db_map() -> dict[str, str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    activity_log = ActivityLog()
     real_client = LLMClient(
         groq_api_key=settings.groq_api_key,
         groq_model=settings.llm_model,
         groq_extra_body_params=reasoning_params_for_model(settings.llm_model),
         usage_ledger=UsageLedger(settings.llm_usage_ledger_path),
+        on_call=activity_log.record_llm_call,
     )
     _BACKEND_DIR = Path(__file__).parent.parent
     cassette_path = _BACKEND_DIR / "tests/cassettes/e2e.json"
@@ -134,6 +138,7 @@ async def lifespan(app: FastAPI):
     app.state.content_store = content_stores[default_code]
     app.state.language = languages[default_code]
 
+    app.state.activity_log = activity_log
     app.state.llm = llm
     app.state.curriculum_planner = CurriculumPlanner(llm)
     app.state.story_generator = StoryGenerator(llm)
@@ -146,6 +151,20 @@ async def lifespan(app: FastAPI):
         delivery_bitrate=settings.audio_delivery_bitrate,
     )
     app.state.audio_dir = _BACKEND_DIR / "output/audio"
+
+    pipeline = LessonPipeline(
+        story_generator=app.state.story_generator,
+        renderer=app.state.renderer,
+        audio_dir=app.state.audio_dir,
+        content_stores=content_stores,
+        languages=languages,
+        srs_dbs=srs_dbs,
+        activity_log=activity_log,
+        llm_client=real_client,
+    )
+    app.state.pipeline = pipeline
+    if settings.pipeline_autostart:
+        pipeline.start()
 
     # Warm the lemmatizer in the background so the first /listen or /transcript request
     # doesn't pay the model-load cost. Critically, this must NOT be awaited before the
@@ -161,6 +180,7 @@ async def lifespan(app: FastAPI):
     # Let the warm-up settle on shutdown. _warm_lemmatizer swallows its own exceptions,
     # so this never raises; by normal shutdown the pipeline is long since loaded.
     await warmup_task
+    await pipeline.shutdown()
     for db in srs_dbs.values():
         db.close()
     for store in content_stores.values():
@@ -210,8 +230,10 @@ async def _resolve_language_state(request, call_next):
 
 from app.api import admin, anki, audio, curriculum, generation, srs  # noqa: E402
 from app.api import llm as llm_api  # noqa: E402
+from app.api import pipeline as pipeline_api  # noqa: E402
 
 app.include_router(curriculum.router)
+app.include_router(pipeline_api.router)
 app.include_router(generation.router)
 app.include_router(srs.router)
 app.include_router(audio.router)

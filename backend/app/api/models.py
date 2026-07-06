@@ -133,6 +133,15 @@ class InflectionClozeRequest(BaseModel):
     translation: str = ""
 
 
+class PipelineRetryRequest(BaseModel):
+    day: int
+
+
+class PipelineRegenerateRequest(BaseModel):
+    day: int
+    strategy: Literal["WIDER", "DEEPER"] = "WIDER"
+
+
 class CreateBaseCardRequest(BaseModel):
     surface: str
     lemma: str

@@ -34,6 +34,11 @@ async def test_lifespan_populates_app_state(tmp_path, monkeypatch):
         assert test_app.state.audio_dir.is_absolute()
         # In mock mode, the LLM client should be wrapped with CassetteLLMClient
         assert isinstance(test_app.state.curriculum_planner._llm, CassetteLLMClient)
+        # ActivityLog is wired and the real client's on_call points to it
+        assert test_app.state.activity_log is not None
+        assert test_app.state.llm._real_client.on_call == test_app.state.activity_log.record_llm_call
+        # Pipeline is wired
+        assert test_app.state.pipeline is not None
 
     # After exiting the context the databases should be closed cleanly (no exception)
 
@@ -71,6 +76,24 @@ async def test_lifespan_live_mode_uses_raw_client(tmp_path, monkeypatch):
 
     async with lifespan(test_app):
         assert not isinstance(test_app.state.curriculum_planner._llm, CassetteLLMClient)
+
+
+async def test_lifespan_without_pipeline_autostart(tmp_path, monkeypatch):
+    """With pipeline_autostart=False, pipeline is wired but not started."""
+    from app.config import settings
+    from app.main import lifespan
+
+    monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'test.db'}")
+    monkeypatch.setattr(settings, "llm_mode", "mock")
+    monkeypatch.setattr(settings, "pipeline_autostart", False)
+
+    test_app = FastAPI()
+
+    async with lifespan(test_app):
+        assert test_app.state.pipeline is not None
+        assert test_app.state.pipeline._worker_task is None
+
+    await test_app.state.pipeline.shutdown()
 
 
 async def test_lifespan_warmup_failure_does_not_abort(tmp_path, monkeypatch):

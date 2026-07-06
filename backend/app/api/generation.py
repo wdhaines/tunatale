@@ -101,6 +101,11 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
         _background_tasks.add(task)
         task.add_done_callback(_background_tasks.discard)
 
+    # Enqueue a render job for this day
+    pipeline = getattr(request.app.state, "pipeline", None)
+    if pipeline is not None:
+        pipeline.enqueue(request.state.language_code, body.curriculum_id, body.day, "render")
+
     sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
     return {"id": lesson_id, "title": lesson.title, "sections": sections}
 
@@ -130,6 +135,11 @@ async def import_story(body: ImportLessonRequest, request: Request):
     srs_db = getattr(request.app.state, "srs_db", None)
     if srs_db is not None:
         asyncio.create_task(_prewarm_lesson(lesson, srs_db))
+
+    # Enqueue a render job for this day
+    pipeline = getattr(request.app.state, "pipeline", None)
+    if pipeline is not None:
+        pipeline.enqueue(request.state.language_code, body.curriculum_id, body.day, "render")
 
     sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
     return {
