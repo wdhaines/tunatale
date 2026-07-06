@@ -1,9 +1,16 @@
 <script lang="ts">
 	import { api } from '$lib/api';
 	import type { ProposedBatch } from '$lib/api';
+	import { onDestroy, onMount } from 'svelte';
 	import PlannerChat from '$lib/components/PlannerChat.svelte';
 	import ProposedBatchView from '$lib/components/ProposedBatch.svelte';
+	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
+	import PipelineCard from '$lib/components/PipelineCard.svelte';
+	import LlmActivityLog from '$lib/components/LlmActivityLog.svelte';
 	import { appendTurn, commitEvent, type ChatMessage } from '$lib/planner';
+	import { pipelineStore } from '$lib/stores/pipeline.svelte';
+	import { llmActivityStore } from '$lib/stores/llmActivity.svelte';
+	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -29,6 +36,18 @@
 	let error = $state('');
 	let chat: PlannerChat;
 
+	const pipelineStatus = $derived(pipelineStore.status);
+	const showPipeline = $derived(
+		pipelineStatus != null && pipelineStatus.days.some(d => d.state !== 'ready'),
+	);
+
+	// The rate-limit widget lives on this page now (not the global nav), so the
+	// page owns keeping its store fresh: on mount and after every planner turn
+	// (each turn consumes quota; a failed turn may BE the 429 worth showing).
+	onMount(() => {
+		rateLimitStore.refresh();
+	});
+
 	async function handleSend(message: string): Promise<boolean> {
 		pending = true;
 		error = '';
@@ -42,6 +61,7 @@
 			return false;
 		} finally {
 			pending = false;
+			rateLimitStore.refresh();
 		}
 	}
 
@@ -53,12 +73,17 @@
 			messages = [...messages, commitEvent(batch)];
 			committedCount = result.days;
 			proposed = null;
+			pipelineStore.start(data.curriculum.id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
 			pending = false;
 		}
 	}
+
+	onDestroy(() => {
+		pipelineStore.stop();
+	});
 </script>
 
 <main>
@@ -70,6 +95,7 @@
 				{data.curriculum.cefr_level} · {committedCount}
 				{committedCount === 1 ? 'day' : 'days'} committed
 			</p>
+			<RateLimitWidget />
 		</header>
 
 		<PlannerChat bind:this={chat} {messages} {pending} bind:batchSize onSend={handleSend} />
@@ -86,6 +112,19 @@
 			{pending}
 			onCommit={() => handleCommit(batch)}
 			onRevise={() => chat.focusInput()}
+		/>
+	{/if}
+
+	{#if showPipeline}
+		<PipelineCard
+			status={pipelineStatus!}
+			curriculumId={data.curriculum.id}
+			onRefresh={() => pipelineStore.start(data.curriculum.id)}
+		/>
+		<LlmActivityLog
+			events={llmActivityStore.events}
+			currentLine={llmActivityStore.currentLine}
+			rateLimitStatus={rateLimitStore.status}
 		/>
 	{/if}
 </main>

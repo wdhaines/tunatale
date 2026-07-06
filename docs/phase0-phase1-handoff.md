@@ -102,10 +102,45 @@ A synchronous `ActivityLog` (`app/llm/activity.py`) — bounded deque holding up
 - `asyncio.CancelledError` coverage uses `pipeline.shutdown()` while a job blocks on a slow queue item (not directly processable, so the CancelledError hits the inner `try`)
 - `ConcurrentEnqueueGuard` tests verify simultaneous enqueue doesn't create duplicate keys
 
+## Phase 2 — Pipeline UI + LLM status relocation (landed 2026-07-06)
+
+Frontend-only. New: `stores/pipeline.svelte.ts` (2s active / 10s idle poll, refreshes
+rateLimit + activity stores while active, generation-token guarded start/stop),
+`stores/llmActivity.svelte.ts` (since-cursor, 100-event cap, seq-dedupe + backend-restart
+reset), `PipelineCard.svelte`, `LlmActivityLog.svelte` (mock-mode empty state),
+`tests/pipeline-card.spec.ts` (2 Playwright specs, route-mocked pipeline/activity).
+Modified: `api.ts` (+4 methods/types), layout (RateLimitWidget + 30s poll removed),
+plan page (hosts widget, refreshes on mount + after each planner turn, commit starts
+pipeline, PipelineCard with onRefresh→restart), curriculum page (hosts widget + log,
+starts pipeline on mount, day click: ready→goto / failed→retry+restart / in-flight→
+fall through to cached lesson), DayPicker (`pipelineStates` prop → pulse/danger).
+
+**Post-review fixes (Fable, 2026-07-06):**
+- `pipeline.svelte.ts` `start()` called bare `stop()` which resolved to `window.stop()`
+  — restart leaked the old timer (two polling loops). Now closure `stop` + a generation
+  token discards in-flight responses/timers after stop/restart. Regression tests +
+  sabotage drill (stop-on-start disabled → leak test red → reverted).
+- `llmActivityStore.refresh()` appended re-sent seqs → duplicate keys crashed the keyed
+  `{#each}` (real trigger: backend restart resets the ring-buffer seq space). Dedupe +
+  reset-on-seq-regression.
+- Curriculum page day click hard no-op'd in-flight days, locking users out of a
+  readable lesson whose audio was still rendering (caught by lesson-navigation e2e
+  against the real reconciling backend + PIPELINE_AUTOSTART=false). In-flight now falls
+  through to the cached-lesson lookup.
+- Retry paths restart the poll (a failed pipeline idles at 10s cadence — the retried
+  state showed up to 10s late).
+- `PHANTOM_STATEMENT_LINES` exemption map in coverage-gate.ts REVERTED — the three
+  "phantom" lines were lazy Svelte prop thunks (`currentLine`, `curriculumId`) whose
+  reading branches no test exercised. Covered with real tests instead; the gate has
+  zero per-file exemptions.
+- RateLimitWidget relocation left it unfed (it never self-refreshes; the layout's
+  mount/focus/30s refreshes were deleted): hosting pages now refresh on mount and the
+  plan page after every planner turn.
+
 ## What's next
 
-Phases 2–3 (frontend pipeline UI + LLM status relocation, lesson source panel) per the
-plan at `~/.claude/plans/iterative-crunching-popcorn.md`.
+Phase 3 (lesson source panel) per the plan at
+`~/.claude/plans/iterative-crunching-popcorn.md`.
 
 ## Gates before commit
 

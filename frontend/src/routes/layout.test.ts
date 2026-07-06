@@ -31,13 +31,11 @@ vi.mock("$lib/api", () => ({
 import { api } from "$lib/api";
 import { syncStore } from "$lib/stores/sync.svelte";
 import { queueStatsStore } from "$lib/stores/queueStats.svelte";
-import { rateLimitStore } from "$lib/stores/rateLimit.svelte";
 import { themeStore } from "$lib/stores/theme.svelte";
 import Layout from "./+layout.svelte";
 
 const mockPeerSync = vi.mocked(api.peerSync);
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
-const mockGetRateLimit = vi.mocked(api.getRateLimit);
 
 const RESULT = {
   auth_success: true,
@@ -59,16 +57,6 @@ beforeEach(() => {
   nav.pathname = "/";
   syncStore.notify(null);
   queueStatsStore.set(null); // the badge reads a shared singleton — reset per test
-  rateLimitStore.set(null);
-  mockGetRateLimit.mockResolvedValue({
-    provider: "groq",
-    model: "openai/gpt-oss-120b",
-    llm_mode: "live",
-    snapshot: null,
-    last_429: null,
-    tokens_used_24h: null,
-    tokens_per_day_limit: 100000,
-  });
   // jsdom lacks matchMedia; the layout's theme init() needs it.
   (window as unknown as { matchMedia: unknown }).matchMedia = vi.fn(() => ({
     matches: false,
@@ -277,61 +265,5 @@ describe("root +layout.svelte", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(mockFetchQueueStats.mock.calls.length).toBe(callsBefore);
-  });
-
-  // ── rate-limit widget ──────────────────────────────────────────────────────
-
-  it("renders the RateLimitWidget in the nav-actions", () => {
-    const { container } = renderLayout();
-    expect(container.querySelector(".llm-chip")).not.toBeNull();
-  });
-
-  it("refreshes rate limit on mount", async () => {
-    renderLayout();
-    await waitFor(() => expect(mockGetRateLimit).toHaveBeenCalled());
-  });
-
-  it("refreshes rate limit on window focus", async () => {
-    renderLayout();
-    await waitFor(() => expect(mockGetRateLimit).toHaveBeenCalled());
-    const callsBefore = mockGetRateLimit.mock.calls.length;
-
-    window.dispatchEvent(new Event("focus"));
-
-    await waitFor(() => {
-      expect(mockGetRateLimit.mock.calls.length).toBeGreaterThan(callsBefore);
-    });
-  });
-
-  it("polls rate limit every 30s", async () => {
-    vi.useFakeTimers();
-    try {
-      renderLayout();
-      // Mount triggered first refresh
-      const callsBefore = mockGetRateLimit.mock.calls.length;
-
-      await vi.advanceTimersByTimeAsync(30000);
-
-      expect(mockGetRateLimit.mock.calls.length).toBeGreaterThan(callsBefore);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("stops polling rate limit on unmount", async () => {
-    vi.useFakeTimers();
-    try {
-      const { unmount } = renderLayout();
-      // Let mount refresh settle
-      await vi.advanceTimersByTimeAsync(0);
-      const callsBefore = mockGetRateLimit.mock.calls.length;
-
-      unmount();
-      await vi.advanceTimersByTimeAsync(30000);
-
-      expect(mockGetRateLimit.mock.calls.length).toBe(callsBefore);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 });

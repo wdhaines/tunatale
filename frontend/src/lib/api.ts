@@ -356,6 +356,66 @@ export interface ReviewQueueItem extends SRSItemDetail {
   direction: "recognition" | "production";
 }
 
+// ── Pipeline status ───────────────────────────────────────────────────
+
+export interface PipelineDayState {
+  day: number;
+  state: "queued" | "generating" | "rendering" | "ready" | "failed";
+  lesson_id: string | null;
+  has_audio: boolean;
+  error: string | null;
+  retryable: boolean | null;
+  detail: string | null;
+}
+
+export interface PipelineStatus {
+  active: boolean;
+  days: PipelineDayState[];
+}
+
+export interface PipelineRetryResponse {
+  status: "queued" | "ready";
+}
+
+export interface PipelineRegenerateRequest {
+  day: number;
+  strategy: ContentStrategy;
+}
+
+// ── LLM activity ──────────────────────────────────────────────────────
+
+export interface LlmCallEvent {
+  seq: number;
+  timestamp: number;
+  kind: "llm_call";
+  provider: string;
+  model: string;
+  latency_ms: number;
+  status: string;
+  is_fallback: boolean;
+  prompt_preview: string;
+  response_preview: string;
+  rate_limits: Record<string, unknown> | null;
+  reasoning_effort: string | null;
+}
+
+export interface PipelineEvent {
+  seq: number;
+  timestamp: number;
+  kind: "pipeline";
+  curriculum_id: string;
+  day: number;
+  state: string;
+  message: string;
+}
+
+export type ActivityEvent = LlmCallEvent | PipelineEvent;
+
+export interface ActivityResponse {
+  latest: number;
+  events: ActivityEvent[];
+}
+
 export interface PeerSyncResult {
   auth_success: boolean;
   pull_required: number | null;
@@ -572,6 +632,35 @@ export class TunaTaleAPI {
 
   async probeRateLimit(): Promise<RateLimitStatus> {
     return this.request("/api/llm/rate-limit/probe", { method: "POST" });
+  }
+
+  async getPipeline(curriculumId: string): Promise<PipelineStatus> {
+    return this.request(`/api/curriculum/${curriculumId}/pipeline`);
+  }
+
+  async retryPipelineDay(curriculumId: string, day: number): Promise<PipelineRetryResponse> {
+    return this.request(`/api/curriculum/${curriculumId}/pipeline/retry`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ day }),
+    });
+  }
+
+  async regenerateDay(
+    curriculumId: string,
+    day: number,
+    strategy: ContentStrategy,
+  ): Promise<PipelineRetryResponse> {
+    return this.request(`/api/curriculum/${curriculumId}/pipeline/regenerate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ day, strategy }),
+    });
+  }
+
+  async getLlmActivity(since?: number): Promise<ActivityResponse> {
+    const qs = since != null ? `?since=${since}` : "";
+    return this.request(`/api/llm/activity${qs}`);
   }
 
   async fetchReviewQueue(

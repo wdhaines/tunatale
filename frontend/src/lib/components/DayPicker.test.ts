@@ -65,14 +65,11 @@ describe("DayPicker", () => {
     const { getAllByRole } = render(DayPicker, { props: { curriculum, onSelectDay } });
     const buttons = getAllByRole("button") as HTMLButtonElement[];
 
-    // Start loading Day 1
     await fireEvent.click(buttons[0]);
-    // While Day 1 is loading, buttons should be disabled
     expect(buttons[1].disabled).toBe(true);
 
-    // Clicking Day 2 while loading should be a no-op (covered by if guard)
     await fireEvent.click(buttons[1]);
-    expect(onSelectDay).toHaveBeenCalledTimes(1); // Only called once
+    expect(onSelectDay).toHaveBeenCalledTimes(1);
 
     resolveClick();
   });
@@ -120,5 +117,63 @@ describe("DayPicker", () => {
     const buttons = getAllByRole("button") as HTMLButtonElement[];
     expect(buttons[0].classList.contains("state-listened")).toBe(true);
     expect(buttons[0].textContent).toContain("✓");
+  });
+
+  describe("pipelineStates prop", () => {
+    it("adds pulse class for queued pipeline state", () => {
+      const pipelineStates = new Map([[1, "queued"]]);
+      const { getAllByRole } = render(DayPicker, {
+        props: { curriculum, onSelectDay: vi.fn(), pipelineStates },
+      });
+      const buttons = getAllByRole("button") as HTMLButtonElement[];
+      expect(buttons[0].classList.contains("pulse")).toBe(true);
+    });
+
+    it("adds pulse class for generating pipeline state", () => {
+      const pipelineStates = new Map([[1, "generating"]]);
+      const { getAllByRole } = render(DayPicker, {
+        props: { curriculum, onSelectDay: vi.fn(), pipelineStates },
+      });
+      const buttons = getAllByRole("button") as HTMLButtonElement[];
+      expect(buttons[0].classList.contains("pulse")).toBe(true);
+    });
+
+    it("adds pulse class for rendering pipeline state", () => {
+      const pipelineStates = new Map([[2, "rendering"]]);
+      const { getAllByRole } = render(DayPicker, {
+        props: { curriculum, onSelectDay: vi.fn(), pipelineStates },
+      });
+      const buttons = getAllByRole("button") as HTMLButtonElement[];
+      expect(buttons[1].classList.contains("pulse")).toBe(true);
+    });
+
+    it("adds danger class for failed pipeline state", () => {
+      const pipelineStates = new Map([[1, "failed"]]);
+      const { getAllByRole } = render(DayPicker, {
+        props: { curriculum, onSelectDay: vi.fn(), pipelineStates },
+      });
+      const buttons = getAllByRole("button") as HTMLButtonElement[];
+      expect(buttons[0].classList.contains("danger")).toBe(true);
+    });
+
+    it("no extra class for ready pipeline state", () => {
+      const pipelineStates = new Map([[1, "ready"]]);
+      const { getAllByRole } = render(DayPicker, {
+        props: { curriculum, onSelectDay: vi.fn(), pipelineStates },
+      });
+      const buttons = getAllByRole("button") as HTMLButtonElement[];
+      expect(buttons[0].classList.contains("pulse")).toBe(false);
+      expect(buttons[0].classList.contains("danger")).toBe(false);
+    });
+
+    it("ignores pipelineStates for days not in the map", () => {
+      const pipelineStates = new Map([[5, "queued"]]);
+      const { getAllByRole } = render(DayPicker, {
+        props: { curriculum, onSelectDay: vi.fn(), pipelineStates },
+      });
+      const buttons = getAllByRole("button") as HTMLButtonElement[];
+      expect(buttons[0].classList.contains("pulse")).toBe(false);
+      expect(buttons[2].classList.contains("pulse")).toBe(false);
+    });
   });
 });

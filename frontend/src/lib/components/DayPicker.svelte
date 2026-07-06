@@ -6,9 +6,10 @@
 		curriculum: CurriculumSummary;
 		onSelectDay: (day: number) => void | Promise<void>;
 		progress?: Map<number, string>;
+		pipelineStates?: Map<number, string>;
 	}
 
-	let { curriculum, onSelectDay, progress = new Map() }: Props = $props();
+	let { curriculum, onSelectDay, progress = new Map(), pipelineStates = new Map() }: Props = $props();
 
 	let loadingDay: number | null = $state(null);
 
@@ -17,6 +18,13 @@
 		if (!lessonId) return 'empty';
 		if (listenedStore.has(lessonId)) return 'listened';
 		return 'generated';
+	}
+
+	function pipelineClass(day: number): string {
+		const ps = pipelineStates.get(day);
+		if (ps === 'queued' || ps === 'generating' || ps === 'rendering') return 'pulse';
+		if (ps === 'failed') return 'danger';
+		return '';
 	}
 
 	async function handleClick(day: number) {
@@ -33,8 +41,11 @@
 <div class="days">
 	{#each curriculum.days as d (d.day)}
 		{@const state = dayState(d.day)}
+		{@const pClass = pipelineClass(d.day)}
 		<button
 			class="day-btn state-{state}"
+			class:pulse={pClass === 'pulse'}
+			class:danger={pClass === 'danger'}
 			onclick={() => handleClick(d.day)}
 			disabled={loadingDay !== null}
 		>
@@ -80,6 +91,17 @@
 	}
 	.state-listened {
 		background: var(--color-success);
+		color: var(--color-on-primary);
+	}
+	.day-btn.pulse {
+		animation: pulse 1.2s ease-in-out infinite;
+	}
+	@keyframes pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.4; }
+	}
+	.day-btn.danger {
+		background: var(--color-danger);
 		color: var(--color-on-primary);
 	}
 </style>

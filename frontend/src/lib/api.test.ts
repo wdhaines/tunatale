@@ -1352,3 +1352,148 @@ describe("TunaTaleAPI language header", () => {
     expect(result.active).toBe("sl");
   });
 });
+
+describe("pipeline API", () => {
+  let api: TunaTaleAPI;
+
+  beforeEach(() => {
+    api = new TunaTaleAPI(BASE);
+    vi.restoreAllMocks();
+  });
+
+  it("getPipeline calls GET /api/curriculum/:id/pipeline", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockOk({
+          active: true,
+          days: [
+            {
+              day: 1,
+              state: "generating",
+              lesson_id: null,
+              has_audio: false,
+              error: null,
+              retryable: true,
+              detail: "attempt 1/4",
+            },
+          ],
+        }),
+      ),
+    );
+    const result = await api.getPipeline("cid-1");
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/curriculum/cid-1/pipeline`);
+    expect(result.active).toBe(true);
+    expect(result.days[0].state).toBe("generating");
+  });
+
+  it("getPipeline returns inactive when no pipeline exists", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ active: false, days: [] })));
+    const result = await api.getPipeline("cid-1");
+    expect(result.active).toBe(false);
+    expect(result.days).toEqual([]);
+  });
+
+  it("retryPipelineDay calls POST /api/curriculum/:id/pipeline/retry", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ status: "queued" })));
+    const result = await api.retryPipelineDay("cid-1", 2);
+    expect(fetch).toHaveBeenCalledWith(
+      `${BASE}/api/curriculum/cid-1/pipeline/retry`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ day: 2 }) }),
+    );
+    expect(result.status).toBe("queued");
+  });
+
+  it("retryPipelineDay returns ready when audio already exists", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ status: "ready" })));
+    const result = await api.retryPipelineDay("cid-1", 3);
+    expect(result.status).toBe("ready");
+  });
+
+  it("regenerateDay calls POST /api/curriculum/:id/pipeline/regenerate", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ status: "queued" })));
+    const result = await api.regenerateDay("cid-1", 2, "DEEPER");
+    expect(fetch).toHaveBeenCalledWith(
+      `${BASE}/api/curriculum/cid-1/pipeline/regenerate`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ day: 2, strategy: "DEEPER" }),
+      }),
+    );
+    expect(result.status).toBe("queued");
+  });
+
+  it("regenerateDay defaults to WIDER strategy", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ status: "queued" })));
+    await api.regenerateDay("cid-1", 1, "WIDER");
+    expect(fetch).toHaveBeenCalledWith(
+      `${BASE}/api/curriculum/cid-1/pipeline/regenerate`,
+      expect.objectContaining({ body: JSON.stringify({ day: 1, strategy: "WIDER" }) }),
+    );
+  });
+
+  describe("getLlmActivity", () => {
+    it("calls GET /api/llm/activity with no params", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ latest: 0, events: [] })));
+      const result = await api.getLlmActivity();
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/llm/activity`);
+      expect(result.latest).toBe(0);
+    });
+
+    it("appends ?since=N when provided", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ latest: 5, events: [] })));
+      await api.getLlmActivity(3);
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/llm/activity?since=3`);
+    });
+
+    it("returns events when available", async () => {
+      const events = [
+        {
+          seq: 1,
+          timestamp: 1000,
+          kind: "pipeline",
+          curriculum_id: "cid-1",
+          day: 1,
+          state: "queued",
+          message: "enqueued",
+        },
+        {
+          seq: 2,
+          timestamp: 1001,
+          kind: "llm_call",
+          provider: "groq",
+          model: "llama",
+          latency_ms: 500,
+          status: "success",
+          is_fallback: false,
+          prompt_preview: "",
+          response_preview: "",
+          rate_limits: null,
+          reasoning_effort: null,
+        },
+      ];
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ latest: 2, events })));
+      const result = await api.getLlmActivity();
+      expect(result.events).toHaveLength(2);
+      expect(result.events[0].kind).toBe("pipeline");
+      expect(result.events[1].kind).toBe("llm_call");
+    });
+  });
+
+  it("throws on non-ok pipeline response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Not Found")));
+    await expect(api.getPipeline("missing")).rejects.toThrow(
+      "GET /api/curriculum/missing/pipeline: Not Found",
+    );
+  });
+
+  it("throws on non-ok retry with 409", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(mockFailBody({ detail: "Day 2 is already active" }, 409)),
+    );
+    await expect(api.retryPipelineDay("cid-1", 2)).rejects.toThrow(
+      "POST /api/curriculum/cid-1/pipeline/retry: Day 2 is already active",
+    );
+  });
+});
