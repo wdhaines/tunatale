@@ -72,8 +72,13 @@ class Settings(BaseSettings):
 
     anki_model_name: str = ""
     pixabay_api_key: str = ""
-    # lowercase (default) | classla (Slovene) | stanza (Norwegian + other Stanza
-    # langs, wired to target_language). One engine per process — see get_lemmatizer.
+    # Global lemmatizer gate: "lowercase" (default) forces the deterministic
+    # lowercase engine for EVERY language (the CI/test pin, and how a deployment
+    # disables the heavy PyTorch pipelines). Any other value ("classla", "stanza",
+    # "auto", …) opts in, and the ENGINE is then chosen per language from the
+    # registry (app.languages.get_lemmatizer_type: sl→classla, no→stanza). This is
+    # per-language, not one-engine-per-process, so multi-language mode
+    # (database_urls) analyzes each language with its own model. See get_lemmatizer.
     lemmatizer_type: str = "lowercase"
 
     anki_new_per_day_default: int = 20

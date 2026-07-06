@@ -83,7 +83,7 @@ async def test_lifespan_warmup_failure_does_not_abort(tmp_path, monkeypatch):
 
     mock_lemmatizer = MagicMock()
     mock_lemmatizer.lemmatize.side_effect = RuntimeError("classla model missing")
-    monkeypatch.setattr("app.main.get_lemmatizer", lambda: mock_lemmatizer)
+    monkeypatch.setattr("app.main.get_lemmatizer", lambda code: mock_lemmatizer)
 
     test_app = FastAPI()
 
@@ -138,14 +138,14 @@ async def test_warm_lemmatizer_swallows_exception(monkeypatch):
     from app.srs.database import SRSDatabase
     from app.storage.store import ContentStore
 
-    monkeypatch.setattr("app.main.get_lemmatizer", lambda: MagicMock(_cache_version="test-v1"))
+    monkeypatch.setattr("app.main.get_lemmatizer", lambda code: MagicMock(_cache_version="test-v1"))
 
     # A content_store that raises when list_lessons is called
     store = ContentStore(":memory:")
     srs_db = SRSDatabase(":memory:")
     try:
         store.close()  # close the store so list_lessons fails
-        await _warm_lemmatizer(srs_db, store)  # should not raise
+        await _warm_lemmatizer({"sl": srs_db}, {"sl": store})  # should not raise
     finally:
         srs_db.close()
 
@@ -228,7 +228,7 @@ async def test_warm_lemmatizer_skips_cheap_lemmatizer():
     store = ContentStore(":memory:")
     srs_db = SRSDatabase(":memory:")
     try:
-        await _warm_lemmatizer(srs_db, store)  # should not raise
+        await _warm_lemmatizer({"sl": srs_db}, {"sl": store})  # should not raise
     finally:
         srs_db.close()
         store.close()

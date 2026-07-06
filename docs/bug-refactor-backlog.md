@@ -17,7 +17,8 @@ present + logically correct, every cited guardrail test exists and passes;
 ~925 targeted backend/frontend tests green across the three sweeps). One gap
 found and closed in the same audit: #20's promised `is_absolute()` guardrail
 assertion was missing from `test_main_lifespan.py` (the fix itself was in
-place) — added. #25 re-confirmed still OPEN. Cosmetic doc drift corrected in
+place) — added. #25 re-confirmed still OPEN, then **FIXED 2026-07-05** (see §25).
+Cosmetic doc drift corrected in
 place (#2/#17 quoted error strings, #12 test names, #29 mixin paths).
 **Branch note (resolved 2026-07-05)**: `refactor/god-module-split` and
 `fix/backlog-sweep` (which alone carried #18, incl. the gpt-oss cassette
@@ -33,9 +34,9 @@ unresolved load-bearing decision. **[BP]** = Big-Pickle-ready — prescriptive
 brief + guardrail test, outside the Anki/sync danger zone (the standing
 [[feedback_big_pickle_readiness_rubric]]). #18 (the cassette re-record) landed
 2026-07-04; the remaining in-house items are the two danger-zone observations
-(parity code — oracle harness green before/after). #25 is
-BP-drafts-Claude-reviews. Everything else in Tiers 1–3 is dispatchable to Big
-Pickle as-is.
+(parity code — oracle harness green before/after). #25 (the last open
+Tier-1–3 item) landed 2026-07-05. Everything else in Tiers 1–3 is dispatchable
+to Big Pickle as-is.
 
 ### Tier 1 — do next (real bugs, low→medium cost, high ROI)
 
@@ -70,7 +71,7 @@ Pickle as-is.
 | ~~32~~ | ✅ | Filter orphaned planner feedback at prompt-build | **FIXED 2026-07-03** — `build_planner_turn_prompt` filters `feedback` against `existing_days`. |
 | ~~13-fu~~ | ✅ | One-shot lowercase `token_glosses` migration for pre-fix lessons | **FIXED 2026-07-03** — `app/storage/lowercase_glosses.py` + guardrail tests. |
 | ~~21~~ | ✅ | Renderer preprocessor per-language (latent; harmless while both pass-through) | **FIXED 2026-07-03** — `LessonRenderer` takes `dict[str, TextPreprocessor]`; `_render_section` receives `language_code`. |
-| 25 | BP* | `get_lemmatizer` per-language (latent; *biggest/riskiest BP — Claude reviews the request-scoping change) |
+| ~~25~~ | ✅ | `get_lemmatizer` per-language | **FIXED 2026-07-05** — `get_lemmatizer(language_code)`, `@cache`-per-code; engine chosen from `app.languages.get_lemmatizer_type` (sl→classla, no→stanza), `lemmatizer_type="lowercase"` a global off-switch. `api/srs.py` module-level `_lemmatizer` singleton removed → per-request resolution; warm-up warms each configured language. |
 
 ### Tier 4 — owner-only (Claude), scheduled separately
 
@@ -502,31 +503,47 @@ exits 0 but writes an empty file). Tests:
 `test_empty_ffmpeg_output_returns_original_bytes` (both mock at the
 `subprocess.run` boundary only).
 
-## 25. OPEN [→ BP* · T3] — `get_lemmatizer()` singleton breaks in multi-language mode (companion to #21)
+## 25. FIXED — `get_lemmatizer()` singleton broke in multi-language mode (companion to #21)
 
-**Latent bug / trap.** `backend/app/srs/lemmatizer.py::get_lemmatizer` is
-`@lru_cache(maxsize=1)` and its docstring's premise is "one `target_language`
-per process" — but multi-language mode (`settings.database_urls`, per-request
-`X-TT-Language` middleware in `main.py`) runs BOTH languages in one process.
-There, every request gets the single cached lemmatizer for the configured
-`lemmatizer_type`/`target_language` — e.g. Norwegian transcripts analyzed by
-the Slovene classla model (or silently by the lowercase fallback). Same wiring
-class as item #21 (renderer preprocessor).
+**Fixed 2026-07-05.** `backend/app/srs/lemmatizer.py::get_lemmatizer` was
+`@lru_cache(maxsize=1)` on a premise of "one `target_language` per process" —
+but multi-language mode (`settings.database_urls`, per-request `X-TT-Language`
+middleware in `main.py`) runs BOTH languages in one process, so every request
+got the single cached lemmatizer wired to the configured
+`lemmatizer_type`/`target_language` (Norwegian transcripts analyzed by the
+Slovene classla model, or silently lowercased). Same wiring class as #21.
 
-**Fix sketch (bigger than #21 — verify call-site behavior as you go).** Make
-the factory per-language: `get_lemmatizer(language_code)` with an
-`lru_cache`-per-code (classla for "sl", stanza for "no", lowercase otherwise —
-the mapping can live in `app/languages.py` next to the preprocessor factory).
-Callers already carry `language_code` (`lemmatize_surfaces_in_context`,
-`analyze_sentence_cached`, `extract_transcript`, `api/srs.py`'s module-level
-`_lemmatizer`); the module-level `_lemmatizer` in `api/srs.py` must become
-per-request (resolve from `request.state.language_code`). Keep the
-warm-up (`main.py::_warm_from_lessons`) warming each configured language.
+**What landed.**
+- **Per-language factory.** `get_lemmatizer(language_code: str)` is now
+  `@cache`-keyed per code. The engine is a **property of the language**: a new
+  `lemmatizer_type` field on `LanguageConfig` + `get_lemmatizer_type(code)` in
+  `app/languages.py` (sl→`classla`, no→`stanza`, else `lowercase`), sitting next
+  to the preprocessor factory. `settings.lemmatizer_type == "lowercase"` is now a
+  **global off-switch** (the CI/test pin, and how a deployment disables the heavy
+  PyTorch pipelines): with it set, every language resolves to
+  `LowercaseLemmatizer`. Any other value opts in and the per-language engine is
+  built, falling back to lowercase + a logged warning when its package isn't
+  importable. `settings.target_language` is no longer read by the factory.
+- **No more singleton.** The module-level `app.api.srs._lemmatizer` is deleted;
+  the three call sites (`mark_lesson_listened`, `get_lesson_transcript`,
+  `create_base_card`) resolve `get_lemmatizer(<content language_code>)` per
+  request (the content's `lesson`/`body` language, which is what the lemmatizer's
+  own methods compare against). Other callers threaded their known code:
+  `api/generation.py` (`lesson.language_code`), `generation/story.py`
+  (`language.code`), `storage/regloss_lessons.py` (`language.code`).
+- **Warm-up warms each configured language.** `main.py::_warm_lemmatizer` now
+  takes the `srs_dbs`/`content_stores` dict and loops every configured language
+  with its own engine (per-language try/except so one missing model doesn't abort
+  the others).
 
-**Guardrail test.** Two-language settings; assert `get_lemmatizer("sl")` and
-`get_lemmatizer("no")` return different instances of the right classes
-(importability-fallback aside), and that the transcript endpoint threads the
-request language's lemmatizer.
+**Guardrail tests.** `test_lemmatizer.py::TestGetLemmatizer::test_per_language_engines_in_one_process`
+(gate open + both modules faked → `get_lemmatizer("sl")` is `ClasslaLemmatizer`,
+`get_lemmatizer("no")` is `StanzaLemmatizer`, `"en"` stays lowercase, cached per
+code) and `test_gate_off_is_lowercase_for_every_language`;
+`test_api.py::…::test_threads_lesson_language_to_lemmatizer` spies
+`get_lemmatizer` and asserts a Norwegian lesson's transcript resolves it with
+`"no"`. `test_suite_pins_lowercase_lemmatizer_regardless_of_env` updated to the
+gate. `./test.sh` green (backend 3365 passed @100%, frontend 947 @100%, e2e 15).
 
 ## 26. FIXED — `POST /items` looked up the just-created item by LIKE-search → wrong row
 

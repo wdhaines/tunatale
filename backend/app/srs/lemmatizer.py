@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict, dataclass, fields
-from functools import lru_cache
+from functools import cache
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -291,48 +291,62 @@ def _parse_person(feats: str) -> str:
 # ── Factory ────────────────────────────────────────────────────────────────
 
 
-@lru_cache(maxsize=1)
-def get_lemmatizer() -> Lemmatizer:
-    """Return a cached lemmatizer based on ``settings.lemmatizer_type``.
+@cache
+def get_lemmatizer(language_code: str) -> Lemmatizer:
+    """Return a cached lemmatizer for *language_code*.
 
-    * ``"lowercase"`` (default) — ``LowercaseLemmatizer``
-    * ``"classla"`` — ``ClasslaLemmatizer`` (Slovene), falling back to
-      ``LowercaseLemmatizer`` with a logged warning if classla is not importable.
-    * ``"stanza"`` — ``StanzaLemmatizer`` wired to ``settings.target_language``
-      (Norwegian and other Stanza-supported languages), same fallback.
+    The engine is a **property of the language** (``app.languages.get_lemmatizer_type``):
+    ``classla`` for Slovene, ``stanza`` for Norwegian, ``lowercase`` otherwise.
+    ``settings.lemmatizer_type == "lowercase"`` (the default, and the test/CI pin)
+    is a global off-switch — every language gets ``LowercaseLemmatizer`` so analysis
+    stays deterministic without the heavy PyTorch deps. **Any other value** opts in
+    and the per-language engine is built, falling back to ``LowercaseLemmatizer``
+    with a logged warning when the engine's package is not importable.
 
-    One lemmatizer per process: the app runs a single ``target_language`` per
-    process (``.env`` flips ``target_language`` + ``database_url`` together), so the
-    Slovene process sets ``classla`` and the Norwegian process sets ``stanza``.
+    Cached per ``language_code`` (``functools.cache``) so multi-language mode
+    (``settings.database_urls``, one process serving both languages) gives each
+    language its own engine: a Norwegian request is never analyzed by the Slovene
+    model. The lemmatizer's own methods short-circuit to lowercase for any code
+    other than the one it was built for, so the *code passed to the methods must
+    match the code passed here* — callers resolve from the content's
+    ``language_code`` (lesson / body), not a global default.
     """
     from app.config import settings
+    from app.languages import get_lemmatizer_type
 
-    lemmatizer_type = settings.lemmatizer_type
-    if lemmatizer_type == "classla":
+    # Global off-switch: keep every language on the deterministic lowercase engine
+    # (the CI/test default, and the single flag a deployment flips to disable the
+    # heavy NLP pipelines everywhere).
+    if settings.lemmatizer_type == "lowercase":
+        return LowercaseLemmatizer()
+
+    engine = get_lemmatizer_type(language_code)
+    if engine == "classla":
         try:
             import classla  # noqa: F401 — check importability at factory time
 
-            return ClasslaLemmatizer()
+            return ClasslaLemmatizer(language_code)
         except ImportError:
             _logger.warning(
-                "classla not installed; falling back to LowercaseLemmatizer. "
+                "classla not installed; falling back to LowercaseLemmatizer for %s. "
                 "Install the opt-in extra: `uv sync --all-groups --extra classla` "
                 "(pins classla==2.2.1; the torch==2.12.0 override for Python 3.14 is "
-                "baked into pyproject.toml). Then set lemmatizer_type=classla. "
-                "See docs/walkthrough.md §22.2."
+                "baked into pyproject.toml). See docs/walkthrough.md §22.2.",
+                language_code,
             )
-    elif lemmatizer_type == "stanza":
+    elif engine == "stanza":
         try:
             import stanza  # noqa: F401 — check importability at factory time
 
-            return StanzaLemmatizer(settings.target_language)
+            return StanzaLemmatizer(language_code)
         except ImportError:
             _logger.warning(
-                "stanza not installed; falling back to LowercaseLemmatizer. "
+                "stanza not installed; falling back to LowercaseLemmatizer for %s. "
                 "Install the opt-in extra: `uv sync --all-groups --extra stanza` "
                 "(the torch==2.12.0 override for Python 3.14 is shared with classla). "
                 'Then download the model — `uv run python -c "import stanza; '
-                "stanza.download('nb')\"` — and set lemmatizer_type=stanza."
+                "stanza.download('nb')\"`.",
+                language_code,
             )
     return LowercaseLemmatizer()
 

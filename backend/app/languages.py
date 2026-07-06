@@ -29,6 +29,15 @@ class LanguageConfig:
       into (recognition + production). ``None`` for languages TT doesn't mint
       into (``en``).
 
+    ``lemmatizer_type`` names the morphological engine the language's transcripts
+    are analyzed with (``classla`` for Slovene, ``stanza`` for Norwegian,
+    ``lowercase`` otherwise). It is a **property of the language**, not of the
+    process: multi-language mode (``settings.database_urls``) runs both languages
+    in one process, so a global ``settings.lemmatizer_type`` singleton would give
+    every request the same engine (a Norwegian transcript analyzed by the Slovene
+    model). ``settings.lemmatizer_type == "lowercase"`` is a global off-switch;
+    see ``app.srs.lemmatizer.get_lemmatizer``.
+
     ``en`` (English) is the gloss/translation language — it has a ``Language``
     entry but **no** preprocessor and **no** TT-managed Anki deck of its own
     (both fields are ``None``). ``get_preprocessor("en")`` / ``get_deck_name("en")``
@@ -39,6 +48,7 @@ class LanguageConfig:
     preprocessor_factory: type[TextPreprocessor] | None = None
     deck_name: str | None = None
     vocab_notetype: VocabNotetype | None = None
+    lemmatizer_type: str = "lowercase"
 
 
 _CONFIGS: dict[str, LanguageConfig] = {
@@ -47,6 +57,7 @@ _CONFIGS: dict[str, LanguageConfig] = {
         preprocessor_factory=SlovenePreprocessor,
         deck_name="1. Slovene",
         vocab_notetype=SLOVENE_VOCAB,
+        lemmatizer_type="classla",
     ),
     "en": LanguageConfig(
         language=Language.english(),
@@ -59,6 +70,7 @@ _CONFIGS: dict[str, LanguageConfig] = {
         preprocessor_factory=NorwegianPreprocessor,
         deck_name="0. 6000 Most Frequent Norwegian Words [Part 1]",
         vocab_notetype=NORWEGIAN_VOCAB,
+        lemmatizer_type="stanza",
     ),
 }
 
@@ -112,6 +124,19 @@ def get_tts_voice(code: str, role: str = "female-1") -> str:
     if not voice:
         raise ValueError(f"Language {code!r} has no {role!r} TTS voice configured")
     return voice
+
+
+def get_lemmatizer_type(code: str) -> str:
+    """Return the morphological-engine name for *code* (``classla`` / ``stanza`` /
+    ``lowercase``).
+
+    Unknown codes and languages with no dedicated engine default to ``lowercase``.
+    This picks *which* engine a language wants; whether it is actually built (vs.
+    forced to lowercase) is the global ``settings.lemmatizer_type`` gate in
+    ``app.srs.lemmatizer.get_lemmatizer``.
+    """
+    config = _CONFIGS.get(code)
+    return config.lemmatizer_type if config else "lowercase"
 
 
 def get_vocab_notetype(code: str) -> VocabNotetype | None:

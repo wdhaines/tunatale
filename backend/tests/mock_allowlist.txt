@@ -14,5 +14,3 @@ app.anki.sync._MEDIA_DIR
 app.api.srs._MEDIA_DIR
 app.anki.media.vocab_media._MEDIA_DIR
 app.anki.model_discovery._CACHE_PATH
-# Cached-instance pin (deterministic test defaults)
-app.api.srs._lemmatizer

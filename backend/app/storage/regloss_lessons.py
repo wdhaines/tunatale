@@ -173,7 +173,7 @@ async def _main() -> None:  # pragma: no cover — CLI wiring, run once against 
     store = ContentStore(settings.database_url.replace("sqlite:///", ""))
     llm = LLMClient(groq_api_key=settings.groq_api_key, groq_model=settings.llm_model)
     try:
-        count = await regloss_all(store, llm, get_lemmatizer(), language)
+        count = await regloss_all(store, llm, get_lemmatizer(language.code), language)
         logger.info("Re-glossed %d lesson(s)", count)
     finally:
         store.close()
