@@ -81,6 +81,9 @@ def _settings_overrides(monkeypatch, tmp_path):
     # no-ops in tests.
     monkeypatch.setattr(settings, "anki_media_path", tmp_path / "collection.media")
     monkeypatch.setattr(settings, "sync_log", tmp_path / "logs" / "sync.log")
+    # The LLM token-usage ledger otherwise appends to the real ~/.tunatale file
+    # (and would read a developer's real spend into tally assertions).
+    monkeypatch.setattr(settings, "llm_usage_ledger_path", tmp_path / "llm_usage.log")
     # Add-time vocab media (POST /items, /listen, base cards) reads this key to
     # decide whether to fetch image+audio. A developer's real ``.env`` key would
     # otherwise make card-creating endpoint tests hit Pixabay/Forvo live. Pin

@@ -5,9 +5,11 @@
 	import { page } from '$app/stores';
 	import SyncButton from '$lib/components/SyncButton.svelte';
 	import QueueStatsWidget from '$lib/components/QueueStatsWidget.svelte';
+	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
 	import { languageStore } from '$lib/stores/language.svelte';
 	import { syncStore } from '$lib/stores/sync.svelte';
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
+	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
 	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
 
@@ -27,12 +29,21 @@
 		prefetchPrefStore.init();
 		languageStore.init();
 		queueStatsStore.refresh();
+		rateLimitStore.refresh();
 	});
 
 	$effect(() => {
-		const onFocus = () => queueStatsStore.refresh();
+		const onFocus = () => {
+			queueStatsStore.refresh();
+			rateLimitStore.refresh();
+		};
 		window.addEventListener('focus', onFocus);
 		return () => window.removeEventListener('focus', onFocus);
+	});
+
+	$effect(() => {
+		const id = setInterval(() => rateLimitStore.refresh(), 30000);
+		return () => clearInterval(id);
 	});
 
 	$effect(() => {
@@ -63,6 +74,7 @@
 		<a href="/cards" class="nav-link" class:active={onCards}>Cards</a>
 	</div>
 	<div class="nav-actions">
+		<RateLimitWidget />
 		<a
 			href="/settings"
 			class="settings-link"

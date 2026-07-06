@@ -38,6 +38,26 @@ async def test_lifespan_populates_app_state(tmp_path, monkeypatch):
     # After exiting the context the databases should be closed cleanly (no exception)
 
 
+async def test_lifespan_wires_usage_ledger(tmp_path, monkeypatch):
+    """The real LLM client gets a persistent UsageLedger (24h token tally for
+    the rate-limit status endpoint), anchored at settings.llm_usage_ledger_path."""
+    from app.config import settings
+    from app.llm.usage_ledger import UsageLedger
+    from app.main import lifespan
+
+    monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'test.db'}")
+    monkeypatch.setattr(settings, "llm_mode", "mock")
+    monkeypatch.setattr(settings, "llm_usage_ledger_path", tmp_path / "llm_usage.log")
+
+    test_app = FastAPI()
+
+    async with lifespan(test_app):
+        real = test_app.state.llm._real_client
+        assert isinstance(real.usage_ledger, UsageLedger)
+        real.usage_ledger.record(10, now=1_000.0)
+        assert UsageLedger(tmp_path / "llm_usage.log").tokens_used_last_24h(now=1_000.0) == 10
+
+
 async def test_lifespan_live_mode_uses_raw_client(tmp_path, monkeypatch):
     """In live mode, lifespan uses an unwrapped LLMClient."""
     from app.config import settings

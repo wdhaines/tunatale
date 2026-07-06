@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # budget on reasoning. Free-tier TPM is 8000; WIDER story gen fits, DEEPER (bigger
     # prompt) can approach the ceiling.
     llm_model: str = "openai/gpt-oss-120b"
+    # Groq free-tier daily token cap for gpt-oss-120b — the binding limit, but it
+    # appears in no response header, so TT tallies its own spend (UsageLedger) and
+    # the rate-limit UI compares against this number.
+    groq_tokens_per_day_limit: int = 100_000
+    llm_usage_ledger_path: Path = Path("~/.tunatale/llm_usage.log").expanduser()
 
     target_language: str = "sl"
 

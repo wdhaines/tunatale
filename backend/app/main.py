@@ -22,6 +22,7 @@ from app.generation.story import StoryGenerator  # noqa: E402
 from app.languages import get_language, get_preprocessor  # noqa: E402
 from app.llm.cassette import CassetteLLMClient  # noqa: E402
 from app.llm.client import LLMClient, reasoning_params_for_model  # noqa: E402
+from app.llm.usage_ledger import UsageLedger  # noqa: E402
 from app.models.lesson import SectionType  # noqa: E402
 from app.srs.database import SRSDatabase  # noqa: E402
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for  # noqa: E402
@@ -94,6 +95,7 @@ async def lifespan(app: FastAPI):
         groq_api_key=settings.groq_api_key,
         groq_model=settings.llm_model,
         groq_extra_body_params=reasoning_params_for_model(settings.llm_model),
+        usage_ledger=UsageLedger(settings.llm_usage_ledger_path),
     )
     _BACKEND_DIR = Path(__file__).parent.parent
     cassette_path = _BACKEND_DIR / "tests/cassettes/e2e.json"
@@ -203,6 +205,7 @@ async def _resolve_language_state(request, call_next):
 
 
 from app.api import admin, anki, audio, curriculum, generation, srs  # noqa: E402
+from app.api import llm as llm_api  # noqa: E402
 
 app.include_router(curriculum.router)
 app.include_router(generation.router)
@@ -210,6 +213,7 @@ app.include_router(srs.router)
 app.include_router(audio.router)
 app.include_router(anki.router)
 app.include_router(admin.router)
+app.include_router(llm_api.router)
 
 
 @app.get("/api/health")

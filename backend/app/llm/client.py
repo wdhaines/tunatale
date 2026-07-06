@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 import shutil
@@ -73,6 +74,7 @@ class LLMClient:
         groq_extra_body_params: dict | None = None,
         on_call: Callable[[dict], None] | None = None,
         fallback_client: LLMClient | None = None,
+        usage_ledger=None,
     ) -> None:
         self.groq_api_key = groq_api_key
         self.groq_model = groq_model
@@ -97,6 +99,12 @@ class LLMClient:
         # parse the content as JSON use this to distinguish truncation from junk.
         self.last_finish_reason: str | None = None
         self.last_usage: dict = {}
+        # Rate-limit visibility (GET /api/llm/rate-limit): headers from the most
+        # recent Groq response (success or 429), the most recent 429, and an
+        # optional persistent token tally (the daily cap has no header).
+        self.last_rate_limits: dict | None = None
+        self.last_429: dict | None = None
+        self.usage_ledger = usage_ledger
         self._next_call_at: float = 0.0
         self._groq_call_delay: float = 0.0
         self._last_429_at: float = 0.0
@@ -266,6 +274,9 @@ class LLMClient:
                     rl_requests_remaining,
                     rl_requests_limit,
                 )
+                rl_snapshot = self._snapshot_rate_limits(response)
+                if rl_snapshot is not None:
+                    self.last_rate_limits = rl_snapshot
 
                 if response.status_code == 429:
                     retry_after_raw = response.headers.get("retry-after", "2")
@@ -274,6 +285,7 @@ class LLMClient:
                     except ValueError:
                         retry_after = 2.0
                     msg = f"Groq returned 429 Too Many Requests (retry after {retry_after_raw}s)"
+                    self.last_429 = {"at": time.time(), "retry_after_s": retry_after}
                     if retry_after <= self.max_retry_after_s:
                         self._last_429_at = time.monotonic()
                         self._groq_call_delay = retry_after
@@ -338,6 +350,9 @@ class LLMClient:
                 self.last_provider = "groq"
                 self.last_finish_reason = data["choices"][0].get("finish_reason")
                 self.last_usage = data.get("usage") or {}
+                total_tokens = self.last_usage.get("total_tokens")
+                if self.usage_ledger is not None and isinstance(total_tokens, int):
+                    self.usage_ledger.record(total_tokens)
                 if self.last_finish_reason == "length":
                     logger.warning(
                         "Groq response truncated at the completion-token cap (finish_reason=length, cap=%s)",
@@ -406,6 +421,49 @@ class LLMClient:
                 return content
 
         raise LLMError("Groq call loop exhausted", [])  # pragma: no cover
+
+    @staticmethod
+    def _snapshot_rate_limits(response: httpx.Response) -> dict | None:
+        """Parse Groq rate-limit headers (present on 2xx AND 429) into a snapshot.
+
+        Header semantics per Groq docs: *-requests is the daily request window,
+        *-tokens is the per-minute token window. Returns None when the response
+        carries no rate-limit headers at all (e.g. a 5xx) so a real snapshot is
+        never clobbered by an empty one.
+        """
+        headers = response.headers
+
+        def _int(name: str) -> int | None:
+            value = headers.get(name, "")
+            return int(value) if value.isdigit() else None
+
+        def _reset(name: str) -> float | None:
+            value = headers.get(name, "")
+            seconds = _parse_reset_duration(value) if value else 0.0
+            return seconds if seconds > 0 else None
+
+        snapshot = {
+            "requests_limit": _int("x-ratelimit-limit-requests"),
+            "requests_remaining": _int("x-ratelimit-remaining-requests"),
+            "requests_reset_s": _reset("x-ratelimit-reset-requests"),
+            "tokens_limit": _int("x-ratelimit-limit-tokens"),
+            "tokens_remaining": _int("x-ratelimit-remaining-tokens"),
+            "tokens_reset_s": _reset("x-ratelimit-reset-tokens"),
+        }
+        if all(v is None for v in snapshot.values()):
+            return None
+        return {"captured_at": time.time(), **snapshot}
+
+    async def probe_rate_limits(self) -> dict | None:
+        """Fire a minimal Groq request purely to refresh rate-limit headers.
+
+        Deliberately bypasses complete()'s fallback chain: a probe must never
+        cascade into Ollama, and even a 429 refreshes the snapshot (the headers
+        are captured before the error is raised).
+        """
+        with contextlib.suppress(LLMError):
+            await self._call_groq("ping", system_prompt=None, temperature=0.0, max_tokens=1)
+        return self.last_rate_limits
 
     async def _start_ollama(self) -> bool:  # pragma: no cover
         """Try to start 'ollama serve' in the background. Returns True if started."""

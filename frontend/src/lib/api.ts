@@ -327,6 +327,31 @@ export interface QueueStats {
   fsrs_source?: string;
 }
 
+export interface RateLimitSnapshot {
+  age_s: number | null;
+  requests_limit: number | null;
+  requests_remaining: number | null;
+  requests_reset_in_s: number | null;
+  tokens_limit: number | null;
+  tokens_remaining: number | null;
+  tokens_reset_in_s: number | null;
+}
+
+export interface RateLimitLast429 {
+  ago_s: number | null;
+  retry_in_s: number | null;
+}
+
+export interface RateLimitStatus {
+  provider: string;
+  model: string;
+  llm_mode: string;
+  snapshot: RateLimitSnapshot | null;
+  last_429: RateLimitLast429 | null;
+  tokens_used_24h: number | null;
+  tokens_per_day_limit: number | null;
+}
+
 export interface ReviewQueueItem extends SRSItemDetail {
   direction: "recognition" | "production";
 }
@@ -539,6 +564,14 @@ export class TunaTaleAPI {
 
   async fetchQueueStats(): Promise<QueueStats> {
     return this.request("/api/srs/queue-stats");
+  }
+
+  async getRateLimit(): Promise<RateLimitStatus> {
+    return this.request("/api/llm/rate-limit");
+  }
+
+  async probeRateLimit(): Promise<RateLimitStatus> {
+    return this.request("/api/llm/rate-limit/probe", { method: "POST" });
   }
 
   async fetchReviewQueue(

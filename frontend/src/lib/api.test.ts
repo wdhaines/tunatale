@@ -1206,6 +1206,69 @@ describe("TunaTaleAPI", () => {
     });
   });
 
+  describe("getRateLimit", () => {
+    it("calls GET /api/llm/rate-limit and returns parsed shape", async () => {
+      const payload = {
+        provider: "groq",
+        model: "openai/gpt-oss-120b",
+        llm_mode: "live",
+        snapshot: {
+          age_s: 12.3,
+          requests_limit: 1000,
+          requests_remaining: 999,
+          requests_reset_in_s: 86.4,
+          tokens_limit: 8000,
+          tokens_remaining: 7927,
+          tokens_reset_in_s: 0.5,
+        },
+        last_429: null,
+        tokens_used_24h: 73,
+        tokens_per_day_limit: 100000,
+      };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(payload)));
+
+      const result = await api.getRateLimit();
+
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/llm/rate-limit`);
+      expect(result.provider).toBe("groq");
+      expect(result.snapshot?.tokens_remaining).toBe(7927);
+      expect(result.last_429).toBeNull();
+    });
+
+    it("throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Not Found")));
+      await expect(api.getRateLimit()).rejects.toThrow("Not Found");
+    });
+  });
+
+  describe("probeRateLimit", () => {
+    it("calls POST /api/llm/rate-limit/probe and returns parsed shape", async () => {
+      const payload = {
+        provider: "groq",
+        model: "openai/gpt-oss-120b",
+        llm_mode: "live",
+        snapshot: null,
+        last_429: null,
+        tokens_used_24h: null,
+        tokens_per_day_limit: 100000,
+      };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(payload)));
+
+      const result = await api.probeRateLimit();
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/llm/rate-limit/probe`,
+        expect.objectContaining({ method: "POST" }),
+      );
+      expect(result.snapshot).toBeNull();
+    });
+
+    it("throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Service Unavailable")));
+      await expect(api.probeRateLimit()).rejects.toThrow("Service Unavailable");
+    });
+  });
+
   describe("fetchReviewQueue", () => {
     it("GETs /api/srs/review-queue and returns the payload", async () => {
       const queue = [{ id: 1, text: "foo" }];

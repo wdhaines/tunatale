@@ -336,6 +336,118 @@ class TestResponseMetadata:
         assert client.last_usage == {"prompt_tokens": 9}
 
 
+_RL_HEADERS = {
+    "x-ratelimit-limit-requests": "1000",
+    "x-ratelimit-remaining-requests": "998",
+    "x-ratelimit-reset-requests": "2m52.8s",
+    "x-ratelimit-limit-tokens": "8000",
+    "x-ratelimit-remaining-tokens": "7282",
+    "x-ratelimit-reset-tokens": "5.385s",
+}
+
+
+class TestRateLimitSnapshot:
+    """Rate-limit header capture — feeds GET /api/llm/rate-limit."""
+
+    async def test_snapshot_captured_on_success(self, client):
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(
+                return_value=Response(200, headers=_RL_HEADERS, json=_make_groq_response("ok"))
+            )
+            await client.complete("q")
+        snap = client.last_rate_limits
+        assert snap["requests_limit"] == 1000
+        assert snap["requests_remaining"] == 998
+        assert snap["requests_reset_s"] == pytest.approx(172.8)
+        assert snap["tokens_limit"] == 8000
+        assert snap["tokens_remaining"] == 7282
+        assert snap["tokens_reset_s"] == pytest.approx(5.385)
+        assert snap["captured_at"] == pytest.approx(time.time(), abs=5)
+
+    async def test_response_without_rl_headers_keeps_prior_snapshot(self, client):
+        """A response carrying no rate-limit headers (5xx, or a bare mock) must not
+        clobber the last real snapshot with an empty one."""
+        prior = {"captured_at": 1.0, "tokens_remaining": 7000}
+        client.last_rate_limits = prior
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, json=_make_groq_response("ok")))
+            await client.complete("q")
+        assert client.last_rate_limits is prior
+
+    async def test_partial_rl_headers_still_captured(self, client):
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(
+                return_value=Response(
+                    200,
+                    headers={"x-ratelimit-remaining-tokens": "123"},
+                    json=_make_groq_response("ok"),
+                )
+            )
+            await client.complete("q")
+        snap = client.last_rate_limits
+        assert snap["tokens_remaining"] == 123
+        assert snap["requests_limit"] is None
+
+    async def test_snapshot_and_last_429_captured_on_429(self):
+        """A 429 response carries the same headers — capture them AND the retry-after,
+        so the UI can show 'rate limited, retry in Ns' even when the call failed."""
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(
+                return_value=Response(429, headers={"retry-after": "7", **_RL_HEADERS}, json={})
+            )
+            respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("ok")))
+            await client.complete("q")
+        assert client.last_429["retry_after_s"] == 7.0
+        assert client.last_429["at"] == pytest.approx(time.time(), abs=5)
+        assert client.last_rate_limits["tokens_remaining"] == 7282
+
+    async def test_usage_ledger_records_total_tokens(self, tmp_path):
+        from app.llm.usage_ledger import UsageLedger
+
+        ledger = UsageLedger(tmp_path / "usage.log")
+        client = LLMClient(groq_api_key="test-key", usage_ledger=ledger)
+        resp = {
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, json=resp))
+            await client.complete("q")
+        assert ledger.tokens_used_last_24h() == 15
+
+    async def test_no_usage_in_response_records_nothing(self, tmp_path):
+        from app.llm.usage_ledger import UsageLedger
+
+        ledger = UsageLedger(tmp_path / "usage.log")
+        client = LLMClient(groq_api_key="test-key", usage_ledger=ledger)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, json=_make_groq_response("ok")))
+            await client.complete("q")
+        assert ledger.tokens_used_last_24h() == 0
+
+    async def test_probe_refreshes_snapshot(self, client):
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(
+                return_value=Response(200, headers=_RL_HEADERS, json=_make_groq_response("ok"))
+            )
+            snap = await client.probe_rate_limits()
+        assert snap["tokens_remaining"] == 7282
+        assert snap is client.last_rate_limits
+
+    async def test_probe_swallows_llm_error_without_ollama_fallback(self, client):
+        """A probe exists only to read headers — a Groq failure must not cascade
+        into the Ollama fallback chain or raise to the caller."""
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
+            ollama_route = respx.post(OLLAMA_GENERATE_URL).mock(
+                return_value=Response(200, json=_make_ollama_response("ok"))
+            )
+            snap = await client.probe_rate_limits()
+        assert snap is None
+        assert ollama_route.call_count == 0
+
+
 class TestExtraBodyParams:
     """Tests for reasoning_effort and max_completion_tokens extra body params."""
 
