@@ -16,6 +16,7 @@ from app.storage.lesson_io import (
     speaker_warnings,
     validate_story,
 )
+from app.models.curriculum import Curriculum, CurriculumDay
 from app.storage.store import ContentStore
 
 
@@ -321,6 +322,37 @@ class TestImportLesson:
         latest = store.get_latest_lesson_by_day("c1", 3)
         assert latest is not None
         assert latest[0] == second_id
+
+    def test_import_syncs_curriculum_day_title(self, store, language):
+        cur = Curriculum(
+            id="c1",
+            topic="Test",
+            language_code="sl",
+            cefr_level="A1",
+            days=[CurriculumDay(day=3, title="Old Title", focus="grammar", collocations=[], learning_objective="obj")],
+        )
+        store.save_curriculum("c1", cur)
+        file = {"curriculum_id": "c1", "day": 3, "story": _story()}
+        lesson_id, lesson = import_lesson(store, file, language)
+        reloaded = store.get_curriculum("c1")
+        assert reloaded is not None
+        day3 = next(d for d in reloaded.days if d.day == 3)
+        assert day3.title == lesson.title
+
+    def test_import_skips_title_sync_on_mismatched_day(self, store, language):
+        cur = Curriculum(
+            id="c1",
+            topic="Test",
+            language_code="sl",
+            cefr_level="A1",
+            days=[CurriculumDay(day=3, title="Keep Me", focus="grammar", collocations=[], learning_objective="obj")],
+        )
+        store.save_curriculum("c1", cur)
+        file = {"curriculum_id": "c1", "day": 5, "story": _story()}
+        import_lesson(store, file, language)
+        reloaded = store.get_curriculum("c1")
+        assert reloaded is not None
+        assert reloaded.days[0].title == "Keep Me"
 
 
 class TestRoundTrip:

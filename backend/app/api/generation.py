@@ -93,6 +93,8 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
 
     lesson_id = mint_id(lesson.title)
     store.save_lesson(lesson_id, body.curriculum_id, body.day, lesson)
+    curriculum_day.title = lesson.title
+    store.save_curriculum(body.curriculum_id, curriculum)
 
     # Pre-warm the analysis cache off the request path
     srs_db = getattr(request.app.state, "srs_db", None)

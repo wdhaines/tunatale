@@ -330,6 +330,8 @@ class LessonPipeline:
 
             lesson_id = mint_id(lesson.title)
             store.save_lesson(lesson_id, curriculum_id, day, lesson)
+            curriculum_day.title = lesson.title
+            store.save_curriculum(curriculum_id, curriculum)
             record["lesson_id"] = lesson_id
 
             # Pre-warm the analysis cache in the background

@@ -422,8 +422,10 @@
 				{#each transcript.key_phrases as kp, kpIdx (kp.phrase)}
 					{@const seekCue = controller && cues ? findKeyPhraseSeekCue(cues, kpIdx) : null}
 					<li class:active-kp={activeRef?.kind === 'key_phrase' && activeRef.target_index === kpIdx}>
-						<span class="kp-phrase">{kp.phrase}</span>
-						<span class="kp-translation">{kp.translation}</span>
+						<div class="kp-text">
+							<span class="kp-phrase">{kp.phrase}</span>
+							<span class="kp-translation">{kp.translation}</span>
+						</div>
 						{#if seekCue}
 							<button class="seek-btn" onclick={() => controller!.seekToCue(seekCue!)}>▶</button>
 						{/if}
@@ -802,9 +804,13 @@
 	.key-phrases-list li {
 		display: flex;
 		flex-direction: column;
-		gap: 0.1rem;
 		padding: 0.25rem 0;
 		border-bottom: 1px solid var(--color-border);
+	}
+	.kp-text {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
 	}
 	.kp-phrase {
 		font-weight: 500;
@@ -815,7 +821,6 @@
 	}
 	.key-phrases-list .seek-btn {
 		margin-left: auto;
-		align-self: center;
 	}
 	.scene-header {
 		margin: 1.25rem 0 0.5rem;
