@@ -157,6 +157,44 @@
 		return pipelineStore.status.days.find((d) => d.day === data.lesson.day) ?? null;
 	});
 
+	// Track this lesson's day record WITHOUT the active gate so we can detect
+	// transitions (e.g. rendering→ready) even after the pipeline goes inactive.
+	let pipelineDayRecord = $derived.by(() => {
+		if (!pipelineStore.status) return null;
+		return pipelineStore.status.days.find((d) => d.day === data.lesson.day) ?? null;
+	});
+
+	// Plain let (not $state): we only need to remember across effect runs, not
+	// trigger a re-run when it changes.
+	let prevPipelineDayState: string | null = null;
+
+	$effect(() => {
+		const record = pipelineDayRecord;
+		const lessonId = data.lesson.id;
+
+		if (record) {
+			const prev = prevPipelineDayState;
+			prevPipelineDayState = record.state;
+
+			if (
+				// Transition from a non-ready state to ready (pipeline just finished)
+				(prev != null && prev !== 'ready' && record.state === 'ready') ||
+				// Page loaded after pipeline already finished — audio still missing
+				(prev == null && record.state === 'ready' && record.has_audio && !audio)
+			) {
+				api.getLessonAudio(lessonId)
+					.then((a) => {
+						if (data.lesson.id === lessonId) audio = a;
+					})
+					.catch((e) => {
+						if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
+					});
+			}
+		} else {
+			prevPipelineDayState = null;
+		}
+	});
+
 	async function handleMarkListened() {
 		const lessonId = data.lesson.id;
 		listenLoading = true;

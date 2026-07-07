@@ -9,6 +9,7 @@ vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...ar
 
 vi.mock("$lib/api", () => ({
   api: {
+    getLessonAudio: vi.fn(),
     renderAudio: vi.fn(),
     getLessonTranscript: vi.fn(),
     markAsListened: vi.fn(),
@@ -62,6 +63,7 @@ function stubViewport(mobile: boolean) {
   }));
 }
 
+const mockGetLessonAudio = vi.mocked(api.getLessonAudio);
 const mockRenderAudio = vi.mocked(api.renderAudio);
 const mockGetTranscript = vi.mocked(api.getLessonTranscript);
 const mockMarkAsListened = vi.mocked(api.markAsListened);
@@ -1760,6 +1762,106 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio: null, transcript: null } },
       });
       expect(container.querySelector(".pipeline-state")).toBeFalsy();
+    });
+
+    it("fetches audio when pipeline day is ready and audio is null", async () => {
+      mockGetLessonAudio.mockResolvedValue(audio);
+      (pipelineStore as any).status = {
+        active: true,
+        days: [
+          {
+            day: 1,
+            state: "ready",
+            has_audio: true,
+            lesson_id: null,
+            error: null,
+            retryable: null,
+            detail: null,
+          },
+        ],
+      };
+      const { container } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: null } },
+      });
+      await waitFor(() => {
+        expect(mockGetLessonAudio).toHaveBeenCalledWith("l1");
+      });
+      await waitFor(() => {
+        expect(container.querySelector(".player")).toBeTruthy();
+      });
+    });
+
+    it("does not refetch audio on repeated ready polls", async () => {
+      mockGetLessonAudio.mockResolvedValue(audio);
+      (pipelineStore as any).status = {
+        active: true,
+        days: [
+          {
+            day: 1,
+            state: "ready",
+            has_audio: true,
+            lesson_id: null,
+            error: null,
+            retryable: null,
+            detail: null,
+          },
+        ],
+      };
+      render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: null } },
+      });
+      await waitFor(() => {
+        expect(mockGetLessonAudio).toHaveBeenCalledTimes(1);
+      });
+      // After the fetch resolves, audio is set. The effect could re-run because
+      // audio is a tracked dependency — must not call getLessonAudio again.
+      await waitFor(() => {
+        expect(mockGetLessonAudio).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it("does not fetch audio when a different day is in the pipeline", () => {
+      (pipelineStore as any).status = {
+        active: true,
+        days: [
+          {
+            day: 2,
+            state: "ready",
+            has_audio: true,
+            lesson_id: null,
+            error: null,
+            retryable: null,
+            detail: null,
+          },
+        ],
+      };
+      render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: null } },
+      });
+      expect(mockGetLessonAudio).not.toHaveBeenCalled();
+    });
+
+    it("surfaces error when getLessonAudio fails", async () => {
+      mockGetLessonAudio.mockRejectedValue(new Error("audio fetch failed"));
+      (pipelineStore as any).status = {
+        active: true,
+        days: [
+          {
+            day: 1,
+            state: "ready",
+            has_audio: true,
+            lesson_id: null,
+            error: null,
+            retryable: null,
+            detail: null,
+          },
+        ],
+      };
+      const { findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: null } },
+      });
+      expect(await findByText("audio fetch failed")).toBeTruthy();
+      expect(mockGetLessonAudio).toHaveBeenCalledTimes(1);
     });
   });
 
