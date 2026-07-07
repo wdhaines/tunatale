@@ -47,6 +47,7 @@
 	// (each turn consumes quota; a failed turn may BE the 429 worth showing).
 	onMount(() => {
 		rateLimitStore.ensureFresh();
+		pipelineStore.start(data.curriculum.id);
 	});
 
 	async function handleReset() {
@@ -90,6 +91,7 @@
 		} finally {
 			pending = false;
 			rateLimitStore.refresh();
+			llmActivityStore.refresh();
 		}
 	}
 
@@ -160,12 +162,12 @@
 			curriculumId={data.curriculum.id}
 			onRefresh={() => pipelineStore.start(data.curriculum.id)}
 		/>
-		<LlmActivityLog
-			events={llmActivityStore.events}
-			currentLine={llmActivityStore.currentLine}
-			rateLimitStatus={rateLimitStore.status}
-		/>
 	{/if}
+	<LlmActivityLog
+		events={llmActivityStore.events}
+		currentLine={llmActivityStore.currentLine}
+		rateLimitStatus={rateLimitStore.status}
+	/>
 </main>
 
 <style>

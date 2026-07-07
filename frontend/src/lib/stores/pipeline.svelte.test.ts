@@ -114,8 +114,17 @@ describe("pipelineStore", () => {
     }
   });
 
-  it("refreshes rateLimit and activity stores while active", async () => {
+  it("refreshes rateLimit and activity stores every poll (active or idle)", async () => {
     mockGetPipeline.mockResolvedValue(ACTIVE_STATUS);
+    pipelineStore.start("cid-1");
+    await vi.waitFor(() => {
+      expect(rateLimitStore.refresh).toHaveBeenCalled();
+      expect(llmActivityStore.refresh).toHaveBeenCalled();
+    });
+  });
+
+  it("idle poll still refreshes both stores", async () => {
+    mockGetPipeline.mockResolvedValue(IDLE_STATUS);
     pipelineStore.start("cid-1");
     await vi.waitFor(() => {
       expect(rateLimitStore.refresh).toHaveBeenCalled();

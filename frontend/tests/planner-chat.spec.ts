@@ -65,7 +65,7 @@ test('planner chat: route-mocked turn + commit render the full propose/commit UI
 	await expect(page.getByText(CANNED_TURN_REPLY)).toBeVisible();
 
 	for (const day of CANNED_DAYS) {
-		await expect(page.getByText(`Day ${day.day}`)).toBeVisible();
+		await expect(page.getByText(`Day ${day.day}`, { exact: true })).toBeVisible();
 		await expect(page.getByText(day.title)).toBeVisible();
 		await expect(page.getByText(day.focus)).toBeVisible();
 		await expect(page.getByText(day.learning_objective)).toBeVisible();

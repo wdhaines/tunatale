@@ -67,13 +67,16 @@ function dayPayload(state: string) {
 	};
 }
 
-test('pipeline card: committed day walks queued → generating → ready, with live activity line', async ({
+	test('pipeline card: committed day walks queued → generating → ready, with live activity line', async ({
 	page,
 	request,
 }) => {
 	const curriculumId = await createPlan(request);
 
 	// Each poll (2s cadence while active) advances one step; clamps on the last.
+	// The pipeline store starts polling on mount now, so pre-commit polls consume
+	// some states. Reset the counter when the commit route is hit so the post-commit
+	// walk starts from queued.
 	const states = ['queued', 'generating', 'generating', 'generating', 'ready'];
 	let call = 0;
 	await page.route(`**/api/curriculum/${curriculumId}/pipeline`, async (route) => {
@@ -106,11 +109,20 @@ test('pipeline card: committed day walks queued → generating → ready, with l
 		});
 	});
 	await mockPlannerRoutes(page, curriculumId);
+	// Register AFTER mockPlannerRoutes so this commit handler takes priority (LIFO).
+	await page.route(`**/api/curriculum/${curriculumId}/plan/commit`, async (route) => {
+		call = 0; // reset so post-commit pipeline walk starts from queued
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ id: curriculumId, days: 1 }),
+		});
+	});
 
 	await page.goto(`/c/${curriculumId}/plan`);
 	await commitOneDay(page);
 
-	// Committing starts the pipeline store — the card appears and walks the states.
+	// Committing restarts the pipeline store — the card appears and walks the states.
 	await expect(page.getByText('queued', { exact: true })).toBeVisible();
 	await expect(page.getByText('generating', { exact: true })).toBeVisible({ timeout: 10000 });
 	// The activity log shows the current line fed by the polled events.

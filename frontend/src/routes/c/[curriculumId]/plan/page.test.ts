@@ -45,6 +45,7 @@ vi.mock("$lib/components/RateLimitWidget.svelte", () => ({
 import { api } from "$lib/api";
 import { pipelineStore } from "$lib/stores/pipeline.svelte";
 import { rateLimitStore } from "$lib/stores/rateLimit.svelte";
+import { llmActivityStore } from "$lib/stores/llmActivity.svelte";
 import type { CurriculumSummary, DayPlan, ProposedBatch } from "$lib/api";
 import Page from "./+page.svelte";
 
@@ -103,22 +104,29 @@ describe("/c/[curriculumId]/plan page", () => {
     expect(queryByText(/committed so far/i)).toBeNull();
   });
 
-  it("ensures rate-limit store is fresh on mount and refreshes after each planner turn", async () => {
+  it("ensures rate-limit store is fresh on mount, starts pipeline store, and refreshes after each planner turn", async () => {
     const ensureFresh = vi.mocked(rateLimitStore.ensureFresh);
     const refresh = vi.mocked(rateLimitStore.refresh);
+    const llmRefresh = vi.mocked(llmActivityStore.refresh);
     mockPlanTurn.mockResolvedValue({ reply: "ok", proposed: null });
 
     const { getByRole, getByPlaceholderText } = render(Page, {
       props: { data: { curriculum: makeCurriculum() } },
     });
-    await waitFor(() => expect(ensureFresh).toHaveBeenCalledTimes(1)); // mount
+    await waitFor(() => {
+      expect(ensureFresh).toHaveBeenCalledTimes(1); // mount
+      expect(mockPipelineStoreStart).toHaveBeenCalledWith("trip-1");
+    });
     expect(refresh).not.toHaveBeenCalled(); // mount uses ensureFresh, not refresh
 
     await fireEvent.input(getByPlaceholderText(/message the planner/i), {
       target: { value: "plan my trip" },
     });
     await fireEvent.click(getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1)); // after the turn
+    await waitFor(() => {
+      expect(refresh).toHaveBeenCalledTimes(1); // after the turn
+      expect(llmRefresh).toHaveBeenCalledTimes(1);
+    });
     // ensureFresh still only once — we do NOT touch post-turn calls
     expect(ensureFresh).toHaveBeenCalledTimes(1);
   });
@@ -192,7 +200,8 @@ describe("/c/[curriculumId]/plan page", () => {
     });
     expect(mockCommitPlan).toHaveBeenCalledWith("trip-1");
     expect(getByText(/3 days committed/i)).toBeTruthy();
-    expect(mockPipelineStoreStart).toHaveBeenCalledWith("trip-1");
+    // Called from onMount + from handleCommit
+    expect(mockPipelineStoreStart).toHaveBeenCalledTimes(2);
   });
 
   it("commit failure surfaces the error, keeps the proposal, does not start pipeline", async () => {
@@ -206,7 +215,8 @@ describe("/c/[curriculumId]/plan page", () => {
 
     await waitFor(() => expect(getByText(/no proposed batch/i)).toBeTruthy());
     expect(getByText(/proposed: day 1/i)).toBeTruthy();
-    expect(mockPipelineStoreStart).not.toHaveBeenCalled();
+    // Called once from onMount; the failed commit does not add a second call
+    expect(mockPipelineStoreStart).toHaveBeenCalledTimes(1);
   });
 
   it("Revise focuses the chat input", async () => {
@@ -333,6 +343,17 @@ describe("/c/[curriculumId]/plan page", () => {
       Object.defineProperty(llmActivityStore, "events", { value: [], configurable: true });
       Object.defineProperty(llmActivityStore, "currentLine", { value: "", configurable: true });
     }
+  });
+
+  it("renders LlmActivityLog unconditionally (pipeline status null)", () => {
+    // pipelineStore.status is null by default → showPipeline is false
+    const { getByText } = render(Page, {
+      props: { data: { curriculum: makeCurriculum() } },
+    });
+    // LlmActivityLog renders its empty state
+    expect(getByText("No LLM activity yet")).toBeTruthy();
+    // PipelineCard is NOT rendered (no non-ready days)
+    expect(getByText("LLM Activity")).toBeTruthy();
   });
 
   describe("reset chat", () => {

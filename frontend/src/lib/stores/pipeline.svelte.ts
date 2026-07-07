@@ -17,10 +17,8 @@ function createPipelineStore() {
       if (gen !== _gen) return;
       status = s;
       error = "";
-      if (s.active) {
-        rateLimitStore.refresh();
-        llmActivityStore.refresh();
-      }
+      rateLimitStore.refresh();
+      llmActivityStore.refresh();
     } catch (e) {
       if (gen !== _gen) return;
       error = e instanceof Error ? e.message : String(e);
