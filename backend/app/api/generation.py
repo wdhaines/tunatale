@@ -16,7 +16,7 @@ from app.models.lesson import Lesson, SectionType
 from app.models.strategy import ContentStrategy
 from app.srs.database import SRSDatabase
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for
-from app.storage.lesson_io import export_lesson, import_lesson, speaker_warnings
+from app.storage.lesson_io import export_lesson, import_lesson, speaker_warnings, sync_curriculum_day_title
 
 _logger = logging.getLogger(__name__)
 
@@ -93,8 +93,7 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
 
     lesson_id = mint_id(lesson.title)
     store.save_lesson(lesson_id, body.curriculum_id, body.day, lesson)
-    curriculum_day.title = lesson.title
-    store.save_curriculum(body.curriculum_id, curriculum)
+    sync_curriculum_day_title(store, body.curriculum_id, body.day, lesson.title)
 
     # Pre-warm the analysis cache off the request path
     srs_db = getattr(request.app.state, "srs_db", None)

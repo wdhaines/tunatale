@@ -29,7 +29,7 @@ def backfill_curriculum_day_titles(store: ContentStore) -> int:
     updated = 0
     for entry in store.list_curricula():
         curriculum = store.get_curriculum(entry["id"])
-        if curriculum is None:  # pragma: no cover — race: deleted between list_curricula and get_curriculum
+        if curriculum is None:
             continue
         dirty = False
         for day in curriculum.days:

@@ -185,6 +185,9 @@ class TestPipelineHappyPath:
         lesson_result = store.get_latest_lesson_by_day(cid, 1)
         assert lesson_result is not None
         assert lesson_result[1].title == "Generated Lesson"
+        curriculum = store.get_curriculum(cid)
+        assert curriculum is not None
+        assert curriculum.days[0].title == "Generated Lesson"
         assert len(fake_renderer.calls) == 1
         events, _ = activity_log.events_since(0)
         states = [e["state"] for e in events if e["kind"] == "pipeline"]

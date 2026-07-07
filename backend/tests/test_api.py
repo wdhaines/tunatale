@@ -697,6 +697,10 @@ class TestStoryEndpoints:
         assert "sections" in data
         # Verify lesson was persisted
         assert store.get_lesson(data["id"]) is not None
+        # Verify CurriculumDay.title was synced
+        curriculum = store.get_curriculum(curriculum_id)
+        assert curriculum is not None
+        assert curriculum.days[0].title == "Day 1"
         # Verify pipeline enqueued a render job
         assert pipeline._jobs[("sl", "test-curriculum-id", 1)]["state"] == "queued"
         assert pipeline._jobs[("sl", "test-curriculum-id", 1)]["kind"] == "render"

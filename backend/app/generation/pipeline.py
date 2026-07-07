@@ -12,6 +12,7 @@ from app.audio.render_service import render_lesson_audio
 from app.generation.ids import mint_id
 from app.generation.story import StoryGenerationError
 from app.llm.activity import ActivityLog
+from app.storage.lesson_io import sync_curriculum_day_title
 from app.storage.store import ContentStore
 
 logger = logging.getLogger(__name__)
@@ -330,8 +331,7 @@ class LessonPipeline:
 
             lesson_id = mint_id(lesson.title)
             store.save_lesson(lesson_id, curriculum_id, day, lesson)
-            curriculum_day.title = lesson.title
-            store.save_curriculum(curriculum_id, curriculum)
+            sync_curriculum_day_title(store, curriculum_id, day, lesson.title)
             record["lesson_id"] = lesson_id
 
             # Pre-warm the analysis cache in the background

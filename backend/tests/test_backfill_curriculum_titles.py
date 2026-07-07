@@ -14,7 +14,27 @@ def _lesson(title: str) -> Lesson:
     )
 
 
+class ForgetfulStore(ContentStore):
+    """Simulates the race: curriculum listed but gone by the time get_curriculum runs."""
+
+    def get_curriculum(self, curriculum_id: str) -> None:
+        return None
+
+
 class TestBackfillCurriculumDayTitles:
+    def test_skips_curriculum_deleted_between_list_and_get(self):
+        store = ForgetfulStore(":memory:")
+        cur = Curriculum(
+            id="c1",
+            topic="Test",
+            language_code="sl",
+            cefr_level="A1",
+            days=[CurriculumDay(day=1, title="Doomed", focus="grammar", collocations=[], learning_objective="obj")],
+        )
+        store.save_curriculum("c1", cur)
+        count = backfill_curriculum_day_titles(store)
+        assert count == 0
+
     def test_updates_mismatched_titles(self):
         store = ContentStore(":memory:")
         cur = Curriculum(

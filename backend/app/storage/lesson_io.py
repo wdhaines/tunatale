@@ -149,11 +149,11 @@ def import_lesson(store: ContentStore, file: dict, language: Language) -> tuple[
     lesson = build_lesson_from_story(story, language=language)
     lesson_id = mint_id(lesson.title)
     store.save_lesson(lesson_id, file["curriculum_id"], file["day"], lesson)
-    _sync_curriculum_day_title(store, file["curriculum_id"], file["day"], lesson.title)
+    sync_curriculum_day_title(store, file["curriculum_id"], file["day"], lesson.title)
     return lesson_id, lesson
 
 
-def _sync_curriculum_day_title(store: ContentStore, curriculum_id: str, day: int, title: str) -> None:
+def sync_curriculum_day_title(store: ContentStore, curriculum_id: str, day: int, title: str) -> None:
     curriculum = store.get_curriculum(curriculum_id)
     if curriculum is None:
         return
