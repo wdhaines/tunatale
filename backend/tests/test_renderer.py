@@ -1,7 +1,10 @@
 """LessonRenderer integration tests."""
 
 import asyncio
-import shutil
+import contextlib
+import subprocess
+import threading
+import time
 import wave
 from io import BytesIO
 from unittest.mock import AsyncMock
@@ -668,19 +671,25 @@ class TestEventLoopResponsiveness:
 
     Without ``asyncio.to_thread`` offloading, synchronous file I/O (soundfile
     reads/writes, ffmpeg subprocess calls) starves concurrent coroutines.
+
+    Uses a thread-based monitor to detect event-loop starvation during the
+    encode phase — the previous tick-counter approach was decorative because
+    ``asyncio.sleep`` timers fire in real time and accumulate post-hoc,
+    masking the blocking.
     """
 
-    @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not available")
-    async def test_render_does_not_block_event_loop(self, tmp_path):
-        """A concurrent asyncio task makes progress while ``render()`` is running.
+    async def test_render_does_not_block_event_loop(self, tmp_path, monkeypatch):
+        """A separate OS thread monitors ticker progress during the render.
 
-        The test starts a fast ticker alongside a multi-section opus render and
-        asserts the ticker advanced *during* the render.  Without
-        ``asyncio.to_thread`` wrappers the ticker would stall (0 advances)
-        during the sync I/O and ffmpeg calls.
+        A slow fake replaces ``subprocess.run`` at the ffmpeg boundary so the
+        render spends ~1.5s in the sync encode phase.  A concurrent ticker
+        advances every 10ms on the event loop.  A dedicated monitor thread
+        checks whether the ticker made progress *during* the encode window.
+
+        Without to_thread offloading the event loop is starved (ticker stalls);
+        with offloading the loop stays responsive (ticker advances freely while
+        encode runs in the thread pool).
         """
-        # A moderately-sized lesson so there are enough sync operations to
-        # distinguish async offloading from a blocking render.
         phrases_per_section = 8
         lesson = Lesson(
             title="Guardrail Test",
@@ -705,6 +714,15 @@ class TestEventLoopResponsiveness:
 
         mock_tts.synthesize = fake_synthesize
 
+        # Slow fake at the subprocess.Popen / subprocess.run boundary —
+        # each call sleeps 250ms to simulate ffmpeg encode time.
+        # 6 encode_audio calls (5 sections + 1 full lesson) = ~1.5s of sleep.
+        def fake_run(cmd, *args, **kwargs):
+            time.sleep(0.25)
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=b"faked opus data")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
         rdr = LessonRenderer(
             tts=mock_tts,
             preprocessors={"sl": SlovenePreprocessor()},
@@ -713,19 +731,38 @@ class TestEventLoopResponsiveness:
         )
         output = tmp_path / "lesson.opus"
 
-        ticks = 0
+        state: dict = {"ticks": 0, "blocked": False}
 
         async def ticker():
-            nonlocal ticks
-            for _ in range(500):
-                await asyncio.sleep(0)
-                ticks += 1
+            while True:
+                await asyncio.sleep(0.01)
+                state["ticks"] += 1
+
+        def monitor():
+            """Wait for the encode phase, then check if ticks advanced."""
+            try:
+                time.sleep(0.2)
+                before = state["ticks"]
+                time.sleep(0.6)
+                after = state["ticks"]
+                if after - before < 3:
+                    state["blocked"] = True
+            except Exception:
+                state["blocked"] = True  # fail-safe: any error → blocked
 
         ticker_task = asyncio.create_task(ticker())
-        await rdr.render(lesson, output)
-        await ticker_task
+        monitor_thread = threading.Thread(target=monitor, daemon=True)
+        monitor_thread.start()
 
-        assert ticks >= 5, (
-            f"Event loop was blocked during render: ticker only advanced {ticks} times "
-            "(expected ≥5 with asyncio.to_thread offloading)"
+        await rdr.render(lesson, output)
+
+        monitor_thread.join(timeout=5)
+        ticker_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await ticker_task
+
+        assert not state["blocked"], (
+            "Event loop was blocked during render — ticker stalled during the encode phase. "
+            f"Without to_thread offloading the sync subprocess.run calls starve the loop "
+            f"(ticks={state['ticks']})"
         )
