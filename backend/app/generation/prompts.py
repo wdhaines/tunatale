@@ -294,8 +294,15 @@ Language of your replies:
   with a brief English gloss in parentheses.
 
 Reply conversationally. When proposing days, include exactly one fenced ```json block of the form:
-{"days": [{"day": N, "title": "\u2026", "focus": "\u2026", "collocations": ["\u2026"], \
-"learning_objective": "\u2026", "story_guidance": "\u2026"}]}
+{"days": [{"day": N, "title": "<English>", "focus": "<English>", \
+"collocations": ["<target-language phrase, no gloss>"], \
+"learning_objective": "<English>", "story_guidance": "<English>"}]}
+
+Example (Norwegian curriculum):
+{"days": [{"day": 5, "title": "At the bakery", "focus": "Ordering pastries and paying", \
+"collocations": ["et br\u00f8d, takk", "hvor mye koster det?"], \
+"learning_objective": "Order food and handle payment in simple exchanges.", \
+"story_guidance": "A quick visit to a Bergen bakery; friendly small talk with the baker."}]}
 When only discussing, include no JSON. 3\u20138 collocations per day."""
 
 
@@ -395,5 +402,11 @@ def build_planner_turn_prompt(
 
     # 6  Closing instruction
     parts.append(f"If proposing, propose exactly {batch_size} days starting at day {start_day}.")
+    parts.append(
+        f"Respond in English \u2014 title, focus, learning_objective, and "
+        f"story_guidance in English \u2014 even though the committed plan and "
+        f"conversation above are in {language_name}. The collocations array "
+        f"is in {language_name}: bare phrases, no English glosses."
+    )
 
     return "\n".join(parts)

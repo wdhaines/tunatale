@@ -1,14 +1,16 @@
-"""Multi-turn cassette-backed planner scenario.
+"""Multi-turn cassette-backed planner scenarios.
 
 Turn 1 proposes 3 days, they are committed inline, feedback is added,
 then turn 2 proposes the next batch starting at day 4.
+Norwegian-context regression: 2 committed days in Norwegian + chat
+history, then proposes 2 more days — JSON fields must stay English.
 
 Record with:
     uv run pytest tests/test_planner_llm.py --llm-mode=record
 """
 
 from app.generation.planner import CurriculumPlanner
-from app.models.curriculum import Curriculum
+from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.language import Language
 
 
@@ -24,6 +26,8 @@ def _empty_curriculum() -> Curriculum:
 
 SNAPSHOT = "(no tracked vocabulary yet \u2014 assume a beginner at the stated CEFR level)"
 LANGUAGE = Language.slovene()
+
+_NORWEGIAN_CHARS = frozenset("æøåÆØÅ")
 
 
 class TestPlannerLLM:
@@ -82,3 +86,64 @@ class TestPlannerLLM:
         for d in turn2.proposed_days:
             for c in d.collocations:
                 assert "(" not in c, f"Collocation must be bare target-language, got: {c!r}"
+
+    async def test_norwegian_context_regression(self, cassette_llm):
+        """2 committed Norwegian days + chat → propose 2 more; JSON fields must stay English."""
+        planner = CurriculumPlanner(llm=cassette_llm)
+        curriculum = Curriculum(
+            id="planner-no-test",
+            topic="En reise til Bergen",
+            language_code="no",
+            cefr_level="A2",
+            metadata={
+                "planner": {
+                    "chat": [
+                        {"role": "user", "content": "Jeg vil lære norsk for en tur til Bergen"},
+                        {"role": "planner", "content": "Flott! La oss begynne med det grunnleggende."},
+                        {"role": "event", "content": "Committed days 1-2."},
+                    ],
+                    "proposed": None,
+                    "feedback": [],
+                }
+            },
+            days=[
+                CurriculumDay(
+                    day=1,
+                    title="Politiintervjuet – første vitne",
+                    focus="Enkel vitneforklaring og høflighet",
+                    collocations=["vitne", "forklare", "hendelsen", "bekreft"],
+                    learning_objective="Kunne gjengi enkle fakta om en hendelse i høflig form.",
+                    story_guidance="En politibetjent spør deg hva du så. Bruk enkle setninger for å forklare.",
+                ),
+                CurriculumDay(
+                    day=2,
+                    title="Politiintervjuet – andre vitne",
+                    focus="Bekrefte informasjon og stille oppfølgingsspørsmål",
+                    collocations=["bekrefte", "stemmer", "kan du gjenta", "usikker"],
+                    learning_objective="Kunne bekrefte eller avkrefte påstander og be om gjentakelse.",
+                    story_guidance="Du blir bedt om å bekrefte opplysninger. Spør om du er usikker.",
+                ),
+            ],
+        )
+
+        turn = await planner.turn(
+            curriculum=curriculum,
+            user_message="Legg til to dager med mer avansert ordforråd om restaurant og shopping",
+            batch_size=2,
+            learner_snapshot=SNAPSHOT,
+            language=Language.norwegian(),
+        )
+        assert turn.proposed_days is not None, "Should propose days"
+        assert len(turn.proposed_days) == 2
+        assert turn.proposed_days[0].day == 3
+        assert turn.proposed_days[1].day == 4
+        for d in turn.proposed_days:
+            for c in d.collocations:
+                assert "(" not in c, f"Collocation must be bare target-language, got: {c!r}"
+            # Mechanical proxy for "JSON fields in English": no Norwegian chars
+            assert not _NORWEGIAN_CHARS & set(d.title), f"title should be English, got: {d.title!r}"
+            assert not _NORWEGIAN_CHARS & set(d.focus), f"focus should be English, got: {d.focus!r}"
+            assert not _NORWEGIAN_CHARS & set(d.learning_objective), (
+                f"learning_objective should be English, got: {d.learning_objective!r}"
+            )
+            # story_guidance may legitimately quote target-language text — no assertion

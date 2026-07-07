@@ -207,7 +207,11 @@ class TestBuildPlannerTurnPrompt:
             "USER: And a day about transportation\n"
             "PLANNER: Public transport vocab is essential for getting around.\n"
             "\n"
-            "If proposing, propose exactly 3 days starting at day 17."
+            "If proposing, propose exactly 3 days starting at day 17.\n"
+            "Respond in English \u2014 title, focus, learning_objective, and "
+            "story_guidance in English \u2014 even though the committed plan and "
+            "conversation above are in Slovene. The collocations array "
+            "is in Slovene: bare phrases, no English glosses."
         )
         # fmt: on
         assert result == expected
@@ -515,6 +519,9 @@ class TestBuildPlannerTurnPrompt:
             start_day=3,
         )
         assert "If proposing, propose exactly 7 days starting at day 3." in result
+        assert "Respond in English" in result
+        assert "committed plan and conversation above are in T" in result
+        assert "collocations array is in T:" in result
 
     def test_emoji_in_user_message(self):
         """User messages with special chars pass through unchanged."""

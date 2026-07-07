@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "recorded_at": "2026-07-07T14:16:06.632000+00:00",
+  "calls": [
+    {
+      "prompt_hash": "sha256:37e7760d4949f564",
+      "prompt_preview": "Topic: En reise til Bergen CEFR Level: A2 Language: Norwegian (no)  ## Committed",
+      "max_tokens": 5500,
+      "response": "Sure, here are two new days that build on the police\u2011interview material and move toward restaurant and shopping situations.\n\n```json\n{\n  \"days\": [\n    {\n      \"day\": 3,\n      \"title\": \"At the restaurant\",\n      \"focus\": \"Ordering food, asking about the menu and handling the bill\",\n      \"collocations\": [\n        \"jeg vil gjerne ha\",\n        \"kan jeg f\u00e5 menyen\",\n        \"hva anbefaler du\",\n        \"hvordan vil du ha den\",\n        \"kan jeg f\u00e5 regningen\",\n        \"takk for maten\"\n      ],\n      \"learning_objective\": \"Be able to order meals, request clarification, and settle the bill using polite, everyday expressions.\",\n      \"story_guidance\": \"You are seated at a cozy Bergen restaurant. The waiter brings the menu, you ask for recommendations, place your order, and later ask for the check.\"\n    },\n    {\n      \"day\": 4,\n      \"title\": \"Shopping in the city centre\",\n      \"focus\": \"Asking for prices, sizes, and making a purchase\",\n      \"collocations\": [\n        \"hvor mye koster dette\",\n        \"har dere den i en annen st\u00f8rrelse\",\n        \"kan jeg pr\u00f8ve den p\u00e5\",\n        \"jeg tar den\",\n        \"kan jeg betale med kort\",\n        \"takk for hjelpen\"\n      ],\n      \"learning_objective\": \"Handle simple shopping interactions: inquire about price, size, try\u2011on, and complete a purchase confidently.\",\n      \"story_guidance\": \"You walk along Bergen's main shopping street, enter a boutique, and engage the shop assistant to buy a souvenir.\"\n    }\n  ]\n}\n```",
+      "provider": "groq"
+    }
+  ]
+}
