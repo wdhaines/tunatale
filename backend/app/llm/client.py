@@ -153,7 +153,9 @@ class LLMClient:
     def _make_attempt(provider: str, model: str, status: str | int, error: str, latency_ms: int) -> dict:
         return {"provider": provider, "model": model, "status": status, "error": error, "latency_ms": latency_ms}
 
-    def _update_health_after_groq(self, *, success: bool, status: str | int | None = None, message: str | None = None) -> None:
+    def _update_health_after_groq(
+        self, *, success: bool, status: str | int | None = None, message: str | None = None
+    ) -> None:
         if success:
             self.consecutive_primary_failures = 0
             self.last_primary_error = None

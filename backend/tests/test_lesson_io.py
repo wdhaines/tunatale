@@ -10,13 +10,13 @@ import copy
 import pytest
 
 from app.generation.story import build_lesson_from_story
+from app.models.curriculum import Curriculum, CurriculumDay
 from app.storage.lesson_io import (
     export_lesson,
     import_lesson,
     speaker_warnings,
     validate_story,
 )
-from app.models.curriculum import Curriculum, CurriculumDay
 from app.storage.store import ContentStore
 
 

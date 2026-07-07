@@ -776,7 +776,9 @@ class TestNoFallback:
         client = LLMClient(groq_api_key="test-key", max_retries_429=0)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(401, json={}))
-            ollama_route = respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("ok")))
+            ollama_route = respx.post(OLLAMA_GENERATE_URL).mock(
+                return_value=Response(200, json=_make_ollama_response("ok"))
+            )
             with pytest.raises(LLMError, match="Groq returned HTTP 401"):
                 await client.complete("q")
         assert ollama_route.call_count == 0
@@ -785,7 +787,9 @@ class TestNoFallback:
         client = LLMClient(groq_api_key="test-key", max_retries_429=0)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(side_effect=httpx.ConnectError("refused"))
-            ollama_route = respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("ok")))
+            ollama_route = respx.post(OLLAMA_GENERATE_URL).mock(
+                return_value=Response(200, json=_make_ollama_response("ok"))
+            )
             with pytest.raises(LLMError, match="Groq transport error"):
                 await client.complete("q")
         assert ollama_route.call_count == 0
@@ -795,7 +799,9 @@ class TestNoFallback:
         client = LLMClient(groq_api_key="test-key", max_retries_429=0)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
-            ollama_route = respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("ok")))
+            ollama_route = respx.post(OLLAMA_GENERATE_URL).mock(
+                return_value=Response(200, json=_make_ollama_response("ok"))
+            )
             with pytest.raises(LLMError):
                 await client.complete("q")
         assert ollama_route.call_count == 0

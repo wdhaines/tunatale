@@ -143,7 +143,9 @@ describe("LlmHealthBanner", () => {
     });
     let resolveProbe: ((v: unknown) => void) | undefined;
     mocks.probeRateLimit.mockReturnValue(
-      new Promise((r) => { resolveProbe = r; }),
+      new Promise((r) => {
+        resolveProbe = r;
+      }),
     );
     mocks.getLlmHealth.mockResolvedValue({
       healthy: true,

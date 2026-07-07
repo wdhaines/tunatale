@@ -1350,6 +1350,32 @@ describe("TunaTaleAPI", () => {
     });
   });
 
+  describe("getLlmHealth", () => {
+    it("calls GET /api/llm/health and returns parsed shape", async () => {
+      const payload = {
+        healthy: true,
+        consecutive_failures: 0,
+        last_error: null,
+        fallback_allowed: false,
+        llm_mode: "live",
+      };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(payload)));
+
+      const result = await api.getLlmHealth();
+
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/llm/health`);
+      expect(result.healthy).toBe(true);
+      expect(result.consecutive_failures).toBe(0);
+      expect(result.last_error).toBeNull();
+      expect(result.fallback_allowed).toBe(false);
+    });
+
+    it("throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Service Unavailable")));
+      await expect(api.getLlmHealth()).rejects.toThrow("Service Unavailable");
+    });
+  });
+
   describe("fetchReviewQueue", () => {
     it("GETs /api/srs/review-queue and returns the payload", async () => {
       const queue = [{ id: 1, text: "foo" }];
