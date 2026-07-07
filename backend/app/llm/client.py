@@ -75,6 +75,7 @@ class LLMClient:
         on_call: Callable[[dict], None] | None = None,
         fallback_client: LLMClient | None = None,
         usage_ledger=None,
+        allow_fallback: bool = False,
     ) -> None:
         self.groq_api_key = groq_api_key
         self.groq_model = groq_model
@@ -93,6 +94,7 @@ class LLMClient:
         )
         self.on_call = on_call
         self.fallback_client = fallback_client
+        self.allow_fallback = allow_fallback
         self.last_provider: str | None = None
         # Metadata of the most recent successful completion. finish_reason=="length"
         # means the content was cut off at the completion-token cap — callers that
@@ -105,6 +107,9 @@ class LLMClient:
         self.last_rate_limits: dict | None = None
         self.last_429: dict | None = None
         self.usage_ledger = usage_ledger
+        # Health tracking — consecutive Groq failures and last error detail.
+        self.consecutive_primary_failures: int = 0
+        self.last_primary_error: dict | None = None
         self._next_call_at: float = 0.0
         self._groq_call_delay: float = 0.0
         self._last_429_at: float = 0.0
@@ -148,6 +153,18 @@ class LLMClient:
     def _make_attempt(provider: str, model: str, status: str | int, error: str, latency_ms: int) -> dict:
         return {"provider": provider, "model": model, "status": status, "error": error, "latency_ms": latency_ms}
 
+    def _update_health_after_groq(self, *, success: bool, status: str | int | None = None, message: str | None = None) -> None:
+        if success:
+            self.consecutive_primary_failures = 0
+            self.last_primary_error = None
+        else:
+            self.consecutive_primary_failures += 1
+            self.last_primary_error = {
+                "status": status,
+                "message": message,
+                "at": time.time(),
+            }
+
     async def complete(
         self,
         prompt: str,
@@ -167,6 +184,8 @@ class LLMClient:
             )
         except LLMError as e:
             attempts.extend(e.attempts)
+            if not self.allow_fallback:
+                raise
             logger.warning("Groq failed, trying fallback: %s", e)
             if self.fallback_client is not None:
                 try:
@@ -259,6 +278,7 @@ class LLMClient:
                         prompt=prompt,
                         error=msg,
                     )
+                    self._update_health_after_groq(success=False, status=status, message=msg)
                     raise LLMError(msg, [self._make_attempt("groq", self.groq_model, status, msg, latency_ms)]) from err
                 latency_ms = int((time.monotonic() - start) * 1000)
 
@@ -311,6 +331,7 @@ class LLMClient:
                         prompt=prompt,
                         error=msg,
                     )
+                    self._update_health_after_groq(success=False, status=429, message=msg)
                     raise LLMError(msg, [self._make_attempt("groq", self.groq_model, 429, msg, latency_ms)])
 
                 if not response.is_success:
@@ -323,6 +344,7 @@ class LLMClient:
                         prompt=prompt,
                         error=msg,
                     )
+                    self._update_health_after_groq(success=False, status=response.status_code, message=msg)
                     raise LLMError(
                         msg, [self._make_attempt("groq", self.groq_model, response.status_code, msg, latency_ms)]
                     )
@@ -344,6 +366,7 @@ class LLMClient:
                         prompt=prompt,
                         error=msg,
                     )
+                    self._update_health_after_groq(success=False, status="malformed", message=msg)
                     raise LLMError(
                         msg, [self._make_attempt("groq", self.groq_model, "malformed", msg, latency_ms)]
                     ) from err
@@ -358,6 +381,7 @@ class LLMClient:
                         "Groq response truncated at the completion-token cap (finish_reason=length, cap=%s)",
                         body.get("max_completion_tokens") or body.get("max_tokens"),
                     )
+                self._update_health_after_groq(success=True)
                 logger.info("Groq success: model=%s latency=%dms", self.groq_model, latency_ms)
 
                 if self.on_call:

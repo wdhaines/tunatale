@@ -153,7 +153,7 @@ class TestRateLimit:
 
     async def test_429_non_numeric_retry_after(self):
         """Verify non-numeric retry-after header is handled gracefully."""
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(429, headers={"retry-after": "not-a-number"}, json={}))
             respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("ok")))
@@ -183,7 +183,7 @@ class TestRateLimit:
 
     async def test_429_excessive_retry_after_falls_back(self):
         """retry_after > max_retry_after_s skips pacing update and raises (242->245 False branch)."""
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0, max_retry_after_s=5.0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, max_retry_after_s=5.0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(429, headers={"retry-after": "60"}, json={}))
             respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("ok")))
@@ -229,7 +229,7 @@ class TestFallbackChain:
     async def test_fallback_client_used_when_groq_fails(self):
         fallback = MagicMock()
         fallback.complete = AsyncMock(return_value="fallback response")
-        client = LLMClient(groq_api_key="test-key", fallback_client=fallback, max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", fallback_client=fallback, max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
             result = await client.complete("q")
@@ -237,7 +237,7 @@ class TestFallbackChain:
         fallback.complete.assert_called_once()
 
     async def test_ollama_fallback_when_groq_fails(self):
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
             respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("ollama resp")))
@@ -252,7 +252,7 @@ class TestFallbackChain:
                 [{"provider": "groq", "model": "x", "status": 500, "error": "err", "latency_ms": 0}],
             )
         )
-        client = LLMClient(groq_api_key="test-key", fallback_client=fallback, max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", fallback_client=fallback, max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
             respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("ollama resp")))
@@ -260,7 +260,7 @@ class TestFallbackChain:
         assert result == "ollama resp"
 
     async def test_ollama_http_error_in_fallback(self):
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
             respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(503, json={}))
@@ -269,7 +269,7 @@ class TestFallbackChain:
 
     async def test_groq_timeout_raises(self):
         """Verify Groq timeout raises LLMError and falls back to Ollama."""
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(side_effect=httpx.TimeoutException("timeout"))
             respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("fallback")))
@@ -310,7 +310,7 @@ class TestResponseMetadata:
         """A stale 'length' from an earlier Groq call must not survive an Ollama
         fallback success — callers use last_finish_reason to classify the response
         they just received."""
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         client.last_finish_reason = "length"
         client.last_usage = {"prompt_tokens": 999}
         with respx.mock:
@@ -326,7 +326,7 @@ class TestResponseMetadata:
         fallback.last_provider = "groq"
         fallback.last_finish_reason = "length"
         fallback.last_usage = {"prompt_tokens": 9}
-        client = LLMClient(groq_api_key="test-key", fallback_client=fallback, max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", fallback_client=fallback, max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
             result = await client.complete("q")
@@ -391,7 +391,7 @@ class TestRateLimitSnapshot:
     async def test_snapshot_and_last_429_captured_on_429(self):
         """A 429 response carries the same headers — capture them AND the retry-after,
         so the UI can show 'rate limited, retry in Ns' even when the call failed."""
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(
                 return_value=Response(429, headers={"retry-after": "7", **_RL_HEADERS}, json={})
@@ -596,7 +596,7 @@ class TestCallbacks:
 
     async def test_on_call_fires_on_groq_error(self):
         calls = []
-        client = LLMClient(groq_api_key="test-key", on_call=calls.append, max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", on_call=calls.append, max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
             respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("ok")))
@@ -661,7 +661,7 @@ class TestOllamaEdgeCases:
 
     async def test_ollama_connect_error_no_binary(self):
         """Verify Ollama ConnectError with no binary raises LLMError."""
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
             respx.post(OLLAMA_GENERATE_URL).mock(side_effect=httpx.ConnectError("refused"))
@@ -670,7 +670,7 @@ class TestOllamaEdgeCases:
 
     async def test_ollama_system_prompt_sent(self):
         """Verify system_prompt is included in Ollama request body."""
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
             route = respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("ok")))
@@ -680,7 +680,7 @@ class TestOllamaEdgeCases:
 
     async def test_ollama_timeout_raises(self):
         """Verify Ollama TimeoutException raises LLMError."""
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
             respx.post(OLLAMA_GENERATE_URL).mock(side_effect=httpx.TimeoutException("timeout"))
@@ -694,7 +694,7 @@ class TestConnectionAndMalformedFallback:
 
     async def test_groq_connect_error_falls_back_to_ollama(self):
         """A transport error (not just timeout) from Groq engages the fallback."""
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(side_effect=httpx.ConnectError("connection refused"))
             respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("fallback")))
@@ -705,7 +705,7 @@ class TestConnectionAndMalformedFallback:
         """ConnectError reaches the configured fallback_client, not the caller."""
         fallback = MagicMock()
         fallback.complete = AsyncMock(return_value="from fallback client")
-        client = LLMClient(groq_api_key="test-key", fallback_client=fallback, max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", fallback_client=fallback, max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(side_effect=httpx.ConnectError("refused"))
             result = await client.complete("q")
@@ -714,7 +714,7 @@ class TestConnectionAndMalformedFallback:
 
     async def test_groq_malformed_json_body_falls_back(self):
         """A 200 whose body isn't JSON raises LLMError (not JSONDecodeError) → fallback."""
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(200, text="not json at all"))
             respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("fallback")))
@@ -723,7 +723,7 @@ class TestConnectionAndMalformedFallback:
 
     async def test_groq_missing_choices_key_falls_back(self):
         """A 200 with an unexpected shape raises LLMError (not KeyError) → fallback."""
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(200, json={"unexpected": True}))
             respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("fallback")))
@@ -732,7 +732,7 @@ class TestConnectionAndMalformedFallback:
 
     async def test_groq_null_content_falls_back(self):
         """A 200 with content=null raises LLMError (not TypeError in the think-strip) → fallback."""
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(
                 return_value=Response(200, json={"choices": [{"message": {"content": None}}]})
@@ -743,7 +743,7 @@ class TestConnectionAndMalformedFallback:
 
     async def test_groq_malformed_body_no_fallback_raises_llmerror(self):
         """With no working backend, a malformed Groq body still surfaces as LLMError."""
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(200, json={"unexpected": True}))
             respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(500, json={}))
@@ -752,7 +752,7 @@ class TestConnectionAndMalformedFallback:
 
     async def test_ollama_read_error_raises_llmerror(self):
         """A non-connect/non-timeout transport error from Ollama raises LLMError, not a raw error."""
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
             respx.post(OLLAMA_GENERATE_URL).mock(side_effect=httpx.ReadError("read failed"))
@@ -761,9 +761,107 @@ class TestConnectionAndMalformedFallback:
 
     async def test_ollama_malformed_body_raises_llmerror(self):
         """A 200 from Ollama with no 'response' key raises LLMError, not KeyError."""
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
             respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json={"no_response_key": 1}))
             with pytest.raises(LLMError, match="malformed"):
                 await client.complete("q")
+
+
+class TestNoFallback:
+    """allow_fallback=False (default) must raise on Groq failure without touching fallback/Ollama."""
+
+    async def test_no_fallback_raises_on_http_error(self):
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(401, json={}))
+            ollama_route = respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("ok")))
+            with pytest.raises(LLMError, match="Groq returned HTTP 401"):
+                await client.complete("q")
+        assert ollama_route.call_count == 0
+
+    async def test_no_fallback_raises_on_transport_error(self):
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(side_effect=httpx.ConnectError("refused"))
+            ollama_route = respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("ok")))
+            with pytest.raises(LLMError, match="Groq transport error"):
+                await client.complete("q")
+        assert ollama_route.call_count == 0
+
+    async def test_no_fallback_never_calls_ollama(self):
+        """Even when Ollama would succeed, allow_fallback=False skips it entirely."""
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
+            ollama_route = respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("ok")))
+            with pytest.raises(LLMError):
+                await client.complete("q")
+        assert ollama_route.call_count == 0
+
+    async def test_allow_fallback_true_preserves_old_chain(self):
+        """With allow_fallback=True, the old fallback to Ollama still works."""
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
+            respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(200, json=_make_ollama_response("ollama resp")))
+            result = await client.complete("q")
+        assert result == "ollama resp"
+
+
+class TestHealthTracking:
+    """consecutive_primary_failures and last_primary_error tracking."""
+
+    async def test_starts_clean(self):
+        client = LLMClient(groq_api_key="test-key")
+        assert client.consecutive_primary_failures == 0
+        assert client.last_primary_error is None
+
+    async def test_success_resets_counters(self):
+        client = LLMClient(groq_api_key="test-key")
+        client.consecutive_primary_failures = 5
+        client.last_primary_error = {"status": 500, "message": "old", "at": 0}
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, json=_make_groq_response("ok")))
+            await client.complete("q")
+        assert client.consecutive_primary_failures == 0
+        assert client.last_primary_error is None
+
+    async def test_http_error_increments_counter(self):
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(401, json={}))
+            with pytest.raises(LLMError):
+                await client.complete("q")
+        assert client.consecutive_primary_failures == 1
+        assert client.last_primary_error is not None
+        assert client.last_primary_error["status"] == 401
+        assert "Groq returned HTTP 401" in client.last_primary_error["message"]
+
+    async def test_consecutive_failures_accumulate(self):
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
+            for _ in range(3):
+                with pytest.raises(LLMError):
+                    await client.complete("q")
+        assert client.consecutive_primary_failures == 3
+
+    async def test_probe_rate_limits_updates_health_on_success(self):
+        client = LLMClient(groq_api_key="test-key")
+        client.consecutive_primary_failures = 2
+        client.last_primary_error = {"status": 429, "message": "old", "at": 0}
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, json=_make_groq_response("ok")))
+            await client.probe_rate_limits()
+        assert client.consecutive_primary_failures == 0
+        assert client.last_primary_error is None
+
+    async def test_probe_rate_limits_updates_health_on_failure(self):
+        client = LLMClient(groq_api_key="test-key")
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
+            await client.probe_rate_limits()
+        assert client.consecutive_primary_failures == 1
+        assert client.last_primary_error is not None

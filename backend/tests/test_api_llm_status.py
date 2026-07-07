@@ -12,6 +12,7 @@ import pytest
 import respx
 from httpx import ASGITransport, AsyncClient, Response
 
+from app.config import settings
 from app.llm.client import GROQ_API_URL, LLMClient
 from app.llm.usage_ledger import UsageLedger
 from app.main import app
@@ -150,3 +151,47 @@ class TestRateLimitProbe:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
             response = await http.post("/api/llm/rate-limit/probe")
         assert response.status_code == 503
+
+
+async def _get_health() -> dict:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        response = await http.get("/api/llm/health")
+    assert response.status_code == 200
+    return response.json()
+
+
+class TestLlmHealth:
+    async def test_healthy_when_no_failures(self):
+        app.state.llm = LLMClient(groq_api_key="test-key")
+        body = await _get_health()
+        assert body["healthy"] is True
+        assert body["consecutive_failures"] == 0
+        assert body["last_error"] is None
+        assert body["fallback_allowed"] is False
+        assert body["llm_mode"] == settings.llm_mode
+
+    async def test_unhealthy_when_two_consecutive_failures(self):
+        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+        client.consecutive_primary_failures = 3
+        client.last_primary_error = {"status": 401, "message": "Groq returned HTTP 401", "at": time.time() - 10}
+        app.state.llm = client
+        body = await _get_health()
+        assert body["healthy"] is False
+        assert body["consecutive_failures"] == 3
+        assert body["last_error"]["status"] == 401
+        assert body["last_error"]["message"] == "Groq returned HTTP 401"
+        assert body["last_error"]["ago_s"] == pytest.approx(10, abs=3)
+        assert body["fallback_allowed"] is False
+
+    async def test_mock_mode_always_healthy(self):
+        original_mode = settings.llm_mode
+        settings.llm_mode = "mock"
+        try:
+            client = LLMClient(groq_api_key="test-key")
+            client.consecutive_primary_failures = 99
+            app.state.llm = client
+            body = await _get_health()
+            assert body["healthy"] is True
+            assert body["consecutive_failures"] == 0
+        finally:
+            settings.llm_mode = original_mode

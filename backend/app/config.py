@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     # appears in no response header, so TT tallies its own spend (UsageLedger) and
     # the rate-limit UI compares against this number.
     groq_tokens_per_day_limit: int = 100_000
+    # Ollama/secondary fallback when Groq fails; default off — failures fail loudly.
+    llm_allow_fallback: bool = False
     llm_usage_ledger_path: Path = Path("~/.tunatale/llm_usage.log").expanduser()
 
     target_language: str = "sl"

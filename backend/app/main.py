@@ -104,6 +104,7 @@ async def lifespan(app: FastAPI):
         groq_extra_body_params=reasoning_params_for_model(settings.llm_model),
         usage_ledger=UsageLedger(settings.llm_usage_ledger_path),
         on_call=activity_log.record_llm_call,
+        allow_fallback=settings.llm_allow_fallback,
     )
     _BACKEND_DIR = Path(__file__).parent.parent
     cassette_path = _BACKEND_DIR / "tests/cassettes/e2e.json"

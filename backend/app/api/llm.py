@@ -70,6 +70,36 @@ def _status_payload(client) -> dict:
     }
 
 
+@router.get("/health")
+async def llm_health(request: Request) -> dict:
+    client = _unwrap(request)
+    if settings.llm_mode == "mock":
+        return {
+            "healthy": True,
+            "consecutive_failures": 0,
+            "last_error": None,
+            "fallback_allowed": settings.llm_allow_fallback,
+            "llm_mode": settings.llm_mode,
+        }
+    now = time.time()
+    last_error = getattr(client, "last_primary_error", None)
+    out_error = None
+    if last_error is not None:
+        out_error = {
+            "status": last_error["status"],
+            "message": last_error["message"],
+            "ago_s": round(now - last_error["at"], 1),
+        }
+    consecutive = getattr(client, "consecutive_primary_failures", 0)
+    return {
+        "healthy": consecutive < 2,
+        "consecutive_failures": consecutive,
+        "last_error": out_error,
+        "fallback_allowed": settings.llm_allow_fallback,
+        "llm_mode": settings.llm_mode,
+    }
+
+
 @router.get("/rate-limit")
 async def rate_limit_status(request: Request) -> dict:
     return _status_payload(_unwrap(request))
