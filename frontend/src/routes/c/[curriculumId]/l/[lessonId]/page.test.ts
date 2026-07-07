@@ -1723,6 +1723,21 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       expect(container.querySelector("details.tools-card")).toBeTruthy();
       expect(queryByText("Download All Sections")).toBeFalsy();
     });
+
+    it("shows a help toggle that reveals the regen explanation on click", async () => {
+      const { container, getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: null } },
+      });
+      const toggle = container.querySelector<HTMLButtonElement>(".help-toggle")!;
+      expect(toggle).toBeTruthy();
+      expect(toggle.getAttribute("aria-label")).toBe("What does regenerate do?");
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(container.querySelector(".help-panel")).toBeFalsy();
+
+      await fireEvent.click(toggle);
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      expect(getByText(/Regenerating rewrites/)).toBeTruthy();
+    });
   });
 
   describe("pipeline integration", () => {

@@ -41,6 +41,7 @@
 	let syncStatus = $state('');
 	let error = $state('');
 	let wordActionInFlight = $state(false);
+	let showRegenHelp = $state(false);
 
 	let playbackController = $state<PlaybackController | null>(null);
 
@@ -558,14 +559,19 @@
 			</div>
 		{/if}
 		<div class="regen-row">
-			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}
-				title="Regenerating rewrites this day's dialogue with the current prompt (better declension &amp; conjugation coverage). Existing cards stay; new vocabulary and morphology drills are added when you next listen and sync.">
+			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
 				{regenerating ? 'Regenerating…' : `Regenerate Day ${data.lesson.day}`}
 			</button>
 			<!-- Regeneration hits the LLM, so surface the quota chip here to track usage. -->
 			<RateLimitWidget />
+			<button type="button" class="help-toggle"
+				aria-label="What does regenerate do?"
+				aria-expanded={showRegenHelp}
+				onclick={() => (showRegenHelp = !showRegenHelp)}>?</button>
 		</div>
-		<p class="muted">Rewrites this day's dialogue — existing cards stay, new drills appear on next listen.</p>
+		{#if showRegenHelp}
+			<p class="help-panel">Regenerating rewrites this day's dialogue with the current prompt (better declension &amp; conjugation coverage). Existing cards stay; new vocabulary and morphology drills are added when you next listen and sync.</p>
+		{/if}
 		{#if regenStatus}
 			<p class="regen-status" data-testid="regen-status">
 				<span class="pipeline-state state-{regenStatus.state}">{regenStatus.state}</span>
@@ -655,6 +661,32 @@
 	}
 	.regen-row button {
 		margin-top: 0;
+	}
+	.help-toggle {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.4rem;
+		height: 1.4rem;
+		padding: 0;
+		margin: 0;
+		border: 1px solid var(--color-border);
+		border-radius: 50%;
+		background: transparent;
+		color: var(--color-muted);
+		font-size: 0.8rem;
+		font-weight: 700;
+		cursor: pointer;
+		line-height: 1;
+	}
+	.help-toggle:hover {
+		color: var(--color-text);
+		border-color: var(--color-text);
+	}
+	.help-panel {
+		margin: 0.5rem 0 0;
+		font-size: 0.85rem;
+		color: var(--color-muted);
 	}
 	.regen-btn {
 		background: transparent;
