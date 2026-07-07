@@ -27,6 +27,15 @@ class TestPlannerSystemPrompt:
     def test_mentions_collocations(self):
         assert "collocations" in PLANNER_SYSTEM_PROMPT
 
+    def test_english_language_directive(self):
+        assert "Converse in English" in PLANNER_SYSTEM_PROMPT
+
+    def test_collocations_target_language_exception(self):
+        assert 'Only the "collocations" array is in the' in PLANNER_SYSTEM_PROMPT
+
+    def test_english_gloss_requirement(self):
+        assert "English gloss" in PLANNER_SYSTEM_PROMPT
+
 
 class TestBuildPlannerTurnPrompt:
     def test_golden_prompt(self):
