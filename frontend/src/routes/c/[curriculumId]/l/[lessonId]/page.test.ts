@@ -24,6 +24,8 @@ vi.mock("$lib/api", () => ({
     undoGrade: vi.fn(),
     fetchQueueStats: vi.fn(),
     regenerateDay: vi.fn(),
+    getRateLimit: vi.fn().mockResolvedValue(null),
+    probeRateLimit: vi.fn().mockResolvedValue(null),
     ignoreLemma: vi.fn(),
     unignoreLemma: vi.fn(),
     getStorySource: vi.fn(),
@@ -2129,40 +2131,46 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       };
     }
 
-    it("shows the rate-limit detail while regenerating", async () => {
+    it("shows a colored state pill and the rate-limit detail while regenerating", async () => {
       confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       mockRegenerateDay.mockResolvedValue({ status: "queued" });
       (pipelineStore as any).status = dayStatus({
-        state: "generating",
+        state: "rendering",
         detail: "waiting 37s for rate-limit window (attempt 2/4)",
       });
 
-      const { getByText, findByTestId } = render(Page, {
+      const { getByText, getByTestId, findByTestId } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       await fireEvent.click(getByText("Regenerate Day 1"));
 
       const status = await findByTestId("regen-status");
-      expect(status.textContent).toContain("waiting 37s for rate-limit window");
+      // State renders as a styled pill (not bare text), message alongside it.
+      const pill = status.querySelector(".pipeline-state");
+      expect(pill?.textContent).toBe("rendering");
+      expect(pill?.classList.contains("state-rendering")).toBe(true);
+      expect(getByTestId("regen-detail").textContent).toContain(
+        "waiting 37s for rate-limit window",
+      );
     });
 
-    it("falls back to the pipeline state when there is no detail while regenerating", async () => {
+    it("shows the state pill with no detail line when there is no detail while regenerating", async () => {
       confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       mockRegenerateDay.mockResolvedValue({ status: "queued" });
       (pipelineStore as any).status = dayStatus({ state: "generating", detail: null });
 
-      const { getByText, findByTestId } = render(Page, {
+      const { getByText, findByTestId, queryByTestId } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       await fireEvent.click(getByText("Regenerate Day 1"));
 
       const status = await findByTestId("regen-status");
-      expect(status.textContent).toBe("generating");
+      expect(status.querySelector(".pipeline-state")?.textContent).toBe("generating");
+      expect(queryByTestId("regen-detail")).toBeNull();
     });
 
-    it("shows the sticky error text when the day has failed", () => {
+    it("shows a failed pill and the sticky error text when the day has failed", () => {
       (pipelineStore as any).status = dayStatus({
-        active: false,
         state: "failed",
         error: "Groq returned HTTP 401",
       });
@@ -2170,16 +2178,19 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       const { getByTestId } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
-      expect(getByTestId("regen-status").textContent).toBe("Groq returned HTTP 401");
+      const pill = getByTestId("regen-status").querySelector(".pipeline-state");
+      expect(pill?.textContent).toBe("failed");
+      expect(pill?.classList.contains("state-failed")).toBe(true);
+      expect(getByTestId("regen-detail").textContent).toBe("Groq returned HTTP 401");
     });
 
     it("shows a generic failure message when a failed day carries no error", () => {
-      (pipelineStore as any).status = dayStatus({ active: false, state: "failed", error: null });
+      (pipelineStore as any).status = dayStatus({ state: "failed", error: null });
 
       const { getByTestId } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
-      expect(getByTestId("regen-status").textContent).toBe("Regeneration failed");
+      expect(getByTestId("regen-detail").textContent).toBe("Regeneration failed");
     });
 
     it("shows no status line for a healthy day when not regenerating", () => {

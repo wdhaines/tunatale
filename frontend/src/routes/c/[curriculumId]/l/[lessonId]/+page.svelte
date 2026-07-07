@@ -12,6 +12,8 @@
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
 	import { lessonModePref } from '$lib/stores/lessonModePref.svelte';
 	import { pipelineStore } from '$lib/stores/pipeline.svelte';
+	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
+	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
 	import LessonSourcePanel from '$lib/components/LessonSourcePanel.svelte';
 	import type { PageData } from './$types';
 
@@ -49,6 +51,12 @@
 		navHeight = document.querySelector('.global-nav')?.clientHeight ?? 0;
 	}
 	onMount(measureNav);
+
+	// Seed the LLM quota chip so it isn't empty when the user opens Lesson tools to
+	// regenerate; the pipeline poll (pipelineStore) keeps it fresh during the run.
+	onMount(() => {
+		void rateLimitStore.ensureFresh();
+	});
 
 	let isListened = $derived(listenedStore.has(data.lesson.id));
 
@@ -190,14 +198,14 @@
 	});
 
 	// The render-row pipeline badge only shows when audio is absent, but a regen
-	// keeps the old audio on screen — so surface progress here: the live detail
-	// (e.g. the 429 "waiting Ns for rate-limit window") while running, and the
-	// sticky error once the day fails.
-	let regenStatus = $derived.by(() => {
+	// keeps the old audio on screen — so surface progress here as a colored state
+	// pill + message: the live detail (e.g. the 429 "waiting Ns for rate-limit
+	// window") while running, and the sticky error once the day fails.
+	let regenStatus = $derived.by((): { state: string; message: string | null } | null => {
 		const record = pipelineDayRecord;
 		if (record === null) return null;
-		if (record.state === 'failed') return record.error ?? 'Regeneration failed';
-		if (regenerating) return record.detail ?? record.state;
+		if (record.state === 'failed') return { state: 'failed', message: record.error ?? 'Regeneration failed' };
+		if (regenerating) return { state: record.state, message: record.detail };
 		return null;
 	});
 
@@ -554,11 +562,20 @@
 			conjugation coverage). Existing cards stay; new vocabulary and morphology drills are added when
 			you next listen and sync.
 		</p>
-		<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
-			{regenerating ? 'Regenerating…' : `Regenerate Day ${data.lesson.day}`}
-		</button>
+		<div class="regen-row">
+			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
+				{regenerating ? 'Regenerating…' : `Regenerate Day ${data.lesson.day}`}
+			</button>
+			<!-- Regeneration hits the LLM, so surface the quota chip here to track usage. -->
+			<RateLimitWidget />
+		</div>
 		{#if regenStatus}
-			<p class="regen-status" data-testid="regen-status">{regenStatus}</p>
+			<p class="regen-status" data-testid="regen-status">
+				<span class="pipeline-state state-{regenStatus.state}">{regenStatus.state}</span>
+				{#if regenStatus.message}
+					<span class="regen-detail" data-testid="regen-detail">{regenStatus.message}</span>
+				{/if}
+			</p>
 		{/if}
 	</details>
 
@@ -632,6 +649,16 @@
 		color: var(--color-muted);
 		font-size: 0.9rem;
 	}
+	.regen-row {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		flex-wrap: wrap;
+		margin-top: 0.75rem;
+	}
+	.regen-row button {
+		margin-top: 0;
+	}
 	.regen-btn {
 		background: transparent;
 		color: var(--color-danger);
@@ -641,8 +668,13 @@
 		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
 	}
 	.regen-status {
-		margin: 0.5rem 0 0;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin: 0.6rem 0 0;
 		font-size: 0.82rem;
+	}
+	.regen-detail {
 		color: var(--color-muted);
 	}
 	.mode-row {

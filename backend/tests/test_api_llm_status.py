@@ -162,13 +162,22 @@ async def _get_health() -> dict:
 
 class TestLlmHealth:
     async def test_healthy_when_no_failures(self):
-        app.state.llm = LLMClient(groq_api_key="test-key")
-        body = await _get_health()
-        assert body["healthy"] is True
-        assert body["consecutive_failures"] == 0
-        assert body["last_error"] is None
-        assert body["fallback_allowed"] is False
-        assert body["llm_mode"] == settings.llm_mode
+        # Pin a non-mock mode: in mock mode the endpoint short-circuits and never
+        # exercises the real health path (the `last_error is None` branch). Without
+        # this it's covered on dev (LLM_MODE=live) but not CI (LLM_MODE=mock), a
+        # 99.99% coverage miss on app/api/llm.py:87->93.
+        original_mode = settings.llm_mode
+        settings.llm_mode = "live"
+        try:
+            app.state.llm = LLMClient(groq_api_key="test-key")
+            body = await _get_health()
+            assert body["healthy"] is True
+            assert body["consecutive_failures"] == 0
+            assert body["last_error"] is None
+            assert body["fallback_allowed"] is False
+            assert body["llm_mode"] == settings.llm_mode
+        finally:
+            settings.llm_mode = original_mode
 
     async def test_unhealthy_when_two_consecutive_failures(self):
         # Health only reflects real failure state outside mock mode; in mock mode
