@@ -44,6 +44,9 @@ class TestPlannerLLM:
         assert turn1.proposed_days[0].day == 1
         assert turn1.proposed_days[1].day == 2
         assert turn1.proposed_days[2].day == 3
+        for d in turn1.proposed_days:
+            for c in d.collocations:
+                assert "(" not in c, f"Collocation must be bare target-language, got: {c!r}"
 
         # Commit inline
         curriculum.days.extend(turn1.proposed_days)
@@ -76,3 +79,6 @@ class TestPlannerLLM:
         assert turn2.proposed_days[0].day == 4
         assert turn2.proposed_days[1].day == 5
         assert turn2.proposed_days[2].day == 6
+        for d in turn2.proposed_days:
+            for c in d.collocations:
+                assert "(" not in c, f"Collocation must be bare target-language, got: {c!r}"

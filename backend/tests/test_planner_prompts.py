@@ -31,10 +31,13 @@ class TestPlannerSystemPrompt:
         assert "Converse in English" in PLANNER_SYSTEM_PROMPT
 
     def test_collocations_target_language_exception(self):
-        assert 'Only the "collocations" array is in the' in PLANNER_SYSTEM_PROMPT
+        assert 'The "collocations" array must contain' in PLANNER_SYSTEM_PROMPT
 
     def test_english_gloss_requirement(self):
         assert "English gloss" in PLANNER_SYSTEM_PROMPT
+
+    def test_collocations_bare_target_language(self):
+        assert "bare target-language phrases only" in PLANNER_SYSTEM_PROMPT
 
 
 class TestBuildPlannerTurnPrompt:
