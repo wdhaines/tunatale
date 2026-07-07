@@ -409,3 +409,39 @@ class TestPlanFeedback:
         expected = [{"day": 1, "note": "old note"}, {"day": 2, "note": "too fast"}]
         assert response.json() == {"feedback": expected}
         assert store.get_curriculum("trip").metadata["planner"]["feedback"] == expected
+
+
+class TestDeleteCurriculum:
+    async def test_delete_unknown_curriculum_404(self):
+        _setup()
+        async with _client() as client:
+            response = await client.delete("/api/curriculum/no-such")
+        assert response.status_code == 404
+
+    async def test_delete_curriculum_removes_it_and_cascades(self):
+        curriculum = _planned_curriculum()
+        store = _setup(curriculum)
+        from app.models.lesson import Lesson
+
+        lesson = Lesson(
+            title="Test Lesson",
+            language_code="sl",
+            generation_metadata={"source_prompt": "x", "model": "y"},
+        )
+        store.save_lesson("less_1", "trip", 1, lesson)
+        store.save_audio_file("aud_1", "less_1", "/tmp/foo.mp3", section_index=0, section_type="dialogue")
+
+        # Sanity: data exists before delete
+        assert store.get_curriculum("trip") is not None
+        assert store.get_lesson("less_1") is not None
+        assert store.get_audio_file_row("aud_1") is not None
+
+        async with _client() as client:
+            response = await client.delete("/api/curriculum/trip")
+        assert response.status_code == 200
+        assert response.json() == {"deleted": "trip"}
+
+        # Curriculum, lessons, and audio files are all gone
+        assert store.get_curriculum("trip") is None
+        assert store.get_lesson("less_1") is None
+        assert store.get_audio_file_row("aud_1") is None

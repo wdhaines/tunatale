@@ -207,6 +207,14 @@ async def get_curriculum_source(curriculum_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Curriculum not found") from None
 
 
+@router.delete("/{curriculum_id}", status_code=200)
+async def delete_curriculum(curriculum_id: str, request: Request):
+    store = request.state.content_store
+    if not store.delete_curriculum(curriculum_id):
+        raise HTTPException(status_code=404, detail="Curriculum not found")
+    return {"deleted": curriculum_id}
+
+
 @router.get("/{curriculum_id}/days/{day}/lesson", status_code=200)
 async def get_lesson_by_day(curriculum_id: str, day: int, request: Request):
     store = request.state.content_store

@@ -141,6 +141,17 @@ class ContentStore:
             result.append({"id": row["id"], "topic": c.topic, "created_at": row["created_at"]})
         return result
 
+    def delete_curriculum(self, curriculum_id: str) -> bool:
+        with self._get_conn() as conn:
+            conn.execute(
+                "DELETE FROM audio_files WHERE lesson_id IN (SELECT id FROM lessons WHERE curriculum_id = ?)",
+                (curriculum_id,),
+            )
+            conn.execute("DELETE FROM lessons WHERE curriculum_id = ?", (curriculum_id,))
+            deleted = conn.execute("DELETE FROM curricula WHERE id = ?", (curriculum_id,)).rowcount > 0
+            conn.commit()
+        return deleted
+
     # ── Lessons ───────────────────────────────────────────────────────────
 
     def save_lesson(self, lesson_id: str, curriculum_id: str, day: int, lesson: Lesson) -> None:
