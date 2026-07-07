@@ -30,8 +30,9 @@ test('lesson source panel: copy, warned import defers navigation, clean import n
 	await page.goto(`/c/${curriculumId}/l/${lessonId}`);
 	await expect(page.getByRole('button', { name: 'Render Audio' })).toBeVisible({ timeout: 15000 });
 
-	// Open the panel — the REAL source endpoint returns the seeded story.
-	await page.getByText('Lesson source — edit with Claude').click();
+	// Open the tools card, then the source panel — the REAL source endpoint returns the seeded story.
+	await page.getByText('Lesson tools').click();
+	await page.getByText('Edit Source').click();
 	await expect(page.locator('.source-view')).toContainText('"title": "Ordering Coffee"', {
 		timeout: 10000,
 	});

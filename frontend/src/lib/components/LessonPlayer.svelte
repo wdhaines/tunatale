@@ -89,7 +89,7 @@
 		</button>
 		<button class="ctrl-btn" onclick={() => ctrl.seekBy(10)} title="Forward 10s">10s▶</button>
 		{#if hasCues}
-			<button class="ctrl-btn" onclick={() => ctrl.nextSection()} title="Next section">Sec ⏭</button>
+			<button class="ctrl-btn" onclick={() => ctrl.nextSection()} title="Next section">Section ⏭</button>
 		{/if}
 	</div>
 

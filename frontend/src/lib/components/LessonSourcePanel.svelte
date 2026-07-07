@@ -99,7 +99,7 @@
 </script>
 
 <details class="lesson-source-panel" bind:open={_open}>
-	<summary>Lesson source — edit with Claude</summary>
+	<summary>Edit Source</summary>
 
 	{#if sourceLoading}
 		<p class="muted">Loading source…</p>

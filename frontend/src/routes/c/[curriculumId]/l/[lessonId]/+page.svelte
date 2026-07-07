@@ -557,13 +557,9 @@
 				{/each}
 			</div>
 		{/if}
-		<p class="muted">
-			Regenerating rewrites this day's dialogue with the current prompt (better declension &amp;
-			conjugation coverage). Existing cards stay; new vocabulary and morphology drills are added when
-			you next listen and sync.
-		</p>
 		<div class="regen-row">
-			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
+			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}
+				title="Regenerating rewrites this day's dialogue with the current prompt (better declension &amp; conjugation coverage). Existing cards stay; new vocabulary and morphology drills are added when you next listen and sync.">
 				{regenerating ? 'Regenerating…' : `Regenerate Day ${data.lesson.day}`}
 			</button>
 			<!-- Regeneration hits the LLM, so surface the quota chip here to track usage. -->
@@ -577,14 +573,14 @@
 				{/if}
 			</p>
 		{/if}
+		<hr />
+		<LessonSourcePanel
+			lessonId={data.lesson.id}
+			curriculumId={data.curriculum.id}
+			day={data.lesson.day}
+			onImported={(newLessonId) => goto(`/c/${data.curriculum.id}/l/${newLessonId}`)}
+		/>
 	</details>
-
-	<LessonSourcePanel
-		lessonId={data.lesson.id}
-		curriculumId={data.curriculum.id}
-		day={data.lesson.day}
-		onImported={(newLessonId) => goto(`/c/${data.curriculum.id}/l/${newLessonId}`)}
-	/>
 </main>
 
 <style>
@@ -784,12 +780,21 @@
 		font-size: 0.9rem;
 		font-weight: 600;
 		color: var(--color-muted);
+		padding: 0.25rem 0;
+		border-radius: 4px;
+		user-select: none;
+	}
+	.tools-card summary:hover {
+		color: var(--color-text);
 	}
 	.tools-card[open] summary {
 		margin-bottom: 0.75rem;
 	}
-	.tools-card .muted {
-		margin: 0.75rem 0 0;
+	.tools-card hr {
+		border: none;
+		border-top: 1px solid var(--color-border);
+		margin: 1rem 0;
+		opacity: 0.5;
 	}
 	.download-links {
 		display: flex;
@@ -797,10 +802,8 @@
 		gap: 0.5rem;
 	}
 	.download-all-btn {
-		display: block;
-		min-height: 44px;
-		line-height: 44px;
-		padding: 0 1.25rem;
+		display: inline-block;
+		padding: 0.5rem 1.25rem;
 		background: var(--color-primary);
 		color: var(--color-on-primary);
 		border-radius: 4px;

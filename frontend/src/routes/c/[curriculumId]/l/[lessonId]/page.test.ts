@@ -1872,17 +1872,17 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
   });
 
   describe("lesson source panel", () => {
-    it("renders a collapsed LessonSourcePanel after the tools card", () => {
+    it("renders a collapsed LessonSourcePanel inside the tools card", () => {
       const { container } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       const toolsCard = container.querySelector("details.tools-card");
       expect(toolsCard).toBeTruthy();
-      const sourcePanel = container.querySelector<HTMLDetailsElement>(
+      const sourcePanel = toolsCard!.querySelector<HTMLDetailsElement>(
         "details.lesson-source-panel",
       );
       expect(sourcePanel).toBeTruthy();
-      expect(sourcePanel!.textContent).toContain("edit with Claude");
+      expect(sourcePanel!.textContent).toContain("Edit Source");
       expect(sourcePanel!.open).toBe(false);
     });
 
