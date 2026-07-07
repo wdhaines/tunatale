@@ -1,5 +1,7 @@
 """LessonRenderer integration tests."""
 
+import asyncio
+import shutil
 import wave
 from io import BytesIO
 from unittest.mock import AsyncMock
@@ -659,3 +661,71 @@ class TestLessonRendererCues:
         _ = await rdr.render(lesson, output)  # ignore return value
         assert output.exists()
         assert output.stat().st_size > 0
+
+
+class TestEventLoopResponsiveness:
+    """Guardrail: ``LessonRenderer`` must not block the asyncio event loop.
+
+    Without ``asyncio.to_thread`` offloading, synchronous file I/O (soundfile
+    reads/writes, ffmpeg subprocess calls) starves concurrent coroutines.
+    """
+
+    @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not available")
+    async def test_render_does_not_block_event_loop(self, tmp_path):
+        """A concurrent asyncio task makes progress while ``render()`` is running.
+
+        The test starts a fast ticker alongside a multi-section opus render and
+        asserts the ticker advanced *during* the render.  Without
+        ``asyncio.to_thread`` wrappers the ticker would stall (0 advances)
+        during the sync I/O and ffmpeg calls.
+        """
+        # A moderately-sized lesson so there are enough sync operations to
+        # distinguish async offloading from a blocking render.
+        phrases_per_section = 8
+        lesson = Lesson(
+            title="Guardrail Test",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text=f"fraza {j}", voice_id="sl-SI-PetraNeural", language_code="sl")
+                        for j in range(phrases_per_section)
+                    ],
+                )
+                for _ in range(5)  # 5 sections × 8 phrases = 40 phrases
+            ],
+        )
+        fake_audio = _make_wav_bytes(duration_ms=100)
+
+        mock_tts = AsyncMock()
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+            output_path.write_bytes(fake_audio)
+
+        mock_tts.synthesize = fake_synthesize
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"sl": SlovenePreprocessor()},
+            pause_calculator=NaturalPauseCalculator(),
+            delivery_codec="opus",
+        )
+        output = tmp_path / "lesson.opus"
+
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            for _ in range(500):
+                await asyncio.sleep(0)
+                ticks += 1
+
+        ticker_task = asyncio.create_task(ticker())
+        await rdr.render(lesson, output)
+        await ticker_task
+
+        assert ticks >= 5, (
+            f"Event loop was blocked during render: ticker only advanced {ticks} times "
+            "(expected ≥5 with asyncio.to_thread offloading)"
+        )
