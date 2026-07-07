@@ -25,6 +25,13 @@ vi.mock("$lib/api", () => ({
     getRateLimit: vi.fn(),
     probeRateLimit: vi.fn(),
     getLanguages: vi.fn().mockResolvedValue({ languages: [], active: "sl" }),
+    getLlmHealth: vi.fn().mockResolvedValue({
+      healthy: true,
+      consecutive_failures: 0,
+      last_error: null,
+      fallback_allowed: false,
+      llm_mode: "mock",
+    }),
   },
 }));
 

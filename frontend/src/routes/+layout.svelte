@@ -10,6 +10,8 @@
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
 	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
+	import { llmHealthStore } from '$lib/stores/llmHealth.svelte';
+	import LlmHealthBanner from '$lib/components/LlmHealthBanner.svelte';
 
 	let { children } = $props();
 
@@ -27,6 +29,9 @@
 		prefetchPrefStore.init();
 		languageStore.init();
 		queueStatsStore.refresh();
+		llmHealthStore.refresh();
+		const healthTimer = setInterval(() => llmHealthStore.refresh(), 60000);
+		return () => clearInterval(healthTimer);
 	});
 
 	$effect(() => {
@@ -51,6 +56,8 @@
 <svelte:head>
 	<link rel="icon" href={favicon} />
 </svelte:head>
+
+<LlmHealthBanner />
 
 <nav class="global-nav">
 	<a href="/" class="brand"><img class="brand-mark" src={logo} alt="" />TunaTale</a>

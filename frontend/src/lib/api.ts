@@ -352,6 +352,20 @@ export interface RateLimitStatus {
   tokens_per_day_limit: number | null;
 }
 
+export interface LlmHealthLastError {
+  status: string | number;
+  message: string;
+  ago_s: number;
+}
+
+export interface LlmHealthStatus {
+  healthy: boolean;
+  consecutive_failures: number;
+  last_error: LlmHealthLastError | null;
+  fallback_allowed: boolean;
+  llm_mode: string;
+}
+
 export interface ReviewQueueItem extends SRSItemDetail {
   direction: "recognition" | "production";
 }
@@ -649,6 +663,10 @@ export class TunaTaleAPI {
 
   async fetchQueueStats(): Promise<QueueStats> {
     return this.request("/api/srs/queue-stats");
+  }
+
+  async getLlmHealth(): Promise<LlmHealthStatus> {
+    return this.request("/api/llm/health");
   }
 
   async getRateLimit(): Promise<RateLimitStatus> {
