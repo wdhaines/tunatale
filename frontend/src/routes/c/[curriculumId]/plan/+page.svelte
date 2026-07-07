@@ -34,6 +34,7 @@
 	let pending = $state(false);
 	let batchSize = $state(5);
 	let error = $state('');
+	let confirmingReset = $state(false);
 	let chat: PlannerChat;
 
 	const pipelineStatus = $derived(pipelineStore.status);
@@ -47,6 +48,33 @@
 	onMount(() => {
 		rateLimitStore.ensureFresh();
 	});
+
+	async function handleReset() {
+		confirmingReset = false;
+		pending = true;
+		error = '';
+		try {
+			await api.resetPlanChat(data.curriculum.id);
+			messages = [];
+			proposed = null;
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			pending = false;
+		}
+	}
+
+	function handleResetClick() {
+		if (confirmingReset) {
+			handleReset();
+		} else {
+			confirmingReset = true;
+		}
+	}
+
+	function handleResetBlur() {
+		confirmingReset = false;
+	}
 
 	async function handleSend(message: string): Promise<boolean> {
 		pending = true;
@@ -103,6 +131,17 @@
 		{#if error}
 			<p class="error">{error}</p>
 		{/if}
+		<div class="reset-area">
+			<button
+				class="reset"
+				class:confirming={confirmingReset}
+				onclick={handleResetClick}
+				onblur={handleResetBlur}
+				disabled={pending}
+			>
+				{confirmingReset ? 'Confirm reset' : 'Reset chat'}
+			</button>
+		</div>
 	</section>
 
 	{#if proposed}
@@ -169,5 +208,28 @@
 		color: var(--color-danger);
 		margin: 0.75rem 0 0;
 		font-size: 0.9rem;
+	}
+	.reset-area {
+		display: flex;
+		justify-content: flex-end;
+		margin-top: 0.75rem;
+	}
+	.reset {
+		padding: 0.5rem 1.1rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-pill);
+		background: var(--color-surface);
+		color: var(--color-text);
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.reset:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.reset.confirming {
+		border-color: var(--color-danger);
+		color: var(--color-danger);
 	}
 </style>

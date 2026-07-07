@@ -5,6 +5,7 @@ vi.mock("$lib/api", () => ({
   api: {
     planTurn: vi.fn(),
     commitPlan: vi.fn(),
+    resetPlanChat: vi.fn(),
     getPipeline: vi.fn(),
     getLlmActivity: vi.fn().mockResolvedValue({ latest: 0, events: [] }),
     retryPipelineDay: vi.fn(),
@@ -49,6 +50,7 @@ import Page from "./+page.svelte";
 
 const mockPlanTurn = vi.mocked(api.planTurn);
 const mockCommitPlan = vi.mocked(api.commitPlan);
+const mockResetPlanChat = vi.mocked(api.resetPlanChat);
 const mockPipelineStoreStart = vi.mocked(pipelineStore.start);
 const mockPipelineStoreStop = vi.mocked(pipelineStore.stop);
 
@@ -331,5 +333,82 @@ describe("/c/[curriculumId]/plan page", () => {
       Object.defineProperty(llmActivityStore, "events", { value: [], configurable: true });
       Object.defineProperty(llmActivityStore, "currentLine", { value: "", configurable: true });
     }
+  });
+
+  describe("reset chat", () => {
+    it("first click shows Confirm reset, does not call the API", async () => {
+      const { getByRole, queryByText } = render(Page, {
+        props: { data: { curriculum: makeCurriculum() } },
+      });
+
+      const btn = getByRole("button", { name: "Reset chat" });
+      await fireEvent.click(btn);
+
+      expect(getByRole("button", { name: "Confirm reset" })).toBeTruthy();
+      expect(mockResetPlanChat).not.toHaveBeenCalled();
+      // Proposed area should not be rendered (no proposal)
+      expect(queryByText(/proposed/i)).toBeNull();
+    });
+
+    it("second click calls the API, clears messages and proposed", async () => {
+      mockResetPlanChat.mockResolvedValue({ reply_count_cleared: 2 });
+      const proposed: ProposedBatch = { start_day: 1, days: [day(1)] };
+
+      const { getByRole, queryByText, container } = render(Page, {
+        props: {
+          data: {
+            curriculum: makeCurriculum({
+              days: [day(1)],
+              proposed,
+            }),
+          },
+        },
+      });
+
+      // First click: arm
+      await fireEvent.click(getByRole("button", { name: "Reset chat" }));
+      // Second click: fire
+      await fireEvent.click(getByRole("button", { name: "Confirm reset" }));
+
+      await waitFor(() => {
+        expect(mockResetPlanChat).toHaveBeenCalledWith("trip-1");
+        // Proposed area gone
+        expect(queryByText(/proposed/i)).toBeNull();
+        // Messages cleared (no event line)
+        expect(queryByText(/1 days committed so far/i)).toBeNull();
+        // Error area is not present
+        expect(container.querySelector(".error")).toBeNull();
+      });
+    });
+
+    it("blur reverts the button text to Reset chat", async () => {
+      const { getByRole } = render(Page, {
+        props: { data: { curriculum: makeCurriculum() } },
+      });
+
+      await fireEvent.click(getByRole("button", { name: "Reset chat" }));
+      expect(getByRole("button", { name: "Confirm reset" })).toBeTruthy();
+
+      await fireEvent.blur(getByRole("button", { name: "Confirm reset" }));
+
+      expect(getByRole("button", { name: "Reset chat" })).toBeTruthy();
+    });
+
+    it("API failure surfaces the error and reverts the button", async () => {
+      mockResetPlanChat.mockRejectedValue(new Error("POST …/reset: Not found"));
+
+      const { getByRole, getByText } = render(Page, {
+        props: { data: { curriculum: makeCurriculum() } },
+      });
+
+      await fireEvent.click(getByRole("button", { name: "Reset chat" }));
+      await fireEvent.click(getByRole("button", { name: "Confirm reset" }));
+
+      await waitFor(() => {
+        expect(getByText(/not found/i)).toBeTruthy();
+      });
+      // Button reverted
+      expect(getByRole("button", { name: "Reset chat" })).toBeTruthy();
+    });
   });
 });

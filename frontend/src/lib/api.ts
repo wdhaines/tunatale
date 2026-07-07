@@ -531,6 +531,10 @@ export class TunaTaleAPI {
     });
   }
 
+  async resetPlanChat(id: string): Promise<{ reply_count_cleared: number }> {
+    return this.request(`/api/curriculum/${id}/plan/reset`, { method: "POST" });
+  }
+
   async sendPlanFeedback(
     id: string,
     day: number,

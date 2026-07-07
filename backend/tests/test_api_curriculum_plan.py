@@ -315,6 +315,72 @@ class TestPlanCommit:
         assert chat == [{"role": "event", "content": "Committed day 1."}]
 
 
+class TestPlanReset:
+    async def test_reset_unknown_curriculum_404(self):
+        _setup()
+        async with _client() as client:
+            response = await client.post("/api/curriculum/no-such/plan/reset", json={})
+        assert response.status_code == 404
+
+    async def test_reset_clears_chat_and_proposed_keeps_feedback_and_days(self):
+        curriculum = _planned_curriculum(
+            chat=[
+                {"role": "user", "content": "plan 2 days"},
+                {"role": "planner", "content": "Here you go"},
+            ],
+            proposed={"start_day": 1, "days": [asdict(_day(1))]},
+            feedback=[{"day": 1, "note": "good"}],
+        )
+        curriculum.days.append(_day(1))
+        store = _setup(curriculum)
+
+        async with _client() as client:
+            response = await client.post("/api/curriculum/trip/plan/reset", json={})
+
+        assert response.status_code == 200
+        assert response.json() == {"reply_count_cleared": 1}
+
+        saved = store.get_curriculum("trip").metadata["planner"]
+        assert saved["chat"] == []
+        assert saved["proposed"] is None
+        assert saved["feedback"] == [{"day": 1, "note": "good"}]
+        assert [d.day for d in store.get_curriculum("trip").days] == [1]
+
+    async def test_reset_idempotent_on_empty_state(self):
+        store = _setup(_planned_curriculum())
+
+        async with _client() as client:
+            response = await client.post("/api/curriculum/trip/plan/reset", json={})
+
+        assert response.status_code == 200
+        assert response.json() == {"reply_count_cleared": 0}
+
+        saved = store.get_curriculum("trip").metadata["planner"]
+        assert saved["chat"] == []
+        assert saved["proposed"] is None
+
+    async def test_reset_counts_only_planner_replies(self):
+        curriculum = _planned_curriculum(
+            chat=[
+                {"role": "user", "content": "hi"},
+                {"role": "planner", "content": "hello"},
+                {"role": "event", "content": "Committed day 1."},
+                {"role": "user", "content": "more"},
+                {"role": "planner", "content": "sure"},
+            ],
+            proposed={"start_day": 2, "days": [asdict(_day(2))]},
+        )
+        store = _setup(curriculum)
+
+        async with _client() as client:
+            response = await client.post("/api/curriculum/trip/plan/reset", json={})
+
+        assert response.status_code == 200
+        # 2 planner replies out of 5 entries
+        assert response.json() == {"reply_count_cleared": 2}
+        assert store.get_curriculum("trip").metadata["planner"]["chat"] == []
+
+
 class TestPlanFeedback:
     async def test_feedback_unknown_curriculum_404(self):
         _setup()

@@ -190,6 +190,26 @@ describe("TunaTaleAPI", () => {
       expect(result.days).toBe(3);
     });
 
+    it("resetPlanChat calls POST /api/curriculum/:id/plan/reset", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ reply_count_cleared: 3 })));
+
+      const result = await api.resetPlanChat("trip-1");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/curriculum/trip-1/plan/reset`,
+        expect.objectContaining({ method: "POST" }),
+      );
+      expect(result.reply_count_cleared).toBe(3);
+    });
+
+    it("resetPlanChat returns 0 for empty chat", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ reply_count_cleared: 0 })));
+
+      const result = await api.resetPlanChat("trip-1");
+
+      expect(result.reply_count_cleared).toBe(0);
+    });
+
     it("sendPlanFeedback calls POST /api/curriculum/:id/plan/feedback", async () => {
       vi.stubGlobal(
         "fetch",

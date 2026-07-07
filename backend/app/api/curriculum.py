@@ -140,6 +140,20 @@ async def plan_commit(curriculum_id: str, request: Request):
     return {"id": curriculum_id, "days": len(curriculum.days)}
 
 
+@router.post("/{curriculum_id}/plan/reset", status_code=200)
+async def plan_reset(curriculum_id: str, request: Request):
+    """Clear the planner chat and proposed batch (keeps feedback and committed days)."""
+    store = request.state.content_store
+    curriculum = _get_curriculum_or_404(store, curriculum_id)
+    state = get_planner_state(curriculum)
+    reply_count = sum(1 for m in state.get("chat", []) if m.get("role") == "planner")
+    state["chat"] = []
+    state["proposed"] = None
+    curriculum.metadata["planner"] = state
+    store.save_curriculum(curriculum_id, curriculum)
+    return {"reply_count_cleared": reply_count}
+
+
 @router.post("/{curriculum_id}/plan/feedback", status_code=200)
 async def plan_feedback(curriculum_id: str, body: PlanFeedbackRequest, request: Request):
     """Record listening feedback for a committed day; it enters the next turn's prompt."""
