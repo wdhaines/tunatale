@@ -1,11 +1,25 @@
 /**
  * Tests for LessonPlayer.svelte.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import LessonPlayer from "./LessonPlayer.svelte";
 import type { LessonAudio } from "$lib/api";
 import type { PlaybackController } from "$lib/playback/playbackController.svelte";
+
+beforeAll(() => {
+  vi.spyOn(HTMLAudioElement.prototype, "play").mockImplementation(
+    function (this: HTMLAudioElement) {
+      this.dispatchEvent(new Event("play"));
+      return Promise.resolve();
+    },
+  );
+  vi.spyOn(HTMLAudioElement.prototype, "pause").mockImplementation(
+    function (this: HTMLAudioElement) {
+      this.dispatchEvent(new Event("pause"));
+    },
+  );
+});
 
 vi.mock("$lib/api", () => ({
   api: {
@@ -225,10 +239,12 @@ describe("LessonPlayer", () => {
       fireEvent.click(btn);
     });
 
-    it("fires togglePlay on play button click", () => {
+    it("fires togglePlay on play button click and shows pause SVG", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
       const btn = container.querySelector<HTMLButtonElement>(".play-btn")!;
+      expect(btn.querySelector("svg")).toBeTruthy();
       fireEvent.click(btn);
+      expect(btn.querySelector("svg")).toBeTruthy();
     });
 
     it("fires forward on button click", () => {

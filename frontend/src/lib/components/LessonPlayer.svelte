@@ -81,23 +81,46 @@
 
 	<div class="transport-row">
 		{#if hasCues}
-			<button class="ctrl-btn" onclick={() => ctrl.prevSection()} title="Previous section">⏮ Sec</button>
+			<button class="ctrl-btn" onclick={() => ctrl.prevSection()} title="Previous section">
+				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="2,8 10,2 10,14" fill="currentColor"/><rect x="11.5" y="2" width="2.5" height="12" rx="0.5" fill="currentColor"/></svg>
+				Section
+			</button>
 		{/if}
-		<button class="ctrl-btn" onclick={() => ctrl.seekBy(-10)} title="Rewind 10s">◀10s</button>
-		<button class="ctrl-btn play-btn" onclick={() => ctrl.togglePlay()} title={ctrl.playing ? 'Pause' : 'Play'}>
-			{ctrl.playing ? '⏸' : '▶'}
+		<button class="ctrl-btn" onclick={() => ctrl.seekBy(-10)} title="Rewind 10s">
+			<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="12,2 4,8 12,14" fill="currentColor"/></svg>10s
 		</button>
-		<button class="ctrl-btn" onclick={() => ctrl.seekBy(10)} title="Forward 10s">10s▶</button>
+		<button class="ctrl-btn play-btn" onclick={() => ctrl.togglePlay()} title={ctrl.playing ? 'Pause' : 'Play'}>
+			{#if ctrl.playing}
+				<svg viewBox="0 0 16 16" width="1.1em" height="1.1em" style="vertical-align:middle"><rect x="3" y="2" width="4" height="12" rx="1" fill="currentColor"/><rect x="9" y="2" width="4" height="12" rx="1" fill="currentColor"/></svg>
+			{:else}
+				<svg viewBox="0 0 16 16" width="1.1em" height="1.1em" style="vertical-align:middle"><polygon points="4,2 14,8 4,14" fill="currentColor"/></svg>
+			{/if}
+		</button>
+		<button class="ctrl-btn" onclick={() => ctrl.seekBy(10)} title="Forward 10s">
+			10s<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="4,2 12,8 4,14" fill="currentColor"/></svg>
+		</button>
 		{#if hasCues}
-			<button class="ctrl-btn" onclick={() => ctrl.nextSection()} title="Next section">Section ⏭</button>
+			<button class="ctrl-btn" onclick={() => ctrl.nextSection()} title="Next section">
+				Section
+				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><rect x="2" y="2" width="2.5" height="12" rx="0.5" fill="currentColor"/><polygon points="6,2 14,8 6,14" fill="currentColor"/></svg>
+			</button>
 		{/if}
 	</div>
 
 	{#if hasCues}
 		<div class="sentence-row">
-			<button class="ctrl-btn small" onclick={() => ctrl.prevCue()} title="Previous sentence">◀ Sentence</button>
-			<button class="ctrl-btn small" onclick={() => ctrl.repeatCue()} title="Repeat current">Repeat ↻</button>
-			<button class="ctrl-btn small" onclick={() => ctrl.nextCue()} title="Next sentence">Sentence ▶</button>
+			<button class="ctrl-btn small" onclick={() => ctrl.prevCue()} title="Previous sentence">
+				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="12,2 4,8 12,14" fill="currentColor"/></svg>
+				Sentence
+			</button>
+			<button class="ctrl-btn small" onclick={() => ctrl.repeatCue()} title="Repeat current">
+				Repeat
+				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><path d="M4 8a4 4 0 0 1 7.5-2L10 8h3V4l-1 1a5 5 0 0 0-9 3h1zm8 0a4 4 0 0 1-7.5 2L6 8H3v4l1-1a5 5 0 0 0 9-3h-1z" fill="currentColor"/></svg>
+			</button>
+			<button class="ctrl-btn small" onclick={() => ctrl.nextCue()} title="Next sentence">
+				Sentence
+				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="4,2 12,8 4,14" fill="currentColor"/></svg>
+			</button>
 			<label class="sentence-skip-toggle">
 				<input type="checkbox" checked={ctrl.sentenceSkip} onchange={(e) => ctrl.setSentenceSkip((e.target as HTMLInputElement).checked)} />
 				Sentence skip
