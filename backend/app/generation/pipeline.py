@@ -12,6 +12,7 @@ from app.audio.render_service import render_lesson_audio
 from app.generation.ids import mint_id
 from app.generation.story import StoryGenerationError
 from app.llm.activity import ActivityLog
+from app.llm.client import LLMError
 from app.storage.lesson_io import sync_curriculum_day_title
 from app.storage.store import ContentStore
 
@@ -297,7 +298,11 @@ class LessonPipeline:
                     strategy=ContentStrategy[record["strategy"]],
                     cefr_level=curriculum.cefr_level,
                 )
-            except StoryGenerationError as e:
+            except (StoryGenerationError, LLMError) as e:
+                # LLMError: opt-in fallback means complete() now raises a bare 429/HTTP
+                # error instead of degrading to Ollama junk-JSON (a StoryGenerationError).
+                # Both funnel here so the rate-limit backoff below runs for a real 429
+                # rather than escaping to the worker's generic 'Unexpected pipeline error'.
                 msg = str(e)
                 is_rate_limit = (
                     (self._llm_client.last_429 is not None and self._llm_client.last_429.get("at", 0) >= t0)

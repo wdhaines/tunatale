@@ -627,6 +627,49 @@ class TestStoryEndpoints:
         assert response.status_code == 502
         assert "invalid JSON" in response.json()["detail"]
 
+    async def test_generate_story_llm_error_502(self):
+        """A raw LLMError (opt-in fallback: complete() no longer rescues a 429 via
+        Ollama) must map to 502 with the error detail, not escape as a 500 traceback."""
+        from app.llm.client import LLMError
+        from app.storage.store import ContentStore
+
+        mock_generator = AsyncMock()
+        mock_generator.generate = AsyncMock(
+            side_effect=LLMError("Groq returned 429 Too Many Requests (retry after 37s)")
+        )
+
+        store = ContentStore(":memory:")
+        store.save_curriculum(
+            "c1",
+            Curriculum(
+                id="c1",
+                topic="coffee",
+                language_code="sl",
+                cefr_level="A2",
+                days=[
+                    CurriculumDay(
+                        day=1,
+                        title="Day 1",
+                        focus="greetings",
+                        learning_objective="greet",
+                        story_guidance="café",
+                        collocations=["zdravo"],
+                    )
+                ],
+            ),
+        )
+        app.state.content_store = store
+        app.state.story_generator = mock_generator
+        app.state.language = Language.slovene()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/story/generate",
+                json={"curriculum_id": "c1", "day": 1, "strategy": "WIDER"},
+            )
+        assert response.status_code == 502
+        assert "429" in response.json()["detail"]
+
     async def test_generate_story_returns_201(self, monkeypatch):
         from app.generation.pipeline import LessonPipeline
         from app.llm.activity import ActivityLog

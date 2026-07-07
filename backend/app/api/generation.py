@@ -12,6 +12,7 @@ from app.api._serializers import serialize_lesson
 from app.api.models import GenerateStoryRequest, ImportLessonRequest
 from app.generation.ids import mint_id
 from app.generation.story import StoryGenerationError
+from app.llm.client import LLMError
 from app.models.lesson import Lesson, SectionType
 from app.models.strategy import ContentStrategy
 from app.srs.database import SRSDatabase
@@ -89,6 +90,13 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
         )
     except StoryGenerationError as e:
         # Malformed LLM output — nothing persisted; the user retries.
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    except LLMError as e:
+        # Opt-in fallback: complete() now raises a bare 429/HTTP error instead of
+        # degrading to Ollama. Map to 502 (mirror plan_turn's PlannerError handling)
+        # so the client gets the retry detail, never a raw 500/ASGI traceback. The
+        # lesson-page Regenerate button routes through the pipeline (429 backoff +
+        # sticky-failed) instead — this hardens the sync endpoint's other callers.
         raise HTTPException(status_code=502, detail=str(e)) from e
 
     lesson_id = mint_id(lesson.title)

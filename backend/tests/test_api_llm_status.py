@@ -171,17 +171,25 @@ class TestLlmHealth:
         assert body["llm_mode"] == settings.llm_mode
 
     async def test_unhealthy_when_two_consecutive_failures(self):
-        client = LLMClient(groq_api_key="test-key", max_retries_429=0)
-        client.consecutive_primary_failures = 3
-        client.last_primary_error = {"status": 401, "message": "Groq returned HTTP 401", "at": time.time() - 10}
-        app.state.llm = client
-        body = await _get_health()
-        assert body["healthy"] is False
-        assert body["consecutive_failures"] == 3
-        assert body["last_error"]["status"] == 401
-        assert body["last_error"]["message"] == "Groq returned HTTP 401"
-        assert body["last_error"]["ago_s"] == pytest.approx(10, abs=3)
-        assert body["fallback_allowed"] is False
+        # Health only reflects real failure state outside mock mode; in mock mode
+        # the endpoint short-circuits to healthy=True (see test_mock_mode_always_healthy).
+        # Pin a non-mock mode so this runs identically in CI (LLM_MODE=mock) and dev.
+        original_mode = settings.llm_mode
+        settings.llm_mode = "live"
+        try:
+            client = LLMClient(groq_api_key="test-key", max_retries_429=0)
+            client.consecutive_primary_failures = 3
+            client.last_primary_error = {"status": 401, "message": "Groq returned HTTP 401", "at": time.time() - 10}
+            app.state.llm = client
+            body = await _get_health()
+            assert body["healthy"] is False
+            assert body["consecutive_failures"] == 3
+            assert body["last_error"]["status"] == 401
+            assert body["last_error"]["message"] == "Groq returned HTTP 401"
+            assert body["last_error"]["ago_s"] == pytest.approx(10, abs=3)
+            assert body["fallback_allowed"] is False
+        finally:
+            settings.llm_mode = original_mode
 
     async def test_mock_mode_always_healthy(self):
         original_mode = settings.llm_mode

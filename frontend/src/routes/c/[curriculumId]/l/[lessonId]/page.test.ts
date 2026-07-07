@@ -23,7 +23,7 @@ vi.mock("$lib/api", () => ({
     submitDrill: vi.fn(),
     undoGrade: vi.fn(),
     fetchQueueStats: vi.fn(),
-    generateStory: vi.fn(),
+    regenerateDay: vi.fn(),
     ignoreLemma: vi.fn(),
     unignoreLemma: vi.fn(),
     getStorySource: vi.fn(),
@@ -75,7 +75,7 @@ const mockCreateBaseCard = vi.mocked(api.createBaseCard);
 const mockCreateInflectionCloze = vi.mocked(api.createInflectionCloze);
 const mockSubmitDrill = vi.mocked(api.submitDrill);
 const mockUndoGrade = vi.mocked(api.undoGrade);
-const mockGenerateStory = vi.mocked(api.generateStory);
+const mockRegenerateDay = vi.mocked(api.regenerateDay);
 const mockGetStorySource = vi.mocked(api.getStorySource);
 const mockImportStory = vi.mocked(api.importStory);
 const mockIgnoreLemma = vi.mocked(api.ignoreLemma);
@@ -126,6 +126,10 @@ beforeEach(() => {
   lessonModePref.set("read"); // reset the singleton's in-memory state
   localStorage.clear(); // ...without leaving the persisted override set() just wrote
   syncStore.notify(null);
+  // Reset the shared pipeline mock's status between tests: it's a plain object,
+  // not cleared by vi.clearAllMocks(), and a leaked (esp. failed) record would
+  // bleed into the ungated regenStatus / follow-effect of an unrelated test.
+  (pipelineStore as unknown as { status: unknown }).status = null;
   vi.mocked(listenedStore.has).mockReturnValue(false);
   // When load supplies no transcript the component fetches it on mount. Default
   // to a pending promise so null-transcript renders sit in the loading state
@@ -1929,6 +1933,25 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       confirmSpy?.mockRestore();
     });
 
+    /** Build a one-day pipeline status for day 1 with the given overrides. */
+    function dayStatus(overrides: Record<string, unknown>) {
+      return {
+        active: true,
+        days: [
+          {
+            day: 1,
+            state: "generating",
+            lesson_id: null,
+            has_audio: false,
+            error: null,
+            retryable: null,
+            detail: null,
+            ...overrides,
+          },
+        ],
+      };
+    }
+
     it("renders a Regenerate button", () => {
       const { getByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
@@ -1936,12 +1959,13 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       expect(getByText("Regenerate Day 1")).toBeTruthy();
     });
 
-    it("regenerates and navigates to the new lesson when confirmed", async () => {
+    it("routes regeneration through the pipeline and navigates once the new lesson is ready", async () => {
       confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-      mockGenerateStory.mockResolvedValue({
-        id: "l1-new",
-        title: "Day 1: Coffee v2",
-        sections: [],
+      mockRegenerateDay.mockResolvedValue({ status: "queued" });
+      (pipelineStore as any).status = dayStatus({
+        state: "ready",
+        lesson_id: "l1-new",
+        has_audio: true,
       });
 
       const { getByText } = render(Page, {
@@ -1950,7 +1974,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await fireEvent.click(getByText("Regenerate Day 1"));
 
       await waitFor(() => {
-        expect(mockGenerateStory).toHaveBeenCalledWith("cid-1", 1);
+        expect(mockRegenerateDay).toHaveBeenCalledWith("cid-1", 1, "WIDER");
         expect(mockGoto).toHaveBeenCalledWith("/c/cid-1/l/l1-new");
       });
     });
@@ -1963,26 +1987,92 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       });
       await fireEvent.click(getByText("Regenerate Day 1"));
 
-      expect(mockGenerateStory).not.toHaveBeenCalled();
+      expect(mockRegenerateDay).not.toHaveBeenCalled();
       expect(mockGoto).not.toHaveBeenCalled();
     });
 
-    it("shows an error when regeneration fails", async () => {
+    it("does not navigate while the day is still generating", async () => {
       confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-      mockGenerateStory.mockRejectedValue(new Error("generation failed"));
+      mockRegenerateDay.mockResolvedValue({ status: "queued" });
+      (pipelineStore as any).status = dayStatus({ state: "generating", lesson_id: null });
+
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      await fireEvent.click(getByText("Regenerate Day 1"));
+
+      await waitFor(() => expect(mockRegenerateDay).toHaveBeenCalled());
+      expect(mockGoto).not.toHaveBeenCalled();
+    });
+
+    it("does not navigate when the ready lesson id equals the current lesson", async () => {
+      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      mockRegenerateDay.mockResolvedValue({ status: "queued" });
+      (pipelineStore as any).status = dayStatus({
+        state: "ready",
+        lesson_id: "l1",
+        has_audio: true,
+      });
+
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      await fireEvent.click(getByText("Regenerate Day 1"));
+
+      await waitFor(() => expect(mockRegenerateDay).toHaveBeenCalled());
+      expect(mockGoto).not.toHaveBeenCalled();
+    });
+
+    it("does not navigate when the ready record has no lesson id", async () => {
+      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      mockRegenerateDay.mockResolvedValue({ status: "queued" });
+      (pipelineStore as any).status = dayStatus({
+        state: "ready",
+        lesson_id: null,
+        has_audio: true,
+      });
+
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      await fireEvent.click(getByText("Regenerate Day 1"));
+
+      await waitFor(() => expect(mockRegenerateDay).toHaveBeenCalled());
+      expect(mockGoto).not.toHaveBeenCalled();
+    });
+
+    it("does not navigate when there is no pipeline record for the day", async () => {
+      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      mockRegenerateDay.mockResolvedValue({ status: "queued" });
+      (pipelineStore as any).status = { active: true, days: [] };
+
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      await fireEvent.click(getByText("Regenerate Day 1"));
+
+      await waitFor(() => expect(mockRegenerateDay).toHaveBeenCalled());
+      expect(mockGoto).not.toHaveBeenCalled();
+    });
+
+    it("shows an error and re-enables the button when the regenerate request fails", async () => {
+      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      mockRegenerateDay.mockRejectedValue(new Error("regenerate failed"));
 
       const { getByText, findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       await fireEvent.click(getByText("Regenerate Day 1"));
 
-      expect(await findByText("generation failed")).toBeTruthy();
+      expect(await findByText("regenerate failed")).toBeTruthy();
       expect(mockGoto).not.toHaveBeenCalled();
+      // Flag cleared → button back to its idle label.
+      expect(getByText("Regenerate Day 1")).toBeTruthy();
     });
 
-    it("shows a stringified error when regeneration throws a non-Error", async () => {
+    it("shows a stringified error when the regenerate request throws a non-Error", async () => {
       confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-      mockGenerateStory.mockRejectedValue("plain regen error");
+      mockRegenerateDay.mockRejectedValue("plain regen error");
 
       const { getByText, findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
@@ -1990,6 +2080,119 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await fireEvent.click(getByText("Regenerate Day 1"));
 
       expect(await findByText("plain regen error")).toBeTruthy();
+    });
+
+    it("clears the regenerating flag when the day fails", async () => {
+      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      mockRegenerateDay.mockResolvedValue({ status: "queued" });
+      (pipelineStore as any).status = dayStatus({
+        active: false,
+        state: "failed",
+        error: "Groq returned 429 Too Many Requests (retry after 37s)",
+        retryable: true,
+      });
+
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      await fireEvent.click(getByText("Regenerate Day 1"));
+
+      // Follow-effect resets the flag on failure → button re-enabled, no nav.
+      await waitFor(() => expect(mockRegenerateDay).toHaveBeenCalled());
+      expect(mockGoto).not.toHaveBeenCalled();
+      expect(getByText("Regenerate Day 1")).toBeTruthy();
+    });
+  });
+
+  describe("regenerate status line", () => {
+    let confirmSpy: ReturnType<typeof vi.spyOn>;
+
+    afterEach(() => {
+      confirmSpy?.mockRestore();
+    });
+
+    function dayStatus(overrides: Record<string, unknown>) {
+      return {
+        active: true,
+        days: [
+          {
+            day: 1,
+            state: "generating",
+            lesson_id: null,
+            has_audio: false,
+            error: null,
+            retryable: null,
+            detail: null,
+            ...overrides,
+          },
+        ],
+      };
+    }
+
+    it("shows the rate-limit detail while regenerating", async () => {
+      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      mockRegenerateDay.mockResolvedValue({ status: "queued" });
+      (pipelineStore as any).status = dayStatus({
+        state: "generating",
+        detail: "waiting 37s for rate-limit window (attempt 2/4)",
+      });
+
+      const { getByText, findByTestId } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      await fireEvent.click(getByText("Regenerate Day 1"));
+
+      const status = await findByTestId("regen-status");
+      expect(status.textContent).toContain("waiting 37s for rate-limit window");
+    });
+
+    it("falls back to the pipeline state when there is no detail while regenerating", async () => {
+      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      mockRegenerateDay.mockResolvedValue({ status: "queued" });
+      (pipelineStore as any).status = dayStatus({ state: "generating", detail: null });
+
+      const { getByText, findByTestId } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      await fireEvent.click(getByText("Regenerate Day 1"));
+
+      const status = await findByTestId("regen-status");
+      expect(status.textContent).toBe("generating");
+    });
+
+    it("shows the sticky error text when the day has failed", () => {
+      (pipelineStore as any).status = dayStatus({
+        active: false,
+        state: "failed",
+        error: "Groq returned HTTP 401",
+      });
+
+      const { getByTestId } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      expect(getByTestId("regen-status").textContent).toBe("Groq returned HTTP 401");
+    });
+
+    it("shows a generic failure message when a failed day carries no error", () => {
+      (pipelineStore as any).status = dayStatus({ active: false, state: "failed", error: null });
+
+      const { getByTestId } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      expect(getByTestId("regen-status").textContent).toBe("Regeneration failed");
+    });
+
+    it("shows no status line for a healthy day when not regenerating", () => {
+      (pipelineStore as any).status = dayStatus({
+        state: "ready",
+        lesson_id: "l1",
+        has_audio: true,
+      });
+
+      const { queryByTestId } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      expect(queryByTestId("regen-status")).toBeNull();
     });
   });
 });

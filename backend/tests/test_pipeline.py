@@ -367,6 +367,71 @@ class TestRateLimitBackoff:
         assert "Malformed" in record["error"]
 
 
+class TestLLMErrorHandling:
+    """A 429 now surfaces as LLMError (opt-in-fallback: complete() no longer
+    rescues via Ollama), which escapes StoryGenerator.generate uncaught. The
+    pipeline must treat LLMError identically to a StoryGenerationError — else a
+    real rate-limit falls through to the worker's generic 'Unexpected pipeline
+    error' and the 429 backoff never runs.
+    """
+
+    async def test_llm_error_429_retries_and_succeeds(self, pipeline, fake_generator, fake_llm, sleep_recorder):
+        """A 429 LLMError waits out the window and retries (not a hard failure)."""
+        from app.llm.client import LLMError
+
+        store = sl_store(pipeline)
+        cid = "cur-1"
+        curriculum = Curriculum(
+            id=cid,
+            topic="test",
+            language_code="sl",
+            cefr_level="A2",
+            days=[CurriculumDay(day=1, title="D1", focus="f", collocations=["c"], learning_objective="lo")],
+        )
+        store.save_curriculum(cid, curriculum)
+        fake_generator.fail_count = 1
+        fake_generator.raise_error = LLMError("Groq returned 429 Too Many Requests (retry after 37s)")
+        # Detection is the last_429 timestamp, not a message-substring match (a bare
+        # 429 LLMError carries no 'rate-limited' token). Real _call_groq stamps it
+        # DURING the failing call (so at >= the attempt's t0); a future ts simulates that.
+        fake_llm.last_429 = {"at": time.time() + 1000, "retry_after_s": 37.0}
+
+        pipeline.start()
+        pipeline.enqueue("sl", cid, 1, "generate")
+        await wait_for_job(pipeline, "sl", cid, 1, "ready")
+
+        assert len(sleep_recorder.calls) >= 1
+        assert len(fake_generator.calls) == 2
+        assert pipeline._jobs[("sl", cid, 1)]["state"] == "ready"
+
+    async def test_llm_error_non_rate_limit_fails_immediately(self, pipeline, fake_generator, sleep_recorder):
+        """A non-429 LLMError (e.g. HTTP 401) → failed(retryable), no backoff sleep,
+        and the real error message is preserved (not 'Unexpected pipeline error')."""
+        from app.llm.client import LLMError
+
+        store = sl_store(pipeline)
+        cid = "cur-1"
+        curriculum = Curriculum(
+            id=cid,
+            topic="test",
+            language_code="sl",
+            cefr_level="A2",
+            days=[CurriculumDay(day=1, title="D1", focus="f", collocations=["c"], learning_objective="lo")],
+        )
+        store.save_curriculum(cid, curriculum)
+        fake_generator.fail_count = 99
+        fake_generator.raise_error = LLMError("Groq returned HTTP 401")
+
+        pipeline.start()
+        pipeline.enqueue("sl", cid, 1, "generate")
+        await wait_for_job(pipeline, "sl", cid, 1, "failed")
+
+        assert len(sleep_recorder.calls) == 0
+        record = pipeline._jobs[("sl", cid, 1)]
+        assert record["retryable"] is True
+        assert "401" in record["error"]
+
+
 class TestFailureStickiness:
     async def test_reconcile_does_not_re_enqueue_failed(self, pipeline, fake_generator, fake_llm):
         """reconcile() does NOT re-enqueue previously-failed jobs."""

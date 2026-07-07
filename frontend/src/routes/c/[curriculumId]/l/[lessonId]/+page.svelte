@@ -32,7 +32,10 @@
 	let listenLoading = $state(false);
 	let listenResult: { registered: number } | null = $state(null);
 	let audioLoading = $state(false);
-	let regenLoading = $state(false);
+	// Stays true from the Regenerate click until the pipeline lands the new lesson
+	// (navigate) or fails — NOT just for the brief regenerateDay request, so the
+	// button stays disabled while the background job runs.
+	let regenerating = $state(false);
 	let syncStatus = $state('');
 	let error = $state('');
 	let wordActionInFlight = $state(false);
@@ -113,15 +116,17 @@
 				`morphology drills are added on the next listen + sync.`
 		);
 		if (!confirmed) return;
-		regenLoading = true;
+		regenerating = true;
 		error = '';
 		try {
-			const summary = await api.generateStory(data.curriculum.id, data.lesson.day);
-			await goto(`/c/${data.curriculum.id}/l/${summary.id}`);
+			// Route through the greedy pipeline (429 wait-and-retry, sticky-failed +
+			// Retry, activity-log visibility) rather than the synchronous generate
+			// endpoint, which escapes an unhandled LLMError on a 429. The pipeline mints
+			// a NEW lesson id for this day; the follow-effect below navigates once ready.
+			await api.regenerateDay(data.curriculum.id, data.lesson.day, 'WIDER');
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
-		} finally {
-			regenLoading = false;
+			regenerating = false;
 		}
 	}
 
@@ -162,6 +167,38 @@
 	let pipelineDayRecord = $derived.by(() => {
 		if (!pipelineStore.status) return null;
 		return pipelineStore.status.days.find((d) => d.day === data.lesson.day) ?? null;
+	});
+
+	// Follow the regenerated day to its NEW lesson: navigate once the pipeline day
+	// record reaches ready with a different lesson id. Gated on `regenerating` so
+	// merely viewing an older version (whose latest lesson differs) never navigates.
+	// A failed regen just drops the flag — the failure stays visible via regenStatus
+	// and the curriculum page's sticky Retry.
+	$effect(() => {
+		if (!regenerating) return;
+		const record = pipelineDayRecord;
+		if (record === null) return;
+		if (record.state === 'failed') {
+			regenerating = false;
+			return;
+		}
+		const newId = record.lesson_id;
+		if (record.state === 'ready' && newId !== null && newId !== data.lesson.id) {
+			regenerating = false;
+			goto(`/c/${data.curriculum.id}/l/${newId}`);
+		}
+	});
+
+	// The render-row pipeline badge only shows when audio is absent, but a regen
+	// keeps the old audio on screen — so surface progress here: the live detail
+	// (e.g. the 429 "waiting Ns for rate-limit window") while running, and the
+	// sticky error once the day fails.
+	let regenStatus = $derived.by(() => {
+		const record = pipelineDayRecord;
+		if (record === null) return null;
+		if (record.state === 'failed') return record.error ?? 'Regeneration failed';
+		if (regenerating) return record.detail ?? record.state;
+		return null;
 	});
 
 	// Plain let (not $state): we only need to remember across effect runs, not
@@ -517,9 +554,12 @@
 			conjugation coverage). Existing cards stay; new vocabulary and morphology drills are added when
 			you next listen and sync.
 		</p>
-		<button class="regen-btn" onclick={handleRegenerate} disabled={regenLoading}>
-			{regenLoading ? 'Regenerating…' : `Regenerate Day ${data.lesson.day}`}
+		<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
+			{regenerating ? 'Regenerating…' : `Regenerate Day ${data.lesson.day}`}
 		</button>
+		{#if regenStatus}
+			<p class="regen-status" data-testid="regen-status">{regenStatus}</p>
+		{/if}
 	</details>
 
 	<LessonSourcePanel
@@ -599,6 +639,11 @@
 	}
 	.regen-btn:not(:disabled):hover {
 		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+	}
+	.regen-status {
+		margin: 0.5rem 0 0;
+		font-size: 0.82rem;
+		color: var(--color-muted);
 	}
 	.mode-row {
 		display: flex;
