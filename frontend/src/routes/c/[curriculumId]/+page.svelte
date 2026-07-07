@@ -23,7 +23,7 @@
 	onMount(async () => {
 		// The rate-limit widget lives on this page now (not the global nav);
 		// seed its store so it doesn't sit empty while the pipeline is idle.
-		rateLimitStore.refresh();
+		rateLimitStore.ensureFresh();
 		try {
 			const days = await api.getCurriculumProgress(data.curriculum.id);
 			progress = new Map(days.map(d => [d.day, d.lesson_id]));

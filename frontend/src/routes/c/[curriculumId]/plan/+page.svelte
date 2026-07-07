@@ -45,7 +45,7 @@
 	// page owns keeping its store fresh: on mount and after every planner turn
 	// (each turn consumes quota; a failed turn may BE the 429 worth showing).
 	onMount(() => {
-		rateLimitStore.refresh();
+		rateLimitStore.ensureFresh();
 	});
 
 	async function handleSend(message: string): Promise<boolean> {

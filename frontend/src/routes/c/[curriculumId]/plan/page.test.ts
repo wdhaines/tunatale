@@ -32,6 +32,7 @@ vi.mock("$lib/stores/rateLimit.svelte", () => ({
     refresh: vi.fn(),
     probe: vi.fn(),
     set: vi.fn(),
+    ensureFresh: vi.fn(),
   },
 }));
 
@@ -100,20 +101,24 @@ describe("/c/[curriculumId]/plan page", () => {
     expect(queryByText(/committed so far/i)).toBeNull();
   });
 
-  it("refreshes the rate-limit store on mount and after each planner turn", async () => {
+  it("ensures rate-limit store is fresh on mount and refreshes after each planner turn", async () => {
+    const ensureFresh = vi.mocked(rateLimitStore.ensureFresh);
     const refresh = vi.mocked(rateLimitStore.refresh);
     mockPlanTurn.mockResolvedValue({ reply: "ok", proposed: null });
 
     const { getByRole, getByPlaceholderText } = render(Page, {
       props: { data: { curriculum: makeCurriculum() } },
     });
-    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1)); // mount
+    await waitFor(() => expect(ensureFresh).toHaveBeenCalledTimes(1)); // mount
+    expect(refresh).not.toHaveBeenCalled(); // mount uses ensureFresh, not refresh
 
     await fireEvent.input(getByPlaceholderText(/message the planner/i), {
       target: { value: "plan my trip" },
     });
     await fireEvent.click(getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2)); // after the turn
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1)); // after the turn
+    // ensureFresh still only once — we do NOT touch post-turn calls
+    expect(ensureFresh).toHaveBeenCalledTimes(1);
   });
 
   it("sending a message appends the turn and renders the proposal", async () => {

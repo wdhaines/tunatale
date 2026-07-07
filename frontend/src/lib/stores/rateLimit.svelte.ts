@@ -1,9 +1,29 @@
 import { api } from "$lib/api";
 import type { RateLimitStatus } from "$lib/api";
 
+let autoProbed = false;
+
 function createRateLimitStore() {
   let status = $state<RateLimitStatus | null>(null);
   let probeError = $state("");
+
+  async function doRefresh() {
+    try {
+      status = await api.getRateLimit();
+      probeError = "";
+    } catch {
+      // Keep last-known status (or null)
+    }
+  }
+
+  async function doProbe() {
+    try {
+      status = await api.probeRateLimit();
+      probeError = "";
+    } catch (e) {
+      probeError = e instanceof Error ? e.message : String(e);
+    }
+  }
 
   return {
     get status() {
@@ -16,19 +36,19 @@ function createRateLimitStore() {
       return probeError;
     },
     async refresh() {
-      try {
-        status = await api.getRateLimit();
-        probeError = "";
-      } catch {
-        // Keep last-known status (or null)
-      }
+      await doRefresh();
     },
     async probe() {
-      try {
-        status = await api.probeRateLimit();
-        probeError = "";
-      } catch (e) {
-        probeError = e instanceof Error ? e.message : String(e);
+      await doProbe();
+    },
+    async ensureFresh() {
+      await doRefresh();
+      if (
+        !autoProbed &&
+        (status === null || (status.llm_mode !== "mock" && status.snapshot == null))
+      ) {
+        autoProbed = true;
+        await doProbe();
       }
     },
   };

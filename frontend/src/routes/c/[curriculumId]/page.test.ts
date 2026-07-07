@@ -40,6 +40,7 @@ vi.mock("$lib/stores/rateLimit.svelte", () => ({
     refresh: vi.fn(),
     probe: vi.fn(),
     set: vi.fn(),
+    ensureFresh: vi.fn(),
   },
 }));
 
@@ -100,11 +101,11 @@ describe("/c/[curriculumId] page", () => {
     });
   });
 
-  it("refreshes the rate-limit store on mount (widget lives here now)", async () => {
+  it("ensures rate-limit store is fresh on mount (widget lives here now)", async () => {
     const { rateLimitStore } = await import("$lib/stores/rateLimit.svelte");
     render(Page, { props: { data: { curriculum } } });
     await waitFor(() => {
-      expect(vi.mocked(rateLimitStore.refresh)).toHaveBeenCalled();
+      expect(vi.mocked(rateLimitStore.ensureFresh)).toHaveBeenCalled();
     });
   });
 

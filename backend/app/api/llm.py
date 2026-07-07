@@ -6,8 +6,9 @@ token cap has no header). Times are relative (age_s, *_reset_in_s, retry_in_s),
 computed server-side so the frontend can count down without clock-skew issues.
 
 POST /api/llm/rate-limit/probe — fire a 1-token Groq request purely to refresh
-the headers (manual button; never polled — a poll would burn the daily request
-quota the endpoint exists to protect).
+the headers (manual button or one-shot frontend auto-probe on first page open
+per session; still never polled — a poll would burn the daily request quota
+the endpoint exists to protect).
 """
 
 from __future__ import annotations
