@@ -2181,7 +2181,9 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       const pill = getByTestId("regen-status").querySelector(".pipeline-state");
       expect(pill?.textContent).toBe("failed");
       expect(pill?.classList.contains("state-failed")).toBe(true);
-      expect(getByTestId("regen-detail").textContent).toBe("Groq returned HTTP 401");
+      expect(getByTestId("regen-detail").textContent).toBe(
+        "Last regeneration failed: Groq returned HTTP 401",
+      );
     });
 
     it("shows a generic failure message when a failed day carries no error", () => {
@@ -2190,7 +2192,9 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       const { getByTestId } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
-      expect(getByTestId("regen-detail").textContent).toBe("Regeneration failed");
+      expect(getByTestId("regen-detail").textContent).toBe(
+        "Last regeneration failed: Regeneration failed",
+      );
     });
 
     it("shows no status line for a healthy day when not regenerating", () => {

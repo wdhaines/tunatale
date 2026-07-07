@@ -292,21 +292,6 @@ describe("TunaTaleAPI", () => {
   });
 
   describe("story", () => {
-    it("generateStory calls POST /api/story/generate", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn().mockResolvedValue(mockOk({ id: "l1", title: "Day 1", sections: [] })),
-      );
-
-      const result = await api.generateStory("abc", 1, "WIDER");
-
-      expect(fetch).toHaveBeenCalledWith(
-        `${BASE}/api/story/generate`,
-        expect.objectContaining({ method: "POST" }),
-      );
-      expect(result.id).toBe("l1");
-    });
-
     it("getLesson calls GET /api/story/:id", async () => {
       const mockDetail = {
         id: "l1",

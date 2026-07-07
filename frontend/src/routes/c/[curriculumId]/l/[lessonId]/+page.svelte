@@ -565,11 +565,12 @@
 			<!-- Regeneration hits the LLM, so surface the quota chip here to track usage. -->
 			<RateLimitWidget />
 		</div>
+		<p class="muted">Rewrites this day's dialogue — existing cards stay, new drills appear on next listen.</p>
 		{#if regenStatus}
 			<p class="regen-status" data-testid="regen-status">
 				<span class="pipeline-state state-{regenStatus.state}">{regenStatus.state}</span>
 				{#if regenStatus.message}
-					<span class="regen-detail" data-testid="regen-detail">{regenStatus.message}</span>
+					<span class="regen-detail" data-testid="regen-detail">{regenStatus.state === 'failed' ? 'Last regeneration failed: ' : ''}{regenStatus.message}</span>
 				{/if}
 			</p>
 		{/if}
@@ -789,6 +790,9 @@
 	}
 	.tools-card[open] summary {
 		margin-bottom: 0.75rem;
+	}
+	.tools-card .muted {
+		margin: 0.75rem 0 0;
 	}
 	.tools-card hr {
 		border: none;

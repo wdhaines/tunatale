@@ -577,18 +577,6 @@ export class TunaTaleAPI {
     return this.request(`/api/curriculum/${curriculumId}/days/${day}/lesson`);
   }
 
-  async generateStory(
-    curriculumId: string,
-    day: number,
-    strategy: ContentStrategy = "WIDER",
-  ): Promise<LessonSummary> {
-    return this.request("/api/story/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ curriculum_id: curriculumId, day, strategy }),
-    });
-  }
-
   async getLesson(lessonId: string): Promise<LessonDetail> {
     return this.request(`/api/story/${lessonId}`);
   }
