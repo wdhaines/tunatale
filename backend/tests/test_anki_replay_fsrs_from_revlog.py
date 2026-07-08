@@ -466,7 +466,7 @@ class TestRebuildAnkiLinked:
             "anki_due = 123, "
             "anki_card_mod = 456, "
             "bury_kind = 'user', "
-            "prior_state = 'REVIEW', "
+            "prior_state = 'review', "
             "prior_left = 2, "
             "prior_stability = 3.0, "
             "introduced_at = '2024-01-01T00:00:00+00:00' "
@@ -493,7 +493,7 @@ class TestRebuildAnkiLinked:
         assert stored["anki_due"] == 123
         assert stored["anki_card_mod"] == 456
         assert stored["bury_kind"] == "user"
-        assert stored["prior_state"] == "REVIEW"
+        assert stored["prior_state"] == "review"
         assert stored["prior_left"] == 2
         assert stored["prior_stability"] == 3.0
         assert stored["introduced_at"] is not None

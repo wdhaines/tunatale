@@ -725,6 +725,29 @@ class TestSyncSoakLog:
         _write_sync_soak_log(log_path, pull=pull, push=push)
         assert log_path.read_text().count("SYNC_SOAK") == 2
 
+    def test_write_sync_soak_log_emits_invariant_trace(self, tmp_path, srs_db):
+        """When the TT db is supplied, a direction row that breaks a column
+        invariant (bury_kind set on a non-buried row) produces an INVARIANT_TRACE
+        line; a clean DB produces none."""
+        from app.models.syntactic_unit import SyntacticUnit
+
+        srs_db.add_collocation(
+            SyntacticUnit(text="proba", translation="test", word_count=1, difficulty=1, source="corpus"),
+            language_code="sl",
+        )
+        log_path = tmp_path / "sync.log"
+        # Clean DB: exercises the sweep with no violations.
+        _write_sync_soak_log(log_path, pull=PullReport(), push=PushReport(), db=srs_db)
+        assert "INVARIANT_TRACE" not in log_path.read_text()
+        # Seed a coupling violation + a non-null prior_state (both sweep branches).
+        with srs_db._get_conn() as conn:
+            conn.execute("UPDATE collocation_directions SET bury_kind='sched' WHERE direction='recognition'")
+            conn.execute("UPDATE collocation_directions SET prior_state='review' WHERE direction='production'")
+        _write_sync_soak_log(log_path, pull=PullReport(), push=PushReport(), db=srs_db)
+        text = log_path.read_text()
+        assert "INVARIANT_TRACE" in text
+        assert "bury_kind" in text
+
     def test_non_dry_run_writes_soak_log(self, tmp_path, monkeypatch):
         """A non-dry CLI sync persists a SYNC_SOAK heartbeat to the injected path."""
         db_path = tmp_path / "collection.anki2"
