@@ -183,6 +183,21 @@ def _segment_surface(text: str, ranks: dict[str, int]) -> list[str] | None:
     return None
 
 
+def _is_lexicalized_whole(word: str, content_parts: list[str], ranks: dict[str, int]) -> bool:
+    """True if *word* is a common simplex that only coincidentally decomposes.
+
+    A genuine compound is rarer than its own building blocks (``flyplassen`` is
+    rarer than ``fly``/``plass``); a lexicalized word like ``morgen`` (rank ~424)
+    out-ranks both ``mor`` and ``gen``. When the whole word is more frequent than
+    every part, it is not really that compound — keep it whole.
+    """
+    whole_rank = ranks.get(word)
+    if whole_rank is None:
+        return False
+    part_ranks = [ranks[p] for p in content_parts if p in ranks]
+    return bool(part_ranks) and whole_rank < min(part_ranks)
+
+
 def segment_compound(word: str) -> list[str]:
     """Split a word into compound morphemes (deepest valid decomposition).
 
@@ -207,6 +222,8 @@ def segment_compound(word: str) -> list[str]:
                 continue
             parts = _segment_surface(base, ranks)
             if parts is not None and len(parts) >= 2:
+                if _is_lexicalized_whole(word_lower, parts, ranks):
+                    return [word_lower]
                 return parts + [infl]
             if _is_content_stem(base, ranks):
                 # Single content stem + inflection -> not a compound.
@@ -214,6 +231,8 @@ def segment_compound(word: str) -> list[str]:
 
     parts = _segment_surface(word_lower, ranks)
     if parts is not None and len(parts) >= 2:
+        if _is_lexicalized_whole(word_lower, parts, ranks):
+            return [word_lower]
         return parts
     return [word_lower]
 
@@ -407,6 +426,13 @@ def build_norwegian_breakdown(phrase: str) -> list[str]:
     return breakdown
 
 
+# Leading/trailing punctuation peeled off a slow-section token before
+# segmentation. `build_slow_speed_section` splits dialogue on whitespace, so a
+# compound at a sentence boundary arrives as e.g. ``etterforskningsteam.`` — with
+# the period attached, the lexicon lookup misses and the compound wouldn't split.
+_SLOW_PUNCT = ".,!?;:…»«\"'()[]—–-"
+
+
 def slow_norwegian_word(word: str) -> str:
     """Produce a slowed version of a Norwegian word.
 
@@ -415,15 +441,24 @@ def slow_norwegian_word(word: str) -> str:
     stays attached to its stem (``fly, plassen`` — not ``fly, plass, en``).
     Non-compound words are returned unchanged, however long (``informasjon``,
     ``kjærlighet``): syllable-splitting them in the slow section is too
-    aggressive.
+    aggressive. Leading/trailing punctuation is peeled before segmenting and
+    reattached after, so ``flyplassen.`` -> ``fly, plassen.``.
     """
-    w = word.strip().lower()
-    if not w:
+    stripped = word.strip()
+    if not stripped:
         return ""
 
-    morphemes = segment_compound(w)
+    lead = stripped[: len(stripped) - len(stripped.lstrip(_SLOW_PUNCT))]
+    core_end = len(stripped.rstrip(_SLOW_PUNCT))
+    trail = stripped[core_end:]
+    core = stripped[len(lead) : core_end].lower()
+    if not core:
+        # Token is all punctuation — nothing to slow.
+        return stripped
+
+    morphemes = segment_compound(core)
     if len(morphemes) >= 2:
         units = _compound_buildup_units(morphemes)
-        return ", ".join(part for part, _ in units)
+        core = ", ".join(part for part, _ in units)
 
-    return w
+    return f"{lead}{core}{trail}"

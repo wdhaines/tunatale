@@ -156,6 +156,27 @@ def test_segment_compound_arbeidsledighet_stays_whole():
     assert segment_compound("arbeidsledighet") == ["arbeidsledighet"]
 
 
+def test_segment_compound_lexicalized_word_not_split():
+    """A common simplex word that coincidentally decomposes stays whole.
+
+    ``morgen`` (rank ~424) is more common than both ``mor`` and ``gen``, so it is
+    a lexicalized simplex, not the compound mor+gen. A real compound is rarer
+    than its own parts. (Reached via the final, no-inflection path.)
+    """
+    assert segment_compound("morgen") == ["morgen"]
+
+
+def test_segment_compound_lexicalized_word_with_inflection_not_split():
+    """Same guard, reached via the inflection-peel path (base decomposes >=2).
+
+    ``prosent`` (base ``prosen`` -> pro|sen) and ``samfunnet`` (base ``samfunn``
+    -> sam|funn) out-rank their parts and must stay whole, not become
+    ``pro, sen, t`` / ``sam, funn, et``.
+    """
+    assert segment_compound("prosent") == ["prosent"]
+    assert segment_compound("samfunnet") == ["samfunnet"]
+
+
 def test_segment_compound_simple_word():
     assert segment_compound("jeg") == ["jeg"]
 
@@ -307,6 +328,29 @@ def test_slow_very_short_word_unchanged():
 
 def test_slow_word_empty():
     assert slow_norwegian_word("") == ""
+
+
+def test_slow_trailing_period_splits_and_reattaches():
+    """A compound at a sentence boundary keeps its period but still splits."""
+    assert slow_norwegian_word("flyplassen.") == "fly, plassen."
+
+
+def test_slow_trailing_comma_splits_and_reattaches():
+    assert slow_norwegian_word("etterforskningsteam,") == "etter, forsknings, team,"
+
+
+def test_slow_leading_punctuation_preserved():
+    assert slow_norwegian_word("«flyplassen") == "«fly, plassen"
+
+
+def test_slow_surrounding_punctuation_non_compound():
+    """Punctuation is peeled/reattached even when the core doesn't split."""
+    assert slow_norwegian_word("informasjon.") == "informasjon."
+
+
+def test_slow_all_punctuation_token():
+    """A token with no alphabetic core is returned unchanged."""
+    assert slow_norwegian_word("...") == "..."
 
 
 # -- build_norwegian_breakdown -------------------------------------------
