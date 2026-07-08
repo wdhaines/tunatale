@@ -13,3 +13,7 @@ app/anki/vocab_notetype.py
 app/anki/add_vocab_notetype.py
 app/srs/lemmatizer.py
 app/config.py
+# Phonotactics plugin home: its per-language onset inventories hold consonant
+# clusters like "sl"/"nb" that are NOT language codes, alongside the code→syllabifier
+# dispatch table — the syllabification counterpart to audio/preprocessing/.
+app/generation/syllabify.py

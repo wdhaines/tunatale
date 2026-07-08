@@ -10,12 +10,45 @@ from app.languages import (
     LanguageContext,
     get_deck_name,
     get_language,
+    get_morphology_profile,
     get_preprocessor,
     get_tts_voice,
     get_vocab_notetype,
+    known_language_codes,
     resolve_language_context,
+    uses_compound_word_breakdown,
 )
 from app.models.language import Language
+
+
+class TestBreakdownAndMorphologyFlags:
+    """Per-language dispatch flags that replaced hardcoded `== "no"` / `{"sl": ...}`."""
+
+    def test_norwegian_uses_compound_word_breakdown(self):
+        assert uses_compound_word_breakdown("no") is True
+
+    def test_slovene_uses_generic_breakdown(self):
+        assert uses_compound_word_breakdown("sl") is False
+
+    def test_unknown_code_uses_generic_breakdown(self):
+        assert uses_compound_word_breakdown("zz") is False
+
+    def test_slovene_has_slavic_morphology_profile(self):
+        assert get_morphology_profile("sl") == "slavic"
+
+    def test_norwegian_has_no_morphology_profile(self):
+        assert get_morphology_profile("no") is None
+
+    def test_unknown_code_has_no_morphology_profile(self):
+        assert get_morphology_profile("zz") is None
+
+
+class TestKnownLanguageCodes:
+    def test_returns_the_configured_codes(self):
+        assert known_language_codes() == frozenset({"sl", "en", "no"})
+
+    def test_is_a_frozenset(self):
+        assert isinstance(known_language_codes(), frozenset)
 
 
 class TestResolveLanguageContext:

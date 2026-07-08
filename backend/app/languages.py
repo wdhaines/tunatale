@@ -53,6 +53,12 @@ class LanguageConfig:
     deck_name: str | None = None
     vocab_notetype: VocabNotetype | None = None
     lemmatizer_type: str = "lowercase"
+    # ``True`` when the Pimsleur word breakdown uses compound/morpheme-aware
+    # segmentation (Norwegian) instead of the generic per-syllable backward buildup.
+    compound_word_breakdown: bool = False
+    # Morphology-drill profile injected into the story prompt (``"slavic"`` = the
+    # case/dual tagging block); ``None`` omits the block.
+    morphology_profile: str | None = None
 
 
 _CONFIGS: dict[str, LanguageConfig] = {
@@ -62,6 +68,7 @@ _CONFIGS: dict[str, LanguageConfig] = {
         deck_name="1. Slovene",
         vocab_notetype=SLOVENE_VOCAB,
         lemmatizer_type="classla",
+        morphology_profile="slavic",
     ),
     "en": LanguageConfig(
         language=Language.english(),
@@ -75,6 +82,7 @@ _CONFIGS: dict[str, LanguageConfig] = {
         deck_name="0. 6000 Most Frequent Norwegian Words [Part 1]",
         vocab_notetype=NORWEGIAN_VOCAB,
         lemmatizer_type="stanza",
+        compound_word_breakdown=True,
     ),
 }
 
@@ -87,6 +95,16 @@ def get_language(code: str) -> Language:
     if code not in _CONFIGS:
         raise KeyError(f"Unknown language code: {code!r}. Valid: {sorted(_CONFIGS)}")
     return _CONFIGS[code].language
+
+
+def known_language_codes() -> frozenset[str]:
+    """The set of language codes the registry knows (the keys of ``_CONFIGS``).
+
+    The single source for "is this a valid language?" request-validation checks —
+    adding a language to ``_CONFIGS`` widens it automatically, so no caller
+    hardcodes ``{"sl", "en", "no"}``.
+    """
+    return frozenset(_CONFIGS)
 
 
 def get_preprocessor(code: str) -> TextPreprocessor:
@@ -151,6 +169,26 @@ def get_vocab_notetype(code: str) -> VocabNotetype | None:
     """
     config = _CONFIGS.get(code)
     return config.vocab_notetype if config else None
+
+
+def uses_compound_word_breakdown(code: str) -> bool:
+    """Whether *code*'s Pimsleur word breakdown uses compound/morpheme-aware
+    segmentation (Norwegian) rather than the generic per-syllable backward buildup.
+
+    Unknown codes → ``False`` (the generic path). Replaces the hardcoded
+    ``if language_code == "no"`` branches in ``generation/section_builder.py``.
+    """
+    config = _CONFIGS.get(code)
+    return config.compound_word_breakdown if config else False
+
+
+def get_morphology_profile(code: str) -> str | None:
+    """The morphology-drill profile for *code* (e.g. ``"slavic"`` for the case/dual
+    tagging block injected into the story prompt), or ``None`` when the language gets
+    no morphology block. Unknown codes → ``None``.
+    """
+    config = _CONFIGS.get(code)
+    return config.morphology_profile if config else None
 
 
 @dataclass(frozen=True)

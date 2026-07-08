@@ -232,6 +232,55 @@ phase boundary. Phase 3 is the parity-sensitive one — sociable + peer-sync pin
   `generate-norwegian.spec.ts` — nb-NO voices). Changes uncommitted (awaiting user's
   go-ahead to commit/push; no CI URL yet).
 
+## Follow-on: ledger-shrinking loop (2026-07-08, post-#4)
+
+Routing the genuine ledger seams through the registry. Two recon subagents triaged
+all 26 entries. Committed `97bc0db` = the weakness-#4 base (ledger 26).
+
+**Batch A — dispatch/config routing (registry scalar flags, behavior-preserving):**
+- `api/srs.py` `_VALID_LANGUAGE_CODES` → `known_language_codes()` (= `frozenset(_CONFIGS)`).
+- `section_builder.py` two `if …=="no"` branches → `uses_compound_word_breakdown(code)`
+  (new `LanguageConfig.compound_word_breakdown` bool, `True` for `no`). Used SCALAR
+  flags, NOT callables, to keep `languages.py` free of a `generation` import / cycle.
+- `prompts.py` `_MORPHOLOGY_SECTIONS={"sl": …}` → `get_morphology_profile(code)=="slavic"`
+  (new `LanguageConfig.morphology_profile`, `"slavic"` for `sl`); content stays in
+  `prompts.py` (only a scalar flag on the registry → no cycle).
+- `syllabify.py` → **ALLOWLISTED** (not routed): 2 of its 3 `"sl"` hits are phonotactic
+  onset clusters (`_VALID_ONSETS`), NOT codes — it's a phonotactics plugin home like
+  `audio/preprocessing/`. Registry-routing the dispatch table alone couldn't clear the
+  onset hits, so allowlisting is the correct + complete call.
+- Ledger 26 → 20. Import-sanity checked (no cycle); `known_language_codes` +
+  `uses_compound_word_breakdown` + `get_morphology_profile` pinned in `test_languages.py`.
+
+**Deliberately LEFT FROZEN in the ledger (recon-backed rationale — NOT bugs):**
+- The `"sl"` **default params** on helpers (`forvo`, `pipeline`, `vocab_media`,
+  `sync_writer.create_note`/`create_cloze_note`, `db_collocations.add_collocation`):
+  every **production** caller passes `language_code` explicitly — the default is dead in
+  prod and exists only for **test convenience**. Re-sourcing to `settings.target_language`
+  would be an import-time-captured value (footgun) for zero behavioral/architectural gain
+  and would churn ~30–50 test call sites. Frozen is correct.
+- `sync.py:327` `getattr(_s, "target_language", "sl")` — defensive fallback for
+  duck-typed `FakeSettings` test doubles; `_s` may intentionally differ from global
+  settings, so it can't read `settings.target_language`. Not a registry seam.
+- `regloss_lessons.py:160` — argparse `--language` default; funnels into `get_language()`
+  one line later. CLI ergonomics.
+- Benign/false-positive: `pixabay.py "no"` (English word key, not a code),
+  `field_map.py` Anki notetype/field NAMES, `story.py`/`lesson.py` `en-US-GuyNeural`
+  (the English narrator, not an L2), `prompts.py` SYSTEM_PROMPT blob (illustrative),
+  `breakdown_audio.py` CLI description, `sqlite_reader.py` `class="slovene"` Anki-template
+  regex (genuinely Slovene-template-specific parsing).
+
+**Two genuine findings surfaced by recon (flagged to user, NOT auto-fixed):**
+1. **`sqlite_writer.py::plan_guid_backfill` is ORPHANED** — zero production callers
+   (its `archive/backfill_guids.py` CLI is gone; only a stale `.pyc` remains). Dead code
+   → delete, or keep for a future backfill? User's call.
+2. **`audio/backfill_cloze_tts.py` has a pre-existing multi-language bug** — it queries
+   cloze collocations across ALL languages (`WHERE card_type='cloze'`, no language
+   filter) but calls `synthesize_cloze_audios(...)` without a `voice`, so every non-Slovene
+   cloze gets voiced with `sl-SI-PetraNeural`. Real behavior bug (like the renderer one),
+   NOT a mechanical default-swap — fix = resolve each row's `language_code` and pass
+   `voice=get_tts_voice(row_lang)`. Its own ticket.
+
 ## Outcome
 Weakness #4 is closed as an *enforcement* fix, not a one-off seam patch. The gate
 (`check_language_literals.py`) now fails a hardcoded-language regression in CI/pre-commit

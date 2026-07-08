@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.languages import get_morphology_profile
 from app.models.language import Language
 from app.models.strategy import ContentStrategy
 
@@ -153,19 +154,17 @@ or `adj:` with any case other than `nom` — those are A2+ topics that don't bel
 **Cases derive from the governing word, NOT English gloss:** `v/na/pri/o/po` + static location →
 `loc` (v Ljubljani); `v/na/čez/skozi` + motion → `acc` (grem v Ljubljano); direct object → `acc`."""
 
-# Languages whose prompt gets the Slavic morphology-tagging block. Anything not
-# listed (Norwegian, Tagalog, …) omits it.
-_MORPHOLOGY_SECTIONS: dict[str, tuple[str, str]] = {
-    "sl": (_MORPHOLOGY_SCHEMA_SL, _MORPHOLOGY_BLOCK_SL),
-}
-
 
 def _morphology_sections(language_code: str) -> tuple[str, str]:
     """Return the (schema fragment, instructions block) for *language_code*.
 
-    Empty strings for languages without a case/dual morphology drill.
+    Non-empty only for languages whose registry ``morphology_profile`` is
+    ``"slavic"`` (the case/dual tagging block); empty strings otherwise (Norwegian,
+    Tagalog, …).
     """
-    return _MORPHOLOGY_SECTIONS.get(language_code, ("", ""))
+    if get_morphology_profile(language_code) == "slavic":
+        return (_MORPHOLOGY_SCHEMA_SL, _MORPHOLOGY_BLOCK_SL)
+    return ("", "")
 
 
 def build_story_system_prompt(language: Language) -> str:

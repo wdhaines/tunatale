@@ -13,6 +13,7 @@ from app.generation.norwegian_breakdown import (
     slow_norwegian_word,
 )
 from app.generation.syllabify import syllabify_word
+from app.languages import uses_compound_word_breakdown
 from app.models.lesson import Phrase, Section, SectionType
 
 logger = logging.getLogger(__name__)
@@ -57,8 +58,8 @@ def build_word_breakdown(phrase_text: str, language_code: str = "sl") -> list[st
     if not words:
         return []
 
-    # Norwegian uses compound/morpheme-aware breakdown
-    if language_code == "no":
+    # Compound/morpheme-aware breakdown (Norwegian) vs. generic syllable buildup.
+    if uses_compound_word_breakdown(language_code):
         return build_norwegian_breakdown(phrase)
 
     breakdown: list[str] = [phrase]
@@ -207,7 +208,7 @@ def build_slow_speed_section(
                 logger.warning("Skipping dialogue line with missing speaker or text: %r", line)
                 continue
             voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
-            if l2_code == "no":
+            if uses_compound_word_breakdown(l2_code):
                 slowed = " ... ".join(slow_norwegian_word(w) for w in text.split())
             else:
                 slowed = " ... ".join(text.split())

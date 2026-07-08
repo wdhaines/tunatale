@@ -29,7 +29,7 @@ from app.api.models import (
 )
 from app.audio.cloze_tts import synthesize_cloze_audios
 from app.common.guid import compute_guid
-from app.languages import get_tts_voice
+from app.languages import get_tts_voice, known_language_codes
 from app.llm.translate import generate_word_gloss, translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -719,7 +719,7 @@ def _build_translate_prompt(words: list[str], language_name: str) -> str:
     )
 
 
-_VALID_LANGUAGE_CODES = frozenset({"sl", "en", "no"})
+_VALID_LANGUAGE_CODES = known_language_codes()
 
 
 @router.post("/translate", status_code=200)
