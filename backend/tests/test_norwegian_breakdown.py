@@ -19,8 +19,8 @@ edited to match code. Key design decisions they pin:
 from app.generation.norwegian_breakdown import (
     _is_content_stem,
     _load_ranked_lexicon,
-    _merge_geminates,
     _segment_surface,
+    _spoken_syllable,
     build_norwegian_breakdown,
     load_no_lexicon,
     segment_compound,
@@ -226,20 +226,26 @@ def test_syllabify_morpheme_kjaerlighet_multilayer():
     assert syllabify_morpheme("kjærlighet") == ["kjær", "lig", "het"]
 
 
-def test_syllabify_morpheme_etterforsknings_linking_and_geminate():
-    assert syllabify_morpheme("etterforsknings") == ["ett", "er", "forsk", "nings"]
+def test_syllabify_morpheme_etterforsknings_linking_raw():
+    """Syllables are raw (et|ter); geminate lengthening happens at buildup."""
+    assert syllabify_morpheme("etterforsknings") == ["et", "ter", "forsk", "nings"]
 
 
-def test_syllabify_morpheme_geminate_plassen():
-    assert syllabify_morpheme("plassen") == ["plass", "en"]
+def test_syllabify_morpheme_geminate_plassen_raw():
+    assert syllabify_morpheme("plassen") == ["plas", "sen"]
 
 
-def test_syllabify_morpheme_geminate_mannen():
-    assert syllabify_morpheme("mannen") == ["mann", "en"]
+def test_syllabify_morpheme_geminate_mannen_raw():
+    assert syllabify_morpheme("mannen") == ["man", "nen"]
 
 
-def test_syllabify_morpheme_geminate_etter():
-    assert syllabify_morpheme("etter") == ["ett", "er"]
+def test_syllabify_morpheme_geminate_etter_raw():
+    assert syllabify_morpheme("etter") == ["et", "ter"]
+
+
+def test_syllabify_morpheme_finne_not_over_peeled():
+    """-inne is an agent suffix (venninne); it must not peel off finne -> f|inne."""
+    assert syllabify_morpheme("finne") == ["fin", "ne"]
 
 
 def test_syllabify_morpheme_no_geminate_informasjon():
@@ -271,19 +277,26 @@ def test_syllabify_morpheme_loanword_with_derivational():
     assert "lig" in result
 
 
-# -- _merge_geminates ----------------------------------------------------
+# -- _spoken_syllable ----------------------------------------------------
 
 
-def test_merge_geminates_moves_doubled_consonant():
-    assert _merge_geminates(["man", "nen"]) == ["mann", "en"]
+def test_spoken_syllable_lengthens_left_of_geminate():
+    """et|ter -> the left chunk voiced alone is 'ett' (short vowel), right is 'ter'."""
+    assert _spoken_syllable(["et", "ter"], 0) == "ett"
+    assert _spoken_syllable(["et", "ter"], 1) == "ter"
 
 
-def test_merge_geminates_leaves_non_geminate():
-    assert _merge_geminates(["in", "for", "ma", "sjon"]) == ["in", "for", "ma", "sjon"]
+def test_spoken_syllable_mannen():
+    assert _spoken_syllable(["man", "nen"], 0) == "mann"
+    assert _spoken_syllable(["man", "nen"], 1) == "nen"
 
 
-def test_merge_geminates_single_syllable_untouched():
-    assert _merge_geminates(["team"]) == ["team"]
+def test_spoken_syllable_non_geminate_untouched():
+    assert _spoken_syllable(["in", "for", "ma", "sjon"], 0) == "in"
+
+
+def test_spoken_syllable_last_untouched():
+    assert _spoken_syllable(["team"], 0) == "team"
 
 
 # -- slow_norwegian_word -------------------------------------------------
@@ -370,11 +383,23 @@ def test_breakdown_compound_full_golden_sequence():
         "forsknings",
         "forskningsteamet",
         "etter",
-        "er",
+        "ter",
         "ett",
         "etter",
         "etterforskningsteamet",
     ]
+
+
+def test_breakdown_geminate_spoken_as_ett_ter():
+    """The 'etter' morpheme is voiced ett/ter (ambisyllabic geminate), not ett/er."""
+    result = build_norwegian_breakdown("etter")
+    assert result == ["etter", "ter", "ett", "etter", "etter"]
+
+
+def test_breakdown_finne_no_lone_consonant():
+    """finne is fin|ne -> voiced finn/ne, never the bogus f|inne split."""
+    result = build_norwegian_breakdown("finne")
+    assert result == ["finne", "ne", "finn", "finne", "finne"]
 
 
 def test_breakdown_compound_without_inflection():
@@ -451,7 +476,7 @@ def test_breakdown_multi_word_with_compound():
 def test_breakdown_multi_word_non_compound():
     assert build_norwegian_breakdown("på plassen") == [
         "på plassen",
-        "en",
+        "sen",
         "plass",
         "plassen",
         "på",

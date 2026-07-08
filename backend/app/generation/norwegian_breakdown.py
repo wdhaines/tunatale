@@ -109,7 +109,7 @@ def _find_derivational_with_inflection(
     while True:
         matched = False
         for sfx in _DERIVATIONAL_SUFFIXES:
-            if remaining.endswith(sfx) and len(remaining) > len(sfx):
+            if remaining.endswith(sfx) and len(remaining) - len(sfx) >= _MIN_STEM_LEN:
                 deriv_found.append(sfx)
                 remaining = remaining[: -len(sfx)]
                 matched = True
@@ -129,7 +129,7 @@ def _find_derivational_with_inflection(
             while True:
                 matched = False
                 for sfx in _DERIVATIONAL_SUFFIXES:
-                    if remaining.endswith(sfx) and len(remaining) > len(sfx):
+                    if remaining.endswith(sfx) and len(remaining) - len(sfx) >= _MIN_STEM_LEN:
                         deriv_found.append(sfx)
                         remaining = remaining[: -len(sfx)]
                         matched = True
@@ -240,23 +240,24 @@ def segment_compound(word: str) -> list[str]:
 _NORWEGIAN_VOWELS: frozenset[str] = frozenset("aeiouyæøå")
 
 
-def _merge_geminates(syllables: list[str]) -> list[str]:
-    """Keep a doubled consonant with the preceding syllable, for TTS.
+def _spoken_syllable(syllables: list[str], i: int) -> str:
+    """Spoken form of syllable *i*, lengthening a geminate when spoken alone.
 
-    A doubled consonant in Norwegian marks the preceding vowel as *short*, so an
-    isolated ``et`` (single t) would cue TTS to a long vowel — wrong for
-    ``etter``. Moving the split so the whole geminate closes the first syllable
-    (``ett | er``, ``mann | en``, ``plass | en``) preserves the short vowel when
-    each chunk is pronounced alone. Onset-maximization does the opposite, so
-    this post-processes its output on the Norwegian path only.
+    A doubled consonant in Norwegian marks the preceding vowel as *short*, and
+    the geminate is ambisyllabic — heard in both syllables. Onset-maximization
+    splits it one consonant per side (``et | ter``, ``man | nen``). When a chunk
+    is voiced ALONE we lengthen the left half so its vowel stays short
+    (``et`` -> ``ett``), while the right half keeps its own onset (``ter``) — so
+    the pair is heard ``ett`` / ``ter`` rather than ``ett`` / ``er``.
+    Reconstruction still uses the raw syllables, so joins remain exact
+    (``et`` + ``ter`` = ``etter``, never ``ettter``).
     """
-    out = list(syllables)
-    for i in range(len(out) - 1):
-        cur, nxt = out[i], out[i + 1]
-        if cur and len(nxt) > 1 and cur[-1] == nxt[0] and cur[-1] not in _NORWEGIAN_VOWELS:
-            out[i] = cur + nxt[0]
-            out[i + 1] = nxt[1:]
-    return out
+    s = syllables[i]
+    if i + 1 < len(syllables):
+        nxt = syllables[i + 1]
+        if s and nxt and s[-1] == nxt[0] and s[-1] not in _NORWEGIAN_VOWELS:
+            return s + s[-1]
+    return s
 
 
 def syllabify_morpheme(part: str) -> list[str]:
@@ -265,9 +266,9 @@ def syllabify_morpheme(part: str) -> list[str]:
     Derivational suffixes (-ning, -het, etc.) form their own syllable groups.
     Inflectional suffixes are only stripped when they help reveal a hidden
     derivational suffix. Words without derivational boundaries fall through to
-    the standard onset-maximization syllabifier. A geminate-merge pass then
-    keeps doubled consonants with the preceding syllable for correct TTS vowel
-    length.
+    the standard onset-maximization syllabifier. Syllables are returned raw
+    (``et | ter``); geminate lengthening for isolated chunks happens at buildup
+    time via :func:`_spoken_syllable`, so reconstruction joins stay exact.
     """
     word = part.lower().strip()
     if not word:
@@ -293,13 +294,13 @@ def syllabify_morpheme(part: str) -> list[str]:
         # No suffix boundary — standard syllabification
         if _is_loanword_monosyllable(word) and word in load_no_lexicon():
             return [word]
-        return _merge_geminates(syllabify_norwegian_word(word))
+        return syllabify_norwegian_word(word)
 
     # Suffix boundary found — syllabify stem, append suffix groups
     if _is_loanword_monosyllable(stem) and stem in load_no_lexicon():
         stem_syllables = [stem]
     else:
-        stem_syllables = _merge_geminates(syllabify_norwegian_word(stem)) if stem else []
+        stem_syllables = syllabify_norwegian_word(stem) if stem else []
 
     suffix_groups: list[str] = deriv_found + infl_found
 
@@ -314,7 +315,7 @@ def _build_syllable_sequence(word: str, syllables: list[str]) -> list[str]:
     seq: list[str] = [word]
     n = len(syllables)
     for i in range(n - 1, -1, -1):
-        seq.append(syllables[i])
+        seq.append(_spoken_syllable(syllables, i))
         if i < n - 1:
             seq.append("".join(syllables[i:]))
     seq.append(word)
@@ -360,7 +361,7 @@ def _build_compound_sequence(phrase: str, morphemes: list[str]) -> list[str]:
         seq.append(part)
         if len(pieces) > 1:
             for j in range(len(pieces) - 1, -1, -1):
-                seq.append(pieces[j])
+                seq.append(_spoken_syllable(pieces, j))
                 if j < len(pieces) - 1:
                     seq.append("".join(pieces[j:]))
         partial = "".join(p for p, _ in units[i:])
@@ -408,7 +409,7 @@ def build_norwegian_breakdown(phrase: str) -> list[str]:
             syllables = syllabify_morpheme(word)
             if len(syllables) > 1:
                 for i in range(len(syllables) - 1, -1, -1):
-                    breakdown.append(syllables[i])
+                    breakdown.append(_spoken_syllable(syllables, i))
                     if i < len(syllables) - 1:
                         breakdown.append("".join(syllables[i:]))
             else:
