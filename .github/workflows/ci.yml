@@ -37,6 +37,9 @@ jobs:
       - name: Mock boundary check
         run: uv run python scripts/check_mock_boundaries.py
 
+      - name: Language literal check
+        run: uv run python scripts/check_language_literals.py
+
       - name: Test
         run: uv run pytest -n auto
 

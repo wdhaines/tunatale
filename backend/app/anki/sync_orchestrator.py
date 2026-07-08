@@ -165,17 +165,18 @@ def _tt_settings(language_code: str | None = None):
     grade pushed nothing because the reconcile targeted the Norwegian deck). A
     ``None`` / unconfigured code falls back to the singular defaults unchanged.
     """
-    update = {"anki_collection_path": settings.tt_collection_path}
-    db_url = settings.database_url
-    if language_code and settings.database_urls.get(language_code):
-        from app.languages import get_deck_name
+    from app.languages import resolve_language_context
 
-        db_url = settings.database_urls[language_code]
-        update["anki_deck_name"] = get_deck_name(language_code)
-        update["target_language"] = language_code
-    abs_url = _absolute_sqlite_url(db_url)
-    update["database_url"] = abs_url if abs_url is not None else db_url
-    return settings.model_copy(update=update)
+    ctx = resolve_language_context(language_code, settings)
+    abs_url = _absolute_sqlite_url(ctx.db_url)
+    return settings.model_copy(
+        update={
+            "anki_collection_path": settings.tt_collection_path,
+            "database_url": abs_url if abs_url is not None else ctx.db_url,
+            "anki_deck_name": ctx.deck_name,
+            "target_language": ctx.target_language,
+        }
+    )
 
 
 def _anki_with_spec() -> str:

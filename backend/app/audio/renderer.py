@@ -153,7 +153,7 @@ class LessonRenderer:
         return _concat(parts), section_cues
 
     async def _render_section(
-        self, section: Section, tmp: Path, section_idx: int, language_code: str = "sl"
+        self, section: Section, tmp: Path, section_idx: int, language_code: str
     ) -> tuple[_Audio, list[tuple[int, int, int]]]:
         """Render a single section to an audio buffer (no boundary silence).
 
@@ -168,7 +168,11 @@ class LessonRenderer:
             Timing entries are (phrase_index, start_frame, end_frame) relative
             to the section start, in frames (not ms).
         """
-        preprocessor = self._preprocessors.get(language_code, next(iter(self._preprocessors.values())))
+        if language_code not in self._preprocessors:
+            raise ValueError(
+                f"No preprocessor configured for language {language_code!r}; renderer has {sorted(self._preprocessors)}"
+            )
+        preprocessor = self._preprocessors[language_code]
         phrase_files = [tmp / f"s{section_idx}_p{i}.mp3" for i in range(len(section.phrases))]
         processed_texts = [preprocessor.preprocess(phrase.text, section.section_type) for phrase in section.phrases]
 

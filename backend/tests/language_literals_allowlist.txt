@@ -1,0 +1,15 @@
+# Sanctioned plugin/registry homes where hardcoded language literals
+# legitimately live. TunaTale is language-plugin based ("No hardcoded
+# language logic" in root CLAUDE.md) — these are the modules that ARE the
+# plugin/registry layer, so language codes, names, engine names, and TTS
+# voice ids are expected and exempt from the checker.
+#
+# A file matching one of these globs is fully exempt: every hit in it is
+# skipped, and it never enters the grandfather ledger.
+app/languages.py
+app/models/language.py
+app/audio/preprocessing/*.py
+app/anki/vocab_notetype.py
+app/anki/add_vocab_notetype.py
+app/srs/lemmatizer.py
+app/config.py

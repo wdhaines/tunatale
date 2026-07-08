@@ -46,6 +46,9 @@ echo "Running backend + frontend suites in parallel..."
   echo "=== Mock boundary check ==="
   uv run python scripts/check_mock_boundaries.py
 
+  echo "=== Language literal check ==="
+  uv run python scripts/check_language_literals.py
+
   echo "=== Tests ==="
   # -n auto parallelizes across CPU cores; pytest-cov combines per-worker
   # coverage so the 100% gate still applies to the full run.

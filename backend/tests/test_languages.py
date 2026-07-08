@@ -1,11 +1,77 @@
 """Tests for language configuration registry (app.languages)."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.audio.preprocessing.norwegian import NorwegianPreprocessor
 from app.audio.preprocessing.slovene import SlovenePreprocessor
-from app.languages import get_deck_name, get_language, get_preprocessor, get_tts_voice, get_vocab_notetype
+from app.languages import (
+    LanguageContext,
+    get_deck_name,
+    get_language,
+    get_preprocessor,
+    get_tts_voice,
+    get_vocab_notetype,
+    resolve_language_context,
+)
 from app.models.language import Language
+
+
+class TestResolveLanguageContext:
+    """resolve_language_context — the single-source per-language wiring (weakness #4)."""
+
+    @staticmethod
+    def _settings(**over):
+        base = {
+            "database_urls": {},
+            "database_url": "sqlite:///./tunatale_sl.db",
+            "anki_deck_name": "1. Slovene",
+            "target_language": "sl",
+        }
+        base.update(over)
+        return SimpleNamespace(**base)
+
+    def test_configured_language_retargets_db_deck_target(self):
+        s = self._settings(database_urls={"no": "sqlite:///./tunatale_no.db"})
+        ctx = resolve_language_context("no", s)
+        assert isinstance(ctx, LanguageContext)
+        assert ctx.db_url == "sqlite:///./tunatale_no.db"
+        assert ctx.deck_name == "0. 6000 Most Frequent Norwegian Words [Part 1]"
+        assert ctx.target_language == "no"
+        # static registry facets attached
+        assert ctx.language is not None and ctx.language.code == "no"
+        assert ctx.lemmatizer_type == "stanza"
+        assert ctx.preprocessor_factory is NorwegianPreprocessor
+
+    def test_none_falls_back_to_defaults(self):
+        ctx = resolve_language_context(None, self._settings())
+        assert ctx.db_url == "sqlite:///./tunatale_sl.db"
+        assert ctx.deck_name == "1. Slovene"
+        assert ctx.target_language == "sl"
+        assert ctx.language is None
+        assert ctx.preprocessor_factory is None
+        assert ctx.lemmatizer_type == "lowercase"
+
+    def test_known_code_absent_from_urls_falls_back_but_keeps_registry_facets(self):
+        # code IS a known language but NOT configured in database_urls → default
+        # db/deck/target, yet the static registry facets still resolve (this pins
+        # the config-present-in-the-fallback-branch path).
+        s = self._settings(database_urls={"sl": "sqlite:///./tunatale_sl.db"})
+        ctx = resolve_language_context("no", s)  # "no" absent from database_urls
+        assert ctx.db_url == "sqlite:///./tunatale_sl.db"
+        assert ctx.deck_name == "1. Slovene"
+        assert ctx.target_language == "sl"
+        assert ctx.language is not None and ctx.language.code == "no"
+        assert ctx.lemmatizer_type == "stanza"
+
+    def test_unknown_code_has_no_registry_facets(self):
+        ctx = resolve_language_context("zz", self._settings())
+        assert ctx.db_url == "sqlite:///./tunatale_sl.db"
+        assert ctx.language is None
+        assert ctx.preprocessor_factory is None
+        assert ctx.lemmatizer_type == "lowercase"
+        assert ctx.vocab_notetype is None
 
 
 class TestGetTtsVoice:

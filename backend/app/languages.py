@@ -9,12 +9,16 @@ means adding one entry to ``_CONFIGS``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from app.anki.vocab_notetype import NORWEGIAN_VOCAB, SLOVENE_VOCAB, VocabNotetype
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.preprocessing.norwegian import NorwegianPreprocessor
 from app.audio.preprocessing.slovene import SlovenePreprocessor
 from app.models.language import Language
+
+if TYPE_CHECKING:
+    from app.config import Settings
 
 
 @dataclass
@@ -147,3 +151,61 @@ def get_vocab_notetype(code: str) -> VocabNotetype | None:
     """
     config = _CONFIGS.get(code)
     return config.vocab_notetype if config else None
+
+
+@dataclass(frozen=True)
+class LanguageContext:
+    """Resolved per-language wiring for a single sync/render operation.
+
+    Bundles the runtime, mode-dependent facets (``db_url`` / ``deck_name`` /
+    ``target_language`` — which differ between single-language mode and
+    ``settings.database_urls`` multi-language mode) with the static registry facets
+    (``language``, ``preprocessor_factory``, ``lemmatizer_type``, ``vocab_notetype``).
+    One object threads a language's identity end-to-end so a caller no longer
+    re-derives each facet with a separate ad-hoc lookup (the pattern the old
+    ``_tt_settings`` embodied — architectural weakness #4).
+
+    ``db_url`` is the RAW registry/settings value; a caller needing a
+    CWD-independent path (the sync adapter) absolutizes it itself — keeping this
+    module free of filesystem-anchoring concerns.
+    """
+
+    code: str | None
+    db_url: str
+    deck_name: str | None
+    target_language: str
+    language: Language | None = None
+    preprocessor_factory: type[TextPreprocessor] | None = None
+    lemmatizer_type: str = "lowercase"
+    vocab_notetype: VocabNotetype | None = None
+
+
+def resolve_language_context(code: str | None, settings: Settings) -> LanguageContext:
+    """Resolve the full per-language wiring for *code* against *settings*.
+
+    Mirrors the sync path's rule exactly (the former ``_tt_settings`` body): when
+    *code* names a configured multi-language (a truthy ``settings.database_urls``
+    entry), use that db, the registry deck, and ``target_language = code``.
+    Otherwise — ``None`` (the CLI path), an unconfigured code, or single-language
+    mode — fall back to the singular ``settings`` defaults unchanged. Static
+    registry facets are attached whenever *code* is a known language, else
+    ``None`` / the ``lowercase`` default.
+    """
+    config = _CONFIGS.get(code) if code else None
+    configured_db = settings.database_urls.get(code) if code else None
+    if configured_db:
+        db_url, deck_name, target_language = configured_db, get_deck_name(code), code
+    else:
+        db_url = settings.database_url
+        deck_name = settings.anki_deck_name
+        target_language = settings.target_language
+    return LanguageContext(
+        code=code,
+        db_url=db_url,
+        deck_name=deck_name,
+        target_language=target_language,
+        language=config.language if config else None,
+        preprocessor_factory=config.preprocessor_factory if config else None,
+        lemmatizer_type=config.lemmatizer_type if config else "lowercase",
+        vocab_notetype=config.vocab_notetype if config else None,
+    )

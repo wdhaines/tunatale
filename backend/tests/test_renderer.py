@@ -83,6 +83,31 @@ class TestLessonRenderer:
         assert output.exists()
         assert output.stat().st_size > 0
 
+    async def test_render_raises_on_unconfigured_language(self, tmp_path):
+        """render() raises when the lesson's language has no configured preprocessor,
+        rather than silently substituting an arbitrary one (weakness #4, Phase 2a — the
+        old ``.get(code, next(iter(...)))`` fallback masked a language mismatch)."""
+        lesson = Lesson(
+            title="Test",
+            language_code="no",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="hei", voice_id="nb-NO-PernilleNeural", language_code="no")],
+                )
+            ],
+        )
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+            output_path.write_bytes(_make_wav_bytes())
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        rdr = _make_renderer(mock_tts)  # preprocessors={"sl": ...} only — no "no"
+        with pytest.raises(ValueError, match="preprocessor"):
+            await rdr.render(lesson, tmp_path / "out.wav")
+
     async def test_render_produces_valid_wav(self, tmp_path):
         """render() output is a valid WAV file with audio frames."""
         lesson = _minimal_lesson()

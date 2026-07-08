@@ -10,5 +10,6 @@
 # override gitignore. It remains outside ruff scope, same as CI today.)
 *
 !check_mock_boundaries.py
+!check_language_literals.py
 !__init__.py
 !.gitignore
