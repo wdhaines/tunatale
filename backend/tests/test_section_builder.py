@@ -319,6 +319,72 @@ def test_slow_speed_skips_malformed_line():
     assert "Bad lines" in texts
 
 
+# ── Norwegian dispatch ──────────────────────────────────────────────────────
+
+
+L2_CODE_NO = "no"
+
+
+def test_build_word_breakdown_routes_norwegian():
+    """build_word_breakdown with l2_code='no' should route to build_norwegian_breakdown."""
+    result = build_word_breakdown("etterforskningsteamet", "no")
+    assert result[0] == "etterforskningsteamet"
+    assert result[-1] == "etterforskningsteamet"
+    # Compound parts should appear
+    assert "etterforsknings" in result or any("etterforsknings" in r for r in result)
+    assert "team" in " ".join(result)
+    assert "et" in " ".join(result)
+
+
+def test_build_word_breakdown_norwegian_non_compound():
+    """Single-stem Norwegian words use morpheme-aware syllabification dispatch."""
+    result = build_word_breakdown("jeg", "no")
+    assert result == ["jeg", "jeg"]
+
+
+def test_build_word_breakdown_norwegian_multi_word():
+    result = build_word_breakdown("p\u00e5 plassen", "no")
+    assert result[0] == "p\u00e5 plassen"
+    assert result[-1] == "p\u00e5 plassen"
+    assert "plassen" in result or any("plassen" in r for r in result)
+
+
+def test_slovene_behavior_unchanged():
+    """Slovene ('sl') should continue to use the classic syllable buildup."""
+    result = build_word_breakdown("prosim", "sl")
+    assert result == ["prosim", "sim", "pro", "prosim", "prosim"]
+
+
+def test_slow_speed_norwegian_slows_compounds():
+    """Norwegian slow-speed section should use intra-word commas for compounds."""
+    slow_text = build_slow_speed_section(
+        [{"label": "Test", "lines": [{"speaker": "female-1", "text": "flyplassen", "translation": "the airport"}]}],
+        _VOICE_MAP,
+        NARRATOR_VOICE,
+        "no",
+    )
+    texts = [p.text for p in slow_text.phrases if p.role != "narrator"]
+    # Compound is split at morpheme boundaries; the article stays on its stem.
+    assert "fly, plassen" in "\n".join(texts)
+
+
+def test_slow_speed_slovene_unchanged():
+    """Slovene slow-speed should not use intra-word commas for compounds."""
+    slow_text = build_slow_speed_section(
+        [{"label": "Test", "lines": [{"speaker": "female-1", "text": "dober dan", "translation": "good day"}]}],
+        _VOICE_MAP,
+        NARRATOR_VOICE,
+        "sl",
+    )
+    texts = [p.text for p in slow_text.phrases if p.role != "narrator"]
+    assert " ... " in texts[0]
+    # No comma-based intra-word slowing
+    assert texts[0] == "dober ... dan"
+
+
+# ── Malformed-input resilience (backlog #5) ──────────────────────────────
+
+
 def test_translated_skips_line_without_translation():
     """Translated-section builder skips malformed scenes and lines (non-dict, missing fields)."""
     scenes = [
