@@ -9,6 +9,8 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 
+from app.models.language import NARRATOR_VOICE
+
 
 @dataclass
 class KeyPhraseInfo:
@@ -59,7 +61,7 @@ class Lesson:
     title: str
     language_code: str
     sections: list[Section] = field(default_factory=list)
-    narrator_voice: str = "en-US-GuyNeural"
+    narrator_voice: str = NARRATOR_VOICE
     key_phrases: list[KeyPhraseInfo] = field(default_factory=list)
     generation_metadata: dict = field(default_factory=dict)
 
@@ -106,7 +108,7 @@ class Lesson:
             title=data["title"],
             language_code=data["language_code"],
             sections=sections,
-            narrator_voice=data.get("narrator_voice", "en-US-GuyNeural"),
+            narrator_voice=data.get("narrator_voice", NARRATOR_VOICE),
             key_phrases=key_phrases,
             generation_metadata=data.get("generation_metadata", {}),
         )

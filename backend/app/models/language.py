@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+# The narrator (English descriptions/translations) voice — shared across every
+# language's voice map and the default narrator for generated lessons. Single-sourced
+# here so lesson/story code doesn't re-hardcode the literal.
+NARRATOR_VOICE = "en-US-GuyNeural"
+
 
 @dataclass
 class Language:
@@ -23,7 +28,7 @@ class Language:
             native_name="slovenščina",
             script="latin",
             tts_voice_map={
-                "narrator": "en-US-GuyNeural",
+                "narrator": NARRATOR_VOICE,
                 "female-1": "sl-SI-PetraNeural",
                 "female-2": "sl-SI-PetraNeural",
                 "male-1": "sl-SI-RokNeural",
@@ -41,7 +46,7 @@ class Language:
             native_name="norsk",
             script="latin",
             tts_voice_map={
-                "narrator": "en-US-GuyNeural",
+                "narrator": NARRATOR_VOICE,
                 "female-1": "nb-NO-PernilleNeural",
                 "female-2": "nb-NO-PernilleNeural",
                 "male-1": "nb-NO-FinnNeural",
@@ -59,7 +64,7 @@ class Language:
             native_name="English",
             script="latin",
             tts_voice_map={
-                "narrator": "en-US-GuyNeural",
+                "narrator": NARRATOR_VOICE,
                 "female-1": "en-US-AriaNeural",
                 "female-2": "en-US-AriaNeural",
                 "male-1": "en-US-GuyNeural",

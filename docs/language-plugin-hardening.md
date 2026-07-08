@@ -278,24 +278,29 @@ all 26 entries. Committed `97bc0db` = the weakness-#4 base (ledger 26).
 - `regloss_lessons.py:160` — argparse `--language` default; funnels into `get_language()`
   one line later. CLI ergonomics.
 - Benign/false-positive: `pixabay.py "no"` (English word key, not a code),
-  `story.py`/`lesson.py` `en-US-GuyNeural` (the English narrator, not an L2 —
-  already in each language's voice map under the `narrator` role; routing the domain
-  model through the registry is a layering call left for later), the `tts.py`/`cloze_tts.py`
-  `sl-SI-PetraNeural` fallback voice constants (de-hardcoding just relocates the literal —
-  see Batch B), `prompts.py` SYSTEM_PROMPT blob (illustrative),
+  the `tts.py`/`cloze_tts.py` `sl-SI-PetraNeural` fallback voice constants (de-hardcoding
+  just relocates the literal — see Batch B), `prompts.py` SYSTEM_PROMPT blob (illustrative),
   `breakdown_audio.py` CLI description, `sqlite_reader.py` `class="slovene"` Anki-template
   regex (genuinely Slovene-template-specific parsing).
 
-**Two genuine findings surfaced by recon (flagged to user, NOT auto-fixed):**
-1. **`sqlite_writer.py::plan_guid_backfill` is ORPHANED** — zero production callers
-   (its `archive/backfill_guids.py` CLI is gone; only a stale `.pyc` remains). Dead code
-   → delete, or keep for a future backfill? User's call.
-2. **`audio/backfill_cloze_tts.py` has a pre-existing multi-language bug** — it queries
-   cloze collocations across ALL languages (`WHERE card_type='cloze'`, no language
-   filter) but calls `synthesize_cloze_audios(...)` without a `voice`, so every non-Slovene
-   cloze gets voiced with `sl-SI-PetraNeural`. Real behavior bug (like the renderer one),
-   NOT a mechanical default-swap — fix = resolve each row's `language_code` and pass
-   `voice=get_tts_voice(row_lang)`. Its own ticket.
+**Batch C — the two recon findings + narrator (FIXED 2026-07-08, all approved):**
+1. **`backfill_cloze_tts.py` multi-language voice bug — FIXED.** The query now selects
+   `c.language_code` and passes `voice=get_tts_voice(row["language_code"])`, so each
+   cloze is voiced in its own language instead of always Slovene. Behavior-preserving for
+   `sl` rows (same voice), corrects `no`. Regression test
+   `test_backfill_uses_per_row_language_voice` (asserts a `no` cloze → `nb-NO-PernilleNeural`).
+2. **`sqlite_writer.py::plan_guid_backfill` orphan — DELETED.** The *whole module* was
+   dead (all 5 functions used only within itself + its dedicated test; the `archive`
+   CLI that used it is gone; grep-verified zero app/scripts callers). Removed
+   `app/anki/sqlite_writer.py` + `tests/test_anki_sqlite_writer.py`. Coverage stayed 100%.
+3. **Narrator voice single-sourced.** `en-US-GuyNeural` in `models/lesson.py` (×2) +
+   `generation/story.py` → `NARRATOR_VOICE` constant in `models/language.py` (the
+   allowlisted voice-map home; no import cycle — `language.py` is a leaf). The 3 narrator
+   voice-map entries also DRY to the constant.
+
+Ledger 18 → **15** (regenerated from ground truth). Remaining 15 are the frozen classes
+above (test-convenience defaults, fallback voice constants, benign schema/prompt/regex
+strings). Gate green: **3586 passed @100% cov + --run-oracle**, both checkers clean.
 
 ## Outcome
 Weakness #4 is closed as an *enforcement* fix, not a one-off seam patch. The gate

@@ -14,7 +14,7 @@ from app.generation.section_builder import (
     build_translated_section,
 )
 from app.models.curriculum import CurriculumDay
-from app.models.language import Language
+from app.models.language import NARRATOR_VOICE, Language
 from app.models.lesson import KeyPhraseInfo, Lesson
 from app.models.strategy import ContentStrategy
 from app.srs.lemmatizer import get_lemmatizer, lemmatize_surfaces_in_context
@@ -163,7 +163,7 @@ def build_lesson_from_story(data: dict, language: Language) -> Lesson:
     if not key_phrases and not scenes:
         raise StoryGenerationError("LLM response missing 'key_phrases' and 'scenes'")
 
-    narrator_voice = language.tts_voice_map.get("narrator", "en-US-GuyNeural")
+    narrator_voice = language.tts_voice_map.get("narrator", NARRATOR_VOICE)
 
     sections = [
         build_key_phrases_section(key_phrases, language.tts_voice_map, narrator_voice, language.code),

@@ -66,6 +66,41 @@ def test_backfill_synthesizes_for_missing_audio(monkeypatch, db_path):
     assert db2.get_audio_filename(coll_id) is not None
 
 
+def test_backfill_uses_per_row_language_voice(monkeypatch, db_path):
+    """A Norwegian cloze is voiced with the Norwegian TTS voice, not the Slovene
+    default (regression: backfill passed no voice, so every language got sl-SI)."""
+    import app.audio.cloze_tts as cloze_tts_mod
+
+    captured_voices: list[str] = []
+
+    async def _fake_tts(text, voice="sl-SI-PetraNeural"):
+        captured_voices.append(voice)
+        return b"fake-mp3"
+
+    monkeypatch.setattr(cloze_tts_mod, "generate_tts_audio", _fake_tts)
+
+    from app.models.syntactic_unit import SyntacticUnit
+    from app.srs.database import SRSDatabase
+
+    db = SRSDatabase(db_path)
+    unit = SyntacticUnit(
+        text="tenker",
+        translation="think",
+        word_count=1,
+        difficulty=1,
+        source="llm",
+        lemma="tenke",
+        card_type="cloze",
+        source_sentence="Jeg tenker på deg",
+    )
+    db.add_collocation(unit, language_code="no")
+
+    result = backfill_cloze_tts(db_path=db_path, dry_run=False)
+
+    assert result["synthesized"] >= 1
+    assert "nb-NO-PernilleNeural" in captured_voices, captured_voices
+
+
 def test_backfill_dry_run(monkeypatch, db_path):
     """Dry-run does not create audio files or media rows."""
     import app.audio.cloze_tts as cloze_tts_mod

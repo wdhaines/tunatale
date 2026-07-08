@@ -8,6 +8,7 @@ import logging
 
 from app.audio.cloze_tts import synthesize_cloze_audios
 from app.config import settings
+from app.languages import get_tts_voice
 from app.srs.database import SRSDatabase
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ def backfill_cloze_tts(
     with db._get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT c.id, c.source_sentence, c.lemma
+            SELECT c.id, c.source_sentence, c.lemma, c.language_code
             FROM collocations c
             WHERE c.card_type = 'cloze'
               AND c.source_sentence IS NOT NULL
@@ -63,7 +64,11 @@ def backfill_cloze_tts(
             print(f"[{i}/{total}] {lemma} — {'dry-run' if dry_run else 'synthesizing'}", flush=True)
             if not dry_run:
                 try:
-                    asyncio.run(synthesize_cloze_audios(db, collocation_id, sentence, lemma))
+                    asyncio.run(
+                        synthesize_cloze_audios(
+                            db, collocation_id, sentence, lemma, voice=get_tts_voice(row["language_code"])
+                        )
+                    )
                     synthesized += 1
                 except Exception:
                     logger.warning("Failed to synthesize for collocation %d (%s)", collocation_id, lemma)

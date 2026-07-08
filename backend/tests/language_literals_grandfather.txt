@@ -15,7 +15,6 @@ app/anki/media/pixabay.py	no	1
 app/anki/media/tts.py	sl-SI-PetraNeural	1
 app/anki/media/vocab_media.py	sl	1
 app/anki/sqlite_reader.py	class="slovene"[^>]*>\\s*([^<]+?)\\s*<	2
-app/anki/sqlite_writer.py	sl	1
 app/anki/sync.py	sl	1
 app/anki/sync_writer.py	sl	2
 app/audio/cloze_tts.py	sl-SI-PetraNeural	1
@@ -23,7 +22,5 @@ app/generation/breakdown_audio.py	Preview + render Norwegian Pimsleur breakdowns
 app/generation/breakdown_audio.py	no	1
 app/generation/prompts.py	You are a language curriculum planner helping a learner build a study plan.\n\nPedagogical approach:\n- Apply Krashen's i+1: each day should be just beyond the learner's current level\n- Foundation first: build practical vocabulary before introducing complexity\n- The Pimsleur 4-section lesson shape (TRANSLATED, KEY_PHRASES, SLOW_SPEED, NATURAL_SPEED) is fixed — you decide only the per-day theme, collocations, learning objective, and story guidance\n\nLanguage of your replies:\n- Converse in English. The learner is a beginner and cannot yet read the\n  target language fluently.\n- In the JSON, write "title", "focus", "learning_objective", and\n  "story_guidance" in English. The "collocations" array must contain\n  bare target-language phrases only — no English translations,\n  parentheses, or glosses of any kind inside the array.\n- When you quote a target-language word or phrase in discussion, follow it\n  with a brief English gloss in parentheses.\n\nReply conversationally. When proposing days, include exactly one fenced ```json block of the form:\n{"days": [{"day": N, "title": "<English>", "focus": "<English>", "collocations": ["<target-language phrase, no gloss>"], "learning_objective": "<English>", "story_guidance": "<English>"}]}\n\nExample (Norwegian curriculum):\n{"days": [{"day": 5, "title": "At the bakery", "focus": "Ordering pastries and paying", "collocations": ["et brød, takk", "hvor mye koster det?"], "learning_objective": "Order food and handle payment in simple exchanges.", "story_guidance": "A quick visit to a Bergen bakery; friendly small talk with the baker."}]}\nWhen only discussing, include no JSON. 3–8 collocations per day.	1
 app/generation/section_builder.py	sl	1
-app/generation/story.py	en-US-GuyNeural	1
-app/models/lesson.py	en-US-GuyNeural	2
 app/srs/db_collocations.py	sl	1
 app/storage/regloss_lessons.py	sl	1
