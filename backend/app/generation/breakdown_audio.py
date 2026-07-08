@@ -1,10 +1,11 @@
 """CLI audio preview for the Norwegian Pimsleur breakdown.
 
-Renders, per word, two clips that reproduce the exact TTS + inter-chunk pauses a
-real lesson produces, so the splits and pronunciation can be confirmed by ear:
+Renders, per word, two Norwegian-only clips (no English narration) that
+reproduce the exact TTS + inter-chunk pauses a real lesson produces, so the
+splits and pronunciation can be confirmed by ear:
 
-  * the full Pimsleur breakdown sequence (a KEY_PHRASES section), and
-  * the slow-speed form (a SLOW_SPEED section).
+  * ``<word>_breakdown.<ext>`` — the full Pimsleur breakdown sequence, and
+  * ``<word>_slow.<ext>`` — the slow-speed form.
 
     uv run python -m app.generation.breakdown_preview <word> [<word> ...] [--out DIR]
 
@@ -30,15 +31,14 @@ from app.audio.renderer import LessonRenderer
 from app.audio.transcode import CODEC_EXT
 from app.config import settings
 from app.generation.breakdown_preview import format_breakdown_preview
-from app.generation.section_builder import (
-    build_key_phrases_section,
-    build_slow_speed_section,
+from app.generation.norwegian_breakdown import (
+    build_norwegian_breakdown,
+    slow_norwegian_word,
 )
 from app.languages import get_preprocessor, get_tts_voice
-from app.models.lesson import KeyPhraseInfo, Lesson
+from app.models.lesson import Phrase, Section, SectionType
 
 _LANGUAGE_CODE = "no"
-_NARRATOR_VOICE = "en-US-GuyNeural"
 
 
 def _slug(word: str) -> str:
@@ -46,28 +46,30 @@ def _slug(word: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in word.strip().lower()) or "word"
 
 
-def build_preview_lesson(word: str, voice_id: str) -> Lesson:
-    """Build a two-section Lesson (breakdown + slow form) for a single word.
+def _phrase(text: str, voice_id: str) -> Phrase:
+    return Phrase(text=text, voice_id=voice_id, language_code=_LANGUAGE_CODE, role="female-1")
 
-    Reuses the real ``build_key_phrases_section`` / ``build_slow_speed_section``
-    so the TTS voice, per-phrase text, and inter-chunk pauses are byte-for-byte
-    what a production lesson emits (the whole point of the preview). The word is
-    passed as its own translation placeholder — the English narrator reads it —
-    since a real gloss isn't needed to confirm pronunciation.
+
+def build_preview_sections(word: str, voice_id: str) -> tuple[Section, Section]:
+    """Build the Norwegian-only (breakdown, slow) sections for a single word.
+
+    Deliberately *not* the real ``build_key_phrases_section`` — that prepends an
+    English "Key Phrases" title and reads the L2 word with the English narrator,
+    which is useless for confirming Norwegian pronunciation. These sections carry
+    only the female-1 Norwegian chunks. Crucially the breakdown section keeps
+    ``SectionType.KEY_PHRASES`` so ``NaturalPauseCalculator`` still applies the
+    1:1 audio-duration inter-chunk pause (the Pimsleur "repeat it back" pacing);
+    a different section type would flatten every gap to 500 ms.
     """
-    voice_map = {"female-1": voice_id}
-    key_phrases = [{"phrase": word, "translation": word}]
-    slow_scene = [{"label": word, "lines": [{"speaker": "female-1", "text": word, "translation": word}]}]
-    return Lesson(
-        title=f"Breakdown preview: {word}",
-        language_code=_LANGUAGE_CODE,
-        sections=[
-            build_key_phrases_section(key_phrases, voice_map, _NARRATOR_VOICE, _LANGUAGE_CODE),
-            build_slow_speed_section(slow_scene, voice_map, _NARRATOR_VOICE, _LANGUAGE_CODE),
-        ],
-        narrator_voice=_NARRATOR_VOICE,
-        key_phrases=[KeyPhraseInfo(phrase=word, translation=word)],
+    breakdown = Section(
+        section_type=SectionType.KEY_PHRASES,
+        phrases=[_phrase(step, voice_id) for step in build_norwegian_breakdown(word)],
     )
+    slow = Section(
+        section_type=SectionType.SLOW_SPEED,
+        phrases=[_phrase(slow_norwegian_word(word), voice_id)],
+    )
+    return breakdown, slow
 
 
 def _build_renderer() -> LessonRenderer:
@@ -81,23 +83,31 @@ def _build_renderer() -> LessonRenderer:
 
 
 async def render_word_previews(words: list[str], out_dir: Path) -> dict[str, list[Path]]:
-    """Render breakdown + slow clips for each word. Returns {word: [breakdown, slow]}."""
+    """Render breakdown + slow clips for each word. Returns {word: [breakdown, slow]}.
+
+    Renders each section directly via the renderer's per-section assembly
+    (``_render_section`` → ``_write_audio``), bypassing the full-lesson cue
+    manifest — the manifest requires the English title/translation scaffolding we
+    dropped, and a preview clip needs no cues, only the audio.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     renderer = _build_renderer()
     voice_id = get_tts_voice(_LANGUAGE_CODE, "female-1")
     ext = CODEC_EXT.get(settings.audio_delivery_codec, "wav")
 
     results: dict[str, list[Path]] = {}
-    for word in words:
-        lesson = build_preview_lesson(word, voice_id)
-        slug = _slug(word)
-        full_path = out_dir / f"{slug}.{ext}"
-        section_paths = [
-            out_dir / f"{slug}_breakdown.{ext}",
-            out_dir / f"{slug}_slow.{ext}",
-        ]
-        await renderer.render(lesson, full_path, section_paths=section_paths)
-        results[word] = section_paths
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp = Path(tmp_dir)
+        for word in words:
+            slug = _slug(word)
+            sections = build_preview_sections(word, voice_id)
+            out_paths: list[Path] = []
+            for idx, (section, suffix) in enumerate(zip(sections, ("breakdown", "slow"), strict=True)):
+                audio, _timing = await renderer._render_section(section, tmp, idx, language_code=_LANGUAGE_CODE)
+                path = out_dir / f"{slug}_{suffix}.{ext}"
+                await asyncio.to_thread(renderer._write_audio, path, audio)
+                out_paths.append(path)
+            results[word] = out_paths
     return results
 
 
