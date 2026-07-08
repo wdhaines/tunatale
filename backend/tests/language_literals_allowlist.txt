@@ -17,3 +17,7 @@ app/config.py
 # clusters like "sl"/"nb" that are NOT language codes, alongside the code→syllabifier
 # dispatch table — the syllabification counterpart to audio/preprocessing/.
 app/generation/syllabify.py
+# Anki-schema mapping home: maps extraction roles to specific Anki notetype +
+# FIELD NAMES (e.g. the "6000 Most Frequent Norwegian Words" notetype's "Norwegian
+# word" field). Those are external Anki schema strings, like vocab_notetype.py.
+app/anki/field_map.py

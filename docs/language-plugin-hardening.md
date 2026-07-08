@@ -251,6 +251,19 @@ all 26 entries. Committed `97bc0db` = the weakness-#4 base (ledger 26).
   onset hits, so allowlisting is the correct + complete call.
 - Ledger 26 → 20. Import-sanity checked (no cycle); `known_language_codes` +
   `uses_compound_word_breakdown` + `get_morphology_profile` pinned in `test_languages.py`.
+  Committed `378df0e`.
+
+**Batch B — allowlist a schema home (20 → 18):**
+- `app/anki/field_map.py` → **ALLOWLISTED**. Its flagged literals are Anki notetype +
+  FIELD NAMES (the "6000 Most Frequent Norwegian Words" notetype's "Norwegian word"
+  field) — external Anki schema strings, exactly like the allowlisted `vocab_notetype.py`.
+- **Tried & reverted**: sourcing `tts.DEFAULT_VOICE` from `get_tts_voice("sl")` — the
+  gate correctly rejected it (it only *relocated* the literal `sl-SI-PetraNeural` → bare
+  `"sl"`, no real de-hardcoding; an import-time `settings.target_language` read would be a
+  footgun). The named fallback voice constants stay frozen in the ledger — that is the
+  correct disposition, not a miss.
+- Ledger regenerated from ground truth via `--write-grandfather` (beats manual line
+  surgery). 18 seams remain, all in the "left frozen" classes below.
 
 **Deliberately LEFT FROZEN in the ledger (recon-backed rationale — NOT bugs):**
 - The `"sl"` **default params** on helpers (`forvo`, `pipeline`, `vocab_media`,
@@ -265,8 +278,11 @@ all 26 entries. Committed `97bc0db` = the weakness-#4 base (ledger 26).
 - `regloss_lessons.py:160` — argparse `--language` default; funnels into `get_language()`
   one line later. CLI ergonomics.
 - Benign/false-positive: `pixabay.py "no"` (English word key, not a code),
-  `field_map.py` Anki notetype/field NAMES, `story.py`/`lesson.py` `en-US-GuyNeural`
-  (the English narrator, not an L2), `prompts.py` SYSTEM_PROMPT blob (illustrative),
+  `story.py`/`lesson.py` `en-US-GuyNeural` (the English narrator, not an L2 —
+  already in each language's voice map under the `narrator` role; routing the domain
+  model through the registry is a layering call left for later), the `tts.py`/`cloze_tts.py`
+  `sl-SI-PetraNeural` fallback voice constants (de-hardcoding just relocates the literal —
+  see Batch B), `prompts.py` SYSTEM_PROMPT blob (illustrative),
   `breakdown_audio.py` CLI description, `sqlite_reader.py` `class="slovene"` Anki-template
   regex (genuinely Slovene-template-specific parsing).
 

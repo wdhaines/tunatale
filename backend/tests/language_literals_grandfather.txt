@@ -9,8 +9,6 @@
 # add a new line here or bump a count up. Regenerate with:
 #   uv run python scripts/check_language_literals.py --write-grandfather
 # and re-apply this header, or diff by hand to confirm only shrinkage.
-app/anki/field_map.py	6000 Most Frequent Norwegian Words	1
-app/anki/field_map.py	Norwegian word	1
 app/anki/media/forvo.py	sl	2
 app/anki/media/pipeline.py	sl	1
 app/anki/media/pixabay.py	no	1
