@@ -179,6 +179,7 @@ describe("playbackController", () => {
       lessonId: string;
       lessonTitle: string;
       audioUrl: string;
+      sectionUrl: (audioId: string) => string;
     }> = {},
   ) {
     const ms = overrides.mediaSession !== undefined ? overrides.mediaSession : null;
@@ -190,6 +191,7 @@ describe("playbackController", () => {
       lessonTitle: overrides.lessonTitle ?? "Lesson 1",
       audioUrl: overrides.audioUrl ?? "/api/audio/a1",
       audio: overrides.audio ?? lessonAudio,
+      sectionUrl: overrides.sectionUrl ?? ((id: string) => `/api/audio/${id}`),
     });
   }
 
@@ -1034,6 +1036,267 @@ describe("playbackController", () => {
       const cue = basicCues[2]; // start_ms 1500
       ctrl.seekToCue(cue);
       expect(mediaSession.setPositionState).toHaveBeenCalled();
+    });
+  });
+
+  describe("selectTrack", () => {
+    const sectionsCues: Cue[] = [
+      makeCue({
+        index: 0,
+        start_ms: 0,
+        end_ms: 500,
+        section_index: 0,
+        section_type: "natural_speed",
+        phrase_index: 0,
+        text: "Dober dan",
+        ref: { kind: "line", target_index: 0 },
+      }),
+      makeCue({
+        index: 1,
+        start_ms: 500,
+        end_ms: 1000,
+        section_index: 0,
+        section_type: "natural_speed",
+        phrase_index: 1,
+        text: "Kako si",
+        ref: { kind: "line", target_index: 1 },
+      }),
+    ];
+
+    const sectionsAudio: LessonAudio = {
+      audio_id: "a1",
+      lesson_id: "l1",
+      sections: [
+        {
+          audio_id: "sec-natural",
+          section_index: 0,
+          section_type: "natural_speed",
+          title: "Natural Speed",
+          cues: sectionsCues,
+        },
+        {
+          audio_id: "sec-translated",
+          section_index: 1,
+          section_type: "translated",
+          title: "Translated",
+          cues: [
+            makeCue({
+              index: 0,
+              start_ms: 0,
+              end_ms: 600,
+              section_index: 0,
+              section_type: "translated",
+              phrase_index: 0,
+              text: "Dober dan",
+              ref: { kind: "line", target_index: 0 },
+            }),
+            makeCue({
+              index: 1,
+              start_ms: 600,
+              end_ms: 1200,
+              section_index: 0,
+              section_type: "translated",
+              phrase_index: 1,
+              text: "Good day",
+              ref: { kind: "line", target_index: 0 },
+            }),
+            makeCue({
+              index: 2,
+              start_ms: 1200,
+              end_ms: 1800,
+              section_index: 0,
+              section_type: "translated",
+              phrase_index: 2,
+              text: "Kako si",
+              ref: { kind: "line", target_index: 1 },
+            }),
+            makeCue({
+              index: 3,
+              start_ms: 1800,
+              end_ms: 2400,
+              section_index: 0,
+              section_type: "translated",
+              phrase_index: 3,
+              text: "How are you",
+              ref: { kind: "line", target_index: 1 },
+            }),
+          ],
+        },
+        {
+          audio_id: "sec-key",
+          section_index: 2,
+          section_type: "key_phrases",
+          title: "Key Phrases",
+          cues: [
+            makeCue({
+              index: 0,
+              start_ms: 0,
+              end_ms: 800,
+              section_index: 0,
+              section_type: "key_phrases",
+              phrase_index: 0,
+              text: "kavo prosim",
+              ref: { kind: "key_phrase", target_index: 0 },
+            }),
+          ],
+        },
+      ],
+      cues: sectionsCues,
+    };
+
+    it("swaps audioEl.src to the section URL", () => {
+      const ctrl = createController({ audio: sectionsAudio });
+      ctrl.selectTrack("translated");
+      expect(audioEl.src).toBe("/api/audio/sec-translated");
+    });
+
+    it("swaps activeCues and activeSectionType", () => {
+      const ctrl = createController({ audio: sectionsAudio });
+      expect(ctrl.activeSectionType).toBe("natural_speed");
+      ctrl.selectTrack("translated");
+      expect(ctrl.activeSectionType).toBe("translated");
+      expect(ctrl.activeCues).toHaveLength(4);
+      expect(ctrl.activeCues![0].text).toBe("Dober dan");
+    });
+
+    it("seek is deferred — not applied until loadedmetadata fires", () => {
+      const ctrl = createController({ audio: sectionsAudio });
+      // Start on line 1 (target_index=1) of natural_speed
+      audioEl.currentTime = 0.6;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(ctrl.currentCue?.ref?.target_index).toBe(1);
+
+      // Select translated section — same line ref exists at target_index=1
+      ctrl.selectTrack("translated");
+      // The seek must NOT have landed yet: selectTrack only stashes it and
+      // applies it on loadedmetadata. A synchronous seek would already show
+      // the matched cue's 1.2s here — assert we're still at the pre-swap time.
+      const timeAfterSwap = audioEl.currentTime;
+      expect(timeAfterSwap).toBeCloseTo(0.6, 3);
+      expect(timeAfterSwap).not.toBeCloseTo(1.2, 3);
+      // Now fire loadedmetadata — the deferred seek should apply
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      // The matched cue at target_index=1 in translated starts at 1200ms
+      expect(audioEl.currentTime).toBeCloseTo(1.2, 3);
+    });
+
+    it("Dialogue variant switch preserves position via line ref", () => {
+      const ctrl = createController({ audio: sectionsAudio });
+      // Position on line 0 in natural_speed
+      audioEl.currentTime = 0.1;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(ctrl.currentCue?.ref).toEqual({ kind: "line", target_index: 0 });
+
+      // Switch to translated — same line ref (kind=line, target_index=0) exists
+      ctrl.selectTrack("translated");
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      // In translated, line 0 starts at 0ms
+      expect(audioEl.currentTime).toBeCloseTo(0, 3);
+    });
+
+    it("phase switch (Dialogue→Key Phrases) restarts at 0", () => {
+      const ctrl = createController({ audio: sectionsAudio });
+      // Position on line 1 in natural_speed
+      audioEl.currentTime = 0.6;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(ctrl.currentCue?.ref?.kind).toBe("line");
+
+      // Switch to key_phrases — ref.kind changes from "line" to "key_phrase", no match
+      ctrl.selectTrack("key_phrases");
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(audioEl.currentTime).toBeCloseTo(0, 3);
+    });
+
+    it("play-state continuity: playing before → play() called after deferred seek", () => {
+      const ctrl = createController({ audio: sectionsAudio });
+      // Start playing — make the fake audio reflect non-paused state
+      Object.defineProperty(audioEl, "paused", { value: false, configurable: true });
+      audioEl.dispatchEvent(new Event("play"));
+      expect(ctrl.playing).toBe(true);
+
+      // selectTrack should detect playing, then after loadedmetadata call play()
+      ctrl.selectTrack("translated");
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(audioEl.play).toHaveBeenCalled();
+    });
+
+    it("selectTrack does not overwrite tt-resume-${lessonId}", () => {
+      fakeLocalStorage.setItem("tt-resume-l1", "5.0");
+      const ctrl = createController({
+        audio: sectionsAudio,
+        storage: fakeLocalStorage,
+        lessonId: "l1",
+      });
+      // Load metadata first so the initial pendingResume is consumed and set to
+      // null — otherwise saveResume()'s own pendingResume guard (not the one
+      // under test) would protect the key and mask a broken swapping guard.
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+
+      ctrl.selectTrack("translated");
+      // A real src swap fires a pause/emptied event while currentTime is 0.
+      // With pendingResume already null, only the `swapping` guard stops the
+      // pause listener from saveResume()-ing 0 over the stored 5.0.
+      audioEl.currentTime = 0;
+      audioEl.dispatchEvent(new Event("pause"));
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      // The resume key should still be 5.0, not overwritten by the swap
+      expect(fakeLocalStorage.getItem("tt-resume-l1")).toBe("5.0");
+    });
+
+    it("existing default behavior unchanged (full-lesson track on init)", () => {
+      const ctrl = createController({ audio: sectionsAudio });
+      // Initial src is the full lesson URL, not a section URL
+      expect(audioEl.src).toBe("/api/audio/a1");
+      expect(ctrl.activeSectionType).toBe("natural_speed");
+      expect(ctrl.activeCues).toHaveLength(2);
+      // currentCue derives from the initial cues
+      audioEl.currentTime = 0.1;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(ctrl.currentCue?.index).toBe(0);
+    });
+
+    it("selectTrack with unknown section type is a no-op", () => {
+      const ctrl = createController({ audio: sectionsAudio });
+      const srcBefore = audioEl.src;
+      ctrl.selectTrack("nonexistent");
+      expect(audioEl.src).toBe(srcBefore);
+    });
+
+    it("seek falls back to 0 when currentCue is null (no prior ref)", () => {
+      const ctrl = createController({ audio: sectionsAudio });
+      // Don't advance currentTime — currentCue is null because all cues start > 0
+      // (first cue starts at 0ms, but currentTime is 0 so it IS the current cue;
+      // instead, use an audio with late-starting cues)
+      const lateAudio: LessonAudio = {
+        ...sectionsAudio,
+        cues: sectionsAudio.cues!.map((c) => ({ ...c, start_ms: c.start_ms + 10000 })),
+        sections: sectionsAudio.sections.map((s) => ({
+          ...s,
+          cues: s.cues?.map((c) => ({ ...c, start_ms: c.start_ms + 10000 })),
+        })),
+      };
+      const ctrl2 = createController({ audio: lateAudio });
+      audioEl.currentTime = 0.1;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(ctrl2.currentCue).toBeNull();
+      // Select a track — no ref to match, seek should go to 0
+      ctrl2.selectTrack("translated");
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(audioEl.currentTime).toBeCloseTo(0, 3);
+    });
+
+    it("selectTrack falls back to default sectionUrl when dep is absent", () => {
+      const ctrl = createPlaybackController({
+        createAudio: () => audioEl,
+        storage: fakeLocalStorage,
+        lessonId: "l1",
+        lessonTitle: "Lesson 1",
+        audioUrl: "/api/audio/a1",
+        audio: sectionsAudio,
+        // sectionUrl intentionally omitted
+      });
+      ctrl.selectTrack("translated");
+      expect(audioEl.src).toBe("sec-translated");
     });
   });
 });

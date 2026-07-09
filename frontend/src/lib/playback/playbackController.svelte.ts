@@ -1,5 +1,5 @@
 import { untrack } from "svelte";
-import type { Cue, LessonAudio } from "$lib/api";
+import type { Cue, LessonAudio, SectionAudio } from "$lib/api";
 
 export interface PlaybackController {
   readonly currentCue: Cue | null;
@@ -10,6 +10,8 @@ export interface PlaybackController {
   readonly duration: number;
   readonly playbackRate: number;
   readonly sentenceSkip: boolean;
+  readonly activeSectionType: string | null;
+  readonly activeCues: Cue[] | null;
 
   play(): void;
   pause(): void;
@@ -22,6 +24,7 @@ export interface PlaybackController {
   nextCue(): void;
   prevCue(): void;
   repeatCue(): void;
+  selectTrack(sectionType: string): void;
   setRate(rate: number): void;
   setSentenceSkip(v: boolean): void;
   destroy(): void;
@@ -35,6 +38,7 @@ interface Deps {
   lessonTitle?: string;
   audioUrl: string;
   audio: LessonAudio;
+  sectionUrl?: (audioId: string) => string;
 }
 
 function getRefGroupKey(cue: Cue): string {
@@ -91,14 +95,24 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   const mediaSession =
     deps.mediaSession ?? (typeof navigator !== "undefined" ? navigator.mediaSession : undefined);
   const lessonId = deps.lessonId;
-  const cues: Cue[] | null = deps.audio.cues ?? null;
-  const refGroups = cues ? buildRefGroups(cues) : [];
-  const sectionTitles = deps.audio.sections.reduce(
-    (acc, s) => {
-      acc[s.section_index] = s.title;
-      return acc;
-    },
-    {} as Record<number, string>,
+  const sectionUrlFn = deps.sectionUrl ?? ((id: string) => id);
+  const audioSections = deps.audio.sections;
+
+  let activeCues: Cue[] | null = $state(deps.audio.cues ?? null);
+  let refGroups: number[][] = $state(activeCues ? buildRefGroups(activeCues) : []);
+  let sectionTitles: Record<number, string> = $state(
+    audioSections.reduce(
+      (acc, s) => {
+        acc[s.section_index] = s.title;
+        return acc;
+      },
+      {} as Record<number, string>,
+    ),
+  );
+  let activeSectionType: string | null = $state(
+    activeCues && activeCues.length > 0 && activeCues[0].section_type
+      ? activeCues[0].section_type
+      : null,
   );
 
   let currentTime = $state(0);
@@ -110,12 +124,16 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   // listener AFTER src="" has reset currentTime to 0 — without this flag the
   // listener would overwrite the resume position destroy just saved.
   let destroyed = false;
+  // Guard against pause/emptied events fired during a src swap in selectTrack.
+  let swapping = false;
+  let pendingSeek: number | null = null;
+  let wasPlayingBeforeSwap = false;
 
   let currentCue = $derived.by(() => {
-    if (!cues || cues.length === 0) return null;
+    if (!activeCues || activeCues.length === 0) return null;
     const tMs = currentTime * 1000;
     let best: Cue | null = null;
-    for (const c of cues) {
+    for (const c of activeCues) {
       if (c.start_ms <= tMs) best = c;
       else break;
     }
@@ -174,6 +192,15 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       }
       pendingResume = null;
     }
+    if (pendingSeek !== null) {
+      doSeek(pendingSeek);
+      pendingSeek = null;
+      swapping = false;
+      if (wasPlayingBeforeSwap) {
+        audioEl.play();
+        wasPlayingBeforeSwap = false;
+      }
+    }
     updatePositionState();
   });
   audioEl.addEventListener("play", () => {
@@ -181,7 +208,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     if (mediaSession) mediaSession.playbackState = "playing";
   });
   audioEl.addEventListener("pause", () => {
-    if (destroyed) return;
+    if (destroyed || swapping) return;
     playing = false;
     saveResume();
     if (mediaSession) mediaSession.playbackState = "paused";
@@ -276,15 +303,15 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   // --- Section navigation ---
 
   function nextSection(): void {
-    if (!cues) return;
+    if (!activeCues) return;
     if (currentSectionIndex === null) {
-      const firstCue = cues.find((c) => c.section_index != null);
+      const firstCue = activeCues.find((c) => c.section_index != null);
       if (firstCue) {
         doSeek(firstCue.start_ms / 1000);
       }
       return;
     }
-    const firstCueAfter = cues.find(
+    const firstCueAfter = activeCues.find(
       (c) => c.section_index != null && c.section_index > currentSectionIndex!,
     );
     if (firstCueAfter) {
@@ -293,14 +320,14 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   }
 
   function prevSection(): void {
-    if (!cues) return;
+    if (!activeCues) return;
     if (currentSectionIndex === null) {
       doSeek(0);
       return;
     }
     if (currentSectionIndex <= 0) return;
     const targetSection = currentSectionIndex - 1;
-    const firstCueInTarget = cues.find((c) => c.section_index === targetSection);
+    const firstCueInTarget = activeCues.find((c) => c.section_index === targetSection);
     if (firstCueInTarget) {
       doSeek(firstCueInTarget.start_ms / 1000);
     }
@@ -321,7 +348,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     if (groupIdx < 0) return;
     const nextCueIndex = findGroupStart(refGroups, groupIdx, "next");
     if (nextCueIndex == null) return;
-    const targetCue = findCueByIndex(cues!, nextCueIndex);
+    const targetCue = findCueByIndex(activeCues!, nextCueIndex);
     if (targetCue) {
       doSeek(targetCue.start_ms / 1000);
     }
@@ -332,10 +359,57 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     if (groupIdx < 0) return;
     const prevCueIndex = findGroupStart(refGroups, groupIdx, "prev");
     if (prevCueIndex == null) return;
-    const targetCue = findCueByIndex(cues!, prevCueIndex);
+    const targetCue = findCueByIndex(activeCues!, prevCueIndex);
     if (targetCue) {
       doSeek(targetCue.start_ms / 1000);
     }
+  }
+
+  // --- Track selection (B2) ---
+
+  function selectTrack(sectionType: string): void {
+    const section = audioSections.find((s) => s.section_type === sectionType);
+    if (!section) return;
+
+    // Capture the current line ref before the src swap resets everything.
+    const prevRef = currentCue?.ref ?? null;
+
+    // Guard: prevent the browser's pause/emptied events from clobbering resume.
+    swapping = true;
+    wasPlayingBeforeSwap = !audioEl.paused;
+
+    // Swap the audio source.
+    audioEl.src = sectionUrlFn(section.audio_id);
+
+    // Swap the active cue list + rebuild derived state.
+    const newCues = section.cues ?? null;
+    activeCues = newCues;
+    refGroups = newCues ? buildRefGroups(newCues) : [];
+    activeSectionType = sectionType;
+
+    // Rebuild sectionTitles so section-title narration cues stay correct.
+    sectionTitles = audioSections.reduce(
+      (acc, s) => {
+        acc[s.section_index] = s.title;
+        return acc;
+      },
+      {} as Record<number, string>,
+    );
+
+    // Find the matching cue by ref.kind + target_index for position preservation.
+    if (prevRef && newCues && newCues.length > 0) {
+      const match = newCues.find(
+        (c) => c.ref && c.ref.kind === prevRef.kind && c.ref.target_index === prevRef.target_index,
+      );
+      if (match) {
+        pendingSeek = match.start_ms / 1000;
+      } else {
+        pendingSeek = 0;
+      }
+    } else {
+      pendingSeek = 0;
+    }
+    // The seek is applied inside the loadedmetadata handler.
   }
 
   // --- Repeat ---
@@ -373,6 +447,12 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     get sentenceSkip() {
       return sentenceSkip;
     },
+    get activeSectionType() {
+      return activeSectionType;
+    },
+    get activeCues() {
+      return activeCues;
+    },
 
     play() {
       audioEl.play();
@@ -401,6 +481,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     nextCue: nextCueAction,
     prevCue: prevCueAction,
     repeatCue,
+    selectTrack,
     setRate(newRate: number) {
       audioEl.playbackRate = newRate;
       rate = newRate;

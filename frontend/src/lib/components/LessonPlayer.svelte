@@ -37,14 +37,72 @@
 	const hasCues =
 		init.audio.cues !== null && init.audio.cues !== undefined && init.audio.cues.length > 0;
 
-	const SPEED_OPTIONS = [0.7, 0.8, 0.85, 0.9, 0.95, 1.0];
+	const sectionTypes = new Set(init.audio.sections.map((s) => s.section_type));
+	const hasAllSections =
+		sectionTypes.has('key_phrases') &&
+		sectionTypes.has('natural_speed') &&
+		sectionTypes.has('translated') &&
+		sectionTypes.has('slow_speed') &&
+		sectionTypes.has('slow_translated');
 
-	function cycleSpeed() {
-		const current = ctrl.playbackRate;
-		const idx = SPEED_OPTIONS.indexOf(current);
-		const next = SPEED_OPTIONS[(idx + 1) % SPEED_OPTIONS.length];
-		ctrl.setRate(next);
+	// --- Phase / Enunciation / English state ---
+
+	const PHASES = ['key_phrases', 'dialogue'] as const;
+	type Phase = (typeof PHASES)[number];
+
+	const ENUNCIATION_OPTIONS = [
+		{ level: 'natural', label: 'Natural', rate: 1.0 },
+		{ level: 'enunciated', label: 'Enunciated', rate: 1.0 },
+		{ level: 'enunciated_0.9', label: 'Enun 0.9×', rate: 0.9 },
+		{ level: 'enunciated_0.8', label: 'Enun 0.8×', rate: 0.8 },
+	] as const;
+
+	function resolveSectionType(phase: Phase, enunLevel: string, engOn: boolean): string | null {
+		if (phase === 'key_phrases') return 'key_phrases';
+		if (enunLevel === 'natural') return engOn ? 'translated' : 'natural_speed';
+		return engOn ? 'slow_translated' : 'slow_speed';
 	}
+
+	function resolveRate(enunLevel: string): number {
+		const opt = ENUNCIATION_OPTIONS.find((o) => o.level === enunLevel);
+		return opt?.rate ?? 1.0;
+	}
+
+	let phase: Phase = $state('dialogue');
+	let enunLevel: string = $state('natural');
+	let englishOn: boolean = $state(false);
+
+	let selectedSectionType = $derived(resolveSectionType(phase, enunLevel, englishOn));
+	let enunIndex = $derived(ENUNCIATION_OPTIONS.findIndex((o) => o.level === enunLevel));
+
+	function cycleEnunciation() {
+		const nextIdx = (enunIndex + 1) % ENUNCIATION_OPTIONS.length;
+		enunLevel = ENUNCIATION_OPTIONS[nextIdx].level;
+	}
+
+	function applyTrack() {
+		if (selectedSectionType) {
+			ctrl.selectTrack(selectedSectionType);
+			ctrl.setRate(resolveRate(enunLevel));
+		}
+	}
+
+	function onPhaseClick(p: Phase) {
+		phase = p;
+		applyTrack();
+	}
+
+	function onEnunClick() {
+		cycleEnunciation();
+		applyTrack();
+	}
+
+	function onEnglishToggle() {
+		englishOn = !englishOn;
+		applyTrack();
+	}
+
+	// --- Prefetch section URLs ---
 
 	function formatTime(s: number): string {
 		const m = Math.floor(s / 60);
@@ -54,7 +112,8 @@
 
 	onMount(() => {
 		const nav = navigator as Navigator & { connection?: NetworkInformationLike };
-		const urls = [api.audioUrl(audio.audio_id)];
+		const sectionUrls = init.audio.sections.map((s) => api.audioUrl(s.audio_id));
+		const urls = [api.audioUrl(audio.audio_id), ...sectionUrls];
 		void maybePrefetchLesson(urls, {
 			enabled: prefetchPrefStore.enabled,
 			connection: nav.connection,
@@ -79,13 +138,22 @@
 		</div>
 	{/if}
 
+	{#if hasCues && !compact}
+		<div class="phase-row">
+			<button
+				class="phase-btn"
+				class:active={phase === 'key_phrases'}
+				onclick={() => onPhaseClick('key_phrases')}
+			>Key Phrases</button>
+			<button
+				class="phase-btn"
+				class:active={phase === 'dialogue'}
+				onclick={() => onPhaseClick('dialogue')}
+			>Dialogue</button>
+		</div>
+	{/if}
+
 	<div class="transport-row">
-		{#if hasCues}
-			<button class="ctrl-btn" onclick={() => ctrl.prevSection()} title="Previous section">
-				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="2,8 10,2 10,14" fill="currentColor"/><rect x="11.5" y="2" width="2.5" height="12" rx="0.5" fill="currentColor"/></svg>
-				Section
-			</button>
-		{/if}
 		<button class="ctrl-btn" onclick={() => ctrl.seekBy(-10)} title="Rewind 10s">
 			<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="12,2 4,8 12,14" fill="currentColor"/></svg>10s
 		</button>
@@ -99,15 +167,9 @@
 		<button class="ctrl-btn" onclick={() => ctrl.seekBy(10)} title="Forward 10s">
 			10s<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="4,2 12,8 4,14" fill="currentColor"/></svg>
 		</button>
-		{#if hasCues}
-			<button class="ctrl-btn" onclick={() => ctrl.nextSection()} title="Next section">
-				Section
-				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><rect x="2" y="2" width="2.5" height="12" rx="0.5" fill="currentColor"/><polygon points="6,2 14,8 6,14" fill="currentColor"/></svg>
-			</button>
-		{/if}
 	</div>
 
-	{#if hasCues}
+	{#if hasCues && !compact}
 		<div class="sentence-row">
 			<button class="ctrl-btn small" onclick={() => ctrl.prevCue()} title="Previous sentence">
 				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="12,2 4,8 12,14" fill="currentColor"/></svg>
@@ -144,9 +206,16 @@
 		</div>
 	</div>
 
-	<div class="speed-row">
-		<button class="speed-btn" onclick={cycleSpeed}>{ctrl.playbackRate}×</button>
-	</div>
+	{#if hasCues && !compact && hasAllSections}
+		<div class="controls-row">
+			<button class="enunciation-btn" onclick={onEnunClick}>
+				{ENUNCIATION_OPTIONS[enunIndex].label}
+			</button>
+			<button class="english-btn" onclick={onEnglishToggle}>
+				English {englishOn ? 'On' : 'Off'}
+			</button>
+		</div>
+	{/if}
 
 	{#if hasCues && !compact}
 		<!-- Subtitle sits BELOW the controls: the player is a sticky header, so the
@@ -257,28 +326,59 @@
 		font-size: 0.75rem;
 		color: var(--color-muted);
 	}
-	.speed-row {
+	.phase-row {
 		display: flex;
 		justify-content: center;
+		background: var(--color-surface-2);
+		border-radius: var(--radius-pill, 999px);
+		padding: 3px;
+		gap: 2px;
 	}
-	.speed-btn {
-		min-width: 56px;
+	.phase-btn {
+		flex: 1;
+		padding: 0.4rem 0.8rem;
+		border: none;
+		border-radius: var(--radius-pill, 999px);
+		background: transparent;
+		color: var(--color-muted);
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.15s ease, color 0.15s ease;
+	}
+	.phase-btn.active {
+		background: var(--color-primary);
+		color: var(--color-on-primary);
+	}
+	.phase-btn:hover:not(.active) {
+		color: var(--color-text);
+	}
+	.controls-row {
+		display: flex;
+		justify-content: center;
+		gap: 0.5rem;
+	}
+	.enunciation-btn,
+	.english-btn {
+		min-width: 80px;
 		min-height: 40px;
 		padding: 0.35rem 0.8rem;
 		background: var(--color-surface-2);
 		color: var(--color-text);
 		border: 1px solid var(--color-border, #ddd);
 		border-radius: var(--radius-pill, 999px);
-		font-size: 0.9rem;
+		font-size: 0.85rem;
 		font-weight: 600;
 		cursor: pointer;
+		transition: background 0.15s ease;
 	}
-	.speed-btn:hover {
+	.enunciation-btn:hover,
+	.english-btn:hover {
 		background: var(--color-primary);
 		color: var(--color-on-primary);
 		border-color: var(--color-primary);
 	}
-	/* Keep the five transport pills on one tidy line down to small phones:
+	/* Keep the transport pills on one tidy line down to small phones:
 	   never let a label wrap inside its pill, and tighten spacing instead. */
 	@media (max-width: 430px) {
 		.transport-row {

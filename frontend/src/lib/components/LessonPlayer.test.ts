@@ -28,6 +28,10 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
+vi.mock("$lib/sw/prefetch", () => ({
+  maybePrefetchLesson: vi.fn(() => Promise.resolve()),
+}));
+
 const audioWithNoSections: LessonAudio = {
   audio_id: "a1",
   lesson_id: "l1",
@@ -75,6 +79,44 @@ const audioWithCuesNull: LessonAudio = {
   cues: null,
 };
 
+const audioWithAllSections: LessonAudio = {
+  audio_id: "a1",
+  lesson_id: "l1",
+  sections: [
+    { audio_id: "s1", section_index: 0, section_type: "key_phrases", title: "Key Phrases" },
+    { audio_id: "s2", section_index: 1, section_type: "natural_speed", title: "Natural Speed" },
+    { audio_id: "s3", section_index: 2, section_type: "translated", title: "Translated" },
+    { audio_id: "s4", section_index: 3, section_type: "slow_speed", title: "Slow Speed" },
+    { audio_id: "s5", section_index: 4, section_type: "slow_translated", title: "Slow Translated" },
+  ],
+  cues: [
+    {
+      index: 0,
+      start_ms: 0,
+      end_ms: 800,
+      section_index: 0,
+      section_type: "key_phrases",
+      phrase_index: 0,
+      role: "narrator",
+      language_code: "en",
+      text: "Hello world",
+      ref: { kind: "key_phrase", target_index: 0 },
+    },
+    {
+      index: 1,
+      start_ms: 1000,
+      end_ms: 2000,
+      section_index: 1,
+      section_type: "natural_speed",
+      phrase_index: 0,
+      role: "speaker",
+      language_code: "sl",
+      text: "Pozdravljeni",
+      ref: { kind: "line", target_index: 0 },
+    },
+  ],
+};
+
 describe("LessonPlayer", () => {
   describe("basic transport", () => {
     it("does not render an audio element (controller owns the only one)", () => {
@@ -82,7 +124,7 @@ describe("LessonPlayer", () => {
       expect(container.querySelector("audio")).toBeFalsy();
     });
 
-    it("renders transport buttons (play, seek, section)", () => {
+    it("renders transport buttons (play, seek)", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithSections } });
       expect(container.querySelector(".transport-row")).toBeTruthy();
       const buttons = container.querySelectorAll(".ctrl-btn");
@@ -93,14 +135,6 @@ describe("LessonPlayer", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithNoSections } });
       const playBtn = container.querySelector(".play-btn");
       expect(playBtn).toBeTruthy();
-    });
-
-    it("hides section nav buttons when cues are absent", () => {
-      const { container } = render(LessonPlayer, { props: { audio: audioWithCuesNull } });
-      expect(container.querySelector('button[title="Previous section"]')).toBeFalsy();
-      expect(container.querySelector('button[title="Next section"]')).toBeFalsy();
-      const buttons = container.querySelectorAll(".ctrl-btn");
-      expect(buttons.length).toBe(3);
     });
 
     it("renders no section info or current line when cues absent", () => {
@@ -116,39 +150,36 @@ describe("LessonPlayer", () => {
     });
 
     it("renders the current line BELOW the controls (sticky-header layout)", () => {
-      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
-      const speedRow = container.querySelector(".speed-row")!;
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      const controlsRow = container.querySelector(".controls-row")!;
       const currentLine = container.querySelector(".current-line")!;
       // current-line after the last control row → subtitle sits nearest the content
       expect(
-        speedRow.compareDocumentPosition(currentLine) & Node.DOCUMENT_POSITION_FOLLOWING,
+        controlsRow.compareDocumentPosition(currentLine) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
     });
   });
 
   describe("compact mode", () => {
-    it("hides only the current-line subtitle and downloads; keeps all controls", () => {
+    it("hides current-line, downloads, and phase controls; keeps transport, scrubber", () => {
       const { container } = render(LessonPlayer, {
         props: { audio: audioWithCues, compact: true },
       });
-      // Subtitle display is the transcript's job in Read mode.
       expect(container.querySelector(".current-line")).toBeFalsy();
       expect(container.querySelector(".download-section")).toBeFalsy();
-      // Full control parity with Listen mode.
-      expect(container.querySelector(".section-info")).toBeTruthy();
-      expect(container.querySelector(".sentence-row")).toBeTruthy();
+      expect(container.querySelector(".phase-row")).toBeFalsy();
+      expect(container.querySelector(".transport-row")).toBeTruthy();
       expect(container.querySelector(".scrubber-row")).toBeTruthy();
-      expect(container.querySelector(".speed-row")).toBeTruthy();
     });
 
-    it("compact without cues hides cue-driven rows but keeps scrubber and speed", () => {
+    it("compact without cues hides cue-driven rows but keeps scrubber", () => {
       const { container } = render(LessonPlayer, {
         props: { audio: audioWithCuesNull, compact: true },
       });
       expect(container.querySelector(".section-info")).toBeFalsy();
       expect(container.querySelector(".sentence-row")).toBeFalsy();
       expect(container.querySelector(".scrubber-row")).toBeTruthy();
-      expect(container.querySelector(".speed-row")).toBeTruthy();
+      expect(container.querySelector(".phase-row")).toBeFalsy();
     });
 
     it("still renders transport row in compact mode", () => {
@@ -190,7 +221,7 @@ describe("LessonPlayer", () => {
     });
   });
 
-  describe("scrubber and speed", () => {
+  describe("scrubber", () => {
     it("renders scrubber when cues present and not compact", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
       expect(container.querySelector(".scrubber-row")).toBeTruthy();
@@ -202,37 +233,105 @@ describe("LessonPlayer", () => {
       expect(container.querySelector(".scrubber-row")).toBeTruthy();
       expect(container.querySelector(".scrubber")).toBeTruthy();
     });
+  });
 
-    it("renders speed button with rate", () => {
-      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
-      const speedBtn = container.querySelector(".speed-btn");
-      expect(speedBtn).toBeTruthy();
-      expect(speedBtn!.textContent).toContain("×");
-    });
-
-    it("renders speed button even with cues null (not compact)", () => {
+  describe("phase selector", () => {
+    it("does not render phase row when cues absent", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCuesNull } });
-      const speedBtn = container.querySelector(".speed-btn");
-      expect(speedBtn).toBeTruthy();
+      expect(container.querySelector(".phase-row")).toBeFalsy();
     });
 
-    it("cycles speed on click", () => {
+    it("renders Key Phrases and Dialogue buttons when cues present", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
-      const speedBtn = container.querySelector<HTMLButtonElement>(".speed-btn")!;
-      const initialRate = parseFloat(speedBtn.textContent!);
-      fireEvent.click(speedBtn);
-      const nextRate = parseFloat(speedBtn.textContent!);
-      expect(nextRate).not.toBe(initialRate);
+      const phaseRow = container.querySelector(".phase-row");
+      expect(phaseRow).toBeTruthy();
+      const buttons = phaseRow!.querySelectorAll("button");
+      expect(buttons.length).toBe(2);
+      expect(buttons[0].textContent).toContain("Key Phrases");
+      expect(buttons[1].textContent).toContain("Dialogue");
+    });
+
+    it("does not render phase row in compact mode", () => {
+      const { container } = render(LessonPlayer, {
+        props: { audio: audioWithCues, compact: true },
+      });
+      expect(container.querySelector(".phase-row")).toBeFalsy();
+    });
+
+    it("clicking Key Phrases activates that phase", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      const keyPhrasesBtn = container.querySelector<HTMLButtonElement>(".phase-btn:first-child")!;
+      expect(keyPhrasesBtn.classList.contains("active")).toBe(false);
+      fireEvent.click(keyPhrasesBtn);
+      expect(keyPhrasesBtn.classList.contains("active")).toBe(true);
+    });
+
+    it("clicking Dialogue activates that phase", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      // Default is 'dialogue' — switch away first, then back
+      const keyPhrasesBtn = container.querySelector<HTMLButtonElement>(".phase-btn:first-child")!;
+      fireEvent.click(keyPhrasesBtn);
+      expect(keyPhrasesBtn.classList.contains("active")).toBe(true);
+      const dialogueBtn = container.querySelector<HTMLButtonElement>(".phase-btn:last-child")!;
+      expect(dialogueBtn.classList.contains("active")).toBe(false);
+      fireEvent.click(dialogueBtn);
+      expect(dialogueBtn.classList.contains("active")).toBe(true);
+    });
+  });
+
+  describe("enunciation and English controls", () => {
+    it("renders enunciation and English controls when all sections present", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      expect(container.querySelector(".enunciation-btn")).toBeTruthy();
+      expect(container.querySelector(".english-btn")).toBeTruthy();
+    });
+
+    it("does not render enunciation or English buttons when cues absent", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithCuesNull } });
+      expect(container.querySelector(".enunciation-btn")).toBeFalsy();
+      expect(container.querySelector(".english-btn")).toBeFalsy();
+    });
+
+    it("enunciation button shows current label", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      const btn = container.querySelector(".enunciation-btn");
+      expect(btn!.textContent).toContain("Natural");
+    });
+
+    it("english button shows Off by default", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      const btn = container.querySelector(".english-btn");
+      expect(btn!.textContent).toContain("English");
+      expect(btn!.textContent).toContain("Off");
+    });
+
+    it("english button toggles label on click", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      const btn = container.querySelector<HTMLButtonElement>(".english-btn")!;
+      expect(btn.textContent).toContain("Off");
+      fireEvent.click(btn);
+      expect(btn.textContent).toContain("On");
+      fireEvent.click(btn);
+      expect(btn.textContent).toContain("Off");
+    });
+
+    it("enunciation cycles through 4 states on click", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      const btn = container.querySelector<HTMLButtonElement>(".enunciation-btn")!;
+      // Natural → Enunciated → Enun 0.9× → Enun 0.8× → Natural
+      expect(btn.textContent).toContain("Natural");
+      fireEvent.click(btn);
+      expect(btn.textContent).not.toContain("Natural");
+      fireEvent.click(btn);
+      expect(btn.textContent).toContain("0.9");
+      fireEvent.click(btn);
+      expect(btn.textContent).toContain("0.8");
+      fireEvent.click(btn);
+      expect(btn.textContent).toContain("Natural");
     });
   });
 
   describe("interactions", () => {
-    it("fires prevSection on button click", () => {
-      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
-      const btn = container.querySelector<HTMLButtonElement>('button[title="Previous section"]')!;
-      fireEvent.click(btn);
-    });
-
     it("fires rewind on button click", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
       const btn = container.querySelector<HTMLButtonElement>('button[title="Rewind 10s"]')!;
@@ -253,12 +352,6 @@ describe("LessonPlayer", () => {
       fireEvent.click(btn);
     });
 
-    it("fires nextSection on button click", () => {
-      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
-      const btn = container.querySelector<HTMLButtonElement>('button[title="Next section"]')!;
-      fireEvent.click(btn);
-    });
-
     it("fires prevCue on sentence back click", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
       const btn = container.querySelector<HTMLButtonElement>('button[title="Previous sentence"]')!;
@@ -274,8 +367,6 @@ describe("LessonPlayer", () => {
     });
 
     it("fires nextCue on sentence forward click", () => {
-      // Sentence stepping must work both ways from the on-screen controls —
-      // next-sentence is not only a headset (sentence-skip) affordance.
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
       const btn = container.querySelector<HTMLButtonElement>('button[title="Next sentence"]')!;
       expect(btn).toBeTruthy();

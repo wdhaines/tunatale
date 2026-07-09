@@ -187,11 +187,12 @@ export interface ListenResponse {
   registered: number;
 }
 
-interface SectionAudio {
+export interface SectionAudio {
   audio_id: string;
   section_index: number;
   section_type: string;
   title: string;
+  cues?: Cue[] | null;
 }
 
 export interface CueRef {
