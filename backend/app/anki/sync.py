@@ -8,6 +8,7 @@ S3.6: --force-fsrs gate + setSpecificValueOfCard.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 
@@ -107,11 +108,40 @@ def _copy_tt_media_to_anki(writer: OfflineWriter, filename: str) -> None:
     writer.store_media_file(filename, src.read_bytes())
 
 
+def _iter_direction_invariant_violations(conn) -> Iterator[str]:
+    """Yield a message per post-sync direction row that breaks a column invariant.
+
+    Reuses the single-source validator in ``app/srs/direction_fields.py`` (rather
+    than re-encoding the rules in SQL here), reading only the columns it needs. The
+    v35 CHECK constraints already reject out-of-domain writes, so in practice this
+    surfaces the *coupling* invariant the CHECK can't express (a ``bury_kind`` set on
+    a non-buried row — the 2026-05-16 incident class).
+    """
+    from app.models.srs_item import Direction, DirectionState, SRSState
+    from app.srs.direction_fields import iter_direction_invariant_violations
+
+    dummy_due = datetime.now()
+    rows = conn.execute(
+        "SELECT collocation_id, direction, state, prior_state, bury_kind FROM collocation_directions"
+    ).fetchall()
+    for cid, direction, state, prior_state, bury_kind in rows:
+        st = DirectionState(
+            direction=Direction(direction),
+            due_at=dummy_due,
+            state=SRSState(state),
+            prior_state=SRSState(prior_state) if prior_state is not None else None,
+            bury_kind=bury_kind,
+        )
+        for msg in iter_direction_invariant_violations(st):
+            yield f"cid={cid} dir={direction} {msg}"
+
+
 def _write_sync_soak_log(
     path: Path,
     *,
     pull: PullReport,
     push,
+    db=None,
 ) -> None:
     """Append a durable, greppable soak line for each non-dry CLI sync.
 
@@ -119,7 +149,10 @@ def _write_sync_soak_log(
     health signal would be lost when the terminal scrolled. This persists one
     ``SYNC_SOAK`` heartbeat per sync (even at count 0, so there's positive
     "ran clean" confirmation) plus one ``RECOMPUTE_DIVERGENCE`` detail line per
-    divergence. Grep ``~/.tunatale/logs/sync.log`` for either.
+    divergence. When the TT ``db`` (SRSDatabase) is supplied, also emits one
+    ``INVARIANT_TRACE`` line per direction row that breaks a column-level
+    invariant (rules 7/8/10). Grep ``~/.tunatale/logs/sync.log`` for any of the
+    three.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().isoformat(timespec="seconds")
@@ -135,6 +168,10 @@ def _write_sync_soak_log(
             f"replay_s={d.replay_stability:.4f} anki_s={d.anki_stability:.4f} "
             f"replay_d={d.replay_difficulty:.4f} anki_d={d.anki_difficulty:.4f}"
         )
+    if db is not None:
+        with db._get_conn() as tt_conn:
+            for msg in _iter_direction_invariant_violations(tt_conn):
+                lines.append(f"{ts}   INVARIANT_TRACE {msg}")
     with open(path, "a") as f:
         f.write("\n".join(lines) + "\n")
 
@@ -245,6 +282,7 @@ async def run_full_sync(
             sync_log_path,
             pull=pull_report,
             push=push_report,
+            db=db,
         )
 
     return create_report, push_report, pull_report, media_report

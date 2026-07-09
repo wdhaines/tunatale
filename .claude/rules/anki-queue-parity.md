@@ -76,9 +76,9 @@ Both apps freeze the main review queue and never re-sort mid-session (Anki `Card
 
 6. **Sync must merge both directions.** `sync_push` defers to Anki when Anki is ahead (graduated or smaller `total_remaining`). `sync_pull` defers to Anki when Anki is ahead. `_direction_differs` must compare `left`, `due_at`, `prior_state`, `bury_kind`, `anki_card_mod` so self-heal writes actually fire — since 2026-07-05 it (and `_DIR_COLUMNS`) derives from the field registry `app/srs/direction_fields.py`; register new columns there with an explicit `sync_comparable` decision, never hand-edit either list (`tests/test_direction_fields.py` pins registry ↔ schema ↔ model ↔ diff).
 
-7. **`prior_state='new'` is sticky.** Set on intro by `_resolve_prior_state` (sync) or `_grade_prior_state` (TT). Persists across same-state-class grades and LEARNING→REVIEW graduation. Released only on REVIEW→RELEARNING (lapse) for revlog `type=1` correctness. **Do not** overwrite `prior_state='new'` without checking new state.
+7. **`prior_state='new'` is sticky.** Set on intro by `_resolve_prior_state` (sync) or `_grade_prior_state` (TT). Persists across same-state-class grades and LEARNING→REVIEW graduation. Released only on REVIEW→RELEARNING (lapse) for revlog `type=1` correctness. **Do not** overwrite `prior_state='new'` without checking new state. *Now declared as `WritePolicy.STICKY_NEW` in `app/srs/direction_fields.py`, pinned to `_grade_prior_state` by `tests/test_direction_invariants.py`; `prior_state`'s value domain is a v35 SQL CHECK.*
 
-8. **`introduced_at` is a one-shot stamp, NOT a sticky marker (Layer 26).** Written exactly once per direction on first NEW→non-NEW transition by `fsrs.schedule` or `sync_pull._resolve_introduced_at` (from `MIN(revlog.id)`). `count_new_introduced_today` queries this column, NOT `prior_state` + `last_review`. Don't conflate: `prior_state='new'` lives for the entire intro arc (revlog correctness); `introduced_at` is a fixed timestamp (anchors Anki's `newToday` parity).
+8. **`introduced_at` is a one-shot stamp, NOT a sticky marker (Layer 26).** Written exactly once per direction on first NEW→non-NEW transition by `fsrs.schedule` or `sync_pull._resolve_introduced_at` (from `MIN(revlog.id)`). `count_new_introduced_today` queries this column, NOT `prior_state` + `last_review`. Don't conflate: `prior_state='new'` lives for the entire intro arc (revlog correctness); `introduced_at` is a fixed timestamp (anchors Anki's `newToday` parity). *Now declared as `WritePolicy.ONE_SHOT` in `app/srs/direction_fields.py`, pinned to `_resolve_introduced_at` by `tests/test_direction_invariants.py`.*
 
 9. **Daily unbury sweep at queue-build (Layer 27, refined 35).** `db.unbury_if_needed(today)` runs at the top of `/queue-stats`, `/review-queue`, `sync_pull`. Restores `state='buried' AND bury_kind='sched'` to `state='review'` (reps>0) or `'new'` (reps=0). Tracked via `anki_state_cache['last_unbury_day']`; idempotent within local day. Mirrors Anki's `unbury_on_day_rollover` (releases both `queue=-3` AND `queue=-2`). **Do NOT** let `state='buried' bury_kind='sched'` rows accumulate.
 
@@ -86,6 +86,8 @@ Both apps freeze the main review queue and never re-sort mid-session (Anki `Card
     - `'sched'` → released by daily sweep
     - `'user'` → sticks across rollover (from `POST /api/srs/bury`)
     - `NULL` → non-buried
+
+    This tri-state is now declared as `domain=BURY_KIND_DOMAIN` in `app/srs/direction_fields.py` (the single source), hard-enforced at write time by a **v35 SQL CHECK** (`bury_kind IN (NULL,'sched','user')`), and swept per-sync into `INVARIANT_TRACE` soak lines (plus the `bury_kind`-set-⇒-`state='buried'` coupling); `tests/test_direction_invariants.py` pins the CHECK domain back to the registry.
 
     `_bury_kind_from_queue` maps **both `queue=-2` and `queue=-3` to `'sched'`**. Pre-Layer-35 buried rows backfilled to `'user'` (pessimistic). **Do NOT** add an unconditional `UPDATE … WHERE state='buried'` — pre-Layer-35 bug that wiped 18 manually-buried cards per poll.
 

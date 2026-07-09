@@ -13,7 +13,7 @@ from datetime import date
 from app.common.guid import compute_guid
 from app.srs.function_words import format_morphology_hint
 
-CURRENT_VERSION = 34
+CURRENT_VERSION = 35
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -974,6 +974,94 @@ def migrate_v33_to_v34(conn: sqlite3.Connection) -> None:
     _set_version(conn, 34)
 
 
+def migrate_v34_to_v35(conn: sqlite3.Connection) -> None:
+    """Add domain CHECK constraints to ``collocation_directions.bury_kind`` and
+    ``prior_state`` — mechanical enforcement of two column-level invariants that
+    previously lived only in ``.claude/rules/anki-queue-parity.md`` prose (rules
+    10 and 7). SQLite can't ``ALTER … ADD CHECK``, so recreate the table (the
+    v24→v25 pattern).
+
+    The CHECK literals below are frozen at v35. Their domains are single-sourced
+    in ``app/srs/direction_fields.py`` (``BURY_KIND_DOMAIN`` / ``PRIOR_STATE_DOMAIN``)
+    and pinned back to this migration by
+    ``tests/test_direction_invariants.py::test_check_domains_match_registry`` — a
+    new SRSState/bury-kind value added to the registry without widening this CHECK
+    fails that test, signalling "write a v36 migration". TT-local schema: no USN,
+    no Anki write, no ``col.scm`` bump.
+    """
+    existing_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='collocation_directions'"
+    ).fetchone()[0]
+    if "bury_kind IS NULL OR bury_kind IN" in existing_sql:  # already constrained (idempotent re-run)
+        _set_version(conn, 35)
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        for idx in (
+            "idx_directions_state",
+            "idx_directions_anki_card_id",
+            "idx_directions_introduced_at",
+            "idx_directions_due_at",
+        ):
+            conn.execute(f"DROP INDEX IF EXISTS {idx}")
+
+        conn.execute("DROP TABLE IF EXISTS _cd_v35")
+        conn.execute("""
+            CREATE TABLE _cd_v35 (
+                collocation_id INTEGER NOT NULL REFERENCES collocations(id) ON DELETE CASCADE,
+                direction TEXT NOT NULL CHECK(direction IN ('recognition','production')),
+                stability REAL NOT NULL DEFAULT 1.0,
+                fsrs_difficulty REAL NOT NULL DEFAULT 5.0,
+                due_at TEXT NOT NULL,
+                reps INTEGER NOT NULL DEFAULT 0,
+                lapses INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL DEFAULT 'new',
+                last_review TEXT,
+                last_review_time_ms INTEGER NOT NULL DEFAULT 0,
+                anki_card_id INTEGER,
+                anki_card_mod INTEGER,
+                anki_due INTEGER,
+                dirty_fsrs INTEGER NOT NULL DEFAULT 0,
+                last_synced_at TEXT,
+                last_rating INTEGER,
+                left INTEGER,
+                prior_state TEXT CHECK(
+                    prior_state IS NULL OR prior_state IN
+                    ('new','learning','review','relearning','suspended','buried','known')
+                ),
+                prior_left INTEGER,
+                prior_stability REAL,
+                introduced_at TEXT,
+                bury_kind TEXT CHECK(bury_kind IS NULL OR bury_kind IN ('sched','user')),
+                known_prior_state TEXT,
+                known_prior_stability REAL,
+                known_prior_due_at TEXT,
+                fsrs_force_next INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (collocation_id, direction)
+            )
+        """)
+        conn.execute("""
+            INSERT INTO _cd_v35 SELECT
+                collocation_id, direction, stability, fsrs_difficulty, due_at,
+                reps, lapses, state, last_review, last_review_time_ms,
+                anki_card_id, anki_card_mod, anki_due, dirty_fsrs, last_synced_at,
+                last_rating, left, prior_state, prior_left, prior_stability,
+                introduced_at, bury_kind, known_prior_state, known_prior_stability,
+                known_prior_due_at, fsrs_force_next
+            FROM collocation_directions
+        """)
+        conn.execute("DROP TABLE collocation_directions")
+        conn.execute("ALTER TABLE _cd_v35 RENAME TO collocation_directions")
+        conn.execute("CREATE INDEX idx_directions_state ON collocation_directions(state)")
+        conn.execute("CREATE INDEX idx_directions_anki_card_id ON collocation_directions(anki_card_id)")
+        conn.execute("CREATE INDEX idx_directions_introduced_at ON collocation_directions(introduced_at)")
+        conn.execute("CREATE INDEX idx_directions_due_at ON collocation_directions(due_at)")
+        _set_version(conn, 35)
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -1009,6 +1097,7 @@ _MIGRATIONS = {
     31: migrate_v31_to_v32,
     32: migrate_v32_to_v33,
     33: migrate_v33_to_v34,
+    34: migrate_v34_to_v35,
 }
 
 
