@@ -59,6 +59,11 @@ class LanguageConfig:
     # Morphology-drill profile injected into the story prompt (``"slavic"`` = the
     # case/dual tagging block); ``None`` omits the block.
     morphology_profile: str | None = None
+    # Character that separates alternate accepted spellings of ONE word on a card
+    # front (Norwegian's ``mot, imot`` — both spellings of "against/towards").
+    # ``None`` (the default) means the language has no such convention, so a card
+    # front is always a single surface form. See ``card_surface_variants``.
+    variant_separator: str | None = None
 
 
 _CONFIGS: dict[str, LanguageConfig] = {
@@ -83,6 +88,7 @@ _CONFIGS: dict[str, LanguageConfig] = {
         vocab_notetype=NORWEGIAN_VOCAB,
         lemmatizer_type="stanza",
         compound_word_breakdown=True,
+        variant_separator=",",
     ),
 }
 
@@ -180,6 +186,37 @@ def uses_compound_word_breakdown(code: str) -> bool:
     """
     config = _CONFIGS.get(code)
     return config.compound_word_breakdown if config else False
+
+
+def get_variant_separator(code: str) -> str | None:
+    """The character separating alternate spellings on *code*'s card fronts, or
+    ``None`` when the language has no multi-spelling convention.
+
+    Unknown codes → ``None``. Norwegian uses ``","`` (``mot, imot``); every other
+    wired language returns ``None``, so ``card_surface_variants`` is a no-op there.
+    """
+    config = _CONFIGS.get(code)
+    return config.variant_separator if config else None
+
+
+def card_surface_variants(code: str, text: str) -> list[str]:
+    """Alternate accepted surface forms encoded in a card front *text*.
+
+    A card front listing separator-delimited single-word spellings (Norwegian
+    ``mot, imot``) is ONE lexical item with multiple surfaces — not a multi-word
+    collocation. Returns each stripped variant when *text* is such a list, else
+    ``[text]`` unchanged. The "every part is a single token" guard keeps genuine
+    phrases that merely contain the separator (``hei, hvordan går det``) whole,
+    and languages without a ``variant_separator`` always return ``[text]``.
+    """
+    sep = get_variant_separator(code)
+    if not sep or sep not in text:
+        return [text]
+    parts = [p.strip() for p in text.split(sep)]
+    parts = [p for p in parts if p]
+    if len(parts) > 1 and all(len(p.split()) == 1 for p in parts):
+        return parts
+    return [text]
 
 
 def get_morphology_profile(code: str) -> str | None:

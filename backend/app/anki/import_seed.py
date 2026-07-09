@@ -32,7 +32,7 @@ from app.anki.sqlite_reader import (
 )
 from app.common.guid import compute_guid
 from app.config import settings
-from app.languages import get_deck_name
+from app.languages import card_surface_variants, get_deck_name
 from app.media.importer import compute_sha256, copy_media_file
 from app.models.srs_item import Direction, DirectionState
 from app.models.syntactic_unit import BackField, SyntacticUnit
@@ -277,7 +277,12 @@ def import_seed(
                     )
                     other_idx = 1 - l2_idx if len(note.fields) > 1 else 0
                     translation = extract_translation(note.fields[other_idx]) if len(note.fields) > 1 else ""
-            word_count = len(l2_text.split())
+            # A comma-front listing alternate spellings of one word (Norwegian
+            # 'mot, imot') is a single lexical item, not a multi-word collocation —
+            # count it as one word so the reader's single-word/variant lookup matches.
+            variant_surfaces = card_surface_variants(language_code, l2_text)
+            is_variant_front = len(variant_surfaces) > 1
+            word_count = 1 if is_variant_front else len(l2_text.split())
             if word_count < 1:
                 # Extractor returned empty/whitespace — nothing to import.
                 # Reference/Q&A notes with long English questions are now
@@ -325,7 +330,9 @@ def import_seed(
                 disambig_key=disambig,
                 article=article,
                 extras=extras,
-                lemma=l2_text.lower() if word_count == 1 else None,
+                # Variant fronts keep lemma unset — matched via the reader's
+                # per-surface variant index, not a single lemma column.
+                lemma=l2_text.lower() if (word_count == 1 and not is_variant_front) else None,
             )
             note_cards = card_map.get(note.id, [])
             directions = _build_directions(note_cards)

@@ -13,7 +13,7 @@ from datetime import date
 from app.common.guid import compute_guid
 from app.srs.function_words import format_morphology_hint
 
-CURRENT_VERSION = 35
+CURRENT_VERSION = 36
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -1062,6 +1062,31 @@ def migrate_v34_to_v35(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA foreign_keys = ON")
 
 
+def migrate_v35_to_v36(conn: sqlite3.Connection) -> None:
+    """Reclassify comma-separated spelling-variant cards as single-word.
+
+    Anki fronts that list alternate spellings of one word (Norwegian ``mot, imot``)
+    were imported as multi-word collocations — ``word_count`` came from
+    ``text.split()``, so ``mot, imot`` got ``word_count=2``. That made them invisible
+    to the reader's single-word lookup and dropped them into the multi-word span
+    index they never match.
+
+    A front whose whitespace-token count equals its comma count plus one is exactly
+    such a variant list: ``commas + 1`` comma-groups holding ``commas + 1`` total
+    tokens means every group is a single token (a genuine phrase like ``god morgen``
+    has 0 commas; ``hei, hvordan går det`` has 1 comma but 4 tokens). Reset those to
+    ``word_count=1``. ``lemma`` stays as-is — the reader matches these via the
+    per-surface variant index (``transcript._build_variant_index``), not the lemma
+    column. Language-agnostic by construction; the Slovene deck has no such rows.
+    """
+    conn.execute(
+        "UPDATE collocations SET word_count = 1 "
+        "WHERE word_count > 1 "
+        "AND word_count = (LENGTH(text) - LENGTH(REPLACE(text, ',', ''))) + 1"
+    )
+    _set_version(conn, 36)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -1098,6 +1123,7 @@ _MIGRATIONS = {
     32: migrate_v32_to_v33,
     33: migrate_v33_to_v34,
     34: migrate_v34_to_v35,
+    35: migrate_v35_to_v36,
 }
 
 

@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
+from app.languages import card_surface_variants, get_variant_separator
 from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
-from app.models.srs_item import Direction, DirectionState, SRSState
+from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.srs.collocation_matcher import match_spans
 from app.srs.database import SRSDatabase
 from app.srs.function_words import is_a1_morphology_feature, is_clozes_only_verb, ud_feats_to_tt_feature
@@ -209,6 +210,31 @@ def _inflection_feature_for(surface: str, analysis_by_surface: dict[str, object]
     return ""
 
 
+def _build_variant_index(db: SRSDatabase, language_code: str) -> dict[str, tuple[int, SRSItem]]:
+    """Map each accepted spelling of a variant card to its (id, hydrated item).
+
+    A card front listing comma-separated spellings (Norwegian ``mot, imot``) is one
+    lexical item that the single-word lemma lookup can't match (its ``lemma`` column
+    is unset). This index lets the reader resolve *either* spelling to the one card.
+    Empty for languages with no ``variant_separator`` (every other language today).
+    """
+    sep = get_variant_separator(language_code)
+    if not sep:
+        return {}
+    index: dict[str, tuple[int, SRSItem]] = {}
+    for cid, text in db.get_variant_candidate_rows(language_code, sep):
+        variants = card_surface_variants(language_code, text)
+        if len(variants) <= 1:
+            continue  # contained the separator but isn't a variant list (real phrase)
+        loaded = db.get_collocation_by_id(cid)
+        if loaded is None:  # pragma: no cover - row vanished between queries
+            continue
+        _cid, item, _lang = loaded
+        for variant in variants:
+            index[variant.casefold()] = (cid, item)
+    return index
+
+
 def extract_transcript(
     lesson: Lesson,
     db: SRSDatabase,
@@ -240,6 +266,8 @@ def extract_transcript(
     collocation_index = _build_collocation_index(db, raw_collocations, lemmatizer, lesson.language_code)
     # Card-less ignore list
     ignored_lemmas = db.get_ignored_lemmas(lesson.language_code)
+    # Spelling-variant cards ('mot, imot') keyed by each accepted surface form
+    variant_index = _build_variant_index(db, lesson.language_code)
     # Persistent cache key — empty for cheap lemmatizers (skips DB round-trip)
     model_version = model_version_for(lemmatizer)
 
@@ -313,6 +341,11 @@ def extract_transcript(
                         base_cache[lemma] = result
                         if result is not None and surface.lower() != lemma:
                             base_cache[surface.lower()] = result
+                    # Step 2b: spelling-variant card ('mot, imot') keyed by surface.
+                    # The lemma lookup misses these (their lemma column is unset), so
+                    # fall back to the per-surface variant index before giving up.
+                    if result is None:
+                        result = variant_index.get(surface.casefold())
                     if result is not None:
                         item_id, item = result
                         resolved_item = item

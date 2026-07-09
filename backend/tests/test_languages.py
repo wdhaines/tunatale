@@ -8,11 +8,13 @@ from app.audio.preprocessing.norwegian import NorwegianPreprocessor
 from app.audio.preprocessing.slovene import SlovenePreprocessor
 from app.languages import (
     LanguageContext,
+    card_surface_variants,
     get_deck_name,
     get_language,
     get_morphology_profile,
     get_preprocessor,
     get_tts_voice,
+    get_variant_separator,
     get_vocab_notetype,
     known_language_codes,
     resolve_language_context,
@@ -38,6 +40,47 @@ class TestBreakdownAndMorphologyFlags:
 
     def test_norwegian_has_no_morphology_profile(self):
         assert get_morphology_profile("no") is None
+
+
+class TestCardSurfaceVariants:
+    """Comma-separated spelling-variant fronts (Norwegian 'mot, imot') are ONE
+    lexical item with multiple accepted surfaces — not a multi-word collocation."""
+
+    def test_norwegian_variant_separator_is_comma(self):
+        assert get_variant_separator("no") == ","
+
+    def test_slovene_has_no_variant_separator(self):
+        assert get_variant_separator("sl") is None
+
+    def test_unknown_code_has_no_variant_separator(self):
+        assert get_variant_separator("zz") is None
+
+    def test_norwegian_comma_front_splits_into_variants(self):
+        assert card_surface_variants("no", "mot, imot") == ["mot", "imot"]
+
+    def test_norwegian_variant_split_strips_whitespace(self):
+        assert card_surface_variants("no", "fram,frem") == ["fram", "frem"]
+
+    def test_norwegian_three_way_variant(self):
+        assert card_surface_variants("no", "a, b, c") == ["a", "b", "c"]
+
+    def test_norwegian_single_word_returns_itself(self):
+        assert card_surface_variants("no", "politiet") == ["politiet"]
+
+    def test_norwegian_real_phrase_with_comma_not_split(self):
+        # A genuine phrase where a comma-part is multi-word is NOT a variant list.
+        assert card_surface_variants("no", "hei, hvordan går det") == ["hei, hvordan går det"]
+
+    def test_slovene_comma_front_not_split(self):
+        # Slovene has no variant separator, so commas never split.
+        assert card_surface_variants("sl", "mot, imot") == ["mot, imot"]
+
+    def test_unknown_code_returns_text_unchanged(self):
+        assert card_surface_variants("zz", "mot, imot") == ["mot, imot"]
+
+    def test_empty_variant_parts_dropped(self):
+        # Trailing separator must not yield an empty surface.
+        assert card_surface_variants("no", "mot, imot,") == ["mot", "imot"]
 
     def test_unknown_code_has_no_morphology_profile(self):
         assert get_morphology_profile("zz") is None

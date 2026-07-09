@@ -36,7 +36,7 @@ from app.srs.direction_fields import (
     iter_domain_violations,
 )
 from app.srs.fsrs import _grade_prior_state
-from app.srs.migrations import migrate_v34_to_v35
+from app.srs.migrations import CURRENT_VERSION, migrate_v34_to_v35
 
 _DUE = datetime(2026, 1, 1, 4, 0, tzinfo=UTC)
 
@@ -200,7 +200,7 @@ class TestMigrationV35:
     def test_migration_is_idempotent(self, srs_db: SRSDatabase) -> None:
         # srs_db ran every migration incl. the v35 recreate path during setup.
         with srs_db._get_conn() as conn:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 35
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_VERSION
             conn.execute("PRAGMA user_version = 34")
             migrate_v34_to_v35(conn)  # hits the "already has CHECK" guard
             assert conn.execute("PRAGMA user_version").fetchone()[0] == 35

@@ -116,6 +116,30 @@ class TestCRUD:
         assert retrieved.syntactic_unit.extras == existing
 
 
+class TestVariantHelpers:
+    """DB support for comma-separated spelling-variant cards (Norwegian 'mot, imot')."""
+
+    def test_get_variant_candidate_rows_returns_only_separator_rows(self, srs_db):
+        srs_db.add_collocation(
+            SyntacticUnit(text="mot, imot", translation="against", word_count=2, difficulty=1, source="anki"),
+            language_code="no",
+        )
+        srs_db.add_collocation(
+            SyntacticUnit(text="politiet", translation="the police", word_count=1, difficulty=1, source="anki"),
+            language_code="no",
+        )
+        rows = srs_db.get_variant_candidate_rows("no", ",")
+        assert [text for _id, text in rows] == ["mot, imot"]
+        assert all(isinstance(rid, int) for rid, _ in rows)
+
+    def test_get_variant_candidate_rows_scoped_by_language(self, srs_db):
+        srs_db.add_collocation(
+            SyntacticUnit(text="mot, imot", translation="against", word_count=2, difficulty=1, source="anki"),
+            language_code="no",
+        )
+        assert srs_db.get_variant_candidate_rows("sl", ",") == []
+
+
 class TestAmbiguousSurfaces:
     """get_ambiguous_surfaces returns casefolded surfaces with >=2 distinct POS."""
 

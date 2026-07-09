@@ -178,6 +178,51 @@ class TestLemmaPopulation:
         assert item.syntactic_unit.translation == "nothing"
 
 
+class TestVariantSpellingImport:
+    """A comma-separated spelling-variant front imports as ONE single-word card."""
+
+    def test_variant_front_imports_as_single_word_without_junk_lemma(self, tmp_path):
+        import sqlite3 as sq3
+
+        from app.srs.database import SRSDatabase
+        from tests.conftest import build_minimal_anki_db
+
+        db_path = build_minimal_anki_db(tmp_path)
+        conn = sq3.connect(str(db_path))
+        conn.execute("UPDATE notes SET flds = ?, sfld = ? WHERE id = 1001", ("mot, imot\x1fagainst", "mot, imot"))
+        conn.commit()
+        conn.close()
+
+        _run(db_path, tmp_path, language_code="no")
+        db = SRSDatabase(str(tmp_path / "tunatale.db"))
+        item = db.get_collocation("mot, imot")
+        assert item is not None
+        assert item.syntactic_unit.word_count == 1
+        # lemma must NOT be the whole comma-joined front — the reader matches these
+        # via the per-surface variant index, not the lemma column.
+        assert item.syntactic_unit.lemma in (None, "")
+
+    def test_real_two_word_phrase_still_word_count_two(self, tmp_path):
+        import sqlite3 as sq3
+
+        from app.srs.database import SRSDatabase
+        from tests.conftest import build_minimal_anki_db
+
+        db_path = build_minimal_anki_db(tmp_path)
+        conn = sq3.connect(str(db_path))
+        conn.execute(
+            "UPDATE notes SET flds = ?, sfld = ? WHERE id = 1001", ("god morgen\x1fgood morning", "god morgen")
+        )
+        conn.commit()
+        conn.close()
+
+        _run(db_path, tmp_path, language_code="no")
+        db = SRSDatabase(str(tmp_path / "tunatale.db"))
+        item = db.get_collocation("god morgen")
+        assert item is not None
+        assert item.syntactic_unit.word_count == 2
+
+
 class TestDryRun:
     def test_dry_run_rolls_back_tunatale_writes(self, fake_anki_db, tmp_path):
         _run(fake_anki_db, tmp_path, dry_run=True)

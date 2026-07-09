@@ -73,7 +73,43 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 35
+        assert CURRENT_VERSION == 36
+
+    def test_migrates_v35_to_v36_reclassifies_variant_cards(self, tmp_path):
+        """v36 resets word_count=1 for comma-separated spelling-variant fronts.
+
+        A front like Norwegian 'mot, imot' (two spellings of one word) was imported
+        as a multi-word collocation (word_count = comma-parts). The structural test
+        'word_count == comma-count + 1' identifies exactly such variant lists (every
+        comma-part is a single token) and leaves genuine phrases untouched.
+        """
+        import sqlite3
+
+        from app.srs.migrations import _set_version, migrate_v35_to_v36
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.row_factory = sqlite3.Row
+        conn.execute("CREATE TABLE collocations (id INTEGER PRIMARY KEY, text TEXT, word_count INTEGER)")
+        # Variant lists — must become word_count=1.
+        conn.execute("INSERT INTO collocations VALUES (1, 'mot, imot', 2)")
+        conn.execute("INSERT INTO collocations VALUES (2, 'a, b, c', 3)")
+        # Genuine multi-word phrase (no comma) — must stay word_count=2.
+        conn.execute("INSERT INTO collocations VALUES (3, 'god morgen', 2)")
+        # Phrase that merely contains a comma but has a multi-word part — stays as-is.
+        conn.execute("INSERT INTO collocations VALUES (4, 'hei, hvordan går det', 4)")
+        # Already single-word — untouched.
+        conn.execute("INSERT INTO collocations VALUES (5, 'politiet', 1)")
+        _set_version(conn, 35)
+
+        migrate_v35_to_v36(conn)
+
+        counts = {r["id"]: r["word_count"] for r in conn.execute("SELECT id, word_count FROM collocations")}
+        assert counts == {1: 1, 2: 1, 3: 2, 4: 4, 5: 1}
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 36
+
+        # Idempotent
+        migrate_v35_to_v36(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 36
 
     def test_migrates_v27_to_v28_adds_lemma_key_column(self, tmp_path):
         """v28 adds collocations.lemma_key (space-joined lemma tuple for span matching)."""

@@ -11,6 +11,7 @@ from datetime import date
 
 from app.anki.rollover import due_at_rollover_utc
 from app.common.guid import compute_guid
+from app.languages import card_surface_variants
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit, serialize_extras
 
@@ -28,7 +29,7 @@ class DbCollocationsMixin:
 
         Returns True if a new row was inserted, False if it already existed.
         """
-        if not unit.lemma and unit.word_count == 1:
+        if not unit.lemma and unit.word_count == 1 and len(card_surface_variants(language_code, unit.text)) == 1:
             unit.lemma = unit.text.casefold()
         disambig = unit.disambig_key
         guid = compute_guid(unit.text, language_code, disambig)
@@ -361,8 +362,9 @@ class DbCollocationsMixin:
         """
         guid = compute_guid(unit.text, language_code, unit.disambig_key)
         # Backfill missing single-word lemma so by-lemma lookups keep working;
-        # mirrors add_collocation. Empty strings count as missing.
-        if not unit.lemma and unit.word_count == 1:
+        # mirrors add_collocation. Empty strings count as missing. Variant fronts
+        # ('mot, imot') are exempt — matched via the reader's per-surface index.
+        if not unit.lemma and unit.word_count == 1 and len(card_surface_variants(language_code, unit.text)) == 1:
             unit.lemma = unit.text.casefold()
         with self._get_conn() as conn:
             row = conn.execute("SELECT id, lemma FROM collocations WHERE guid = ?", (guid,)).fetchone()

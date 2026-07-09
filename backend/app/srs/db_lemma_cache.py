@@ -25,6 +25,21 @@ class DbLemmaCacheMixin:
                 return None
             return (row["id"], self._row_to_item(conn, row))
 
+    def get_variant_candidate_rows(self, language_code: str, separator: str) -> list[tuple[int, str]]:
+        """Return (id, text) for *language_code* rows whose front contains *separator*.
+
+        Candidates for the reader's spelling-variant index: a front like Norwegian
+        ``mot, imot`` lists alternate spellings of one word. The caller confirms each
+        row is a genuine variant list (all single-word parts) via
+        ``languages.card_surface_variants`` — this method only narrows the scan.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, text FROM collocations WHERE language_code = ? AND text LIKE ?",
+                (language_code, f"%{separator}%"),
+            ).fetchall()
+        return [(row["id"], row["text"]) for row in rows]
+
     def get_inflection_clozes_for_lemma(self, lemma: str) -> list[tuple[int, SRSItem]]:
         """All morphology (inflection) clozes for a lemma, hydrated with directions.
 

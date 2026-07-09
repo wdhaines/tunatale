@@ -19,16 +19,16 @@ from app.srs.transcript import (
 )
 
 
-def _make_lesson(l2_phrases: list[tuple[str, str]] | None = None) -> Lesson:
+def _make_lesson(l2_phrases: list[tuple[str, str]] | None = None, lang: str = "sl") -> Lesson:
     """Build a minimal lesson with a NATURAL_SPEED section.
 
     l2_phrases is a list of (role, text) tuples for L2 dialogue lines.
     """
-    lesson = Lesson(title="Test Lesson", language_code="sl")
+    lesson = Lesson(title="Test Lesson", language_code=lang)
     phrases = []
     if l2_phrases:
         for role, text in l2_phrases:
-            phrases.append(Phrase(text=text, voice_id="female-1", language_code="sl", role=role))
+            phrases.append(Phrase(text=text, voice_id="female-1", language_code=lang, role=role))
     lesson.sections = [Section(section_type=SectionType.NATURAL_SPEED, phrases=phrases)]
     return lesson
 
@@ -167,6 +167,79 @@ class TestExtractTranscript:
         words = result.dialogue_lines[0].words
         vsak_token = next(w for w in words if w.lemma == "vsak")
         assert vsak_token.srs_state == "learning"
+
+    def _add_variant_card(self, text: str = "mot, imot", translation: str = "against") -> None:
+        """Add a Norwegian spelling-variant card (word_count=1, lemma unset)."""
+        unit = SyntacticUnit(
+            text=text,
+            translation=translation,
+            word_count=1,
+            difficulty=1,
+            source="anki",
+        )
+        self.db.add_collocation(unit, language_code="no")
+
+    def test_variant_card_matched_by_first_spelling(self):
+        """A comma-front card ('mot, imot') resolves when its first spelling is read."""
+        self._add_variant_card()
+        lesson = _make_lesson([("female-1", "mot")], lang="no")
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        word = result.dialogue_lines[0].words[0]
+        assert word.srs_state == "new"
+        assert word.active_state == "new"
+        assert word.translation == "against"
+        assert word.srs_item_id is not None
+
+    def test_variant_card_matched_by_second_spelling(self):
+        """The alternate spelling ('imot') resolves to the SAME single card."""
+        self._add_variant_card()
+        lesson = _make_lesson([("female-1", "mot"), ("female-1", "imot")], lang="no")
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        mot_id = result.dialogue_lines[0].words[0].srs_item_id
+        imot_id = result.dialogue_lines[1].words[0].srs_item_id
+        assert mot_id is not None
+        assert imot_id == mot_id  # one Anki note → one SRS card
+
+    def test_variant_card_reflects_review_state(self):
+        self._add_variant_card()
+        item = self.db.get_collocation("mot, imot")
+        item.state = SRSState.REVIEW
+        self.db.update_collocation(item)
+        lesson = _make_lesson([("female-1", "imot")], lang="no")
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].srs_state == "review"
+
+    def test_non_variant_word_still_unknown(self):
+        """The variant index must not accidentally match unrelated words."""
+        self._add_variant_card()
+        lesson = _make_lesson([("female-1", "hus")], lang="no")
+        result = extract_transcript(lesson, self.db, self.lemmatizer)
+        assert result.dialogue_lines[0].words[0].active_state == "unknown"
+
+    def test_build_variant_index_skips_comma_phrase(self):
+        """A comma-containing row that is a genuine phrase (multi-word part) is not
+        indexed as a spelling variant."""
+        from app.srs.transcript import _build_variant_index
+
+        self._add_variant_card()
+        # Real phrase with an internal comma — a candidate row that is NOT a variant list.
+        self.db.add_collocation(
+            SyntacticUnit(
+                text="hei, hvordan går det", translation="hi, how are you", word_count=4, difficulty=1, source="anki"
+            ),
+            language_code="no",
+        )
+        index = _build_variant_index(self.db, "no")
+        assert set(index) == {"mot", "imot"}
+
+    def test_build_variant_index_empty_without_separator(self):
+        from app.srs.transcript import _build_variant_index
+
+        self.db.add_collocation(
+            SyntacticUnit(text="mot, imot", translation="against", word_count=1, difficulty=1, source="anki"),
+            language_code="sl",
+        )
+        assert _build_variant_index(self.db, "sl") == {}
 
     def test_english_narrator_lines_excluded(self):
         lesson = Lesson(title="Test", language_code="sl")
