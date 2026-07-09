@@ -1001,3 +1001,29 @@ class TestMaximumReviewInterval:
         assert call_count == 1, f"expected 1 __init__ call, got {call_count}"
         assert val == 36500
         assert source == "default"
+
+
+class TestEffectiveReviewBudget:
+    """Layer 76: new-card intros consume the review-per-day budget.
+
+    Pins effective_review_budget against Anki's rslib/decks/limits.rs:104-108,
+    where the review limit is decremented by BOTH reviews done today and new
+    cards introduced today.
+    """
+
+    def test_subtracts_both_reviews_and_new_intros(self):
+        from app.srs.queue_stats import effective_review_budget
+
+        # 50 - 7 reviews - 3 new intros = 40
+        assert effective_review_budget(50, 7, 3) == 40
+
+    def test_no_intros_matches_reviews_only(self):
+        from app.srs.queue_stats import effective_review_budget
+
+        assert effective_review_budget(50, 7, 0) == 43
+
+    def test_clamps_at_zero_when_overspent(self):
+        from app.srs.queue_stats import effective_review_budget
+
+        # reviews + intros exceed the cap → budget floors at 0, never negative
+        assert effective_review_budget(5, 4, 3) == 0

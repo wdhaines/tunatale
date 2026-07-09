@@ -55,6 +55,7 @@ from app.srs.queue_engine import build_and_freeze_main_queue as build_and_freeze
 from app.srs.queue_stats import (
     advance_learning_cutoff,
     build_live_load_balancer,
+    effective_review_budget,
     resolve_bury_new,
     resolve_col_crt,
     resolve_daily_new_cap,
@@ -812,7 +813,11 @@ async def get_queue_stats(request: Request, response: Response):
     review_due_raw = db.count_review_due_collocations(today)
     review_cap, review_cap_source = resolve_daily_review_cap(db)
     reviews_today = db.count_reviews_completed_today(today)
-    review_remaining = max(0, min(review_due_raw, review_cap - reviews_today))
+    # Anki charges today's new-card introductions against the review-per-day
+    # limit too (Layer 76 — rslib/decks/limits.rs:104-108), so the budget is
+    # `review_cap - reviews_today - introduced_today`, not just minus reviews.
+    review_budget = effective_review_budget(review_cap, reviews_today, introduced_today)
+    review_remaining = min(review_due_raw, review_budget)
     # New-sibling bury (Anki's bury_new): a new card whose sibling is gathered
     # into today's queue (review-due-today / learning / graded-today) is buried
     # out of the new pool. `_compute_live_main` already applies this to the
@@ -826,8 +831,9 @@ async def get_queue_stats(request: Request, response: Response):
     # reviews, Anki shows 0 new even with new/day > 0 (e.g. review cap 50 + 194 due
     # → 0 new). Mirror that, badge-only (rule 12: daily caps are render-only).
     # Assumes the default (off); honouring an explicitly-enabled flag would need the
-    # preset value synced into the cache — a follow-up.
-    review_budget = max(0, review_cap - reviews_today)
+    # preset value synced into the cache — a follow-up. `review_budget` already
+    # nets out reviews AND new intros done today (Layer 76), matching Anki's
+    # `new = min(new_limit, review_limit - review_count)` after both are charged.
     new_badge = min(new_badge, max(0, review_budget - review_remaining))
     return {
         "new": new_badge,

@@ -1543,3 +1543,28 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 **Files.** `app/api/srs.py` (`_compute_live_main`). Tests: `tests/test_api_srs.py::TestReviewQueue::test_review_queue_caps_review_cards_at_daily_review_cap` (cap=2 over 6 due → 2 served) + `…_uncapped_when_cap_above_available` (ceiling, not fixed size). Oracle harness (66) + full queue suite green.
 
 **Surfaced by.** User reviewing the Norwegian deck: badge 50, but the app served all 1499 due reviews.
+
+## Layer 76 — new cards studied today were not charged against the review-per-day limit
+
+**The bug.** Create a card in TunaTale, study it, sync — TT's review count read higher than Anki's. Specifically TT's review badge exceeded Anki's by the number of new cards introduced today. User report (Norwegian Phase 1, 2026-07-09): "the review count in TunaTale and Anki don't match; it happens when I create a new card in TT then sync; it's interacting with the review limit."
+
+**Root cause.** Anki's daily review limit is consumed by BOTH reviews done today AND new cards introduced today (unless `new_cards_ignore_review_limit` is set — a collection-level bool that defaults **off**). `rslib/src/decks/limits.rs:98-114` (Anki 25.09):
+
+```rust
+review_limit -= review_today_count;      // reviews done
+new_limit    -= new_today_count;
+if !new_cards_ignore_review_limit {
+    review_limit -= new_today_count;      // ← new cards introduced ALSO charge the review budget
+    new_limit = new_limit.min(review_limit);
+}
+```
+
+So Anki's remaining review budget = `reviews_per_day − reviews_done − new_introduced_today`. TT computed only `review_cap − reviews_today` (`app/api/srs.py` badge and `app/srs/queue_engine.py` served queue), missing the `− introduced_today` term. `reviews_today` (`count_reviews_completed_today`, Layer 73) counts genuine reviews only — a new-card intro is `last_interval=0`, excluded — and `introduced_today` (`count_new_introduced_today`, Layer 26) is tracked separately; the two sets are disjoint, so TT had the number available but never subtracted it. With the user's deck (240 review-due ≫ 50 cap) the review count is pinned to `cap − done`, so every TT-introduced card left the badge one too high until the discrepancy was noticed against Anki.
+
+**Why it's cross-rebuild (and how it was proven).** The interaction only shows once reviews saturate the limit, but saturated reviews prevent new cards from being *gathered* in the same fresh build (Anki caps `new` to the remaining review budget via `RemainingLimits::decrement`'s `cap_new_to_review`). So a single queue build can't exhibit it. Proven against the real 25.09 scheduler: study 5 new cards (no reviews present) → `new_studied=5`; then add 100 due reviews → `deck_due_tree` review count = **45** = `50 − 0 − 5` (would be 50 without the charge).
+
+**Fix.** New single-source helper `effective_review_budget(review_cap, reviews_today, introduced_today) = max(0, review_cap − reviews_today − introduced_today)` in `app/srs/queue_stats.py`, wired into both the `/queue-stats` badge (`app/api/srs.py`, used for `review_remaining` AND the new-badge review-budget cap) and the served-queue cap (`app/srs/queue_engine.py`, Layer 75's `nonlearning_due[:review_remaining]`). Assumes `new_cards_ignore_review_limit` off — the same assumption TT already makes for the new badge; honouring an explicitly-enabled flag would need the collection bool synced into the cache (follow-up).
+
+**Files.** `app/srs/queue_stats.py` (`effective_review_budget`), `app/api/srs.py` (badge), `app/srs/queue_engine.py` (served queue). Tests: `tests/test_queue_stats.py::TestEffectiveReviewBudget` (helper arithmetic + zero-clamp); `tests/test_api.py::TestQueueStatsEndpoint::test_queue_stats_review_budget_excludes_new_introduced_today` (endpoint regression, sabotage-drilled red without the fix); `tests/test_parity_daily_caps.py::test_anki_review_count_charges_new_cards_studied_today` (oracle: answer 2 new → inject 10 reviews via the new `add_review_cards` oracle op → Anki review = 5−2 = 3). Full backend suite green at 100% coverage with `--run-oracle`.
+
+**Surfaced by.** User creating cards in TT, studying them, syncing, and seeing the Norwegian review count sit above Anki's by the number of new cards introduced that day.

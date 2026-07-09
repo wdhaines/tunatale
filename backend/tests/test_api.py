@@ -2756,6 +2756,38 @@ class TestQueueStatsEndpoint:
         data = response.json()
         assert data["review"] == 42
 
+    async def test_queue_stats_review_budget_excludes_new_introduced_today(self):
+        """Regression (Layer 76): new cards introduced today consume the review
+        daily limit, so the review badge subtracts count_new_introduced_today.
+
+        Anki charges today's new-card intros against reviews_per_day
+        (rslib/decks/limits.rs:104-108). Before the fix TT ignored this term and
+        over-counted the review badge by introduced_today — the exact symptom of
+        "create a new card in TT, study it, sync, review counts don't match."
+
+        review_cap=50, reviews_today=0, introduced_today=3, review_due_raw=60 →
+        review = min(60, 50 - 0 - 3) = 47 (was 50 before the fix).
+        """
+        from unittest.mock import patch
+
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("daily_review_cap", "50")
+        db.set_anki_state_cache("daily_new_cap", "20")
+        app.state.srs_db = db
+
+        with (
+            patch.object(db, "count_review_due_collocations", return_value=60),
+            patch.object(db, "count_reviews_completed_today", return_value=0),
+            patch.object(db, "count_new_introduced_today", return_value=3),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.get("/api/srs/queue-stats")
+
+        data = response.json()
+        assert data["review"] == 47, f"expected 50 - 3 introduced = 47, got {data['review']}"
+
 
 class TestTranscriptEndpoint:
     """Tests for GET /api/srs/lesson/{lesson_id}/transcript."""

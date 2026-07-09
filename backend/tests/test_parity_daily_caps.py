@@ -124,6 +124,67 @@ def test_anki_caps_new_count_at_new_per_day(synthetic_collection: SyntheticColle
     )
 
 
+@pytest.mark.oracle
+def test_anki_review_count_charges_new_cards_studied_today(synthetic_collection: SyntheticCollection) -> None:
+    """Anki subtracts today's new-card introductions from ``counts.review``.
+
+    Pins ``rslib/src/decks/limits.rs:104-108`` (Anki 25.09): the review-per-day
+    limit is charged by BOTH reviews done today AND new cards introduced today
+    (``review_limit -= new_today_count`` when ``new_cards_ignore_review_limit``
+    is off — the default). So introducing new cards shrinks the review count
+    even though new and review are nominally separate limits.
+
+    The interaction is inherently cross-rebuild: it only shows once reviews
+    saturate the limit, but saturated reviews prevent new cards from being
+    gathered/answered in the *same* fresh build (Anki caps ``new`` to the
+    remaining review budget). So the scenario is: answer 2 NEW cards while no
+    reviews are present (``new_studied`` → 2), THEN inject 10 overdue reviews
+    (``add_review_cards`` op) in the same process, THEN count. Anki reports
+    ``counts.review = 5 − 0 reviews − 2 new = 3``. Layer 76: TT mirrors via
+    ``effective_review_budget`` subtracting ``count_new_introduced_today``.
+
+    What this does NOT cover:
+    - ``new_cards_ignore_review_limit`` enabled (TT assumes the default off).
+    - TT's own count pipeline (pinned by the endpoint regression test).
+    """
+    synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
+    synthetic_collection.set_daily_limits(new=20, reviews=5)
+
+    # 5 new cards only (type=0, queue=0). No reviews yet, so they gather to the
+    # top of the queue and are answerable by id.
+    new_card_ids = []
+    for i in range(5):
+        cid = 20010 + i * 10
+        note_id = cid // 10
+        synthetic_collection.add_note(id=note_id, guid=f"g-{cid}", fields=[f"front-{cid}", "back"])
+        synthetic_collection.add_card(id=cid, note_id=note_id, ord=0, type=0, queue=0, due=i, ivl=0, reps=0)
+        new_card_ids.append(cid)
+    synthetic_collection.save()
+
+    result = run_oracle(
+        synthetic_collection.path,
+        [
+            {"op": "get_queue", "deck_id": 1, "fetch_limit": 50},
+            {"op": "answer_card", "card_id": new_card_ids[0], "rating": 3},
+            {"op": "answer_card", "card_id": new_card_ids[1], "rating": 3},
+            {"op": "add_review_cards", "count": 10},
+            {"op": "get_queue", "deck_id": 1, "fetch_limit": 50},
+        ],
+    )
+    before = result.raw()["get_queue_0"]["counts"]
+    ans1 = result.raw()["answer_card_1"]
+    ans2 = result.raw()["answer_card_2"]
+    after = result.raw()["get_queue_4"]["counts"]
+
+    assert "error" not in ans1, f"answering new card 0 failed: {ans1}"
+    assert "error" not in ans2, f"answering new card 1 failed: {ans2}"
+    assert before["review"] == 0, f"no reviews present at baseline, got {before}"
+    assert after["review"] == 3, (
+        f"after studying 2 new cards then adding 10 reviews, review budget should be 5-2=3, got counts={after}. "
+        "Anki charges new-card intros against the review limit (limits.rs:104-108)."
+    )
+
+
 def test_tt_reads_caps_from_synthetic_deck_config(synthetic_collection: SyntheticCollection) -> None:
     """TT's ``resolve_daily_*_cap`` reads the same proto fields the oracle uses.
 

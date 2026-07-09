@@ -260,10 +260,47 @@ def _op_get_card(col: Any, op: dict) -> dict:
     }
 
 
+def _op_add_review_cards(col: Any, op: dict) -> dict:
+    """Add *count* overdue review cards (type=2, queue=2, due in the past) mid-session.
+
+    Exists for the Layer-76 daily-cap test: Anki charges today's new-card intros
+    against the review-per-day limit, but that only shows when reviews saturate
+    the limit — which itself prevents new cards from being gathered/answered in a
+    single fresh build (mutual exclusion). This op breaks the deadlock by adding
+    reviews *after* new cards were answered, in the same process, so the follow-up
+    ``get_queue`` sees ``review = review_limit - new_studied``. Uses the real
+    ``add_note`` / ``update_card`` API (not raw SQL) so the backend invalidates
+    the study queue and the next build gathers them. The cards carry no FSRS
+    memory state (``data='{}'``) — irrelevant to the review *count* (a NULL-R card
+    is still gathered, Layer 38), and this op only asserts on counts.
+    """
+    count = op["count"]
+    deck_id = op.get("deck_id", 1)
+    model = col.models.by_name("Basic") or col.models.all()[0]
+    added = 0
+    for i in range(count):
+        note = col.new_note(model)
+        note.fields[0] = f"rev-added-{i}"
+        if len(note.fields) > 1:
+            note.fields[1] = "back"
+        col.add_note(note, deck_id)
+        card = note.cards()[0]
+        card.type = 2
+        card.queue = 2
+        card.due = 0
+        card.ivl = 10
+        card.factor = 2500
+        card.reps = 5
+        col.update_card(card)
+        added += 1
+    return {"added": added}
+
+
 _OPERATIONS: dict[str, Any] = {
     "get_queue": _op_get_queue,
     "set_config": _op_set_config,
     "answer_card": _op_answer_card,
+    "add_review_cards": _op_add_review_cards,
     "get_card": _op_get_card,
     "get_today": _op_get_today,
     "scheduling_states": _op_scheduling_states,
