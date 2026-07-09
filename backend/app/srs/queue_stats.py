@@ -326,6 +326,29 @@ def resolve_daily_review_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
     return (_DEFAULT_REVIEWS_PER_DAY, "default")
 
 
+def effective_review_budget(review_cap: int, reviews_today: int, introduced_today: int) -> int:
+    """Remaining review-per-day budget, charging today's new-card intros against it.
+
+    Anki's daily review limit is consumed by BOTH reviews done today AND new
+    cards introduced today (unless `new_cards_ignore_review_limit` is set, which
+    defaults off). Mirror of `rslib/src/decks/limits.rs:104-108` (Anki 25.09)::
+
+        review_limit -= review_today_count;      # reviews done
+        if !new_cards_ignore_review_limit {
+            review_limit -= new_today_count;      # new cards introduced
+        }
+
+    `reviews_today` is `count_reviews_completed_today` (genuine reviews only —
+    new-card intros are `last_interval=0`, excluded, Layer 73) and
+    `introduced_today` is `count_new_introduced_today` (Anki's `newToday`,
+    Layer 26); the two sets are disjoint, so subtracting both never
+    double-counts. Assumes the Anki default (`new_cards_ignore_review_limit`
+    off), matching the same assumption TT already makes for the new badge.
+    Layer 76.
+    """
+    return max(0, review_cap - reviews_today - introduced_today)
+
+
 def refresh_review_settings(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
     """Read newSpread/bury flags from Anki's deck_config protobuf and write to cache."""
     try:

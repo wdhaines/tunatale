@@ -16,6 +16,7 @@ from app.srs.fsrs import compute_retrievability
 from app.srs.queue_stats import (
     advance_learning_cutoff,
     clear_session_main_queue,
+    effective_review_budget,
     get_session_main_queue,
     resolve_bury_new,
     resolve_bury_review,
@@ -216,7 +217,10 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     # mid-session drops). Learning cards are NOT review-capped (Anki exempts them).
     review_cap, _ = resolve_daily_review_cap(db)
     reviews_today = db.count_reviews_completed_today(today)
-    review_remaining = max(0, review_cap - reviews_today)
+    # New cards introduced today also consume the review budget (Layer 76 —
+    # rslib/decks/limits.rs:104-108), so the served-review cap nets them out too,
+    # matching Anki's queue build (introducing new cards shrinks review headroom).
+    review_remaining = effective_review_budget(review_cap, reviews_today, introduced_today)
     buried = db.list_collocations_reviewed_today(today)
 
     due_rec = db.get_due_items(today, Direction.RECOGNITION)
