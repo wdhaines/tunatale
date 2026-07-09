@@ -6,6 +6,7 @@
 	import type { NetworkInformationLike } from '$lib/sw/prefetch';
 	import type { CacheStorageLike } from '$lib/sw/audio-cache';
 	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
+	import { lessonPlayerPref } from '$lib/stores/lessonPlayerPref.svelte';
 	import { createPlaybackController } from '$lib/playback/playbackController.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 
@@ -87,19 +88,26 @@
 		}
 	}
 
+	function persistSelection() {
+		lessonPlayerPref.set({ phase, enunciation: enunLevel, english: englishOn });
+	}
+
 	function onPhaseClick(p: Phase) {
 		phase = p;
 		applyTrack();
+		persistSelection();
 	}
 
 	function onEnunClick() {
 		cycleEnunciation();
 		applyTrack();
+		persistSelection();
 	}
 
 	function onEnglishToggle() {
 		englishOn = !englishOn;
 		applyTrack();
+		persistSelection();
 	}
 
 	// --- Prefetch section URLs ---
@@ -111,6 +119,20 @@
 	}
 
 	onMount(() => {
+		// Seed the persisted phase/enunciation/English selection and make it
+		// effective. Gated on hasCues: without cues the phase model doesn't
+		// apply, so we leave the legacy full-lesson track in place. selectTrack
+		// no-ops on a missing section, so a persisted selection that a given
+		// lesson can't satisfy safely falls back to the initial track.
+		if (hasCues) {
+			lessonPlayerPref.init();
+			const sel = lessonPlayerPref.selection;
+			phase = sel.phase;
+			enunLevel = sel.enunciation;
+			englishOn = sel.english;
+			applyTrack();
+		}
+
 		const nav = navigator as Navigator & { connection?: NetworkInformationLike };
 		const sectionUrls = init.audio.sections.map((s) => api.audioUrl(s.audio_id));
 		const urls = [api.audioUrl(audio.audio_id), ...sectionUrls];

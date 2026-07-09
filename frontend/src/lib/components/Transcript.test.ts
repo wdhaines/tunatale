@@ -1488,7 +1488,7 @@ describe("Transcript", () => {
       expect(sceneHeaders.length).toBe(0);
     });
 
-    it("progressive disclosure: slow text hidden by default, shown when Slow toggle is enabled", async () => {
+    it("never renders ellipsis 'slow' text and offers no Slow toggle", () => {
       const lesson: LessonDetail = {
         id: "l1",
         day: 1,
@@ -1539,15 +1539,14 @@ describe("Transcript", () => {
           },
         ],
       };
-      const { container, getByText, queryByText } = render(Transcript, {
+      const { container, queryByText } = render(Transcript, {
         props: defaultProps({ transcript: transcriptData, lesson }),
       });
-      // Slow text not shown by default
-      expect(queryByText("zdra...vo")).toBeFalsy();
-      // Toggle Slow
-      await fireEvent.click(getByText("Slow"));
-      expect(container.querySelector(".line-slow")).not.toBeNull();
-      expect(container.querySelector(".line-slow")!.textContent).toContain("zdra...vo");
+      // The ellipsis slow text drives TTS only — it must never reach the DOM,
+      // and there is no longer a "Slow" disclosure toggle to reveal it.
+      expect(queryByText("zdra...vo")).toBeNull();
+      expect(container.querySelector(".line-slow")).toBeNull();
+      expect(queryByText("Slow")).toBeNull();
     });
 
     it("progressive disclosure: per-word gloss hidden by default, shown when Gloss toggle is enabled", async () => {
@@ -2552,16 +2551,20 @@ describe("Transcript", () => {
     }),
   ];
 
-  function makeFakeController(initialCue: Cue | null = null): PlaybackController {
+  function makeFakeController(
+    initialCue: Cue | null = null,
+    activeCues: Cue[] | null = testCues,
+  ): PlaybackController {
     return {
       currentCue: initialCue,
       currentSectionIndex: initialCue?.section_index ?? null,
+      activeCues,
       seekToCue: vi.fn(),
     } as unknown as PlaybackController;
   }
 
   function renderWithController(initialCue: Cue | null, controllerCues: Cue[] = testCues) {
-    const ctrl = makeFakeController(initialCue);
+    const ctrl = makeFakeController(initialCue, controllerCues);
     return {
       ctrl,
       ...render(Transcript, {
@@ -2569,7 +2572,6 @@ describe("Transcript", () => {
           transcript: multiLineTranscript,
           lesson: phraseLineLesson,
           controller: ctrl,
-          cues: controllerCues,
         }),
       }),
     };
@@ -2617,19 +2619,12 @@ describe("Transcript", () => {
       expect(lines[0].classList.contains("active-line")).toBe(true);
     });
 
-    it("reveals slowText on active line when section_type is slow_speed with global toggle off", () => {
-      const { container } = renderWithController(testCues[1]); // slow_speed, line 0
-      const slowEl = container.querySelector(".line-slow");
-      expect(slowEl).not.toBeNull();
-      expect(slowEl!.textContent).toContain("zdra...vo");
-    });
-
-    it("does NOT reveal slowText on non-active line during slow_speed cue", () => {
-      const { container } = renderWithController(testCues[1]); // slow_speed, line 0
-      // Only the first dialogue line has slowText in our scene; it IS the active line.
-      // The second line has no slowText so there should be exactly one .line-slow.
-      const slowEls = container.querySelectorAll(".line-slow");
-      expect(slowEls.length).toBe(1);
+    it("never renders slow/ellipsis text even during a slow_speed cue", () => {
+      // Slow text was retired from the transcript (it exists only to drive TTS).
+      // A slow_speed cue must never surface the ellipsis-broken "zdra...vo".
+      const { container, queryByText } = renderWithController(testCues[1]); // slow_speed, line 0
+      expect(container.querySelector(".line-slow")).toBeNull();
+      expect(queryByText("zdra...vo")).toBeNull();
     });
 
     it("reveals translatedText on active line when section_type is translated with global toggle off", () => {
@@ -2639,16 +2634,14 @@ describe("Transcript", () => {
       expect(interlinearEl!.textContent).toContain("Hello");
     });
 
-    it("does not reveal slow/translated text when controller is null", () => {
+    it("does not reveal translated text when controller is null", () => {
       const { container } = render(Transcript, {
         props: defaultProps({
           transcript: multiLineTranscript,
           lesson: phraseLineLesson,
           controller: null,
-          cues: testCues,
         }),
       });
-      expect(container.querySelector(".line-slow")).toBeNull();
       expect(container.querySelector(".line-interlinear")).toBeNull();
     });
   });
@@ -2674,31 +2667,28 @@ describe("Transcript", () => {
           transcript: multiLineTranscript,
           lesson: phraseLineLesson,
           controller: null,
-          cues: testCues,
         }),
       });
       expect(container.querySelector(".seek-btn")).toBeNull();
     });
 
-    it("does not render seek buttons when cues is null", () => {
+    it("does not render seek buttons when activeCues is null", () => {
       const { container } = render(Transcript, {
         props: defaultProps({
           transcript: multiLineTranscript,
           lesson: phraseLineLesson,
-          controller: makeFakeController(null),
-          cues: null,
+          controller: makeFakeController(null, null),
         }),
       });
       expect(container.querySelector(".seek-btn")).toBeNull();
     });
 
-    it("does not render seek buttons when cues is empty", () => {
+    it("does not render seek buttons when activeCues is empty", () => {
       const { container } = render(Transcript, {
         props: defaultProps({
           transcript: multiLineTranscript,
           lesson: phraseLineLesson,
-          controller: makeFakeController(null),
-          cues: [],
+          controller: makeFakeController(null, []),
         }),
       });
       expect(container.querySelector(".seek-btn")).toBeNull();
@@ -2711,7 +2701,6 @@ describe("Transcript", () => {
           transcript: multiLineTranscript,
           lesson: phraseLineLesson,
           controller: ctrl,
-          cues: testCues,
         }),
       });
       const seekBtns = container.querySelectorAll(".dialogue-line .seek-btn");
@@ -2729,7 +2718,6 @@ describe("Transcript", () => {
           transcript: multiLineTranscript,
           lesson: phraseLineLesson,
           controller: ctrl,
-          cues: testCues,
         }),
       });
       const kpBtn = container.querySelector(".key-phrases-list .seek-btn")!;
@@ -2749,7 +2737,6 @@ describe("Transcript", () => {
           transcript: unknownTranscript,
           lesson: phraseLineLesson,
           controller: makeFakeController(null),
-          cues: testCues,
           onWordClick,
         }),
       });

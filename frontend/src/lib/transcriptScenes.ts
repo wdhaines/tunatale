@@ -4,7 +4,6 @@ interface UnifiedLine {
   role: string;
   words: WordToken[];
   naturalText: string;
-  slowText: string;
   translatedText: string;
   transcriptIndex: number;
 }
@@ -15,13 +14,6 @@ export interface Scene {
 }
 
 const SECTION_TITLES = new Set(["Natural Speed", "Slow Speed", "Translated", "Key Phrases"]);
-
-function extractL2Texts(
-  phrases: LessonDetail["sections"][number]["phrases"],
-  languageCode: string,
-): string[] {
-  return phrases.filter((p) => p.language_code === languageCode).map((p) => p.text);
-}
 
 function extractTranslations(
   phrases: LessonDetail["sections"][number]["phrases"],
@@ -47,10 +39,8 @@ export function buildScenes(lesson: LessonDetail, dialogueLines: DialogueLine[])
   const natural = lesson.sections.find((s) => s.type === "natural_speed");
   if (!natural) return [];
 
-  const slow = lesson.sections.find((s) => s.type === "slow_speed");
   const translated = lesson.sections.find((s) => s.type === "translated");
 
-  const slowTexts = slow ? extractL2Texts(slow.phrases, languageCode) : [];
   const translatedTexts = translated ? extractTranslations(translated.phrases, languageCode) : [];
 
   const scenes: Scene[] = [];
@@ -70,7 +60,6 @@ export function buildScenes(lesson: LessonDetail, dialogueLines: DialogueLine[])
         role: p.role,
         words: dialogueLines[lineIndex]?.words ?? [],
         naturalText: p.text,
-        slowText: slowTexts[lineIndex] ?? "",
         translatedText: translatedTexts[lineIndex] ?? "",
         transcriptIndex: lineIndex,
       });
@@ -91,7 +80,6 @@ export function fallbackScenes(dialogueLines: DialogueLine[]): Scene[] {
         role: dl.role,
         words: dl.words,
         naturalText: "",
-        slowText: "",
         translatedText: "",
         transcriptIndex: idx,
       })),

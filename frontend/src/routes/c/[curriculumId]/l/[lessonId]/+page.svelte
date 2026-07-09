@@ -535,7 +535,6 @@
 					onCollocationUndo={(spanId) => handleUndoGrade(spanId, 'recognition')}
 					onCreatePhrase={handleCreatePhrase}
 					controller={playbackController}
-					cues={audio?.cues ?? null}
 					tooltipActions={tooltipActions}
 				/>
 			{:else if transcriptLoading}

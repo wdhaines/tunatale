@@ -843,6 +843,22 @@ describe("playbackController", () => {
       expect(ctrl.currentTime).toBe(0);
     });
 
+    it("ignores a stored resume that is non-numeric", () => {
+      fakeLocalStorage.setItem("tt-resume-l1", "not-a-number"); // parseFloat → NaN
+      const ctrl = createController({ storage: fakeLocalStorage, lessonId: "l1" });
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(audioEl.currentTime).toBe(0);
+      expect(ctrl.currentTime).toBe(0);
+    });
+
+    it("ignores a stored resume that is non-positive", () => {
+      fakeLocalStorage.setItem("tt-resume-l1", "-5"); // valid number but <= 0
+      const ctrl = createController({ storage: fakeLocalStorage, lessonId: "l1" });
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(audioEl.currentTime).toBe(0);
+      expect(ctrl.currentTime).toBe(0);
+    });
+
     it("restores only once (later metadata reloads don't rewind)", () => {
       fakeLocalStorage.setItem("tt-resume-l1", "8.3");
       const ctrl = createController({ storage: fakeLocalStorage, lessonId: "l1" });

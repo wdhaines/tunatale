@@ -1,7 +1,7 @@
 /**
  * Tests for LessonPlayer.svelte.
  */
-import { describe, it, expect, vi, beforeAll } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import LessonPlayer from "./LessonPlayer.svelte";
 import type { LessonAudio } from "$lib/api";
@@ -19,6 +19,12 @@ beforeAll(() => {
       this.dispatchEvent(new Event("pause"));
     },
   );
+});
+
+// The player persists its phase/enunciation/English selection to localStorage;
+// clear it between tests so a click in one test doesn't seed the next mount.
+beforeEach(() => {
+  localStorage.clear();
 });
 
 vi.mock("$lib/api", () => ({
@@ -276,6 +282,45 @@ describe("LessonPlayer", () => {
       expect(dialogueBtn.classList.contains("active")).toBe(false);
       fireEvent.click(dialogueBtn);
       expect(dialogueBtn.classList.contains("active")).toBe(true);
+    });
+  });
+
+  describe("persisted selection (B6)", () => {
+    const KEY = "lessonPlayerSelection";
+
+    it("seeds the persisted phase on mount (no click needed)", () => {
+      localStorage.setItem(
+        KEY,
+        JSON.stringify({ phase: "key_phrases", enunciation: "natural", english: false }),
+      );
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      const keyPhrasesBtn = container.querySelector<HTMLButtonElement>(".phase-btn:first-child")!;
+      expect(keyPhrasesBtn.classList.contains("active")).toBe(true);
+    });
+
+    it("seeds a persisted enunciation level on mount", () => {
+      localStorage.setItem(
+        KEY,
+        JSON.stringify({ phase: "dialogue", enunciation: "enunciated_0.8", english: false }),
+      );
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      expect(container.querySelector(".enunciation-btn")!.textContent).toContain("0.8");
+    });
+
+    it("persists the selection to localStorage on change", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      fireEvent.click(container.querySelector<HTMLButtonElement>(".phase-btn:first-child")!);
+      expect(JSON.parse(localStorage.getItem(KEY)!).phase).toBe("key_phrases");
+    });
+
+    it("does not seed from storage when cues are absent (legacy full track)", () => {
+      localStorage.setItem(
+        KEY,
+        JSON.stringify({ phase: "key_phrases", enunciation: "natural", english: false }),
+      );
+      // No cues → no phase controls rendered → nothing seeded/applied.
+      const { container } = render(LessonPlayer, { props: { audio: audioWithCuesNull } });
+      expect(container.querySelector(".phase-row")).toBeFalsy();
     });
   });
 

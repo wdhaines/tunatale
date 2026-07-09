@@ -1,0 +1,89 @@
+import { describe, it, expect, beforeEach } from "vitest";
+import { lessonPlayerPref, type PlayerSelection } from "./lessonPlayerPref.svelte";
+
+const STORAGE_KEY = "lessonPlayerSelection";
+const DEFAULT: PlayerSelection = { phase: "dialogue", enunciation: "natural", english: false };
+
+beforeEach(() => {
+  localStorage.clear();
+  // Reset the singleton to a known (default) state between tests.
+  lessonPlayerPref.init();
+  localStorage.clear();
+});
+
+describe("lessonPlayerPref", () => {
+  it("defaults to Dialogue · Natural · English-off when nothing is stored", () => {
+    lessonPlayerPref.init();
+    expect(lessonPlayerPref.selection).toEqual(DEFAULT);
+  });
+
+  it("seeds from a valid stored selection", () => {
+    const stored: PlayerSelection = {
+      phase: "key_phrases",
+      enunciation: "enunciated_0.8",
+      english: true,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+    lessonPlayerPref.init();
+    expect(lessonPlayerPref.selection).toEqual(stored);
+  });
+
+  it("set() persists to localStorage and updates the live selection", () => {
+    const next: PlayerSelection = { phase: "dialogue", enunciation: "enunciated", english: true };
+    lessonPlayerPref.set(next);
+    expect(lessonPlayerPref.selection).toEqual(next);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toEqual(next);
+  });
+
+  it("falls back to default on malformed JSON", () => {
+    localStorage.setItem(STORAGE_KEY, "{not valid json");
+    lessonPlayerPref.init();
+    expect(lessonPlayerPref.selection).toEqual(DEFAULT);
+  });
+
+  it("falls back to default when the stored value is not an object", () => {
+    localStorage.setItem(STORAGE_KEY, "5");
+    lessonPlayerPref.init();
+    expect(lessonPlayerPref.selection).toEqual(DEFAULT);
+  });
+
+  it("falls back to default when the stored value is null", () => {
+    localStorage.setItem(STORAGE_KEY, "null");
+    lessonPlayerPref.init();
+    expect(lessonPlayerPref.selection).toEqual(DEFAULT);
+  });
+
+  it("falls back to default on an unknown phase", () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ phase: "sideways", enunciation: "natural", english: false }),
+    );
+    lessonPlayerPref.init();
+    expect(lessonPlayerPref.selection).toEqual(DEFAULT);
+  });
+
+  it("falls back to default when enunciation is not a string", () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ phase: "dialogue", enunciation: 3, english: false }),
+    );
+    lessonPlayerPref.init();
+    expect(lessonPlayerPref.selection).toEqual(DEFAULT);
+  });
+
+  it("falls back to default when english is not a boolean", () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ phase: "dialogue", enunciation: "natural", english: "yes" }),
+    );
+    lessonPlayerPref.init();
+    expect(lessonPlayerPref.selection).toEqual(DEFAULT);
+  });
+
+  it("re-seeding after storage is cleared restores the default", () => {
+    lessonPlayerPref.set({ phase: "key_phrases", enunciation: "enunciated", english: true });
+    localStorage.clear();
+    lessonPlayerPref.init();
+    expect(lessonPlayerPref.selection).toEqual(DEFAULT);
+  });
+});

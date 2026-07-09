@@ -84,16 +84,12 @@ describe("buildScenes", () => {
     expect(scenes[1].lines[0].naturalText).toBe("hvala");
   });
 
-  it("attaches slow and translated text when present", () => {
+  it("attaches translated text when present", () => {
     const lesson = baseLesson({
       sections: [
         {
           type: "natural_speed",
           phrases: [narrator("Natural Speed"), narrator("Scene"), l2("zdravo")],
-        },
-        {
-          type: "slow_speed",
-          phrases: [narrator("Slow Speed"), l2("zdra...vo")],
         },
         {
           type: "translated",
@@ -102,7 +98,6 @@ describe("buildScenes", () => {
       ],
     });
     const scenes = buildScenes(lesson, [{ role: "female-1", words: [word("zdravo")] }]);
-    expect(scenes[0].lines[0].slowText).toBe("zdra...vo");
     expect(scenes[0].lines[0].translatedText).toBe("Hello");
   });
 
@@ -149,7 +144,7 @@ describe("buildScenes", () => {
     expect(scenes[0].lines[1].translatedText).toBe("Thanks");
   });
 
-  it("defaults slowText and translatedText to empty when those sections are missing", () => {
+  it("defaults translatedText to empty when the translated section is missing", () => {
     const lesson = baseLesson({
       sections: [
         {
@@ -159,7 +154,6 @@ describe("buildScenes", () => {
       ],
     });
     const scenes = buildScenes(lesson, [{ role: "female-1", words: [word("zdravo")] }]);
-    expect(scenes[0].lines[0].slowText).toBe("");
     expect(scenes[0].lines[0].translatedText).toBe("");
   });
 

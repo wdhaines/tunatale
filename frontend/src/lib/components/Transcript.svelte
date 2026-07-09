@@ -33,7 +33,6 @@
 		onCreatePhrase?: (args: CreatePhraseArgs) => void | Promise<void>;
 		tooltipActions?: TooltipActions;
 		controller?: PlaybackController | null;
-		cues?: Cue[] | null;
 	}
 
 	let {
@@ -45,8 +44,7 @@
 		onCollocationUndo,
 		onCreatePhrase,
 		tooltipActions,
-		controller = null,
-		cues = null
+		controller = null
 	}: Props = $props();
 
 	type WordSegment = { type: 'word'; word: WordToken } | { type: 'collocation'; words: WordToken[]; span_id: number };
@@ -69,7 +67,6 @@
 	let addPhraseError = $state('');
 
 	// Progressive-disclosure toggles for variations
-	let showSlow = $state(false);
 	let showGloss = $state(false);
 	// Interlinear: the whole-line L1 translation under each L2 line (BDT-style,
 	// cover-one-side reading). Distinct from per-word Gloss.
@@ -420,7 +417,7 @@
 			<h3>Key Phrases</h3>
 			<ul class="key-phrases-list">
 				{#each transcript.key_phrases as kp, kpIdx (kp.phrase)}
-					{@const seekCue = controller && cues ? findKeyPhraseSeekCue(cues, kpIdx) : null}
+					{@const seekCue = controller?.activeCues ? findKeyPhraseSeekCue(controller.activeCues, kpIdx) : null}
 					<li class:active-kp={activeRef?.kind === 'key_phrase' && activeRef.target_index === kpIdx}>
 						<div class="kp-text">
 							<span class="kp-phrase">{kp.phrase}</span>
@@ -453,13 +450,6 @@
 				</h3>
 
 				<div class="disclosure-toggles" role="group" aria-label="Show variations">
-					<button
-						type="button"
-						class="toggle-pill"
-						class:active={showSlow}
-						aria-pressed={showSlow}
-						onclick={() => (showSlow = !showSlow)}
-					>Slow</button>
 					<button
 						type="button"
 						class="toggle-pill"
@@ -520,9 +510,8 @@
 					{@const segments = groupIntoSegments(line.words)}
 					{@const lineSentence = transcript.dialogue_lines[lineIndex]?.sentence ?? ''}
 					{@const isActiveLine = activeRef?.kind === 'line' && activeRef.target_index === lineIndex}
-					{@const isActiveSlow = isActiveLine && currentCue?.section_type === 'slow_speed'}
 					{@const isActiveTranslated = isActiveLine && currentCue?.section_type === 'translated'}
-					{@const seekCue = controller && cues ? findSeekCue(cues, lineIndex, currentSectionIndex) : null}
+					{@const seekCue = controller?.activeCues ? findSeekCue(controller.activeCues, lineIndex, currentSectionIndex) : null}
 					<div class="dialogue-line" class:active-line={isActiveLine}>
 						{#if seekCue}
 							<button class="seek-btn" onclick={() => controller!.seekToCue(seekCue!)}>▶</button>
@@ -611,9 +600,6 @@
 									{/if}
 								{/each}
 							</span>
-							{#if (showSlow || isActiveSlow) && line.slowText}
-								<div class="line-slow">{line.slowText}</div>
-							{/if}
 							{#if (showInterlinear || isActiveTranslated) && line.translatedText}
 								<div class="line-interlinear">{line.translatedText}</div>
 							{/if}
@@ -918,12 +904,6 @@
 		display: block;
 		line-height: 1.6;
 		user-select: text;
-	}
-	.line-slow {
-		margin-top: 0.15rem;
-		color: var(--color-muted, #6b7280);
-		font-size: 0.85rem;
-		font-style: italic;
 	}
 	/* Interlinear L1 reads as a deliberate pair under the L2 line: indented and
 	   accented so the eye groups it with the sentence above (cover-one-side). */
