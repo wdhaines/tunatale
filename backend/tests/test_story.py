@@ -77,6 +77,12 @@ class TestStoryGeneration:
         assert SectionType.NATURAL_SPEED in section_types
         assert SectionType.SLOW_SPEED in section_types
         assert SectionType.TRANSLATED in section_types
+        assert SectionType.SLOW_TRANSLATED in section_types
+
+    async def test_generate_lesson_has_five_sections(self, generator, language):
+        day = _make_curriculum_day()
+        lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        assert len(lesson.sections) == 5
 
     async def test_generate_key_phrases_section_bounded(self, generator, language):
         day = _make_curriculum_day()
@@ -506,6 +512,7 @@ class TestBuildLessonFromStory:
             SectionType.NATURAL_SPEED,
             SectionType.SLOW_SPEED,
             SectionType.TRANSLATED,
+            SectionType.SLOW_TRANSLATED,
         ]
 
     def test_parse_response_delegates_to_module_function(self, generator, language):

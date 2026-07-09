@@ -50,4 +50,7 @@ class NaturalPauseCalculator:
         if section_type == SectionType.SLOW_SPEED and is_l2:
             return int(_BASE_PHRASE_PAUSE_MS * _SLOW_SPEED_FACTOR)
 
+        if section_type == SectionType.SLOW_TRANSLATED and is_l2:
+            return int(_BASE_PHRASE_PAUSE_MS * _SLOW_SPEED_FACTOR)
+
         return _BASE_PHRASE_PAUSE_MS

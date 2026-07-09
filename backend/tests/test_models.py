@@ -224,12 +224,13 @@ class TestLesson:
         with pytest.raises((ValueError, AttributeError)):
             Section(section_type="invalid_type", phrases=[])  # type: ignore[arg-type]
 
-    def test_has_four_section_types(self):
+    def test_has_five_section_types(self):
         types = list(SectionType)
         assert SectionType.KEY_PHRASES in types
         assert SectionType.NATURAL_SPEED in types
         assert SectionType.SLOW_SPEED in types
         assert SectionType.TRANSLATED in types
+        assert SectionType.SLOW_TRANSLATED in types
 
     def test_roundtrip_json(self):
         original = _make_lesson()
@@ -254,6 +255,29 @@ class TestLesson:
         data.pop("key_phrases", None)
         restored = Lesson.from_json(json.dumps(data))
         assert restored.key_phrases == []
+
+    def test_roundtrip_json_with_slow_translated(self):
+        """SLOW_TRANSLATED section round-trips through to_json/from_json."""
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.SLOW_TRANSLATED,
+                    phrases=[
+                        Phrase(
+                            text="Dober ... dan!", voice_id="sl-SI-PetraNeural", language_code="sl", role="female-1"
+                        ),
+                        Phrase(text="Good day!", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
+                    ],
+                )
+            ],
+        )
+        restored = Lesson.from_json(lesson.to_json())
+        assert len(restored.sections) == 1
+        assert restored.sections[0].section_type == SectionType.SLOW_TRANSLATED
+        assert restored.sections[0].phrases[0].text == "Dober ... dan!"
+        assert restored.sections[0].phrases[1].language_code == "en"
 
 
 class TestExtractSentenceTranslationsFromTranslated:

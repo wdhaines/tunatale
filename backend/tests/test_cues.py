@@ -133,6 +133,50 @@ class TestBuildCueManifestDialogue:
         assert cues[0].ref == {"kind": "narration"}
         assert cues[1].ref == {"kind": "line", "target_index": 0}
 
+    def test_slow_translated_narrator_following_l2_refs_same_line(self):
+        """In slow_translated, a narrator cue immediately after an L2 cue refs that line."""
+        lesson = Lesson(
+            title="Test",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.SLOW_TRANSLATED,
+                    phrases=[
+                        Phrase(text="Slow Translated", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
+                        Phrase(
+                            text="Dober ... dan!", voice_id="sl-SI-PetraNeural", language_code="sl", role="female-1"
+                        ),
+                        Phrase(text="Good day!", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
+                        Phrase(
+                            text="Prosim ... kavo.", voice_id="sl-SI-PetraNeural", language_code="sl", role="female-1"
+                        ),
+                        Phrase(
+                            text="A coffee please.", voice_id="en-US-GuyNeural", language_code="en", role="narrator"
+                        ),
+                    ],
+                )
+            ],
+        )
+        timing = [
+            CueTiming(section_index=0, phrase_index=0, start_frame=0, end_frame=1000),
+            CueTiming(section_index=0, phrase_index=1, start_frame=2000, end_frame=3000),
+            CueTiming(section_index=0, phrase_index=2, start_frame=4000, end_frame=5000),
+            CueTiming(section_index=0, phrase_index=3, start_frame=6000, end_frame=7000),
+            CueTiming(section_index=0, phrase_index=4, start_frame=8000, end_frame=9000),
+        ]
+        cues = build_cue_manifest(lesson, timing, rate=1000)
+
+        # Section title → narration
+        assert cues[0].ref == {"kind": "narration"}
+        # L2 → line 0
+        assert cues[1].ref == {"kind": "line", "target_index": 0}
+        # Narrator following L2 → same line 0
+        assert cues[2].ref == {"kind": "line", "target_index": 0}
+        # L2 → line 1
+        assert cues[3].ref == {"kind": "line", "target_index": 1}
+        # Narrator following L2 → same line 1
+        assert cues[4].ref == {"kind": "line", "target_index": 1}
+
 
 class TestBuildCueManifestKeyPhrases:
     """Ref derivation for key_phrases section via deterministic builder."""

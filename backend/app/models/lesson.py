@@ -27,6 +27,7 @@ class SectionType(Enum):
     NATURAL_SPEED = "natural_speed"
     SLOW_SPEED = "slow_speed"
     TRANSLATED = "translated"
+    SLOW_TRANSLATED = "slow_translated"
 
 
 @dataclass

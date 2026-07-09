@@ -5,6 +5,7 @@ from app.generation.section_builder import (
     build_key_phrases_section,
     build_natural_speed_section,
     build_slow_speed_section,
+    build_slow_translated_section,
     build_translated_section,
     build_word_breakdown,
 )
@@ -406,3 +407,101 @@ def test_translated_skips_line_without_translation():
     assert "Dober dan" in l2_texts
     assert "Has it" in l2_texts
     assert "No translation" not in l2_texts
+
+
+# ── build_slow_translated_section ────────────────────────────────────────
+
+
+def test_slow_translated_section_type():
+    section = build_slow_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    assert section.section_type == SectionType.SLOW_TRANSLATED
+
+
+def test_slow_translated_starts_with_title_phrase():
+    section = build_slow_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    first = section.phrases[0]
+    assert first.text == "Slow Translated"
+    assert first.role == "narrator"
+    assert first.voice_id == NARRATOR_VOICE
+    assert first.language_code == "en"
+
+
+def test_slow_translated_has_ellipsis_slowed_l2():
+    section = build_slow_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    l2_phrases = [p for p in section.phrases if p.language_code == L2_CODE]
+    assert len(l2_phrases) == 2
+    assert " ... " in l2_phrases[0].text
+    assert " ... " in l2_phrases[1].text
+    assert l2_phrases[0].text == "Dober ... dan!"
+    assert l2_phrases[1].text == "Prosim ... kavo."
+
+
+def test_slow_translated_interleaves_narrator_after_l2():
+    section = build_slow_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    body = [p for p in section.phrases if p.text not in ("Slow Translated", "At the Riverside Café")]
+    for i, phrase in enumerate(body):
+        if i % 2 == 0:
+            assert phrase.language_code == L2_CODE
+        else:
+            assert phrase.role == "narrator"
+            assert phrase.language_code == "en"
+
+
+def test_slow_translated_preserves_scene_labels():
+    section = build_slow_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    narrator_phrases = [p for p in section.phrases if p.role == "narrator"]
+    scene_labels = [p for p in narrator_phrases if "Riverside" in p.text]
+    assert len(scene_labels) == 1
+
+
+def test_slow_translated_skips_line_without_translation():
+    """Lines without translation are skipped, same as translated."""
+    scenes = [
+        {
+            "label": "Scene",
+            "lines": [
+                {"speaker": "f1", "text": "Dober dan", "translation": "Good day"},
+                {"speaker": "f1", "text": "No translation here"},
+                {"speaker": "f1", "text": "Prosim kavo", "translation": "A coffee please"},
+            ],
+        }
+    ]
+    section = build_slow_translated_section(scenes, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    l2_texts = [p.text for p in section.phrases if p.language_code == L2_CODE]
+    assert any("Dober" in t for t in l2_texts)
+    assert any("Prosim" in t for t in l2_texts)
+    assert not any("No translation" in t for t in l2_texts)
+
+
+def test_slow_translated_skips_malformed_input():
+    """Malformed scenes/lines are skipped without crashing."""
+    scenes = [
+        {"label": "Good", "lines": [{"speaker": "f1", "text": "Dober dan", "translation": "Good day"}]},
+        {"not_a_label": True},
+        {"label": "", "lines": []},
+        42,
+        {
+            "label": "Bad",
+            "lines": [
+                {"speaker": "f1", "text": "Kava prosim", "translation": "Coffee please"},
+                {"missing": "speaker"},
+                {"speaker": "f1", "text": ""},
+                "not a dict",
+            ],
+        },
+    ]
+    section = build_slow_translated_section(scenes, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    texts = [p.text for p in section.phrases]
+    assert "Good" in texts
+    assert "Bad" in texts
+    l2_texts = [p.text for p in section.phrases if p.language_code == L2_CODE]
+    assert len(l2_texts) == 2
+
+
+def test_slow_translated_mirrors_translated_line_count():
+    """Slow translated has the same L2 line count as translated (both skip missing translations)."""
+    nat = build_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    slow = build_slow_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    nat_l2 = [p for p in nat.phrases if p.language_code == L2_CODE]
+    slow_l2 = [p for p in slow.phrases if p.language_code == L2_CODE]
+    assert len(slow_l2) == len(nat_l2)

@@ -48,7 +48,11 @@ def _build_dialogue_refs(lesson: Lesson, timing: list[CueTiming], section_idx: i
             ref: dict = {"kind": "line", "target_index": line_n}
             pending_line = line_n
             line_n += 1
-        elif section.section_type == SectionType.TRANSLATED and is_narrator and pending_line is not None:
+        elif (
+            section.section_type in (SectionType.TRANSLATED, SectionType.SLOW_TRANSLATED)
+            and is_narrator
+            and pending_line is not None
+        ):
             ref = {"kind": "line", "target_index": pending_line}
             pending_line = None
         else:

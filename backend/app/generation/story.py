@@ -11,6 +11,7 @@ from app.generation.section_builder import (
     build_key_phrases_section,
     build_natural_speed_section,
     build_slow_speed_section,
+    build_slow_translated_section,
     build_translated_section,
 )
 from app.models.curriculum import CurriculumDay
@@ -170,6 +171,7 @@ def build_lesson_from_story(data: dict, language: Language) -> Lesson:
         build_natural_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
         build_slow_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
         build_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
+        build_slow_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
     ]
 
     kp_infos = []
