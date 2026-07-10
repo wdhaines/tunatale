@@ -9,7 +9,17 @@ degradation (`LessonPlayer.svelte` `trackMode` gate + `findPlayableCue` full-tra
 fallback), language-literal checker case-sensitivity bypass, `.gitignore` DB-backup
 pattern gap.
 
-## 1. Norwegian compound segmenter splits ordinary words (HIGH)
+**Status updates:**
+- **#1 DONE** (commits `8438629`, `975e44f`): closed-class stoplist + anchor-rank
+  scoring, then initial-only homographs (hver/selv/vår), s-overlap compounds
+  (busstasjon → buss|stasjon spoken), and forstand-whole via guard-exempt
+  prepositions — see `docs/bp-brief-segmenter-homographs-overlap.md`. All 9
+  Norwegian lessons re-rendered 2026-07-10.
+- **#2 DONE** (2026-07-10): v35 migration normalizes case-variant/out-of-domain
+  `prior_state`/`bury_kind` before the CHECK-constrained INSERT, with WARNING
+  counts and an idempotency + normalization test.
+
+## 1. Norwegian compound segmenter splits ordinary words (HIGH) — DONE
 
 **Problem.** `_is_lexicalized_whole` (`backend/app/generation/norwegian_breakdown.py:186-198`)
 only keeps a word whole when it out-ranks *all* its parts. That inverts when the
@@ -49,7 +59,7 @@ delegable). Agent builds machinery + tests; user confirms via
 **Tests.** Pin the four repro cases above (corrected values) as new goldens; keep
 every existing golden green; regression-pin that `etter…` still splits.
 
-## 2. v35 migration hard-fails on CHECK-violating legacy rows (MED)
+## 2. v35 migration hard-fails on CHECK-violating legacy rows (MED) — DONE
 
 **Problem.** `migrate_v34_to_v35` (`backend/app/srs/migrations.py:977-1062`) does a
 blind `INSERT INTO _cd_v35 SELECT …` into a CHECK-constrained table. Any row with

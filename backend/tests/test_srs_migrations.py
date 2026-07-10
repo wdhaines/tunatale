@@ -111,6 +111,120 @@ class TestMigrations:
         migrate_v35_to_v36(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 36
 
+    def test_migrates_v34_to_v35_normalises_legacy_rows(self, tmp_path, caplog):
+        """v35 CHECK constraints would reject case-variant prior_state and
+        out-of-domain bury_kind. The migration lowercases case-variant
+        prior_state and NULLs truly out-of-domain values before the INSERT.
+        """
+        import sqlite3
+
+        from app.srs.migrations import _set_version, migrate_v34_to_v35
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.row_factory = sqlite3.Row
+        conn.execute("""CREATE TABLE collocations (
+            id INTEGER PRIMARY KEY,
+            text TEXT UNIQUE NOT NULL
+        )""")
+        conn.execute("""CREATE TABLE collocation_directions (
+            collocation_id INTEGER NOT NULL REFERENCES collocations(id) ON DELETE CASCADE,
+            direction TEXT NOT NULL CHECK(direction IN ('recognition','production')),
+            stability REAL NOT NULL DEFAULT 1.0,
+            fsrs_difficulty REAL NOT NULL DEFAULT 5.0,
+            due_at TEXT NOT NULL,
+            reps INTEGER NOT NULL DEFAULT 0,
+            lapses INTEGER NOT NULL DEFAULT 0,
+            state TEXT NOT NULL DEFAULT 'new',
+            last_review TEXT,
+            last_review_time_ms INTEGER NOT NULL DEFAULT 0,
+            anki_card_id INTEGER,
+            anki_card_mod INTEGER,
+            anki_due INTEGER,
+            dirty_fsrs INTEGER NOT NULL DEFAULT 0,
+            last_synced_at TEXT,
+            last_rating INTEGER,
+            left INTEGER,
+            prior_state TEXT,
+            prior_left INTEGER,
+            prior_stability REAL,
+            introduced_at TEXT,
+            bury_kind TEXT,
+            known_prior_state TEXT,
+            known_prior_stability REAL,
+            known_prior_due_at TEXT,
+            fsrs_force_next INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (collocation_id, direction)
+        )""")
+        conn.execute("INSERT INTO collocations (id, text) VALUES (1, 'test')")
+        conn.execute("INSERT INTO collocations (id, text) VALUES (2, 'test2')")
+        conn.execute("INSERT INTO collocations (id, text) VALUES (3, 'test3')")
+        conn.execute("INSERT INTO collocations (id, text) VALUES (4, 'test4')")
+        conn.execute("INSERT INTO collocations (id, text) VALUES (5, 'test5')")
+        # Row 1: normal valid values — unchanged.
+        conn.execute(
+            "INSERT INTO collocation_directions "
+            "(collocation_id, direction, due_at, state, prior_state, bury_kind) "
+            "VALUES (1, 'recognition', '04:00:00+00:00', 'review', 'new', NULL)"
+        )
+        # Row 2: case-variant prior_state — lowercased to 'review'.
+        conn.execute(
+            "INSERT INTO collocation_directions "
+            "(collocation_id, direction, due_at, state, prior_state, bury_kind) "
+            "VALUES (2, 'recognition', '04:00:00+00:00', 'review', 'REVIEW', NULL)"
+        )
+        # Row 3: titlecase prior_state + valid bury_kind — lowercased, bury_kind unchanged.
+        conn.execute(
+            "INSERT INTO collocation_directions "
+            "(collocation_id, direction, due_at, state, prior_state, bury_kind) "
+            "VALUES (3, 'recognition', '04:00:00+00:00', 'new', 'New', 'user')"
+        )
+        # Row 4: out-of-domain prior_state — NULLed.
+        conn.execute(
+            "INSERT INTO collocation_directions "
+            "(collocation_id, direction, due_at, state, prior_state, bury_kind) "
+            "VALUES (4, 'recognition', '04:00:00+00:00', 'new', 'INVALID', NULL)"
+        )
+        # Row 5: out-of-domain bury_kind — NULLed.
+        conn.execute(
+            "INSERT INTO collocation_directions "
+            "(collocation_id, direction, due_at, state, prior_state, bury_kind) "
+            "VALUES (5, 'recognition', '04:00:00+00:00', 'buried', 'review', 'always')"
+        )
+        _set_version(conn, 34)
+
+        # Must not raise IntegrityError
+        migrate_v34_to_v35(conn)
+
+        rows = {
+            r["collocation_id"]: r
+            for r in conn.execute("SELECT collocation_id, prior_state, bury_kind FROM collocation_directions")
+        }
+        assert rows[1]["prior_state"] == "new"
+        assert rows[1]["bury_kind"] is None
+        assert rows[2]["prior_state"] == "review"
+        assert rows[2]["bury_kind"] is None
+        assert rows[3]["prior_state"] == "new"
+        assert rows[3]["bury_kind"] == "user"
+        assert rows[4]["prior_state"] is None
+        assert rows[4]["bury_kind"] is None
+        assert rows[5]["prior_state"] == "review"
+        assert rows[5]["bury_kind"] is None
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 35
+
+        # WARNING logged with normalisation counts
+        assert any(
+            "v35 migration normalised legacy data" in rec.message
+            and "lowercased 2 prior_state" in rec.message
+            and "NULLed 1 prior_state" in rec.message
+            and "NULLed 1 bury_kind" in rec.message
+            for rec in caplog.records
+            if rec.levelname == "WARNING"
+        )
+
+        # Idempotent
+        migrate_v34_to_v35(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 35
+
     def test_migrates_v27_to_v28_adds_lemma_key_column(self, tmp_path):
         """v28 adds collocations.lemma_key (space-joined lemma tuple for span matching)."""
         import sqlite3

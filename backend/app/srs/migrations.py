@@ -6,12 +6,15 @@ a single transaction. Migrations must be idempotent (safe to re-run).
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from datetime import date
 
 from app.common.guid import compute_guid
 from app.srs.function_words import format_morphology_hint
+
+_logger = logging.getLogger(__name__)
 
 CURRENT_VERSION = 36
 
@@ -1041,6 +1044,43 @@ def migrate_v34_to_v35(conn: sqlite3.Connection) -> None:
                 PRIMARY KEY (collocation_id, direction)
             )
         """)
+        # Normalise legacy rows that would violate the new CHECK constraints.
+        # Case-variant prior_state (e.g. 'REVIEW', 'New') is lowercased;
+        # truly out-of-domain prior_state/bury_kind is NULLed. Note: NULLing a
+        # corrupt bury_kind on a state='buried' row leaves it invisible to the
+        # daily unbury sweep (which releases kind='sched' only) — accepted for
+        # corrupt-data-only rows; the next sync self-heals via the
+        # state/bury_kind diff (queue-parity rule 6).
+        _fix_case = conn.execute("""
+            UPDATE collocation_directions
+            SET prior_state = LOWER(prior_state)
+            WHERE prior_state IS NOT NULL
+              AND prior_state != LOWER(prior_state)
+              AND LOWER(prior_state) IN
+                  ('new','learning','review','relearning','suspended','buried','known')
+        """).rowcount
+        _null_prior = conn.execute("""
+            UPDATE collocation_directions
+            SET prior_state = NULL
+            WHERE prior_state IS NOT NULL
+              AND prior_state NOT IN
+                  ('new','learning','review','relearning','suspended','buried','known')
+        """).rowcount
+        _null_bury = conn.execute("""
+            UPDATE collocation_directions
+            SET bury_kind = NULL
+            WHERE bury_kind IS NOT NULL
+              AND bury_kind NOT IN ('sched','user')
+        """).rowcount
+        if _fix_case or _null_prior or _null_bury:
+            _logger.warning(
+                "v35 migration normalised legacy data: "
+                "lowercased %d prior_state, NULLed %d prior_state, NULLed %d bury_kind",
+                _fix_case,
+                _null_prior,
+                _null_bury,
+            )
+
         conn.execute("""
             INSERT INTO _cd_v35 SELECT
                 collocation_id, direction, stability, fsrs_difficulty, due_at,
