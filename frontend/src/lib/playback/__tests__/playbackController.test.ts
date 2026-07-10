@@ -652,6 +652,60 @@ describe("playbackController", () => {
       expect(audioEl.playbackRate).toBe(0.85);
     });
 
+    it("setEnunciationRate applies rate only to L2 cues", () => {
+      const mixedCues: Cue[] = [
+        makeCue({ index: 0, start_ms: 0, end_ms: 1000, language_code: "sl", text: "Zdravo" }),
+        makeCue({ index: 1, start_ms: 1000, end_ms: 2000, language_code: "en", text: "Hello" }),
+        makeCue({ index: 2, start_ms: 2000, end_ms: 3000, language_code: "sl", text: "Kako si" }),
+      ];
+      const aud: LessonAudio = { ...lessonAudio, cues: mixedCues };
+      const ctrl = createController({ audio: aud });
+
+      ctrl.setEnunciationRate(0.8);
+
+      // At time 0.5s → L2 cue → rate should be 0.8
+      audioEl.currentTime = 0.5;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(audioEl.playbackRate).toBe(0.8);
+
+      // At time 1.5s → English cue → rate should be 1
+      audioEl.currentTime = 1.5;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(audioEl.playbackRate).toBe(1);
+
+      // At time 2.5s → L2 cue → rate should be 0.8
+      audioEl.currentTime = 2.5;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(audioEl.playbackRate).toBe(0.8);
+    });
+
+    it("setEnunciationRate(1) does not override playbackRate", () => {
+      const ctrl = createController();
+      audioEl.playbackRate = 1.5;
+      ctrl.setEnunciationRate(1);
+      // enunciationRate=1 is a no-op, so playbackRate stays at 1.5
+      expect(audioEl.playbackRate).toBe(1.5);
+    });
+
+    it("setEnunciationRate is a no-op when cues are null", () => {
+      const aud: LessonAudio = { ...lessonAudio, cues: null };
+      const ctrl = createController({ audio: aud });
+      audioEl.playbackRate = 1;
+      ctrl.setEnunciationRate(0.8);
+      expect(audioEl.playbackRate).toBe(1);
+    });
+
+    it("setEnunciationRate does not apply when currentTime is before all cues", () => {
+      const lateCues: Cue[] = [
+        makeCue({ index: 0, start_ms: 500, end_ms: 1000, language_code: "sl" }),
+      ];
+      const aud: LessonAudio = { ...lessonAudio, cues: lateCues };
+      const ctrl = createController({ audio: aud });
+      ctrl.setEnunciationRate(0.8);
+      // currentTime is 0, first cue starts at 500ms — no cue matches
+      expect(audioEl.playbackRate).toBe(1);
+    });
+
     it("ratechange event updates rate and position state", () => {
       const mediaSession = makeFakeMediaSession();
       createController({ mediaSession: mediaSession as unknown as MediaSession });

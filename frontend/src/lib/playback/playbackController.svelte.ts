@@ -28,6 +28,7 @@ export interface PlaybackController {
   findPlayableCue(ref: CueRef): Cue | null;
   playRef(ref: CueRef): void;
   setRate(rate: number): void;
+  setEnunciationRate(rate: number): void;
   setSentenceSkip(v: boolean): void;
   destroy(): void;
 }
@@ -124,6 +125,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   let playing = $state(false);
   let duration = $state(audioEl.duration || 0);
   let rate = $state(1);
+  let enunciationRate = 1;
   let sentenceSkip = $state(false);
   // Browsers QUEUE the pause event, so destroy()'s own pause() fires the
   // listener AFTER src="" has reset currentTime to 0 — without this flag the
@@ -166,6 +168,22 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     }
   }
 
+  function applyEnunciationRate() {
+    if (enunciationRate === 1) return;
+    if (!activeCues || activeCues.length === 0) return;
+    const tMs = currentTime * 1000;
+    let best: Cue | null = null;
+    for (const c of activeCues) {
+      if (c.start_ms <= tMs) best = c;
+      else break;
+    }
+    if (!best) return;
+    const targetRate = best.language_code === "en" ? 1 : enunciationRate;
+    if (audioEl.playbackRate !== targetRate) {
+      audioEl.playbackRate = targetRate;
+    }
+  }
+
   function doSeek(time: number) {
     // Pre-metadata duration is NaN/0 — don't clamp every seek to 0 then.
     const max =
@@ -187,6 +205,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   // Audio event listeners
   audioEl.addEventListener("timeupdate", () => {
     currentTime = audioEl.currentTime;
+    applyEnunciationRate();
   });
   audioEl.addEventListener("loadedmetadata", () => {
     duration = audioEl.duration;
@@ -547,6 +566,10 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       audioEl.playbackRate = newRate;
       rate = newRate;
       updatePositionState();
+    },
+    setEnunciationRate(newRate: number) {
+      enunciationRate = newRate;
+      applyEnunciationRate();
     },
     setSentenceSkip(v: boolean) {
       sentenceSkip = v;

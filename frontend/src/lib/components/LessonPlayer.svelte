@@ -98,7 +98,7 @@
 	function applyTrack() {
 		if (selectedSectionType) {
 			ctrl.selectTrack(selectedSectionType);
-			ctrl.setRate(resolveRate(enunLevel));
+			ctrl.setEnunciationRate(resolveRate(enunLevel));
 		}
 	}
 
