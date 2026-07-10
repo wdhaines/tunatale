@@ -4,6 +4,8 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import LessonPlayer from "./LessonPlayer.svelte";
+import PillSyncHarness from "../../test/PillSyncHarness.svelte";
+import { tick } from "svelte";
 import { api } from "$lib/api";
 import type { LessonAudio } from "$lib/api";
 import type { PlaybackController } from "$lib/playback/playbackController.svelte";
@@ -340,6 +342,46 @@ describe("LessonPlayer", () => {
       // No cues → no phase controls rendered → nothing seeded/applied.
       const { container } = render(LessonPlayer, { props: { audio: audioWithCuesNull } });
       expect(container.querySelector(".phase-row")).toBeFalsy();
+    });
+  });
+
+  describe("pills mirror an external track change (transcript ▶)", () => {
+    async function renderWithController(audio: LessonAudio) {
+      let ctrl: PlaybackController | null = null;
+      const result = render(PillSyncHarness, {
+        props: {
+          audio,
+          onController: (c: PlaybackController) => {
+            ctrl = c;
+          },
+        },
+      });
+      await tick();
+      return { ctrl: ctrl as unknown as PlaybackController, ...result };
+    }
+
+    it("activates the Key Phrases pill when the track switches to key_phrases externally", async () => {
+      const { ctrl, container } = await renderWithController(audioWithAllSections);
+      const kpBtn = container.querySelector<HTMLButtonElement>(".phase-btn:first-child")!;
+      expect(kpBtn.classList.contains("active")).toBe(false); // default: dialogue
+
+      ctrl.selectTrack("key_phrases"); // as a key-phrase ▶ tap would
+      await tick();
+      expect(kpBtn.classList.contains("active")).toBe(true);
+    });
+
+    it("resets enunciation/English to Natural when the track switches to natural_speed externally", async () => {
+      const { ctrl, container } = await renderWithController(audioWithAllSections);
+      // Move to an enunciated slow track first via the pill.
+      fireEvent.click(container.querySelector<HTMLButtonElement>(".enunciation-btn")!);
+      await tick();
+      expect(container.querySelector(".enunciation-btn")!.textContent).toContain("Enunciated");
+
+      // An external switch to natural_speed (e.g. tapping a dialogue line ▶ from
+      // another phase) must pull the enunciation pill back to Natural.
+      ctrl.selectTrack("natural_speed");
+      await tick();
+      expect(container.querySelector(".enunciation-btn")!.textContent).toContain("Natural");
     });
   });
 

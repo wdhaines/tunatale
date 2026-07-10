@@ -6,7 +6,7 @@
 	import type { NetworkInformationLike } from '$lib/sw/prefetch';
 	import type { CacheStorageLike } from '$lib/sw/audio-cache';
 	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
-	import { lessonPlayerPref } from '$lib/stores/lessonPlayerPref.svelte';
+	import { lessonPlayerPref, pillsForSection } from '$lib/stores/lessonPlayerPref.svelte';
 	import { createPlaybackController } from '$lib/playback/playbackController.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 
@@ -112,6 +112,18 @@
 		applyTrack();
 		persistSelection();
 	}
+
+	// Mirror the pills onto whatever track is actually playing. A transcript ▶ tap
+	// can switch the track from outside the player (e.g. a key-phrase ▶ while
+	// Dialogue is selected); this keeps the phase/enunciation/English controls
+	// truthful. Idempotent for the player's own clicks (they set the pills first,
+	// then select the matching track).
+	$effect(() => {
+		const p = pillsForSection(ctrl.activeSectionType);
+		if (p.phase !== undefined) phase = p.phase;
+		if (p.enunciation !== undefined) enunLevel = p.enunciation;
+		if (p.english !== undefined) englishOn = p.english;
+	});
 
 	// --- Prefetch section URLs ---
 

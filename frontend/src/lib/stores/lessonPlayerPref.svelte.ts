@@ -22,6 +22,34 @@ function defaultSelection(): PlayerSelection {
   return { phase: "dialogue", enunciation: "natural", english: false };
 }
 
+// Reverse-map the section type actually playing back onto the player pills, so
+// the controls mirror the audio even when something outside the player (a
+// transcript ▶ tap) switches the track. Fields left undefined are not forced:
+// key_phrases leaves enunciation/English (hidden in that phase) untouched, and
+// slow_speed/slow_translated leave the enunciation *level* (natural vs the three
+// enunciated rates isn't recoverable from the section type alone — the pill
+// already holds it).
+export function pillsForSection(sectionType: string | null): {
+  phase?: PlayerPhase;
+  enunciation?: string;
+  english?: boolean;
+} {
+  switch (sectionType) {
+    case "key_phrases":
+      return { phase: "key_phrases" };
+    case "natural_speed":
+      return { phase: "dialogue", enunciation: "natural", english: false };
+    case "translated":
+      return { phase: "dialogue", enunciation: "natural", english: true };
+    case "slow_speed":
+      return { phase: "dialogue", english: false };
+    case "slow_translated":
+      return { phase: "dialogue", english: true };
+    default:
+      return {};
+  }
+}
+
 function isValid(v: unknown): v is PlayerSelection {
   if (typeof v !== "object" || v === null) return false;
   const s = v as Record<string, unknown>;

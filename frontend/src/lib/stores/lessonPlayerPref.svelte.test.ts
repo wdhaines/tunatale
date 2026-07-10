@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { lessonPlayerPref, type PlayerSelection } from "./lessonPlayerPref.svelte";
+import { lessonPlayerPref, pillsForSection, type PlayerSelection } from "./lessonPlayerPref.svelte";
 
 const STORAGE_KEY = "lessonPlayerSelection";
 const DEFAULT: PlayerSelection = { phase: "dialogue", enunciation: "natural", english: false };
@@ -85,5 +85,40 @@ describe("lessonPlayerPref", () => {
     localStorage.clear();
     lessonPlayerPref.init();
     expect(lessonPlayerPref.selection).toEqual(DEFAULT);
+  });
+});
+
+describe("pillsForSection", () => {
+  it("maps key_phrases to the Key Phrases phase (leaving enun/english untouched)", () => {
+    expect(pillsForSection("key_phrases")).toEqual({ phase: "key_phrases" });
+  });
+
+  it("maps natural_speed to Dialogue · Natural · English-off", () => {
+    expect(pillsForSection("natural_speed")).toEqual({
+      phase: "dialogue",
+      enunciation: "natural",
+      english: false,
+    });
+  });
+
+  it("maps translated to Dialogue · Natural · English-on", () => {
+    expect(pillsForSection("translated")).toEqual({
+      phase: "dialogue",
+      enunciation: "natural",
+      english: true,
+    });
+  });
+
+  it("maps slow_speed to Dialogue · English-off (keeping the enunciation level)", () => {
+    expect(pillsForSection("slow_speed")).toEqual({ phase: "dialogue", english: false });
+  });
+
+  it("maps slow_translated to Dialogue · English-on (keeping the enunciation level)", () => {
+    expect(pillsForSection("slow_translated")).toEqual({ phase: "dialogue", english: true });
+  });
+
+  it("returns an empty object for a null or unknown section (no forcing)", () => {
+    expect(pillsForSection(null)).toEqual({});
+    expect(pillsForSection("weird")).toEqual({});
   });
 });
