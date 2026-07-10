@@ -526,7 +526,7 @@
 					{@const segments = groupIntoSegments(line.words)}
 					{@const lineSentence = transcript.dialogue_lines[lineIndex]?.sentence ?? ''}
 					{@const isActiveLine = activeRef?.kind === 'line' && activeRef.target_index === lineIndex}
-					{@const isActiveTranslated = isActiveLine && currentCue?.section_type === 'translated'}
+					{@const isActiveTranslated = isActiveLine && (currentCue?.section_type === 'translated' || currentCue?.section_type === 'slow_translated')}
 					{@const seekCue = controller?.findPlayableCue({ kind: 'line', target_index: lineIndex }) ?? null}
 					<div class="dialogue-line" class:active-line={isActiveLine}>
 						<span class="dialogue-role">

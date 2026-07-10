@@ -2643,6 +2643,27 @@ describe("Transcript", () => {
       expect(interlinearEl!.textContent).toContain("Hello");
     });
 
+    it("reveals translatedText during a slow_translated cue too", () => {
+      // The enunciation cycle plays a slow_translated section between translated
+      // passes; the active line must keep its translation revealed there, not
+      // flicker off because the section_type string no longer matches exactly.
+      const slowTranslatedCue = makeCue({
+        index: 7,
+        start_ms: 2500,
+        section_index: 2,
+        section_type: "slow_translated",
+        ref: { kind: "line", target_index: 0 },
+        text: "Hello",
+      });
+      const { container } = renderWithController(slowTranslatedCue, [
+        ...testCues,
+        slowTranslatedCue,
+      ]);
+      const interlinearEl = container.querySelector(".line-interlinear");
+      expect(interlinearEl).not.toBeNull();
+      expect(interlinearEl!.textContent).toContain("Hello");
+    });
+
     it("does not reveal translated text when controller is null", () => {
       const { container } = render(Transcript, {
         props: defaultProps({
