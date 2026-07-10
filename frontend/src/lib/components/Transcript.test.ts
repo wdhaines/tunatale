@@ -2675,9 +2675,10 @@ describe("Transcript", () => {
         toJSON() {},
       });
 
-      // Player card is the next sibling of .global-nav.
+      // Player card element with .player-card class (queried by scroll effect).
       const playerEl = document.createElement("section");
-      navEl.after(playerEl);
+      playerEl.className = "player-card";
+      document.body.appendChild(playerEl);
       playerEl.getBoundingClientRect = () => ({
         top: 50,
         left: 0,
@@ -2740,7 +2741,8 @@ describe("Transcript", () => {
       });
 
       const playerEl = document.createElement("section");
-      navEl.after(playerEl);
+      playerEl.className = "player-card";
+      document.body.appendChild(playerEl);
       playerEl.getBoundingClientRect = () => ({
         top: 40,
         left: 0,
@@ -2875,6 +2877,35 @@ describe("Transcript", () => {
       const seekBtns = container.querySelectorAll(".dialogue-line .seek-btn");
       fireEvent.click(seekBtns[0]);
       expect(ctrl.playRef).toHaveBeenCalledWith({ kind: "line", target_index: 0 });
+    });
+
+    it("suppresses auto-scroll on the next cue change after a seek-button click", async () => {
+      const scrollBySpy = vi.spyOn(window, "scrollBy").mockImplementation(() => {});
+      // Render with no active cue so the effect's initial key is "".
+      const ctrl1 = makeFakeController(null);
+      const { container, rerender } = render(Transcript, {
+        props: defaultProps({
+          transcript: multiLineTranscript,
+          lesson: phraseLineLesson,
+          controller: ctrl1,
+        }),
+      });
+      // Click the seek button → sets suppressNextScroll = true, calls playRef.
+      const seekBtns = container.querySelectorAll(".dialogue-line .seek-btn");
+      await fireEvent.click(seekBtns[0]);
+      // Rerender with a controller whose currentCue is different → activeRef
+      // changes → the $effect re-enters and sees suppressNextScroll === true.
+      await rerender(
+        defaultProps({
+          transcript: multiLineTranscript,
+          lesson: phraseLineLesson,
+          controller: makeFakeController(testCues[0]),
+        }),
+      );
+      // The effect ran but should NOT have triggered a scroll because
+      // suppressNextScroll was true — the branch at L397 short-circuits.
+      expect(scrollBySpy).not.toHaveBeenCalled();
+      scrollBySpy.mockRestore();
     });
 
     it("tapping a key phrase seek button calls playRef with the key_phrase ref", () => {
