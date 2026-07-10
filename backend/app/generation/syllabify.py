@@ -2,12 +2,11 @@
 
 The onset-maximization algorithm itself is language-agnostic; each language
 supplies its own vowel set and its set of valid syllable onsets. Slovene and
-Norwegian are wired today; ``syllabify_word`` dispatches on the language code.
+Norwegian are wired today; ``syllabify_word`` dispatches through the language
+registry (``app.languages.get_syllabifier``).
 """
 
 from __future__ import annotations
-
-from collections.abc import Callable
 
 _VOWELS = frozenset("aeiou")
 
@@ -198,16 +197,13 @@ def syllabify_norwegian_word(word: str) -> list[str]:
     return _syllabify(word, _NO_VOWELS, _NO_VALID_ONSETS)
 
 
-_SYLLABIFIERS: dict[str, Callable[[str], list[str]]] = {
-    "sl": syllabify_slovene_word,
-    "no": syllabify_norwegian_word,
-}
-
-
 def syllabify_word(word: str, language_code: str) -> list[str]:
     """Syllabify *word* using the rules for *language_code*.
 
+    Dispatches through the language registry (``app.languages.get_syllabifier``).
     Unknown codes fall back to the Slovene onset rules (the breakdown is a
     pedagogical audio aid, so a reasonable default is preferable to raising).
     """
-    return _SYLLABIFIERS.get(language_code, syllabify_slovene_word)(word)
+    from app.languages import get_syllabifier
+
+    return get_syllabifier(language_code)(word)

@@ -13,9 +13,11 @@ app/anki/vocab_notetype.py
 app/anki/add_vocab_notetype.py
 app/srs/lemmatizer.py
 app/config.py
-# Phonotactics plugin home: its per-language onset inventories hold consonant
-# clusters like "sl"/"nb" that are NOT language codes, alongside the code→syllabifier
-# dispatch table — the syllabification counterpart to audio/preprocessing/.
+# Phonotactics DATA home: its per-language onset inventories hold consonant
+# clusters like "sl"/"nb" that are NOT language codes. The code→syllabifier
+# dispatch table that used to live here was routed through app/languages.py
+# (get_syllabifier) on 2026-07-10 — what remains is pure phonotactic data,
+# the syllabification counterpart to audio/preprocessing/.
 app/generation/syllabify.py
 # Anki-schema mapping home: maps extraction roles to specific Anki notetype +
 # FIELD NAMES (e.g. the "6000 Most Frequent Norwegian Words" notetype's "Norwegian

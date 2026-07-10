@@ -18,6 +18,8 @@ from app.audio.preprocessing.slovene import SlovenePreprocessor
 from app.models.language import Language
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from app.config import Settings
 
 
@@ -56,6 +58,10 @@ class LanguageConfig:
     # ``True`` when the Pimsleur word breakdown uses compound/morpheme-aware
     # segmentation (Norwegian) instead of the generic per-syllable backward buildup.
     compound_word_breakdown: bool = False
+    # Name of the onset-maximization syllabifier profile for this language
+    # (``"slovene"`` / ``"norwegian"``).  ``None`` for languages with no
+    # syllabification wiring (``en``); callers fall back to Slovene onset rules.
+    syllabifier: str | None = None
     # Morphology-drill profile injected into the story prompt (``"slavic"`` = the
     # case/dual tagging block); ``None`` omits the block.
     morphology_profile: str | None = None
@@ -74,6 +80,7 @@ _CONFIGS: dict[str, LanguageConfig] = {
         vocab_notetype=SLOVENE_VOCAB,
         lemmatizer_type="classla",
         morphology_profile="slavic",
+        syllabifier="slovene",
     ),
     "en": LanguageConfig(
         language=Language.english(),
@@ -89,6 +96,7 @@ _CONFIGS: dict[str, LanguageConfig] = {
         lemmatizer_type="stanza",
         compound_word_breakdown=True,
         variant_separator=",",
+        syllabifier="norwegian",
     ),
 }
 
@@ -165,6 +173,45 @@ def get_lemmatizer_type(code: str) -> str:
     """
     config = _CONFIGS.get(code)
     return config.lemmatizer_type if config else "lowercase"
+
+
+# Lazy-resolved syllabifier callables keyed by the string identifier stored
+# in ``LanguageConfig.syllabifier``.  The lazy import avoids a circular
+# dependency (``languages → syllabify → languages``).
+_SYLLABIFIER_RESOLVE: dict[str, Callable[[str], list[str]]] = {}
+
+
+def _resolve_syllabifier(name: str) -> Callable[[str], list[str]]:
+    """Lazily import and cache the syllabifier function for *name*."""
+    if name not in _SYLLABIFIER_RESOLVE:
+        from app.generation.syllabify import (
+            syllabify_norwegian_word,
+            syllabify_slovene_word,
+        )
+
+        _SYLLABIFIER_RESOLVE.update(
+            {
+                "slovene": syllabify_slovene_word,
+                "norwegian": syllabify_norwegian_word,
+            }
+        )
+    return _SYLLABIFIER_RESOLVE[name]
+
+
+def get_syllabifier(code: str) -> Callable[[str], list[str]]:
+    """Return the onset-maximization syllabifier function for *code*.
+
+    Unknown codes and languages with no syllabifier wiring fall back to
+    Slovene onset rules (a reasonable pedagogical default rather than
+    raising).
+    """
+    config = _CONFIGS.get(code)
+    name = config.syllabifier if config else None
+    if name is None:
+        from app.generation.syllabify import syllabify_slovene_word
+
+        return syllabify_slovene_word
+    return _resolve_syllabifier(name)
 
 
 def get_vocab_notetype(code: str) -> VocabNotetype | None:
