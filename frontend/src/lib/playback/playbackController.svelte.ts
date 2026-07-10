@@ -462,10 +462,12 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       ) ?? null;
     if (here) {
       doSeek(here.start_ms / 1000);
+      audioEl.play();
       return;
     }
     if (findCueInSection(canonicalSection(ref), ref)) {
       selectTrack(canonicalSection(ref), ref);
+      wasPlayingBeforeSwap = true;
     }
   }
 

@@ -1415,6 +1415,19 @@ describe("playbackController", () => {
       expect(audioEl.src).toBe(srcBefore);
     });
 
+    it("playRef starts playback when seeking within the active track", () => {
+      const ctrl = primeNatural();
+      ctrl.playRef({ kind: "line", target_index: 0 });
+      expect(audioEl.play).toHaveBeenCalled();
+    });
+
+    it("playRef starts playback after switching tracks", () => {
+      const ctrl = primeNatural();
+      ctrl.playRef({ kind: "key_phrase", target_index: 1 });
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(audioEl.play).toHaveBeenCalled();
+    });
+
     it("selectTrack seeks to an explicit ref target instead of preserving position", () => {
       const ctrl = createController({ audio: twoSectionAudio });
       ctrl.selectTrack("key_phrases", { kind: "key_phrase", target_index: 1 });
