@@ -73,6 +73,14 @@ class TestMatchesLanguageLiteral:
     def test_bare_code_strips_whitespace(self):
         assert _matches_language_literal("  sl  ") is True
 
+    @pytest.mark.parametrize("value", ["NO", "No", "SL", "Sl", "NB", "Nb"])
+    def test_bare_code_matches_case_variants(self, value):
+        # The name/engine rules are case-insensitive; the bare-code rule must be
+        # too, or `LANG = "NO"` walks straight through the gate (found by the
+        # 2026-07-10 review — empirically confirmed bypass, zero legitimate
+        # uppercase bare-code literals exist in backend/app).
+        assert _matches_language_literal(value) is True
+
     def test_bare_code_is_exact_not_substring(self):
         # "slovenian" contains "sl" but is caught by the *name* rule, not the
         # bare-code rule; confirm it's still True (via the name rule).

@@ -66,13 +66,14 @@ def _matches_language_literal(value: str) -> bool:
     """True if *value* looks like a hardcoded language literal.
 
     Matches (any of):
-    1. Exact bare code: ``"sl"``, ``"no"``, ``"nb"`` (after ``.strip()``).
+    1. Exact bare code, case-insensitive: ``"sl"``, ``"no"``, ``"NB"``
+       (after ``.strip()``).
     2. Name substring (case-insensitive): ``slovene``, ``slovenian``,
        ``norwegian``.
     3. Engine substring (case-insensitive): ``classla``, ``stanza``.
     4. TTS voice id regex: e.g. ``sl-SI-PetraNeural``.
     """
-    if value.strip() in _BARE_CODES:
+    if value.strip().lower() in _BARE_CODES:
         return True
     lowered = value.lower()
     if any(substr in lowered for substr in _NAME_SUBSTRINGS):
