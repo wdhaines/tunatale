@@ -163,7 +163,7 @@
 		</div>
 	{/if}
 
-	{#if hasCues && !compact}
+	{#if hasCues}
 		<div class="phase-row">
 			<button
 				class="phase-btn"
@@ -194,7 +194,7 @@
 		</button>
 	</div>
 
-	{#if hasCues && !compact}
+	{#if hasCues}
 		<div class="sentence-row">
 			<button class="ctrl-btn small" onclick={() => ctrl.prevCue()} title="Previous sentence">
 				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="12,2 4,8 12,14" fill="currentColor"/></svg>
@@ -231,7 +231,7 @@
 		</div>
 	</div>
 
-	{#if hasCues && !compact && hasAllSections}
+	{#if hasCues && hasAllSections}
 		<div class="controls-row">
 			<button class="enunciation-btn" onclick={onEnunClick}>
 				{ENUNCIATION_OPTIONS[enunIndex].label}

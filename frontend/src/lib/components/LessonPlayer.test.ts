@@ -168,13 +168,16 @@ describe("LessonPlayer", () => {
   });
 
   describe("compact mode", () => {
-    it("hides current-line, downloads, and phase controls; keeps transport, scrubber", () => {
+    it("hides only the redundant subtitle line; keeps controls, transport, scrubber", () => {
+      // Compact (Read mode) is now identical to Listen EXCEPT it omits the
+      // current-line subtitle — the synced transcript is the subtitle there.
+      // The phase/enunciation/English controls appear in both modes.
       const { container } = render(LessonPlayer, {
         props: { audio: audioWithCues, compact: true },
       });
       expect(container.querySelector(".current-line")).toBeFalsy();
       expect(container.querySelector(".download-section")).toBeFalsy();
-      expect(container.querySelector(".phase-row")).toBeFalsy();
+      expect(container.querySelector(".phase-row")).toBeTruthy();
       expect(container.querySelector(".transport-row")).toBeTruthy();
       expect(container.querySelector(".scrubber-row")).toBeTruthy();
     });
@@ -258,11 +261,11 @@ describe("LessonPlayer", () => {
       expect(buttons[1].textContent).toContain("Dialogue");
     });
 
-    it("does not render phase row in compact mode", () => {
+    it("renders the phase row in compact mode too (identical controls)", () => {
       const { container } = render(LessonPlayer, {
         props: { audio: audioWithCues, compact: true },
       });
-      expect(container.querySelector(".phase-row")).toBeFalsy();
+      expect(container.querySelector(".phase-row")).toBeTruthy();
     });
 
     it("clicking Key Phrases activates that phase", () => {
@@ -343,6 +346,14 @@ describe("LessonPlayer", () => {
   describe("enunciation and English controls", () => {
     it("renders enunciation and English controls when all sections present", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      expect(container.querySelector(".enunciation-btn")).toBeTruthy();
+      expect(container.querySelector(".english-btn")).toBeTruthy();
+    });
+
+    it("renders enunciation and English controls in compact (Read) mode too", () => {
+      const { container } = render(LessonPlayer, {
+        props: { audio: audioWithAllSections, compact: true },
+      });
       expect(container.querySelector(".enunciation-btn")).toBeTruthy();
       expect(container.querySelector(".english-btn")).toBeTruthy();
     });
