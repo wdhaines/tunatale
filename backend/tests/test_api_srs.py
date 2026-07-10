@@ -609,6 +609,72 @@ class TestReviewQueue:
         review_items = [q for q in data["queue"] if q["state"] == "review"]
         assert len(review_items) == 4
 
+    async def test_review_queue_new_cards_suppressed_when_review_budget_consumed(self, api_app_state):
+        """The review limit also caps NEW cards in the SERVED queue, not just the badge.
+
+        Layer 77: with `new_cards_ignore_review_limit` off (Anki's default), every
+        review gathered into the build shrinks the new limit
+        (rslib/decks/limits.rs:131-141 `decrement()`: `new = min(new, review)`), so
+        a day whose review budget is fully consumed by due reviews gathers ZERO new
+        cards. Pre-fix TT's badge said `new: 0` while /review-queue still served
+        new cards — the badge/queue split Layer 75 fixed for reviews, on the new side.
+        """
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        for i in range(3):
+            _add_review_due_collocation(db, f"rev{i}", today)
+        for i in range(2):
+            db.add_collocation(
+                SyntacticUnit(text=f"new{i}", translation=f"n{i}", word_count=1, difficulty=1, source="test"),
+                language_code="sl",
+            )
+        db.set_anki_state_cache("daily_review_cap", "2")
+        db.set_anki_state_cache("daily_new_cap", "5")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            data = (await client.get("/api/srs/review-queue?session_start=1")).json()
+
+        review_items = [q for q in data["queue"] if q["state"] == "review"]
+        new_items = [q for q in data["queue"] if q["state"] == "new"]
+        assert len(review_items) == 2
+        assert len(new_items) == 0, (
+            f"review budget fully consumed by due reviews → 0 new served (Anki caps new to the "
+            f"remaining review budget); got {len(new_items)}"
+        )
+
+    async def test_review_queue_new_cards_capped_by_remaining_review_budget(self, api_app_state):
+        """Partial-budget case: new served = min(new_quota, review_budget − reviews gathered).
+
+        Review cap 5 with 2 due reviews leaves headroom 3; with 4 new available and
+        new cap 5, exactly 3 new cards are served (Anki's per-gathered-review
+        `new = min(new, review)` decrement), not 4.
+        """
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        for i in range(2):
+            _add_review_due_collocation(db, f"rev{i}", today)
+        for i in range(4):
+            db.add_collocation(
+                SyntacticUnit(text=f"new{i}", translation=f"n{i}", word_count=1, difficulty=1, source="test"),
+                language_code="sl",
+            )
+        db.set_anki_state_cache("daily_review_cap", "5")
+        db.set_anki_state_cache("daily_new_cap", "5")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            data = (await client.get("/api/srs/review-queue?session_start=1")).json()
+
+        review_items = [q for q in data["queue"] if q["state"] == "review"]
+        new_items = [q for q in data["queue"] if q["state"] == "new"]
+        assert len(review_items) == 2
+        assert len(new_items) == 3, (
+            f"remaining review budget 5−2=3 caps the new slice (quota 5, 4 available); got {len(new_items)}"
+        )
+
     async def test_sets_no_store_cache_header(self, api_app_state):
         """Browser must NEVER cache /review-queue. Without `no-store`, a normal
         page refresh can be served from heuristic disk cache — the JS still

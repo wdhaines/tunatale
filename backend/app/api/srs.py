@@ -829,7 +829,7 @@ async def get_queue_stats(request: Request, response: Response):
     # Anki's "New cards ignore review limit" deck option defaults OFF, so the review
     # limit also caps new cards: when the day's review budget is consumed by due
     # reviews, Anki shows 0 new even with new/day > 0 (e.g. review cap 50 + 194 due
-    # → 0 new). Mirror that, badge-only (rule 12: daily caps are render-only).
+    # → 0 new). The served queue applies the same cap (`_compute_live_main`, Layer 77).
     # Assumes the default (off); honouring an explicitly-enabled flag would need the
     # preset value synced into the cache — a follow-up. `review_budget` already
     # nets out reviews AND new intros done today (Layer 76), matching Anki's

@@ -270,6 +270,14 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     nonlearning_due = nonlearning_due[:review_remaining]
     nonlearning_new = _bury(nonlearning_new, bury_new)
     nonlearning_new.sort(key=lambda t: 0 if t[3] == Direction.RECOGNITION else 1)
+    # Layer 77: the review limit also caps NEW cards (`new_cards_ignore_review_limit`
+    # defaults off). Anki caps `new_limit = min(new_limit, review_limit)` at build
+    # (limits.rs:104-108) and re-mins it as each review is gathered (`decrement()`,
+    # limits.rs:131-141) — so the new slice stops at the review budget left after
+    # the review slice. Self-consistent mid-session like the review cap above:
+    # grading a review shrinks the budget by 1 but also removes it from the due
+    # pool, so `review_remaining - len(due slice)` is stable (no mid-session drops).
+    new_quota = min(new_quota, review_remaining - len(nonlearning_due))
     nonlearning_new = nonlearning_new[:new_quota]
 
     if spread == 1:

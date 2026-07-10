@@ -12,8 +12,10 @@ What this test covers:
   ``queue_stats.resolve_daily_new_cap`` / ``resolve_daily_review_cap``.
 
 What this test does NOT cover (covered by existing TT unit tests):
-- TT-side queue assembly cap application (render-only per Layer 36 —
-  queue assembly itself doesn't cap; only the badge does)
+- TT-side queue assembly cap application — since Layer 75 the caps limit the
+  SERVED queue too, not just the badge (`_compute_live_main` slices both the
+  review and new pools); pinned by the `/review-queue` cap tests in
+  ``test_api_srs.py``
 - ``count_reviews_completed_today`` accounting (Layer 36 internal)
 - ``count_new_introduced_today`` with ``introduced_at`` column (Layer 26)
 """
@@ -182,6 +184,69 @@ def test_anki_review_count_charges_new_cards_studied_today(synthetic_collection:
     assert after["review"] == 3, (
         f"after studying 2 new cards then adding 10 reviews, review budget should be 5-2=3, got counts={after}. "
         "Anki charges new-card intros against the review limit (limits.rs:104-108)."
+    )
+
+
+@pytest.mark.oracle
+def test_anki_caps_new_cards_to_remaining_review_budget(synthetic_collection: SyntheticCollection) -> None:
+    """Anki caps gathered NEW cards at the review budget left after review gather.
+
+    Pins the dynamic half of ``rslib/src/decks/limits.rs``: construction caps
+    ``new_limit = min(new_limit, review_limit)`` (limits.rs:104-108), then every
+    review gathered into the SAME build decrements the review limit and re-mins
+    the new limit (``decrement()``, limits.rs:131-141). So with reviews_per_day=5,
+    2 due reviews, 10 new cards and new_per_day=20, Anki gathers 2 reviews and
+    min(20, 10, 5−2) = 3 new — not 10. Layer 77: TT mirrors in
+    ``_compute_live_main`` by capping the new slice at
+    ``review_budget − len(review slice)``.
+
+    What this does NOT cover:
+    - ``new_cards_ignore_review_limit`` enabled (TT assumes the default off).
+    - TT's served-queue pipeline (pinned by the `/review-queue` endpoint tests).
+    """
+    synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
+    synthetic_collection.set_daily_limits(new=20, reviews=5)
+
+    now_secs = int(time.time())
+    last_review_secs = now_secs - 5 * 86400
+
+    # 2 overdue review cards
+    for i in range(2):
+        cid = 30010 + i * 10
+        note_id = cid // 10
+        synthetic_collection.add_note(id=note_id, guid=f"g-{cid}", fields=[f"front-{cid}", "back"])
+        synthetic_collection.add_card(
+            id=cid,
+            note_id=note_id,
+            ord=0,
+            type=2,
+            queue=2,
+            due=0,
+            ivl=10,
+            reps=5,
+            stability=10.0,
+            difficulty=5.0,
+            last_review_secs=last_review_secs,
+            desired_retention=DEFAULT_DESIRED_RETENTION,
+        )
+    # 10 new cards
+    for i in range(10):
+        cid = 40010 + i * 10
+        note_id = cid // 10
+        synthetic_collection.add_note(id=note_id, guid=f"g-{cid}", fields=[f"front-{cid}", "back"])
+        synthetic_collection.add_card(id=cid, note_id=note_id, ord=0, type=0, queue=0, due=i, ivl=0, reps=0)
+    synthetic_collection.save()
+
+    result = run_oracle(
+        synthetic_collection.path,
+        [{"op": "get_queue", "deck_id": 1, "fetch_limit": 50}],
+    )
+    counts = result.raw()["get_queue_0"]["counts"]
+
+    assert counts["review"] == 2, f"2 due reviews under a cap of 5, got {counts}"
+    assert counts["new"] == 3, (
+        f"new gather must stop at the remaining review budget 5−2=3 (new_per_day=20, 10 available), "
+        f"got counts.new={counts['new']}. counts={counts}"
     )
 
 
