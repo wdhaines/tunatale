@@ -397,10 +397,23 @@
 			prevScrollKey = key;
 			// Capture `ref` — activeRef can flip to null before the frame fires.
 			requestAnimationFrame(() => {
-				const sel = ref.kind === 'line'
-					? '.dialogue-line.active-line'
-					: '.key-phrases-list li.active-kp';
-				document.querySelector(sel)?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+				const el = document.querySelector(
+					ref.kind === 'line'
+						? '.dialogue-line.active-line'
+						: '.key-phrases-list li.active-kp'
+				);
+				if (!el) return;
+				const rect = el.getBoundingClientRect();
+				const vh = window.innerHeight;
+				const navEl = document.querySelector('.global-nav');
+				const navH = navEl?.getBoundingClientRect().height ?? 0;
+				const playerEl = navEl?.nextElementSibling;
+				const playerH = playerEl?.getBoundingClientRect().height ?? 0;
+				const stickyH = navH + playerH;
+				// Position the element's top below the sticky headers, then shift
+				// up to vertically center it in the visible scroll area.
+				const target = rect.top - stickyH - (vh - stickyH - rect.height) / 2;
+				window.scrollBy({ top: target, behavior: 'smooth' });
 			});
 		} else if (!key) {
 			prevScrollKey = '';

@@ -2655,6 +2655,155 @@ describe("Transcript", () => {
     });
   });
 
+  describe("synced subtitle — scroll offset for sticky headers", () => {
+    it("scrolls active line into view accounting for nav + player card height", async () => {
+      const scrollBySpy = vi.spyOn(window, "scrollBy").mockImplementation(() => {});
+
+      // Set up a .global-nav in the document so the scroll effect can measure it.
+      const navEl = document.createElement("div");
+      navEl.className = "global-nav";
+      document.body.appendChild(navEl);
+      navEl.getBoundingClientRect = () => ({
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 50,
+        width: 0,
+        height: 50,
+        x: 0,
+        y: 0,
+        toJSON() {},
+      });
+
+      // Player card is the next sibling of .global-nav.
+      const playerEl = document.createElement("section");
+      navEl.after(playerEl);
+      playerEl.getBoundingClientRect = () => ({
+        top: 50,
+        left: 0,
+        right: 0,
+        bottom: 200,
+        width: 0,
+        height: 150,
+        x: 0,
+        y: 0,
+        toJSON() {},
+      });
+
+      Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
+
+      const { container } = renderWithController(testCues[0]); // line 0
+      const activeLine = container.querySelector(".dialogue-line.active-line")!;
+      activeLine.getBoundingClientRect = () => ({
+        top: 400,
+        left: 0,
+        right: 0,
+        bottom: 430,
+        width: 0,
+        height: 30,
+        x: 0,
+        y: 0,
+        toJSON() {},
+      });
+
+      // Let the $effect's requestAnimationFrame fire.
+      await new Promise((r) => requestAnimationFrame(r));
+      await new Promise((r) => requestAnimationFrame(r));
+
+      expect(scrollBySpy).toHaveBeenCalled();
+      // stickyH = 50 + 150 = 200; vh = 800; el height = 30; el top = 400
+      // target = 400 - 200 - (800 - 200 - 30) / 2 = 200 - 285 = -85
+      const call = scrollBySpy.mock.calls.at(-1)![0] as unknown as { top: number };
+      expect(call.top).toBe(-85);
+
+      scrollBySpy.mockRestore();
+      navEl.remove();
+      playerEl.remove();
+    });
+
+    it("scrolls active key-phrase into view with sticky-header offset", async () => {
+      const scrollBySpy = vi.spyOn(window, "scrollBy").mockImplementation(() => {});
+
+      const navEl = document.createElement("div");
+      navEl.className = "global-nav";
+      document.body.appendChild(navEl);
+      navEl.getBoundingClientRect = () => ({
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 40,
+        width: 0,
+        height: 40,
+        x: 0,
+        y: 0,
+        toJSON() {},
+      });
+
+      const playerEl = document.createElement("section");
+      navEl.after(playerEl);
+      playerEl.getBoundingClientRect = () => ({
+        top: 40,
+        left: 0,
+        right: 0,
+        bottom: 190,
+        width: 0,
+        height: 150,
+        x: 0,
+        y: 0,
+        toJSON() {},
+      });
+
+      Object.defineProperty(window, "innerHeight", { value: 600, configurable: true });
+
+      const { container } = renderWithController(testCues[4]); // key_phrase 0
+      const activeKp = container.querySelector(".key-phrases-list li.active-kp")!;
+      activeKp.getBoundingClientRect = () => ({
+        top: 350,
+        left: 0,
+        right: 0,
+        bottom: 380,
+        width: 0,
+        height: 30,
+        x: 0,
+        y: 0,
+        toJSON() {},
+      });
+
+      await new Promise((r) => requestAnimationFrame(r));
+      await new Promise((r) => requestAnimationFrame(r));
+
+      expect(scrollBySpy).toHaveBeenCalled();
+      // stickyH = 40 + 150 = 190; vh = 600; el height = 30; el top = 350
+      // target = 350 - 190 - (600 - 190 - 30) / 2 = 160 - 190 = -30
+      const call = scrollBySpy.mock.calls.at(-1)![0] as unknown as { top: number };
+      expect(call.top).toBe(-30);
+
+      scrollBySpy.mockRestore();
+      navEl.remove();
+      playerEl.remove();
+    });
+
+    it("gracefully no-ops when the active element is not in the DOM", async () => {
+      const scrollBySpy = vi.spyOn(window, "scrollBy").mockImplementation(() => {});
+
+      // Render with null controller so no active line exists, then the
+      // effect's querySelector returns null → early return.
+      render(Transcript, {
+        props: defaultProps({
+          transcript: multiLineTranscript,
+          lesson: phraseLineLesson,
+          controller: null,
+        }),
+      });
+
+      await new Promise((r) => requestAnimationFrame(r));
+      await new Promise((r) => requestAnimationFrame(r));
+
+      expect(scrollBySpy).not.toHaveBeenCalled();
+      scrollBySpy.mockRestore();
+    });
+  });
+
   describe("synced subtitle — seek buttons", () => {
     it("renders a seek button per dialogue line", () => {
       const { container } = renderWithController(testCues[0]);
