@@ -84,15 +84,12 @@ _CLOSED_CLASS_STEMS: frozenset[str] = frozenset(
         "min",
         "din",
         "sin",
-        "vår",
         "deres",
         "hvilken",
         "hvilket",
         "hvilke",
         "noen",
         "noe",
-        "hver",
-        "selv",
         # conjunctions (note: "for" and "om" are omitted — they are
         # prepositions/particles that are productive compound stems, e.g.
         # "forstand", "omgang")
@@ -163,6 +160,44 @@ _CLOSED_CLASS_STEMS: frozenset[str] = frozenset(
     ]
 )
 
+# Compound-productive homographs: words that are closed-class in isolation
+# (determiner/pronoun/possessive) but are legitimate compound-initial elements
+# (hverdag, selvtillit, vårsol).  Blocked only when *not* word-initial — the
+# closed-class reading causes the original over-splits, but position separates
+# the readings.
+_COMPOUND_INITIAL_ONLY_STEMS: frozenset[str] = frozenset(["hver", "selv", "vår"])
+
+# Compound-productive prepositions/particles that are so frequent they always
+# win the ``min(part_ranks)`` comparison in :func:`_is_lexicalized_whole`,
+# neutering the guard for ANY word they appear in.  Excluded from that
+# comparison so the whole word competes against its *content* parts only.
+_GUARD_EXEMPT_PREPOSITIONS: frozenset[str] = frozenset(
+    [
+        "for",
+        "om",
+        "etter",
+        "over",
+        "under",
+        "inn",
+        "ut",
+        "opp",
+        "ned",
+        "av",
+        "på",
+        "til",
+        "mot",
+        "fra",
+        "ved",
+        "mellom",
+        "gjennom",
+    ]
+)
+
+# Human-ratified lexicalized wholes that the rank-based guard cannot catch
+# (the whole word does not outrank all non-exempt parts).  Each entry is a
+# one-off decision — this list must NOT grow into a general dumping ground.
+_LEXICALIZED_WHOLE_OVERRIDES: frozenset[str] = frozenset(["forstand"])
+
 
 @functools.cache
 def _load_ranked_lexicon() -> dict[str, int]:
@@ -185,16 +220,21 @@ def load_no_lexicon() -> frozenset[str]:
     return frozenset(_load_ranked_lexicon())
 
 
-def _is_content_stem(word: str, ranks: dict[str, int]) -> bool:
+def _is_content_stem(word: str, ranks: dict[str, int], *, initial: bool = True) -> bool:
     """True if *word* is a lexicon entry common enough to be a real compound part.
 
     Rejects closed-class function words (pronouns, conjunctions, etc.) that are
     too frequent to be productive compound stems — their extreme rank causes
     ordinary words to be over-split (e.g. ``sommer`` → ``som``+``mer``).
+    Compound-initial-only homographs (``hver``, ``selv``, ``vår``) are rejected
+    when *not* word-initial — their closed-class reading causes spurious splits,
+    but they are legitimate compound stems at the start of a word.
     """
     if len(word) < _MIN_STEM_LEN or word in _DERIVATIONAL_SUFFIX_SET:
         return False
     if word in _CLOSED_CLASS_STEMS:
+        return False
+    if not initial and word in _COMPOUND_INITIAL_ONLY_STEMS:
         return False
     rank = ranks.get(word)
     return rank is not None and rank <= _MAX_STEM_RANK
@@ -264,7 +304,7 @@ def _anchor_rank(parts: list[str], ranks: dict[str, int]) -> int:
     return min(ranks.get(p, _MAX_STEM_RANK) for p in parts)
 
 
-def _segment_surface(text: str, ranks: dict[str, int]) -> list[str] | None:
+def _segment_surface(text: str, ranks: dict[str, int], *, initial: bool = True) -> list[str] | None:
     """Split a content region (no trailing inflection) into surface morphemes.
 
     Recursive, frequency-gated compound splitter. Prefers the decomposition
@@ -277,12 +317,36 @@ def _segment_surface(text: str, ranks: dict[str, int]) -> list[str] | None:
     roots like ``politi`` from splitting into the rare junk fragments
     ``poli`` + ``tie``.  Returns ``None`` when *text* cannot be covered by any
     content stem.
+
+    *initial* is ``True`` for word-initial position (the first morpheme in a
+    compound) and ``False`` for all deeper positions — compound-initial-only
+    homographs (``hver``, ``selv``, ``vår``) are rejected at non-initial sites.
     """
     n = len(text)
     best: list[str] | None = None
     for end in range(n - 1, _MIN_STEM_LEN - 1, -1):
+        # S-overlap candidate: at a doubled-consonant boundary (e.g. ``bus|stasjon``
+        # where text[k-1]==text[k]=='s'), the surface part is ``text[:k]`` (``bus``)
+        # but the stem-gate check runs on the doubled spoken form ``text[:k]+text[k]``
+        # (``buss``).  Downstream spoken-form sites detect the overlap and re-double
+        # the final consonant for voice-alone rendering.
+        if end >= 2 and text[end - 1] == text[end] and text[end - 1] not in _NORWEGIAN_VOWELS:
+            overlap_spoken = text[:end] + text[end]  # e.g. ``buss``
+            if _is_content_stem(overlap_spoken, ranks, initial=initial):
+                # ``rest`` is never empty here: end <= n-1, so text[end:] has
+                # at least one character (no guard needed).
+                sub = _segment_surface(text[end:], ranks, initial=False)
+                if sub is not None:
+                    candidate = [text[:end]] + sub  # surface slice, not spoken
+                    if best is None:
+                        best = candidate
+                    else:
+                        cand_anchor = _anchor_rank(candidate, ranks)
+                        best_anchor = _anchor_rank(best, ranks)
+                        if cand_anchor < best_anchor or (cand_anchor == best_anchor and len(candidate) < len(best)):
+                            best = candidate
         first = text[:end]
-        if not _is_content_stem(first, ranks):
+        if not _is_content_stem(first, ranks, initial=initial):
             continue
         for link in _LINKING_ELEMENTS:
             if link and text[end : end + len(link)] != link:
@@ -290,7 +354,7 @@ def _segment_surface(text: str, ranks: dict[str, int]) -> list[str] | None:
             rest = text[end + len(link) :]
             if not rest:
                 continue
-            sub = _segment_surface(rest, ranks)
+            sub = _segment_surface(rest, ranks, initial=False)
             if sub is None:
                 continue
             candidate = [first + link] + sub
@@ -303,7 +367,7 @@ def _segment_surface(text: str, ranks: dict[str, int]) -> list[str] | None:
                     best = candidate
     if best is not None:
         return best
-    if _is_content_stem(text, ranks):
+    if _is_content_stem(text, ranks, initial=initial):
         return [text]
     return None
 
@@ -315,11 +379,18 @@ def _is_lexicalized_whole(word: str, content_parts: list[str], ranks: dict[str, 
     rarer than ``fly``/``plass``); a lexicalized word like ``morgen`` (rank ~424)
     out-ranks both ``mor`` and ``gen``. When the whole word is more frequent than
     every part, it is not really that compound — keep it whole.
+
+    Compound-productive prepositions (``for``, ``etter``, etc.) are so frequent
+    they always win the min, so they are excluded from the comparison — the
+    whole word competes against its *content* parts only.  A small human-ratified
+    override set handles words where the rank data still can't catch the split.
     """
+    if word in _LEXICALIZED_WHOLE_OVERRIDES:
+        return True
     whole_rank = ranks.get(word)
     if whole_rank is None:
         return False
-    part_ranks = [ranks[p] for p in content_parts if p in ranks]
+    part_ranks = [ranks[p] for p in content_parts if p in ranks and p not in _GUARD_EXEMPT_PREPOSITIONS]
     return bool(part_ranks) and whole_rank < min(part_ranks)
 
 
@@ -383,6 +454,34 @@ def _spoken_syllable(syllables: list[str], i: int) -> str:
         if s and nxt and s[-1] == nxt[0] and s[-1] not in _NORWEGIAN_VOWELS:
             return s + s[-1]
     return s
+
+
+def _spoken_part(parts: list[str], i: int) -> str:
+    """Spoken form of compound part *i*, restoring an overlap-truncated consonant.
+
+    When a compound is split at a doubled-consonant boundary (``buss``+``stasjon``
+    surface as ``bus``+``stasjon``), the truncated part is voiced with its full
+    doubled final consonant (``bus`` → ``buss``).  Partials/rebuilds always use
+    raw surfaces so ``"".join(...)`` reproduces the original string.
+
+    A matching consonant boundary alone does NOT mean overlap: ``bok|klubb`` and
+    ``sol|lys`` have the same surface shape (part ends with the next part's
+    onset) but their left parts are full lexemes with LONG vowels — voicing
+    ``bokk``/``soll`` would be wrong.  The discriminator is the lexicon: an
+    overlap truncation is by construction not a content stem (it lost a
+    consonant; only its doubled form passed the stem gate in
+    ``_segment_surface``), while a legitimate part is one.  So double only when
+    the doubled form is a content stem AND the surface is not.
+    """
+    p = parts[i]
+    if i + 1 < len(parts):
+        nxt = parts[i + 1]
+        if p and nxt and p[-1] == nxt[0] and p[-1] not in _NORWEGIAN_VOWELS:
+            ranks = _load_ranked_lexicon()
+            doubled = p + p[-1]
+            if _is_content_stem(doubled, ranks) and not _is_content_stem(p, ranks):
+                return doubled
+    return p
 
 
 def syllabify_morpheme(part: str) -> list[str]:
@@ -477,13 +576,16 @@ def _build_compound_sequence(phrase: str, morphemes: list[str]) -> list[str]:
 
     Tail-first, each part is spoken whole, broken into its pieces (backward),
     rebuilt, then the running partial toward the full phrase is added.
+    Overlap-truncated parts (s-overlap compounds) are voiced with their
+    doubled final consonant; partials/rebuilds always use raw surfaces.
     """
     units = _compound_buildup_units(morphemes)
+    parts_list = [part for part, _ in units]
     seq: list[str] = [phrase]
 
     for i in range(len(units) - 1, -1, -1):
         part, pieces = units[i]
-        seq.append(part)
+        seq.append(_spoken_part(parts_list, i))
         if len(pieces) > 1:
             for j in range(len(pieces) - 1, -1, -1):
                 seq.append(_spoken_syllable(pieces, j))
@@ -585,6 +687,7 @@ def slow_norwegian_word(word: str) -> str:
     morphemes = segment_compound(core)
     if len(morphemes) >= 2:
         units = _compound_buildup_units(morphemes)
-        core = ", ".join(part for part, _ in units)
+        parts_list = [part for part, _ in units]
+        core = ", ".join(_spoken_part(parts_list, i) for i in range(len(parts_list)))
 
     return f"{lead}{core}{trail}"

@@ -103,6 +103,17 @@ def test_is_content_stem_closed_class_excluded():
         assert _is_content_stem(word, ranks) is False, f"{word!r} should be excluded"
 
 
+def test_is_content_stem_compound_initial_only():
+    """Compound-initial-only homographs are valid stems at word-initial position
+    but rejected at non-initial positions."""
+    ranks = _load_ranked_lexicon()
+    for word in ("hver", "selv", "vår"):
+        assert _is_content_stem(word, ranks, initial=True) is True, f"{word!r} should be allowed at initial position"
+        assert _is_content_stem(word, ranks, initial=False) is False, (
+            f"{word!r} should be rejected at non-initial position"
+        )
+
+
 # -- segment_compound ----------------------------------------------------
 
 
@@ -230,9 +241,117 @@ def test_segment_compound_etterforskning_preposition_eligible():
     assert segment_compound("etterforskning") == ["etter", "forskning"]
 
 
-def test_segment_compound_forstand_preposition_eligible():
-    """'for' is a preposition/particle and MUST remain a valid compound stem."""
-    assert segment_compound("forstand") == ["for", "stand"]
+def test_segment_compound_forstand_lexicalized_whole():
+    """'forstand' (understanding) is a lexicalized derivative, not a transparent
+    compound — it stays whole.  The rank-based guard can't catch it (forstand
+    does not outrank stand), so it is in the human-ratified override set."""
+    assert segment_compound("forstand") == ["forstand"]
+
+
+# -- segment_compound: for-derivatives that DO split (for stays eligible) ---
+
+
+def test_segment_compound_fortid_splits():
+    """'fortid' (before-time) is a transparent for-derivative that splits."""
+    assert segment_compound("fortid") == ["for", "tid"]
+
+
+def test_segment_compound_formiddag_splits():
+    """'formiddag' (fore-midday) is a transparent for-derivative that splits."""
+    assert segment_compound("formiddag") == ["for", "middag"]
+
+
+# -- segment_compound: compound-initial-only homographs --------------------
+
+
+def test_segment_compound_hverdag():
+    """'hver' is compound-productive at word-initial position."""
+    assert segment_compound("hverdag") == ["hver", "dag"]
+
+
+def test_segment_compound_hverdagen():
+    assert segment_compound("hverdagen") == ["hver", "dag", "en"]
+
+
+def test_segment_compound_selvtillit():
+    """'selv' is compound-productive at word-initial position."""
+    assert segment_compound("selvtillit") == ["selv", "tillit"]
+
+
+# -- segment_compound: s-overlap compounds ---------------------------------
+
+
+def test_segment_compound_busstasjon_s_overlap():
+    """'busstasjon' splits at the doubled-consonant boundary: surface ['bus',
+    'stasjon'], spoken 'buss, stasjon'."""
+    assert segment_compound("busstasjon") == ["bus", "stasjon"]
+
+
+def test_slow_busstasjon_s_overlap():
+    """Overlap-truncated part is voiced with doubled final consonant."""
+    assert slow_norwegian_word("busstasjon") == "buss, stasjon"
+
+
+def test_breakdown_busstasjon_s_overlap():
+    """Breakdown contains 'buss' as the spoken form, never bare 'bus', and no
+    step ever spells the triple-s join ('bussstasjon')."""
+    bd = build_norwegian_breakdown("busstasjon")
+    assert "buss" in bd
+    assert "stasjon" in bd
+    assert "bus" not in bd  # the truncated surface is never voiced alone
+    for item in bd:
+        assert "sss" not in item, f"triple-s join leaked into {item!r}"
+
+
+def test_segment_compound_fjellandskap_s_overlap():
+    """'fjellandskap' splits at the ll-boundary: surface ['fjel', 'landskap']."""
+    assert segment_compound("fjellandskap") == ["fjel", "landskap"]
+
+
+def test_segment_compound_snomann_no_s_overlap():
+    """'snømann' must NOT trigger s-overlap — its nm boundary is not a
+    doubled consonant."""
+    assert segment_compound("snømann") == ["snø", "mann"]
+
+
+def test_spoken_part_no_false_doubling_for_full_lexeme_parts():
+    """A matching consonant boundary is NOT enough to double: 'bok|klubb' and
+    'sol|lys' have the same surface shape as an overlap truncation, but 'bok'
+    and 'sol' are full lexemes (long vowels) — voicing 'bokk'/'soll' would be
+    wrong. Only a non-stem surface whose doubled form IS a stem doubles
+    ('bus' → 'buss')."""
+    assert slow_norwegian_word("bokklubb") == "bok, klubb"
+    assert slow_norwegian_word("sollys") == "sol, lys"
+    bd = build_norwegian_breakdown("bokklubb")
+    assert "bok" in bd
+    assert "bokk" not in bd
+
+
+def test_segment_surface_overlap_candidate_beats_existing_best():
+    """The overlap comparison branch: a candidate formed at a doubled-consonant
+    boundary competes against an already-set best and WINS on anchor rank.
+
+    Synthetic 'fooffbar' (descending `end` scan): at end=5 the normal path sets
+    best=['fooff','bar'] (anchor 100).  At end=4 the ff-boundary overlap fires:
+    spoken 'foof'+'f'='fooff' passes the stem gate, rest 'fbar' (anchor 5) —
+    5 < 100, so the overlap candidate ['foof','fbar'] takes over."""
+    ranks = {
+        "fooff": 100,  # normal first part at end=5 AND overlap spoken at end=4
+        "bar": 200,  # rest after the normal split
+        "fbar": 5,  # rest after the overlap split (the winning anchor)
+    }
+    assert _segment_surface("fooffbar", ranks) == ["foof", "fbar"]
+
+
+def test_segment_surface_overlap_candidate_loses_to_existing_best():
+    """Same shape, but the overlap candidate's anchor is WEAKER than the
+    existing best's — the comparison branch keeps the normal split."""
+    ranks = {
+        "fooff": 100,
+        "bar": 200,
+        "fbar": 7000,  # overlap rest is the weakest anchor: min(8000,7000) > 100
+    }
+    assert _segment_surface("fooffbar", ranks) == ["fooff", "bar"]
 
 
 # -- _segment_surface edge branches --------------------------------------
