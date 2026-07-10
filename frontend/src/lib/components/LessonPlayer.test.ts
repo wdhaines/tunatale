@@ -7,7 +7,7 @@ import LessonPlayer from "./LessonPlayer.svelte";
 import PillSyncHarness from "../../test/PillSyncHarness.svelte";
 import { tick } from "svelte";
 import { api } from "$lib/api";
-import type { LessonAudio } from "$lib/api";
+import type { Cue, LessonAudio } from "$lib/api";
 import type { PlaybackController } from "$lib/playback/playbackController.svelte";
 
 beforeAll(() => {
@@ -88,15 +88,75 @@ const audioWithCuesNull: LessonAudio = {
   cues: null,
 };
 
+// Post-Phase-A shape: every section row carries its own (rebased) cue manifest.
+// The phase/enunciation track model is only active for lessons of this shape.
+function sectionCue(sectionIndex: number, sectionType: string, text: string): Cue {
+  return {
+    index: 0,
+    start_ms: 0,
+    end_ms: 800,
+    section_index: sectionIndex,
+    section_type: sectionType,
+    phrase_index: 0,
+    role: "speaker",
+    language_code: "sl",
+    text,
+    ref: { kind: "line", target_index: 0 },
+  };
+}
+
 const audioWithAllSections: LessonAudio = {
   audio_id: "a1",
   lesson_id: "l1",
   sections: [
-    { audio_id: "s1", section_index: 0, section_type: "key_phrases", title: "Key Phrases" },
-    { audio_id: "s2", section_index: 1, section_type: "natural_speed", title: "Natural Speed" },
-    { audio_id: "s3", section_index: 2, section_type: "translated", title: "Translated" },
-    { audio_id: "s4", section_index: 3, section_type: "slow_speed", title: "Slow Speed" },
-    { audio_id: "s5", section_index: 4, section_type: "slow_translated", title: "Slow Translated" },
+    {
+      audio_id: "s1",
+      section_index: 0,
+      section_type: "key_phrases",
+      title: "Key Phrases",
+      cues: [
+        {
+          index: 0,
+          start_ms: 0,
+          end_ms: 800,
+          section_index: 0,
+          section_type: "key_phrases",
+          phrase_index: 0,
+          role: "narrator",
+          language_code: "en",
+          text: "Hello world",
+          ref: { kind: "key_phrase", target_index: 0 },
+        },
+      ],
+    },
+    {
+      audio_id: "s2",
+      section_index: 1,
+      section_type: "natural_speed",
+      title: "Natural Speed",
+      cues: [sectionCue(1, "natural_speed", "Pozdravljeni")],
+    },
+    {
+      audio_id: "s3",
+      section_index: 2,
+      section_type: "translated",
+      title: "Translated",
+      cues: [sectionCue(2, "translated", "Pozdravljeni")],
+    },
+    {
+      audio_id: "s4",
+      section_index: 3,
+      section_type: "slow_speed",
+      title: "Slow Speed",
+      cues: [sectionCue(3, "slow_speed", "Pozdravljeni")],
+    },
+    {
+      audio_id: "s5",
+      section_index: 4,
+      section_type: "slow_translated",
+      title: "Slow Translated",
+      cues: [sectionCue(4, "slow_translated", "Pozdravljeni")],
+    },
   ],
   cues: [
     {
@@ -175,7 +235,7 @@ describe("LessonPlayer", () => {
       // current-line subtitle — the synced transcript is the subtitle there.
       // The phase/enunciation/English controls appear in both modes.
       const { container } = render(LessonPlayer, {
-        props: { audio: audioWithCues, compact: true },
+        props: { audio: audioWithAllSections, compact: true },
       });
       expect(container.querySelector(".current-line")).toBeFalsy();
       expect(container.querySelector(".download-section")).toBeFalsy();
@@ -253,8 +313,8 @@ describe("LessonPlayer", () => {
       expect(container.querySelector(".phase-row")).toBeFalsy();
     });
 
-    it("renders Key Phrases and Dialogue buttons when cues present", () => {
-      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
+    it("renders Key Phrases and Dialogue buttons when per-section cues present", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
       const phaseRow = container.querySelector(".phase-row");
       expect(phaseRow).toBeTruthy();
       const buttons = phaseRow!.querySelectorAll("button");
@@ -265,9 +325,33 @@ describe("LessonPlayer", () => {
 
     it("renders the phase row in compact mode too (identical controls)", () => {
       const { container } = render(LessonPlayer, {
-        props: { audio: audioWithCues, compact: true },
+        props: { audio: audioWithAllSections, compact: true },
       });
       expect(container.querySelector(".phase-row")).toBeTruthy();
+    });
+
+    it("legacy lesson (no per-section cues): keeps the full track and hides the phase row", () => {
+      // Pre-Phase-A lessons have a full-track manifest but cues=null on every
+      // section row. Switching tracks there would strand the player on one
+      // section's audio with no cues (dead subtitle + sentence nav), so the
+      // phase model must stay off and the legacy full-lesson track must keep
+      // playing. Regression: onMount applyTrack() used to fire on hasCues alone.
+      const srcSpy = vi.spyOn(HTMLMediaElement.prototype, "src", "set");
+      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
+      expect(container.querySelector(".phase-row")).toBeFalsy();
+      const srcs = srcSpy.mock.calls.map((c) => c[0]);
+      expect(srcs).toContain("/api/audio/a1"); // the full concatenated track
+      expect(srcs).not.toContain("/api/audio/s1");
+      expect(srcs).not.toContain("/api/audio/s2"); // no silent track switch
+      srcSpy.mockRestore();
+    });
+
+    it("legacy lesson: subtitle and sentence nav still work off the full-track cues", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
+      // currentTime 0 → first full-track cue is active; the subtitle must carry
+      // real text, not render an empty shell (the pre-fix failure mode).
+      expect(container.querySelector(".current-line")!.textContent).toContain("Hello world");
+      expect(container.querySelector(".sentence-row")).toBeTruthy();
     });
 
     it("clicking Key Phrases activates that phase", () => {

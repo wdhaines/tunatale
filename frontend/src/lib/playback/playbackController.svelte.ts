@@ -436,6 +436,18 @@ export function createPlaybackController(deps: Deps): PlaybackController {
 
   // For button visibility: is there audio for this transcript ref at all?
   function findPlayableCue(ref: CueRef): Cue | null {
+    const section = audioSections.find((s) => s.section_type === canonicalSection(ref));
+    if (!section?.cues) {
+      // Legacy lesson (pre per-section cues): the section rows carry no
+      // manifests, but the full-track manifest spans every section — resolve
+      // ▶ against it. playRef then seeks in place via its activeCues branch,
+      // so the player never switches to a cue-less section track.
+      return (
+        initialCues?.find(
+          (c) => c.ref && c.ref.kind === ref.kind && c.ref.target_index === ref.target_index,
+        ) ?? null
+      );
+    }
     return findCueInSection(canonicalSection(ref), ref);
   }
 

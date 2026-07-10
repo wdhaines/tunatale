@@ -41,6 +41,17 @@
 	const hasCues =
 		init.audio.cues !== null && init.audio.cues !== undefined && init.audio.cues.length > 0;
 
+	// Track mode: the phase/enunciation model switches between per-section
+	// tracks, which is only meaningful when every section row carries its own
+	// cue manifest. Legacy lessons (rendered before per-section cues existed)
+	// have cues on the full track only — they must stay on the legacy
+	// full-lesson track, where subtitle + sentence nav keep working off the
+	// full manifest. Switching them would strand playback on one cue-less
+	// section (dead subtitle, dead ▶/nav, other sections unreachable).
+	const hasSectionCues =
+		init.audio.sections.length > 0 && init.audio.sections.every((s) => (s.cues?.length ?? 0) > 0);
+	const trackMode = hasCues && hasSectionCues;
+
 	const sectionTypes = new Set(init.audio.sections.map((s) => s.section_type));
 	const hasAllSections =
 		sectionTypes.has('key_phrases') &&
@@ -135,11 +146,12 @@
 
 	onMount(() => {
 		// Seed the persisted phase/enunciation/English selection and make it
-		// effective. Gated on hasCues: without cues the phase model doesn't
-		// apply, so we leave the legacy full-lesson track in place. selectTrack
-		// no-ops on a missing section, so a persisted selection that a given
-		// lesson can't satisfy safely falls back to the initial track.
-		if (hasCues) {
+		// effective. Gated on trackMode: without per-section cues the phase
+		// model doesn't apply, so we leave the legacy full-lesson track in
+		// place. selectTrack no-ops on a missing section, so a persisted
+		// selection that a given lesson can't satisfy safely falls back to the
+		// initial track.
+		if (trackMode) {
 			lessonPlayerPref.init();
 			const sel = lessonPlayerPref.selection;
 			phase = sel.phase;
@@ -175,7 +187,7 @@
 		</div>
 	{/if}
 
-	{#if hasCues}
+	{#if trackMode}
 		<div class="phase-row">
 			<button
 				class="phase-btn"
@@ -243,7 +255,7 @@
 		</div>
 	</div>
 
-	{#if hasCues && hasAllSections}
+	{#if trackMode && hasAllSections}
 		<div class="controls-row">
 			<button class="enunciation-btn" onclick={onEnunClick}>
 				{ENUNCIATION_OPTIONS[enunIndex].label}

@@ -1421,5 +1421,43 @@ describe("playbackController", () => {
       audioEl.dispatchEvent(new Event("loadedmetadata"));
       expect(audioEl.currentTime).toBeCloseTo(0.8, 3); // sought to kp1, not position 0
     });
+
+    describe("legacy lessons (pre-Phase-A: sections carry no per-section cues)", () => {
+      // Rendered before per-section cue manifests existed: the API returns
+      // cues=null on every section row, but the full-track manifest is present
+      // and spans all sections. The transcript ▶ buttons must keep working by
+      // resolving against the full-track cues and seeking in place.
+      const legacyAudio: LessonAudio = {
+        audio_id: "a1",
+        lesson_id: "l1",
+        sections: [
+          { audio_id: "skp", section_index: 0, section_type: "key_phrases", title: "Key Phrases" },
+          { audio_id: "snat", section_index: 1, section_type: "natural_speed", title: "Natural" },
+        ],
+        cues: [kp0, kp1, line0],
+      };
+
+      it("findPlayableCue falls back to the full-track cues when the section has none", () => {
+        const ctrl = createController({ audio: legacyAudio });
+        expect(ctrl.findPlayableCue({ kind: "key_phrase", target_index: 1 })).toEqual(kp1);
+        expect(ctrl.findPlayableCue({ kind: "line", target_index: 0 })).toEqual(line0);
+      });
+
+      it("findPlayableCue still returns null for a ref absent from the full track", () => {
+        const ctrl = createController({ audio: legacyAudio });
+        expect(ctrl.findPlayableCue({ kind: "line", target_index: 9 })).toBeNull();
+      });
+
+      it("playRef seeks within the full track without swapping src", () => {
+        const ctrl = createController({ audio: legacyAudio });
+        const srcBefore = audioEl.src;
+        ctrl.playRef({ kind: "line", target_index: 0 });
+        expect(audioEl.src).toBe(srcBefore);
+        expect(audioEl.currentTime).toBeCloseTo(0.7, 3);
+        ctrl.playRef({ kind: "key_phrase", target_index: 1 });
+        expect(audioEl.src).toBe(srcBefore); // never switches to a cue-less section track
+        expect(audioEl.currentTime).toBeCloseTo(0.8, 3);
+      });
+    });
   });
 });
