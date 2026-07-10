@@ -334,6 +334,7 @@ def effective_review_budget(
     reviews_today: int,
     introduced_today: int,
     *,
+    interday_learning_due: int = 0,
     new_cards_ignore_review_limit: bool = False,
 ) -> int:
     """Remaining review-per-day budget, charging today's new-card intros against it.
@@ -358,10 +359,18 @@ def effective_review_budget(
     `resolve_new_cards_ignore_review_limit`), new-card intros do NOT charge the
     review budget — keep the single-source shape by branching here, not at call
     sites. Defaults off (Anki's default).
+
+    Layer 79: `interday_learning_due` (`count_interday_learning_due`) charges the
+    budget too — Anki gathers queue=3 day-learning under `LimitKind::Review`
+    (gathering.rs:35-61) BEFORE reviews, and that decrement is NOT gated on
+    `new_cards_ignore_review_limit` (limits.rs:136 gates only the new re-min).
+    Disjoint from `reviews_today`: an interday card *answered* today moved its
+    due date out of today's window, so it can't appear in both terms.
     """
-    if new_cards_ignore_review_limit:
-        return max(0, review_cap - reviews_today)
-    return max(0, review_cap - reviews_today - introduced_today)
+    budget = review_cap - reviews_today - interday_learning_due
+    if not new_cards_ignore_review_limit:
+        budget -= introduced_today
+    return max(0, budget)
 
 
 def refresh_review_settings(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:

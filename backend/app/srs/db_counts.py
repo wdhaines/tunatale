@@ -197,6 +197,41 @@ class DbCountsMixin:
             ).fetchone()
             return row[0] if row else 0
 
+    def count_interday_learning_due(self, today: date) -> int:
+        """Count interday (re)learning directions due today — Anki's queue=3.
+
+        Layer 79: Anki gathers day-scale learning steps under the REVIEW limit
+        (``gather_due_cards`` hardcodes ``LimitKind::Review`` for
+        ``DueCardKind::Learning``, gathering.rs:35-61), so each one due today
+        consumes the review-per-day budget exactly like a review card — while
+        still displaying in the *learning* count (``day_learning`` feeds
+        ``learn_count``, builder/mod.rs:189-218). Oracle-pinned by
+        ``test_parity_daily_caps.py::test_anki_interday_learning_charges_review_limit``.
+
+        "Interday footing" mirrors the ``lastIvl`` sign convention
+        (interval_kind.rs): the scheduled step spans >= 1 day of wall clock
+        (``due_at - last_review``); sub-day steps are queue=1 (intraday), exempt
+        from the budget. Rows without ``last_review`` (listen-first
+        ``promote_to_learning``) stay out — Anki keeps those at queue=0. The due
+        bound is the end of today's 4am-rollover window: queue=3 dues are
+        day-level, so anything due this Anki day (or overdue) is gathered
+        regardless of intra-day time.
+        """
+        _, end_iso = _anki_day_bounds_utc(today)
+        with self._get_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) FROM collocation_directions
+                WHERE state IN ('learning', 'relearning')
+                  AND due_at IS NOT NULL
+                  AND last_review IS NOT NULL
+                  AND due_at < ?
+                  AND julianday(due_at) - julianday(last_review) >= 1.0
+                """,
+                (end_iso,),
+            ).fetchone()
+            return row[0] if row else 0
+
     def count_due_collocations(
         self,
         as_of: date,

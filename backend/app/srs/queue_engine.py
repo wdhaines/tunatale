@@ -215,7 +215,8 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     # served queue (not just the badge) stops at the cap. reviews_today grows as
     # the user grades, so the cap tightens — but graded cards leave the due pool,
     # so the surviving frozen reviews always equal the remaining budget (no
-    # mid-session drops). Learning cards are NOT review-capped (Anki exempts them).
+    # mid-session drops). Intraday learning cards (queue=1) are NOT review-capped;
+    # interday ones (queue=3) charge the budget via Layer 79 below.
     review_cap, _ = resolve_daily_review_cap(db)
     reviews_today = db.count_reviews_completed_today(today)
     # Anki's "New cards ignore review limit" deck option (default OFF, synced from
@@ -226,8 +227,15 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     # New cards introduced today also consume the review budget (Layer 76 —
     # rslib/decks/limits.rs:104-108), so the served-review cap nets them out too,
     # matching Anki's queue build (introducing new cards shrinks review headroom).
+    # Interday learning cards due today charge the same budget (Layer 79 — Anki
+    # gathers queue=3 under LimitKind::Review before reviews); the cards
+    # themselves still serve from the learning queue, uncapped.
     review_remaining = effective_review_budget(
-        review_cap, reviews_today, introduced_today, new_cards_ignore_review_limit=ignore_review_limit
+        review_cap,
+        reviews_today,
+        introduced_today,
+        interday_learning_due=db.count_interday_learning_due(today),
+        new_cards_ignore_review_limit=ignore_review_limit,
     )
     buried = db.list_collocations_reviewed_today(today)
 

@@ -1802,6 +1802,92 @@ class TestCountReviewsCompletedToday:
         assert srs_db.count_reviews_completed_today(today) == 2
 
 
+class TestCountInterdayLearningDue:
+    """Layer 79: interday learning cards (Anki queue=3, DayLearn) due today
+    charge the review-per-day budget — Anki gathers them under
+    ``LimitKind::Review`` (gathering.rs:35-61), oracle-pinned by
+    ``test_parity_daily_caps.py::test_anki_interday_learning_charges_review_limit``.
+
+    TT's discriminator for "interday footing": the scheduled step spans >= 1 day
+    (``due_at - last_review``), the same sign convention as ``lastIvl``
+    (interval_kind.rs). Intraday steps (queue=1) are exempt from the budget.
+    """
+
+    def _seed_learning(
+        self,
+        srs_db,
+        text: str,
+        *,
+        due_at: datetime,
+        last_review: datetime | None,
+        state: SRSState = SRSState.LEARNING,
+    ) -> None:
+        srs_db.add_collocation(_unit(text, "x"), language_code="sl")
+        item = srs_db.get_collocation(text)
+        srs_db.update_direction(
+            item.guid,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=state,
+                due_at=due_at,
+                last_review=last_review,
+                left=1001,
+            ),
+        )
+
+    def test_counts_interday_learning_due_today(self, srs_db):
+        today = date.today()
+        due = anki_day_anchor(today) + timedelta(hours=8)
+        self._seed_learning(srs_db, "interday", due_at=due, last_review=due - timedelta(days=1))
+        assert srs_db.count_interday_learning_due(today) == 1
+
+    def test_counts_overdue_interday_from_yesterday(self, srs_db):
+        """Anki gathers queue=3 with due <= today — overdue still charges."""
+        today = date.today()
+        due = anki_day_anchor(today) - timedelta(hours=8)
+        self._seed_learning(srs_db, "overdue", due_at=due, last_review=due - timedelta(days=2))
+        assert srs_db.count_interday_learning_due(today) == 1
+
+    def test_counts_interday_relearning(self, srs_db):
+        """Day-scale RELEARN steps are queue=3 too (DAY_LEARN_RELEARN)."""
+        today = date.today()
+        due = anki_day_anchor(today) + timedelta(hours=8)
+        self._seed_learning(
+            srs_db, "relearn", due_at=due, last_review=due - timedelta(days=1), state=SRSState.RELEARNING
+        )
+        assert srs_db.count_interday_learning_due(today) == 1
+
+    def test_excludes_intraday_step(self, srs_db):
+        """A sub-day step is queue=1 — exempt from the review budget."""
+        today = date.today()
+        due = anki_day_anchor(today) + timedelta(hours=8)
+        self._seed_learning(srs_db, "intraday", due_at=due, last_review=due - timedelta(minutes=10))
+        assert srs_db.count_interday_learning_due(today) == 0
+
+    def test_excludes_interday_due_later(self, srs_db):
+        """A day-scale step not yet due today doesn't charge today's budget."""
+        today = date.today()
+        due = anki_day_anchor(today) + timedelta(days=3)
+        self._seed_learning(srs_db, "future", due_at=due, last_review=due - timedelta(days=3))
+        assert srs_db.count_interday_learning_due(today) == 0
+
+    def test_excludes_promoted_without_last_review(self, srs_db):
+        """listen-first ``promote_to_learning`` rows (no last_review) stay out —
+        Anki keeps those cards at queue=0, so they never charge its budget."""
+        today = date.today()
+        due = anki_day_anchor(today) + timedelta(hours=8)
+        self._seed_learning(srs_db, "promoted", due_at=due, last_review=None)
+        assert srs_db.count_interday_learning_due(today) == 0
+
+    def test_excludes_review_state(self, srs_db):
+        """REVIEW cards charge via reviews_today/due-count paths, not this one."""
+        today = date.today()
+        due = anki_day_anchor(today) + timedelta(hours=8)
+        self._seed_learning(srs_db, "review_st", due_at=due, last_review=due - timedelta(days=5), state=SRSState.REVIEW)
+        assert srs_db.count_interday_learning_due(today) == 0
+
+
 class TestFileBased:
     """Tests for file-backed SRS database persistence."""
 

@@ -45,6 +45,6 @@ def test_mixin_composition() -> None:
 
 def test_public_method_count_pinned() -> None:
     count = sum(1 for m in dir(SRSDatabase) if not m.startswith("_") and callable(getattr(SRSDatabase, m)))
-    # 100: get_variant_candidates_with_items replaces get_variant_candidate_rows
-    # (single-query scan+hydrate swap, net zero)
-    assert count == 100
+    # 100 + count_interday_learning_due (Layer 79); the variant scan+hydrate
+    # single-query merge was a net-zero swap
+    assert count == 101

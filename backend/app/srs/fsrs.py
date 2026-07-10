@@ -1475,19 +1475,22 @@ def _graduate_to_review(
     )
 
 
-def _compute_review_kind(prev_state: SRSState, new_state: SRSState) -> int:
-    """Derive Anki revlog.type from the state transition.
+def _compute_review_kind(prev_state: SRSState) -> int:
+    """Derive Anki revlog.type from the PRE-answer state (Layer 78).
 
-    0=Learn 1=Review 2=Relearn 4=Manual
+    0=Learn 1=Review 2=Relearn 4=Manual. Anki builds the revlog entry from
+    ``current.revlog_kind()`` — the state the card was answered FROM, never the
+    next state (``RevlogEntryPartial::new`` in answering/revlog.rs:18-33). So a
+    lapse (REVIEW→relearning) logs Review=1 (states/review.rs:56-62) and a
+    graduating answer (LEARNING→review) logs Learning=0; Relearning=2 applies
+    only to presses on a card already in relearn steps (relearning.rs:23-25).
+    Same mapping as ``_derive_revlog_shape`` (sync_engine.py), keyed there on
+    ``prior_state``.
     """
-    if new_state == SRSState.REVIEW and prev_state != SRSState.REVIEW:
-        return 1
-    if new_state == SRSState.RELEARNING:
-        return 2
-    if prev_state == SRSState.REVIEW and new_state == SRSState.REVIEW:
-        return 1
-    if new_state in (SRSState.LEARNING, SRSState.NEW):
+    if prev_state in (SRSState.NEW, SRSState.LEARNING):
         return 0
+    if prev_state == SRSState.RELEARNING:
+        return 2
     return 1
 
 
@@ -1514,8 +1517,25 @@ def _compute_revlog_interval(new_dir: DirectionState, now: datetime) -> int:
     return max(1, days)
 
 
-def _compute_revlog_last_interval(prev: DirectionState) -> int:
-    """Compute last_interval for tt_revlog from previous state."""
+def _compute_revlog_last_interval(prev: DirectionState, col_crt: int | None = None) -> int:
+    """Compute last_interval for tt_revlog from the pre-answer state.
+
+    Mirrors Anki's ``lastIvl``: ``current.interval_kind()`` encoded via
+    ``as_revlog_interval`` (interval_kind.rs:32-37) — days-positive for a card
+    on interday footing, seconds-negative for an intraday step.
+
+    Layer 78: a REVIEW card's interval kind is ``InDays(card.interval)``
+    (states/review.rs:50-54), always >= 1 — NOT the wall-clock ``due_at -
+    last_review`` delta. TT's review ``due_at`` is day-granular
+    (``review_due_at_for_col_day``), so a card graded late in the local day can
+    sit < 24h before its due boundary; the old delta formula flipped that to
+    negative seconds, and ``count_reviews_completed_today``'s
+    ``last_interval >= 1`` filter then missed the answer (review budget never
+    charged — the frozen review badge). Reconstruct ``card.ivl`` via
+    ``_scheduled_days_for_grade`` (the Layer 51 helper) instead, floored at 1.
+    """
+    if prev.state == SRSState.REVIEW:
+        return max(1, _scheduled_days_for_grade(prev, col_crt))
     if prev.last_review and prev.due_at:
         days = (prev.due_at - prev.last_review).days
         if days >= 1:
@@ -1534,6 +1554,7 @@ def build_revlog_row(
     time_ms: int,
     *,
     now: datetime | None = None,
+    col_crt: int | None = None,
 ) -> RevlogRow:
     """Construct a RevlogRow from the outcome of a ``schedule()`` call.
 
@@ -1550,9 +1571,9 @@ def build_revlog_row(
         direction=direction,
         button_chosen=rating.value,
         interval=_compute_revlog_interval(new_dir, now),
-        last_interval=_compute_revlog_last_interval(prev),
+        last_interval=_compute_revlog_last_interval(prev, col_crt),
         factor=0,
         taken_millis=time_ms,
-        review_kind=_compute_review_kind(prev.state, new_dir.state),
+        review_kind=_compute_review_kind(prev.state),
         anki_card_id=prev.anki_card_id,
     )

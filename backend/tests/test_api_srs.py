@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -719,6 +719,87 @@ class TestReviewQueue:
         assert len(new_items) == 3, (
             f"remaining review budget 5−2=3 caps the new slice (quota 5, 4 available); got {len(new_items)}"
         )
+
+    async def test_review_queue_interday_learning_charges_review_budget(self, api_app_state):
+        """Layer 79: interday learning cards due today shrink the SERVED review slice.
+
+        Mirrors the oracle pin (test_parity_daily_caps.py::
+        test_anki_interday_learning_charges_review_limit): review cap 3, 5 due
+        reviews, 2 interday learning cards (day-scale step, due today) → Anki
+        gathers the interday cards under LimitKind::Review first, leaving budget
+        for 1 review and 0 new. Pre-fix TT served 3 reviews (interday exempt).
+        """
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        for i in range(5):
+            _add_review_due_collocation(db, f"rev{i}", today)
+        due = anki_day_anchor(today) + timedelta(hours=8)
+        for i in range(2):
+            seed_direction(
+                db,
+                text=f"interday{i}",
+                state=SRSState.LEARNING,
+                due_at=due,
+                last_review=due - timedelta(days=1),
+                left=1001,
+            )
+        db.add_collocation(
+            SyntacticUnit(text="newbie", translation="nb", word_count=1, difficulty=1, source="test"),
+            language_code="sl",
+        )
+        db.set_anki_state_cache("daily_review_cap", "3")
+        db.set_anki_state_cache("daily_new_cap", "5")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            data = (await client.get("/api/srs/review-queue?session_start=1")).json()
+
+        review_items = [q for q in data["queue"] if q["state"] == "review"]
+        new_items = [q for q in data["queue"] if q["state"] == "new"]
+        assert len(review_items) == 1, (
+            f"2 interday learning cards consume 2 of the 3-review budget → 1 review served; got {len(review_items)}"
+        )
+        assert len(new_items) == 0, (
+            f"interday learning + the served review exhaust the new headroom (3−2−1=0); got {len(new_items)}"
+        )
+
+    async def test_queue_stats_review_badge_charged_by_interday_learning(self, api_app_state):
+        """Layer 79 badge half: same scenario as the served-queue test — the
+        review badge must read min(due, budget − interday) = 1, and the interday
+        cards keep displaying in the LEARNING badge (Anki puts day_learning in
+        learn_count, builder/mod.rs:189-218)."""
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        for i in range(5):
+            _add_review_due_collocation(db, f"rev{i}", today)
+        due = anki_day_anchor(today) + timedelta(hours=8)
+        for i in range(2):
+            seed_direction(
+                db,
+                text=f"interday{i}",
+                state=SRSState.LEARNING,
+                due_at=due,
+                last_review=due - timedelta(days=1),
+                left=1001,
+            )
+        db.add_collocation(
+            SyntacticUnit(text="newbie", translation="nb", word_count=1, difficulty=1, source="test"),
+            language_code="sl",
+        )
+        db.set_anki_state_cache("daily_review_cap", "3")
+        db.set_anki_state_cache("daily_new_cap", "5")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            data = (await client.get("/api/srs/queue-stats")).json()
+
+        assert data["learning"] == 2, f"interday cards display as learning; got {data}"
+        assert data["review"] == 1, (
+            f"review badge must charge the 2 interday learning cards against the cap-3 budget; got {data}"
+        )
+        assert data["new"] == 0, f"no new headroom left (3−2−1=0); got {data}"
 
     async def test_review_queue_new_cards_served_when_flag_on_despite_saturated_reviews(self, api_app_state):
         """Brief #4a: with `new_cards_ignore_review_limit` cached ON, the served
@@ -2352,6 +2433,42 @@ class TestLearningStatePriority:
         assert cached_at >= before - timedelta(seconds=1), (
             f"learning_cutoff ({cached_at.isoformat()}) must be ≥ pre-grade `now` ({before.isoformat()}) — "
             f"not the stale value {stale_cutoff.isoformat()}"
+        )
+
+    async def test_again_on_day_granular_review_charges_review_budget(self, api_app_state):
+        """Layer 78 regression (the frozen 0/1/50 badge): a REVIEW card whose
+        day-granular ``due_at`` sits < 24h after ``last_review`` (graduated late
+        in the local day) graded Again must still count as a review answered
+        today. The old wall-clock ``last_interval`` flipped to negative seconds,
+        so ``count_reviews_completed_today`` missed the grade and the review
+        badge stayed pinned at the daily cap instead of charging the budget.
+        """
+        from datetime import UTC, date, datetime, timedelta
+
+        db = api_app_state
+        today = date.today()
+        lr = datetime.now(UTC) - timedelta(hours=16)
+        row_id = seed_direction(
+            db,
+            text="lapse_me",
+            state=SRSState.REVIEW,
+            due_at=lr + timedelta(hours=2),  # day-granular col-day boundary, sub-24h gap
+            stability=0.08,
+            difficulty=9.9,
+            reps=6,
+            last_review=lr,
+        )
+        assert db.count_reviews_completed_today(today) == 0
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                f"/api/srs/items/{row_id}/direction/recognition/feedback", json={"rating": "again"}
+            )
+        assert resp.status_code == 200
+
+        assert db.count_reviews_completed_today(today) == 1, (
+            "the Again answer on a review card must charge the review-per-day budget "
+            "(Anki: CardQueue::Review → review_delta += 1 regardless of rating)"
         )
 
 

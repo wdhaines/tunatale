@@ -155,13 +155,18 @@ if the onset-cluster constants stay). Registry test in `test_languages.py`.
   `resolve_new_cards_ignore_review_limit(db)` (default False), and threaded into
   `effective_review_budget` (keyword arg), the `/queue-stats` badge new-cap, and
   the Layer 77 served-queue new-slice cap. Layer 76/77 addenda + rule 12 amended.
-- **(b) Candidate Layer 78 — interday learning charges the review limit.** Anki
+- **(b) Interday learning charges the review limit — DONE (2026-07-10, Layer 79).** Anki
   gathers interday-learning (queue=3) as `LimitKind::Review`
-  (`gathering.rs:16+53`); rule 12's "learning exempt" is true only for intraday
-  (queue=1). TT exempts ALL learning/relearning. Needs an oracle test first
-  (interday learning card + saturated review cap → does Anki serve fewer
-  reviews/new?); only then mirror. Do NOT change `_compute_live_main` without the
-  oracle pin.
+  (`gathering.rs:35-61`); rule 12's "learning exempt" is true only for intraday
+  (queue=1). Oracle-pinned FIRST as required
+  (`test_parity_daily_caps.py::test_anki_interday_learning_charges_review_limit`:
+  cap 3 + 2 interday learning + 5 due reviews + 4 new → Anki `learning=2,
+  review=1, new=0`), then mirrored: `count_interday_learning_due(today)` charged
+  inside `effective_review_budget` (both flag branches — the flag only lifts the
+  new couplings), threaded through the badge and the served queue. Residual: when
+  interday count > budget Anki gathers only budget-many (learning count shrinks);
+  TT doesn't cap the learning queue — documented in the Layer 79 entry.
+  (Numbering: 78 went to the same-day lastIvl/review_kind revlog fix.)
 
 ## 5. Player prefetch downloads everything (LOW) — DONE (2026-07-10)
 
@@ -171,14 +176,19 @@ Fix: prefetch the resolved current section + the enunciation-cycle neighbor;
 skip the legacy full track when `trackMode` (it's immediately src-swapped away).
 Mobile-data cost only — nothing is broken.
 
-## 6. Small hygiene (LOW)
+## 6. Small hygiene (LOW) — DONE (2026-07-10, items 1-2; backfill skipped as optional)
 
-- `backend/app/srs/transcript.py` / `db_lemma_cache.py` "row vanished between
-  queries" `pragma: no cover` is a real TOCTOU branch across two connections, not
-  an unreachable one — write the two-connection test or restructure to one query
-  (pragma discipline, `.claude/rules/testing.md`).
-- `check_language_literals.py` known remaining bypass: string concatenation
-  (`"n" + "o"`) — two Constant nodes, neither matches. Document as a known
+- **DONE.** `backend/app/srs/transcript.py` / `db_lemma_cache.py` "row vanished between
+  queries" `pragma: no cover` — restructured to ONE query:
+  `get_variant_candidates_with_items` scans and hydrates in a single SELECT
+  (`SELECT *` + `_row_to_item`), the caller's vanished-row branch and its pragma
+  are deleted outright (testing.md option (b)), and the now-dead
+  `get_variant_candidate_rows` removed. (First pass kept a two-SELECT
+  same-connection shape with a "genuinely unreachable" pragma — overstated:
+  autocommit connections give each SELECT its own read snapshot, so the window
+  was narrowed, not closed. The single-query merge removes the branch instead.)
+- **DONE.** `check_language_literals.py` known remaining bypass: string concatenation
+  (`"n" + "o"`) — two Constant nodes, neither matches. Documented as a known
   limitation in the script docstring (an AST const-folding pass is possible but
   likely overkill; the case-variant bypass was fixed 2026-07-10).
 - Legacy lessons could alternatively get a **backfill script** deriving per-section
@@ -198,3 +208,55 @@ Mobile-data cost only — nothing is broken.
   shape, so the phase-model tests exercised exactly the state the feature doesn't
   support. When adding an API field, update the fixtures to the new shape AND keep
   one explicitly-named legacy fixture with degradation assertions (done 2026-07-10).
+
+## 7. sync_push collapses intermediate TT grades out of Anki's revlog (MED-LOW, parity — BP brief, orchestrator review required before commit)
+
+**Problem (observed live 2026-07-10, ~16:00).** TT review badge 45 vs Anki 46 after
+the 15:59 sync. TT counted 5 review answers today; Anki's rebuilt studied-today
+counter saw 4. Card 1483 was graded twice between syncs (13:49 Again — a countable
+lapse — then a 15:52 relearn-step press), but `sync_push` writes **one Anki revlog
+row per dirty direction reflecting only the latest state** (`_derive_revlog_shape`),
+so the intermediate lapse never reached Anki's revlog. Consequences: Anki's
+`review_today` reconstruction (`count_reviews_today_for_deck`) under-counts,
+`reps`/`lapses` bump once per push instead of once per grade, and Anki-side FSRS
+Optimize sees an incomplete review history. Bounded by grades-per-card-per-sync-gap;
+badge half self-clears at rollover — the revlog history loss does not.
+
+**Enabler.** Since Layer 78, TT-native `tt_revlog` rows carry Anki-faithful values
+(`review_kind` from the pre-answer state; `last_interval` days-positive ≥ 1 for
+review footing) — so the rows can be pushed verbatim instead of reconstructed.
+
+**Fix shape (decisions pre-made — do not re-litigate):**
+- In the push path, per pushed direction, candidate rows =
+  `tt_revlog` rows for that direction with `id > (SELECT MAX(id) FROM revlog WHERE cid = ?)`
+  in the Anki collection (no separate watermark; monotone ids). This naturally
+  excludes rows already echoed (Layer 74 lands TT pushes at grade-time ids),
+  ingested Anki rows (they keep Anki's original id), and pre-Layer-78 malformed
+  history (already superseded by a pushed collapsed row at the latest grade id).
+- Insert each candidate at **its own `tt_revlog.id`** (extends Layer 74's
+  `preferred_id` semantics per row; keep the `_revlog_id_exists` bump-on-collision
+  guard), mapping `ease=button_chosen, ivl=interval, lastIvl=last_interval,
+  time=taken_millis, type=review_kind, usn=-1` — i.e. generalize
+  `OfflineWriter.write_revlog_entry`; do NOT invent a second insert path.
+- `reps`/`lapses`: bump by rows inserted / by inserted rows with
+  `type=1 AND next state = relearning` (today: `button_chosen=1` on `type=1`),
+  replacing the current single increment.
+- **Do NOT touch**: the cards-table state writes, `sync_pull` ingest/`held_ids`,
+  `col.usn` (anki-sync.md Layer 61), `_derive_revlog_shape`'s remaining users.
+- **Accepted edge (document, don't solve)**: a phone grade newer than an unpushed
+  TT grade on the SAME card makes MAX(id) skip the older TT row — same loss as
+  today's collapse; rule 6 state convergence still applies.
+
+**Guardrail tests (all must exist; sabotage-drill each):**
+1. Unit: two TT grades between syncs (lapse then relearn step) → push writes BOTH
+   revlog rows at their exact grade-time ids with `tt_revlog`-verbatim values.
+2. Outcome (`TestSociableSync` style): after push,
+   `count_reviews_today_for_deck == count_reviews_completed_today` for the same day.
+3. Idempotency: re-running push inserts nothing new (MAX(id) + id-exists guards).
+4. Round-trip (`--run-peer-sync`, MANDATORY run): push → pull does not re-ingest
+   the per-grade rows as duplicates (Layer 74 echo suppression now per row), and
+   `reviews_today` does not inflate (the Layer 74 signature).
+
+**Definition of done**: full `./test.sh` + peer-sync suite output pasted;
+orchestrator (Fable) reviews the diff before commit — this is inside the Anki-write
+danger zone (`.claude/rules/anki-sync.md` envelope applies).

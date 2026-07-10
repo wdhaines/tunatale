@@ -350,3 +350,108 @@ def test_tt_reads_caps_from_synthetic_deck_config(synthetic_collection: Syntheti
 
     assert new_cap == 7, f"TT reads new_per_day=7 but got {new_cap}"
     assert review_cap == 42, f"TT reads reviews_per_day=42 but got {review_cap}"
+
+
+@pytest.mark.oracle
+def test_anki_interday_learning_charges_review_limit(synthetic_collection: SyntheticCollection) -> None:
+    """Interday learning cards (queue=3, DayLearn) consume the review-per-day budget.
+
+    Ground-truth pin for brief #4b (Layer 79). Anki's queue builder gathers
+    interday learning under the REVIEW limit: ``gather_due_cards`` hardcodes
+    ``LimitKind::Review`` for BOTH ``DueCardKind::Learning`` and ``::Review``
+    (``rslib/src/scheduler/queue/builder/gathering.rs:35-61``), in gather order
+    intraday-learning → interday-learning → reviews → new (``gathering.rs:14-21``).
+    Each gathered interday card runs the same ``decrement(LimitKind::Review)``
+    that re-mins the new headroom (``rslib/src/decks/limits.rs:131-143``). The
+    cards still DISPLAY in the learning count, not the review count
+    (``builder/mod.rs:189-218``: ``day_learning`` feeds ``learn_count``).
+
+    Scenario: reviews_per_day=3, new_per_day=20; 2 interday learning cards due
+    today + 5 due reviews + 4 new cards. Expected counts:
+      - learning == 2  (interday cards, displayed as learning)
+      - review   == 1  (3 budget − 2 consumed by interday learning)
+      - new      == 0  (headroom 3 − 2 interday − 1 review = 0)
+
+    Pre-Layer-79 TT reported review=3 / learning=2 here (interday exempt from
+    the budget) — the review discrepancy is the discriminator.
+
+    What this does NOT cover:
+    - interday count EXCEEDING the budget (Anki then gathers only budget-many
+      interday cards, shrinking the learning count too — known TT residual,
+      documented in the Layer 79 entry).
+    """
+    synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
+    synthetic_collection.set_daily_limits(new=20, reviews=3)
+
+    now_secs = int(time.time())
+    last_review_secs = now_secs - 5 * 86400
+
+    # 5 overdue review cards.
+    for i in range(5):
+        cid = 60010 + i * 10
+        note_id = cid // 10
+        synthetic_collection.add_note(id=note_id, guid=f"g-{cid}", fields=[f"front-{cid}", "back"])
+        synthetic_collection.add_card(
+            id=cid,
+            note_id=note_id,
+            ord=0,
+            type=2,
+            queue=2,
+            due=0,
+            ivl=10,
+            reps=5,
+            stability=10.0,
+            difficulty=5.0,
+            last_review_secs=last_review_secs,
+            desired_retention=DEFAULT_DESIRED_RETENTION,
+        )
+
+    # 4 new cards.
+    for i in range(4):
+        cid = 61010 + i * 10
+        note_id = cid // 10
+        synthetic_collection.add_note(id=note_id, guid=f"g-{cid}", fields=[f"front-{cid}", "back"])
+        synthetic_collection.add_card(id=cid, note_id=note_id, ord=0, type=0, queue=0, due=i, ivl=0, reps=0)
+
+    # Save, then ask Anki for its authoritative day index (gotcha #10: never
+    # compute `today` Python-side — the 4AM local rollover shifts it ±1).
+    synthetic_collection.save()
+    anki_today = run_oracle(synthetic_collection.path, [{"op": "get_today"}]).raw()["get_today_0"]["today"]
+
+    # 2 interday learning cards: queue=3 (DAY_LEARN), day-level due = today.
+    from app.srs.fsrs import _pack_left
+
+    for i in range(2):
+        cid = 62010 + i * 10
+        note_id = cid // 10
+        synthetic_collection.add_note(id=note_id, guid=f"g-{cid}", fields=[f"front-{cid}", "back"])
+        synthetic_collection.add_card(
+            id=cid,
+            note_id=note_id,
+            ord=0,
+            type=1,
+            queue=3,
+            due=anki_today,
+            ivl=0,
+            reps=1,
+            left=_pack_left(1),
+            stability=1.0,
+            difficulty=5.0,
+            last_review_secs=now_secs - 86400,
+            desired_retention=DEFAULT_DESIRED_RETENTION,
+        )
+    synthetic_collection.save()
+
+    result = run_oracle(
+        synthetic_collection.path,
+        [{"op": "get_queue", "deck_id": 1, "fetch_limit": 50}],
+    )
+    counts = result.raw()["get_queue_0"]["counts"]
+
+    assert counts["learning"] == 2, f"interday learning cards must display in the learning count, got {counts}"
+    assert counts["review"] == 1, (
+        f"2 interday learning cards must consume 2 of the 3-review budget, leaving review=1, got {counts}"
+    )
+    assert counts["new"] == 0, (
+        f"interday learning + the gathered review exhaust the new headroom (3-2-1=0), got {counts}"
+    )

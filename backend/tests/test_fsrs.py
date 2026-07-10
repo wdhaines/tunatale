@@ -793,42 +793,48 @@ class TestBuildRevlogRow:
     """Tests for build_revlog_row and the _compute_* helpers it calls."""
 
     def test_review_review_kind_1(self):
-        """REVIEW→REVIEW transition returns kind=1."""
+        """Answering from REVIEW returns kind=1."""
         from app.srs.fsrs import _compute_review_kind
 
-        assert _compute_review_kind(SRSState.REVIEW, SRSState.REVIEW) == 1
+        assert _compute_review_kind(SRSState.REVIEW) == 1
 
-    def test_relearning_review_kind_2(self):
-        """→RELEARNING returns kind=2 (line 879)."""
+    def test_lapse_review_kind_1(self):
+        """Layer 78: a lapse (answered FROM review, into relearning) is kind=1.
+
+        Anki keys revlog kind on the pre-answer state: ``apply_relearning_state``
+        builds the entry from ``current.revlog_kind()``, and
+        ``ReviewState::revlog_kind()`` is Review (states/review.rs:56-62) — the
+        Relearning kind (2) only applies to later presses on the relearn step.
+        """
         from app.srs.fsrs import _compute_review_kind
 
-        assert _compute_review_kind(SRSState.REVIEW, SRSState.RELEARNING) == 2
+        assert _compute_review_kind(SRSState.REVIEW) == 1
 
-    def test_learning_to_learning_review_kind_0(self):
-        """LEARNING→LEARNING returns kind=0 (line 883)."""
+    def test_relearn_step_review_kind_2(self):
+        """Answering FROM relearning (a relearn step) returns kind=2."""
         from app.srs.fsrs import _compute_review_kind
 
-        assert _compute_review_kind(SRSState.LEARNING, SRSState.LEARNING) == 0
-        assert _compute_review_kind(SRSState.RELEARNING, SRSState.LEARNING) == 0
+        assert _compute_review_kind(SRSState.RELEARNING) == 2
+
+    def test_learning_review_kind_0(self):
+        """Answering from LEARNING returns kind=0 — including the graduating
+        answer (LearnState::revlog_kind() is Learning regardless of next state)."""
+        from app.srs.fsrs import _compute_review_kind
+
+        assert _compute_review_kind(SRSState.LEARNING) == 0
 
     def test_fallback_review_kind_1(self):
-        """Non-standard state transitions fall through to return 1 (line 886)."""
+        """Exotic pre-answer states fall through to kind=1."""
         from app.srs.fsrs import _compute_review_kind
 
-        assert _compute_review_kind(SRSState.NEW, SRSState.SUSPENDED) == 1
-        assert _compute_review_kind(SRSState.REVIEW, SRSState.BURIED) == 1
+        assert _compute_review_kind(SRSState.SUSPENDED) == 1
+        assert _compute_review_kind(SRSState.BURIED) == 1
 
-    def test_new_to_review_kind_1(self):
-        """NEW→REVIEW returns kind=1."""
+    def test_new_review_kind_0(self):
+        """Answering a NEW card (first grade, even Easy-graduate) is kind=0."""
         from app.srs.fsrs import _compute_review_kind
 
-        assert _compute_review_kind(SRSState.NEW, SRSState.REVIEW) == 1
-
-    def test_new_to_learning_kind_0(self):
-        """→LEARNING returns kind=0."""
-        from app.srs.fsrs import _compute_review_kind
-
-        assert _compute_review_kind(SRSState.NEW, SRSState.LEARNING) == 0
+        assert _compute_review_kind(SRSState.NEW) == 0
 
     def test_compute_revlog_interval_learning(self):
         """Learning intervals are negative seconds — the new step from ``now``."""
@@ -886,6 +892,98 @@ class TestBuildRevlogRow:
         now = datetime(2026, 5, 19, tzinfo=UTC)
         prev = DirectionState(direction=Direction.RECOGNITION, state=SRSState.NEW, due_at=now)
         assert _compute_revlog_last_interval(prev) == 0
+
+    def test_last_interval_review_day_granular_due_is_positive_days(self):
+        """Layer 78 regression (the 0/1/50 badge bug): a REVIEW card graduated
+        late in the local day has a day-granular ``due_at`` (next col-day
+        boundary) less than 24h after ``last_review``. The wall-clock delta
+        formula encoded that as negative seconds (-7236), so
+        ``count_reviews_completed_today``'s ``last_interval >= 1`` filter missed
+        the lapse and the review budget never charged the grade. Anki's lastIvl
+        for any review-card answer is the stored ``ivl`` in days, always >= 1
+        (states/review.rs:50-54 → interval_kind.rs as_revlog_interval)."""
+        from app.srs.fsrs import _compute_revlog_last_interval
+
+        lr = datetime(2026, 7, 10, 1, 59, 23, tzinfo=UTC)
+        prev = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            last_review=lr,
+            due_at=lr + timedelta(seconds=7236),
+        )
+        assert _compute_revlog_last_interval(prev) == 1
+
+    def test_last_interval_review_reconstructs_ivl_from_anki_due(self):
+        """With ``anki_due`` + ``col_crt`` available, the REVIEW branch uses the
+        ``_scheduled_days_for_grade`` col-day reconstruction (exactly ``card.ivl``
+        at sync time), not the truncating wall-clock delta."""
+        from app.anki.protobuf_wire import compute_anki_day_index
+        from app.srs.fsrs import _compute_revlog_last_interval
+
+        col_crt = int(datetime(2024, 1, 1, tzinfo=UTC).timestamp())
+        lr = datetime(2026, 7, 10, 15, 0, tzinfo=UTC)
+        prev = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            last_review=lr,
+            due_at=lr + timedelta(hours=2),
+            anki_due=compute_anki_day_index(col_crt, 4, lr) + 30,
+        )
+        assert _compute_revlog_last_interval(prev, col_crt) == 30
+
+    def test_last_interval_interday_learning_positive_days(self):
+        """A learning card on a day-scale step (interday, Anki queue=3) encodes
+        the pre-answer step as positive days — the `lastIvl >= 1` footing that
+        charges Anki's review-per-day limit."""
+        from app.srs.fsrs import _compute_revlog_last_interval
+
+        lr = datetime(2026, 7, 8, 15, 0, tzinfo=UTC)
+        prev = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.LEARNING,
+            last_review=lr,
+            due_at=lr + timedelta(days=2),
+        )
+        assert _compute_revlog_last_interval(prev) == 2
+
+    def test_last_interval_relearn_step_stays_negative_seconds(self):
+        """A relearn step answered FROM relearning keeps the seconds-negative
+        encoding (Anki: LearnState::interval_kind() is always InSecs)."""
+        from app.srs.fsrs import _compute_revlog_last_interval
+
+        lr = datetime(2026, 7, 10, 15, 0, tzinfo=UTC)
+        prev = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.RELEARNING,
+            last_review=lr,
+            due_at=lr + timedelta(minutes=10),
+        )
+        assert _compute_revlog_last_interval(prev) == -600
+
+    def test_build_revlog_row_lapse_counts_as_review(self):
+        """End-to-end shape of the badge bug: a day-granular REVIEW card graded
+        Again must produce a row with ``review_kind=1`` and ``last_interval>=1``
+        so the Layer 73 counter (``review_kind IN (0,1,2) AND last_interval >= 1``)
+        charges it against the review budget."""
+        from app.srs.fsrs import build_revlog_row
+
+        now = datetime(2026, 7, 10, 17, 49, 53, tzinfo=UTC)
+        prev = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            last_review=now - timedelta(hours=16),
+            due_at=now - timedelta(hours=14),
+            anki_card_id=7,
+        )
+        new_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.RELEARNING,
+            last_review=now,
+            due_at=now + timedelta(minutes=11),
+        )
+        row = build_revlog_row(1, Direction.RECOGNITION, prev, new_dir, Rating.AGAIN, 0, now=now)
+        assert row.review_kind == 1
+        assert row.last_interval == 1
 
     def test_build_revlog_row_default_now(self):
         """build_revlog_row uses datetime.now when now=None (line 936)."""

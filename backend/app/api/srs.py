@@ -286,7 +286,9 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
         load_balancer=balancer,
     )
     db.update_direction_by_id(item_id, dir_enum, updated.directions[dir_enum])
-    row = build_revlog_row(item_id, dir_enum, prev_dir, updated.directions[dir_enum], rating, body.time_ms, now=now)
+    row = build_revlog_row(
+        item_id, dir_enum, prev_dir, updated.directions[dir_enum], rating, body.time_ms, now=now, col_crt=col_crt
+    )
     db.append_revlog(row)
     # Single-level undo: snapshot the verbatim pre-grade state so the popover's
     # "Got it ✓" can cycle back via "Undo ↩" (see app.srs.grade_undo).
@@ -582,6 +584,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                     rating,
                     0,
                     now=now,
+                    col_crt=col_crt,
                 )
                 db.append_revlog(row)
                 _balancer_add(
@@ -639,6 +642,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                     Rating.GOOD,
                     0,
                     now=now,
+                    col_crt=col_crt,
                 )
                 db.append_revlog(row)
                 _balancer_add(
@@ -821,8 +825,14 @@ async def get_queue_stats(request: Request, response: Response):
     ignore_review_limit = resolve_new_cards_ignore_review_limit(db)
     # Anki charges today's new-card introductions against the review-per-day
     # limit too (Layer 76 — rslib/decks/limits.rs:104-108), unless the flag is ON.
+    # Interday learning cards due today charge it as well (Layer 79 —
+    # gathering.rs gathers queue=3 under LimitKind::Review), flag or no flag.
     review_budget = effective_review_budget(
-        review_cap, reviews_today, introduced_today, new_cards_ignore_review_limit=ignore_review_limit
+        review_cap,
+        reviews_today,
+        introduced_today,
+        interday_learning_due=db.count_interday_learning_due(today),
+        new_cards_ignore_review_limit=ignore_review_limit,
     )
     review_remaining = min(review_due_raw, review_budget)
     # New-sibling bury (Anki's bury_new): a new card whose sibling is gathered

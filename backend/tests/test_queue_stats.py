@@ -1041,6 +1041,28 @@ class TestEffectiveReviewBudget:
         assert effective_review_budget(50, 40, 999, new_cards_ignore_review_limit=True) == 10
         assert effective_review_budget(5, 40, 999, new_cards_ignore_review_limit=True) == 0
 
+    def test_interday_learning_charges_budget(self):
+        """Layer 79: interday learning cards due today consume the review budget.
+
+        Anki gathers queue=3 (DayLearn) under LimitKind::Review — the same
+        decrement as review cards (gathering.rs:35-61) — oracle-pinned by
+        test_parity_daily_caps.py::test_anki_interday_learning_charges_review_limit.
+        """
+        from app.srs.queue_stats import effective_review_budget
+
+        assert effective_review_budget(3, 0, 0, interday_learning_due=2) == 1
+        # Clamps at zero when interday learning alone exhausts the cap.
+        assert effective_review_budget(3, 0, 0, interday_learning_due=5) == 0
+
+    def test_interday_learning_charges_even_when_flag_on(self):
+        """new_cards_ignore_review_limit only lifts the NEW couplings — the
+        interday-learning gather still runs decrement(Review) unconditionally
+        (limits.rs:136 gates only the new re-min, not the review decrement)."""
+        from app.srs.queue_stats import effective_review_budget
+
+        assert effective_review_budget(50, 7, 3, interday_learning_due=4, new_cards_ignore_review_limit=True) == 39
+        assert effective_review_budget(50, 7, 3, interday_learning_due=4) == 36
+
 
 class TestNewCardsIgnoreReviewLimit:
     """Brief #4a: sync Anki's `newCardsIgnoreReviewLimit` collection-config bool.
