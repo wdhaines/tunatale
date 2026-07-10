@@ -74,7 +74,7 @@ otherwise (log count); map out-of-domain `bury_kind` to `NULL` (log). Test with 
 in-memory v34 DB seeded with `'REVIEW'`, `'New'`, and a junk `bury_kind` — migration
 succeeds, values normalized, WARNING logged.
 
-## 3. `syllabify.py` dispatch table exempted instead of routed (MED-LOW)
+## 3. `syllabify.py` dispatch table exempted instead of routed (MED-LOW) — DONE (8519051)
 
 **Problem.** `backend/app/generation/syllabify.py:202-203` holds a bare
 `{"sl": …, "no": …}` code→function dict, allowlisted wholesale in
@@ -103,7 +103,7 @@ if the onset-cluster constants stay). Registry test in `test_languages.py`.
   reviews/new?); only then mirror. Do NOT change `_compute_live_main` without the
   oracle pin.
 
-## 5. Player prefetch downloads everything (LOW)
+## 5. Player prefetch downloads everything (LOW) — DONE (2026-07-10)
 
 `LessonPlayer.svelte` onMount prefetches the full concatenated track **plus all 5
 section tracks** unconditionally; the plan specified active + likely-next (~2).

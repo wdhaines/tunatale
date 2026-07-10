@@ -6,7 +6,7 @@ import { render, fireEvent } from "@testing-library/svelte";
 import LessonPlayer from "./LessonPlayer.svelte";
 import PillSyncHarness from "../../test/PillSyncHarness.svelte";
 import { tick } from "svelte";
-import { api } from "$lib/api";
+import { maybePrefetchLesson } from "$lib/sw/prefetch";
 import type { Cue, LessonAudio } from "$lib/api";
 import type { PlaybackController } from "$lib/playback/playbackController.svelte";
 
@@ -28,6 +28,7 @@ beforeAll(() => {
 // clear it between tests so a click in one test doesn't seed the next mount.
 beforeEach(() => {
   localStorage.clear();
+  vi.mocked(maybePrefetchLesson).mockClear();
 });
 
 vi.mock("$lib/api", () => ({
@@ -182,6 +183,43 @@ const audioWithAllSections: LessonAudio = {
       language_code: "sl",
       text: "Pozdravljeni",
       ref: { kind: "line", target_index: 0 },
+    },
+  ],
+};
+
+// trackMode but missing natural_speed — exercises the defensive
+// !currentUrl guard in computePrefetchUrls.
+const audioMissingCurrentSection: LessonAudio = {
+  audio_id: "a1",
+  lesson_id: "l1",
+  sections: [
+    {
+      audio_id: "s1",
+      section_index: 0,
+      section_type: "key_phrases",
+      title: "Key Phrases",
+      cues: [sectionCue(0, "key_phrases", "Hello")],
+    },
+    {
+      audio_id: "s4",
+      section_index: 1,
+      section_type: "slow_speed",
+      title: "Slow Speed",
+      cues: [sectionCue(1, "slow_speed", "Pozdravljeni")],
+    },
+  ],
+  cues: [
+    {
+      index: 0,
+      start_ms: 0,
+      end_ms: 800,
+      section_index: 0,
+      section_type: "key_phrases",
+      phrase_index: 0,
+      role: "narrator",
+      language_code: "en",
+      text: "Hello world",
+      ref: { kind: "key_phrase", target_index: 0 },
     },
   ],
 };
@@ -601,6 +639,46 @@ describe("LessonPlayer", () => {
         props: { audio: audioWithCues, controller: null },
       });
       expect(() => unmount()).not.toThrow();
+    });
+  });
+
+  describe("prefetch URL selection", () => {
+    it("trackMode: prefetches current section + enunciation neighbor, not the full track", () => {
+      render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      // Default: dialogue·natural·englishOff → natural_speed (s2).
+      // Enunciation neighbor: enunciated·englishOff → slow_speed (s4).
+      expect(vi.mocked(maybePrefetchLesson)).toHaveBeenCalledTimes(1);
+      const urls = vi.mocked(maybePrefetchLesson).mock.calls[0][0];
+      expect(urls).toContain("/api/audio/s2");
+      expect(urls).toContain("/api/audio/s4");
+      expect(urls).not.toContain("/api/audio/a1");
+    });
+
+    it("legacy mode: prefetches only the full concatenated track", () => {
+      render(LessonPlayer, { props: { audio: audioWithCues } });
+      expect(vi.mocked(maybePrefetchLesson)).toHaveBeenCalledTimes(1);
+      const urls = vi.mocked(maybePrefetchLesson).mock.calls[0][0];
+      expect(urls).toEqual(["/api/audio/a1"]);
+    });
+
+    it("trackMode with key_phrases: prefetches only key_phrases (no neighbor)", () => {
+      localStorage.setItem(
+        "lessonPlayerSelection",
+        JSON.stringify({ phase: "key_phrases", enunciation: "natural", english: false }),
+      );
+      render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      expect(vi.mocked(maybePrefetchLesson)).toHaveBeenCalledTimes(1);
+      const urls = vi.mocked(maybePrefetchLesson).mock.calls[0][0];
+      expect(urls).toEqual(["/api/audio/s1"]);
+    });
+
+    it("trackMode: falls back to the full track when the resolved section is missing", () => {
+      // selectTrack no-ops on a missing section, so the player stays on the
+      // full concatenated track — the prefetch must cover what actually plays.
+      render(LessonPlayer, { props: { audio: audioMissingCurrentSection } });
+      expect(vi.mocked(maybePrefetchLesson)).toHaveBeenCalledTimes(1);
+      const urls = vi.mocked(maybePrefetchLesson).mock.calls[0][0];
+      expect(urls).toEqual(["/api/audio/a1"]);
     });
   });
 });

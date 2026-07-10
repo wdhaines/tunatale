@@ -138,6 +138,34 @@
 
 	// --- Prefetch section URLs ---
 
+	function computePrefetchUrls(
+		sections: { audio_id: string; section_type: string }[],
+		fullAudioId: string,
+		trackMode: boolean,
+		phase: Phase,
+		enunLevel: string,
+		englishOn: boolean,
+		currentEnunIndex: number,
+	): string[] {
+		if (!trackMode) {
+			return [api.audioUrl(fullAudioId)];
+		}
+		const byType = new Map(sections.map((s) => [s.section_type, s.audio_id]));
+		const currentType = resolveSectionType(phase, enunLevel, englishOn);
+		const currentUrl = currentType ? byType.get(currentType) : undefined;
+		// Resolved section missing: applyTrack's selectTrack no-ops there too, so
+		// the player stays on the full concatenated track — prefetch that instead.
+		if (!currentUrl) return [api.audioUrl(fullAudioId)];
+
+		const nextIdx = (currentEnunIndex + 1) % ENUNCIATION_OPTIONS.length;
+		const nextType = resolveSectionType(phase, ENUNCIATION_OPTIONS[nextIdx].level, englishOn);
+		const nextUrl = nextType && nextType !== currentType ? byType.get(nextType) : undefined;
+
+		const urls = [api.audioUrl(currentUrl)];
+		if (nextUrl) urls.push(api.audioUrl(nextUrl));
+		return urls;
+	}
+
 	function formatTime(s: number): string {
 		const m = Math.floor(s / 60);
 		const sec = Math.floor(s % 60);
@@ -161,8 +189,15 @@
 		}
 
 		const nav = navigator as Navigator & { connection?: NetworkInformationLike };
-		const sectionUrls = init.audio.sections.map((s) => api.audioUrl(s.audio_id));
-		const urls = [api.audioUrl(audio.audio_id), ...sectionUrls];
+		const urls = computePrefetchUrls(
+			init.audio.sections,
+			init.audio.audio_id,
+			trackMode,
+			phase,
+			enunLevel,
+			englishOn,
+			enunIndex,
+		);
 		void maybePrefetchLesson(urls, {
 			enabled: prefetchPrefStore.enabled,
 			connection: nav.connection,
