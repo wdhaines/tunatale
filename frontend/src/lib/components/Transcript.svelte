@@ -390,10 +390,14 @@
 
 	// Plain (non-reactive) memo: writing it inside the effect must not re-run it.
 	let prevScrollKey = '';
+	let suppressNextScroll = false;
 	$effect(() => {
 		const ref = activeRef;
 		const key = ref ? `${ref.kind}:${ref.target_index}` : '';
-		if (ref && key !== prevScrollKey) {
+		if (suppressNextScroll) {
+			suppressNextScroll = false;
+			prevScrollKey = key;
+		} else if (ref && key !== prevScrollKey) {
 			prevScrollKey = key;
 			// Capture `ref` — activeRef can flip to null before the frame fires.
 			requestAnimationFrame(() => {
@@ -407,7 +411,7 @@
 				const vh = window.innerHeight;
 				const navEl = document.querySelector('.global-nav');
 				const navH = navEl?.getBoundingClientRect().height ?? 0;
-				const playerEl = navEl?.nextElementSibling;
+				const playerEl = document.querySelector('.player-card');
 				const playerH = playerEl?.getBoundingClientRect().height ?? 0;
 				const stickyH = navH + playerH;
 				// Position the element's top below the sticky headers, then shift
@@ -436,7 +440,7 @@
 							<span class="kp-translation">{kp.translation}</span>
 						</div>
 						{#if seekCue}
-							<button class="seek-btn" onclick={() => controller!.playRef({ kind: 'key_phrase', target_index: kpIdx })}>▶</button>
+							<button class="seek-btn" onclick={() => { suppressNextScroll = true; controller!.playRef({ kind: 'key_phrase', target_index: kpIdx }); }}>▶</button>
 						{/if}
 					</li>
 				{/each}
@@ -614,7 +618,7 @@
 							{/if}
 						</div>
 						{#if seekCue}
-							<button class="seek-btn" onclick={() => controller!.playRef({ kind: 'line', target_index: lineIndex })}>▶</button>
+							<button class="seek-btn" onclick={() => { suppressNextScroll = true; controller!.playRef({ kind: 'line', target_index: lineIndex }); }}>▶</button>
 						{/if}
 					</div>
 
@@ -837,15 +841,33 @@
 	}
 	.dialogue-line.active-line {
 		background: rgba(37, 99, 235, 0.06);
-		border-left: 3px solid var(--color-primary, #2563eb);
 		padding-left: 0.5rem;
+		border-radius: 0 4px 4px 0;
+		position: relative;
+	}
+	.dialogue-line.active-line::before {
+		content: '';
+		position: absolute;
+		left: 0;
+		top: 0;
+		bottom: 0;
+		width: 3px;
+		background: var(--color-primary, #2563eb);
 		border-radius: 0 4px 4px 0;
 	}
 	.key-phrases-list li.active-kp {
 		background: rgba(37, 99, 235, 0.06);
-		border-left: 3px solid var(--color-primary, #2563eb);
 		padding-left: 0.5rem;
-		padding-right: 0.5rem;
+		position: relative;
+	}
+	.key-phrases-list li.active-kp::before {
+		content: '';
+		position: absolute;
+		left: 0;
+		top: 0;
+		bottom: 0;
+		width: 3px;
+		background: var(--color-primary, #2563eb);
 	}
 	.seek-btn {
 		background: transparent;
