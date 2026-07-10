@@ -1,5 +1,5 @@
 import { untrack } from "svelte";
-import type { Cue, LessonAudio, SectionAudio } from "$lib/api";
+import type { Cue, CueRef, LessonAudio, SectionAudio } from "$lib/api";
 
 export interface PlaybackController {
   readonly currentCue: Cue | null;
@@ -24,7 +24,9 @@ export interface PlaybackController {
   nextCue(): void;
   prevCue(): void;
   repeatCue(): void;
-  selectTrack(sectionType: string): void;
+  selectTrack(sectionType: string, seekRef?: CueRef | null): void;
+  findPlayableCue(ref: CueRef): Cue | null;
+  playRef(ref: CueRef): void;
   setRate(rate: number): void;
   setSentenceSkip(v: boolean): void;
   destroy(): void;
@@ -370,12 +372,13 @@ export function createPlaybackController(deps: Deps): PlaybackController {
 
   // --- Track selection (B2) ---
 
-  function selectTrack(sectionType: string): void {
+  function selectTrack(sectionType: string, seekRef: CueRef | null = null): void {
     const section = audioSections.find((s) => s.section_type === sectionType);
     if (!section) return;
 
-    // Capture the current line ref before the src swap resets everything.
-    const prevRef = currentCue?.ref ?? null;
+    // Where to land in the new track: an explicit seekRef (a transcript ▶ tap)
+    // wins; otherwise preserve the current line's position across the swap.
+    const prevRef = seekRef ?? currentCue?.ref ?? null;
 
     // Guard: prevent the browser's pause/emptied events from clobbering resume.
     swapping = true;
@@ -413,6 +416,45 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       pendingSeek = 0;
     }
     // The seek is applied inside the loadedmetadata handler.
+  }
+
+  // The canonical section a transcript ref plays from: key phrases from the
+  // key_phrases track, dialogue lines from natural_speed. Stable regardless of
+  // the phase/variant currently selected, so the ▶ buttons always show.
+  function canonicalSection(ref: CueRef): string {
+    return ref.kind === "key_phrase" ? "key_phrases" : "natural_speed";
+  }
+
+  function findCueInSection(sectionType: string, ref: CueRef): Cue | null {
+    const section = audioSections.find((s) => s.section_type === sectionType);
+    return (
+      section?.cues?.find(
+        (c) => c.ref && c.ref.kind === ref.kind && c.ref.target_index === ref.target_index,
+      ) ?? null
+    );
+  }
+
+  // For button visibility: is there audio for this transcript ref at all?
+  function findPlayableCue(ref: CueRef): Cue | null {
+    return findCueInSection(canonicalSection(ref), ref);
+  }
+
+  // Play a transcript ref (a per-line ▶). If the ref lives in the current track
+  // (e.g. tapping a dialogue line while a dialogue variant is active), just seek
+  // there — no track change, preserving the chosen variant. Otherwise switch to
+  // the ref's canonical section and seek to it.
+  function playRef(ref: CueRef): void {
+    const here =
+      activeCues?.find(
+        (c) => c.ref && c.ref.kind === ref.kind && c.ref.target_index === ref.target_index,
+      ) ?? null;
+    if (here) {
+      doSeek(here.start_ms / 1000);
+      return;
+    }
+    if (findCueInSection(canonicalSection(ref), ref)) {
+      selectTrack(canonicalSection(ref), ref);
+    }
   }
 
   // --- Repeat ---
@@ -485,6 +527,8 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     prevCue: prevCueAction,
     repeatCue,
     selectTrack,
+    findPlayableCue,
+    playRef,
     setRate(newRate: number) {
       audioEl.playbackRate = newRate;
       rate = newRate;

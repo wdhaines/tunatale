@@ -3,8 +3,8 @@
 	import Tooltip from './Tooltip.svelte';
 	import type { TooltipActions } from './Tooltip.svelte';
 	import { api } from '$lib/api';
-	import type { Cue, LessonDetail, TranscriptData, WordToken } from '$lib/api';
-	import { buildScenes, fallbackScenes, cueHighlight, findSeekCue, findKeyPhraseSeekCue } from '$lib/transcriptScenes';
+	import type { LessonDetail, TranscriptData, WordToken } from '$lib/api';
+	import { buildScenes, fallbackScenes, cueHighlight } from '$lib/transcriptScenes';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { masteryBackgroundColor, masteryColor } from '$lib/mastery';
 
@@ -385,7 +385,6 @@
 	// --- Synced subtitle state (Phase 3) ---
 	// The controller's getters are $state-backed, so plain deriveds track them.
 	let currentCue = $derived(controller?.currentCue ?? null);
-	let currentSectionIndex = $derived(controller?.currentSectionIndex ?? null);
 
 	let activeRef = $derived(cueHighlight(currentCue));
 
@@ -417,14 +416,14 @@
 			<h3>Key Phrases</h3>
 			<ul class="key-phrases-list">
 				{#each transcript.key_phrases as kp, kpIdx (kp.phrase)}
-					{@const seekCue = controller?.activeCues ? findKeyPhraseSeekCue(controller.activeCues, kpIdx) : null}
+					{@const seekCue = controller?.findPlayableCue({ kind: 'key_phrase', target_index: kpIdx }) ?? null}
 					<li class:active-kp={activeRef?.kind === 'key_phrase' && activeRef.target_index === kpIdx}>
 						<div class="kp-text">
 							<span class="kp-phrase">{kp.phrase}</span>
 							<span class="kp-translation">{kp.translation}</span>
 						</div>
 						{#if seekCue}
-							<button class="seek-btn" onclick={() => controller!.seekToCue(seekCue!)}>▶</button>
+							<button class="seek-btn" onclick={() => controller!.playRef({ kind: 'key_phrase', target_index: kpIdx })}>▶</button>
 						{/if}
 					</li>
 				{/each}
@@ -511,11 +510,8 @@
 					{@const lineSentence = transcript.dialogue_lines[lineIndex]?.sentence ?? ''}
 					{@const isActiveLine = activeRef?.kind === 'line' && activeRef.target_index === lineIndex}
 					{@const isActiveTranslated = isActiveLine && currentCue?.section_type === 'translated'}
-					{@const seekCue = controller?.activeCues ? findSeekCue(controller.activeCues, lineIndex, currentSectionIndex) : null}
+					{@const seekCue = controller?.findPlayableCue({ kind: 'line', target_index: lineIndex }) ?? null}
 					<div class="dialogue-line" class:active-line={isActiveLine}>
-						{#if seekCue}
-							<button class="seek-btn" onclick={() => controller!.seekToCue(seekCue!)}>▶</button>
-						{/if}
 						<span class="dialogue-role">
 							<span
 								class="dialogue-role-chip speaker-{speakerIndex(line.role) % 4}"
@@ -604,6 +600,9 @@
 								<div class="line-interlinear">{line.translatedText}</div>
 							{/if}
 						</div>
+						{#if seekCue}
+							<button class="seek-btn" onclick={() => controller!.playRef({ kind: 'line', target_index: lineIndex })}>▶</button>
+						{/if}
 					</div>
 
 					{#if selection && selection.lineIndex === lineIndex}

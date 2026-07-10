@@ -7,7 +7,6 @@ import Transcript from "./Transcript.svelte";
 import { api } from "$lib/api";
 import type { Cue, LessonDetail, TranscriptData } from "$lib/api";
 import type { PlaybackController } from "$lib/playback/playbackController.svelte";
-import { findSeekCue, findKeyPhraseSeekCue } from "$lib/transcriptScenes";
 
 vi.mock("$lib/api", () => ({
   api: { translateTerm: vi.fn() },
@@ -2554,12 +2553,22 @@ describe("Transcript", () => {
   function makeFakeController(
     initialCue: Cue | null = null,
     activeCues: Cue[] | null = testCues,
+    playableCues: Cue[] = testCues,
   ): PlaybackController {
     return {
       currentCue: initialCue,
       currentSectionIndex: initialCue?.section_index ?? null,
       activeCues,
       seekToCue: vi.fn(),
+      playRef: vi.fn(),
+      // Real controller searches ALL sections (not activeCues), so a button
+      // shows regardless of which phase/variant is currently active.
+      findPlayableCue: vi.fn(
+        (ref) =>
+          playableCues.find(
+            (c) => c.ref && c.ref.kind === ref.kind && c.ref.target_index === ref.target_index,
+          ) ?? null,
+      ),
     } as unknown as PlaybackController;
   }
 
@@ -2647,18 +2656,39 @@ describe("Transcript", () => {
   });
 
   describe("synced subtitle — seek buttons", () => {
-    it("renders a seek button per dialogue line when controller and cues are present", () => {
+    it("renders a seek button per dialogue line", () => {
       const { container } = renderWithController(testCues[0]);
       const seekBtns = container.querySelectorAll(".dialogue-line .seek-btn");
-      // Two dialogue lines, both have line 0 and line 1 cues in testCues
+      // Two dialogue lines, both playable (line 0 and line 1 exist in testCues).
       expect(seekBtns.length).toBe(2);
     });
 
-    it("renders a seek button per key phrase row when controller and cues are present", () => {
+    it("renders a seek button per key phrase row", () => {
       const { container } = renderWithController(testCues[0]);
       const kpBtns = container.querySelectorAll(".key-phrases-list .seek-btn");
-      // testCues only has key_phrase for index 0, so only 1 button
       expect(kpBtns.length).toBe(1);
+    });
+
+    it("shows dialogue seek buttons even when a key-phrases track is active", () => {
+      // Regression: buttons must not depend on the currently-selected track.
+      // activeCues is key-phrases-only, but findPlayableCue searches all sections.
+      const { container } = renderWithController(testCues[4], [testCues[4], testCues[5]]);
+      expect(container.querySelectorAll(".dialogue-line .seek-btn").length).toBe(2);
+    });
+
+    it("shows the key-phrase seek button even when a dialogue track is active", () => {
+      const { container } = renderWithController(testCues[0], [testCues[0], testCues[3]]);
+      expect(container.querySelectorAll(".key-phrases-list .seek-btn").length).toBe(1);
+    });
+
+    it("places the dialogue seek button on the right (after the line body)", () => {
+      const { container } = renderWithController(testCues[0]);
+      const line = container.querySelector(".dialogue-line")!;
+      const children = Array.from(line.children);
+      const bodyIdx = children.findIndex((c) => c.classList.contains("dialogue-line-body"));
+      const btnIdx = children.findIndex((c) => c.classList.contains("seek-btn"));
+      expect(bodyIdx).toBeGreaterThanOrEqual(0);
+      expect(btnIdx).toBeGreaterThan(bodyIdx);
     });
 
     it("does not render seek buttons when controller is null", () => {
@@ -2672,29 +2702,19 @@ describe("Transcript", () => {
       expect(container.querySelector(".seek-btn")).toBeNull();
     });
 
-    it("does not render seek buttons when activeCues is null", () => {
+    it("does not render a seek button when the ref has no audio anywhere", () => {
+      // findPlayableCue returns null for every ref (no playable cues).
       const { container } = render(Transcript, {
         props: defaultProps({
           transcript: multiLineTranscript,
           lesson: phraseLineLesson,
-          controller: makeFakeController(null, null),
+          controller: makeFakeController(null, testCues, []),
         }),
       });
       expect(container.querySelector(".seek-btn")).toBeNull();
     });
 
-    it("does not render seek buttons when activeCues is empty", () => {
-      const { container } = render(Transcript, {
-        props: defaultProps({
-          transcript: multiLineTranscript,
-          lesson: phraseLineLesson,
-          controller: makeFakeController(null, []),
-        }),
-      });
-      expect(container.querySelector(".seek-btn")).toBeNull();
-    });
-
-    it("tapping a dialogue line seek button calls seekToCue with the matching cue", () => {
+    it("tapping a dialogue line seek button calls playRef with the line ref", () => {
       const ctrl = makeFakeController(testCues[0]);
       const { container } = render(Transcript, {
         props: defaultProps({
@@ -2704,14 +2724,11 @@ describe("Transcript", () => {
         }),
       });
       const seekBtns = container.querySelectorAll(".dialogue-line .seek-btn");
-      // First seek button is for line index 0 (first dialogue line)
       fireEvent.click(seekBtns[0]);
-      // Should seek to the first cue matching line 0 (testCues[0] = natural_speed)
-      const expected = findSeekCue(testCues, 0, testCues[0].section_index);
-      expect(ctrl.seekToCue).toHaveBeenCalledWith(expected);
+      expect(ctrl.playRef).toHaveBeenCalledWith({ kind: "line", target_index: 0 });
     });
 
-    it("tapping a key phrase seek button calls seekToCue with the matching cue", () => {
+    it("tapping a key phrase seek button calls playRef with the key_phrase ref", () => {
       const ctrl = makeFakeController(testCues[4]);
       const { container } = render(Transcript, {
         props: defaultProps({
@@ -2722,8 +2739,7 @@ describe("Transcript", () => {
       });
       const kpBtn = container.querySelector(".key-phrases-list .seek-btn")!;
       fireEvent.click(kpBtn);
-      const expected = findKeyPhraseSeekCue(testCues, 0);
-      expect(ctrl.seekToCue).toHaveBeenCalledWith(expected);
+      expect(ctrl.playRef).toHaveBeenCalledWith({ kind: "key_phrase", target_index: 0 });
     });
   });
 

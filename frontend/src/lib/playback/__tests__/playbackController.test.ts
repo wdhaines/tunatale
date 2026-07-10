@@ -1315,4 +1315,111 @@ describe("playbackController", () => {
       expect(audioEl.src).toBe("sec-translated");
     });
   });
+
+  describe("findPlayableCue / playRef (transcript ▶ buttons)", () => {
+    const kp0 = makeCue({
+      index: 0,
+      start_ms: 0,
+      end_ms: 500,
+      section_index: 0,
+      section_type: "key_phrases",
+      ref: { kind: "key_phrase", target_index: 0 },
+      text: "dober dan",
+    });
+    const kp1 = makeCue({
+      index: 1,
+      start_ms: 800,
+      end_ms: 1300,
+      section_index: 0,
+      section_type: "key_phrases",
+      ref: { kind: "key_phrase", target_index: 1 },
+      text: "hvala",
+    });
+    const line0 = makeCue({
+      index: 0,
+      start_ms: 700,
+      end_ms: 1200,
+      section_index: 1,
+      section_type: "natural_speed",
+      ref: { kind: "line", target_index: 0 },
+      text: "zdravo",
+    });
+    const twoSectionAudio: LessonAudio = {
+      audio_id: "a1",
+      lesson_id: "l1",
+      sections: [
+        {
+          audio_id: "skp",
+          section_index: 0,
+          section_type: "key_phrases",
+          title: "Key Phrases",
+          cues: [kp0, kp1],
+        },
+        {
+          audio_id: "snat",
+          section_index: 1,
+          section_type: "natural_speed",
+          title: "Natural",
+          cues: [line0],
+        },
+      ],
+      cues: [kp0, kp1, line0],
+    };
+
+    function primeNatural(): ReturnType<typeof createController> {
+      const ctrl = createController({ audio: twoSectionAudio });
+      ctrl.selectTrack("natural_speed");
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      return ctrl;
+    }
+
+    it("resolves a key phrase to the key_phrases section (even while dialogue is active)", () => {
+      const ctrl = primeNatural();
+      expect(ctrl.activeSectionType).toBe("natural_speed");
+      expect(ctrl.findPlayableCue({ kind: "key_phrase", target_index: 1 })).toEqual(kp1);
+    });
+
+    it("resolves a dialogue line to the natural_speed section (even while key phrases are active)", () => {
+      const ctrl = createController({ audio: twoSectionAudio });
+      ctrl.selectTrack("key_phrases");
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(ctrl.findPlayableCue({ kind: "line", target_index: 0 })).toEqual(line0);
+    });
+
+    it("returns null when no section has the ref", () => {
+      const ctrl = createController({ audio: twoSectionAudio });
+      expect(ctrl.findPlayableCue({ kind: "line", target_index: 9 })).toBeNull();
+    });
+
+    it("playRef switches to the key_phrases track and seeks to that phrase", () => {
+      const ctrl = primeNatural();
+      ctrl.playRef({ kind: "key_phrase", target_index: 1 });
+      expect(audioEl.src).toBe("/api/audio/skp");
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(ctrl.activeSectionType).toBe("key_phrases");
+      expect(audioEl.currentTime).toBeCloseTo(0.8, 3); // kp1 starts at 800ms
+    });
+
+    it("playRef seeks within the active track when the ref is already there (no src swap)", () => {
+      const ctrl = primeNatural();
+      const srcBefore = audioEl.src;
+      ctrl.playRef({ kind: "line", target_index: 0 });
+      expect(audioEl.src).toBe(srcBefore);
+      expect(audioEl.currentTime).toBeCloseTo(0.7, 3); // line0 starts at 700ms, seeked immediately
+    });
+
+    it("playRef is a no-op when the ref has no audio anywhere", () => {
+      const ctrl = primeNatural();
+      const srcBefore = audioEl.src;
+      ctrl.playRef({ kind: "line", target_index: 9 });
+      expect(audioEl.src).toBe(srcBefore);
+    });
+
+    it("selectTrack seeks to an explicit ref target instead of preserving position", () => {
+      const ctrl = createController({ audio: twoSectionAudio });
+      ctrl.selectTrack("key_phrases", { kind: "key_phrase", target_index: 1 });
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(audioEl.currentTime).toBeCloseTo(0.8, 3); // sought to kp1, not position 0
+    });
+  });
 });
