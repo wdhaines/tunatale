@@ -212,6 +212,51 @@ class TestQueueStats:
         assert data["review"] == 2  # capped at the review limit
         assert data["new"] == 0  # review budget fully consumed → no new, despite quota 5 + 1 available
 
+    async def test_queue_stats_new_badge_ignores_review_limit_when_flag_on(self, api_app_state):
+        """Brief #4a: with `new_cards_ignore_review_limit` cached ON, the review
+        budget no longer caps the new badge. Same saturated-review scenario as the
+        OFF test above (review cap 2 + 3 due), but the available new card survives."""
+        from datetime import date
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        due = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+
+        for i in range(3):
+            db.add_collocation(
+                SyntacticUnit(text=f"rev{i}", translation=f"r{i}", word_count=1, difficulty=1, source="test"),
+                language_code="sl",
+            )
+            item = db.get_collocation(f"rev{i}")
+            for direction in (Direction.RECOGNITION, Direction.PRODUCTION):
+                db.update_direction(
+                    item.guid,
+                    direction,
+                    DirectionState(
+                        direction=direction,
+                        due_at=due,
+                        stability=5.0,
+                        difficulty=5.0,
+                        reps=5,
+                        lapses=0,
+                        state=SRSState.REVIEW,
+                    ),
+                )
+        db.add_collocation(
+            SyntacticUnit(text="newword", translation="nw", word_count=1, difficulty=1, source="test"),
+            language_code="sl",
+        )
+        db.set_anki_state_cache("daily_review_cap", "2")
+        db.set_anki_state_cache("daily_new_cap", "5")
+        db.set_anki_state_cache("new_cards_ignore_review_limit", "true")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            data = (await client.get("/api/srs/queue-stats")).json()
+
+        assert data["review"] == 2  # review cap still bounds reviews themselves
+        assert data["new"] == 1  # flag ON → new NOT suppressed by the review budget
+
     async def test_queue_stats_new_badge_buries_new_with_review_due_sibling(self, api_app_state):
         """New badge mirrors Anki's new-sibling bury (bury_new default True).
 
@@ -673,6 +718,36 @@ class TestReviewQueue:
         assert len(review_items) == 2
         assert len(new_items) == 3, (
             f"remaining review budget 5−2=3 caps the new slice (quota 5, 4 available); got {len(new_items)}"
+        )
+
+    async def test_review_queue_new_cards_served_when_flag_on_despite_saturated_reviews(self, api_app_state):
+        """Brief #4a: with `new_cards_ignore_review_limit` cached ON, the served
+        queue no longer caps the new slice at the remaining review budget. Same
+        saturated scenario as the suppression test above (3 due, review cap 2), but
+        the 2 available new cards are served."""
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = api_app_state
+        today = date.today()
+        for i in range(3):
+            _add_review_due_collocation(db, f"rev{i}", today)
+        for i in range(2):
+            db.add_collocation(
+                SyntacticUnit(text=f"new{i}", translation=f"n{i}", word_count=1, difficulty=1, source="test"),
+                language_code="sl",
+            )
+        db.set_anki_state_cache("daily_review_cap", "2")
+        db.set_anki_state_cache("daily_new_cap", "5")
+        db.set_anki_state_cache("new_cards_ignore_review_limit", "true")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            data = (await client.get("/api/srs/review-queue?session_start=1")).json()
+
+        review_items = [q for q in data["queue"] if q["state"] == "review"]
+        new_items = [q for q in data["queue"] if q["state"] == "new"]
+        assert len(review_items) == 2  # reviews still capped at 2
+        assert len(new_items) == 2, (
+            f"flag ON → new slice ignores the review budget (2 available, quota 5); got {len(new_items)}"
         )
 
     async def test_sets_no_store_cache_header(self, api_app_state):

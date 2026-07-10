@@ -55,6 +55,9 @@ _DEFAULT_BURY_REVIEW = True
 _DEFAULT_LEARN_STEPS: list[float] = [1.0, 10.0]
 _DEFAULT_RELEARN_STEPS: list[float] = [10.0]
 _DEFAULT_LOAD_BALANCER_ENABLED = False
+# Anki's "New cards ignore review limit" deck option. Default OFF, matching Anki
+# (rslib/src/decks/limits.rs:106 — `if !new_cards_ignore_review_limit`).
+_DEFAULT_NEW_CARDS_IGNORE_REVIEW_LIMIT = False
 
 
 def _read_conf_id_for_deck(conn: sqlite3.Connection, deck_name: str) -> int | None:
@@ -326,12 +329,18 @@ def resolve_daily_review_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
     return (_DEFAULT_REVIEWS_PER_DAY, "default")
 
 
-def effective_review_budget(review_cap: int, reviews_today: int, introduced_today: int) -> int:
+def effective_review_budget(
+    review_cap: int,
+    reviews_today: int,
+    introduced_today: int,
+    *,
+    new_cards_ignore_review_limit: bool = False,
+) -> int:
     """Remaining review-per-day budget, charging today's new-card intros against it.
 
     Anki's daily review limit is consumed by BOTH reviews done today AND new
     cards introduced today (unless `new_cards_ignore_review_limit` is set, which
-    defaults off). Mirror of `rslib/src/decks/limits.rs:104-108` (Anki 25.09)::
+    defaults off). Mirror of `rslib/src/decks/limits.rs:104-108` (Anki 26.05)::
 
         review_limit -= review_today_count;      # reviews done
         if !new_cards_ignore_review_limit {
@@ -342,10 +351,16 @@ def effective_review_budget(review_cap: int, reviews_today: int, introduced_toda
     new-card intros are `last_interval=0`, excluded, Layer 73) and
     `introduced_today` is `count_new_introduced_today` (Anki's `newToday`,
     Layer 26); the two sets are disjoint, so subtracting both never
-    double-counts. Assumes the Anki default (`new_cards_ignore_review_limit`
-    off), matching the same assumption TT already makes for the new badge.
-    Layer 76.
+    double-counts. Layers 76/77.
+
+    Brief #4a: when the collection's `new_cards_ignore_review_limit` option is ON
+    (resolved from `newCardsIgnoreReviewLimit` in Anki's config table via
+    `resolve_new_cards_ignore_review_limit`), new-card intros do NOT charge the
+    review budget — keep the single-source shape by branching here, not at call
+    sites. Defaults off (Anki's default).
     """
+    if new_cards_ignore_review_limit:
+        return max(0, review_cap - reviews_today)
     return max(0, review_cap - reviews_today - introduced_today)
 
 
@@ -881,6 +896,52 @@ def resolve_load_balancer_enabled(db: SRSDatabase | None = None) -> bool:
     if row is not None:
         return row[0] == "true"
     return _DEFAULT_LOAD_BALANCER_ENABLED
+
+
+def _read_new_cards_ignore_review_limit_from_config_table(conn: sqlite3.Connection) -> bool | None:
+    """Read newCardsIgnoreReviewLimit from Anki's config table.
+
+    Collection-level bool (the deck-options UI edits it, but Anki persists it at
+    collection scope — `col.get_config_bool(BoolKey::NewCardsIgnoreReviewLimit)`,
+    rslib/src/scheduler/queue/builder/mod.rs:132). Stored as JSON bool bytes
+    (b'true' / b'false'). Storage key confirmed empirically against the binary
+    (brief #4a). Returns None if the key or table is absent (Anki's default false).
+    """
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    except sqlite3.Error:
+        return None
+
+    if "config" not in tables:
+        return None
+
+    row = conn.execute("SELECT val FROM config WHERE key = 'newCardsIgnoreReviewLimit'").fetchone()
+    if not row:
+        return None
+    return row[0] == b"true"
+
+
+def refresh_new_cards_ignore_review_limit(db: SRSDatabase, conn: sqlite3.Connection) -> None:
+    """Read newCardsIgnoreReviewLimit from Anki's config table and cache it."""
+    val = _read_new_cards_ignore_review_limit_from_config_table(conn)
+    if val is not None:
+        db.set_anki_state_cache("new_cards_ignore_review_limit", "true" if val else "false")
+
+
+def resolve_new_cards_ignore_review_limit(db: SRSDatabase | None = None) -> bool:
+    """Return the cached newCardsIgnoreReviewLimit flag. Defaults to False (Anki's default)."""
+    if db is None:
+        try:
+            from app.srs.database import SRSDatabase as _SRSDatabase
+
+            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        except Exception:
+            return _DEFAULT_NEW_CARDS_IGNORE_REVIEW_LIMIT
+
+    row = db.get_anki_state_cache("new_cards_ignore_review_limit")
+    if row is not None:
+        return row[0] == "true"
+    return _DEFAULT_NEW_CARDS_IGNORE_REVIEW_LIMIT
 
 
 def warn_if_multi_deck_preset(conn: sqlite3.Connection, deck_name: str) -> None:

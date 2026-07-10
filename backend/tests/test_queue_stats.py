@@ -1027,3 +1027,138 @@ class TestEffectiveReviewBudget:
 
         # reviews + intros exceed the cap → budget floors at 0, never negative
         assert effective_review_budget(5, 4, 3) == 0
+
+    def test_flag_on_ignores_new_intros(self):
+        """Brief #4a: new_cards_ignore_review_limit ON → intros don't charge the budget."""
+        from app.srs.queue_stats import effective_review_budget
+
+        # Same inputs as the OFF case (50, 7, 3) but the 3 intros no longer count.
+        assert effective_review_budget(50, 7, 3, new_cards_ignore_review_limit=True) == 43
+
+    def test_flag_on_still_subtracts_reviews_and_clamps(self):
+        from app.srs.queue_stats import effective_review_budget
+
+        assert effective_review_budget(50, 40, 999, new_cards_ignore_review_limit=True) == 10
+        assert effective_review_budget(5, 40, 999, new_cards_ignore_review_limit=True) == 0
+
+
+class TestNewCardsIgnoreReviewLimit:
+    """Brief #4a: sync Anki's `newCardsIgnoreReviewLimit` collection-config bool.
+
+    Storage location confirmed empirically against the real binary (config table,
+    key `newCardsIgnoreReviewLimit`); pinned end-to-end by
+    test_parity_daily_caps.py::test_anki_new_cards_ignore_review_limit_flips_new_cap.
+    """
+
+    @staticmethod
+    def _make_config_conn(value: bytes | None):
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE config (key TEXT PRIMARY KEY, val BLOB, mtime_secs INT, usn INT)")
+        if value is not None:
+            conn.execute("INSERT INTO config (key, val) VALUES ('newCardsIgnoreReviewLimit', ?)", (value,))
+        conn.commit()
+        return conn
+
+    def test_reads_true(self):
+        from app.srs.queue_stats import _read_new_cards_ignore_review_limit_from_config_table
+
+        conn = self._make_config_conn(b"true")
+        assert _read_new_cards_ignore_review_limit_from_config_table(conn) is True
+        conn.close()
+
+    def test_reads_false(self):
+        from app.srs.queue_stats import _read_new_cards_ignore_review_limit_from_config_table
+
+        conn = self._make_config_conn(b"false")
+        assert _read_new_cards_ignore_review_limit_from_config_table(conn) is False
+        conn.close()
+
+    def test_missing_key_returns_none(self):
+        from app.srs.queue_stats import _read_new_cards_ignore_review_limit_from_config_table
+
+        conn = self._make_config_conn(None)
+        assert _read_new_cards_ignore_review_limit_from_config_table(conn) is None
+        conn.close()
+
+    def test_no_config_table_returns_none(self):
+        import sqlite3
+
+        from app.srs.queue_stats import _read_new_cards_ignore_review_limit_from_config_table
+
+        conn = sqlite3.connect(":memory:")
+        assert _read_new_cards_ignore_review_limit_from_config_table(conn) is None
+        conn.close()
+
+    def test_sqlite_error_returns_none(self):
+        """A closed connection raises sqlite3.Error on the sqlite_master probe → None."""
+        from app.srs.queue_stats import _read_new_cards_ignore_review_limit_from_config_table
+
+        conn = self._make_config_conn(b"true")
+        conn.close()  # subsequent .execute raises sqlite3.ProgrammingError (a sqlite3.Error)
+        assert _read_new_cards_ignore_review_limit_from_config_table(conn) is None
+
+    def test_refresh_then_resolve_true(self):
+        from app.srs.database import SRSDatabase
+        from app.srs.queue_stats import (
+            refresh_new_cards_ignore_review_limit,
+            resolve_new_cards_ignore_review_limit,
+        )
+
+        conn = self._make_config_conn(b"true")
+        db = SRSDatabase(":memory:")
+        refresh_new_cards_ignore_review_limit(db, conn)
+        assert resolve_new_cards_ignore_review_limit(db) is True
+        conn.close()
+
+    def test_refresh_then_resolve_false(self):
+        from app.srs.database import SRSDatabase
+        from app.srs.queue_stats import (
+            refresh_new_cards_ignore_review_limit,
+            resolve_new_cards_ignore_review_limit,
+        )
+
+        conn = self._make_config_conn(b"false")
+        db = SRSDatabase(":memory:")
+        refresh_new_cards_ignore_review_limit(db, conn)
+        assert resolve_new_cards_ignore_review_limit(db) is False
+        conn.close()
+
+    def test_refresh_noop_when_key_absent(self):
+        from app.srs.database import SRSDatabase
+        from app.srs.queue_stats import (
+            refresh_new_cards_ignore_review_limit,
+            resolve_new_cards_ignore_review_limit,
+        )
+
+        conn = self._make_config_conn(None)
+        db = SRSDatabase(":memory:")
+        refresh_new_cards_ignore_review_limit(db, conn)
+        # Nothing cached → resolve falls back to the Anki default (False).
+        assert resolve_new_cards_ignore_review_limit(db) is False
+        conn.close()
+
+    def test_resolve_defaults_false(self):
+        from app.srs.database import SRSDatabase
+        from app.srs.queue_stats import resolve_new_cards_ignore_review_limit
+
+        assert resolve_new_cards_ignore_review_limit(SRSDatabase(":memory:")) is False
+
+    def test_resolve_no_db_creates_fresh(self):
+        from unittest.mock import patch
+
+        from app.config import settings as app_settings
+        from app.srs.queue_stats import resolve_new_cards_ignore_review_limit
+
+        with patch.object(app_settings, "database_url", "sqlite:///:memory:"):
+            assert resolve_new_cards_ignore_review_limit(db=None) is False
+
+    def test_resolve_db_none_creation_fails(self):
+        from unittest.mock import patch
+
+        from app.srs.database import SRSDatabase
+        from app.srs.queue_stats import resolve_new_cards_ignore_review_limit
+
+        with patch.object(SRSDatabase, "__init__", lambda self, x="": (_ for _ in ()).throw(Exception("boom"))):
+            assert resolve_new_cards_ignore_review_limit(None) is False

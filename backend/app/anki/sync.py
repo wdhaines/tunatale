@@ -242,6 +242,7 @@ async def run_full_sync(
             refresh_learning_steps,
             refresh_load_balancer_enabled,
             refresh_maximum_review_interval,
+            refresh_new_cards_ignore_review_limit,
             refresh_review_settings,
             warn_if_multi_deck_preset,
         )
@@ -260,6 +261,7 @@ async def run_full_sync(
         refresh_review_settings(db, conn, deck_name)
         refresh_learning_steps(db, conn, deck_name)
         refresh_load_balancer_enabled(db, conn)
+        refresh_new_cards_ignore_review_limit(db, conn)
         refresh_easy_days(db, conn, deck_name)
         warn_if_multi_deck_preset(conn, deck_name)
 

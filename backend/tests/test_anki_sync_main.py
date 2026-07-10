@@ -32,6 +32,7 @@ _REFRESH_FUNCS = [
     "refresh_review_settings",
     "refresh_learning_steps",
     "refresh_load_balancer_enabled",
+    "refresh_new_cards_ignore_review_limit",
     "refresh_easy_days",
     "warn_if_multi_deck_preset",
 ]

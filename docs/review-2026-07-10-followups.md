@@ -90,11 +90,18 @@ if the onset-cluster constants stay). Registry test in `test_languages.py`.
 
 ## 4. Review-cap residuals (LOW, parity — orchestrator supervision required)
 
-- **(a) `new_cards_ignore_review_limit` never synced.** TT hardcodes the default
-  (off) in badge + queue. Fix: read the collection/deck-config bool in a
-  `refresh_*` phase of `run_full_sync` (add to the ONE phase list +
-  `TestRunFullSync`), cache in `anki_state_cache`, thread into
-  `effective_review_budget` call sites and the Layer 77 new-slice cap.
+- **(a) `new_cards_ignore_review_limit` never synced. — DONE (2026-07-10).** TT
+  hardcoded the default (off) in badge + queue. Fixed: storage location resolved
+  EMPIRICALLY against the 26.05 binary — a collection-level config-table bool,
+  key `newCardsIgnoreReviewLimit` (NOT a deck_config proto field; the deck-options
+  UI edits it but Anki persists it at collection scope). Oracle-pinned
+  (`test_parity_daily_caps.py::test_anki_new_cards_ignore_review_limit_flips_new_cap`:
+  saturated reviews + flag OFF → new=0, flag ON → new=new-cap). Read by
+  `refresh_new_cards_ignore_review_limit` in `run_full_sync` (added to the ONE
+  phase list + `TestRunFullSync`), cached in `anki_state_cache`, resolved by
+  `resolve_new_cards_ignore_review_limit(db)` (default False), and threaded into
+  `effective_review_budget` (keyword arg), the `/queue-stats` badge new-cap, and
+  the Layer 77 served-queue new-slice cap. Layer 76/77 addenda + rule 12 amended.
 - **(b) Candidate Layer 78 — interday learning charges the review limit.** Anki
   gathers interday-learning (queue=3) as `LimitKind::Review`
   (`gathering.rs:16+53`); rule 12's "learning exempt" is true only for intraday

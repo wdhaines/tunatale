@@ -61,6 +61,7 @@ from app.srs.queue_stats import (
     resolve_daily_new_cap,
     resolve_daily_review_cap,
     resolve_fsrs_params,
+    resolve_new_cards_ignore_review_limit,
 )
 from app.srs.tokenizer import tokenize
 from app.srs.transcript import extract_transcript
@@ -813,10 +814,16 @@ async def get_queue_stats(request: Request, response: Response):
     review_due_raw = db.count_review_due_collocations(today)
     review_cap, review_cap_source = resolve_daily_review_cap(db)
     reviews_today = db.count_reviews_completed_today(today)
+    # Anki's "New cards ignore review limit" deck option (default OFF, synced from
+    # `newCardsIgnoreReviewLimit` into the cache — brief #4a). When OFF, today's
+    # new-card intros ALSO charge the review-per-day limit AND the review budget
+    # caps the new count; when ON, both couplings are lifted.
+    ignore_review_limit = resolve_new_cards_ignore_review_limit(db)
     # Anki charges today's new-card introductions against the review-per-day
-    # limit too (Layer 76 — rslib/decks/limits.rs:104-108), so the budget is
-    # `review_cap - reviews_today - introduced_today`, not just minus reviews.
-    review_budget = effective_review_budget(review_cap, reviews_today, introduced_today)
+    # limit too (Layer 76 — rslib/decks/limits.rs:104-108), unless the flag is ON.
+    review_budget = effective_review_budget(
+        review_cap, reviews_today, introduced_today, new_cards_ignore_review_limit=ignore_review_limit
+    )
     review_remaining = min(review_due_raw, review_budget)
     # New-sibling bury (Anki's bury_new): a new card whose sibling is gathered
     # into today's queue (review-due-today / learning / graded-today) is buried
@@ -826,15 +833,15 @@ async def get_queue_stats(request: Request, response: Response):
     bury_new, _ = resolve_bury_new(db)
     new_available = db.count_new_available_collocations(today) if bury_new else db.count_new_available()
     new_badge = min(remaining_quota, new_available)
-    # Anki's "New cards ignore review limit" deck option defaults OFF, so the review
-    # limit also caps new cards: when the day's review budget is consumed by due
-    # reviews, Anki shows 0 new even with new/day > 0 (e.g. review cap 50 + 194 due
-    # → 0 new). The served queue applies the same cap (`_compute_live_main`, Layer 77).
-    # Assumes the default (off); honouring an explicitly-enabled flag would need the
-    # preset value synced into the cache — a follow-up. `review_budget` already
-    # nets out reviews AND new intros done today (Layer 76), matching Anki's
+    # When "New cards ignore review limit" is OFF, the review limit also caps new
+    # cards: when the day's review budget is consumed by due reviews, Anki shows 0
+    # new even with new/day > 0 (e.g. review cap 50 + 194 due → 0 new). The served
+    # queue applies the same cap (`_compute_live_main`, Layer 77). `review_budget`
+    # already nets out reviews AND new intros done today (Layer 76), matching Anki's
     # `new = min(new_limit, review_limit - review_count)` after both are charged.
-    new_badge = min(new_badge, max(0, review_budget - review_remaining))
+    # Brief #4a: skip this cap entirely when the flag is ON (new ignores the limit).
+    if not ignore_review_limit:
+        new_badge = min(new_badge, max(0, review_budget - review_remaining))
     return {
         "new": new_badge,
         "learning": db.count_learning(),

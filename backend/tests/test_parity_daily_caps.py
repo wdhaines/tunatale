@@ -250,6 +250,87 @@ def test_anki_caps_new_cards_to_remaining_review_budget(synthetic_collection: Sy
     )
 
 
+@pytest.mark.oracle
+def test_anki_new_cards_ignore_review_limit_flips_new_cap(synthetic_collection: SyntheticCollection) -> None:
+    """Anki's ``new_cards_ignore_review_limit`` deck option lifts the review cap on new cards.
+
+    Ground-truth pin for brief #4a. Resolves the storage-location ambiguity
+    EMPIRICALLY: the source reads ``col.get_config_bool(BoolKey::NewCardsIgnoreReviewLimit)``
+    (``rslib/src/scheduler/queue/builder/mod.rs:132``, ``rslib/src/decks/limits.rs:106``),
+    a COLLECTION-level config-table bool — the UI presents it under deck options
+    but persists it at collection scope. The exact stored key was captured against
+    the real binary by driving ``update_deck_configs`` and dumping the ``config``
+    table: key ``newCardsIgnoreReviewLimit``, val JSON ``true``. That is the field
+    #37-vs-#40 (Layer 38) footgun this test exists to foreclose.
+
+    Scenario (same collection, two states): reviews_per_day=5 saturated by 5 due
+    reviews, new_per_day=10 with 10 new available.
+      - flag OFF (key absent): review budget exhausted ⇒ ``counts.new == 0``.
+      - flag ON  (key ``true``): new cards ignore the review budget ⇒
+        ``counts.new == 10`` (min(new_per_day, available)).
+
+    What this does NOT cover:
+    - TT's own count/queue pipeline (pinned by the flag-ON endpoint tests in
+      ``test_api_srs.py``).
+    """
+    synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
+    synthetic_collection.set_daily_limits(new=10, reviews=5)
+
+    now_secs = int(time.time())
+    last_review_secs = now_secs - 5 * 86400
+
+    # 5 overdue review cards — saturate reviews_per_day.
+    for i in range(5):
+        cid = 50010 + i * 10
+        note_id = cid // 10
+        synthetic_collection.add_note(id=note_id, guid=f"g-{cid}", fields=[f"front-{cid}", "back"])
+        synthetic_collection.add_card(
+            id=cid,
+            note_id=note_id,
+            ord=0,
+            type=2,
+            queue=2,
+            due=0,
+            ivl=10,
+            reps=5,
+            stability=10.0,
+            difficulty=5.0,
+            last_review_secs=last_review_secs,
+            desired_retention=DEFAULT_DESIRED_RETENTION,
+        )
+    # 10 new cards.
+    for i in range(10):
+        cid = 60010 + i * 10
+        note_id = cid // 10
+        synthetic_collection.add_note(id=note_id, guid=f"g-{cid}", fields=[f"front-{cid}", "back"])
+        synthetic_collection.add_card(id=cid, note_id=note_id, ord=0, type=0, queue=0, due=i, ivl=0, reps=0)
+    synthetic_collection.save()
+
+    off = run_oracle(
+        synthetic_collection.path,
+        [{"op": "get_queue", "deck_id": 1, "fetch_limit": 50}],
+    ).raw()["get_queue_0"]["counts"]
+    assert off["review"] == 5, f"5 due reviews under a cap of 5, got {off}"
+    assert off["new"] == 0, (
+        f"with new_cards_ignore_review_limit OFF and the review budget saturated, "
+        f"new must be capped to 0, got counts.new={off['new']}. counts={off}"
+    )
+
+    # Flip the flag ON at collection scope (the storage the source reads).
+    synthetic_collection.set_config_value("newCardsIgnoreReviewLimit", True)
+    synthetic_collection.save()
+
+    on = run_oracle(
+        synthetic_collection.path,
+        [{"op": "get_queue", "deck_id": 1, "fetch_limit": 50}],
+    ).raw()["get_queue_0"]["counts"]
+    assert on["review"] == 5, f"5 due reviews under a cap of 5, got {on}"
+    assert on["new"] == 10, (
+        f"with new_cards_ignore_review_limit ON, new ignores the review budget and "
+        f"caps only at new_per_day=10 (10 available), got counts.new={on['new']}. counts={on}"
+    )
+
+
 def test_tt_reads_caps_from_synthetic_deck_config(synthetic_collection: SyntheticCollection) -> None:
     """TT's ``resolve_daily_*_cap`` reads the same proto fields the oracle uses.
 

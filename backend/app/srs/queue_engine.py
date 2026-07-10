@@ -25,6 +25,7 @@ from app.srs.queue_stats import (
     resolve_daily_review_cap,
     resolve_fsrs_params,
     resolve_learning_cutoff,
+    resolve_new_cards_ignore_review_limit,
     resolve_new_spread,
     set_session_main_queue,
 )
@@ -217,10 +218,17 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     # mid-session drops). Learning cards are NOT review-capped (Anki exempts them).
     review_cap, _ = resolve_daily_review_cap(db)
     reviews_today = db.count_reviews_completed_today(today)
+    # Anki's "New cards ignore review limit" deck option (default OFF, synced from
+    # `newCardsIgnoreReviewLimit` — brief #4a): when OFF, new intros charge the
+    # review budget (Layer 76) AND the review budget caps the new slice (Layer 77);
+    # when ON, both couplings are lifted.
+    ignore_review_limit = resolve_new_cards_ignore_review_limit(db)
     # New cards introduced today also consume the review budget (Layer 76 —
     # rslib/decks/limits.rs:104-108), so the served-review cap nets them out too,
     # matching Anki's queue build (introducing new cards shrinks review headroom).
-    review_remaining = effective_review_budget(review_cap, reviews_today, introduced_today)
+    review_remaining = effective_review_budget(
+        review_cap, reviews_today, introduced_today, new_cards_ignore_review_limit=ignore_review_limit
+    )
     buried = db.list_collocations_reviewed_today(today)
 
     due_rec = db.get_due_items(today, Direction.RECOGNITION)
@@ -277,7 +285,9 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     # the review slice. Self-consistent mid-session like the review cap above:
     # grading a review shrinks the budget by 1 but also removes it from the due
     # pool, so `review_remaining - len(due slice)` is stable (no mid-session drops).
-    new_quota = min(new_quota, review_remaining - len(nonlearning_due))
+    # Brief #4a: skip this cap when "New cards ignore review limit" is ON.
+    if not ignore_review_limit:
+        new_quota = min(new_quota, review_remaining - len(nonlearning_due))
     nonlearning_new = nonlearning_new[:new_quota]
 
     if spread == 1:
