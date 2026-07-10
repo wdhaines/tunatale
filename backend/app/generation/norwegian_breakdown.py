@@ -61,6 +61,108 @@ _MAX_STEM_RANK = 8000
 # or none. Kept attached to the part on their left.
 _LINKING_ELEMENTS = ("", "s", "e")
 
+# Closed-class words that can never be a *free compound stem*. These are
+# pronouns, conjunctions, degree adverbs, and similar function words whose
+# extreme frequency causes the segmenter to split ordinary words (e.g. "sommer"
+# -> "som"+"mer"). Prepositions and particles MUST stay eligible — words like
+# "etter", "inn", "ut", "over", "under", "til", "mot", "for", "om" are
+# productive compound first-elements ("etterforskning" = "etter"+"forskning").
+_CLOSED_CLASS_STEMS: frozenset[str] = frozenset(
+    [
+        # pronouns
+        "jeg",
+        "du",
+        "han",
+        "hun",
+        "vi",
+        "de",
+        "seg",
+        "dem",
+        "deg",
+        "meg",
+        "oss",
+        "min",
+        "din",
+        "sin",
+        "vår",
+        "deres",
+        "hvilken",
+        "hvilket",
+        "hvilke",
+        "noen",
+        "noe",
+        "hver",
+        "selv",
+        # conjunctions (note: "for" and "om" are omitted — they are
+        # prepositions/particles that are productive compound stems, e.g.
+        # "forstand", "omgang")
+        "men",
+        "og",
+        "eller",
+        "så",
+        "at",
+        "dersom",
+        "fordi",
+        "mens",
+        "derfor",
+        # degree adverbs / intensifiers
+        "mer",
+        "mest",
+        "meget",
+        "ganske",
+        "temmelig",
+        "litt",
+        # subordinators / auxiliaries / particles (NOT prepositions)
+        "som",
+        "ikke",
+        "har",
+        "er",
+        "var",
+        "skal",
+        "kan",
+        "vil",
+        "bør",
+        "må",
+        "hadde",
+        "skulle",
+        "kunne",
+        "ville",
+        "maatte",
+        # demonstratives
+        "den",
+        "det",
+        "denne",
+        "dette",
+        "disse",
+        # interrogatives
+        "hva",
+        "hvor",
+        "hvorfor",
+        "hvordan",
+        "hvem",
+        # common adverbs / particles (not prepositions)
+        "også",
+        "bare",
+        "når",
+        "der",
+        "her",
+        "da",
+        "daa",
+        "nå",
+        "allerede",
+        "ennå",
+        "fremdeles",
+        # articles / determiners
+        "en",
+        "et",
+        "ei",
+        "ett",
+        # proper names that appear in the wordlist at compound-stem rank but
+        # are never productive compound first-elements
+        "jon",
+    ]
+)
+
 
 @functools.cache
 def _load_ranked_lexicon() -> dict[str, int]:
@@ -84,8 +186,15 @@ def load_no_lexicon() -> frozenset[str]:
 
 
 def _is_content_stem(word: str, ranks: dict[str, int]) -> bool:
-    """True if *word* is a lexicon entry common enough to be a real compound part."""
+    """True if *word* is a lexicon entry common enough to be a real compound part.
+
+    Rejects closed-class function words (pronouns, conjunctions, etc.) that are
+    too frequent to be productive compound stems — their extreme rank causes
+    ordinary words to be over-split (e.g. ``sommer`` → ``som``+``mer``).
+    """
     if len(word) < _MIN_STEM_LEN or word in _DERIVATIONAL_SUFFIX_SET:
+        return False
+    if word in _CLOSED_CLASS_STEMS:
         return False
     rank = ranks.get(word)
     return rank is not None and rank <= _MAX_STEM_RANK
@@ -143,17 +252,31 @@ def _find_derivational_with_inflection(
     return None
 
 
+def _anchor_rank(parts: list[str], ranks: dict[str, int]) -> int:
+    """Return the rank of the *most* frequent part (lowest rank number).
+
+    This is the split's "anchor": the strongest, most established stem in it.
+    Parts missing from the lexicon are treated as rank ``_MAX_STEM_RANK``.
+    NOT worst-part scoring (max rank) — that would punish legitimate linked
+    forms like ``forsknings`` (rank ~18k) and flip the pinned
+    ``etter|forsknings|team`` decomposition.
+    """
+    return min(ranks.get(p, _MAX_STEM_RANK) for p in parts)
+
+
 def _segment_surface(text: str, ranks: dict[str, int]) -> list[str] | None:
     """Split a content region (no trailing inflection) into surface morphemes.
 
-    Recursive, frequency-gated compound splitter. Prefers the *deepest* valid
-    decomposition (most parts) so ``etterforskning`` -> ``etter | forskning``
-    rather than staying whole. A Norwegian linking element (fuge-s / fuge-e)
-    may sit between two parts and stays attached to the part on its left.
-    Every free part must clear the frequency floor (:func:`_is_content_stem`),
-    which is what keeps simplex roots like ``politi`` from splitting into the
-    rare junk fragments ``poli`` + ``tie``. Returns ``None`` when *text* cannot
-    be covered by any content stem.
+    Recursive, frequency-gated compound splitter. Prefers the decomposition
+    anchored on the most frequent part (lowest :func:`_anchor_rank`); on ties,
+    fewer parts wins — so ``togstasjon`` resolves to ``tog | stasjon`` rather
+    than ``tog | stas | jon`` (same anchor ``tog``, fewer parts). A Norwegian
+    linking element (fuge-s / fuge-e) may sit between two parts and stays
+    attached to the part on its left.  Every free part must clear the
+    frequency floor (:func:`_is_content_stem`), which is what keeps simplex
+    roots like ``politi`` from splitting into the rare junk fragments
+    ``poli`` + ``tie``.  Returns ``None`` when *text* cannot be covered by any
+    content stem.
     """
     n = len(text)
     best: list[str] | None = None
@@ -170,12 +293,14 @@ def _segment_surface(text: str, ranks: dict[str, int]) -> list[str] | None:
             sub = _segment_surface(rest, ranks)
             if sub is None:
                 continue
-            # Only the remainder recurses; trying every `first` length lets the
-            # deepest split emerge (first="etter" -> rest recurses to
-            # "forsknings"+"team"). The linking element stays on the left part.
             candidate = [first + link] + sub
-            if best is None or len(candidate) > len(best):
+            if best is None:
                 best = candidate
+            else:
+                cand_anchor = _anchor_rank(candidate, ranks)
+                best_anchor = _anchor_rank(best, ranks)
+                if cand_anchor < best_anchor or (cand_anchor == best_anchor and len(candidate) < len(best)):
+                    best = candidate
     if best is not None:
         return best
     if _is_content_stem(text, ranks):

@@ -95,6 +95,14 @@ def test_is_content_stem_derivational_suffix_excluded():
     assert _is_content_stem("het", ranks) is False
 
 
+def test_is_content_stem_closed_class_excluded():
+    """Closed-class function words (pronouns, conjunctions, etc.) are never
+    compound stems, even though they rank well under _MAX_STEM_RANK."""
+    ranks = _load_ranked_lexicon()
+    for word in ("som", "mer", "men", "den", "det", "han", "hun", "seg", "jeg"):
+        assert _is_content_stem(word, ranks) is False, f"{word!r} should be excluded"
+
+
 # -- segment_compound ----------------------------------------------------
 
 
@@ -192,6 +200,39 @@ def test_segment_compound_non_compound():
 
 def test_segment_compound_empty():
     assert segment_compound("") == []
+
+
+# -- segment_compound: closed-class exclusion goldens ---------------------
+
+
+def test_segment_compound_sommer_stays_whole():
+    """'sommer' (summer) must not split into 'som'+'mer' — both are
+    closed-class words that should never be compound stems."""
+    assert segment_compound("sommer") == ["sommer"]
+
+
+def test_segment_compound_morsom_stays_whole():
+    """'morsom' (funny) must not split into 'mor'+'som'."""
+    assert segment_compound("morsom") == ["morsom"]
+
+
+def test_segment_compound_togstasjon_fewer_parts():
+    """'togstasjon' (train station) splits into two real stems, not three —
+    both candidates share the anchor 'tog', so fewer parts wins the tie."""
+    assert segment_compound("togstasjon") == ["tog", "stasjon"]
+
+
+# -- segment_compound: preposition eligibility regression ------------------
+
+
+def test_segment_compound_etterforskning_preposition_eligible():
+    """'etter' is a preposition and MUST remain a valid compound stem."""
+    assert segment_compound("etterforskning") == ["etter", "forskning"]
+
+
+def test_segment_compound_forstand_preposition_eligible():
+    """'for' is a preposition/particle and MUST remain a valid compound stem."""
+    assert segment_compound("forstand") == ["for", "stand"]
 
 
 # -- _segment_surface edge branches --------------------------------------
