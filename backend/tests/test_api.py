@@ -3283,6 +3283,57 @@ class TestAudioEndpoints:
         assert "cues" in data
         assert len(data["cues"]) > 0
 
+        # A7: each section carries its own rebased cue list (not just the full
+        # track). Without this the frontend's per-variant subtitle sync is dead.
+        for s in data["sections"]:
+            assert "cues" in s
+        natural = next(s for s in data["sections"] if s["section_type"] == "natural_speed")
+        assert natural["cues"] is not None
+        assert natural["cues"][0]["start_ms"] == 0  # rebased to its own zero
+
+    async def test_get_lesson_audio_scrubs_slow_section_cue_text(self, tmp_path):
+        """A7 + A6: a slow section's cues expose natural text through the API,
+        never the ellipsis-broken text that drives TTS."""
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="T",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="hvala", voice_id="v", language_code="sl")],
+                ),
+                Section(
+                    section_type=SectionType.SLOW_SPEED,
+                    phrases=[Phrase(text="hva ... la", voice_id="v", language_code="sl")],
+                ),
+            ],
+        )
+        store = ContentStore(":memory:")
+        lesson_id = "lesson-slow-scrub"
+        store.save_lesson(lesson_id, "cur", 1, lesson)
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=_fake_render)
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+            response = await client.get(f"/api/audio/lesson/{lesson_id}")
+
+        data = response.json()
+        slow = next(s for s in data["sections"] if s["section_type"] == "slow_speed")
+        line_texts = [
+            c["text"]
+            for c in slow["cues"]
+            if c["language_code"] == "sl" and (c["ref"] or {}).get("kind") == "line"
+        ]
+        assert line_texts == ["hvala"]
+        assert all(" ... " not in t for t in line_texts)
+
     async def test_get_lesson_audio_returns_null_cues_for_old_lesson(self, tmp_path):
         """GET /api/audio/lesson/{id} returns cues:null for lessons without manifest."""
         from app.storage.store import ContentStore

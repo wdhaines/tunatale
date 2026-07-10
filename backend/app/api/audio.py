@@ -94,12 +94,14 @@ async def get_lesson_audio(lesson_id: str, request: Request):
     for r in section_rows:
         section_type_str = r["section_type"] or ""
         title = _section_title(section_type_str)
+        section_cues = json.loads(r["cues_json"]) if r["cues_json"] else None
         sections.append(
             {
                 "audio_id": r["id"],
                 "section_index": r["section_index"],
                 "section_type": section_type_str,
                 "title": title,
+                "cues": section_cues,
             }
         )
 
