@@ -119,7 +119,10 @@ class TestCRUD:
 class TestVariantHelpers:
     """DB support for comma-separated spelling-variant cards (Norwegian 'mot, imot')."""
 
-    def test_get_variant_candidate_rows_returns_only_separator_rows(self, srs_db):
+    def test_get_variant_candidates_with_items_returns_hydrated_separator_rows(self, srs_db):
+        """Scans and hydrates in ONE query: (id, text, item) per separator row,
+        no scan→refetch window (the old two-step shape needed a dead
+        "row vanished between queries" branch on the caller)."""
         srs_db.add_collocation(
             SyntacticUnit(text="mot, imot", translation="against", word_count=2, difficulty=1, source="anki"),
             language_code="no",
@@ -128,16 +131,20 @@ class TestVariantHelpers:
             SyntacticUnit(text="politiet", translation="the police", word_count=1, difficulty=1, source="anki"),
             language_code="no",
         )
-        rows = srs_db.get_variant_candidate_rows("no", ",")
-        assert [text for _id, text in rows] == ["mot, imot"]
-        assert all(isinstance(rid, int) for rid, _ in rows)
+        results = srs_db.get_variant_candidates_with_items("no", ",")
+        assert len(results) == 1
+        cid, text, item = results[0]
+        assert isinstance(cid, int)
+        assert text == "mot, imot"
+        assert item.syntactic_unit.text == "mot, imot"
+        assert item.directions  # hydrated, not a bare row
 
-    def test_get_variant_candidate_rows_scoped_by_language(self, srs_db):
+    def test_get_variant_candidates_with_items_scoped_by_language(self, srs_db):
         srs_db.add_collocation(
             SyntacticUnit(text="mot, imot", translation="against", word_count=2, difficulty=1, source="anki"),
             language_code="no",
         )
-        assert srs_db.get_variant_candidate_rows("sl", ",") == []
+        assert srs_db.get_variant_candidates_with_items("sl", ",") == []
 
 
 class TestAmbiguousSurfaces:

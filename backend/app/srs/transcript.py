@@ -217,19 +217,18 @@ def _build_variant_index(db: SRSDatabase, language_code: str) -> dict[str, tuple
     lexical item that the single-word lemma lookup can't match (its ``lemma`` column
     is unset). This index lets the reader resolve *either* spelling to the one card.
     Empty for languages with no ``variant_separator`` (every other language today).
+
+    ``get_variant_candidates_with_items`` scans and hydrates in one query, so
+    there is no scan→refetch window (and no "row vanished" branch to cover).
     """
     sep = get_variant_separator(language_code)
     if not sep:
         return {}
     index: dict[str, tuple[int, SRSItem]] = {}
-    for cid, text in db.get_variant_candidate_rows(language_code, sep):
+    for cid, text, item in db.get_variant_candidates_with_items(language_code, sep):
         variants = card_surface_variants(language_code, text)
         if len(variants) <= 1:
             continue  # contained the separator but isn't a variant list (real phrase)
-        loaded = db.get_collocation_by_id(cid)
-        if loaded is None:  # pragma: no cover - row vanished between queries
-            continue
-        _cid, item, _lang = loaded
         for variant in variants:
             index[variant.casefold()] = (cid, item)
     return index

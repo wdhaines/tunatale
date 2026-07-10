@@ -26,6 +26,15 @@ Grandfather (``tests/language_literals_grandfather.txt``)
 Docstrings are excluded — only literals used as real values (assignments,
 comparisons, dict keys, function arguments, etc.) count as hits.
 
+Known limitations
+  String concatenation (``"n" + "o"``) produces two separate ``ast.Constant``
+  nodes joined by ``ast.BinOp`` — neither constant alone matches a language
+  literal, so the checker misses it. An AST constant-folding pass could resolve
+  this but is likely overkill: the case-variant bypass (``"No"`` → ``"no"``) was
+  fixed 2026-07-10, and concatenation to form language codes is not observed in
+  the codebase today. If a violation of this shape appears, it must be caught by
+  code review or added to the grandfather ledger.
+
 Usage::
 
     # Check against allowlist + grandfather (exit 0 = clean)

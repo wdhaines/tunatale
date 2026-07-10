@@ -45,4 +45,6 @@ def test_mixin_composition() -> None:
 
 def test_public_method_count_pinned() -> None:
     count = sum(1 for m in dir(SRSDatabase) if not m.startswith("_") and callable(getattr(SRSDatabase, m)))
-    assert count == 100  # 99 pre-split + get_variant_candidate_rows (spelling-variant reader index)
+    # 100: get_variant_candidates_with_items replaces get_variant_candidate_rows
+    # (single-query scan+hydrate swap, net zero)
+    assert count == 100
