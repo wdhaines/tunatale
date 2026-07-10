@@ -1,3 +1,56 @@
+Update docs/walkthrough.md to match the current codebase, then sweep the rest
+  of docs/ for stale content. Verify every claim against the code before keeping
+  or writing it — the docs lie, the code doesn't.
+
+  The walkthrough likely predates several 2026-06/07 structural changes; verify
+  each and update where it shows the old world:
+  - sync module split (2026-06-11): app/anki/sync.py is a runner + re-export
+    facade; engine in sync_engine.py, I/O in sync_reader.py/sync_writer.py,
+    helpers in sync_common.py.
+  - peer-sync is the ONLY sync path (legacy /api/anki/sync + /status deleted
+    2026-06-10; the python -m app.anki.sync CLI + --all-languages removed
+    2026-06-30).
+  - god-module split (2026-07-04/05): app/srs/database.py is a ~60-line facade
+    over db_* mixins; queue engine extracted to app/srs/queue_engine.py.
+  - language-plugin hardening (2026-07-08): app/languages.py registry +
+    LanguageContext, enforced by scripts/check_language_literals.py; sqlite_writer.py
+    DELETED — any doc mention of it as a live module is stale.
+  - direction field registry (2026-07-08): app/srs/direction_fields.py + v35 SQL
+    CHECK drive _DIR_COLUMNS/_direction_differs.
+  - Norwegian breakdown plugin (2026-07-07..10): app/generation/norwegian_breakdown.py
+    (compound segmentation, s-overlap, closed-class stems), dispatched via
+    section_builder; docs/bp-brief-segmenter-homographs-overlap.md has the design.
+  - lesson player rework (2026-07-09/10): per-section cue manifests
+    (render_service.derive_section_cues), new slow_translated section, phase +
+    enunciation/English track model in LessonPlayer, legacy lessons gated via
+    trackMode; the transcript "Slow" text toggle is gone.
+  - daily-caps parity now spans Layers 75-77 (caps limit the served queue, new
+    intros charge the review budget, review budget caps served new cards).
+
+  One concrete stale spot already confirmed: .claude/rules/testing.md's frontend
+  coverage-gate baseline says "46 drops on 21 files" — current reality is ~128
+  drops on 47-48 files (growth, not compiler drift); update the baseline note the
+  way that section itself prescribes.
+
+  Hard limits: docs/anki-parity-layers.md is an append-only history — never
+  rewrite entries. The .claude/rules/*.md files are load-bearing operational
+  docs — fix factually stale statements in place but do not restructure or
+  condense them; the Anki mirror is the product, "fewer Layers" is not a goal,
+  and Path 2 stays rejected. Don't touch ~/.claude memory files.
+
+  Deliverables: (1) the doc updates, committed after a full unpiped ./test.sh
+  run (confirm "All checks passed" + the ruff file count; docs-only changes
+  still go through the gate); (2) a new docs/refactor-suggestions-2026-07.md
+  listing fixes/refactors/cleanups you noticed along the way — ASSESSMENT ONLY,
+  ranked, with file:line evidence and a one-line why per item; do not implement
+  them. Check docs/review-2026-07-10-followups.md and docs/ui-review-backlog.md
+  first so you don't duplicate known items. Use cheap subagents (sonnet/haiku)
+  for the bulk read-and-verify passes; write the final docs yourself.
+
+  Use showboat to update the documentation as appropriate, especially @docs/walkthrough.md.
+
+  Also can you use your knowledge of all the documentation to appropriately compact memory? I’d like to not have to load 66k tokens every session!
+
 # Review follow-ups — 2026-07-10 branch review (norwegian-breakdown)
 
 Findings from the 2026-07-10 review of commits since 7/7 that were **deliberately
