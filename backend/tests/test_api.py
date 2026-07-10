@@ -3327,9 +3327,7 @@ class TestAudioEndpoints:
         data = response.json()
         slow = next(s for s in data["sections"] if s["section_type"] == "slow_speed")
         line_texts = [
-            c["text"]
-            for c in slow["cues"]
-            if c["language_code"] == "sl" and (c["ref"] or {}).get("kind") == "line"
+            c["text"] for c in slow["cues"] if c["language_code"] == "sl" and (c["ref"] or {}).get("kind") == "line"
         ]
         assert line_texts == ["hvala"]
         assert all(" ... " not in t for t in line_texts)
