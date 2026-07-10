@@ -30,7 +30,10 @@
 		lessonId: init.audio.lesson_id,
 		lessonTitle: init.lessonTitle || init.audio.lesson_id,
 		audioUrl: api.audioUrl(init.audio.audio_id),
-		audio: init.audio
+		audio: init.audio,
+		// Without this, selectTrack falls back to identity and sets audioEl.src to
+		// a bare section id — a broken relative URL that never loads.
+		sectionUrl: (id) => api.audioUrl(id)
 	});
 
 	controller = ctrl;

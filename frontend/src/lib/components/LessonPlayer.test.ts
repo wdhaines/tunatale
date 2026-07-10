@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import LessonPlayer from "./LessonPlayer.svelte";
+import { api } from "$lib/api";
 import type { LessonAudio } from "$lib/api";
 import type { PlaybackController } from "$lib/playback/playbackController.svelte";
 
@@ -311,6 +312,21 @@ describe("LessonPlayer", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
       fireEvent.click(container.querySelector<HTMLButtonElement>(".phase-btn:first-child")!);
       expect(JSON.parse(localStorage.getItem(KEY)!).phase).toBe("key_phrases");
+    });
+
+    it("sets the section track src to a real URL, not a bare id", () => {
+      // Regression: LessonPlayer must pass sectionUrl to the controller.
+      // Default dialogue·natural selects natural_speed (s2) on mount; without
+      // the wiring, selectTrack falls back to identity and sets audioEl.src to
+      // the bare id "s2" — a broken relative URL that never loads, so play
+      // silently does nothing. The prefetch path calls api.audioUrl(s2) either
+      // way, so we must observe the actual src the controller assigns.
+      const srcSpy = vi.spyOn(HTMLMediaElement.prototype, "src", "set");
+      render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      const srcs = srcSpy.mock.calls.map((c) => c[0]);
+      expect(srcs).toContain("/api/audio/s2");
+      expect(srcs).not.toContain("s2");
+      srcSpy.mockRestore();
     });
 
     it("does not seed from storage when cues are absent (legacy full track)", () => {

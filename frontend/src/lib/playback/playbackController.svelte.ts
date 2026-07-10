@@ -98,8 +98,11 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   const sectionUrlFn = deps.sectionUrl ?? ((id: string) => id);
   const audioSections = deps.audio.sections;
 
-  let activeCues: Cue[] | null = $state(deps.audio.cues ?? null);
-  let refGroups: number[][] = $state(activeCues ? buildRefGroups(activeCues) : []);
+  // Seed the reactive track state from a plain const (not the $state itself) so
+  // the initializers don't trip Svelte's state_referenced_locally warning.
+  const initialCues: Cue[] | null = deps.audio.cues ?? null;
+  let activeCues: Cue[] | null = $state(initialCues);
+  let refGroups: number[][] = $state(initialCues ? buildRefGroups(initialCues) : []);
   let sectionTitles: Record<number, string> = $state(
     audioSections.reduce(
       (acc, s) => {
@@ -110,8 +113,8 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     ),
   );
   let activeSectionType: string | null = $state(
-    activeCues && activeCues.length > 0 && activeCues[0].section_type
-      ? activeCues[0].section_type
+    initialCues && initialCues.length > 0 && initialCues[0].section_type
+      ? initialCues[0].section_type
       : null,
   );
 
