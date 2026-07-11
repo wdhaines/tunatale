@@ -19,8 +19,8 @@
 
 Steps are ordered by dependency. Never implement step N+1 until step N's tests are green.
 
-Current steps:
-1. Project scaffolding & health check ← here
+Original build-plan steps (all 10 completed long ago — kept as the worked example of the ordering rule; apply the same dependency-ordering to any new multi-step plan):
+1. Project scaffolding & health check
 2. Domain models
 3. Groq LLM client + cassette system
 4. FSRS SRS engine

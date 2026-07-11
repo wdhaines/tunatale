@@ -29,6 +29,7 @@ The chat transcript is not the source. It's the conversation that *produced* the
 | `POST` | `/api/curriculum/plan` | **LLM-free**: mint an id, save an empty curriculum with empty planner state |
 | `POST` | `/api/curriculum/{id}/plan/turn` | One planner chat turn: learner snapshot → LLM → append chat, set/replace proposal |
 | `POST` | `/api/curriculum/{id}/plan/commit` | Append the proposed batch to committed days, clear proposal |
+| `POST` | `/api/curriculum/{id}/plan/reset` | Clear planner chat + pending proposal (recover from a language-contaminated conversation); committed days untouched |
 | `POST` | `/api/curriculum/{id}/plan/feedback` | Record listening feedback for a committed day (enters next turn's prompt) |
 | `GET` | `/api/curriculum/{id}` | Full day-object list + `cefr_level` + pending `proposed` batch |
 | `GET` | `/api/curriculum/{id}/source` | Export plan as self-describing JSON (the full Curriculum model) |
@@ -95,7 +96,7 @@ The LLM response cassette system (`app/llm/cassette.py`) keys prompts by hash. F
 
 - **Deterministic ordering.** Days are sorted by `day`; feedback by `day`; chat messages are in insertion order (always the same sequence for the same conversation). `dict` iteration is stable in modern Python (3.7+). The prompt string is fully determined by the topic/CEFR/chat history/learner state.
 
-- **`build_planner_turn_prompt`** (`app/generation/prompts.py:368`) is a pure function — same inputs → same string output every time.
+- **`build_planner_turn_prompt`** (`app/generation/prompts.py:308`) is a pure function — same inputs → same string output every time.
 
 - **`build_learner_snapshot`** (`app/srs/planner_snapshot.py`) computes known lemmas, FSRS parameters, and recent review history from the SRS database. For a given SRS state, the snapshot is deterministic.
 

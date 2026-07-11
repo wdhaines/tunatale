@@ -26,7 +26,7 @@ delivers ~95% of the data savings; Phases 2–4 add true offline playback.
   `start-dev.sh` detects the MagicDNS name and mints HTTPS certs covering it).
   Tailscale tunnels over cellular too, which is *why* mobile data gets spent off
   wifi — the phone streams straight from the Mac through the VPN.
-- **Playback:** `frontend/src/lib/components/AudioPlayer.svelte:14` is a plain
+- **Playback:** `frontend/src/lib/components/LessonPlayer.svelte` (which replaced `AudioPlayer.svelte` in the 2026-07-09 player rework) wraps a plain
   `<audio controls src={api.audioUrl(audio.audio_id)}>`. URL helpers:
   `frontend/src/lib/api.ts:306` (`audioUrl`) and `:310` (`audioZipUrl`).
 - **Serving:** `backend/app/api/audio.py:177` `GET /api/audio/{audio_id}` →
@@ -145,7 +145,7 @@ reproducible from TTS anyway.
   decodes; assert `codec="wav"` still produces WAV (escape hatch).
 - `tests/test_api.py` audio-serving test: assert `Content-Type` matches codec and
   the body decodes.
-- Frontend: `AudioPlayer` is codec-agnostic (`<audio>` sniffs) — likely no change,
+- Frontend: `LessonPlayer` is codec-agnostic (`<audio>` sniffs) — likely no change,
   but add/adjust a test asserting the `src` still resolves.
 
 ### Acceptance
@@ -250,7 +250,7 @@ The 100% per-file frontend gate is the hard part of this phase. Pattern:
 
 Implemented: `src/lib/sw/prefetch.ts` (`shouldPrefetchOnConnection`,
 `prefetchAudioUrls`, `maybePrefetchLesson` — all gating in the lib, 100% tested);
-`AudioPlayer.svelte` `onMount` fires `maybePrefetchLesson` with real
+`LessonPlayer.svelte` `onMount` fires `maybePrefetchLesson` with real
 `navigator.connection` / `globalThis.caches` / `fetch`, prefetching the lesson's
 full + section audio on wifi. No-op where the (Chrome-Android-only) Network
 Information API or Cache Storage is absent — on-demand cache-first still applies.

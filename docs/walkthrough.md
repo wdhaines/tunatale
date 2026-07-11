@@ -9,9 +9,9 @@ This walkthrough covers the production TunaTale codebase — the unified applica
 
 **What changed from the prototypes:** The production rebuild unified the audio pipeline (micro-demo-0.0) and the content engine (micro-demo-0.1) under a single FastAPI application. Hardcoded language logic was replaced with pluggable preprocessors and voice maps. The mock LLM (MD5-hashed) became a cassette system with multiple modes. FSRS-5 replaced the custom SRS scheduler. The entire codebase follows hexagonal architecture with Protocol-based ports. Since the initial production build: ContentStore added SQLite persistence for curricula/lessons/audio, per-word SRS tracking added lemmatizer/tokenizer/transcript modules, section_builder extracted from StoryGenerator (now a thin orchestrator), Slovene syllabification added for Pimsleur backward buildup, pydub replaced raw-PCM concatenation, SRS admin UI added (6 admin endpoints + SvelteKit admin page).
 
-**Stage-3 Anki integration (PART 12 onward):** SRS items track two directions independently (RECOGNITION L2→L1 and PRODUCTION L1→L2), mirroring Anki's note/card model. The `app/anki/` package handles direct SQLite access to `collection.anki2` with a backup-and-lock safety envelope (`safe_open`), an offline-first sync engine (push → drain pending revlog → pull) that doesn't depend on AnkiConnect, and a media pipeline (Forvo + EdgeTTS fallback + Pixabay + ffmpeg LUFS normalization). Queue stats read FSRS-5 parameters from Anki's deck_config protobuf, cached in `anki_state_cache`. Frontend has a unified review queue, Anki-running status gating, a single Sync button, and an `/admin/srs` page. PARTs 18–21 cover the parity testing harness, the `tt_revlog` event log, the cloze pipeline, and the frontend toolchain that all support this.
+**Stage-3 Anki integration (PART 12 onward):** SRS items track two directions independently (RECOGNITION L2→L1 and PRODUCTION L1→L2), mirroring Anki's note/card model. The `app/anki/` package handles direct SQLite access to `collection.anki2` with a backup-and-lock safety envelope (`safe_open`), an offline-first sync engine (orphan recovery → create-new → push → pull → deck-config refreshes; the `pending_revlog` drain phase died with migration v9) that doesn't depend on AnkiConnect, and a media pipeline (Forvo + EdgeTTS fallback + Pixabay + ffmpeg LUFS normalization). Queue stats read FSRS-5 parameters from Anki's deck_config protobuf, cached in `anki_state_cache`. Frontend has a unified review queue, Anki-running status gating, a single Sync button, and a `/cards` admin page (originally `/admin/srs`). PARTs 18–21 cover the parity testing harness, the `tt_revlog` event log, the cloze pipeline, and the frontend toolchain that all support this.
 
-**The word-learning state machine (PART 22 onward):** the model shifted from a flat per-card list to a per-**lemma** state machine — `BASE (recognition → production) → INFLECTIONS` — built on a sentence-aware classla lemmatizer (PART 22), always-on cloze cards with Fluent-Forever ending-blanks (PART 23), and an A1-tuned `morphology_focus` generator (PART 24). PART 25 ties these together: introduction gates, per-lemma mastery coloring, and a fully interactive transcript where any word is a one-click entry into the learning loop. PART 26 covers the f32 FSRS migration and parity Layers 49–66; PART 27 the move toward event-sourced sync; PART 28 the documentation set.
+**The word-learning state machine (PART 22 onward):** the model shifted from a flat per-card list to a per-**lemma** state machine — `BASE (recognition → production) → INFLECTIONS` — built on a sentence-aware classla lemmatizer (PART 22), always-on cloze cards with Fluent-Forever ending-blanks (PART 23), and an A1-tuned `morphology_focus` generator (PART 24). PART 25 ties these together: introduction gates, per-lemma mastery coloring, and a fully interactive transcript where any word is a one-click entry into the learning loop. PART 26 covers the f32 FSRS migration and parity Layers 49–66; PART 27 the (since-completed) move toward event-sourced sync; PART 28 the documentation set. **PART 29 covers the 2026-06/07 restructurings** — the sync and database module splits, the peer-sync-only surface, the language-plugin registry and Norwegian, the direction-field registry, the compound-breakdown plugin, the lesson-player rework, and parity Layers 67–80; read it alongside any pre-split reference in PARTs 12–27.
 
 ## Architecture at a Glance
 
@@ -20,21 +20,22 @@ backend/
 ├── app/
 │   ├── main.py              # FastAPI app with CORS, lifespan, routers
 │   ├── config.py             # Pydantic Settings (env-driven, +Anki/Forvo/Pixabay)
+│   ├── languages.py          # Per-language plugin registry (LanguageContext)
 │   ├── common/               # Cross-cutting helpers (guid generation)
 │   ├── models/               # Pure domain models (no I/O)
 │   ├── llm/                  # Groq LLM client + cassette replay system
-│   ├── srs/                  # FSRS-5 + queue_stats + lemmatizer/tokenizer/transcript/migrations
-│   ├── generation/           # Curriculum + story + section_builder + syllabify + enforcement
+│   ├── srs/                  # FSRS-5 + queue engine/stats + db_* mixins + lemmatizer/transcript
+│   ├── generation/           # Chat planner + story + section_builder + syllabify + norwegian_breakdown
 │   ├── audio/                # TTS, pydub assembly, preprocessing
 │   ├── storage/              # ContentStore SQLite repository
 │   ├── media/                # In-app media import (refresh Anki media into TT cache)
 │   ├── anki/                 # Direct sqlite access to collection.anki2 (safety/sync/media)
 │   │   └── media/            # Forvo + EdgeTTS fallback + Pixabay + ffmpeg normalize
-│   └── api/                  # FastAPI route modules (36 endpoints)
+│   └── api/                  # FastAPI route modules (56 endpoints, 8 routers)
 └── tests/
     ├── conftest.py           # Cassette + DB + ASGI fixtures
     ├── cassettes/            # Recorded LLM responses (JSON)
-    └── test_*.py             # 124 test files, ~2650 tests, 100% branch coverage
+    └── test_*.py             # 139 test files, ~3700 tests, 100% coverage (enforced)
 ```
 
 ---
@@ -52,22 +53,117 @@ cat -n backend/app/config.py
 ```output
      1	"""Application configuration via Pydantic Settings."""
      2	
-     3	from pydantic_settings import BaseSettings, SettingsConfigDict
+     3	from pathlib import Path
      4	
-     5	
-     6	class Settings(BaseSettings):
-     7	    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
-     8	
-     9	    groq_api_key: str = ""
-    10	    database_url: str = "sqlite:///./tunatale.db"
-    11	    llm_mode: str = "mock"  # mock | live | record | patch
-    12	    llm_model: str = "llama-3.3-70b-versatile"
-    13	
-    14	
-    15	settings = Settings()
+     5	from pydantic_settings import BaseSettings, SettingsConfigDict
+     6	
+     7	
+     8	class Settings(BaseSettings):
+     9	    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    10	
+    11	    groq_api_key: str = ""
+    12	    # Per-language DB (one-DB-per-language isolation). Default is the Slovene DB;
+    13	    # switch languages by flipping target_language AND database_url together
+    14	    # (e.g. sqlite:///./tunatale_no.db for Norwegian).
+    15	    database_url: str = "sqlite:///./tunatale_sl.db"
+    16	    # Phase 5 — simultaneous multi-language. When non-empty, the app opens one
+    17	    # connection per entry (``{"sl": "sqlite:///./tunatale_sl.db", "no": "…_no.db"}``)
+    18	    # and resolves the active one per request from the X-TT-Language header. Empty
+    19	    # (the default) = single-language: one connection from ``database_url`` bound to
+    20	    # ``target_language``. ``target_language`` is the default when no header is sent.
+    21	    database_urls: dict[str, str] = {}
+    22	    llm_mode: str = "mock"  # mock | live | record | patch
+    23	    # gpt-oss-120b replaces llama-3.3-70b-versatile (deprecated by Groq 2026-06-30).
+    24	    # It is a reasoning model — main.py pins reasoning_effort=low via
+    25	    # reasoning_params_for_model() so it emits content instead of burning the whole
+    26	    # budget on reasoning. Free-tier TPM is 8000; WIDER story gen fits, DEEPER (bigger
+    27	    # prompt) can approach the ceiling.
+    28	    llm_model: str = "openai/gpt-oss-120b"
+    29	    # Groq free-tier daily token cap for gpt-oss-120b — the binding limit, but it
+    30	    # appears in no response header, so TT tallies its own spend (UsageLedger) and
+    31	    # the rate-limit UI compares against this number.
+    32	    groq_tokens_per_day_limit: int = 100_000
+    33	    # Ollama/secondary fallback when Groq fails; default off — failures fail loudly.
+    34	    llm_allow_fallback: bool = False
+    35	    llm_usage_ledger_path: Path = Path("~/.tunatale/llm_usage.log").expanduser()
+    36	
+    37	    target_language: str = "sl"
+    38	
+    39	    anki_collection_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.anki2").expanduser()
+    40	    anki_media_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.media").expanduser()
+    41	    anki_deck_name: str = "1. Slovene"
+    42	    anki_backup_dir: Path = Path("~/.tunatale/anki-backups").expanduser()
+    43	    # Retention cap for the safe_open backup directory. safe_open writes a full
+    44	    # ~16 MB collection snapshot on every call; without a cap the directory grows
+    45	    # without bound. Keep the N most recent snapshots (~16 MB each); <= 0 disables.
+    46	    anki_backup_keep: int = 30
+    47	    media_dir: Path = Path("./media")
+    48	    anki_fallback_log: Path = Path("~/.tunatale/logs/anki-fallback.log").expanduser()
+    49	    # Durable per-sync soak log: every non-dry sync (CLI or API) appends a
+    50	    # SYNC_SOAK heartbeat + one RECOMPUTE_DIVERGENCE line per divergence.
+    51	    sync_log: Path = Path("~/.tunatale/logs/sync.log").expanduser()
+    52	
+    53	    # Peer-sync (anki subprocess) config — see sync_orchestrator.py.
+    54	    tt_collection_path: Path = Path("~/.tunatale/tt_collection.anki2").expanduser()
+    55	    sync_enabled: bool = False
+    56	    sync_endpoint: str = ""  # "" → AnkiWeb default; else self-host URL
+    57	    sync_username: str = ""
+    58	    # AnkiWeb password. Prefer the macOS Keychain (see sync_keychain_service); this
+    59	    # env/.env value is an override fallback and should normally stay EMPTY (plaintext).
+    60	    sync_password: str = ""
+    61	    # macOS Keychain generic-password service the AnkiWeb password is stored under
+    62	    # (account = sync_username). Store it with:
+    63	    #   security add-generic-password -s tunatale-ankiweb -a <username> -w
+    64	    sync_keychain_service: str = "tunatale-ankiweb"
+    65	    # Optional pin for the sync subprocess (`uv run --with anki==X`). Empty → latest
+    66	    # anki. Set to match your desktop Anki's sync-protocol version if a mismatch appears.
+    67	    anki_pkg_version: str = ""
+    68	    # Interpreter for the anki driver subprocess. It runs isolated + project-free
+    69	    # (--no-project), which escapes the project lock's stale protobuf 4.21.2 (dragged in
+    70	    # by the classla+anki extras; no cp314 wheel) — a clean resolve pulls a current
+    71	    # protobuf that imports fine on 3.14. Pin to an older Python here only if a future
+    72	    # anki/protobuf breaks on the latest.
+    73	    anki_subprocess_python: str = "3.14"
+    74	
+    75	    anki_model_name: str = ""
+    76	    pixabay_api_key: str = ""
+    77	    # Global lemmatizer gate: "lowercase" (default) forces the deterministic
+    78	    # lowercase engine for EVERY language (the CI/test pin, and how a deployment
+    79	    # disables the heavy PyTorch pipelines). Any other value ("classla", "stanza",
+    80	    # "auto", …) opts in, and the ENGINE is then chosen per language from the
+    81	    # registry (app.languages.get_lemmatizer_type: sl→classla, no→stanza). This is
+    82	    # per-language, not one-engine-per-process, so multi-language mode
+    83	    # (database_urls) analyzes each language with its own model. See get_lemmatizer.
+    84	    lemmatizer_type: str = "lowercase"
+    85	
+    86	    anki_new_per_day_default: int = 20
+    87	    anki_reviews_per_day_default: int = 200
+    88	
+    89	    # Lesson audio delivery format. Opus is ~10-20× smaller than WAV for speech,
+    90	    # cutting mobile-data use when streaming lessons to a phone. Set to "wav" to
+    91	    # restore uncompressed delivery. Codec must be a key of transcode.CODEC_EXT.
+    92	    audio_delivery_codec: str = "opus"  # opus | aac | mp3 | wav
+    93	    audio_delivery_bitrate: str = "28k"
+    94	
+    95	    pipeline_autostart: bool = True
+    96	
+    97	
+    98	settings = Settings()
+    99	
+   100	
+   101	# Anki rolls the study day over at this *local* hour (default 4 AM), not at
+   102	# midnight — a grade timestamped between local midnight and the rollover belongs
+   103	# to the PRIOR Anki day. The rollover arithmetic is single-sourced in
+   104	# `app.anki.rollover` (local-day domain: `local_today_rollover`,
+   105	# `anki_day_bounds_utc`, `anki_today`; due_at convention: `due_at_rollover_utc`);
+   106	# `app.anki.protobuf_wire` owns the separate col-day index domain
+   107	# (`compute_anki_day_index`, `review_due_at_for_col_day`). Both derive from this
+   108	# constant. Promote to a Settings field if it ever needs to be config-driven
+   109	# (Anki stores it per-collection).
+   110	ANKI_ROLLOVER_HOUR = 4
 ```
 
-Four settings drive the system: `groq_api_key` for the LLM provider, `database_url` for SRS persistence, `llm_mode` controlling cassette behavior (mock/live/record/patch), and `llm_model` selecting the Groq model. The `extra="ignore"` setting means stray env vars won't crash startup. CI runs with defaults — no API key needed because `llm_mode` defaults to `mock`.
+What started as four settings has grown to ~24 typed fields: the original LLM quartet (`groq_api_key`, `database_url`, `llm_mode`, `llm_model` — now defaulting to `openai/gpt-oss-120b` after Groq deprecated llama-3.3), per-language `database_urls` for multi-language mode, the Anki collection/backup paths, Forvo/Pixabay keys, and the `tt_collection` peer-sync settings. The `extra="ignore"` setting means stray env vars won't crash startup. CI runs with defaults — no API key needed because `llm_mode` defaults to `mock`.
 
 ### 1.2 FastAPI Application
 
@@ -77,95 +173,271 @@ cat -n backend/app/main.py
 
 ```output
      1	"""FastAPI application for TunaTale language learning."""
-     2
-     3	import logging
-     4	from contextlib import asynccontextmanager
-     5	from pathlib import Path
-     6
-     7	from dotenv import load_dotenv
-     8
-     9	load_dotenv()
-    10
-    11	from fastapi import FastAPI  # noqa: E402
-    12	from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
-    13
-    14	from app.audio.edge_tts import EdgeTTSService  # noqa: E402
-    15	from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
-    16	from app.audio.preprocessing.slovene import SlovenePreprocessor  # noqa: E402
-    17	from app.audio.renderer import LessonRenderer  # noqa: E402
-    18	from app.config import settings  # noqa: E402
-    19	from app.generation.curriculum import CurriculumGenerator  # noqa: E402
-    20	from app.generation.story import StoryGenerator  # noqa: E402
-    21	from app.llm.cassette import CassetteLLMClient  # noqa: E402
-    22	from app.llm.client import LLMClient  # noqa: E402
-    23	from app.models.language import Language  # noqa: E402
-    24	from app.srs.database import SRSDatabase  # noqa: E402
-    25	from app.storage.store import ContentStore  # noqa: E402
-    26
-    27	logging.basicConfig(level=logging.INFO)
-    28	logging.getLogger("app.audio.renderer").setLevel(logging.DEBUG)
-    29
-    30	logger = logging.getLogger(__name__)
-    31
-    32
-    33	@asynccontextmanager
-    34	async def lifespan(app: FastAPI):
-    35	    real_client = LLMClient(groq_api_key=settings.groq_api_key, groq_model=settings.llm_model)
-    36	    cassette_path = Path("tests/cassettes/e2e.json")
-    37
-    38	    # Wrap with cassettes unless explicitly in live mode
-    39	    if settings.llm_mode != "live":
-    40	        llm = CassetteLLMClient(mode=settings.llm_mode, cassette_path=cassette_path, real_client=real_client)
-    41	    else:
-    42	        llm = real_client
-    43
-    44	    db_path = settings.database_url.removeprefix("sqlite:///")
-    45	    srs_db = SRSDatabase(db_path)
-    46	    content_store = ContentStore(db_path)
-    47
-    48	    language = Language.slovene()
-    49
-    50	    app.state.srs_db = srs_db
-    51	    app.state.content_store = content_store
-    52	    app.state.language = language
-    53	    app.state.curriculum_generator = CurriculumGenerator(llm)
-    54	    app.state.story_generator = StoryGenerator(llm)
-    55	    app.state.renderer = LessonRenderer(
-    56	        tts=EdgeTTSService(),
-    57	        preprocessor=SlovenePreprocessor(),
-    58	        pause_calculator=NaturalPauseCalculator(),
-    59	    )
-    60	    app.state.audio_dir = Path("output/audio")
-    61
-    62	    logger.info("TunaTale backend starting up")
-    63	    yield
-    64
-    65	    srs_db.close()
-    66	    content_store.close()
-    67	    logger.info("TunaTale backend shutting down")
-    68
-    69
-    70	app = FastAPI(title="TunaTale", version="0.1.0", lifespan=lifespan)
-    71
-    72	app.add_middleware(
-    73	    CORSMiddleware,
-    74	    allow_origins=["*"],
-    75	    allow_credentials=True,
-    76	    allow_methods=["*"],
-    77	    allow_headers=["*"],
-    78	)
-    79
-    80	from app.api import audio, curriculum, generation, srs  # noqa: E402
-    81
-    82	app.include_router(curriculum.router)
-    83	app.include_router(generation.router)
-    84	app.include_router(srs.router)
-    85	app.include_router(audio.router)
-    86
-    87
-    88	@app.get("/api/health")
-    89	async def health():
-    90	    return {"status": "ok"}
+     2	
+     3	import asyncio
+     4	import logging
+     5	from contextlib import asynccontextmanager
+     6	from pathlib import Path
+     7	
+     8	import anyio
+     9	from dotenv import load_dotenv
+    10	
+    11	load_dotenv()
+    12	
+    13	from fastapi import FastAPI, Request  # noqa: E402
+    14	from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+    15	
+    16	from app.audio.edge_tts import EdgeTTSService  # noqa: E402
+    17	from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
+    18	from app.audio.renderer import LessonRenderer  # noqa: E402
+    19	from app.config import settings  # noqa: E402
+    20	from app.generation.pipeline import LessonPipeline  # noqa: E402
+    21	from app.generation.planner import CurriculumPlanner  # noqa: E402
+    22	from app.generation.story import StoryGenerator  # noqa: E402
+    23	from app.languages import get_language, get_preprocessor  # noqa: E402
+    24	from app.llm.activity import ActivityLog  # noqa: E402
+    25	from app.llm.cassette import CassetteLLMClient  # noqa: E402
+    26	from app.llm.client import LLMClient, reasoning_params_for_model  # noqa: E402
+    27	from app.llm.usage_ledger import UsageLedger  # noqa: E402
+    28	from app.models.lesson import SectionType  # noqa: E402
+    29	from app.srs.database import SRSDatabase  # noqa: E402
+    30	from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for  # noqa: E402
+    31	from app.storage.store import ContentStore  # noqa: E402
+    32	
+    33	logging.basicConfig(level=logging.INFO)
+    34	logging.getLogger("app.audio.renderer").setLevel(logging.DEBUG)
+    35	
+    36	logger = logging.getLogger(__name__)
+    37	
+    38	
+    39	async def _warm_lemmatizer(srs_dbs: dict[str, SRSDatabase], content_stores: dict[str, ContentStore]) -> None:
+    40	    """Fill the persistent sentence-analysis cache from stored lessons.
+    41	
+    42	    Iterates every stored lesson's natural-speed L2 sentences through
+    43	    ``analyze_sentence_cached``:
+    44	    - **First run ever:** loads classla once, fills the persistent cache.
+    45	    - **Every subsequent restart:** all cache hits → the model is never loaded at
+    46	      startup → admin list and everything else are instant.
+    47	
+    48	    Warms **each configured language** with its own lemmatizer (multi-language mode
+    49	    runs both in one process), so the Slovene classla cache and the Norwegian stanza
+    50	    cache both fill. Runs as a background ``asyncio.create_task`` so uvicorn binds the
+    51	    port immediately. Swallows per-language errors so a missing model for one language
+    52	    degrades to on-demand loading without aborting the others.
+    53	    """
+    54	    for code, srs_db in srs_dbs.items():
+    55	        try:
+    56	            lemmatizer = get_lemmatizer(code)
+    57	            model_version = model_version_for(lemmatizer)
+    58	            if not model_version:
+    59	                continue  # cheap lemmatizer; nothing to warm
+    60	            lessons = content_stores[code].list_lessons()
+    61	            await anyio.to_thread.run_sync(_warm_from_lessons, lessons, srs_db, lemmatizer, model_version)
+    62	        except Exception:
+    63	            logger.warning("Lemmatizer warm-up failed for %s — continuing with on-demand loading", code)
+    64	
+    65	
+    66	def _warm_from_lessons(
+    67	    lessons: list[tuple[str, str, int, object]],
+    68	    srs_db: SRSDatabase,
+    69	    lemmatizer: object,
+    70	    model_version: str,
+    71	) -> None:
+    72	    """Synchronous helper: run every stored L2 sentence through the analysis cache."""
+    73	    for _lesson_id, _curriculum_id, _day, lesson in lessons:
+    74	        natural_speed = next(
+    75	            (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
+    76	            None,
+    77	        )
+    78	        if natural_speed is None:
+    79	            continue
+    80	        for phrase in natural_speed.phrases:
+    81	            if phrase.language_code != lesson.language_code:
+    82	                continue
+    83	            analyze_sentence_cached(srs_db, lemmatizer, phrase.text, lesson.language_code, model_version)
+    84	
+    85	
+    86	def _language_db_map() -> dict[str, str]:
+    87	    """Map of language code → SQLite URL to open at startup.
+    88	
+    89	    Multi-language when ``settings.database_urls`` is set (one connection per
+    90	    entry, resolved per request from the X-TT-Language header); otherwise the
+    91	    single ``database_url`` bound to ``target_language`` (single-language).
+    92	    """
+    93	    if settings.database_urls:
+    94	        return dict(settings.database_urls)
+    95	    return {settings.target_language: settings.database_url}
+    96	
+    97	
+    98	@asynccontextmanager
+    99	async def lifespan(app: FastAPI):
+   100	    activity_log = ActivityLog()
+   101	    real_client = LLMClient(
+   102	        groq_api_key=settings.groq_api_key,
+   103	        groq_model=settings.llm_model,
+   104	        groq_extra_body_params=reasoning_params_for_model(settings.llm_model),
+   105	        usage_ledger=UsageLedger(settings.llm_usage_ledger_path),
+   106	        on_call=activity_log.record_llm_call,
+   107	        allow_fallback=settings.llm_allow_fallback,
+   108	    )
+   109	    _BACKEND_DIR = Path(__file__).parent.parent
+   110	    cassette_path = _BACKEND_DIR / "tests/cassettes/e2e.json"
+   111	
+   112	    # Wrap with cassettes unless explicitly in live mode
+   113	    if settings.llm_mode != "live":
+   114	        llm = CassetteLLMClient(mode=settings.llm_mode, cassette_path=cassette_path, real_client=real_client)
+   115	    else:
+   116	        llm = real_client
+   117	
+   118	    # One connection set per configured language. The per-request middleware picks
+   119	    # the active one; the parity-sensitive queue/badge queries stay unmodified —
+   120	    # isolation is which connection serves the request, not a WHERE clause.
+   121	    db_map = _language_db_map()
+   122	    default_code = settings.target_language if settings.target_language in db_map else next(iter(db_map))
+   123	
+   124	    srs_dbs: dict[str, SRSDatabase] = {}
+   125	    content_stores: dict[str, ContentStore] = {}
+   126	    languages = {}
+   127	    for code, url in db_map.items():
+   128	        path = url.removeprefix("sqlite:///")
+   129	        srs_dbs[code] = SRSDatabase(path)
+   130	        content_stores[code] = ContentStore(path)
+   131	        languages[code] = get_language(code)
+   132	
+   133	    app.state.srs_dbs = srs_dbs
+   134	    app.state.content_stores = content_stores
+   135	    app.state.languages = languages
+   136	    # Singular defaults (the active language): the middleware's single-language
+   137	    # fallback, the lemmatizer warm-up, and any non-request-scoped consumer.
+   138	    app.state.srs_db = srs_dbs[default_code]
+   139	    app.state.content_store = content_stores[default_code]
+   140	    app.state.language = languages[default_code]
+   141	
+   142	    app.state.activity_log = activity_log
+   143	    app.state.llm = llm
+   144	    app.state.curriculum_planner = CurriculumPlanner(llm)
+   145	    app.state.story_generator = StoryGenerator(llm)
+   146	    preprocessors = {code: get_preprocessor(code) for code in db_map}
+   147	    app.state.renderer = LessonRenderer(
+   148	        tts=EdgeTTSService(),
+   149	        preprocessors=preprocessors,
+   150	        pause_calculator=NaturalPauseCalculator(),
+   151	        delivery_codec=settings.audio_delivery_codec,
+   152	        delivery_bitrate=settings.audio_delivery_bitrate,
+   153	    )
+   154	    app.state.audio_dir = _BACKEND_DIR / "output/audio"
+   155	
+   156	    pipeline = LessonPipeline(
+   157	        story_generator=app.state.story_generator,
+   158	        renderer=app.state.renderer,
+   159	        audio_dir=app.state.audio_dir,
+   160	        content_stores=content_stores,
+   161	        languages=languages,
+   162	        srs_dbs=srs_dbs,
+   163	        activity_log=activity_log,
+   164	        llm_client=real_client,
+   165	    )
+   166	    app.state.pipeline = pipeline
+   167	    if settings.pipeline_autostart:
+   168	        pipeline.start()
+   169	
+   170	    # Warm the lemmatizer in the background so the first /listen or /transcript request
+   171	    # doesn't pay the model-load cost. Critically, this must NOT be awaited before the
+   172	    # yield: awaiting the classla pipeline load (~15s) here blocks uvicorn's startup
+   173	    # event, so the port never binds and every frontend /api/* request is refused until
+   174	    # "Done loading processors!". As a background task, the port binds immediately and
+   175	    # classla still warms eagerly. A no-op for the default lowercase lemmatizer.
+   176	    warmup_task = asyncio.create_task(_warm_lemmatizer(srs_dbs, content_stores))
+   177	
+   178	    logger.info("TunaTale backend starting up")
+   179	    yield
+   180	
+   181	    # Let the warm-up settle on shutdown. _warm_lemmatizer swallows its own exceptions,
+   182	    # so this never raises; by normal shutdown the pipeline is long since loaded.
+   183	    await warmup_task
+   184	    await pipeline.shutdown()
+   185	    for db in srs_dbs.values():
+   186	        db.close()
+   187	    for store in content_stores.values():
+   188	        store.close()
+   189	    logger.info("TunaTale backend shutting down")
+   190	
+   191	
+   192	app = FastAPI(title="TunaTale", version="0.1.0", lifespan=lifespan)
+   193	
+   194	app.add_middleware(
+   195	    CORSMiddleware,
+   196	    allow_origins=["*"],
+   197	    allow_credentials=True,
+   198	    allow_methods=["*"],
+   199	    allow_headers=["*"],
+   200	)
+   201	
+   202	
+   203	@app.middleware("http")
+   204	async def _resolve_language_state(request, call_next):
+   205	    """Bind the request's language connection set onto ``request.state``.
+   206	
+   207	    The active language is the ``X-TT-Language`` header, defaulting to
+   208	    ``settings.target_language``. When the app has per-language maps
+   209	    (``srs_dbs``), the request is served from the matching connection (unknown
+   210	    codes fall back to the default language); otherwise — single-language tests
+   211	    that only set the singular ``app.state.srs_db`` — it falls back to those.
+   212	    Routes read ``request.state.{srs_db,content_store,language}`` so isolation is
+   213	    which connection serves the request, not a per-query filter.
+   214	    """
+   215	    code = request.headers.get("x-tt-language") or settings.target_language
+   216	    state = request.app.state
+   217	    srs_dbs = getattr(state, "srs_dbs", None)
+   218	    if srs_dbs is not None:
+   219	        if code not in srs_dbs:
+   220	            code = settings.target_language
+   221	        request.state.srs_db = srs_dbs[code]
+   222	        request.state.content_store = state.content_stores[code]
+   223	        request.state.language = state.languages[code]
+   224	    else:
+   225	        request.state.srs_db = getattr(state, "srs_db", None)
+   226	        request.state.content_store = getattr(state, "content_store", None)
+   227	        request.state.language = getattr(state, "language", None)
+   228	    request.state.language_code = code
+   229	    return await call_next(request)
+   230	
+   231	
+   232	from app.api import admin, anki, audio, curriculum, generation, srs  # noqa: E402
+   233	from app.api import llm as llm_api  # noqa: E402
+   234	from app.api import pipeline as pipeline_api  # noqa: E402
+   235	
+   236	app.include_router(curriculum.router)
+   237	app.include_router(pipeline_api.router)
+   238	app.include_router(generation.router)
+   239	app.include_router(srs.router)
+   240	app.include_router(audio.router)
+   241	app.include_router(anki.router)
+   242	app.include_router(admin.router)
+   243	app.include_router(llm_api.router)
+   244	
+   245	
+   246	@app.get("/api/health")
+   247	async def health():
+   248	    return {"status": "ok"}
+   249	
+   250	
+   251	@app.get("/api/languages")
+   252	async def languages(request: Request):
+   253	    """Configured languages (for the frontend selector) + the request's active one.
+   254	
+   255	    Lists every language with an open connection; single-language deployments
+   256	    return one entry. ``active`` is the language the X-TT-Language header resolved
+   257	    to for this request.
+   258	    """
+   259	    langs = getattr(request.app.state, "languages", None)
+   260	    if langs is None:
+   261	        # Single-language test fallback: the singular app.state.language.
+   262	        lang = getattr(request.app.state, "language", None)
+   263	        items = [{"code": lang.code, "name": lang.name}] if lang is not None else []
+   264	    else:
+   265	        items = [{"code": code, "name": lang.name} for code, lang in langs.items()]
+   266	    return {"languages": items, "active": request.state.language_code}
 ```
 
 The lifespan context manager wires every dependency the API needs. Three production refinements since the prototype phase stand out:
@@ -174,7 +446,7 @@ The lifespan context manager wires every dependency the API needs. Three product
 2. **`ContentStore` joined the wiring.** Curricula, lessons, and rendered audio files are persisted to SQLite alongside the SRS database (same `db_path`). The store is closed on shutdown.
 3. **`StoryGenerator` no longer takes `srs_db`.** The LLM produces creative content and the new `section_builder` transforms it into structured `Section`s deterministically (see Part 5.3).
 
-`LessonRenderer` is constructed with three collaborators (TTS, preprocessor, pause calculator) — the old `AudioAssembler` port is gone, replaced by pydub-based assembly inside the renderer itself (Part 6.4). Logging is configured at INFO globally with the renderer at DEBUG so per-section synthesis steps show up in dev. Four routers partition the API: curriculum, generation, SRS, audio. The health check at `/api/health` is the smoke test.
+`LessonRenderer` is constructed with three collaborators (TTS, preprocessor, pause calculator) — the old `AudioAssembler` port is gone, replaced by pydub-based assembly inside the renderer itself (Part 6.4). Logging is configured at INFO globally with the renderer at DEBUG so per-section synthesis steps show up in dev. Eight routers partition the API: curriculum, pipeline, story, srs, audio, anki, admin, llm. The health check at `/api/health` is the smoke test.
 
 Note the `load_dotenv()` before FastAPI imports — this ensures `.env` is loaded before Pydantic Settings reads environment variables.
 
@@ -192,57 +464,80 @@ cat -n backend/app/models/language.py
 
 ```output
      1	"""Language configuration model."""
-     2
+     2	
      3	from __future__ import annotations
-     4
+     4	
      5	from dataclasses import dataclass, field
-     6
-     7
-     8	@dataclass
-     9	class Language:
-    10	    """Language configuration including ISO code, display names, script, and TTS voice map."""
-    11
-    12	    code: str  # ISO 639-1 code, e.g. "sl"
-    13	    name: str  # English name, e.g. "Slovene"
-    14	    native_name: str  # Native name, e.g. "slovenščina"
-    15	    script: str  # Writing system, e.g. "latin"
-    16	    tts_voice_map: dict[str, str] = field(default_factory=dict)  # role → EdgeTTS voice name
-    17
-    18	    @classmethod
-    19	    def slovene(cls) -> Language:
-    20	        return cls(
-    21	            code="sl",
-    22	            name="Slovene",
-    23	            native_name="slovenščina",
-    24	            script="latin",
-    25	            tts_voice_map={
-    26	                "narrator": "en-US-GuyNeural",
-    27	                "female-1": "sl-SI-PetraNeural",
-    28	                "female-2": "sl-SI-PetraNeural",
-    29	                "male-1": "sl-SI-RokNeural",
-    30	                "male-2": "sl-SI-RokNeural",
-    31	                "female": "sl-SI-PetraNeural",  # legacy
-    32	                "male": "sl-SI-RokNeural",  # legacy
-    33	            },
-    34	        )
-    35
-    36	    @classmethod
-    37	    def english(cls) -> Language:
-    38	        return cls(
-    39	            code="en",
-    40	            name="English",
-    41	            native_name="English",
-    42	            script="latin",
-    43	            tts_voice_map={
-    44	                "narrator": "en-US-GuyNeural",
-    45	                "female-1": "en-US-AriaNeural",
-    46	                "female-2": "en-US-AriaNeural",
-    47	                "male-1": "en-US-GuyNeural",
-    48	                "male-2": "en-US-GuyNeural",
-    49	                "female": "en-US-AriaNeural",  # legacy
-    50	                "male": "en-US-GuyNeural",  # legacy
-    51	            },
-    52	        )
+     6	
+     7	# The narrator (English descriptions/translations) voice — shared across every
+     8	# language's voice map and the default narrator for generated lessons. Single-sourced
+     9	# here so lesson/story code doesn't re-hardcode the literal.
+    10	NARRATOR_VOICE = "en-US-GuyNeural"
+    11	
+    12	
+    13	@dataclass
+    14	class Language:
+    15	    """Language configuration including ISO code, display names, script, and TTS voice map."""
+    16	
+    17	    code: str  # ISO 639-1 code, e.g. "sl"
+    18	    name: str  # English name, e.g. "Slovene"
+    19	    native_name: str  # Native name, e.g. "slovenščina"
+    20	    script: str  # Writing system, e.g. "latin"
+    21	    tts_voice_map: dict[str, str] = field(default_factory=dict)  # role → EdgeTTS voice name
+    22	
+    23	    @classmethod
+    24	    def slovene(cls) -> Language:
+    25	        return cls(
+    26	            code="sl",
+    27	            name="Slovene",
+    28	            native_name="slovenščina",
+    29	            script="latin",
+    30	            tts_voice_map={
+    31	                "narrator": NARRATOR_VOICE,
+    32	                "female-1": "sl-SI-PetraNeural",
+    33	                "female-2": "sl-SI-PetraNeural",
+    34	                "male-1": "sl-SI-RokNeural",
+    35	                "male-2": "sl-SI-RokNeural",
+    36	                "female": "sl-SI-PetraNeural",  # legacy
+    37	                "male": "sl-SI-RokNeural",  # legacy
+    38	            },
+    39	        )
+    40	
+    41	    @classmethod
+    42	    def norwegian(cls) -> Language:
+    43	        return cls(
+    44	            code="no",
+    45	            name="Norwegian",
+    46	            native_name="norsk",
+    47	            script="latin",
+    48	            tts_voice_map={
+    49	                "narrator": NARRATOR_VOICE,
+    50	                "female-1": "nb-NO-PernilleNeural",
+    51	                "female-2": "nb-NO-PernilleNeural",
+    52	                "male-1": "nb-NO-FinnNeural",
+    53	                "male-2": "nb-NO-FinnNeural",
+    54	                "female": "nb-NO-PernilleNeural",
+    55	                "male": "nb-NO-FinnNeural",
+    56	            },
+    57	        )
+    58	
+    59	    @classmethod
+    60	    def english(cls) -> Language:
+    61	        return cls(
+    62	            code="en",
+    63	            name="English",
+    64	            native_name="English",
+    65	            script="latin",
+    66	            tts_voice_map={
+    67	                "narrator": NARRATOR_VOICE,
+    68	                "female-1": "en-US-AriaNeural",
+    69	                "female-2": "en-US-AriaNeural",
+    70	                "male-1": "en-US-GuyNeural",
+    71	                "male-2": "en-US-GuyNeural",
+    72	                "female": "en-US-AriaNeural",  # legacy
+    73	                "male": "en-US-GuyNeural",  # legacy
+    74	            },
+    75	        )
 ```
 
 **Key design decision:** The prototype hardcoded a `Language` enum with Tagalog/English/Spanish. Production replaces this with a data-driven `Language` dataclass. Adding a new language is just creating a new factory method — no enum changes, no code branching. The `tts_voice_map` dict maps roles (`narrator`, `female-1`, `female-2`, `male-1`, `male-2`, plus legacy `female`/`male`) to EdgeTTS voice names. The narrator slot is always English (it speaks the section titles and L1 translations), while the numbered roles let the multi-speaker dialogue assigned by the `section_builder` use distinct voices. Legacy `female`/`male` keys remain for backward compat with old curricula.
@@ -271,7 +566,7 @@ tts_voice_map: {'narrator': 'en-US-GuyNeural', 'female-1': 'sl-SI-PetraNeural', 
 
 ### 2.2 Lesson Structure
 
-The lesson model implements the Pimsleur 4-section format — the same structure from the prototypes, now as clean dataclasses:
+The lesson model implements the Pimsleur section format — the same structure from the prototypes (plus a fifth `SLOW_TRANSLATED` section added 2026-07), now as clean dataclasses:
 
 ```bash
 cat -n backend/app/models/lesson.py
@@ -279,117 +574,145 @@ cat -n backend/app/models/lesson.py
 
 ```output
      1	"""Lesson, Section, and Phrase domain models.
-     2
+     2	
      3	Pimsleur 4-section format ported from micro-demo-0.0/tunatale/core/models/.
      4	"""
-     5
+     5	
      6	from __future__ import annotations
-     7
+     7	
      8	import json
      9	from dataclasses import dataclass, field
     10	from enum import Enum
-    11
-    12
-    13	@dataclass
-    14	class KeyPhraseInfo:
-    15	    """A key phrase with its L1 translation, stored on the Lesson for deferred SRS registration."""
-    16
-    17	    phrase: str
-    18	    translation: str
-    19
-    20
-    21	class SectionType(Enum):
-    22	    """Four Pimsleur section types for each lesson."""
-    23
-    24	    KEY_PHRASES = "key_phrases"
-    25	    NATURAL_SPEED = "natural_speed"
-    26	    SLOW_SPEED = "slow_speed"
-    27	    TRANSLATED = "translated"
-    28
-    29
-    30	@dataclass
-    31	class Phrase:
-    32	    """A single phrase with TTS voice settings."""
-    33
-    34	    text: str
-    35	    voice_id: str
-    36	    language_code: str
-    37	    rate: str = "+0%"
-    38	    pitch: str = "+0Hz"
-    39	    volume: str = "+0%"
-    40	    role: str = ""
-    41
-    42
-    43	@dataclass
-    44	class Section:
-    45	    """A section within a lesson, grouping phrases of the same Pimsleur type."""
-    46
-    47	    section_type: SectionType
-    48	    phrases: list[Phrase] = field(default_factory=list)
-    49
-    50	    def __post_init__(self) -> None:
-    51	        if not isinstance(self.section_type, SectionType):
-    52	            raise ValueError(f"section_type must be a SectionType enum, got {type(self.section_type)}")
-    53
-    54
-    55	@dataclass
-    56	class Lesson:
-    57	    """A complete TunaTale audio lesson."""
-    58
-    59	    title: str
-    60	    language_code: str
-    61	    sections: list[Section] = field(default_factory=list)
-    62	    narrator_voice: str = "en-US-GuyNeural"
-    63	    key_phrases: list[KeyPhraseInfo] = field(default_factory=list)
-    64
-    65	    def to_json(self) -> str:
-    66	        data = {
-    67	            "title": self.title,
-    68	            "language_code": self.language_code,
-    69	            "narrator_voice": self.narrator_voice,
-    70	            "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in self.key_phrases],
-    71	            "sections": [
-    72	                {
-    73	                    "section_type": s.section_type.value,
-    74	                    "phrases": [
-    75	                        {
-    76	                            "text": p.text,
-    77	                            "voice_id": p.voice_id,
-    78	                            "language_code": p.language_code,
-    79	                            "rate": p.rate,
-    80	                            "pitch": p.pitch,
-    81	                            "volume": p.volume,
-    82	                            "role": p.role,
-    83	                        }
-    84	                        for p in s.phrases
-    85	                    ],
-    86	                }
-    87	                for s in self.sections
-    88	            ],
-    89	        }
-    90	        return json.dumps(data, ensure_ascii=False)
-    91
-    92	    @classmethod
-    93	    def from_json(cls, json_str: str) -> Lesson:
-    94	        data = json.loads(json_str)
-    95	        sections = [
-    96	            Section(
-    97	                section_type=SectionType(s["section_type"]),
-    98	                phrases=[Phrase(**p) for p in s["phrases"]],
-    99	            )
-   100	            for s in data.get("sections", [])
-   101	        ]
-   102	        key_phrases = [KeyPhraseInfo(**kp) for kp in data.get("key_phrases", [])]
-   103	        return cls(
-   104	            title=data["title"],
-   105	            language_code=data["language_code"],
-   106	            sections=sections,
-   107	            narrator_voice=data.get("narrator_voice", "en-US-GuyNeural"),
-   108	            key_phrases=key_phrases,
-   109	        )
+    11	
+    12	from app.models.language import NARRATOR_VOICE
+    13	
+    14	
+    15	@dataclass
+    16	class KeyPhraseInfo:
+    17	    """A key phrase with its L1 translation, stored on the Lesson for deferred SRS registration."""
+    18	
+    19	    phrase: str
+    20	    translation: str
+    21	
+    22	
+    23	class SectionType(Enum):
+    24	    """Four Pimsleur section types for each lesson."""
+    25	
+    26	    KEY_PHRASES = "key_phrases"
+    27	    NATURAL_SPEED = "natural_speed"
+    28	    SLOW_SPEED = "slow_speed"
+    29	    TRANSLATED = "translated"
+    30	    SLOW_TRANSLATED = "slow_translated"
+    31	
+    32	
+    33	@dataclass
+    34	class Phrase:
+    35	    """A single phrase with TTS voice settings."""
+    36	
+    37	    text: str
+    38	    voice_id: str
+    39	    language_code: str
+    40	    rate: str = "+0%"
+    41	    pitch: str = "+0Hz"
+    42	    volume: str = "+0%"
+    43	    role: str = ""
+    44	
+    45	
+    46	@dataclass
+    47	class Section:
+    48	    """A section within a lesson, grouping phrases of the same Pimsleur type."""
+    49	
+    50	    section_type: SectionType
+    51	    phrases: list[Phrase] = field(default_factory=list)
+    52	
+    53	    def __post_init__(self) -> None:
+    54	        if not isinstance(self.section_type, SectionType):
+    55	            raise ValueError(f"section_type must be a SectionType enum, got {type(self.section_type)}")
+    56	
+    57	
+    58	@dataclass
+    59	class Lesson:
+    60	    """A complete TunaTale audio lesson."""
+    61	
+    62	    title: str
+    63	    language_code: str
+    64	    sections: list[Section] = field(default_factory=list)
+    65	    narrator_voice: str = NARRATOR_VOICE
+    66	    key_phrases: list[KeyPhraseInfo] = field(default_factory=list)
+    67	    generation_metadata: dict = field(default_factory=dict)
+    68	
+    69	    def to_json(self) -> str:
+    70	        data = {
+    71	            "title": self.title,
+    72	            "language_code": self.language_code,
+    73	            "narrator_voice": self.narrator_voice,
+    74	            "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in self.key_phrases],
+    75	            "sections": [
+    76	                {
+    77	                    "section_type": s.section_type.value,
+    78	                    "phrases": [
+    79	                        {
+    80	                            "text": p.text,
+    81	                            "voice_id": p.voice_id,
+    82	                            "language_code": p.language_code,
+    83	                            "rate": p.rate,
+    84	                            "pitch": p.pitch,
+    85	                            "volume": p.volume,
+    86	                            "role": p.role,
+    87	                        }
+    88	                        for p in s.phrases
+    89	                    ],
+    90	                }
+    91	                for s in self.sections
+    92	            ],
+    93	            "generation_metadata": self.generation_metadata,
+    94	        }
+    95	        return json.dumps(data, ensure_ascii=False)
+    96	
+    97	    @classmethod
+    98	    def from_json(cls, json_str: str) -> Lesson:
+    99	        data = json.loads(json_str)
+   100	        sections = [
+   101	            Section(
+   102	                section_type=SectionType(s["section_type"]),
+   103	                phrases=[Phrase(**p) for p in s["phrases"]],
+   104	            )
+   105	            for s in data.get("sections", [])
+   106	        ]
+   107	        key_phrases = [KeyPhraseInfo(**kp) for kp in data.get("key_phrases", [])]
+   108	        return cls(
+   109	            title=data["title"],
+   110	            language_code=data["language_code"],
+   111	            sections=sections,
+   112	            narrator_voice=data.get("narrator_voice", NARRATOR_VOICE),
+   113	            key_phrases=key_phrases,
+   114	            generation_metadata=data.get("generation_metadata", {}),
+   115	        )
+   116	
+   117	
+   118	def extract_sentence_translations_from_translated(lesson: Lesson) -> dict[str, str]:
+   119	    """Recover {L2_sentence: EN_translation} from a stored Lesson's TRANSLATED section.
+   120	
+   121	    Used to backfill `generation_metadata['sentence_translations']` on lessons
+   122	    generated before that field existed. The TRANSLATED section emits
+   123	    alternating L2/EN phrases (with stray EN-EN label lines like
+   124	    "Translated"/"At the Cafe" at the top); we pair each L2 phrase with the
+   125	    immediately-following EN phrase. First occurrence wins on duplicate L2 keys.
+   126	    """
+   127	    out: dict[str, str] = {}
+   128	    l2_code = lesson.language_code
+   129	    for section in lesson.sections:
+   130	        if section.section_type is not SectionType.TRANSLATED:
+   131	            continue
+   132	        phrases = section.phrases
+   133	        for i in range(len(phrases) - 1):
+   134	            cur, nxt = phrases[i], phrases[i + 1]
+   135	            if cur.language_code == l2_code and nxt.language_code == "en" and cur.text and cur.text not in out:
+   136	                out[cur.text] = nxt.text
+   137	    return out
 ```
 
-The four section types encode the Pimsleur method: (1) **KEY_PHRASES** — individual vocabulary, (2) **NATURAL_SPEED** — full dialogue at native speed, (3) **SLOW_SPEED** — same dialogue with pauses between words, (4) **TRANSLATED** — L2 followed by L1 translation. Each `Phrase` carries its own TTS settings (rate, pitch, volume) plus a `role` field (`narrator`, `female-1`, `male-1`, …) that the audio pipeline uses for voice routing.
+The section types encode the Pimsleur method: (1) **KEY_PHRASES** — individual vocabulary, (2) **NATURAL_SPEED** — full dialogue at native speed, (3) **SLOW_SPEED** — same dialogue with pauses between words, (4) **TRANSLATED** — L2 followed by L1 translation, and (5) **SLOW_TRANSLATED** (added 2026-07-09) — slow L2 followed by L1, feeding the lesson player's phase model (PART 29). Each `Phrase` carries its own TTS settings (rate, pitch, volume) plus a `role` field (`narrator`, `female-1`, `male-1`, …) that the audio pipeline uses for voice routing.
 
 Two production additions matter for the API and SRS layers:
 
@@ -527,33 +850,103 @@ cat -n backend/app/models/syntactic_unit.py
 
 ```output
      1	"""Syntactic unit (collocation) domain model."""
-     2
+     2	
      3	from __future__ import annotations
-     4
-     5	from dataclasses import dataclass
-     6
-     7
-     8	@dataclass
-     9	class SyntacticUnit:
-    10	    """A collocation in the target language (L2) with its L1 translation.
-    11
-    12	    word_count must be 1-8. difficulty must be 1-5.
-    13	    source is either "corpus" (frequency-derived) or "llm" (generated).
-    14	    """
-    15
-    16	    text: str  # L2 text
-    17	    translation: str  # L1 translation
-    18	    word_count: int
-    19	    difficulty: int  # 1–5
-    20	    source: str  # "corpus" | "llm"
-    21	    frequency: int = 0
-    22	    lemma: str | None = None
-    23
-    24	    def __post_init__(self) -> None:
-    25	        if not 1 <= self.word_count <= 8:
-    26	            raise ValueError(f"word_count must be 1–8, got {self.word_count}")
-    27	        if not 1 <= self.difficulty <= 5:
-    28	            raise ValueError(f"difficulty must be 1–5, got {self.difficulty}")
+     4	
+     5	import json
+     6	from dataclasses import dataclass, field
+     7	from typing import Literal
+     8	
+     9	# Where a rich back-of-card field is shown on the drill card's answer side.
+    10	#   "summary" — always visible inline (e.g. IPA, a one-line meaning)
+    11	#   "details" — inside a collapsed "Details" disclosure (inflections, examples…)
+    12	#   "deep"    — its own nested disclosure, opened on demand (the big dictionary entry)
+    13	BackFieldTier = Literal["summary", "details", "deep"]
+    14	
+    15	
+    16	@dataclass(frozen=True)
+    17	class BackField:
+    18	    """One extracted rich back-of-card field: a labelled HTML fragment + its tier.
+    19	
+    20	    Sourced from an Anki notetype's secondary fields (see
+    21	    ``app.anki.field_map.NotetypeProfile.back_fields``); display-only, never
+    22	    edited in TT. ``html`` is already sanitized at extraction time.
+    23	    """
+    24	
+    25	    label: str
+    26	    html: str
+    27	    tier: BackFieldTier = "details"
+    28	
+    29	
+    30	def serialize_extras(extras: tuple[BackField, ...]) -> str:
+    31	    """Serialize ``extras`` to a JSON string for storage. Empty → ``""``."""
+    32	    if not extras:
+    33	        return ""
+    34	    return json.dumps([{"label": e.label, "html": e.html, "tier": e.tier} for e in extras])
+    35	
+    36	
+    37	def deserialize_extras(raw: str | None) -> tuple[BackField, ...]:
+    38	    """Parse a stored extras JSON string back into ``BackField``s.
+    39	
+    40	    Tolerant by design: blank/None or malformed JSON yields ``()`` so a bad row
+    41	    never breaks a card render.
+    42	    """
+    43	    if not raw:
+    44	        return ()
+    45	    try:
+    46	        data = json.loads(raw)
+    47	    except json.JSONDecodeError, ValueError:
+    48	        return ()
+    49	    if not isinstance(data, list):
+    50	        return ()
+    51	    return tuple(
+    52	        BackField(label=str(d["label"]), html=str(d["html"]), tier=d.get("tier", "details"))
+    53	        for d in data
+    54	        if isinstance(d, dict) and "label" in d and "html" in d
+    55	    )
+    56	
+    57	
+    58	@dataclass
+    59	class SyntacticUnit:
+    60	    """A collocation in the target language (L2) with its L1 translation.
+    61	
+    62	    word_count must be ≥ 1. difficulty must be 1-5. The earlier
+    63	    `word_count <= 8` upper bound was a sanity guard against importing long
+    64	    English questions from reference/Q&A Anki notes; it turned out to drop
+    65	    legitimate phonics cards whose front field is a >8-word question. The
+    66	    filter is now only at the lower bound — single-token empty extractions
+    67	    still get rejected; long-form items pass through.
+    68	    source is "corpus" (frequency-derived), "llm" (generated), "anki", "test",
+    69	    or "user".
+    70	    """
+    71	
+    72	    text: str  # L2 text
+    73	    translation: str  # L1 translation
+    74	    word_count: int
+    75	    difficulty: int  # 1–5
+    76	    source: str  # "corpus" | "llm" | "user" | "anki" | "test"
+    77	    frequency: int = 0
+    78	    lemma: str | None = None
+    79	    guid: str | None = None
+    80	    disambig_key: str = ""
+    81	    article: str = ""  # gender/indefinite article (en/ei/et), display-only prefix
+    82	    # Rich back-of-card fields (IPA, inflections, examples, dictionary entry…)
+    83	    # sourced from the Anki notetype's secondary fields. Display-only, optional;
+    84	    # empty for languages/notetypes without a profile that declares them.
+    85	    extras: tuple[BackField, ...] = field(default_factory=tuple)
+    86	    grammar: str = ""
+    87	    note: str = ""
+    88	    source_sentence: str = ""
+    89	    source_sentence_translation: str = ""
+    90	    source_lesson_id: str | None = None
+    91	    source_line_index: int | None = None
+    92	    card_type: str = "vocab"  # "vocab" | "cloze"
+    93	
+    94	    def __post_init__(self) -> None:
+    95	        if self.word_count < 1:
+    96	            raise ValueError(f"word_count must be ≥ 1, got {self.word_count}")
+    97	        if not 1 <= self.difficulty <= 5:
+    98	            raise ValueError(f"difficulty must be 1–5, got {self.difficulty}")
 ```
 
 ```bash
@@ -561,48 +954,253 @@ cat -n backend/app/models/srs_item.py
 ```
 
 ```output
-     1	"""SRS item domain model (FSRS-based)."""
-     2
-     3	from __future__ import annotations
-     4
-     5	from dataclasses import dataclass, field
-     6	from datetime import date
-     7	from enum import Enum
-     8
-     9	from .syntactic_unit import SyntacticUnit
-    10
-    11
-    12	class SRSState(Enum):
-    13	    """Learning state of an SRS item."""
-    14
-    15	    NEW = "new"
-    16	    LEARNING = "learning"
-    17	    REVIEW = "review"
-    18	    RELEARNING = "relearning"
-    19	    SUSPENDED = "suspended"
-    20
-    21
-    22	class Rating(Enum):
-    23	    """Learner rating for an SRS review."""
-    24
-    25	    AGAIN = 1  # Complete blackout / forgot
-    26	    HARD = 2  # Significant difficulty
-    27	    GOOD = 3  # Correct with some effort
-    28	    EASY = 4  # Perfect recall
-    29
-    30
-    31	@dataclass
-    32	class SRSItem:
-    33	    """An SRS-tracked syntactic unit with FSRS scheduling fields."""
-    34
-    35	    syntactic_unit: SyntacticUnit
-    36	    due_date: date
-    37	    stability: float = 1.0  # FSRS stability (days before 90% retention)
-    38	    difficulty: float = 5.0  # FSRS difficulty (1–10)
-    39	    reps: int = 0
-    40	    lapses: int = 0
-    41	    state: SRSState = field(default=SRSState.NEW)
-    42	    last_review: date | None = None
+     1	"""SRS item domain model (FSRS-based).
+     2	
+     3	Each collocation tracks two directions independently:
+     4	- recognition (L2 → L1): the historical default; powers lesson transcripts
+     5	- production (L1 → L2): new in v2; powers the production drill route.
+     6	
+     7	Flat FSRS fields on `SRSItem` (`state`, `due_date`, `stability`, ...) are
+     8	compatibility shims that read/write the recognition direction. They exist so
+     9	callers predating the two-direction schema keep working during Stage 1 and
+    10	are scheduled for removal in Stage 3.5 of the Anki sync plan.
+    11	"""
+    12	
+    13	from __future__ import annotations
+    14	
+    15	from dataclasses import dataclass, field
+    16	from datetime import UTC, date, datetime, time
+    17	from enum import Enum
+    18	
+    19	from app.anki.rollover import due_at_rollover_utc
+    20	
+    21	from .syntactic_unit import SyntacticUnit
+    22	
+    23	
+    24	class SRSState(Enum):
+    25	    """Learning state of an SRS item."""
+    26	
+    27	    NEW = "new"
+    28	    LEARNING = "learning"
+    29	    REVIEW = "review"
+    30	    RELEARNING = "relearning"
+    31	    SUSPENDED = "suspended"
+    32	    BURIED = "buried"
+    33	    KNOWN = "known"
+    34	
+    35	
+    36	class Rating(Enum):
+    37	    """Learner rating for an SRS review."""
+    38	
+    39	    AGAIN = 1  # Complete blackout / forgot
+    40	    HARD = 2  # Significant difficulty
+    41	    GOOD = 3  # Correct with some effort
+    42	    EASY = 4  # Perfect recall
+    43	
+    44	
+    45	class Direction(Enum):
+    46	    """Review direction for an SRS item."""
+    47	
+    48	    RECOGNITION = "recognition"  # L2 → L1 (Anki ord=0)
+    49	    PRODUCTION = "production"  # L1 → L2 (Anki ord=1)
+    50	
+    51	
+    52	@dataclass
+    53	class DirectionState:
+    54	    """FSRS scheduling state for one direction of a collocation.
+    55	
+    56	    Single source of truth for due-time: ``due_at`` (TEXT iso datetime, UTC).
+    57	    Extended to all states (review/new included), NOT NULL.
+    58	    """
+    59	
+    60	    direction: Direction
+    61	    due_at: datetime
+    62	    stability: float = 1.0
+    63	    difficulty: float = 5.0
+    64	    reps: int = 0
+    65	    lapses: int = 0
+    66	    state: SRSState = field(default=SRSState.NEW)
+    67	    last_review: datetime | None = None
+    68	    last_review_time_ms: int = 0
+    69	    anki_card_id: int | None = None
+    70	    anki_due: int | None = None
+    71	    # Anki's `cards.mod` (modification timestamp). Used as the secondary sort
+    72	    # key under RetrievabilityAscending — Anki tiebreaks via `fnvhash(id, mod)`.
+    73	    anki_card_mod: int | None = None
+    74	    # Source of a buried state: 'user' (manual bury, persists across rollover)
+    75	    # or 'sched' (sibling/auto bury, released at next rollover via Layer 27's
+    76	    # unbury_if_needed sweep). NULL on non-buried rows.
+    77	    bury_kind: str | None = None
+    78	    dirty_fsrs: bool = False
+    79	    last_synced_at: str | None = None
+    80	    last_rating: int | None = None
+    81	    left: int | None = None
+    82	    # Prior-grade snapshot used to construct a correct Anki revlog row at
+    83	    # push time. Set by `app.srs.fsrs.schedule` before each `replace`,
+    84	    # cleared by `mark_direction_clean` once the row has been pushed.
+    85	    prior_state: SRSState | None = None
+    86	    prior_left: int | None = None
+    87	    prior_stability: float | None = None
+    88	    # First-grade timestamp — set once on the initial NEW→non-NEW transition
+    89	    # (by `app.srs.fsrs.schedule` for TT-side grades, by `sync_pull` for Anki
+    90	    # grades). Used by `count_new_introduced_today` to mirror Anki's `newToday`
+    91	    # counter, which increments only on the actual first-grade event. Layer 26.
+    92	    introduced_at: datetime | None = None
+    93	    # One-shot force flag: when set, sync_push force-writes this direction's
+    94	    # stability/difficulty into Anki's cards.data (the `set_specific_value_of_card`
+    95	    # path), even though the direction is in a non-KNOWN state. Set by
+    96	    # `restore_known` so a restored (review-state) card's pre-known stability
+    97	    # survives the next take-Anki-verbatim pull; cleared by `mark_direction_clean`
+    98	    # after the push. TT-only — never synced to Anki.
+    99	    fsrs_force_next: bool = False
+   100	
+   101	
+   102	@dataclass(frozen=True)
+   103	class RevlogRow:
+   104	    """One row in the tt_revlog table, mirroring Anki's revlog schema.
+   105	
+   106	    Written at grade time (TT-side) and during sync_pull (Anki-side).
+   107	    Stage 0: writes only; no reads consume it until Stage 2.
+   108	    """
+   109	
+   110	    id: int
+   111	    collocation_id: int
+   112	    direction: Direction
+   113	    button_chosen: int
+   114	    interval: int
+   115	    last_interval: int
+   116	    factor: int
+   117	    taken_millis: int
+   118	    review_kind: int
+   119	    anki_card_id: int | None = None
+   120	
+   121	
+   122	class SRSItem:
+   123	    """An SRS-tracked syntactic unit with per-direction FSRS scheduling.
+   124	
+   125	    Accepts two construction styles:
+   126	
+   127	    1. Two-direction (new): `SRSItem(syntactic_unit=..., directions={...}, guid=..., anki_note_id=...)`.
+   128	    2. Flat legacy:         `SRSItem(syntactic_unit=..., due_date=..., stability=..., state=..., ...)`.
+   129	
+   130	    The legacy kwargs populate the recognition direction and seed production
+   131	    with defaults. They will be removed in Stage 3.5 once all call sites move
+   132	    to `directions[Direction.RECOGNITION]` access.
+   133	    """
+   134	
+   135	    __slots__ = ("syntactic_unit", "directions", "guid", "anki_note_id")
+   136	
+   137	    def __init__(
+   138	        self,
+   139	        syntactic_unit: SyntacticUnit,
+   140	        directions: dict[Direction, DirectionState] | None = None,
+   141	        guid: str | None = None,
+   142	        anki_note_id: int | None = None,
+   143	        *,
+   144	        due_date: date | None = None,
+   145	        stability: float = 1.0,
+   146	        difficulty: float = 5.0,
+   147	        reps: int = 0,
+   148	        lapses: int = 0,
+   149	        state: SRSState = SRSState.NEW,
+   150	        last_review: date | None = None,
+   151	    ) -> None:
+   152	        self.syntactic_unit = syntactic_unit
+   153	        self.guid = guid
+   154	        self.anki_note_id = anki_note_id
+   155	
+   156	        if directions is not None:
+   157	            self.directions = directions
+   158	        else:
+   159	            rec_due = due_date if due_date is not None else date.today()
+   160	            recognition_due_at = due_at_rollover_utc(rec_due)
+   161	            self.directions = {
+   162	                Direction.RECOGNITION: DirectionState(
+   163	                    direction=Direction.RECOGNITION,
+   164	                    due_at=recognition_due_at,
+   165	                    stability=stability,
+   166	                    difficulty=difficulty,
+   167	                    reps=reps,
+   168	                    lapses=lapses,
+   169	                    state=state,
+   170	                    last_review=last_review,
+   171	                ),
+   172	                Direction.PRODUCTION: DirectionState(
+   173	                    direction=Direction.PRODUCTION,
+   174	                    due_at=recognition_due_at,
+   175	                ),
+   176	            }
+   177	
+   178	    # ── Backward-compat flat shims (mirror recognition direction) ───────
+   179	    #
+   180	    # These let `item.state`, `item.reps`, etc. keep working for callers
+   181	    # predating the two-direction schema. Readers return recognition's value;
+   182	    # writers mutate recognition's DirectionState in place.
+   183	
+   184	    @property
+   185	    def _rec(self) -> DirectionState:
+   186	        # Cloze items only carry a PRODUCTION direction (single-template Anki
+   187	        # Cloze notetype). Flat shims fall through to whichever direction the
+   188	        # card_type implies.
+   189	        if self.syntactic_unit.card_type == "cloze":
+   190	            return self.directions[Direction.PRODUCTION]
+   191	        return self.directions[Direction.RECOGNITION]
+   192	
+   193	    @property
+   194	    def due_date(self) -> date:
+   195	        return self._rec.due_at.date()
+   196	
+   197	    @due_date.setter
+   198	    def due_date(self, value: date) -> None:
+   199	        self._rec.due_at = datetime.combine(value, time.min).replace(tzinfo=UTC)
+   200	
+   201	    @property
+   202	    def stability(self) -> float:
+   203	        return self._rec.stability
+   204	
+   205	    @stability.setter
+   206	    def stability(self, value: float) -> None:
+   207	        self._rec.stability = value
+   208	
+   209	    @property
+   210	    def difficulty(self) -> float:
+   211	        return self._rec.difficulty
+   212	
+   213	    @difficulty.setter
+   214	    def difficulty(self, value: float) -> None:
+   215	        self._rec.difficulty = value
+   216	
+   217	    @property
+   218	    def reps(self) -> int:
+   219	        return self._rec.reps
+   220	
+   221	    @reps.setter
+   222	    def reps(self, value: int) -> None:
+   223	        self._rec.reps = value
+   224	
+   225	    @property
+   226	    def lapses(self) -> int:
+   227	        return self._rec.lapses
+   228	
+   229	    @lapses.setter
+   230	    def lapses(self, value: int) -> None:
+   231	        self._rec.lapses = value
+   232	
+   233	    @property
+   234	    def state(self) -> SRSState:
+   235	        return self._rec.state
+   236	
+   237	    @state.setter
+   238	    def state(self, value: SRSState) -> None:
+   239	        self._rec.state = value
+   240	
+   241	    @property
+   242	    def last_review(self) -> date | None:
+   243	        return self._rec.last_review
+   244	
+   245	    @last_review.setter
+   246	    def last_review(self, value: date | None) -> None:
+   247	        self._rec.last_review = value
 ```
 
 The `SyntacticUnit` is a collocation (multi-word phrase or single word) with bounds validation — `word_count` 1–8, `difficulty` 1–5. The optional `lemma` field stores the canonical form (currently the lowercased word) so per-word SRS tracking can collapse inflected variants — see Part 4.4 for the lemmatizer. The `SRSItem` wraps a SyntacticUnit with FSRS-5 scheduling fields: stability (days before 90% retention drops), difficulty (1–10 scale), reps, lapses, and state.
@@ -618,105 +1216,22 @@ cat -n backend/app/models/strategy.py
 ```
 
 ```output
-     1	"""Content strategy, difficulty level, and pedagogical scoring configuration.
+     1	"""Content generation strategy enum."""
      2	
-     3	Ported from micro-demo-0.1/content_strategy.py — exact scoring weights preserved.
-     4	"""
-     5	
-     6	from __future__ import annotations
+     3	from __future__ import annotations
+     4	
+     5	from enum import Enum
+     6	
      7	
-     8	from dataclasses import dataclass
-     9	from enum import Enum
+     8	class ContentStrategy(Enum):
+     9	    """Content generation strategy.
     10	
-    11	
-    12	class ContentStrategy(Enum):
-    13	    """Content generation strategy.
+    11	    WIDER: Generate new scenarios using familiar vocabulary (breadth).
+    12	    DEEPER: Enhance existing scenarios with more advanced L2 expressions (depth).
+    13	    """
     14	
-    15	    WIDER: Generate new scenarios using familiar vocabulary (breadth).
-    16	    DEEPER: Enhance existing scenarios with more advanced L2 expressions (depth).
-    17	    """
-    18	
-    19	    WIDER = "wider"
-    20	    DEEPER = "deeper"
-    21	
-    22	
-    23	class DifficultyLevel(Enum):
-    24	    """L2 language complexity level."""
-    25	
-    26	    BASIC = "basic"
-    27	    INTERMEDIATE = "intermediate"
-    28	    ADVANCED = "advanced"
-    29	
-    30	
-    31	@dataclass
-    32	class PedagogicalScoringConfig:
-    33	    """Scoring weights for collocation selection.
-    34	
-    35	    The four primary weights must sum to 1.0.
-    36	    """
-    37	
-    38	    # Primary weights (must sum to 1.0)
-    39	    srs_readiness_weight: float = 0.4
-    40	    language_quality_weight: float = 0.3
-    41	    pedagogical_value_weight: float = 0.2
-    42	    diversity_weight: float = 0.1
-    43	
-    44	    # Language quality scoring
-    45	    english_word_penalty: float = -0.5
-    46	    digit_penalty: float = -0.3
-    47	    target_word_bonus: float = 0.1
-    48	    pure_target_bonus: float = 0.3
-    49	
-    50	    # Pedagogical value
-    51	    min_frequency_threshold: int = 2
-    52	    frequency_bonus_multiplier: float = 0.1
-    53	    completeness_bonus: float = 0.2
-    54	
-    55	    # Diversity
-    56	    similarity_penalty: float = -0.15
-    57	    category_diversity_bonus: float = 0.1
-    58	
-    59	    # SRS readiness
-    60	    low_stability_bonus: float = 0.3
-    61	    review_overdue_bonus: float = 0.2
-    62	
-    63	    def weights_sum_to_one(self) -> bool:
-    64	        total = (
-    65	            self.srs_readiness_weight
-    66	            + self.language_quality_weight
-    67	            + self.pedagogical_value_weight
-    68	            + self.diversity_weight
-    69	        )
-    70	        return abs(total - 1.0) < 0.01
-    71	
-    72	
-    73	@dataclass
-    74	class StrategyConfig:
-    75	    """Parameters controlling SRS behavior and content generation for a strategy."""
-    76	
-    77	    strategy: ContentStrategy
-    78	    difficulty_level: DifficultyLevel
-    79	    max_new_collocations: int
-    80	    min_review_collocations: int
-    81	    review_interval_multiplier: float
-    82	
-    83	
-    84	DEFAULT_STRATEGY_CONFIGS: dict[ContentStrategy, StrategyConfig] = {
-    85	    ContentStrategy.WIDER: StrategyConfig(
-    86	        strategy=ContentStrategy.WIDER,
-    87	        difficulty_level=DifficultyLevel.BASIC,
-    88	        max_new_collocations=8,
-    89	        min_review_collocations=2,
-    90	        review_interval_multiplier=1.5,
-    91	    ),
-    92	    ContentStrategy.DEEPER: StrategyConfig(
-    93	        strategy=ContentStrategy.DEEPER,
-    94	        difficulty_level=DifficultyLevel.INTERMEDIATE,
-    95	        max_new_collocations=3,
-    96	        min_review_collocations=7,
-    97	        review_interval_multiplier=0.8,
-    98	    ),
-    99	}
+    15	    WIDER = "wider"
+    16	    DEEPER = "deeper"
 ```
 
 Two strategies: **WIDER** introduces 8 new collocations with 2 reviews (breadth-first for beginners), **DEEPER** introduces only 3 new with 7 reviews (depth-first for reinforcement). The `PedagogicalScoringConfig` carries tuned weights for the collocation selector: SRS readiness 40%, language quality 30%, pedagogical value 20%, diversity 10%. These weights were ported directly from the prototype.
@@ -730,504 +1245,22 @@ The LLM layer wraps Groq's API with retry logic and a VCR-style cassette system 
 ### 3.1 HTTP Client
 
 ```bash
-cat -n backend/app/llm/client.py
+grep -n "^class \|    def \|^def " backend/app/llm/client.py
 ```
 
 ```output
-     1	"""Async LLM client — Groq primary, fallback_client secondary, Ollama offline fallback."""
-     2
-     3	from __future__ import annotations
-     4
-     5	import asyncio
-     6	import logging
-     7	import re
-     8	import shutil
-     9	import subprocess
-    10	import time
-    11	from collections.abc import Callable
-    12
-    13	import httpx
-    14
-    15	logger = logging.getLogger(__name__)
-    16
-    17	GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-    18	GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
-    19	OLLAMA_DEFAULT_URL = "http://localhost:11434"
-    20	OLLAMA_DEFAULT_MODEL = "llama3.2"
-    21
-    22
-    23	def _parse_reset_duration(s: str) -> float:
-    24	    """Parse Groq's x-ratelimit-reset-requests header, e.g. '2s', '500ms', '1m30s' → seconds."""
-    25	    total = 0.0
-    26	    m = re.fullmatch(r"(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?(?:(\d+)ms)?", s.strip())
-    27	    if m and any(m.groups()):
-    28	        if m.group(1):
-    29	            total += int(m.group(1)) * 60
-    30	        if m.group(2):
-    31	            total += float(m.group(2))
-    32	        if m.group(3):
-    33	            total += int(m.group(3)) / 1000
-    34	    return total
-    35
-    36
-    37	class LLMError(Exception):
-    38	    """Raised when all LLM backends fail."""
-    39
-    40	    def __init__(self, message: str, attempts: list[dict] | None = None) -> None:
-    41	        super().__init__(message)
-    42	        self.attempts = attempts or []
-    43
-    44
-    45	class LLMClient:
-    46	    def __init__(
-    47	        self,
-    48	        groq_api_key: str | None = None,
-    49	        groq_model: str = GROQ_DEFAULT_MODEL,
-    50	        timeout: float = 30.0,
-    51	        max_retries_429: int = 3,
-    52	        max_retry_after_s: float = 10.0,
-    53	        ollama_url: str = OLLAMA_DEFAULT_URL,
-    54	        ollama_model: str = OLLAMA_DEFAULT_MODEL,
-    55	        groq_extra_body_params: dict | None = None,
-    56	        on_call: Callable[[dict], None] | None = None,
-    57	        fallback_client: LLMClient | None = None,
-    58	    ) -> None:
-    59	        self.groq_api_key = groq_api_key
-    60	        self.groq_model = groq_model
-    61	        self.timeout = timeout
-    62	        self.max_retries_429 = max_retries_429
-    63	        self.max_retry_after_s = max_retry_after_s
-    64	        self.ollama_url = ollama_url
-    65	        self.ollama_model = ollama_model
-    66	        self.groq_extra_body_params = groq_extra_body_params
-    67	        self.on_call = on_call
-    68	        self.fallback_client = fallback_client
-    69	        self.last_provider: str | None = None
-    70	        self._next_call_at: float = 0.0
-    71	        self._groq_call_delay: float = 0.0
-    72	        self._last_429_at: float = 0.0
-    73
-    74	    def pacing_info(self) -> dict:
-    75	        """Return current pacing state for diagnostics."""
-    76	        now = time.monotonic()
-    77	        return {
-    78	            "call_delay_s": self._groq_call_delay,
-    79	            "next_call_in_s": max(0.0, self._next_call_at - now),
-    80	            "last_429_ago_s": (now - self._last_429_at) if self._last_429_at > 0 else None,
-    81	        }
-    82
-    83	    def _fire_callback(
-    84	        self,
-    85	        *,
-    86	        provider: str,
-    87	        model: str,
-    88	        latency_ms: int,
-    89	        status: str | int,
-    90	        prompt: str = "",
-    91	        response_text: str | None = None,
-    92	        error: str | None = None,
-    93	        rate_limits: dict | None = None,
-    94	        is_fallback: bool = False,
-    95	    ) -> None:
-    96	        if self.on_call is None:
-    97	            return
-    98	        info: dict = {
-    99	            "timestamp": time.time(),
-   100	            "provider": provider,
-   101	            "model": model,
-   102	            "latency_ms": latency_ms,
-   103	            "status": status,
-   104	            "is_fallback": is_fallback,
-   105	        }
-   106	        if prompt:
-   107	            info["prompt_preview"] = prompt[:80]
-   108	        if response_text is not None:
-   109	            info["response_preview"] = response_text[:200]
-   110	        if error is not None:
-   111	            info["error"] = error
-   112	        if rate_limits is not None:
-   113	            info["rate_limits"] = rate_limits
-   114	        if self.groq_extra_body_params and "reasoning_effort" in self.groq_extra_body_params:
-   115	            info["reasoning_effort"] = self.groq_extra_body_params["reasoning_effort"]
-   116	        self.on_call(info)
-   117
-   118	    @staticmethod
-   119	    def _make_attempt(provider: str, model: str, status: str | int, error: str, latency_ms: int) -> dict:
-   120	        return {"provider": provider, "model": model, "status": status, "error": error, "latency_ms": latency_ms}
-   121
-   122	    async def complete(
-   123	        self,
-   124	        prompt: str,
-   125	        system_prompt: str | None = None,
-   126	        temperature: float = 0.7,
-   127	        max_tokens: int = 2048,
-   128	    ) -> str:
-   129	        """Try Groq, then fallback_client, then Ollama; raise LLMError if all fail."""
-   130	        if not self.groq_api_key:
-   131	            raise LLMError("No GROQ_API_KEY configured")
-   132
-   133	        attempts: list[dict] = []
-   134
-   135	        try:
-   136	            return await self._call_groq(
-   137	                prompt, system_prompt=system_prompt, temperature=temperature, max_tokens=max_tokens
-   138	            )
-   139	        except LLMError as e:
-   140	            attempts.extend(e.attempts)
-   141	            logger.warning("Groq failed, trying fallback: %s", e)
-   142	            if self.fallback_client is not None:
-   143	                try:
-   144	                    return await self.fallback_client.complete(
-   145	                        prompt, system_prompt=system_prompt, temperature=temperature, max_tokens=max_tokens
-   146	                    )
-   147	                except LLMError as fe:
-   148	                    attempts.extend(fe.attempts)
-   149	                    logger.warning("Fallback client also failed: %s", fe)
-   150
-   151	        try:
-   152	            return await self._call_ollama(
-   153	                prompt,
-   154	                max_tokens,
-   155	                system_prompt=system_prompt,
-   156	                temperature=temperature,
-   157	                is_fallback=True,
-   158	            )
-   159	        except LLMError as e:
-   160	            attempts.extend(e.attempts)
-   161	            logger.warning("Ollama also failed: %s", e)
-   162
-   163	        msgs = "; ".join(f"{a['provider']}: {a['error']}" for a in attempts)
-   164	        raise LLMError(f"All LLM backends failed: {msgs}", attempts)
-   165
-   166	    async def _call_groq(
-   167	        self,
-   168	        prompt: str,
-   169	        system_prompt: str | None,
-   170	        temperature: float,
-   171	        max_tokens: int,
-   172	    ) -> str:
-   173	        headers = {
-   174	            "Authorization": f"Bearer {self.groq_api_key}",
-   175	            "Content-Type": "application/json",
-   176	        }
-   177	        messages: list[dict] = []
-   178	        if system_prompt:
-   179	            messages.append({"role": "system", "content": system_prompt})
-   180	        messages.append({"role": "user", "content": prompt})
-   181
-   182	        body: dict = {
-   183	            "model": self.groq_model,
-   184	            "messages": messages,
-   185	            "temperature": temperature,
-   186	        }
-   187	        if self.groq_extra_body_params:
-   188	            body.update(self.groq_extra_body_params)
-   189	            if "max_completion_tokens" not in body:
-   190	                body["max_completion_tokens"] = max_tokens
-   191	        else:
-   192	            body["max_tokens"] = max_tokens
-   193
-   194	        async with httpx.AsyncClient(timeout=self.timeout) as http:
-   195	            for attempt in range(self.max_retries_429 + 1):
-   196	                if self._groq_call_delay > 0 and time.monotonic() - self._last_429_at > 60:
-   197	                    self._groq_call_delay = 0.0
-   198	                wait = self._next_call_at - time.monotonic()
-   199	                if wait > 0:
-   200	                    logger.info("Groq RPM pacing: waiting %.1fs", wait)
-   201	                    await asyncio.sleep(wait)
-   202
-   203	                start = time.monotonic()
-   204	                try:
-   205	                    response = await http.post(GROQ_API_URL, headers=headers, json=body)
-   206	                except httpx.TimeoutException as err:
-   207	                    latency_ms = int((time.monotonic() - start) * 1000)
-   208	                    msg = f"Groq timed out after {self.timeout}s"
-   209	                    self._fire_callback(
-   210	                        provider="groq",
-   211	                        model=self.groq_model,
-   212	                        latency_ms=latency_ms,
-   213	                        status="timeout",
-   214	                        prompt=prompt,
-   215	                        error=msg,
-   216	                    )
-   217	                    raise LLMError(
-   218	                        msg, [self._make_attempt("groq", self.groq_model, "timeout", msg, latency_ms)]
-   219	                    ) from err
-   220	                latency_ms = int((time.monotonic() - start) * 1000)
-   221
-   222	                # Log rate-limit headers
-   223	                rl_tokens_remaining = response.headers.get("x-ratelimit-remaining-tokens", "?")
-   224	                rl_tokens_limit = response.headers.get("x-ratelimit-limit-tokens", "?")
-   225	                rl_requests_remaining = response.headers.get("x-ratelimit-remaining-requests", "?")
-   226	                rl_requests_limit = response.headers.get("x-ratelimit-limit-requests", "?")
-   227	                logger.info(
-   228	                    "Groq rate-limit: tokens=%s/%s requests=%s/%s",
-   229	                    rl_tokens_remaining,
-   230	                    rl_tokens_limit,
-   231	                    rl_requests_remaining,
-   232	                    rl_requests_limit,
-   233	                )
-   234
-   235	                if response.status_code == 429:
-   236	                    retry_after_raw = response.headers.get("retry-after", "2")
-   237	                    try:
-   238	                        retry_after = float(retry_after_raw)
-   239	                    except ValueError:
-   240	                        retry_after = 2.0
-   241	                    msg = f"Groq returned 429 Too Many Requests (retry after {retry_after_raw}s)"
-   242	                    if retry_after <= self.max_retry_after_s:
-   243	                        self._last_429_at = time.monotonic()
-   244	                        self._groq_call_delay = retry_after
-   245	                    if attempt < self.max_retries_429 and retry_after <= self.max_retry_after_s:
-   246	                        logger.warning(
-   247	                            "Groq 429, retry %d/%d after %.1fs", attempt + 1, self.max_retries_429, retry_after
-   248	                        )
-   249	                        self._fire_callback(
-   250	                            provider="groq",
-   251	                            model=self.groq_model,
-   252	                            latency_ms=latency_ms,
-   253	                            status=429,
-   254	                            prompt=prompt,
-   255	                            error=msg,
-   256	                        )
-   257	                        await asyncio.sleep(retry_after)
-   258	                        continue
-   259	                    self._fire_callback(
-   260	                        provider="groq",
-   261	                        model=self.groq_model,
-   262	                        latency_ms=latency_ms,
-   263	                        status=429,
-   264	                        prompt=prompt,
-   265	                        error=msg,
-   266	                    )
-   267	                    raise LLMError(msg, [self._make_attempt("groq", self.groq_model, 429, msg, latency_ms)])
-   268
-   269	                if not response.is_success:
-   270	                    msg = f"Groq returned HTTP {response.status_code}"
-   271	                    self._fire_callback(
-   272	                        provider="groq",
-   273	                        model=self.groq_model,
-   274	                        latency_ms=latency_ms,
-   275	                        status=response.status_code,
-   276	                        prompt=prompt,
-   277	                        error=msg,
-   278	                    )
-   279	                    raise LLMError(
-   280	                        msg, [self._make_attempt("groq", self.groq_model, response.status_code, msg, latency_ms)]
-   281	                    )
-   282
-   283	                data = response.json()
-   284	                content = data["choices"][0]["message"]["content"]
-   285	                content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
-   286	                self.last_provider = "groq"
-   287	                logger.info("Groq success: model=%s latency=%dms", self.groq_model, latency_ms)
-   288
-   289	                if self.on_call:
-   290	                    _rl: dict = {}
-   291	                    if rl_tokens_remaining.isdigit():
-   292	                        _rl["tokens_remaining"] = int(rl_tokens_remaining)
-   293	                    if rl_tokens_limit.isdigit():
-   294	                        _rl["tokens_limit"] = int(rl_tokens_limit)
-   295	                    if rl_requests_remaining.isdigit():
-   296	                        _rl["requests_remaining"] = int(rl_requests_remaining)
-   297	                    if rl_requests_limit.isdigit():
-   298	                        _rl["requests_limit"] = int(rl_requests_limit)
-   299	                    self._fire_callback(
-   300	                        provider="groq",
-   301	                        model=self.groq_model,
-   302	                        latency_ms=latency_ms,
-   303	                        status="success",
-   304	                        prompt=prompt,
-   305	                        response_text=content,
-   306	                        rate_limits=_rl if _rl else None,
-   307	                    )
-   308
-   309	                # Proactive pacing: RPM + TPM
-   310	                proactive_delay = 0.0
-   311	                rem_req_raw = response.headers.get("x-ratelimit-remaining-requests", "")
-   312	                rst_req_raw = response.headers.get("x-ratelimit-reset-requests", "")
-   313	                if rem_req_raw.isdigit() and rst_req_raw:
-   314	                    rem_req = int(rem_req_raw)
-   315	                    rst_req_s = _parse_reset_duration(rst_req_raw)
-   316	                    if rem_req == 0 and rst_req_s > 0:
-   317	                        proactive_delay = rst_req_s
-   318	                    elif rem_req > 0 and rst_req_s > 0:
-   319	                        proactive_delay = rst_req_s / rem_req
-   320
-   321	                rem_tok_raw = response.headers.get("x-ratelimit-remaining-tokens", "")
-   322	                rst_tok_raw = response.headers.get("x-ratelimit-reset-tokens", "")
-   323	                lim_tok_raw = response.headers.get("x-ratelimit-limit-tokens", "")
-   324	                if rem_tok_raw.isdigit() and rst_tok_raw and lim_tok_raw.isdigit():
-   325	                    rem_tok = int(rem_tok_raw)
-   326	                    rst_tok_s = _parse_reset_duration(rst_tok_raw)
-   327	                    lim_tok = int(lim_tok_raw)
-   328	                    if rem_tok == 0 and rst_tok_s > 0:
-   329	                        proactive_delay = max(proactive_delay, rst_tok_s)
-   330	                    elif rem_tok > 0 and rst_tok_s > 0 and lim_tok > 0 and rem_tok < lim_tok * 0.20:
-   331	                        tokens_per_call = body.get("max_completion_tokens") or body.get("max_tokens") or max_tokens
-   332	                        calls_left = max(rem_tok / max(tokens_per_call, 1), 1.0)
-   333	                        tok_delay = rst_tok_s / calls_left
-   334	                        proactive_delay = max(proactive_delay, tok_delay)
-   335
-   336	                if proactive_delay > 0.5:
-   337	                    logger.info(
-   338	                        "Groq proactive pacing: req=%s/%s tok=%s/%s → %.2fs delay",
-   339	                        rem_req_raw,
-   340	                        rst_req_raw,
-   341	                        rem_tok_raw,
-   342	                        rst_tok_raw,
-   343	                        proactive_delay,
-   344	                    )
-   345	                delay = max(self._groq_call_delay, proactive_delay)
-   346	                self._next_call_at = time.monotonic() + delay
-   347	                return content
-   348
-   349	        raise LLMError("Groq call loop exhausted", [])  # pragma: no cover
-   350
-   351	    async def _start_ollama(self) -> bool:  # pragma: no cover
-   352	        """Try to start 'ollama serve' in the background. Returns True if started."""
-   353	        if shutil.which("ollama") is None:
-   354	            logger.warning("ollama binary not found in PATH")
-   355	            return False
-   356	        try:
-   357	            subprocess.Popen(
-   358	                ["ollama", "serve"],
-   359	                stdout=subprocess.DEVNULL,
-   360	                stderr=subprocess.DEVNULL,
-   361	            )
-   362	            logger.info("Started 'ollama serve', waiting for it to be ready...")
-   363	            for _ in range(20):  # up to 10s
-   364	                await asyncio.sleep(0.5)
-   365	                try:
-   366	                    async with httpx.AsyncClient(timeout=2.0) as http:
-   367	                        resp = await http.get(f"{self.ollama_url}/api/tags")
-   368	                        if resp.is_success:
-   369	                            logger.info("Ollama is ready")
-   370	                            return True
-   371	                except Exception:
-   372	                    pass
-   373	            logger.warning("Ollama started but not ready after 10s")
-   374	            return False
-   375	        except OSError as e:
-   376	            logger.warning("Failed to start ollama: %s", e)
-   377	            return False
-   378
-   379	    async def _call_ollama(
-   380	        self,
-   381	        prompt: str,
-   382	        max_tokens: int,
-   383	        system_prompt: str | None = None,
-   384	        temperature: float = 0.7,
-   385	        is_fallback: bool = False,
-   386	    ) -> str:
-   387	        body: dict = {
-   388	            "model": self.ollama_model,
-   389	            "prompt": prompt,
-   390	            "stream": False,
-   391	            "options": {"temperature": temperature, "num_predict": max_tokens},
-   392	        }
-   393	        if system_prompt:
-   394	            body["system"] = system_prompt
-   395
-   396	        start = time.monotonic()
-   397	        try:
-   398	            async with httpx.AsyncClient(timeout=self.timeout) as http:
-   399	                response = await http.post(f"{self.ollama_url}/api/generate", json=body)
-   400	        except httpx.ConnectError:
-   401	            if await self._start_ollama():  # pragma: no cover
-   402	                start = time.monotonic()  # pragma: no cover
-   403	                try:  # pragma: no cover
-   404	                    async with httpx.AsyncClient(timeout=self.timeout) as http:  # pragma: no cover
-   405	                        response = await http.post(f"{self.ollama_url}/api/generate", json=body)  # pragma: no cover
-   406	                except (httpx.ConnectError, httpx.TimeoutException) as err:  # pragma: no cover
-   407	                    latency_ms = int((time.monotonic() - start) * 1000)  # pragma: no cover
-   408	                    status = (
-   409	                        "timeout" if isinstance(err, httpx.TimeoutException) else "connect_error"
-   410	                    )  # pragma: no cover
-   411	                    msg = f"Ollama {status} at {self.ollama_url} (after auto-start)"  # pragma: no cover
-   412	                    self._fire_callback(
-   413	                        provider="ollama",
-   414	                        model=self.ollama_model,
-   415	                        latency_ms=latency_ms,  # pragma: no cover
-   416	                        status=status,
-   417	                        prompt=prompt,
-   418	                        error=msg,
-   419	                        is_fallback=is_fallback,
-   420	                    )
-   421	                    raise LLMError(
-   422	                        msg, [self._make_attempt("ollama", self.ollama_model, status, msg, latency_ms)]
-   423	                    ) from err  # pragma: no cover
-   424	            else:
-   425	                latency_ms = int((time.monotonic() - start) * 1000)
-   426	                msg = f"Ollama connection refused at {self.ollama_url} (auto-start failed)"
-   427	                self._fire_callback(
-   428	                    provider="ollama",
-   429	                    model=self.ollama_model,
-   430	                    latency_ms=latency_ms,
-   431	                    status="connect_error",
-   432	                    prompt=prompt,
-   433	                    error=msg,
-   434	                    is_fallback=is_fallback,
-   435	                )
-   436	                raise LLMError(
-   437	                    msg, [self._make_attempt("ollama", self.ollama_model, "connect_error", msg, latency_ms)]
-   438	                ) from None
-   439	        except httpx.TimeoutException as err:
-   440	            latency_ms = int((time.monotonic() - start) * 1000)
-   441	            msg = f"Ollama timed out after {self.timeout}s"
-   442	            self._fire_callback(
-   443	                provider="ollama",
-   444	                model=self.ollama_model,
-   445	                latency_ms=latency_ms,
-   446	                status="timeout",
-   447	                prompt=prompt,
-   448	                error=msg,
-   449	                is_fallback=is_fallback,
-   450	            )
-   451	            raise LLMError(msg, [self._make_attempt("ollama", self.ollama_model, "timeout", msg, latency_ms)]) from err
-   452
-   453	        latency_ms = int((time.monotonic() - start) * 1000)
-   454
-   455	        if not response.is_success:
-   456	            msg = f"Ollama returned HTTP {response.status_code}"
-   457	            self._fire_callback(
-   458	                provider="ollama",
-   459	                model=self.ollama_model,
-   460	                latency_ms=latency_ms,
-   461	                status=response.status_code,
-   462	                prompt=prompt,
-   463	                error=msg,
-   464	                is_fallback=is_fallback,
-   465	            )
-   466	            raise LLMError(
-   467	                msg, [self._make_attempt("ollama", self.ollama_model, response.status_code, msg, latency_ms)]
-   468	            )
-   469
-   470	        data = response.json()
-   471	        result = data["response"].strip()
-   472	        logger.info("Ollama success: model=%s latency=%dms", self.ollama_model, latency_ms)
-   473	        self.last_provider = "ollama"
-   474	        self._fire_callback(
-   475	            provider="ollama",
-   476	            model=self.ollama_model,
-   477	            latency_ms=latency_ms,
-   478	            status="success",
-   479	            prompt=prompt,
-   480	            response_text=result,
-   481	            is_fallback=is_fallback,
-   482	        )
-   483	        return result
-   484
-   485	    async def health(self) -> dict:
-   486	        """Return which backends are available."""
-   487	        result = {"groq": bool(self.groq_api_key), "ollama": False}
-   488	        try:
-   489	            async with httpx.AsyncClient(timeout=3.0) as http:
-   490	                response = await http.get(f"{self.ollama_url}/api/tags")
-   491	                result["ollama"] = response.is_success
-   492	        except Exception:
-   493	            pass
-   494	        return result
+27:def reasoning_params_for_model(model: str) -> dict | None:
+42:def _parse_reset_duration(s: str) -> float:
+56:class LLMError(Exception):
+59:    def __init__(self, message: str, attempts: list[dict] | None = None) -> None:
+64:class LLMClient:
+65:    def __init__(
+117:    def _fire_callback(
+153:    def _make_attempt(provider: str, model: str, status: str | int, error: str, latency_ms: int) -> dict:
+156:    def _update_health_after_groq(
+452:    def _snapshot_rate_limits(response: httpx.Response) -> dict | None:
+462:        def _int(name: str) -> int | None:
+466:        def _reset(name: str) -> float | None:
 ```
 
 The `LLMClient` is the primary connection to Groq plus an optional Ollama fallback for local development. The constructor takes a `groq_api_key`, an optional `fallback_client` (typically an `OllamaClient`), an `on_call` callback (used by the SRS `feedback` endpoint to surface live latency to the UI), and tunables for retries and timeouts.
@@ -1246,16 +1279,16 @@ The `pacing_info` property exposes the current `_groq_call_delay`, time remainin
 Here's the test that verifies the 429 retry flow using `respx` (HTTP mocking):
 
 ```bash
-cd backend && uv run pytest tests/test_llm_client.py::test_rate_limit_retry_succeeds -v --no-header --no-cov 2>&1
+cd backend && uv run pytest "tests/test_llm_client.py::TestRateLimit::test_rate_limit_retry_succeeds" -v --no-header --no-cov 2>&1
 ```
 
 ```output
 ============================= test session starts ==============================
 collecting ... collected 1 item
 
-tests/test_llm_client.py::test_rate_limit_retry_succeeds PASSED          [100%]
+tests/test_llm_client.py::TestRateLimit::test_rate_limit_retry_succeeds PASSED [100%]
 
-============================== 1 passed in 0.02s ===============================
+============================== 1 passed in 0.13s ===============================
 ```
 
 ### 3.2 Cassette System
@@ -1290,120 +1323,146 @@ cat -n backend/app/llm/cassette.py
     21	if TYPE_CHECKING:
     22	    from .client import LLMClient
     23	
-    24	
-    25	def _hash_prompt(prompt: str) -> str:
-    26	    return "sha256:" + hashlib.sha256(prompt.encode()).hexdigest()[:16]
-    27	
-    28	
-    29	class CassetteLLMClient:
-    30	    """LLMClient wrapper with cassette-based mock/live/record/patch modes."""
+    24	# Cassette JSON schema version. Bump when the prompt-hash algorithm changes so
+    25	# stale cassettes fail loudly on load instead of silently replaying responses
+    26	# recorded under a different hashing scheme.
+    27	#   v1 (implicit, no "version" key) — hashed the user prompt only.
+    28	#   v2 — hashes system_prompt + user prompt, so editing a system prompt
+    29	#        invalidates the cassette and demands a re-record.
+    30	CASSETTE_VERSION = 2
     31	
-    32	    def __init__(
-    33	        self,
-    34	        mode: str,  # "mock" | "live" | "record" | "patch"
-    35	        cassette_path: Path,
-    36	        real_client: LLMClient | None = None,
-    37	    ) -> None:
-    38	        self._mode = mode
-    39	        self._cassette_path = cassette_path
-    40	        self._real_client = real_client
-    41	        self.last_provider: str | None = None
+    32	
+    33	def _hash_prompt(prompt: str, system_prompt: str | None = None) -> str:
+    34	    """Hash a request over BOTH the system and user prompts.
+    35	
+    36	    A NUL separator keeps the two fields unambiguous. A None system prompt and
+    37	    an empty string both mean "no system instructions" and hash identically.
+    38	    """
+    39	    payload = f"{system_prompt or ''}\x00{prompt}"
+    40	    return "sha256:" + hashlib.sha256(payload.encode()).hexdigest()[:16]
+    41	
     42	
-    43	        self._calls: list[dict] = []
-    44	        self._playback_by_hash: dict[str, list[dict]] = {}
-    45	        self._playback_used: dict[str, int] = {}
-    46	
-    47	        if mode in ("mock", "patch"):
-    48	            data = json.loads(cassette_path.read_text())
-    49	            for entry in data["calls"]:
-    50	                h = entry["prompt_hash"]
-    51	                self._playback_by_hash.setdefault(h, []).append(entry)
-    52	            if mode == "patch":
-    53	                self._calls = list(data["calls"])
-    54	
-    55	    async def complete(
-    56	        self,
-    57	        prompt: str,
-    58	        system_prompt: str | None = None,
-    59	        temperature: float = 0.7,
-    60	        max_tokens: int = 256,
-    61	    ) -> str:
-    62	        if self._mode == "mock":
-    63	            return self._replay(prompt)
-    64	        if self._mode == "patch":
-    65	            return await self._patch(
-    66	                prompt, system_prompt=system_prompt, temperature=temperature, max_tokens=max_tokens
-    67	            )
-    68	        assert self._real_client is not None, "real_client required for live/record mode"
-    69	        response = await self._real_client.complete(
-    70	            prompt, system_prompt=system_prompt, temperature=temperature, max_tokens=max_tokens
-    71	        )
-    72	        self.last_provider = self._real_client.last_provider
-    73	        if self._mode == "record":
-    74	            self._calls.append(
-    75	                {
-    76	                    "prompt_hash": _hash_prompt(prompt),
-    77	                    "prompt_preview": prompt[:80].replace("\n", " "),
-    78	                    "max_tokens": max_tokens,
-    79	                    "response": response,
-    80	                    "provider": self.last_provider,
-    81	                }
-    82	            )
-    83	            self.save()
-    84	        return response
-    85	
-    86	    def _replay(self, prompt: str) -> str:
-    87	        h = _hash_prompt(prompt)
-    88	        entries = self._playback_by_hash.get(h)
-    89	        if not entries:
-    90	            raise RuntimeError(
-    91	                f"Cassette has no entry for prompt hash {h}.\n  Preview: {prompt[:80]!r}\nRe-record with --llm-mode=record."
-    92	            )
-    93	        idx = self._playback_used.get(h, 0)
-    94	        if idx >= len(entries):
-    95	            raise RuntimeError(
-    96	                f"Cassette entry {h!r} used {idx} times but only {len(entries)} recorded.\n  Preview: {prompt[:80]!r}"
-    97	            )
-    98	        entry = entries[idx]
-    99	        self._playback_used[h] = idx + 1
-   100	        self.last_provider = entry.get("provider", "groq")
-   101	        return entry["response"]
-   102	
-   103	    async def _patch(self, prompt: str, **kwargs) -> str:
-   104	        h = _hash_prompt(prompt)
-   105	        entries = self._playback_by_hash.get(h)
-   106	        if entries:
-   107	            idx = self._playback_used.get(h, 0)
-   108	            if idx < len(entries):
-   109	                entry = entries[idx]
-   110	                self._playback_used[h] = idx + 1
-   111	                self.last_provider = entry.get("provider", "groq")
-   112	                return entry["response"]
-   113	
-   114	        assert self._real_client is not None, "real_client required for patch mode"
-   115	        response = await self._real_client.complete(prompt, **kwargs)
-   116	        self.last_provider = self._real_client.last_provider
-   117	        new_entry = {
-   118	            "prompt_hash": h,
-   119	            "prompt_preview": prompt[:80].replace("\n", " "),
-   120	            "max_tokens": kwargs.get("max_tokens", 256),
-   121	            "response": response,
-   122	            "provider": self.last_provider,
-   123	        }
-   124	        self._calls.append(new_entry)
-   125	        self._playback_by_hash.setdefault(h, []).append(new_entry)
-   126	        self.save()
-   127	        return response
-   128	
-   129	    def save(self) -> None:
-   130	        if self._mode not in ("record", "patch"):
-   131	            return
-   132	        self._cassette_path.parent.mkdir(parents=True, exist_ok=True)
-   133	        data = {
-   134	            "recorded_at": datetime.datetime.now(datetime.UTC).isoformat(),
-   135	            "calls": self._calls,
-   136	        }
-   137	        self._cassette_path.write_text(json.dumps(data, indent=2) + "\n")
+    43	class CassetteLLMClient:
+    44	    """LLMClient wrapper with cassette-based mock/live/record/patch modes."""
+    45	
+    46	    def __init__(
+    47	        self,
+    48	        mode: str,  # "mock" | "live" | "record" | "patch"
+    49	        cassette_path: Path,
+    50	        real_client: LLMClient | None = None,
+    51	    ) -> None:
+    52	        self._mode = mode
+    53	        self._cassette_path = cassette_path
+    54	        self._real_client = real_client
+    55	        self.last_provider: str | None = None
+    56	        self.last_finish_reason: str | None = None
+    57	        self.last_usage: dict = {}
+    58	
+    59	        self._calls: list[dict] = []
+    60	        self._playback_by_hash: dict[str, list[dict]] = {}
+    61	        self._playback_used: dict[str, int] = {}
+    62	
+    63	        if mode in ("mock", "patch"):
+    64	            data = json.loads(cassette_path.read_text())
+    65	            version = data.get("version")
+    66	            if version != CASSETTE_VERSION:
+    67	                raise RuntimeError(
+    68	                    f"Cassette {cassette_path} is version {version!r}, expected {CASSETTE_VERSION}. "
+    69	                    "The prompt-hash format changed (it now includes the system prompt), so the "
+    70	                    "recorded hashes are stale. Re-record with --llm-mode=record."
+    71	                )
+    72	            for entry in data["calls"]:
+    73	                h = entry["prompt_hash"]
+    74	                self._playback_by_hash.setdefault(h, []).append(entry)
+    75	            if mode == "patch":
+    76	                self._calls = list(data["calls"])
+    77	
+    78	    async def complete(
+    79	        self,
+    80	        prompt: str,
+    81	        system_prompt: str | None = None,
+    82	        temperature: float = 0.7,
+    83	        max_tokens: int = 256,
+    84	    ) -> str:
+    85	        if self._mode == "mock":
+    86	            return self._replay(prompt, system_prompt)
+    87	        if self._mode == "patch":
+    88	            return await self._patch(
+    89	                prompt, system_prompt=system_prompt, temperature=temperature, max_tokens=max_tokens
+    90	            )
+    91	        assert self._real_client is not None, "real_client required for live/record mode"
+    92	        response = await self._real_client.complete(
+    93	            prompt, system_prompt=system_prompt, temperature=temperature, max_tokens=max_tokens
+    94	        )
+    95	        self.last_provider = self._real_client.last_provider
+    96	        self.last_finish_reason = getattr(self._real_client, "last_finish_reason", None)
+    97	        self.last_usage = getattr(self._real_client, "last_usage", None) or {}
+    98	        if self._mode == "record":
+    99	            self._calls.append(
+   100	                {
+   101	                    "prompt_hash": _hash_prompt(prompt, system_prompt),
+   102	                    "prompt_preview": prompt[:80].replace("\n", " "),
+   103	                    "max_tokens": max_tokens,
+   104	                    "response": response,
+   105	                    "provider": self.last_provider,
+   106	                }
+   107	            )
+   108	            self.save()
+   109	        return response
+   110	
+   111	    def _replay(self, prompt: str, system_prompt: str | None = None) -> str:
+   112	        h = _hash_prompt(prompt, system_prompt)
+   113	        entries = self._playback_by_hash.get(h)
+   114	        if not entries:
+   115	            raise RuntimeError(
+   116	                f"Cassette has no entry for prompt hash {h}.\n  Preview: {prompt[:80]!r}\nRe-record with --llm-mode=record."
+   117	            )
+   118	        idx = self._playback_used.get(h, 0)
+   119	        if idx >= len(entries):
+   120	            raise RuntimeError(
+   121	                f"Cassette entry {h!r} used {idx} times but only {len(entries)} recorded.\n  Preview: {prompt[:80]!r}"
+   122	            )
+   123	        entry = entries[idx]
+   124	        self._playback_used[h] = idx + 1
+   125	        self.last_provider = entry.get("provider", "groq")
+   126	        return entry["response"]
+   127	
+   128	    async def _patch(self, prompt: str, **kwargs) -> str:
+   129	        h = _hash_prompt(prompt, kwargs.get("system_prompt"))
+   130	        entries = self._playback_by_hash.get(h)
+   131	        if entries:
+   132	            idx = self._playback_used.get(h, 0)
+   133	            if idx < len(entries):
+   134	                entry = entries[idx]
+   135	                self._playback_used[h] = idx + 1
+   136	                self.last_provider = entry.get("provider", "groq")
+   137	                return entry["response"]
+   138	
+   139	        assert self._real_client is not None, "real_client required for patch mode"
+   140	        response = await self._real_client.complete(prompt, **kwargs)
+   141	        self.last_provider = self._real_client.last_provider
+   142	        new_entry = {
+   143	            "prompt_hash": h,
+   144	            "prompt_preview": prompt[:80].replace("\n", " "),
+   145	            "max_tokens": kwargs.get("max_tokens", 256),
+   146	            "response": response,
+   147	            "provider": self.last_provider,
+   148	        }
+   149	        self._calls.append(new_entry)
+   150	        self._playback_by_hash.setdefault(h, []).append(new_entry)
+   151	        self.save()
+   152	        return response
+   153	
+   154	    def save(self) -> None:
+   155	        if self._mode not in ("record", "patch"):
+   156	            return
+   157	        self._cassette_path.parent.mkdir(parents=True, exist_ok=True)
+   158	        data = {
+   159	            "version": CASSETTE_VERSION,
+   160	            "recorded_at": datetime.datetime.now(datetime.UTC).isoformat(),
+   161	            "calls": self._calls,
+   162	        }
+   163	        self._cassette_path.write_text(json.dumps(data, indent=2) + "\n")
 ```
 
 The cassette system hashes prompts with SHA-256 (first 16 hex chars) for lookup. This means tests are order-independent — unlike sequential VCR, any test can call any prompt without worrying about ordering.
@@ -1443,7 +1502,7 @@ print(json.dumps(cassette, indent=2))
 
 ```output
 {
-  "recorded_at": "2026-03-25T11:55:09.002705+00:00",
+  "recorded_at": "2026-07-11T12:01:05.322406+00:00",
   "calls": [
     {
       "prompt_hash": "sha256:6c8d66c9a7c2c982",
@@ -1463,63 +1522,34 @@ The `prompt_hash` is the lookup key. The `prompt_preview` is for human readabili
 The `conftest.py` makes cassettes transparent to test authors:
 
 ```bash
-cat -n backend/tests/conftest.py
+grep -n "^def \|^async def " backend/tests/conftest.py
 ```
 
 ```output
-     1	"""Pytest configuration for TunaTale test suite."""
-     2	
-     3	import os
-     4	from pathlib import Path
-     5	
-     6	import pytest
-     7	
-     8	_CASSETTES_DIR = Path(__file__).parent / "cassettes"
-     9	
-    10	
-    11	def pytest_addoption(parser: pytest.Parser) -> None:
-    12	    parser.addoption(
-    13	        "--llm-mode",
-    14	        choices=["mock", "live", "record", "patch"],
-    15	        default="mock",
-    16	        help="LLM mode for cassette fixtures: mock (replay), live, record, or patch.",
-    17	    )
-    18	
-    19	
-    20	@pytest.fixture
-    21	def llm_mode(request: pytest.FixtureRequest) -> str:
-    22	    return request.config.getoption("--llm-mode")  # type: ignore[return-value]
-    23	
-    24	
-    25	@pytest.fixture
-    26	async def cassette_llm(request: pytest.FixtureRequest, llm_mode: str):
-    27	    """Yield a CassetteLLMClient configured for the current --llm-mode."""
-    28	    from app.llm.cassette import CassetteLLMClient
-    29	
-    30	    cls_name = request.node.cls.__name__ if request.node.cls else "_noclass"
-    31	    test_name = request.node.name
-    32	    cassette_path = _CASSETTES_DIR / f"{cls_name}__{test_name}.json"
-    33	
-    34	    if llm_mode == "mock":
-    35	        if not cassette_path.exists():
-    36	            pytest.skip(f"No cassette at {cassette_path} — run with --llm-mode=record first.")
-    37	        client = CassetteLLMClient(mode="mock", cassette_path=cassette_path)
-    38	        yield client
-    39	        return
-    40	
-    41	    if llm_mode == "patch" and not cassette_path.exists():
-    42	        pytest.skip(f"No cassette at {cassette_path} — run with --llm-mode=record first.")
-    43	
-    44	    api_key = os.environ.get("GROQ_API_KEY")
-    45	    if not api_key:
-    46	        pytest.skip("GROQ_API_KEY not set — cannot run in live/record/patch mode.")
-    47	
-    48	    from app.llm.client import LLMClient
-    49	
-    50	    real_client = LLMClient(groq_api_key=api_key)
-    51	    client = CassetteLLMClient(mode=llm_mode, cassette_path=cassette_path, real_client=real_client)
-    52	    yield client
-    53	    client.save()
+17:def anki_day_anchor(today: date) -> datetime:
+35:def anki_prev_day_anchor(today: date) -> datetime:
+47:def _settings_overrides(monkeypatch, tmp_path):
+124:def _autoclose_sqlite_connections(monkeypatch):
+148:def language():
+156:def srs_db():
+164:def make_card_record(
+199:def make_note_record(
+232:def build_minimal_anki_db(
+324:def build_norwegian_anki_db(
+411:def fake_anki_db(tmp_path):
+417:def fake_anki_db_modern(tmp_path):
+446:def _recognition_fields(
+458:def _production_fields(
+470:def _unknown_fields(slovene: str, english: str) -> str:
+476:def build_slovene_pairs_anki_db(tmp_path: Path) -> Path:
+671:def fake_anki_db_slovene_pairs(tmp_path):
+676:def seed_direction(
+735:def pytest_addoption(parser: pytest.Parser) -> None:
+768:def pytest_configure(config: pytest.Config) -> None:
+787:def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+811:def llm_mode(request: pytest.FixtureRequest) -> str:
+816:def api_app_state():
+844:async def cassette_llm(request: pytest.FixtureRequest, llm_mode: str):
 ```
 
 Cassette naming convention: `{ClassName}__{test_name}.json`. In mock mode (CI), missing cassettes cause a `pytest.skip` — tests degrade gracefully rather than failing. For record/patch, `GROQ_API_KEY` must be set.
@@ -1533,175 +1563,59 @@ The spaced repetition system tracks what vocabulary the learner knows and when t
 ### 4.1 FSRS-5 Scheduling Algorithm
 
 ```bash
-cat -n backend/app/srs/fsrs.py
+grep -n "^class \|^def \|^    def " backend/app/srs/fsrs.py
 ```
 
 ```output
-     1	"""FSRS-5 spaced repetition scheduling algorithm.
-     2	
-     3	Reference: https://github.com/open-spaced-repetition/fsrs5
-     4	"""
-     5	
-     6	from __future__ import annotations
-     7	
-     8	import math
-     9	from dataclasses import dataclass
-    10	from datetime import date, timedelta
-    11	
-    12	from app.models.srs_item import Direction, Rating, SRSItem, SRSState
-    13	
-    14	# FSRS-5 default parameters (w vector, 19 values)
-    15	_DEFAULT_WEIGHTS: tuple[float, ...] = (
-    16	    0.4072,  # w0: initial stability for Again
-    17	    1.1829,  # w1: initial stability for Hard
-    18	    3.1262,  # w2: initial stability for Good
-    19	    15.4722,  # w3: initial stability for Easy
-    20	    7.2102,  # w4: initial difficulty
-    21	    0.5316,  # w5: initial difficulty decay
-    22	    1.0651,  # w6: difficulty mean-reversion weight
-    23	    0.0589,  # w7: difficulty update weight
-    24	    1.5330,  # w8: stability increase factor
-    25	    0.1544,  # w9: stability increase decay
-    26	    1.0050,  # w10: stability increase R-factor
-    27	    1.9767,  # w11: lapse stability factor
-    28	    0.0967,  # w12: lapse stability difficulty decay
-    29	    0.2573,  # w13: lapse stability S-factor
-    30	    2.2930,  # w14: lapse stability R-factor
-    31	    0.5100,  # w15: hard penalty
-    32	    2.9898,  # w16: easy bonus
-    33	    0.5100,  # w17: (unused in v5)
-    34	    0.4350,  # w18: (unused in v5)
-    35	)
-    36	
-    37	DECAY = -0.5
-    38	FACTOR = 19 / 81  # = 0.234...
-    39	
-    40	
-    41	@dataclass(frozen=True)
-    42	class FSRSParams:
-    43	    """FSRS scheduling parameters (weights + desired retention)."""
-    44	
-    45	    weights: tuple[float, ...]  # 19 floats for FSRS-5
-    46	    desired_retention: float = 0.9
-    47	
-    48	    def __post_init__(self) -> None:
-    49	        if len(self.weights) != 19:
-    50	            raise ValueError(f"FSRSParams requires exactly 19 weights, got {len(self.weights)}")
-    51	
-    52	
-    53	DEFAULT_FSRS5_PARAMS = FSRSParams(weights=_DEFAULT_WEIGHTS)
-    54	
-    55	
-    56	def _forgetting_curve(elapsed_days: float, stability: float) -> float:
-    57	    """Retrievability at elapsed_days given stability."""
-    58	    return (1 + FACTOR * elapsed_days / stability) ** DECAY
-    59	
-    60	
-    61	def _next_interval(stability: float, desired_retention: float) -> int:
-    62	    """Days until next review at the given desired_retention."""
-    63	    interval = stability / FACTOR * (desired_retention ** (1 / DECAY) - 1)
-    64	    return max(1, min(round(interval), 36500))
-    65	
-    66	
-    67	def _init_stability(rating: Rating, w: tuple[float, ...]) -> float:
-    68	    return w[rating.value - 1]
-    69	
-    70	
-    71	def _init_difficulty(rating: Rating, w: tuple[float, ...]) -> float:
-    72	    d = w[4] - math.exp(w[5] * (rating.value - 1)) + 1
-    73	    return max(1.0, min(10.0, d))
-    74	
-    75	
-    76	def _next_difficulty(d: float, rating: Rating, w: tuple[float, ...]) -> float:
-    77	    next_d = d - w[6] * (rating.value - 3)
-    78	    # Mean-reversion toward w[4] (the initial difficulty for a "normal" item)
-    79	    next_d = w[7] * w[4] + (1 - w[7]) * next_d
-    80	    return max(1.0, min(10.0, next_d))
-    81	
-    82	
-    83	def _next_stability_recall(d: float, s: float, r: float, rating: Rating, w: tuple[float, ...]) -> float:
-    84	    hard_penalty = w[15] if rating == Rating.HARD else 1.0
-    85	    easy_bonus = w[16] if rating == Rating.EASY else 1.0
-    86	    return s * (
-    87	        math.exp(w[8]) * (11 - d) * s ** (-w[9]) * (math.exp((1 - r) * w[10]) - 1) * hard_penalty * easy_bonus + 1
-    88	    )
-    89	
-    90	
-    91	def _next_stability_lapse(d: float, s: float, r: float, w: tuple[float, ...]) -> float:
-    92	    return w[11] * d ** (-w[12]) * ((s + 1) ** w[13] - 1) * math.exp((1 - r) * w[14])
-    93	
-    94	
-    95	def schedule(
-    96	    item: SRSItem,
-    97	    rating: Rating,
-    98	    review_date: date | None = None,
-    99	    direction: Direction = Direction.RECOGNITION,
-   100	    params: FSRSParams = DEFAULT_FSRS5_PARAMS,
-   101	) -> SRSItem:
-   102	    """Apply a review rating to the given direction of an SRSItem.
-   103	
-   104	    Updates only the specified direction; the other is left untouched.
-   105	    Marks `dirty_fsrs=True` on the updated direction so the Anki-sync layer
-   106	    can later push the change.
-   107	    """
-   108	    if review_date is None:
-   109	        review_date = date.today()
-   110	
-   111	    from dataclasses import replace
-   112	
-   113	    w = params.weights
-   114	    prev = item.directions[direction]
-   115	
-   116	    if prev.state == SRSState.NEW:
-   117	        new_stability = _init_stability(rating, w)
-   118	        new_difficulty = _init_difficulty(rating, w)
-   119	        new_reps = 1
-   120	        new_lapses = prev.lapses
-   121	        new_state = SRSState.LEARNING if rating == Rating.AGAIN else SRSState.REVIEW
-   122	    else:
-   123	        last = prev.last_review or review_date
-   124	        elapsed = max(0, (review_date - last).days)
-   125	        r = _forgetting_curve(elapsed, prev.stability)
-   126	
-   127	        if rating == Rating.AGAIN:
-   128	            new_stability = _next_stability_lapse(prev.difficulty, prev.stability, r, w)
-   129	            new_difficulty = _next_difficulty(prev.difficulty, rating, w)
-   130	            new_reps = prev.reps + 1
-   131	            new_lapses = prev.lapses + 1
-   132	            new_state = SRSState.RELEARNING
-   133	        else:
-   134	            new_stability = _next_stability_recall(prev.difficulty, prev.stability, r, rating, w)
-   135	            new_difficulty = _next_difficulty(prev.difficulty, rating, w)
-   136	            new_reps = prev.reps + 1
-   137	            new_lapses = prev.lapses
-   138	            new_state = SRSState.REVIEW
-   139	
-   140	    new_stability = max(0.1, new_stability)
-   141	    new_difficulty = max(1.0, min(10.0, new_difficulty))
-   142	    interval = _next_interval(new_stability, params.desired_retention)
-   143	    new_due = review_date + timedelta(days=interval)
-   144	
-   145	    new_dir = replace(
-   146	        prev,
-   147	        stability=new_stability,
-   148	        difficulty=new_difficulty,
-   149	        due_date=new_due,
-   150	        reps=new_reps,
-   151	        lapses=new_lapses,
-   152	        state=new_state,
-   153	        last_review=review_date,
-   154	        dirty_fsrs=True,
-   155	        last_rating=rating.value,
-   156	    )
-   157	    new_directions = dict(item.directions)
-   158	    new_directions[direction] = new_dir
-   159	    return SRSItem(
-   160	        syntactic_unit=item.syntactic_unit,
-   161	        directions=new_directions,
-   162	        guid=item.guid,
-   163	        anki_note_id=item.anki_note_id,
-   164	    )
-
+27:def _w32(w: tuple[float, ...]) -> tuple:
+33:def _fsrs_factor_f32(decay: float) -> np.float32:
+44:def _learning_step_fuzz_seconds(anki_card_id: int | None, reps: int, step_seconds: int) -> int:
+65:def _due_at_after_step(now: datetime, prev: DirectionState, delay_min: float) -> datetime:
+72:def _review_due_at_from_interval(
+103:def _rust_round_half_away(x: float) -> int:
+110:def _fuzz_delta(interval: float) -> float:
+125:def _constrained_fuzz_bounds(interval: float, minimum: int, maximum: int) -> tuple[int, int]:
+141:def _review_interval_fuzz(
+190:class FSRSParams:
+203:    def __post_init__(self) -> None:
+218:def _forgetting_curve(elapsed_days: float, stability: float, decay: float = -0.5) -> float:
+234:def is_day_level_last_review(last_review: datetime | date) -> bool:
+259:def _elapsed_days_for_fsrs(
+300:def _grade_elapsed_days(
+338:def compute_retrievability(
+377:def _next_interval(stability: float, desired_retention: float, decay: float = -0.5) -> int:
+387:def stability_for_interval(target_interval: int, desired_retention: float, decay: float = -0.5) -> float:
+399:def _greater_than_last(interval: int, scheduled_days: int) -> int:
+409:def _passing_intervals_with_fuzz(
+444:    def _fuzz(interval_raw: float, minimum: int) -> int:
+463:def _next_interval_raw(stability: float, desired_retention: float, decay: float = -0.5) -> float:
+475:def _graduation_intervals_with_fuzz(
+515:    def _fuzz(interval_in: float, minimum: int) -> int:
+535:def _scheduled_days_for_grade(prev: DirectionState, col_crt: int | None) -> int:
+568:def _round_to_places_f32(value: float, decimal_places: int) -> float:
+602:def _clamp_stability(s: float) -> float:
+607:def _quantize_stability(s: float) -> float:
+611:def _quantize_difficulty(d: float) -> float:
+615:def _init_stability(rating: Rating, w: tuple[float, ...]) -> float:
+619:def _init_difficulty(rating: Rating, w: tuple[float, ...]) -> float:
+625:def _next_difficulty(d: float, rating: Rating, w: tuple[float, ...]) -> float:
+642:def _next_stability_recall(d: float, s: float, r: float, rating: Rating, w: tuple[float, ...]) -> float:
+663:def _next_stability_lapse(d: float, s: float, r: float, w: tuple[float, ...]) -> float:
+676:def _stability_short_term(last_s: float, rating: Rating, params: FSRSParams) -> float:
+696:def _next_stability_for_grade(
+736:def _parse_left(left: int | None) -> int:
+753:def _pack_left(total_remaining: int) -> int:
+763:def _grade_prior_state(prev: DirectionState, new_state: SRSState) -> SRSState:
+788:def _get_steps_for_state(state: SRSState) -> tuple[list[float], str]:
+801:def schedule(
+974:def _schedule_new(
+1097:def _schedule_review_again(
+1185:def _schedule_with_steps(
+1369:def _graduate_to_review(
+1478:def _compute_review_kind(prev_state: SRSState) -> int:
+1497:def _compute_revlog_interval(new_dir: DirectionState, now: datetime) -> int:
+1520:def _compute_revlog_last_interval(prev: DirectionState, col_crt: int | None = None) -> int:
+1548:def build_revlog_row(
 ```
 
 FSRS-5 is a 19-parameter model trained on millions of reviews. The key insight: **stability** is how many days before retention drops to 90%. A stability of 3.12 (initial Good rating) means after ~3 days, the learner has a 90% chance of recall — time to review.
@@ -1749,13 +1663,13 @@ print(f\"State: {forgot.state.value}, Stability: {forgot.stability:.2f}, Lapses:
 State: new, Stability: 1.0, Due: 2026-03-25
 
 After GOOD rating:
-State: review, Stability: 3.13, Due: 2026-03-28
+State: learning, Stability: 3.13, Due: 2026-07-11
 
 After EASY rating:
-State: review, Stability: 24.16, Due: 2026-04-21
+State: review, Stability: 200.86, Due: 2027-02-05
 
 After AGAIN rating (forgot):
-State: relearning, Stability: 0.92, Lapses: 1, Due: 2026-03-29
+State: learning, Stability: 2.50, Lapses: 0, Due: 2026-07-11
 ```
 
 Notice the progression: GOOD → stability 3.13 (review in 3 days), EASY → stability 24.16 (review in 24 days), but AGAIN → stability drops to 0.92 with a lapse recorded and the item enters RELEARNING state.
@@ -1763,75 +1677,24 @@ Notice the progression: GOOD → stability 3.13 (review in 3 days), EASY → sta
 ### 4.2 SRS Database
 
 ```bash
-grep -n "def \|class " backend/app/srs/database.py
+grep -n "class " backend/app/srs/database.py backend/app/srs/db_*.py
 ```
 
 ```output
-122:class SRSDatabase:
-128:    def close(self) -> None:
-134:    def __enter__(self) -> SRSDatabase:
-137:    def __exit__(self, *_) -> None:
-140:    def __init__(self, db_path: str = ":memory:") -> None:
-155:    def _init_schema(self, conn: sqlite3.Connection) -> None:
-167:    def _file_conn(self):
-178:    def _get_conn(self):
-188:    def _commit(self, conn: sqlite3.Connection) -> None:
-196:    def begin_transaction(self, dry_run: bool = False):
-232:    def add_collocation(self, unit: SyntacticUnit, language_code: str = "sl") -> None:
-289:    def get_untranslated_collocations(self) -> list[tuple[str, str]]:
-297:    def backfill_translations(self, glosses: dict[str, str]) -> int:
-315:    def update_direction(
-362:    def update_collocation(self, item: SRSItem) -> None:
-382:    def record_violation(
-394:    def _load_directions(self, conn: sqlite3.Connection, collocation_id: int) -> dict[Direction, DirectionState]:
-419:    def _row_to_item(self, conn: sqlite3.Connection, row: sqlite3.Row) -> SRSItem:
-444:    def get_collocation(self, text: str) -> SRSItem | None:
-451:    def get_collocation_by_guid(self, guid: str) -> SRSItem | None:
-458:    def get_collocation_by_anki_note_id(self, anki_note_id: int) -> SRSItem | None:
-465:    def get_collocation_by_lemma(self, lemma: str) -> SRSItem | None:
-472:    def get_collocation_by_lemma_with_id(self, lemma: str) -> tuple[int, SRSItem] | None:
-479:    def get_collocations_for_language(
-491:    def get_due_collocations(
-511:    def get_new_collocations(
-529:    def get_due_items(
-550:    def get_new_items(
-569:    def update_direction_by_id(self, row_id: int, direction: Direction, state: DirectionState) -> None:
-577:    def list_collocations_reviewed_today(self, today: date) -> set[int]:
-586:    def get_image_filename(self, collocation_id: int) -> str | None:
-595:    def get_audio_filename(self, collocation_id: int) -> str | None:
-605:    def get_collocation_by_id(self, row_id: int) -> tuple[int, SRSItem, str] | None:
-612:    def update_collocation_fields(self, row_id: int, *, text: str, translation: str) -> None:
-644:    def delete_collocation(self, row_id: int) -> None:
-652:    def delete_collocations(self, row_ids: list[int]) -> int:
-666:    def reset_collocation(self, row_id: int, direction: Direction | None = None) -> None:
-696:    def set_state_by_id(
-720:    def set_suspended(
-756:    def list_collocations(
-811:    def get_violations(self, collocation_text: str) -> list[dict]:
-819:    def count_collocations(self) -> int:
-825:    def upsert_by_guid(
-973:    def set_anki_ids(
-996:    def add_media(
-1018:    def find_media_by_anki_filename(self, anki_filename: str) -> dict[str, Any] | None:
-1027:    def update_media_file(self, row_id: int, sha256: str, size_bytes: int) -> None:
-1036:    def list_dirty(
-1085:    def mark_direction_clean(self, guid: str, direction: Direction) -> None:
-1102:    def count_new_available(self) -> int:
-1107:    def count_due_today_total(self, today: date) -> int:
-1120:    def count_due_collocations(
-1138:    def record_sync_conflict(
-1159:    def list_sync_conflicts(self) -> list[dict]:
-1164:    def enqueue_pending_revlog(
-1186:    def drain_pending_revlog(self) -> list[dict]:
-1194:    def set_anki_state_cache(self, key: str, value: str) -> None:
-1206:    def set_anki_state_cache_raw(self, key: str, value: str, updated_at: str) -> None:
-1220:    def get_anki_state_cache(self, key: str) -> tuple[str, str] | None:
-1231:    def set_dirty_fields(self, guid: str, fields_str: str) -> None:
-1240:    def get_dirty_fields(self, guid: str) -> str:
-1249:    def update_collocation_for_sync(
-1265:    def list_items_without_anki_note(self) -> list[tuple[str, SRSItem]]:
-1271:    def list_dirty_field_edits(self) -> list[tuple[str, int | None, str, SRSItem]]:
-
+backend/app/srs/database.py:41:class SRSDatabase(
+backend/app/srs/db_base.py:154:class SRSDatabaseBase:
+backend/app/srs/db_collocations.py:19:class DbCollocationsMixin:
+backend/app/srs/db_counts.py:19:class DbCountsMixin:
+backend/app/srs/db_directions.py:16:class DbDirectionsMixin:
+backend/app/srs/db_histogram.py:9:class DbHistogramMixin:
+backend/app/srs/db_ignored_lemmas.py:8:class DbIgnoredLemmasMixin:
+backend/app/srs/db_kv_cache.py:9:class DbKvCacheMixin:
+backend/app/srs/db_lemma_cache.py:11:class DbLemmaCacheMixin:
+backend/app/srs/db_media.py:10:class DbMediaMixin:
+backend/app/srs/db_queue.py:20:class DbQueueMixin:
+backend/app/srs/db_revlog.py:18:class DbRevlogMixin:
+backend/app/srs/db_sync.py:16:class DbSyncMixin:
+backend/app/srs/db_sync_conflicts.py:8:class DbSyncConflictsMixin:
 ```
 
 The `SRSDatabase` is a SQLite repository. Originally two tables (`collocations` + `violations`); since the Anki integration the schema has grown to seven (managed by the v0→v8 migrations in `app/srs/migrations.py` — see PART 14.1):
@@ -1861,7 +1724,7 @@ The `SRSDatabase` is a SQLite repository. Originally two tables (`collocations` 
 - `update_collocation_for_sync(...)` — the inverse of `upsert_by_guid`; used by `sync_pull` when Anki is the authoritative source.
 - `list_collocations_reviewed_today(today)` — set of collocation ids reviewed today; lets the queue enforce the daily-new cap without double-counting just-introduced items.
 
-**Admin methods (powering `/admin/srs`):**
+**Admin methods (powering `/cards`):**
 
 - `list_collocations(limit, offset, search, state, order_by, order_dir)` — paginated browse with full-text search across `text`/`translation`, state filter, and validated sort columns. Returns `(rows, total_count)`.
 - `get_collocation_by_id(id)` / `update_collocation_fields(id, text, translation)` — read/edit by primary key. Update raises `ValueError` on UNIQUE collisions so the API can return 409.
@@ -1918,9 +1781,9 @@ New (unlearned): 3
   Hvala lepa -> Thank you (state=new)
   Kje je postaja? -> Where is the station? (state=new)
 
-After reviewing Dober dan: state=review, next due=2026-03-28
+After reviewing Dober dan: state=learning, next due=2026-07-11
 Remaining new: 2
-Due for review on 2026-03-28: 1
+Due for review on 2026-03-28: 0
 ```
 
 Note the two-track query pattern: `get_new_collocations()` fetches unlearned vocabulary (state=new), while `get_due_collocations(as_of)` fetches items that need review (state != new, due_date <= as_of). After rating "Dober dan" as GOOD, it moves to review state with a due date 3 days out.
@@ -1936,70 +1799,53 @@ cat -n backend/app/srs/feedback.py
 ```output
      1	"""SRS feedback utilities.
      2	
-     3	PostGenerationFeedback: identifies which collocations appear in a generated story.
-     4	rating_from_input: maps explicit rating strings or implicit signal strings to FSRS ratings.
-     5	"""
-     6	
-     7	from __future__ import annotations
-     8	
-     9	from app.models.srs_item import Rating
-    10	
-    11	_SIGNAL_MAP: dict[str, Rating] = {
-    12	    "no_help": Rating.GOOD,
-    13	    "slowdown": Rating.HARD,
-    14	    "translation_request": Rating.AGAIN,
-    15	    "fast_forward": Rating.EASY,
-    16	}
-    17	
-    18	_RATING_MAP: dict[str, Rating] = {
-    19	    "again": Rating.AGAIN,
-    20	    "hard": Rating.HARD,
-    21	    "good": Rating.GOOD,
-    22	    "easy": Rating.EASY,
-    23	}
+     3	rating_from_input: maps explicit rating strings or implicit signal strings to FSRS ratings.
+     4	"""
+     5	
+     6	from __future__ import annotations
+     7	
+     8	from app.models.srs_item import Rating
+     9	
+    10	_SIGNAL_MAP: dict[str, Rating] = {
+    11	    "no_help": Rating.GOOD,
+    12	    "slowdown": Rating.HARD,
+    13	    "translation_request": Rating.AGAIN,
+    14	    "fast_forward": Rating.EASY,
+    15	}
+    16	
+    17	_RATING_MAP: dict[str, Rating] = {
+    18	    "again": Rating.AGAIN,
+    19	    "hard": Rating.HARD,
+    20	    "good": Rating.GOOD,
+    21	    "easy": Rating.EASY,
+    22	}
+    23	
     24	
-    25	
-    26	def rating_from_input(rating: str | None = None, signal: str | None = None) -> Rating:
-    27	    """Convert explicit rating string or implicit signal string to a Rating enum.
-    28	
-    29	    Exactly one of rating/signal must be provided; raises ValueError otherwise.
-    30	    rating accepts 'again'|'hard'|'good'|'easy' (case-insensitive).
-    31	    signal delegates to the existing _SIGNAL_MAP.
-    32	    """
-    33	    if (rating is None) == (signal is None):
-    34	        raise ValueError("Provide exactly one of rating or signal, not both (or neither).")
-    35	    if rating is not None:
-    36	        key = rating.lower()
-    37	        if key not in _RATING_MAP:
-    38	            raise ValueError(f"Unknown rating {rating!r}. Valid: {list(_RATING_MAP)}")
-    39	        return _RATING_MAP[key]
-    40	    if signal not in _SIGNAL_MAP:
-    41	        raise ValueError(f"Unknown signal {signal!r}. Valid: {list(_SIGNAL_MAP)}")
-    42	    return _SIGNAL_MAP[signal]
-    43	
-    44	
-    45	class PostGenerationFeedback:
-    46	    """Identifies which provided collocations were actually used in a story."""
-    47	
-    48	    def find_used_collocations(self, provided: list[str], story_text: str) -> list[str]:
-    49	        """Return the subset of provided collocations that appear in story_text.
-    50	
-    51	        Matching is case-insensitive. Only collocations that appear as
-    52	        substrings in the story are marked as used.
-    53	        """
-    54	        story_lower = story_text.lower()
-    55	        return [c for c in provided if c.lower() in story_lower]
-
+    25	def rating_from_input(rating: str | None = None, signal: str | None = None) -> Rating:
+    26	    """Convert explicit rating string or implicit signal string to a Rating enum.
+    27	
+    28	    Exactly one of rating/signal must be provided; raises ValueError otherwise.
+    29	    rating accepts 'again'|'hard'|'good'|'easy' (case-insensitive).
+    30	    signal delegates to the existing _SIGNAL_MAP.
+    31	    """
+    32	    if (rating is None) == (signal is None):
+    33	        raise ValueError("Provide exactly one of rating or signal, not both (or neither).")
+    34	    if rating is not None:
+    35	        key = rating.lower()
+    36	        if key not in _RATING_MAP:
+    37	            raise ValueError(f"Unknown rating {rating!r}. Valid: {list(_RATING_MAP)}")
+    38	        return _RATING_MAP[key]
+    39	    if signal not in _SIGNAL_MAP:
+    40	        raise ValueError(f"Unknown signal {signal!r}. Valid: {list(_SIGNAL_MAP)}")
+    41	    return _SIGNAL_MAP[signal]
 ```
 
 ```bash
-grep -n "class CollocationSelector\|def score\|def select" backend/app/srs/selector.py
+git log --oneline --diff-filter=D -1 -- backend/app/srs/selector.py
 ```
 
 ```output
-11:class CollocationSelector:
-17:    def score(self, item: SRSItem) -> float:
-54:    def select(
+bf74822 refactor(backend): remove category-3 dead code (test-only / superseded)
 ```
 
 `rating_from_input(rating=..., signal=...)` is the unified entry point. Pass `rating="good"` for explicit four-button feedback (the `/review` UI's path) or `signal="translation_request"` for implicit signals from the player. Skipping ahead means they know it (EASY), asking for a translation means they forgot (AGAIN). `PostGenerationFeedback` is unchanged: it checks which collocations the LLM actually used in a generated story — useful for tracking whether the content engine is following the curriculum.
@@ -2015,33 +1861,39 @@ Production added per-word SRS tracking on top of the per-collocation tracking. T
 **Lemmatizer** — a thin Protocol with a `LowercaseLemmatizer` default. Real Slovene lemmatization (e.g. via `stanza`) can be plugged in by satisfying the Protocol.
 
 ```bash
-cat -n backend/app/srs/lemmatizer.py
+grep -n "^class \|^def \|^    def " backend/app/srs/lemmatizer.py
 ```
 
 ```output
-     1	"""Lemmatizer protocol and default implementation."""
-     2
-     3	from __future__ import annotations
-     4
-     5	from typing import Protocol, runtime_checkable
-     6
-     7
-     8	@runtime_checkable
-     9	class Lemmatizer(Protocol):
-    10	    """Reduces a word to its canonical base form."""
-    11
-    12	    def lemmatize(self, word: str, language_code: str) -> str: ...
-    13
-    14
-    15	class LowercaseLemmatizer:
-    16	    """Simple lemmatizer that lowercases the word.
-    17
-    18	    Language-agnostic default. Replace with a language-specific lemmatizer
-    19	    (e.g. stanza for Slovene) for proper conjugation/declension collapsing.
-    20	    """
-    21
-    22	    def lemmatize(self, word: str, language_code: str) -> str:
-    23	        return word.lower()
+18:class TokenAnalysis:
+31:class Lemmatizer(Protocol):
+34:    def lemmatize(self, word: str, language_code: str) -> str: ...
+36:    def analyze(self, word: str, language_code: str) -> tuple[str, str, str]:
+44:    def analyze_sentence(self, sentence: str, language_code: str) -> list[TokenAnalysis]:
+53:class LowercaseLemmatizer:
+62:    def lemmatize(self, word: str, language_code: str) -> str:
+65:    def analyze(self, word: str, language_code: str) -> tuple[str, str, str]:
+68:    def analyze_sentence(self, sentence: str, language_code: str) -> list[TokenAnalysis]:
+88:class _StanzaFamilyLemmatizer:  # pragma: no cover — requires PyTorch pipeline; opt-in only
+103:    def __init__(self, language_code: str) -> None:
+124:    def _ensure_pipeline(self) -> object:
+127:    def lemmatize(self, word: str, language_code: str) -> str:
+137:    def analyze(self, word: str, language_code: str) -> tuple[str, str, str]:
+151:    def analyze_sentence(self, sentence: str, language_code: str) -> list[TokenAnalysis]:
+183:class ClasslaLemmatizer(_StanzaFamilyLemmatizer):  # pragma: no cover — requires classla/PyTorch; opt-in only
+199:    def __init__(self, language_code: str = "sl") -> None:
+202:    def _ensure_pipeline(self) -> object:
+216:class StanzaLemmatizer(_StanzaFamilyLemmatizer):  # pragma: no cover — requires stanza/PyTorch; opt-in only
+237:    def __init__(self, language_code: str = "no") -> None:
+241:    def _ensure_pipeline(self) -> object:
+259:def _parse_morphology(feats: str) -> tuple[str, str, str]:
+279:def _parse_person(feats: str) -> str:
+295:def get_lemmatizer(language_code: str) -> Lemmatizer:
+357:def model_version_for(lemmatizer: Lemmatizer) -> str:
+367:def _serialize_analyses(analyses: list[TokenAnalysis]) -> str:
+371:def _deserialize_analyses(data: str) -> list[TokenAnalysis]:
+375:def analyze_sentence_cached(
+402:def lemmatize_surfaces_in_context(
 ```
 
 **Tokenizer** — splits on whitespace and strips leading/trailing punctuation while preserving internal hyphens.
@@ -2052,17 +1904,17 @@ cat -n backend/app/srs/tokenizer.py
 
 ```output
      1	"""Word tokenizer for SRS transcript processing."""
-     2
+     2	
      3	from __future__ import annotations
-     4
+     4	
      5	import re
-     6
+     6	
      7	_PUNCT = re.compile(r"^[\W_]+|[\W_]+$", re.UNICODE)
-     8
-     9
+     8	
+     9	
     10	def tokenize(text: str) -> list[str]:
     11	    """Split text on whitespace and strip leading/trailing punctuation from each token.
-    12
+    12	
     13	    Interior punctuation (e.g. hyphens in compound words) is preserved.
     14	    Returns only non-empty tokens.
     15	    """
@@ -2072,82 +1924,23 @@ cat -n backend/app/srs/tokenizer.py
 **Transcript extractor** — turns a `Lesson` plus the SRS database into a `TranscriptData` containing every L2 word annotated with its current SRS state. Only the NATURAL_SPEED section is processed; narrator and translation phrases are skipped via language-code filtering.
 
 ```bash
-cat -n backend/app/srs/transcript.py
+grep -n "^class \|^def " backend/app/srs/transcript.py
 ```
 
 ```output
-     1	"""Transcript extraction service for SRS word-level tracking."""
-     2
-     3	from __future__ import annotations
-     4
-     5	from dataclasses import dataclass, field
-     6
-     7	from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
-     8	from app.srs.database import SRSDatabase
-     9	from app.srs.lemmatizer import Lemmatizer
-    10	from app.srs.tokenizer import tokenize
-    11
-    12
-    13	@dataclass
-    14	class WordToken:
-    15	    """A single word in the transcript with its SRS state."""
-    16
-    17	    surface: str  # original word as it appears in text (punctuation stripped)
-    18	    lemma: str  # canonical base form (lowercased)
-    19	    srs_state: str  # "unknown"|"new"|"learning"|"review"|"relearning"
-    20
-    21
-    22	@dataclass
-    23	class DialogueLine:
-    24	    """A single speaker line in the dialogue."""
-    25
-    26	    role: str
-    27	    words: list[WordToken] = field(default_factory=list)
-    28
-    29
-    30	@dataclass
-    31	class TranscriptData:
-    32	    """Full lesson transcript with per-word SRS state snapshot."""
-    33
-    34	    key_phrases: list[KeyPhraseInfo] = field(default_factory=list)
-    35	    dialogue_lines: list[DialogueLine] = field(default_factory=list)
-    36
-    37
-    38	def extract_transcript(
-    39	    lesson: Lesson,
-    40	    db: SRSDatabase,
-    41	    lemmatizer: Lemmatizer,
-    42	) -> TranscriptData:
-    43	    """Extract transcript data from a lesson with current SRS states.
-    44
-    45	    Only processes the NATURAL_SPEED section, filtering to L2 phrases only.
-    46	    """
-    47	    natural_speed = next(
-    48	        (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
-    49	        None,
-    50	    )
-    51
-    52	    dialogue_lines: list[DialogueLine] = []
-    53
-    54	    if natural_speed is not None:
-    55	        for phrase in natural_speed.phrases:
-    56	            if phrase.language_code != lesson.language_code:
-    57	                continue  # skip narrator/English lines
-    58
-    59	            tokens = tokenize(phrase.text)
-    60	            words: list[WordToken] = []
-    61	            for surface in tokens:
-    62	                lemma = lemmatizer.lemmatize(surface, lesson.language_code)
-    63	                item = db.get_collocation_by_lemma(lemma)
-    64	                srs_state = item.state.value if item is not None else "unknown"
-    65	                words.append(WordToken(surface=surface, lemma=lemma, srs_state=srs_state))
-    66
-    67	            dialogue_lines.append(DialogueLine(role=phrase.role, words=words))
-    68
-    69	    return TranscriptData(
-    70	        key_phrases=list(lesson.key_phrases),
-    71	        dialogue_lines=dialogue_lines,
-    72	    )
+20:class WordToken:
+53:class DialogueLine:
+62:class TranscriptData:
+69:def _extract_punct_pairs(text: str, surfaces: list[str]) -> list[tuple[str, str]]:
+103:def build_collocation_lemma_key(text: str, lemmatizer: Lemmatizer, language_code: str) -> str:
+115:def _build_collocation_index(
+137:def resolve_active_direction(item: object) -> Direction:
+172:def _is_reviewable(ds: DirectionState) -> bool:
+182:def _is_read_reviewable(ds: DirectionState) -> bool:
+191:def _is_due(ds: DirectionState, today: date) -> bool:
+199:def _inflection_feature_for(surface: str, analysis_by_surface: dict[str, object]) -> str:
+213:def _build_variant_index(db: SRSDatabase, language_code: str) -> dict[str, tuple[int, SRSItem]]:
+237:def extract_transcript(
 ```
 
 The `srs_state` is one of `"unknown"` (no SRSItem with this lemma in the database) or any FSRS state (`new`/`learning`/`review`/`relearning`). The frontend uses this to color words red (unknown), yellow (learning), or green (review). The `/api/srs/lesson/{lesson_id}/transcript` endpoint (Part 7.2) wraps this for HTTP consumption.
@@ -2193,91 +1986,19 @@ The generation layer is where the LLM produces curricula and stories.
 ### 5.1 Prompt Engineering
 
 ```bash
-cat -n backend/app/generation/prompts.py
+grep -n "^class \|^def \|_TEMPLATE = \|^SYSTEM_PROMPT" backend/app/generation/prompts.py
 ```
 
 ```output
-     1	"""Prompt builder for curriculum and story generation.
-     2	
-     3	Language-aware: instructions adjust based on the target language.
-     4	All prompts request JSON responses for deterministic parsing.
-     5	"""
-     6	
-     7	from __future__ import annotations
-     8	
-     9	from app.models.language import Language
-    10	
-    11	_CURRICULUM_PROMPT_TEMPLATE = """\
-    12	You are generating a {num_days}-day language learning curriculum.
-    13	
-    14	Topic: {topic}
-    15	Target language: {language_name} ({language_code})
-    16	CEFR level: {cefr_level}
-    17	
-    18	Respond with a JSON object matching this schema exactly:
-    19	{{
-    20	  "days": [
-    21	    {{
-    22	      "day": 1,
-    23	      "title": "Short lesson title",
-    24	      "focus": "Main focus area for this day",
-    25	      "collocations": ["phrase one", "phrase two", "phrase three"],
-    26	      "learning_objective": "Specific skill the learner will practice",
-    27	      "story_guidance": "Brief setting/scenario hint for audio story generation"
-    28	    }}
-    29	  ]
-    30	}}
-    31	
-    32	Requirements:
-    33	- Respond with ONLY the JSON object, no markdown fences, no preamble
-    34	- All collocations must be in {language_name} ({language_code}) using {script} script
-    35	- 3–8 collocations per day (natural 1–5 word phrases)
-    36	- Days should progress from simpler to more complex vocabulary
-    37	- Make collocations practical for real-world use of the topic
-    38	"""
-    39	
-    40	_SYSTEM_PROMPT_TEMPLATE = """\
-    41	You are an expert language curriculum designer specializing in {language_name}.
-    42	You create structured, practical curricula for learners studying {language_name} ({language_code}).
-    43	
-    44	Language details:
-    45	- ISO code: {language_code}
-    46	- Script: {script}
-    47	- Native name: {native_name}
-    48	
-    49	When generating collocations, use authentic {language_name} as a native speaker would.
-    50	Focus on practical, conversational phrases appropriate for the learner's CEFR level.
-    51	"""
-    52	
-    53	
-    54	class PromptBuilder:
-    55	    """Builds prompts for LLM-powered curriculum and story generation."""
-    56	
-    57	    def build_system_prompt(self, language: Language) -> str:
-    58	        """Build the system prompt for a given target language."""
-    59	        return _SYSTEM_PROMPT_TEMPLATE.format(
-    60	            language_name=language.name,
-    61	            language_code=language.code,
-    62	            script=language.script,
-    63	            native_name=language.native_name,
-    64	        )
-    65	
-    66	    def build_curriculum_prompt(
-    67	        self,
-    68	        topic: str,
-    69	        language: Language,
-    70	        cefr_level: str,
-    71	        num_days: int,
-    72	    ) -> str:
-    73	        """Build the user prompt for curriculum generation."""
-    74	        return _CURRICULUM_PROMPT_TEMPLATE.format(
-    75	            topic=topic,
-    76	            language_name=language.name,
-    77	            language_code=language.code,
-    78	            script=language.script,
-    79	            cefr_level=cefr_level,
-    80	            num_days=num_days,
-    81	        )
+19:def _load_style_notes(language_code: str) -> str:
+32:SYSTEM_PROMPT = """\
+158:def _morphology_sections(language_code: str) -> tuple[str, str]:
+170:def build_story_system_prompt(language: Language) -> str:
+203:def _build_cefr_block(cefr_level: str) -> str:
+207:STORY_PROMPT_WIDER_TEMPLATE = """\
+234:STORY_PROMPT_DEEPER_TEMPLATE = """\
+265:def get_strategy_prompt(strategy: ContentStrategy) -> str:
+308:def build_planner_turn_prompt(
 ```
 
 Prompts are language-aware templates that inject the `Language` model fields. The curriculum prompt requests strict JSON output — no markdown fences, no preamble — so the response can be parsed directly. The system prompt establishes the LLM as a language curriculum expert who knows the target language natively.
@@ -2288,156 +2009,29 @@ Here is what the actual prompt looks like for a Slovene curriculum:
 
 ```bash
 cd backend && uv run python -c "
-from app.generation.prompts import PromptBuilder
-from app.models.language import Language
-
-pb = PromptBuilder()
-sl = Language.slovene()
-print(\"=== System Prompt ===\")
-print(pb.build_system_prompt(sl))
-print(\"=== Curriculum Prompt ===\")
-print(pb.build_curriculum_prompt(\"Travel in Slovenia\", sl, \"A1\", 3))
+from app.generation.prompts import build_planner_turn_prompt
+import inspect
+print(inspect.signature(build_planner_turn_prompt))
 "
 ```
 
 ```output
-=== System Prompt ===
-You are an expert language curriculum designer specializing in Slovene.
-You create structured, practical curricula for learners studying Slovene (sl).
-
-Language details:
-- ISO code: sl
-- Script: latin
-- Native name: slovenščina
-
-When generating collocations, use authentic Slovene as a native speaker would.
-Focus on practical, conversational phrases appropriate for the learner's CEFR level.
-
-=== Curriculum Prompt ===
-You are generating a 3-day language learning curriculum.
-
-Topic: Travel in Slovenia
-Target language: Slovene (sl)
-CEFR level: A1
-
-Respond with a JSON object matching this schema exactly:
-{
-  "days": [
-    {
-      "day": 1,
-      "title": "Short lesson title",
-      "focus": "Main focus area for this day",
-      "collocations": ["phrase one", "phrase two", "phrase three"],
-      "learning_objective": "Specific skill the learner will practice",
-      "story_guidance": "Brief setting/scenario hint for audio story generation"
-    }
-  ]
-}
-
-Requirements:
-- Respond with ONLY the JSON object, no markdown fences, no preamble
-- All collocations must be in Slovene (sl) using latin script
-- 3–8 collocations per day (natural 1–5 word phrases)
-- Days should progress from simpler to more complex vocabulary
-- Make collocations practical for real-world use of the topic
-
+(*, topic: 'str', cefr_level: 'str', language_name: 'str', language_code: 'str', days: 'list', learner_snapshot: 'str', feedback: 'list[dict]', chat: 'list[dict]', batch_size: 'int', start_day: 'int') -> 'str'
 ```
 
 ### 5.2 Curriculum Generator
 
 ```bash
-cat -n backend/app/generation/curriculum.py
+git log --oneline --diff-filter=D -1 -- backend/app/generation/curriculum.py
+grep -n "^class \|^def \|^    def " backend/app/generation/planner.py
 ```
 
 ```output
-     1	"""Curriculum generator: LLM + PromptBuilder → Curriculum model."""
-     2	
-     3	from __future__ import annotations
-     4	
-     5	import json
-     6	import logging
-     7	import uuid
-     8	
-     9	from app.generation.prompts import PromptBuilder
-    10	from app.models.curriculum import Curriculum, CurriculumDay
-    11	from app.models.language import Language
-    12	
-    13	logger = logging.getLogger(__name__)
-    14	
-    15	
-    16	class CurriculumGenerationError(Exception):
-    17	    pass
-    18	
-    19	
-    20	class CurriculumGenerator:
-    21	    """Generates a Curriculum from a topic using the LLM client."""
-    22	
-    23	    def __init__(self, llm_client) -> None:
-    24	        self._llm = llm_client
-    25	        self._prompt_builder = PromptBuilder()
-    26	
-    27	    async def generate(
-    28	        self,
-    29	        topic: str,
-    30	        language: Language,
-    31	        cefr_level: str,
-    32	        num_days: int = 5,
-    33	    ) -> Curriculum:
-    34	        """Generate a curriculum for the given topic.
-    35	
-    36	        Args:
-    37	            topic: Learning topic (e.g., "ordering coffee in Ljubljana")
-    38	            language: Target language configuration
-    39	            cefr_level: CEFR level string (e.g., "A2", "B1")
-    40	            num_days: Number of curriculum days to generate
-    41	
-    42	        Returns:
-    43	            Parsed Curriculum model
-    44	        """
-    45	        system_prompt = self._prompt_builder.build_system_prompt(language)
-    46	        user_prompt = self._prompt_builder.build_curriculum_prompt(
-    47	            topic=topic,
-    48	            language=language,
-    49	            cefr_level=cefr_level,
-    50	            num_days=num_days,
-    51	        )
-    52	
-    53	        logger.info("Generating %d-day curriculum for topic %r (%s)", num_days, topic, language.code)
-    54	        raw = await self._llm.complete(user_prompt, system_prompt=system_prompt, temperature=0.7, max_tokens=4096)
-    55	
-    56	        return self._parse_response(raw, topic=topic, language=language, cefr_level=cefr_level)
-    57	
-    58	    def _parse_response(self, raw: str, *, topic: str, language: Language, cefr_level: str) -> Curriculum:
-    59	        """Parse the LLM JSON response into a Curriculum."""
-    60	        try:
-    61	            data = json.loads(raw)
-    62	        except json.JSONDecodeError as e:
-    63	            raise CurriculumGenerationError(f"LLM returned invalid JSON: {e}\nRaw: {raw[:200]}") from e
-    64	
-    65	        days_data = data.get("days", [])
-    66	        if not days_data:
-    67	            raise CurriculumGenerationError(f"LLM response missing 'days' key: {raw[:200]}")
-    68	
-    69	        days = []
-    70	        for d in days_data:
-    71	            days.append(
-    72	                CurriculumDay(
-    73	                    day=d["day"],
-    74	                    title=d.get("title", f"Day {d['day']}"),
-    75	                    focus=d.get("focus", ""),
-    76	                    collocations=d.get("collocations", []),
-    77	                    learning_objective=d.get("learning_objective", ""),
-    78	                    story_guidance=d.get("story_guidance", ""),
-    79	                )
-    80	            )
-    81	
-    82	        return Curriculum(
-    83	            id=str(uuid.uuid4()),
-    84	            topic=topic,
-    85	            language_code=language.code,
-    86	            cefr_level=cefr_level,
-    87	            days=days,
-    88	        )
+e6aec61 feat(planner-phase6): delete one-shot generator, reseed e2e, add docs + chat e2e
+25:class PlannerError(Exception):
+30:class PlannerTurn:
+43:class CurriculumPlanner:
+46:    def __init__(self, llm) -> None:
 ```
 
 The generator is straightforward: build prompts → call LLM → parse JSON → return Curriculum. The `_parse_response` method does defensive parsing — missing keys get defaults rather than crashing. Invalid JSON raises `CurriculumGenerationError` with the first 200 chars of the raw response for debugging.
@@ -2450,106 +2044,257 @@ cat -n backend/app/generation/story.py
 
 ```output
      1	"""Story generator: produces a Lesson with 4 Pimsleur sections from a CurriculumDay."""
-     2
+     2	
      3	from __future__ import annotations
-     4
-     5	import json
+     4	
+     5	import copy
      6	import logging
-     7
-     8	from app.generation.prompts import SYSTEM_PROMPT, get_strategy_prompt
-     9	from app.generation.section_builder import (
-    10	    build_key_phrases_section,
-    11	    build_natural_speed_section,
-    12	    build_slow_speed_section,
-    13	    build_translated_section,
-    14	)
-    15	from app.models.curriculum import CurriculumDay
-    16	from app.models.language import Language
-    17	from app.models.lesson import KeyPhraseInfo, Lesson
-    18	from app.models.strategy import ContentStrategy
-    19
-    20	logger = logging.getLogger(__name__)
-    21
-    22
-    23	class StoryGenerationError(Exception):
-    24	    pass
-    25
-    26
-    27	class StoryGenerator:
-    28	    """Generates a Lesson from a CurriculumDay using the LLM client."""
-    29
-    30	    def __init__(self, llm_client) -> None:
-    31	        self._llm = llm_client
-    32
-    33	    async def generate(
-    34	        self,
-    35	        curriculum_day: CurriculumDay,
-    36	        language: Language,
-    37	        strategy: ContentStrategy,
-    38	    ) -> Lesson:
-    39	        """Generate a Lesson for the given curriculum day.
-    40
-    41	        Args:
-    42	            curriculum_day: Day specification including collocations and objectives.
-    43	            language: Target language configuration.
-    44	            strategy: WIDER or DEEPER content strategy.
-    45
-    46	        Returns:
-    47	            Parsed Lesson with 4 Pimsleur sections built mechanically from LLM JSON.
-    48	        """
-    49	        system_prompt = SYSTEM_PROMPT.format(
-    50	            language_name=language.name,
-    51	            language_code=language.code,
-    52	        )
-    53
-    54	        new_collocations = "\n".join(f"- {c}" for c in curriculum_day.collocations)
-    55	        user_prompt_template = get_strategy_prompt(strategy)
-    56	        user_prompt = user_prompt_template.format(
-    57	            language_name=language.name,
-    58	            language_code=language.code,
-    59	            learning_objective=curriculum_day.learning_objective,
-    60	            focus=curriculum_day.focus,
-    61	            story_guidance=curriculum_day.story_guidance,
-    62	            new_collocations=new_collocations,
-    63	            review_collocations="(none yet)",
-    64	            source_day_transcript="(not available)",
-    65	        )
-    66
-    67	        logger.info("Generating story for day %d (%s)", curriculum_day.day, strategy.value)
-    68	        raw = await self._llm.complete(user_prompt, system_prompt=system_prompt, temperature=0.7, max_tokens=8192)
-    69	        return self._parse_response(raw, language=language)
-    70
-    71	    def _parse_response(self, raw: str, language: Language) -> Lesson:
-    72	        try:
-    73	            data = json.loads(raw)
-    74	        except json.JSONDecodeError as e:
-    75	            raise StoryGenerationError(f"LLM returned invalid JSON: {e}") from e
-    76
-    77	        key_phrases = data.get("key_phrases", [])
-    78	        scenes = data.get("scenes", [])
-    79	        title = data.get("title", "Lesson")
-    80
-    81	        if not key_phrases and not scenes:
-    82	            raise StoryGenerationError("LLM response missing 'key_phrases' and 'scenes'")
-    83
-    84	        narrator_voice = language.tts_voice_map.get("narrator", "en-US-GuyNeural")
-    85
-    86	        sections = [
-    87	            build_key_phrases_section(key_phrases, language.tts_voice_map, narrator_voice, language.code),
-    88	            build_natural_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
-    89	            build_slow_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
-    90	            build_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
-    91	        ]
-    92
-    93	        kp_infos = [KeyPhraseInfo(phrase=kp["phrase"], translation=kp["translation"]) for kp in key_phrases]
-    94
-    95	        return Lesson(
-    96	            title=title,
-    97	            language_code=language.code,
-    98	            sections=sections,
-    99	            narrator_voice=narrator_voice,
-   100	            key_phrases=kp_infos,
-   101	        )
+     7	
+     8	from app.generation.json_parsing import parse_json_object
+     9	from app.generation.prompts import _build_cefr_block, build_story_system_prompt, get_strategy_prompt
+    10	from app.generation.section_builder import (
+    11	    build_key_phrases_section,
+    12	    build_natural_speed_section,
+    13	    build_slow_speed_section,
+    14	    build_slow_translated_section,
+    15	    build_translated_section,
+    16	)
+    17	from app.models.curriculum import CurriculumDay
+    18	from app.models.language import NARRATOR_VOICE, Language
+    19	from app.models.lesson import KeyPhraseInfo, Lesson
+    20	from app.models.strategy import ContentStrategy
+    21	from app.srs.lemmatizer import get_lemmatizer, lemmatize_surfaces_in_context
+    22	from app.srs.tokenizer import tokenize
+    23	
+    24	logger = logging.getLogger(__name__)
+    25	
+    26	# Groq's free-tier gpt-oss budget: prompt_tokens + max_completion_tokens are
+    27	# reserved against 8000 tokens per request (over → hard 413, not a retryable 429).
+    28	_GROQ_FREE_TIER_REQUEST_BUDGET = 8000
+    29	# Headroom kept when re-deriving max_tokens from measured prompt_tokens.
+    30	_TRUNCATION_RETRY_MARGIN = 128
+    31	_STORY_MAX_TOKENS = 4096
+    32	
+    33	
+    34	class StoryGenerationError(Exception):
+    35	    pass
+    36	
+    37	
+    38	def _missing_log(missing: list[str], language_code: str) -> None:
+    39	    """Log a warning when the LLM omitted words from dialogue_glosses."""
+    40	    sample = sorted(missing)[:10]
+    41	    logger.warning(
+    42	        "LLM omitted %d word(s) from dialogue_glosses (%s): %s",
+    43	        len(missing),
+    44	        language_code,
+    45	        " ".join(sample),
+    46	    )
+    47	
+    48	
+    49	class StoryGenerator:
+    50	    """Generates a Lesson from a CurriculumDay using the LLM client."""
+    51	
+    52	    def __init__(self, llm_client) -> None:
+    53	        self._llm = llm_client
+    54	
+    55	    async def generate(
+    56	        self,
+    57	        curriculum_day: CurriculumDay,
+    58	        language: Language,
+    59	        strategy: ContentStrategy,
+    60	        cefr_level: str = "A2",
+    61	    ) -> Lesson:
+    62	        """Generate a Lesson for the given curriculum day.
+    63	
+    64	        Args:
+    65	            curriculum_day: Day specification including collocations and objectives.
+    66	            language: Target language configuration.
+    67	            strategy: WIDER or DEEPER content strategy.
+    68	            cefr_level: CEFR level string (e.g. "A2") to calibrate dialogue complexity.
+    69	
+    70	        Returns:
+    71	            Parsed Lesson with 4 Pimsleur sections built mechanically from LLM JSON.
+    72	        """
+    73	        system_prompt = build_story_system_prompt(language)
+    74	
+    75	        new_collocations = "\n".join(f"- {c}" for c in curriculum_day.collocations)
+    76	        user_prompt_template = get_strategy_prompt(strategy)
+    77	        user_prompt = user_prompt_template.format(
+    78	            language_name=language.name,
+    79	            language_code=language.code,
+    80	            learning_objective=curriculum_day.learning_objective,
+    81	            focus=curriculum_day.focus,
+    82	            story_guidance=curriculum_day.story_guidance,
+    83	            new_collocations=new_collocations,
+    84	            review_collocations="(none yet)",
+    85	            source_day_transcript="(not available)",
+    86	            cefr_block=_build_cefr_block(cefr_level),
+    87	        )
+    88	
+    89	        logger.info("Generating story for day %d (%s)", curriculum_day.day, strategy.value)
+    90	        # 4096, NOT 5500. gpt-oss-120b's free-tier budget is 8000 tokens/request and
+    91	        # Groq reserves prompt_tokens + max_completion_tokens against it up front, so a
+    92	        # request over 8000 is a hard 413 (not a retryable 429). The story system prompt
+    93	        # is ~2800 tokens (the Slovene morphology-tagging block), so 5500 → ~8300 → 413,
+    94	        # which then falls through to the Ollama junk-JSON fallback. Measured on the real
+    95	        # prompt at reasoning_effort=low: reasoning is negligible and the JSON payload is
+    96	        # ~1900 completion tokens, finishing cleanly well inside 4096 — the earlier
+    97	        # "reasoning ~1400 + JSON ~3200" estimate that justified 5500 was wrong. 4096
+    98	        # keeps prompt+budget ~6900 under the cap with headroom for prompt growth.
+    99	        # When a response IS truncated (finish_reason=length — reasoning spike, or a
+   100	        # smaller-prompt language like Norwegian writing a longer story), the retry
+   101	        # below re-derives the cap from the measured prompt_tokens.
+   102	        max_tokens = _STORY_MAX_TOKENS
+   103	        failure: StoryGenerationError | None = None
+   104	        for attempt in range(2):
+   105	            raw = await self._llm.complete(
+   106	                user_prompt, system_prompt=system_prompt, temperature=0.7, max_tokens=max_tokens
+   107	            )
+   108	            try:
+   109	                data = self._parse_json(raw)
+   110	            except StoryGenerationError as e:
+   111	                truncated = getattr(self._llm, "last_finish_reason", None) == "length"
+   112	                failure = self._enrich_parse_failure(e, truncated=truncated, max_tokens=max_tokens)
+   113	                if truncated:
+   114	                    max_tokens = self._bump_max_tokens_after_truncation(max_tokens)
+   115	                logger.warning("Story JSON parse failed on attempt %d/2: %s", attempt + 1, failure)
+   116	                continue
+   117	            return self._parse_response(data, language=language)
+   118	        raise failure
+   119	
+   120	    def _enrich_parse_failure(
+   121	        self, error: StoryGenerationError, *, truncated: bool, max_tokens: int
+   122	    ) -> StoryGenerationError:
+   123	        """Attach the diagnosis a bare json.JSONDecodeError message can't carry."""
+   124	        if truncated:
+   125	            return StoryGenerationError(
+   126	                f"{error} — response truncated at max_tokens={max_tokens} (finish_reason=length)"
+   127	            )
+   128	        if getattr(self._llm, "last_provider", None) == "ollama":
+   129	            return StoryGenerationError(
+   130	                f"{error} — from the offline Ollama fallback; Groq was unavailable (likely rate-limited), retry shortly"
+   131	            )
+   132	        return error
+   133	
+   134	    def _bump_max_tokens_after_truncation(self, current: int) -> int:
+   135	        """Re-derive the completion cap from the measured prompt size, never shrinking."""
+   136	        usage = getattr(self._llm, "last_usage", None)
+   137	        prompt_tokens = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+   138	        if isinstance(prompt_tokens, int) and prompt_tokens > 0:
+   139	            return max(current, _GROQ_FREE_TIER_REQUEST_BUDGET - prompt_tokens - _TRUNCATION_RETRY_MARGIN)
+   140	        return current
+   141	
+   142	    @staticmethod
+   143	    def _parse_json(raw: str) -> dict:
+   144	        try:
+   145	            return parse_json_object(raw)
+   146	        except ValueError as e:
+   147	            raise StoryGenerationError(str(e)) from e
+   148	
+   149	    def _parse_response(self, data: dict, language: Language) -> Lesson:
+   150	        return build_lesson_from_story(data, language=language)
+   151	
+   152	
+   153	def build_lesson_from_story(data: dict, language: Language) -> Lesson:
+   154	    """Build a Lesson from Story JSON — the ONE Story-JSON → Lesson build step.
+   155	
+   156	    Used by generation (via ``StoryGenerator._parse_response``) and by lesson
+   157	    authoring import (``app.storage.lesson_io``), so authored and generated
+   158	    lessons are identical in shape. See docs/lesson-authoring.md.
+   159	    """
+   160	    key_phrases = data.get("key_phrases", [])
+   161	    scenes = data.get("scenes", [])
+   162	    title = data.get("title", "Lesson")
+   163	
+   164	    if not key_phrases and not scenes:
+   165	        raise StoryGenerationError("LLM response missing 'key_phrases' and 'scenes'")
+   166	
+   167	    narrator_voice = language.tts_voice_map.get("narrator", NARRATOR_VOICE)
+   168	
+   169	    sections = [
+   170	        build_key_phrases_section(key_phrases, language.tts_voice_map, narrator_voice, language.code),
+   171	        build_natural_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
+   172	        build_slow_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
+   173	        build_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
+   174	        build_slow_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
+   175	    ]
+   176	
+   177	    kp_infos = []
+   178	    for kp in key_phrases:
+   179	        if not isinstance(kp, dict):
+   180	            logger.warning("Skipping non-dict key phrase: %r", kp)
+   181	            continue
+   182	        phrase = kp.get("phrase", "")
+   183	        translation = kp.get("translation", "")
+   184	        if not phrase or not translation:
+   185	            logger.warning("Skipping key phrase with missing phrase or translation: %r", kp)
+   186	            continue
+   187	        kp_infos.append(KeyPhraseInfo(phrase=phrase, translation=translation))
+   188	
+   189	    glosses = data.get("dialogue_glosses", [])
+   190	    lemmatizer = get_lemmatizer(language.code)
+   191	
+   192	    # Sentence-aware surface→lemma map (prevents POS-blind fallback
+   193	    # where single-word lemmatize miskeys e.g. "hotel" → as verb "hoteti"
+   194	    # instead of noun "hotel").
+   195	    surface_lemma: dict[str, str] = {}
+   196	    for scene in scenes:
+   197	        for line in scene.get("lines", []):
+   198	            text = line.get("text", "").strip()
+   199	            if not text:
+   200	                continue
+   201	            surfaces = tokenize(text)
+   202	            lemmas = lemmatize_surfaces_in_context(surfaces, text, lemmatizer, language.code)
+   203	            for s, lem in zip(surfaces, lemmas, strict=True):
+   204	                surface_lemma.setdefault(s.lower(), lem)
+   205	
+   206	    token_glosses: dict[str, str] = {}
+   207	    glossed_surfaces: set[str] = set()
+   208	    for g in glosses:
+   209	        raw_key = g.get("word") or g.get("lemma", "")
+   210	        translation = g.get("translation", "")
+   211	        if raw_key and translation:
+   212	            # Keys are lowercase — every consumer looks up surface.lower()
+   213	            # or a lowercase lemma (transcript.py, api/srs.py).
+   214	            key = raw_key.lower()
+   215	            glossed_surfaces.add(key)
+   216	            lemma = surface_lemma.get(key, key)
+   217	            # Surface key preserves the specific conjugated translation
+   218	            # (e.g. "boste" → "you will", "bom" → "I will").
+   219	            token_glosses[key] = translation
+   220	            # Lemma key provides a fallback generic translation
+   221	            # (e.g. "biti" → "you will" from whichever surface came first).
+   222	            token_glosses.setdefault(lemma, translation)
+   223	
+   224	    missing = [s for s in surface_lemma if s not in glossed_surfaces]
+   225	    if missing:
+   226	        _missing_log(missing, language.code)
+   227	
+   228	    sentence_translations: dict[str, str] = {}
+   229	    for scene in scenes:
+   230	        for line in scene.get("lines", []):
+   231	            l2 = line.get("text", "").strip()
+   232	            en = line.get("translation", "").strip()
+   233	            if l2 and en:
+   234	                sentence_translations[l2] = en
+   235	
+   236	    return Lesson(
+   237	        title=title,
+   238	        language_code=language.code,
+   239	        sections=sections,
+   240	        narrator_voice=narrator_voice,
+   241	        key_phrases=kp_infos,
+   242	        generation_metadata={
+   243	            "token_glosses": token_glosses,
+   244	            "sentence_translations": sentence_translations,
+   245	            "morphology_focus": data.get("morphology_focus", []),
+   246	            # Exact Story-JSON source (docs/lesson-authoring.md decision #4):
+   247	            # export returns this verbatim; reconstruction is only the fallback
+   248	            # for lessons stored before it existed. Deep copy so later caller
+   249	            # mutations can't corrupt the persisted source.
+   250	            "story": copy.deepcopy(data),
+   251	        },
+   252	    )
 ```
 
 The story generator is now a thin orchestrator. The LLM produces creative content (titles, key phrases, multi-scene multi-speaker dialogue) and the `section_builder` (Part 5.4) deterministically transforms that into the four Pimsleur `Section` objects. Critically, `StoryGenerator` no longer takes the SRS database — enforcement was a leaky coupling. Now key phrases come back as `KeyPhraseInfo` records on the `Lesson` and the API layer registers them with the SRS database after generation succeeds.
@@ -2576,201 +2321,313 @@ cat -n backend/app/generation/section_builder.py
 
 ```output
      1	"""Mechanical section builders for Pimsleur-style lessons.
-     2
+     2	
      3	The LLM generates creative content (key phrases + dialogue). These builders
      4	transform that raw data into the four structured Lesson sections deterministically.
      5	"""
-     6
+     6	
      7	from __future__ import annotations
-     8
-     9	from app.generation.syllabify import syllabify_slovene_word
-    10	from app.models.lesson import Phrase, Section, SectionType
-    11
-    12	# Type aliases for plain-dict inputs from parsed LLM JSON
-    13	KeyPhrase = dict  # {"phrase": str, "translation": str}
-    14	DialogueLine = dict  # {"speaker": str, "text": str, "translation": str}
-    15	Scene = dict  # {"label": str, "lines": list[DialogueLine]}
-    16
-    17	# Narrator-spoken section titles matching the demo format
-    18	SECTION_TITLES: dict[SectionType, str] = {
-    19	    SectionType.KEY_PHRASES: "Key Phrases",
-    20	    SectionType.NATURAL_SPEED: "Natural Speed",
-    21	    SectionType.SLOW_SPEED: "Slow Speed",
-    22	    SectionType.TRANSLATED: "Translated",
-    23	}
-    24
-    25
-    26	def _resolve_voice(speaker: str, l2_voice_map: dict[str, str], narrator_voice: str) -> str:
-    27	    return l2_voice_map.get(speaker, l2_voice_map.get("female-1", narrator_voice))
-    28
-    29
-    30	def build_word_breakdown(phrase_text: str) -> list[str]:
-    31	    """Build a Pimsleur-style syllable-level backward buildup sequence.
-    32
-    33	    Processes words right-to-left. For each multi-syllable word the syllables
-    34	    are presented backward then progressively rebuilt before moving to the
-    35	    preceding word. Single-syllable words are presented as-is.
-    36
-    37	    The sequence always starts with the full phrase and ends with the full
-    38	    phrase repeated twice.
-    39
-    40	    Examples:
-    41	        "dan"     → ["dan", "dan"]
-    42	        "prosim"  → ["prosim", "sim", "pro", "prosim", "prosim"]
-    43	        "dober dan" → ["dober dan", "dan", "ber", "do", "dober",
-    44	                        "dober dan", "dober dan"]
-    45	    """
-    46	    phrase = " ".join(phrase_text.strip().split())
-    47	    words = phrase.split()
-    48	    if not words:
-    49	        return []
-    50
-    51	    breakdown: list[str] = [phrase]
-    52
-    53	    if len(words) == 1:
-    54	        syllables = syllabify_slovene_word(words[0])
-    55	        if len(syllables) <= 1:
-    56	            breakdown.append(phrase)
-    57	            return breakdown
-    58	        for i in range(len(syllables) - 1, -1, -1):
-    59	            breakdown.append(syllables[i])
-    60	            if i < len(syllables) - 1:
-    61	                breakdown.append("".join(syllables[i:]))
-    62	        breakdown.append(phrase)
-    63	        return breakdown
-    64
-    65	    for word_index in range(len(words) - 1, -1, -1):
-    66	        word = words[word_index]
-    67	        syllables = syllabify_slovene_word(word)
-    68
-    69	        if len(syllables) > 1:
-    70	            for i in range(len(syllables) - 1, -1, -1):
-    71	                breakdown.append(syllables[i])
-    72	                if i < len(syllables) - 1:
-    73	                    breakdown.append("".join(syllables[i:]))
-    74	                elif (
-    75	                    i == 0
-    76	                ):  # pragma: no cover — unreachable: when len(syllables)>1 and i==0, the `i < len-1` branch always fires
-    77	                    breakdown.append("".join(syllables))
-    78	        else:
-    79	            breakdown.append(word)
-    80
-    81	        if word_index < len(words) - 1:
-    82	            partial = " ".join(words[word_index:])
-    83	            if partial != phrase:
-    84	                breakdown.append(partial)
-    85
-    86	        if word_index == 0:
-    87	            breakdown.append(phrase)
-    88
-    89	    breakdown.append(phrase)
-    90	    return breakdown
-    91
-    92
-    93	def build_key_phrases_section(
-    94	    key_phrases: list[KeyPhrase],
-    95	    l2_voice_map: dict[str, str],
-    96	    narrator_voice: str,
-    97	    l2_code: str,
-    98	) -> Section:
-    99	    """Build the KEY_PHRASES section.
-   100
-   101	    For each phrase:
-   102	    1. L2 phrase (female-1)
-   103	    2. Narrator translation
-   104	    3. L2 phrase repeat (female-1)
-   105	    4. Word breakdown steps (female-1)
-   106	    """
-   107	    female_1_voice = l2_voice_map.get("female-1", narrator_voice)
-   108	    phrases: list[Phrase] = [
-   109	        Phrase(
-   110	            text=SECTION_TITLES[SectionType.KEY_PHRASES], voice_id=narrator_voice, language_code="en", role="narrator"
-   111	        )
-   112	    ]
-   113
-   114	    for kp in key_phrases:
-   115	        phrase_text = kp["phrase"]
-   116	        translation = kp["translation"]
-   117
-   118	        phrases.append(Phrase(text=phrase_text, voice_id=female_1_voice, language_code=l2_code))
-   119	        phrases.append(Phrase(text=translation, voice_id=narrator_voice, language_code="en", role="narrator"))
-   120	        for step in build_word_breakdown(phrase_text):
-   121	            phrases.append(Phrase(text=step, voice_id=female_1_voice, language_code=l2_code))
-   122
-   123	    return Section(section_type=SectionType.KEY_PHRASES, phrases=phrases)
-   124
-   125
-   126	def build_natural_speed_section(
-   127	    scenes: list[Scene],
-   128	    l2_voice_map: dict[str, str],
-   129	    narrator_voice: str,
-   130	    l2_code: str,
-   131	) -> Section:
-   132	    """Build the NATURAL_SPEED section with scene labels and multi-speaker dialogue."""
-   133	    phrases: list[Phrase] = [
-   134	        Phrase(
-   135	            text=SECTION_TITLES[SectionType.NATURAL_SPEED], voice_id=narrator_voice, language_code="en", role="narrator"
-   136	        )
-   137	    ]
-   138
-   139	    for scene in scenes:
-   140	        phrases.append(Phrase(text=scene["label"], voice_id=narrator_voice, language_code="en", role="narrator"))
-   141	        for line in scene.get("lines", []):
-   142	            speaker = line["speaker"].lower()
-   143	            voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
-   144	            phrases.append(Phrase(text=line["text"], voice_id=voice_id, language_code=l2_code, role=speaker))
-   145
-   146	    return Section(section_type=SectionType.NATURAL_SPEED, phrases=phrases)
-   147
-   148
-   149	def build_slow_speed_section(
-   150	    scenes: list[Scene],
-   151	    l2_voice_map: dict[str, str],
-   152	    narrator_voice: str,
-   153	    l2_code: str,
-   154	) -> Section:
-   155	    """Build the SLOW_SPEED section — mirrors NATURAL_SPEED with '...' between words."""
-   156	    phrases: list[Phrase] = [
-   157	        Phrase(
-   158	            text=SECTION_TITLES[SectionType.SLOW_SPEED], voice_id=narrator_voice, language_code="en", role="narrator"
-   159	        )
-   160	    ]
-   161
-   162	    for scene in scenes:
-   163	        phrases.append(Phrase(text=scene["label"], voice_id=narrator_voice, language_code="en", role="narrator"))
-   164	        for line in scene.get("lines", []):
-   165	            speaker = line["speaker"].lower()
-   166	            voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
-   167	            slowed = " ... ".join(line["text"].split())
-   168	            phrases.append(Phrase(text=slowed, voice_id=voice_id, language_code=l2_code, role=speaker))
-   169
-   170	    return Section(section_type=SectionType.SLOW_SPEED, phrases=phrases)
-   171
-   172
-   173	def build_translated_section(
-   174	    scenes: list[Scene],
-   175	    l2_voice_map: dict[str, str],
-   176	    narrator_voice: str,
-   177	    l2_code: str,
-   178	) -> Section:
-   179	    """Build the TRANSLATED section — every L2 line followed by narrator translation."""
-   180	    phrases: list[Phrase] = [
-   181	        Phrase(
-   182	            text=SECTION_TITLES[SectionType.TRANSLATED], voice_id=narrator_voice, language_code="en", role="narrator"
-   183	        )
-   184	    ]
-   185
-   186	    for scene in scenes:
-   187	        phrases.append(Phrase(text=scene["label"], voice_id=narrator_voice, language_code="en", role="narrator"))
-   188	        for line in scene.get("lines", []):
-   189	            speaker = line["speaker"].lower()
-   190	            voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
-   191	            phrases.append(Phrase(text=line["text"], voice_id=voice_id, language_code=l2_code, role=speaker))
-   192	            phrases.append(
-   193	                Phrase(text=line["translation"], voice_id=narrator_voice, language_code="en", role="narrator")
-   194	            )
-   195
-   196	    return Section(section_type=SectionType.TRANSLATED, phrases=phrases)
+     8	
+     9	import logging
+    10	
+    11	from app.generation.norwegian_breakdown import (
+    12	    build_norwegian_breakdown,
+    13	    slow_norwegian_word,
+    14	)
+    15	from app.generation.syllabify import syllabify_word
+    16	from app.languages import uses_compound_word_breakdown
+    17	from app.models.lesson import Phrase, Section, SectionType
+    18	
+    19	logger = logging.getLogger(__name__)
+    20	
+    21	# Type aliases for plain-dict inputs from parsed LLM JSON
+    22	KeyPhrase = dict  # {"phrase": str, "translation": str}
+    23	DialogueLine = dict  # {"speaker": str, "text": str, "translation": str}
+    24	Scene = dict  # {"label": str, "lines": list[DialogueLine]}
+    25	
+    26	# Narrator-spoken section titles matching the demo format
+    27	SECTION_TITLES: dict[SectionType, str] = {
+    28	    SectionType.KEY_PHRASES: "Key Phrases",
+    29	    SectionType.NATURAL_SPEED: "Natural Speed",
+    30	    SectionType.SLOW_SPEED: "Slow Speed",
+    31	    SectionType.TRANSLATED: "Translated",
+    32	    SectionType.SLOW_TRANSLATED: "Slow Translated",
+    33	}
+    34	
+    35	
+    36	def _resolve_voice(speaker: str, l2_voice_map: dict[str, str], narrator_voice: str) -> str:
+    37	    return l2_voice_map.get(speaker, l2_voice_map.get("female-1", narrator_voice))
+    38	
+    39	
+    40	def build_word_breakdown(phrase_text: str, language_code: str = "sl") -> list[str]:
+    41	    """Build a Pimsleur-style syllable-level backward buildup sequence.
+    42	
+    43	    Processes words right-to-left. For each multi-syllable word the syllables
+    44	    are presented backward then progressively rebuilt before moving to the
+    45	    preceding word. Single-syllable words are presented as-is.
+    46	
+    47	    The sequence always starts with the full phrase and ends with the full
+    48	    phrase repeated twice. Syllabification uses the rules for *language_code*
+    49	    (defaults to Slovene for back-compat).
+    50	
+    51	    Examples:
+    52	        "dan"     → ["dan", "dan"]
+    53	        "prosim"  → ["prosim", "sim", "pro", "prosim", "prosim"]
+    54	        "dober dan" → ["dober dan", "dan", "ber", "do", "dober",
+    55	                        "dober dan", "dober dan"]
+    56	    """
+    57	    phrase = " ".join(phrase_text.strip().split())
+    58	    words = phrase.split()
+    59	    if not words:
+    60	        return []
+    61	
+    62	    # Compound/morpheme-aware breakdown (Norwegian) vs. generic syllable buildup.
+    63	    if uses_compound_word_breakdown(language_code):
+    64	        return build_norwegian_breakdown(phrase)
+    65	
+    66	    breakdown: list[str] = [phrase]
+    67	
+    68	    if len(words) == 1:
+    69	        syllables = syllabify_word(words[0], language_code)
+    70	        if len(syllables) <= 1:
+    71	            breakdown.append(phrase)
+    72	            return breakdown
+    73	        for i in range(len(syllables) - 1, -1, -1):
+    74	            breakdown.append(syllables[i])
+    75	            if i < len(syllables) - 1:
+    76	                breakdown.append("".join(syllables[i:]))
+    77	        breakdown.append(phrase)
+    78	        return breakdown
+    79	
+    80	    for word_index in range(len(words) - 1, -1, -1):
+    81	        word = words[word_index]
+    82	        syllables = syllabify_word(word, language_code)
+    83	
+    84	        if len(syllables) > 1:
+    85	            for i in range(len(syllables) - 1, -1, -1):
+    86	                breakdown.append(syllables[i])
+    87	                if i < len(syllables) - 1:
+    88	                    breakdown.append("".join(syllables[i:]))
+    89	        else:
+    90	            breakdown.append(word)
+    91	
+    92	        if word_index < len(words) - 1:
+    93	            partial = " ".join(words[word_index:])
+    94	            if partial != phrase:
+    95	                breakdown.append(partial)
+    96	
+    97	        if word_index == 0:
+    98	            breakdown.append(phrase)
+    99	
+   100	    breakdown.append(phrase)
+   101	    return breakdown
+   102	
+   103	
+   104	def build_key_phrases_section(
+   105	    key_phrases: list[KeyPhrase],
+   106	    l2_voice_map: dict[str, str],
+   107	    narrator_voice: str,
+   108	    l2_code: str,
+   109	) -> Section:
+   110	    """Build the KEY_PHRASES section.
+   111	
+   112	    For each phrase:
+   113	    1. L2 phrase (female-1)
+   114	    2. Narrator translation
+   115	    3. L2 phrase repeat (female-1)
+   116	    4. Word breakdown steps (female-1)
+   117	    """
+   118	    female_1_voice = l2_voice_map.get("female-1", narrator_voice)
+   119	    phrases: list[Phrase] = [
+   120	        Phrase(
+   121	            text=SECTION_TITLES[SectionType.KEY_PHRASES], voice_id=narrator_voice, language_code="en", role="narrator"
+   122	        )
+   123	    ]
+   124	
+   125	    for kp in key_phrases:
+   126	        if not isinstance(kp, dict):
+   127	            logger.warning("Skipping non-dict key phrase: %r", kp)
+   128	            continue
+   129	        phrase_text = kp.get("phrase", "")
+   130	        translation = kp.get("translation", "")
+   131	        if not phrase_text or not translation:
+   132	            logger.warning("Skipping key phrase with missing phrase or translation: %r", kp)
+   133	            continue
+   134	
+   135	        phrases.append(Phrase(text=phrase_text, voice_id=female_1_voice, language_code=l2_code))
+   136	        phrases.append(Phrase(text=translation, voice_id=narrator_voice, language_code="en", role="narrator"))
+   137	        for step in build_word_breakdown(phrase_text, l2_code):
+   138	            phrases.append(Phrase(text=step, voice_id=female_1_voice, language_code=l2_code))
+   139	
+   140	    return Section(section_type=SectionType.KEY_PHRASES, phrases=phrases)
+   141	
+   142	
+   143	def build_natural_speed_section(
+   144	    scenes: list[Scene],
+   145	    l2_voice_map: dict[str, str],
+   146	    narrator_voice: str,
+   147	    l2_code: str,
+   148	) -> Section:
+   149	    """Build the NATURAL_SPEED section with scene labels and multi-speaker dialogue."""
+   150	    phrases: list[Phrase] = [
+   151	        Phrase(
+   152	            text=SECTION_TITLES[SectionType.NATURAL_SPEED], voice_id=narrator_voice, language_code="en", role="narrator"
+   153	        )
+   154	    ]
+   155	
+   156	    for scene in scenes:
+   157	        if not isinstance(scene, dict):
+   158	            logger.warning("Skipping non-dict scene: %r", scene)
+   159	            continue
+   160	        scene_label = scene.get("label", "")
+   161	        if not scene_label:
+   162	            logger.warning("Skipping scene with missing label: %r", scene)
+   163	            continue
+   164	        phrases.append(Phrase(text=scene_label, voice_id=narrator_voice, language_code="en", role="narrator"))
+   165	        for line in scene.get("lines", []):
+   166	            if not isinstance(line, dict):
+   167	                logger.warning("Skipping non-dict dialogue line: %r", line)
+   168	                continue
+   169	            speaker = line.get("speaker", "").lower()
+   170	            text = line.get("text", "")
+   171	            if not speaker or not text:
+   172	                logger.warning("Skipping dialogue line with missing speaker or text: %r", line)
+   173	                continue
+   174	            voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
+   175	            phrases.append(Phrase(text=text, voice_id=voice_id, language_code=l2_code, role=speaker))
+   176	
+   177	    return Section(section_type=SectionType.NATURAL_SPEED, phrases=phrases)
+   178	
+   179	
+   180	def build_slow_speed_section(
+   181	    scenes: list[Scene],
+   182	    l2_voice_map: dict[str, str],
+   183	    narrator_voice: str,
+   184	    l2_code: str,
+   185	) -> Section:
+   186	    """Build the SLOW_SPEED section — mirrors NATURAL_SPEED with '...' between words."""
+   187	    phrases: list[Phrase] = [
+   188	        Phrase(
+   189	            text=SECTION_TITLES[SectionType.SLOW_SPEED], voice_id=narrator_voice, language_code="en", role="narrator"
+   190	        )
+   191	    ]
+   192	
+   193	    for scene in scenes:
+   194	        if not isinstance(scene, dict):
+   195	            logger.warning("Skipping non-dict scene: %r", scene)
+   196	            continue
+   197	        scene_label = scene.get("label", "")
+   198	        if not scene_label:
+   199	            logger.warning("Skipping scene with missing label: %r", scene)
+   200	            continue
+   201	        phrases.append(Phrase(text=scene_label, voice_id=narrator_voice, language_code="en", role="narrator"))
+   202	        for line in scene.get("lines", []):
+   203	            if not isinstance(line, dict):
+   204	                logger.warning("Skipping non-dict dialogue line: %r", line)
+   205	                continue
+   206	            speaker = line.get("speaker", "").lower()
+   207	            text = line.get("text", "")
+   208	            if not speaker or not text:
+   209	                logger.warning("Skipping dialogue line with missing speaker or text: %r", line)
+   210	                continue
+   211	            voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
+   212	            if uses_compound_word_breakdown(l2_code):
+   213	                slowed = " ... ".join(slow_norwegian_word(w) for w in text.split())
+   214	            else:
+   215	                slowed = " ... ".join(text.split())
+   216	            phrases.append(Phrase(text=slowed, voice_id=voice_id, language_code=l2_code, role=speaker))
+   217	
+   218	    return Section(section_type=SectionType.SLOW_SPEED, phrases=phrases)
+   219	
+   220	
+   221	def build_translated_section(
+   222	    scenes: list[Scene],
+   223	    l2_voice_map: dict[str, str],
+   224	    narrator_voice: str,
+   225	    l2_code: str,
+   226	) -> Section:
+   227	    """Build the TRANSLATED section — every L2 line followed by narrator translation."""
+   228	    phrases: list[Phrase] = [
+   229	        Phrase(
+   230	            text=SECTION_TITLES[SectionType.TRANSLATED], voice_id=narrator_voice, language_code="en", role="narrator"
+   231	        )
+   232	    ]
+   233	
+   234	    for scene in scenes:
+   235	        if not isinstance(scene, dict):
+   236	            logger.warning("Skipping non-dict scene: %r", scene)
+   237	            continue
+   238	        scene_label = scene.get("label", "")
+   239	        if not scene_label:
+   240	            logger.warning("Skipping scene with missing label: %r", scene)
+   241	            continue
+   242	        phrases.append(Phrase(text=scene_label, voice_id=narrator_voice, language_code="en", role="narrator"))
+   243	        for line in scene.get("lines", []):
+   244	            if not isinstance(line, dict):
+   245	                logger.warning("Skipping non-dict dialogue line: %r", line)
+   246	                continue
+   247	            speaker = line.get("speaker", "").lower()
+   248	            text = line.get("text", "")
+   249	            translation = line.get("translation", "")
+   250	            if not speaker or not text or not translation:
+   251	                logger.warning("Skipping dialogue line with missing speaker, text, or translation: %r", line)
+   252	                continue
+   253	            voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
+   254	            phrases.append(Phrase(text=text, voice_id=voice_id, language_code=l2_code, role=speaker))
+   255	            phrases.append(Phrase(text=translation, voice_id=narrator_voice, language_code="en", role="narrator"))
+   256	
+   257	    return Section(section_type=SectionType.TRANSLATED, phrases=phrases)
+   258	
+   259	
+   260	def build_slow_translated_section(
+   261	    scenes: list[Scene],
+   262	    l2_voice_map: dict[str, str],
+   263	    narrator_voice: str,
+   264	    l2_code: str,
+   265	) -> Section:
+   266	    """Build the SLOW_TRANSLATED section — slowed L2 lines with trailing narrator translation.
+   267	
+   268	    Mirrors build_translated_section but slows each L2 line with '...'
+   269	    word separation (like build_slow_speed_section). Lines without a
+   270	    translation are skipped (same as translated).
+   271	    """
+   272	    phrases: list[Phrase] = [
+   273	        Phrase(
+   274	            text=SECTION_TITLES[SectionType.SLOW_TRANSLATED],
+   275	            voice_id=narrator_voice,
+   276	            language_code="en",
+   277	            role="narrator",
+   278	        )
+   279	    ]
+   280	
+   281	    for scene in scenes:
+   282	        if not isinstance(scene, dict):
+   283	            logger.warning("Skipping non-dict scene: %r", scene)
+   284	            continue
+   285	        scene_label = scene.get("label", "")
+   286	        if not scene_label:
+   287	            logger.warning("Skipping scene with missing label: %r", scene)
+   288	            continue
+   289	        phrases.append(Phrase(text=scene_label, voice_id=narrator_voice, language_code="en", role="narrator"))
+   290	        for line in scene.get("lines", []):
+   291	            if not isinstance(line, dict):
+   292	                logger.warning("Skipping non-dict dialogue line: %r", line)
+   293	                continue
+   294	            speaker = line.get("speaker", "").lower()
+   295	            text = line.get("text", "")
+   296	            translation = line.get("translation", "")
+   297	            if not speaker or not text or not translation:
+   298	                logger.warning("Skipping dialogue line with missing speaker, text, or translation: %r", line)
+   299	                continue
+   300	            voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
+   301	            if uses_compound_word_breakdown(l2_code):
+   302	                slowed = " ... ".join(slow_norwegian_word(w) for w in text.split())
+   303	            else:
+   304	                slowed = " ... ".join(text.split())
+   305	            phrases.append(Phrase(text=slowed, voice_id=voice_id, language_code=l2_code, role=speaker))
+   306	            phrases.append(Phrase(text=translation, voice_id=narrator_voice, language_code="en", role="narrator"))
+   307	
+   308	    return Section(section_type=SectionType.SLOW_TRANSLATED, phrases=phrases)
 ```
 
 Three subtleties worth flagging:
@@ -2804,133 +2661,215 @@ cat -n backend/app/generation/syllabify.py
 ```
 
 ```output
-     1	"""Slovene syllabification for Pimsleur breakdown generation."""
-     2
-     3	from __future__ import annotations
-     4
-     5	_VOWELS = frozenset("aeiou")
-     6
-     7	# Valid consonant clusters that can begin a Slovene syllable.
-     8	# Onset maximization: the longest matching suffix of a consonant cluster
-     9	# that appears here goes with the following vowel.
-    10	_VALID_ONSETS = frozenset(
-    11	    [
-    12	        # Three-consonant onsets
-    13	        "str",
-    14	        "spr",
-    15	        "skl",
-    16	        "štr",
-    17	        "škl",
-    18	        # Two-consonant onsets — stop + liquid
-    19	        "pr",
-    20	        "pl",
-    21	        "br",
-    22	        "bl",
-    23	        "tr",
-    24	        "dr",
-    25	        "kr",
-    26	        "kl",
-    27	        "gr",
-    28	        "gl",
-    29	        "fr",
-    30	        "fl",
-    31	        # Two-consonant onsets — fricative + liquid / nasal
-    32	        "vr",
-    33	        "vl",
-    34	        "sr",
-    35	        "sl",
-    36	        "zr",
-    37	        "zl",
-    38	        "šr",
-    39	        "šl",
-    40	        "žr",
-    41	        "žl",
-    42	        "čr",
-    43	        "čl",
-    44	        # Two-consonant onsets — obstruent sequences
-    45	        "hv",
-    46	        "st",
-    47	        "sk",
-    48	        "sp",
-    49	        "šk",
-    50	        "šp",
-    51	        "št",
-    52	        "šč",
-    53	        "zg",
-    54	        "zd",
-    55	        "zm",
-    56	        "zn",
-    57	        "mn",
-    58	        "gn",
-    59	        "ps",
-    60	        "pn",
-    61	    ]
-    62	)
-    63
-    64
-    65	def syllabify_slovene_word(word: str) -> list[str]:
-    66	    """Split a Slovene word into syllables.
-    67
-    68	    Uses onset-maximization: for a consonant cluster between two vowels the
-    69	    longest suffix that is a recognised Slovene onset goes with the following
-    70	    vowel; the remainder closes the preceding syllable.
-    71
-    72	    Single-vowel and no-vowel words (including syllabic-r words like "prst")
-    73	    are returned as a single syllable.
-    74
-    75	    Args:
-    76	        word: Word to syllabify (case-insensitive; returned lowercased).
-    77
-    78	    Returns:
-    79	        List of syllables, lowercased.
-    80	    """
-    81	    word = word.lower().strip()
-    82	    if not word:
-    83	        return []
-    84
-    85	    vowel_positions = [i for i, ch in enumerate(word) if ch in _VOWELS]
-    86
-    87	    if len(vowel_positions) <= 1:
-    88	        return [word]
-    89
-    90	    syllables: list[str] = []
-    91	    start = 0
-    92
-    93	    for vi in range(len(vowel_positions) - 1):
-    94	        curr_v = vowel_positions[vi]
-    95	        next_v = vowel_positions[vi + 1]
-    96	        cluster = word[curr_v + 1 : next_v]
-    97
-    98	        if len(cluster) == 0:
-    99	            # Hiatus — split between adjacent vowels
-   100	            syllables.append(word[start : curr_v + 1])
-   101	            start = curr_v + 1
-   102	        elif len(cluster) == 1:
-   103	            # Single consonant → V-CV, consonant goes with following vowel
-   104	            syllables.append(word[start : curr_v + 1])
-   105	            start = curr_v + 1
-   106	        else:
-   107	            # Multiple consonants — find longest valid onset suffix
-   108	            split = _onset_split(cluster, curr_v + 1)
-   109	            syllables.append(word[start:split])
-   110	            start = split
-   111
-   112	    syllables.append(word[start:])
-   113	    return syllables
-   114
-   115
-   116	def _onset_split(cluster: str, cluster_start: int) -> int:
-   117	    """Return the index in the word where the onset begins.
-   118
-   119	    Tries progressively shorter suffixes of *cluster* (longest first) until a
-   120	    valid onset is found or only one consonant remains.
-   121	    """
-   122	    for onset_start in range(len(cluster)):
-   123	        candidate = cluster[onset_start:]
-   124	        if len(candidate) == 1 or candidate in _VALID_ONSETS:
-   125	            return cluster_start + onset_start
-   126	    # Fallback (should not be reached): first consonant closes preceding syllable
-   127	    return cluster_start + 1  # pragma: no cover
+     1	"""Syllabification for Pimsleur breakdown generation.
+     2	
+     3	The onset-maximization algorithm itself is language-agnostic; each language
+     4	supplies its own vowel set and its set of valid syllable onsets. Slovene and
+     5	Norwegian are wired today; ``syllabify_word`` dispatches through the language
+     6	registry (``app.languages.get_syllabifier``).
+     7	"""
+     8	
+     9	from __future__ import annotations
+    10	
+    11	_VOWELS = frozenset("aeiou")
+    12	
+    13	# Valid consonant clusters that can begin a Slovene syllable.
+    14	# Onset maximization: the longest matching suffix of a consonant cluster
+    15	# that appears here goes with the following vowel.
+    16	_VALID_ONSETS = frozenset(
+    17	    [
+    18	        # Three-consonant onsets
+    19	        "str",
+    20	        "spr",
+    21	        "skl",
+    22	        "štr",
+    23	        "škl",
+    24	        # Two-consonant onsets — stop + liquid
+    25	        "pr",
+    26	        "pl",
+    27	        "br",
+    28	        "bl",
+    29	        "tr",
+    30	        "dr",
+    31	        "kr",
+    32	        "kl",
+    33	        "gr",
+    34	        "gl",
+    35	        "fr",
+    36	        "fl",
+    37	        # Two-consonant onsets — fricative + liquid / nasal
+    38	        "vr",
+    39	        "vl",
+    40	        "sr",
+    41	        "sl",
+    42	        "zr",
+    43	        "zl",
+    44	        "šr",
+    45	        "šl",
+    46	        "žr",
+    47	        "žl",
+    48	        "čr",
+    49	        "čl",
+    50	        # Two-consonant onsets — obstruent sequences
+    51	        "hv",
+    52	        "st",
+    53	        "sk",
+    54	        "sp",
+    55	        "šk",
+    56	        "šp",
+    57	        "št",
+    58	        "šč",
+    59	        "zg",
+    60	        "zd",
+    61	        "zm",
+    62	        "zn",
+    63	        "mn",
+    64	        "gn",
+    65	        "ps",
+    66	        "pn",
+    67	    ]
+    68	)
+    69	
+    70	
+    71	# Norwegian (Bokmål) vowels include y and the special letters æ/ø/å.
+    72	_NO_VOWELS = frozenset("aeiouyæøå")
+    73	
+    74	# Valid consonant clusters that can begin a Norwegian syllable (onset
+    75	# maximization). Germanic phonotactics: stop/fricative + liquid/glide,
+    76	# s-clusters, and the palatal digraphs (kj/gj/sj/skj/tj/fj).
+    77	_NO_VALID_ONSETS = frozenset(
+    78	    [
+    79	        # Three-consonant onsets
+    80	        "str",
+    81	        "spr",
+    82	        "skr",
+    83	        "skv",
+    84	        "spl",
+    85	        "skj",
+    86	        "stj",
+    87	        # Stop/fricative + liquid
+    88	        "bl",
+    89	        "br",
+    90	        "dr",
+    91	        "fl",
+    92	        "fr",
+    93	        "gl",
+    94	        "gr",
+    95	        "kl",
+    96	        "kr",
+    97	        "pl",
+    98	        "pr",
+    99	        "tr",
+   100	        "vr",
+   101	        # s-clusters
+   102	        "sk",
+   103	        "sl",
+   104	        "sm",
+   105	        "sn",
+   106	        "sp",
+   107	        "st",
+   108	        "sv",
+   109	        # Stop/fricative + glide or nasal, palatal digraphs
+   110	        "kn",
+   111	        "kv",
+   112	        "gn",
+   113	        "kj",
+   114	        "gj",
+   115	        "sj",
+   116	        "tj",
+   117	        "fj",
+   118	        "hj",
+   119	        "hv",
+   120	        "pj",
+   121	        "bj",
+   122	        "dv",
+   123	        "tv",
+   124	    ]
+   125	)
+   126	
+   127	
+   128	def _syllabify(word: str, vowels: frozenset[str], valid_onsets: frozenset[str]) -> list[str]:
+   129	    """Onset-maximization syllabifier parameterised by language phonotactics.
+   130	
+   131	    For a consonant cluster between two vowels the longest suffix that is a
+   132	    recognised onset goes with the following vowel; the remainder closes the
+   133	    preceding syllable. Single-vowel and no-vowel words (including syllabic-r
+   134	    words like Slovene "prst") are returned as a single syllable.
+   135	
+   136	    Args:
+   137	        word: Word to syllabify (case-insensitive; returned lowercased).
+   138	        vowels: The language's vowel set.
+   139	        valid_onsets: The language's set of valid syllable onsets.
+   140	
+   141	    Returns:
+   142	        List of syllables, lowercased.
+   143	    """
+   144	    word = word.lower().strip()
+   145	    if not word:
+   146	        return []
+   147	
+   148	    vowel_positions = [i for i, ch in enumerate(word) if ch in vowels]
+   149	
+   150	    if len(vowel_positions) <= 1:
+   151	        return [word]
+   152	
+   153	    syllables: list[str] = []
+   154	    start = 0
+   155	
+   156	    for vi in range(len(vowel_positions) - 1):
+   157	        curr_v = vowel_positions[vi]
+   158	        next_v = vowel_positions[vi + 1]
+   159	        cluster = word[curr_v + 1 : next_v]
+   160	
+   161	        if len(cluster) <= 1:
+   162	            # Hiatus (adjacent vowels) or a single consonant → the consonant,
+   163	            # if any, goes with the following vowel (V-CV).
+   164	            syllables.append(word[start : curr_v + 1])
+   165	            start = curr_v + 1
+   166	        else:
+   167	            # Multiple consonants — find longest valid onset suffix
+   168	            split = _onset_split(cluster, curr_v + 1, valid_onsets)
+   169	            syllables.append(word[start:split])
+   170	            start = split
+   171	
+   172	    syllables.append(word[start:])
+   173	    return syllables
+   174	
+   175	
+   176	def _onset_split(cluster: str, cluster_start: int, valid_onsets: frozenset[str]) -> int:
+   177	    """Return the index in the word where the onset begins.
+   178	
+   179	    Tries progressively shorter suffixes of *cluster* (longest first) until a
+   180	    valid onset is found or only one consonant remains.
+   181	    """
+   182	    for onset_start in range(len(cluster)):
+   183	        candidate = cluster[onset_start:]
+   184	        if len(candidate) == 1 or candidate in valid_onsets:
+   185	            return cluster_start + onset_start
+   186	    # Fallback (should not be reached): first consonant closes preceding syllable
+   187	    return cluster_start + 1  # pragma: no cover
+   188	
+   189	
+   190	def syllabify_slovene_word(word: str) -> list[str]:
+   191	    """Split a Slovene word into syllables using Slovene phonotactics."""
+   192	    return _syllabify(word, _VOWELS, _VALID_ONSETS)
+   193	
+   194	
+   195	def syllabify_norwegian_word(word: str) -> list[str]:
+   196	    """Split a Norwegian (Bokmål) word into syllables."""
+   197	    return _syllabify(word, _NO_VOWELS, _NO_VALID_ONSETS)
+   198	
+   199	
+   200	def syllabify_word(word: str, language_code: str) -> list[str]:
+   201	    """Syllabify *word* using the rules for *language_code*.
+   202	
+   203	    Dispatches through the language registry (``app.languages.get_syllabifier``).
+   204	    Unknown codes fall back to the Slovene onset rules (the breakdown is a
+   205	    pedagogical audio aid, so a reasonable default is preferable to raising).
+   206	    """
+   207	    from app.languages import get_syllabifier
+   208	
+   209	    return get_syllabifier(language_code)(word)
 ```
 
 Single-vowel and no-vowel words (including syllabic-r words like `prst`) collapse to a single syllable, which the breakdown algorithm correctly handles by emitting the word as-is. The `_VALID_ONSETS` set encodes Slovene phonotactics — adding a new language means writing a new syllabifier with the same shape.
@@ -2957,84 +2896,11 @@ for word in ['dober', 'prosim', 'hvala', 'lepa', 'postaja', 'prst']:
 The enforcer dynamically replaces L1 (English) words with their L2 equivalents based on what the learner has already studied:
 
 ```bash
-cat -n backend/app/generation/enforcer.py
+git log --oneline --diff-filter=D -1 -- backend/app/generation/enforcer.py
 ```
 
 ```output
-     1	"""Content enforcer: two-pass L1 → L2 replacement using SRS database.
-     2	
-     3	The replacement dictionary is fully dynamic — built from SRS collocations'
-     4	translation fields. No hardcoded vocabulary.
-     5	"""
-     6	
-     7	from __future__ import annotations
-     8	
-     9	import logging
-    10	import re
-    11	
-    12	from app.srs.database import SRSDatabase
-    13	
-    14	logger = logging.getLogger(__name__)
-    15	
-    16	
-    17	class ContentEnforcer:
-    18	    """Replaces L1 words/phrases in generated text with their L2 equivalents.
-    19	
-    20	    Uses the SRS database to build the replacement dictionary dynamically.
-    21	    Matches are word-boundary-aware and case-insensitive.
-    22	    """
-    23	
-    24	    def __init__(self, srs_db: SRSDatabase) -> None:
-    25	        self._db = srs_db
-    26	        self._cached_patterns: list[tuple[re.Pattern, str]] | None = None
-    27	
-    28	    def get_replacement_dict(self) -> dict[str, str]:
-    29	        """Build {L1_translation → L2_text} mapping from the SRS database."""
-    30	        items = self._db.get_new_collocations(limit=10000)
-    31	        due_items = self._db.get_due_collocations(__import__("datetime").date.today())
-    32	        all_items = {i.syntactic_unit.text: i for i in items + due_items}
-    33	
-    34	        replacements: dict[str, str] = {}
-    35	        for item in all_items.values():
-    36	            translation = item.syntactic_unit.translation.strip().lower()
-    37	            l2_text = item.syntactic_unit.text
-    38	            if translation:
-    39	                replacements[translation] = l2_text
-    40	        return replacements
-    41	
-    42	    def enforce(self, text: str, day_number: int | None = None) -> str:
-    43	        """Replace known L1 phrases in text with their L2 equivalents.
-    44	
-    45	        Args:
-    46	            text: Input text (story dialogue) that may contain L1 words.
-    47	            day_number: Optional day number for violation recording.
-    48	
-    49	        Returns:
-    50	            Text with known L1 phrases replaced by their L2 equivalents.
-    51	        """
-    52	        if not text:
-    53	            return text
-    54	
-    55	        if self._cached_patterns is None:
-    56	            replacements = self.get_replacement_dict()
-    57	            if not replacements:
-    58	                return text
-    59	            self._cached_patterns = [
-    60	                (re.compile(r"(?<!\w)" + re.escape(l1) + r"(?!\w)", re.IGNORECASE), l2)
-    61	                for l1, l2 in sorted(replacements.items(), key=lambda x: -len(x[0]))
-    62	            ]
-    63	
-    64	        if not self._cached_patterns:
-    65	            return text
-    66	
-    67	        result = text
-    68	        for pattern, l2_phrase in self._cached_patterns:
-    69	            new_result = pattern.sub(l2_phrase, result)
-    70	            if new_result != result:
-    71	                logger.debug("Enforcer replaced → %r", l2_phrase)
-    72	                result = new_result
-    73	
-    74	        return result
+bf74822 refactor(backend): remove category-3 dead code (test-only / superseded)
 ```
 
 This is one of the key design decisions from the prototypes: **no hardcoded vocabulary**. The replacement dictionary is built dynamically from whatever the SRS database currently contains. Patterns are sorted longest-first so "thank you very much" matches before "thank you". Word-boundary regex prevents partial matches (e.g., "the" inside "other").
@@ -3042,29 +2908,11 @@ This is one of the key design decisions from the prototypes: **no hardcoded voca
 Real example — feeding English text through the enforcer with some Slovene vocabulary loaded:
 
 ```bash
-cd backend && uv run python -c "
-from app.models.syntactic_unit import SyntacticUnit
-from app.srs.database import SRSDatabase
-from app.generation.enforcer import ContentEnforcer
-
-with SRSDatabase(\":memory:\") as db:
-    # Load vocabulary the learner has studied
-    db.add_collocation(SyntacticUnit(text=\"Dober dan\", translation=\"Good day\", word_count=2, difficulty=1, source=\"llm\"))
-    db.add_collocation(SyntacticUnit(text=\"Hvala\", translation=\"Thank you\", word_count=1, difficulty=1, source=\"llm\"))
-    db.add_collocation(SyntacticUnit(text=\"prosim\", translation=\"please\", word_count=1, difficulty=1, source=\"llm\"))
-
-    enforcer = ContentEnforcer(db)
-
-    text = \"Good day! Could you help me, please? Thank you for your help.\"
-    enforced = enforcer.enforce(text)
-    print(f\"Before: {text}\")
-    print(f\"After:  {enforced}\")
-"
+grep -rln "ContentEnforcer" backend/app || echo "no references left - enforcer fully removed"
 ```
 
 ```output
-Before: Good day! Could you help me, please? Thank you for your help.
-After:  Dober dan! Could you help me, prosim? Hvala for your help.
+backend/app/generation/__pycache__/enforcer.cpython-313.pyc
 ```
 
 ---
@@ -3081,19 +2929,19 @@ cat -n backend/app/storage/store.py
 
 ```output
      1	"""SQLite repository for curricula, lessons, and audio file mappings.
-     2
+     2	
      3	Supports ":memory:" for in-memory test databases.
      4	"""
-     5
+     5	
      6	from __future__ import annotations
-     7
+     7	
      8	import sqlite3
      9	from contextlib import contextmanager
     10	from pathlib import Path
-    11
+    11	
     12	from app.models.curriculum import Curriculum
     13	from app.models.lesson import Lesson
-    14
+    14	
     15	_CREATE_CURRICULA = """
     16	CREATE TABLE IF NOT EXISTS curricula (
     17	    id TEXT PRIMARY KEY,
@@ -3101,7 +2949,7 @@ cat -n backend/app/storage/store.py
     19	    created_at TEXT DEFAULT (datetime('now'))
     20	)
     21	"""
-    22
+    22	
     23	_CREATE_LESSONS = """
     24	CREATE TABLE IF NOT EXISTS lessons (
     25	    id TEXT PRIMARY KEY,
@@ -3111,7 +2959,7 @@ cat -n backend/app/storage/store.py
     29	    created_at TEXT DEFAULT (datetime('now'))
     30	)
     31	"""
-    32
+    32	
     33	_CREATE_AUDIO_FILES = """
     34	CREATE TABLE IF NOT EXISTS audio_files (
     35	    id TEXT PRIMARY KEY,
@@ -3122,188 +2970,250 @@ cat -n backend/app/storage/store.py
     40	    created_at TEXT DEFAULT (datetime('now'))
     41	)
     42	"""
-    43
+    43	
     44	# Columns added after initial schema — applied via migration in _init_schema
     45	_AUDIO_FILES_MIGRATION_COLUMNS = [
     46	    ("section_index", "INTEGER"),
     47	    ("section_type", "TEXT"),
-    48	]
-    49
-    50
-    51	class ContentStore:
-    52	    """SQLite-backed store for curricula, lessons, and audio files.
-    53
-    54	    Use `:memory:` as db_path for in-memory test databases.
-    55	    """
-    56
-    57	    def __init__(self, db_path: str = ":memory:") -> None:
-    58	        self._in_memory = db_path == ":memory:"
-    59	        if self._in_memory:
-    60	            self._conn = sqlite3.connect(":memory:", check_same_thread=False)
-    61	            self._conn.row_factory = sqlite3.Row
-    62	            self._init_schema(self._conn)
-    63	        else:
-    64	            path = Path(db_path)
-    65	            path.parent.mkdir(parents=True, exist_ok=True)
-    66	            self._path = str(path)
-    67	            self._conn = None
-    68	            with self._file_conn() as conn:
-    69	                self._init_schema(conn)
-    70
-    71	    def _init_schema(self, conn: sqlite3.Connection) -> None:
-    72	        conn.execute(_CREATE_CURRICULA)
-    73	        conn.execute(_CREATE_LESSONS)
-    74	        conn.execute(_CREATE_AUDIO_FILES)
-    75	        conn.execute("CREATE INDEX IF NOT EXISTS idx_lessons_curriculum_id ON lessons(curriculum_id)")
-    76	        self._migrate_audio_files(conn)
-    77	        conn.commit()
-    78
-    79	    def _migrate_audio_files(self, conn: sqlite3.Connection) -> None:
-    80	        """Add any missing columns to audio_files (idempotent)."""
-    81	        existing = {row[1] for row in conn.execute("PRAGMA table_info(audio_files)").fetchall()}
-    82	        for col_name, col_type in _AUDIO_FILES_MIGRATION_COLUMNS:
-    83	            if col_name not in existing:
-    84	                conn.execute(f"ALTER TABLE audio_files ADD COLUMN {col_name} {col_type}")
-    85
-    86	    @contextmanager
-    87	    def _file_conn(self):
-    88	        conn = sqlite3.connect(self._path, check_same_thread=False)
-    89	        conn.row_factory = sqlite3.Row
-    90	        try:
-    91	            yield conn
-    92	            conn.commit()
-    93	        finally:
-    94	            conn.close()
-    95
-    96	    @contextmanager
-    97	    def _get_conn(self):
-    98	        if self._in_memory:
-    99	            yield self._conn
-   100	        else:
-   101	            with self._file_conn() as conn:
-   102	                yield conn
-   103
-   104	    def close(self) -> None:
-   105	        if self._in_memory and self._conn is not None:
-   106	            self._conn.close()
-   107	            self._conn = None
-   108
-   109	    def __enter__(self) -> ContentStore:
-   110	        return self
-   111
-   112	    def __exit__(self, *_) -> None:
-   113	        self.close()
-   114
-   115	    # ── Curricula ─────────────────────────────────────────────────────────
-   116
-   117	    def save_curriculum(self, curriculum_id: str, curriculum: Curriculum) -> None:
-   118	        with self._get_conn() as conn:
-   119	            conn.execute(
-   120	                "INSERT OR REPLACE INTO curricula (id, data_json) VALUES (?, ?)",
-   121	                (curriculum_id, curriculum.to_json()),
-   122	            )
-   123	            if self._in_memory:
-   124	                conn.commit()
-   125
-   126	    def get_curriculum(self, curriculum_id: str) -> Curriculum | None:
-   127	        with self._get_conn() as conn:
-   128	            row = conn.execute("SELECT data_json FROM curricula WHERE id = ?", (curriculum_id,)).fetchone()
-   129	        if row is None:
-   130	            return None
-   131	        return Curriculum.from_json(row["data_json"])
-   132
-   133	    def list_curricula(self) -> list[dict]:
-   134	        with self._get_conn() as conn:
-   135	            rows = conn.execute("SELECT id, data_json FROM curricula ORDER BY created_at DESC").fetchall()
-   136	        result = []
-   137	        for row in rows:
-   138	            c = Curriculum.from_json(row["data_json"])
-   139	            result.append({"id": row["id"], "topic": c.topic})
-   140	        return result
-   141
-   142	    # ── Lessons ───────────────────────────────────────────────────────────
-   143
-   144	    def save_lesson(self, lesson_id: str, curriculum_id: str, day: int, lesson: Lesson) -> None:
+    48	    ("cues_json", "TEXT"),
+    49	]
+    50	
+    51	
+    52	class ContentStore:
+    53	    """SQLite-backed store for curricula, lessons, and audio files.
+    54	
+    55	    Use `:memory:` as db_path for in-memory test databases.
+    56	    """
+    57	
+    58	    def __init__(self, db_path: str = ":memory:") -> None:
+    59	        self._in_memory = db_path == ":memory:"
+    60	        if self._in_memory:
+    61	            self._conn = sqlite3.connect(":memory:", check_same_thread=False)
+    62	            self._conn.row_factory = sqlite3.Row
+    63	            self._init_schema(self._conn)
+    64	        else:
+    65	            path = Path(db_path)
+    66	            path.parent.mkdir(parents=True, exist_ok=True)
+    67	            self._path = str(path)
+    68	            self._conn = None
+    69	            with self._file_conn() as conn:
+    70	                self._init_schema(conn)
+    71	
+    72	    def _init_schema(self, conn: sqlite3.Connection) -> None:
+    73	        conn.execute(_CREATE_CURRICULA)
+    74	        conn.execute(_CREATE_LESSONS)
+    75	        conn.execute(_CREATE_AUDIO_FILES)
+    76	        conn.execute("CREATE INDEX IF NOT EXISTS idx_lessons_curriculum_id ON lessons(curriculum_id)")
+    77	        self._migrate_audio_files(conn)
+    78	        conn.commit()
+    79	
+    80	    def _migrate_audio_files(self, conn: sqlite3.Connection) -> None:
+    81	        """Add any missing columns to audio_files (idempotent)."""
+    82	        existing = {row[1] for row in conn.execute("PRAGMA table_info(audio_files)").fetchall()}
+    83	        for col_name, col_type in _AUDIO_FILES_MIGRATION_COLUMNS:
+    84	            if col_name not in existing:
+    85	                conn.execute(f"ALTER TABLE audio_files ADD COLUMN {col_name} {col_type}")
+    86	
+    87	    @contextmanager
+    88	    def _file_conn(self):
+    89	        conn = sqlite3.connect(self._path, check_same_thread=False)
+    90	        conn.row_factory = sqlite3.Row
+    91	        conn.execute("PRAGMA busy_timeout=5000")
+    92	        try:
+    93	            yield conn
+    94	            conn.commit()
+    95	        finally:
+    96	            conn.close()
+    97	
+    98	    @contextmanager
+    99	    def _get_conn(self):
+   100	        if self._in_memory:
+   101	            yield self._conn
+   102	        else:
+   103	            with self._file_conn() as conn:
+   104	                yield conn
+   105	
+   106	    def close(self) -> None:
+   107	        if self._in_memory and self._conn is not None:
+   108	            self._conn.close()
+   109	            self._conn = None
+   110	
+   111	    def __enter__(self) -> ContentStore:
+   112	        return self
+   113	
+   114	    def __exit__(self, *_) -> None:
+   115	        self.close()
+   116	
+   117	    # ── Curricula ─────────────────────────────────────────────────────────
+   118	
+   119	    def save_curriculum(self, curriculum_id: str, curriculum: Curriculum) -> None:
+   120	        with self._get_conn() as conn:
+   121	            conn.execute(
+   122	                "INSERT OR REPLACE INTO curricula (id, data_json) VALUES (?, ?)",
+   123	                (curriculum_id, curriculum.to_json()),
+   124	            )
+   125	            if self._in_memory:
+   126	                conn.commit()
+   127	
+   128	    def get_curriculum(self, curriculum_id: str) -> Curriculum | None:
+   129	        with self._get_conn() as conn:
+   130	            row = conn.execute("SELECT data_json FROM curricula WHERE id = ?", (curriculum_id,)).fetchone()
+   131	        if row is None:
+   132	            return None
+   133	        return Curriculum.from_json(row["data_json"])
+   134	
+   135	    def list_curricula(self) -> list[dict]:
+   136	        with self._get_conn() as conn:
+   137	            rows = conn.execute("SELECT id, data_json, created_at FROM curricula ORDER BY created_at DESC").fetchall()
+   138	        result = []
+   139	        for row in rows:
+   140	            c = Curriculum.from_json(row["data_json"])
+   141	            result.append({"id": row["id"], "topic": c.topic, "created_at": row["created_at"]})
+   142	        return result
+   143	
+   144	    def delete_curriculum(self, curriculum_id: str) -> bool:
    145	        with self._get_conn() as conn:
    146	            conn.execute(
-   147	                "INSERT OR REPLACE INTO lessons (id, curriculum_id, day, data_json) VALUES (?, ?, ?, ?)",
-   148	                (lesson_id, curriculum_id, day, lesson.to_json()),
+   147	                "DELETE FROM audio_files WHERE lesson_id IN (SELECT id FROM lessons WHERE curriculum_id = ?)",
+   148	                (curriculum_id,),
    149	            )
-   150	            if self._in_memory:
-   151	                conn.commit()
-   152
-   153	    def get_lesson(self, lesson_id: str) -> Lesson | None:
-   154	        with self._get_conn() as conn:
-   155	            row = conn.execute("SELECT data_json FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
-   156	        if row is None:
-   157	            return None
-   158	        return Lesson.from_json(row["data_json"])
-   159
-   160	    def get_latest_lesson_by_day(self, curriculum_id: str, day: int) -> tuple[str, Lesson] | None:
-   161	        """Return the most recent (lesson_id, Lesson) for a given curriculum day, or None."""
-   162	        with self._get_conn() as conn:
-   163	            row = conn.execute(
-   164	                "SELECT id, data_json FROM lessons"
-   165	                " WHERE curriculum_id = ? AND day = ?"
-   166	                " ORDER BY created_at DESC, rowid DESC LIMIT 1",
-   167	                (curriculum_id, day),
-   168	            ).fetchone()
+   150	            conn.execute("DELETE FROM lessons WHERE curriculum_id = ?", (curriculum_id,))
+   151	            deleted = conn.execute("DELETE FROM curricula WHERE id = ?", (curriculum_id,)).rowcount > 0
+   152	            conn.commit()
+   153	        return deleted
+   154	
+   155	    # ── Lessons ───────────────────────────────────────────────────────────
+   156	
+   157	    def save_lesson(self, lesson_id: str, curriculum_id: str, day: int, lesson: Lesson) -> None:
+   158	        with self._get_conn() as conn:
+   159	            conn.execute(
+   160	                "INSERT OR REPLACE INTO lessons (id, curriculum_id, day, data_json) VALUES (?, ?, ?, ?)",
+   161	                (lesson_id, curriculum_id, day, lesson.to_json()),
+   162	            )
+   163	            if self._in_memory:
+   164	                conn.commit()
+   165	
+   166	    def get_lesson(self, lesson_id: str) -> Lesson | None:
+   167	        with self._get_conn() as conn:
+   168	            row = conn.execute("SELECT data_json FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
    169	        if row is None:
    170	            return None
-   171	        return row["id"], Lesson.from_json(row["data_json"])
-   172
-   173	    # ── Audio files ───────────────────────────────────────────────────────
-   174
-   175	    def save_audio_file(
-   176	        self,
-   177	        audio_id: str,
-   178	        lesson_id: str,
-   179	        file_path: str,
-   180	        *,
-   181	        section_index: int | None = None,
-   182	        section_type: str | None = None,
-   183	    ) -> None:
-   184	        with self._get_conn() as conn:
-   185	            conn.execute(
-   186	                "INSERT OR REPLACE INTO audio_files (id, lesson_id, file_path, section_index, section_type)"
-   187	                " VALUES (?, ?, ?, ?, ?)",
-   188	                (audio_id, lesson_id, file_path, section_index, section_type),
-   189	            )
-   190	            if self._in_memory:
-   191	                conn.commit()
-   192
-   193	    def get_audio_file(self, audio_id: str) -> str | None:
-   194	        with self._get_conn() as conn:
-   195	            row = conn.execute("SELECT file_path FROM audio_files WHERE id = ?", (audio_id,)).fetchone()
-   196	        if row is None:
-   197	            return None
-   198	        return row["file_path"]
-   199
-   200	    def get_audio_file_row(self, audio_id: str) -> dict | None:
-   201	        """Return all fields for an audio_files row, or None if not found."""
-   202	        with self._get_conn() as conn:
-   203	            row = conn.execute(
-   204	                "SELECT id, lesson_id, file_path, section_index, section_type FROM audio_files WHERE id = ?",
-   205	                (audio_id,),
-   206	            ).fetchone()
-   207	        if row is None:
-   208	            return None
-   209	        return dict(row)
-   210
-   211	    def list_audio_files_for_lesson(self, lesson_id: str) -> list[dict]:
-   212	        """Return all audio file rows for a lesson.
-   213
-   214	        Ordering: full-lesson row first (section_index IS NULL), then sections
-   215	        in ascending section_index order.
-   216	        """
-   217	        with self._get_conn() as conn:
-   218	            rows = conn.execute(
-   219	                "SELECT id, lesson_id, file_path, section_index, section_type FROM audio_files"
-   220	                " WHERE lesson_id = ?"
-   221	                " ORDER BY section_index IS NOT NULL, section_index ASC",
-   222	                (lesson_id,),
-   223	            ).fetchall()
-   224	        return [dict(r) for r in rows]
+   171	        return Lesson.from_json(row["data_json"])
+   172	
+   173	    def get_lesson_row(self, lesson_id: str) -> dict | None:
+   174	        """Return the raw lesson row as a dict (id, curriculum_id, day, data_json), or None."""
+   175	        with self._get_conn() as conn:
+   176	            row = conn.execute(
+   177	                "SELECT id, curriculum_id, day, data_json FROM lessons WHERE id = ?",
+   178	                (lesson_id,),
+   179	            ).fetchone()
+   180	        if row is None:
+   181	            return None
+   182	        return dict(row)
+   183	
+   184	    def get_latest_lesson_by_day(self, curriculum_id: str, day: int) -> tuple[str, Lesson] | None:
+   185	        """Return the most recent (lesson_id, Lesson) for a given curriculum day, or None."""
+   186	        with self._get_conn() as conn:
+   187	            row = conn.execute(
+   188	                "SELECT id, data_json FROM lessons"
+   189	                " WHERE curriculum_id = ? AND day = ?"
+   190	                " ORDER BY created_at DESC, rowid DESC LIMIT 1",
+   191	                (curriculum_id, day),
+   192	            ).fetchone()
+   193	        if row is None:
+   194	            return None
+   195	        return row["id"], Lesson.from_json(row["data_json"])
+   196	
+   197	    def get_lesson_days(self, curriculum_id: str) -> list[dict]:
+   198	        """Return [{day, lesson_id}, ...] for each day with a lesson (latest per day)."""
+   199	        with self._get_conn() as conn:
+   200	            rows = conn.execute(
+   201	                "SELECT l.day, l.id AS lesson_id"
+   202	                " FROM lessons l"
+   203	                " INNER JOIN ("
+   204	                "   SELECT day, MAX(rowid) AS max_rowid"
+   205	                "   FROM lessons WHERE curriculum_id = ?"
+   206	                "   GROUP BY day"
+   207	                " ) latest ON l.rowid = latest.max_rowid"
+   208	                " ORDER BY l.day ASC",
+   209	                (curriculum_id,),
+   210	            ).fetchall()
+   211	        return [{"day": row["day"], "lesson_id": row["lesson_id"]} for row in rows]
+   212	
+   213	    def list_lessons(self) -> list[tuple[str, str, int, Lesson]]:
+   214	        """Every lesson as ``(lesson_id, curriculum_id, day, Lesson)``, oldest first.
+   215	
+   216	        Used by one-shot migrations that need to walk and rewrite all lessons.
+   217	        """
+   218	        with self._get_conn() as conn:
+   219	            rows = conn.execute("SELECT id, curriculum_id, day, data_json FROM lessons ORDER BY created_at").fetchall()
+   220	        return [(r["id"], r["curriculum_id"], r["day"], Lesson.from_json(r["data_json"])) for r in rows]
+   221	
+   222	    def get_all_token_glosses(self) -> dict[str, str]:
+   223	        """Merge token_glosses from all stored lessons into a single dict.
+   224	
+   225	        Later lessons (higher rowid) win on duplicate lemmas.
+   226	        """
+   227	        with self._get_conn() as conn:
+   228	            rows = conn.execute("SELECT data_json FROM lessons ORDER BY rowid ASC").fetchall()
+   229	        glosses: dict[str, str] = {}
+   230	        for row in rows:
+   231	            lesson = Lesson.from_json(row["data_json"])
+   232	            glosses.update(lesson.generation_metadata.get("token_glosses", {}))
+   233	        return glosses
+   234	
+   235	    # ── Audio files ───────────────────────────────────────────────────────
+   236	
+   237	    def save_audio_file(
+   238	        self,
+   239	        audio_id: str,
+   240	        lesson_id: str,
+   241	        file_path: str,
+   242	        *,
+   243	        section_index: int | None = None,
+   244	        section_type: str | None = None,
+   245	        cues_json: str | None = None,
+   246	    ) -> None:
+   247	        with self._get_conn() as conn:
+   248	            conn.execute(
+   249	                "INSERT OR REPLACE INTO audio_files (id, lesson_id, file_path, section_index, section_type, cues_json)"
+   250	                " VALUES (?, ?, ?, ?, ?, ?)",
+   251	                (audio_id, lesson_id, file_path, section_index, section_type, cues_json),
+   252	            )
+   253	            if self._in_memory:
+   254	                conn.commit()
+   255	
+   256	    def get_audio_file_row(self, audio_id: str) -> dict | None:
+   257	        """Return all fields for an audio_files row, or None if not found."""
+   258	        with self._get_conn() as conn:
+   259	            row = conn.execute(
+   260	                "SELECT id, lesson_id, file_path, section_index, section_type, cues_json FROM audio_files WHERE id = ?",
+   261	                (audio_id,),
+   262	            ).fetchone()
+   263	        if row is None:
+   264	            return None
+   265	        return dict(row)
+   266	
+   267	    def list_audio_files_for_lesson(self, lesson_id: str) -> list[dict]:
+   268	        """Return all audio file rows for a lesson.
+   269	
+   270	        Ordering: full-lesson row first (section_index IS NULL), then sections
+   271	        in ascending section_index order.
+   272	        """
+   273	        with self._get_conn() as conn:
+   274	            rows = conn.execute(
+   275	                "SELECT id, lesson_id, file_path, section_index, section_type, cues_json FROM audio_files"
+   276	                " WHERE lesson_id = ?"
+   277	                " ORDER BY section_index IS NOT NULL, section_index ASC",
+   278	                (lesson_id,),
+   279	            ).fetchall()
+   280	        return [dict(r) for r in rows]
+   281	
+   282	    def delete_audio_files_for_lesson(self, lesson_id: str) -> None:
+   283	        """Delete all audio file rows for a lesson so re-render replaces, not appends."""
+   284	        with self._get_conn() as conn:
+   285	            conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (lesson_id,))
+   286	            conn.commit()
 ```
 
 **Why JSON columns instead of normalized tables?** Curricula and lessons are immutable artifacts whose schemas evolve quickly during prototyping. Storing them as JSON avoids ALTER TABLE churn and lets `Lesson.to_json()` / `Lesson.from_json()` round-trip without an ORM. The `audio_files` table is normalized because we query it by `lesson_id` and need ordering control (full-lesson row first, then sections by `section_index`).
@@ -3340,9 +3250,9 @@ with ContentStore(':memory:') as store:
 ```
 
 ```output
-curricula: [{'id': 'greetings-abc12345', 'topic': 'greetings'}]
+curricula: [{'id': 'greetings-abc12345', 'topic': 'greetings', 'created_at': '2026-07-11 12:01:06'}]
 lesson by day: day1-abc12345 -> Day 1
-audio rows: [{'id': 'audio-abc12345', 'lesson_id': 'day1-abc12345', 'file_path': '/tmp/full.wav', 'section_index': None, 'section_type': None}]
+audio rows: [{'id': 'audio-abc12345', 'lesson_id': 'day1-abc12345', 'file_path': '/tmp/full.wav', 'section_index': None, 'section_type': None, 'cues_json': None}]
 ```
 
 ---
@@ -3373,19 +3283,6 @@ cat -n backend/app/audio/ports.py
     13	    async def synthesize(self, text: str, voice_id: str, output_path: Path, rate: str = "+0%") -> None: ...
     14	
     15	    async def list_voices(self, language_code: str | None = None) -> list[dict]: ...
-    16	
-    17	
-    18	@runtime_checkable
-    19	class AudioProcessor(Protocol):
-    20	    """Protocol for audio processing operations."""
-    21	
-    22	    def concatenate(self, audio_bytes_list: list[bytes], silence_ms: int = 300) -> bytes: ...
-    23	
-    24	    def normalize(self, audio_bytes: bytes) -> bytes: ...
-    25	
-    26	    def add_silence(self, duration_ms: int) -> bytes: ...
-    27	
-    28	    def trim_silence(self, audio_bytes: bytes, threshold_db: float = -40.0) -> bytes: ...
 ```
 
 Two protocols define the contracts: `TTSService` for synthesis (text → audio file) and `AudioProcessor` for manipulation (concatenation, normalization, silence insertion). The `@runtime_checkable` decorator means `isinstance()` works at runtime — useful for factory validation.
@@ -3398,99 +3295,106 @@ cat -n backend/app/audio/edge_tts.py
 
 ```output
      1	"""EdgeTTS adapter — implements TTSService Protocol."""
-     2
+     2	
      3	from __future__ import annotations
-     4
+     4	
      5	import asyncio
      6	import hashlib
      7	import logging
      8	import shutil
      9	from pathlib import Path
-    10
-    11	import edge_tts
-    12
-    13	logger = logging.getLogger(__name__)
-    14
-    15	# Rate limiting constants (ported from prototype)
-    16	MIN_REQUEST_DELAY_S = 0.2
-    17	MAX_CONCURRENT_REQUESTS = 10
-    18	MAX_RETRIES = 3
-    19
-    20
-    21	class EdgeTTSService:
-    22	    """Microsoft Edge TTS adapter.
-    23
-    24	    Implements the TTSService Protocol with:
-    25	    - Rate limiting (200 ms between requests, max 3 concurrent)
-    26	    - Optional file-based caching (keyed on text + voice + rate)
-    27	    - Retry on transient errors
-    28	    """
-    29
-    30	    def __init__(self, cache_dir: Path | None = None) -> None:
-    31	        self._cache_dir = cache_dir
-    32	        self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
-    33
-    34	    # ------------------------------------------------------------------
-    35	    # TTSService Protocol implementation
-    36	    # ------------------------------------------------------------------
-    37
-    38	    async def synthesize(self, text: str, voice_id: str, output_path: Path, rate: str = "+0%") -> None:
-    39	        """Synthesize *text* to *output_path* using Edge TTS.
-    40
-    41	        Args:
-    42	            text: Text to synthesize.
-    43	            voice_id: Edge TTS voice short name (e.g. "sl-SI-PetraNeural").
-    44	            output_path: Destination file path for the synthesized audio.
-    45	            rate: Speech rate adjustment (e.g. "+0%", "-20%").
-    46	        """
-    47	        if self._cache_dir is not None:
-    48	            cached = self._cache_path(text, voice_id, rate)
-    49	            if cached.exists():
-    50	                shutil.copy2(cached, output_path)
-    51	                logger.debug("EdgeTTS cache hit for %r", text[:40])
-    52	                return
-    53
-    54	        await self._synthesize_with_retry(text, voice_id, output_path, rate)
-    55
-    56	        if self._cache_dir is not None:
-    57	            cached = self._cache_path(text, voice_id, rate)
-    58	            cached.parent.mkdir(parents=True, exist_ok=True)
-    59	            shutil.copy2(output_path, cached)
-    60
-    61	    async def list_voices(self, language_code: str | None = None) -> list[dict]:
-    62	        """Return available Edge TTS voices, optionally filtered by language."""
-    63	        voices = await edge_tts.list_voices()
-    64	        if language_code:
-    65	            voices = [v for v in voices if language_code in v.get("Locale", "")]
-    66	        return voices
-    67
-    68	    # ------------------------------------------------------------------
-    69	    # Private helpers
-    70	    # ------------------------------------------------------------------
-    71
-    72	    def _cache_path(self, text: str, voice_id: str, rate: str) -> Path:
-    73	        key = f"{voice_id}|{rate}|{text}"
-    74	        digest = hashlib.sha256(key.encode()).hexdigest()[:16]
-    75	        return self._cache_dir / f"{digest}.mp3"  # type: ignore[operator]
-    76
-    77	    async def _synthesize_with_retry(self, text: str, voice_id: str, output_path: Path, rate: str) -> None:
-    78	        last_error: Exception | None = None
-    79	        for attempt in range(MAX_RETRIES):
-    80	            try:
-    81	                await self._do_synthesize(text, voice_id, output_path, rate)
-    82	                return
-    83	            except (ConnectionResetError, ConnectionError, OSError) as exc:
-    84	                last_error = exc
-    85	                logger.warning("EdgeTTS transient error (attempt %d): %s", attempt + 1, exc)
-    86	                await asyncio.sleep(0.5 * (2**attempt))
-    87	        raise RuntimeError(f"EdgeTTS synthesis failed after {MAX_RETRIES} attempts") from last_error
-    88
-    89	    async def _do_synthesize(self, text: str, voice_id: str, output_path: Path, rate: str) -> None:
-    90	        async with self._semaphore:
-    91	            communicate = edge_tts.Communicate(text, voice_id, rate=rate)
-    92	            output_path.parent.mkdir(parents=True, exist_ok=True)
-    93	            await communicate.save(str(output_path))
-    94	            await asyncio.sleep(MIN_REQUEST_DELAY_S)
+    10	
+    11	import aiohttp
+    12	import edge_tts
+    13	
+    14	logger = logging.getLogger(__name__)
+    15	
+    16	# Rate limiting constants (ported from prototype)
+    17	MIN_REQUEST_DELAY_S = 0.2
+    18	MAX_CONCURRENT_REQUESTS = 10
+    19	MAX_RETRIES = 3
+    20	
+    21	
+    22	class EdgeTTSService:
+    23	    """Microsoft Edge TTS adapter.
+    24	
+    25	    Implements the TTSService Protocol with:
+    26	    - Rate limiting (200 ms between requests, max 10 concurrent)
+    27	    - Optional file-based caching (keyed on text + voice + rate)
+    28	    - Retry on transient errors
+    29	    """
+    30	
+    31	    def __init__(self, cache_dir: Path | None = None) -> None:
+    32	        self._cache_dir = cache_dir
+    33	        self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+    34	
+    35	    # ------------------------------------------------------------------
+    36	    # TTSService Protocol implementation
+    37	    # ------------------------------------------------------------------
+    38	
+    39	    async def synthesize(self, text: str, voice_id: str, output_path: Path, rate: str = "+0%") -> None:
+    40	        """Synthesize *text* to *output_path* using Edge TTS.
+    41	
+    42	        Args:
+    43	            text: Text to synthesize.
+    44	            voice_id: Edge TTS voice short name (e.g. "sl-SI-PetraNeural").
+    45	            output_path: Destination file path for the synthesized audio.
+    46	            rate: Speech rate adjustment (e.g. "+0%", "-20%").
+    47	        """
+    48	        if self._cache_dir is not None:
+    49	            cached = self._cache_path(text, voice_id, rate)
+    50	            if cached.exists():
+    51	                shutil.copy2(cached, output_path)
+    52	                logger.debug("EdgeTTS cache hit for %r", text[:40])
+    53	                return
+    54	
+    55	        await self._synthesize_with_retry(text, voice_id, output_path, rate)
+    56	
+    57	        if self._cache_dir is not None:
+    58	            cached = self._cache_path(text, voice_id, rate)
+    59	            cached.parent.mkdir(parents=True, exist_ok=True)
+    60	            shutil.copy2(output_path, cached)
+    61	
+    62	    async def list_voices(self, language_code: str | None = None) -> list[dict]:
+    63	        """Return available Edge TTS voices, optionally filtered by language."""
+    64	        voices = await edge_tts.list_voices()
+    65	        if language_code:
+    66	            voices = [v for v in voices if language_code in v.get("Locale", "")]
+    67	        return voices
+    68	
+    69	    # ------------------------------------------------------------------
+    70	    # Private helpers
+    71	    # ------------------------------------------------------------------
+    72	
+    73	    def _cache_path(self, text: str, voice_id: str, rate: str) -> Path:
+    74	        key = f"{voice_id}|{rate}|{text}"
+    75	        digest = hashlib.sha256(key.encode()).hexdigest()[:16]
+    76	        return self._cache_dir / f"{digest}.mp3"  # type: ignore[operator]
+    77	
+    78	    async def _synthesize_with_retry(self, text: str, voice_id: str, output_path: Path, rate: str) -> None:
+    79	        last_error: Exception | None = None
+    80	        for attempt in range(MAX_RETRIES):
+    81	            try:
+    82	                await self._do_synthesize(text, voice_id, output_path, rate)
+    83	                return
+    84	            except (
+    85	                ConnectionResetError,
+    86	                ConnectionError,
+    87	                OSError,
+    88	                edge_tts.exceptions.EdgeTTSException,
+    89	                aiohttp.ClientError,
+    90	            ) as exc:
+    91	                last_error = exc
+    92	                logger.warning("EdgeTTS transient error (attempt %d): %s", attempt + 1, exc)
+    93	                await asyncio.sleep(0.5 * (2**attempt))
+    94	        raise RuntimeError(f"EdgeTTS synthesis failed after {MAX_RETRIES} attempts") from last_error
+    95	
+    96	    async def _do_synthesize(self, text: str, voice_id: str, output_path: Path, rate: str) -> None:
+    97	        async with self._semaphore:
+    98	            communicate = edge_tts.Communicate(text, voice_id, rate=rate)
+    99	            output_path.parent.mkdir(parents=True, exist_ok=True)
+   100	            await communicate.save(str(output_path))
+   101	            await asyncio.sleep(MIN_REQUEST_DELAY_S)
 ```
 
 EdgeTTS is Microsoft's free neural TTS. The adapter adds three reliability features:
@@ -3507,62 +3411,61 @@ cat -n backend/app/audio/pause_calculator.py
 
 ```output
      1	"""Natural pause calculator — ports exact prototype ratios."""
-     2
+     2	
      3	from __future__ import annotations
-     4
+     4	
      5	from app.models.lesson import SectionType
-     6
+     6	
      7	_BASE_PHRASE_PAUSE_MS = 500  # prototype's silence_between_phrases (0.5 s)
      8	_SLOW_SPEED_FACTOR = 1.2
      9	_SECTION_BOUNDARY_PAUSE_MS = 3000
     10	_ENGLISH_LANG = "en"
-    11
+    11	
     12	_BOUNDARY_PAUSES: dict[str, int] = {
     13	    "syllable": 300,
     14	    "sentence": 2000,
     15	}
-    16
-    17
+    16	
+    17	
     18	class NaturalPauseCalculator:
     19	    """Inter-phrase pause calculator matching the micro-demo-0.0 prototype."""
-    20
+    20	
     21	    def get_section_boundary_pause(self) -> int:
     22	        """Return the pause (ms) inserted between lesson sections."""
     23	        return _SECTION_BOUNDARY_PAUSE_MS
-    24
-    25	    def get_boundary_pause(self, boundary_type: str) -> int:
-    26	        """Return a fixed pause (ms) for the given boundary type."""
-    27	        return _BOUNDARY_PAUSES[boundary_type]
-    28
-    29	    def get_phrase_pause(
-    30	        self,
-    31	        audio_duration_s: float,
-    32	        word_count: int,
-    33	        section_type: SectionType,
-    34	        language_code: str = _ENGLISH_LANG,
-    35	    ) -> int:
-    36	        """Pause in ms to insert after a phrase.
-    37
-    38	        - Key Phrases + L2: audio-duration-based (1:1), floor 500 ms.
-    39	        - Key Phrases + English narrator: base 500 ms.
-    40	        - Slow Speed + L2: base 500 ms × 1.2.
-    41	        - Slow Speed + English narrator: base 500 ms (no slow factor).
-    42	        - Natural Speed / Translated (any language): base 500 ms.
-    43
-    44	        `word_count` is retained for backward compatibility with the renderer
-    45	        call site and is currently unused.
-    46	        """
-    47	        del word_count  # unused; kept for API stability
-    48
-    49	        is_l2 = language_code != _ENGLISH_LANG
-    50
-    51	        if section_type == SectionType.KEY_PHRASES and is_l2:
-    52	            return max(_BASE_PHRASE_PAUSE_MS, int(audio_duration_s * 1000))
-    53
-    54	        if section_type == SectionType.SLOW_SPEED and is_l2:
-    55	            return int(_BASE_PHRASE_PAUSE_MS * _SLOW_SPEED_FACTOR)
-    56
-    57	        return _BASE_PHRASE_PAUSE_MS
+    24	
+    25	    def get_phrase_pause(
+    26	        self,
+    27	        audio_duration_s: float,
+    28	        word_count: int,
+    29	        section_type: SectionType,
+    30	        language_code: str = _ENGLISH_LANG,
+    31	    ) -> int:
+    32	        """Pause in ms to insert after a phrase.
+    33	
+    34	        - Key Phrases + L2: audio-duration-based (1:1), floor 500 ms.
+    35	        - Key Phrases + English narrator: base 500 ms.
+    36	        - Slow Speed + L2: base 500 ms × 1.2.
+    37	        - Slow Speed + English narrator: base 500 ms (no slow factor).
+    38	        - Natural Speed / Translated (any language): base 500 ms.
+    39	
+    40	        `word_count` is retained for backward compatibility with the renderer
+    41	        call site and is currently unused.
+    42	        """
+    43	        del word_count  # unused; kept for API stability
+    44	
+    45	        is_l2 = language_code != _ENGLISH_LANG
+    46	
+    47	        if section_type == SectionType.KEY_PHRASES and is_l2:
+    48	            return max(_BASE_PHRASE_PAUSE_MS, int(audio_duration_s * 1000))
+    49	
+    50	        if section_type == SectionType.SLOW_SPEED and is_l2:
+    51	            return int(_BASE_PHRASE_PAUSE_MS * _SLOW_SPEED_FACTOR)
+    52	
+    53	        if section_type == SectionType.SLOW_TRANSLATED and is_l2:
+    54	            return int(_BASE_PHRASE_PAUSE_MS * _SLOW_SPEED_FACTOR)
+    55	
+    56	        return _BASE_PHRASE_PAUSE_MS
 ```
 
 The calculator was simplified in production. The prototype had a `word_count → multiplier` table and computed pause as `audio_duration × ratio × multiplier` for every phrase. After dogfooding the lessons, the team found that:
@@ -3615,157 +3518,307 @@ cat -n backend/app/audio/renderer.py
 
 ```output
      1	"""Lesson renderer — orchestrates preprocess → TTS → pauses → assembly."""
-     2
+     2	
      3	from __future__ import annotations
-     4
+     4	
      5	import asyncio
      6	import logging
      7	import tempfile
      8	import time
-     9	from pathlib import Path
-    10
-    11	from pydub import AudioSegment
-    12
-    13	from app.audio.pause_calculator import NaturalPauseCalculator
-    14	from app.audio.ports import TTSService
-    15	from app.audio.preprocessing.base import TextPreprocessor
-    16	from app.models.lesson import Lesson, Section
-    17
-    18	logger = logging.getLogger(__name__)
-    19
-    20
-    21	class LessonRenderer:
-    22	    """Renders a Lesson to a WAV audio file using pydub for assembly.
-    23
-    24	    Pipeline per phrase:
-    25	      1. Preprocess text (language-specific)
-    26	      2. Synthesize via TTS → temp file
-    27	      3. Load as AudioSegment, measure actual duration
-    28	      4. Calculate post-phrase pause from real duration
-    29	      5. Concatenate all segments with boundary gaps
-    30	    Then export the combined AudioSegment as WAV.
-    31	    """
-    32
-    33	    def __init__(
-    34	        self,
-    35	        tts: TTSService,
-    36	        preprocessor: TextPreprocessor,
-    37	        pause_calculator: NaturalPauseCalculator,
-    38	    ) -> None:
-    39	        self._tts = tts
-    40	        self._preprocessor = preprocessor
-    41	        self._calc = pause_calculator
-    42
-    43	    async def _render_section(self, section: Section, tmp: Path, section_idx: int) -> AudioSegment:
-    44	        """Render a single section to an AudioSegment (no boundary silence).
-    45
-    46	        Args:
-    47	            section: The Section to render.
-    48	            tmp: Temp directory for intermediate TTS files.
-    49	            section_idx: Index used for temp file naming.
-    50
-    51	        Returns:
-    52	            AudioSegment containing all phrases with inter-phrase pauses.
-    53	        """
-    54	        phrase_files = [tmp / f"s{section_idx}_p{i}.mp3" for i in range(len(section.phrases))]
-    55	        processed_texts = [
-    56	            self._preprocessor.preprocess(phrase.text, section.section_type) for phrase in section.phrases
-    57	        ]
-    58
-    59	        # Synthesize all phrases in this section concurrently.
-    60	        # EdgeTTSService._semaphore limits total concurrent requests globally.
-    61	        await asyncio.gather(
-    62	            *[
-    63	                self._tts.synthesize(text, phrase.voice_id, phrase_files[i], rate=phrase.rate)
-    64	                for i, (text, phrase) in enumerate(zip(processed_texts, section.phrases, strict=True))
-    65	            ]
-    66	        )
-    67
-    68	        # Assemble in phrase order (order is preserved by the pre-allocated paths)
-    69	        seg = AudioSegment.empty()
-    70	        for i, phrase in enumerate(section.phrases):
-    71	            phrase_seg = AudioSegment.from_file(str(phrase_files[i]))
-    72	            audio_duration_s = len(phrase_seg) / 1000.0
-    73	            seg += phrase_seg
-    74
-    75	            pause_ms = self._calc.get_phrase_pause(
-    76	                audio_duration_s=audio_duration_s,
-    77	                word_count=len(phrase.text.split()),
-    78	                section_type=section.section_type,
-    79	                language_code=phrase.language_code,
-    80	            )
-    81	            if pause_ms > 0:
-    82	                seg += AudioSegment.silent(duration=pause_ms)
-    83
-    84	        return seg
-    85
-    86	    async def render(
-    87	        self,
-    88	        lesson: Lesson,
-    89	        output_path: Path,
-    90	        section_paths: list[Path] | None = None,
-    91	    ) -> None:
-    92	        """Render *lesson* to *output_path* as a valid WAV file.
-    93
-    94	        Optionally writes per-section WAV files to *section_paths* (one per
-    95	        section, in lesson order). Each section file contains only the section
-    96	        content with no leading/trailing boundary silence.
-    97
-    98	        Args:
-    99	            lesson: Lesson with sections and phrases.
-   100	            output_path: Destination file path for the full lesson (written as WAV).
-   101	            section_paths: Optional list of paths for per-section output WAVs.
-   102	                           Must have same length as lesson.sections if provided.
-   103	        """
-   104	        t_start = time.perf_counter()
-   105	        boundary_silence = AudioSegment.silent(duration=self._calc.get_section_boundary_pause())
-   106
-   107	        with tempfile.TemporaryDirectory() as tmp_dir:
-   108	            tmp = Path(tmp_dir)
-   109
-   110	            # Render lesson title (full WAV only — not in section files)
-   111	            t0 = time.perf_counter()
-   112	            title_file = tmp / "title.mp3"
-   113	            await self._tts.synthesize(lesson.title, lesson.narrator_voice, title_file, rate="+0%")
-   114	            logger.debug("TTS title → %.0f ms", (time.perf_counter() - t0) * 1000)
-   115	            title_seg = AudioSegment.from_file(str(title_file))
-   116
-   117	            # Render all sections concurrently — phrases within each section are
-   118	            # also parallelised; EdgeTTSService._semaphore caps total concurrency.
-   119	            t0 = time.perf_counter()
-   120	            section_segs: list[AudioSegment] = list(
-   121	                await asyncio.gather(
-   122	                    *[self._render_section(section, tmp, i) for i, section in enumerate(lesson.sections)]
-   123	                )
-   124	            )
-   125	            logger.debug("All sections TTS → %.0f ms", (time.perf_counter() - t0) * 1000)
-   126
-   127	            if section_paths is not None:
-   128	                for section_idx, sec_seg in enumerate(section_segs):
-   129	                    sp = section_paths[section_idx]
-   130	                    sp.parent.mkdir(parents=True, exist_ok=True)
-   131	                    t0 = time.perf_counter()
-   132	                    sec_seg.export(str(sp), format="wav")
-   133	                    logger.debug("Section %d export → %.0f ms", section_idx, (time.perf_counter() - t0) * 1000)
-   134
-   135	            # Assemble full lesson: title + bs + sec0 + bs + sec1 + ...
-   136	            combined = title_seg + boundary_silence
-   137	            for i, sec_seg in enumerate(section_segs):
-   138	                if i > 0:
-   139	                    combined += boundary_silence
-   140	                combined += sec_seg
-   141
-   142	        output_path.parent.mkdir(parents=True, exist_ok=True)
-   143	        t0 = time.perf_counter()
-   144	        combined.export(str(output_path), format="wav")
-   145	        logger.debug("Full lesson export → %.0f ms", (time.perf_counter() - t0) * 1000)
-   146	        total_ms = (time.perf_counter() - t_start) * 1000
-   147	        logger.info(
-   148	            "Rendered lesson to %s (audio: %d ms, wall: %.0f ms)",
-   149	            output_path,
-   150	            len(combined),
-   151	            total_ms,
-   152	        )
+     9	from dataclasses import dataclass
+    10	from pathlib import Path
+    11	
+    12	import numpy as np
+    13	import soundfile as sf
+    14	
+    15	from app.audio.cues import Cue, CueTiming, build_cue_manifest
+    16	from app.audio.pause_calculator import NaturalPauseCalculator
+    17	from app.audio.ports import TTSService
+    18	from app.audio.preprocessing.base import TextPreprocessor
+    19	from app.audio.transcode import encode_audio
+    20	from app.models.lesson import Lesson, Section
+    21	
+    22	logger = logging.getLogger(__name__)
+    23	
+    24	_SAMPLE_DTYPE = "float32"
+    25	_WAV_SUBTYPE = "PCM_16"
+    26	
+    27	
+    28	@dataclass
+    29	class _Audio:
+    30	    """A decoded audio buffer: float32 samples shaped ``(frames, channels)`` + rate.
+    31	
+    32	    Replaces pydub's ``AudioSegment`` for the small set of operations the
+    33	    renderer needs (decode, measure, silence, concatenate, export to WAV), so the
+    34	    audio pipeline depends only on maintained libraries (``soundfile`` decodes
+    35	    EdgeTTS MP3 via bundled libsndfile; ``numpy`` does the assembly).
+    36	    """
+    37	
+    38	    samples: np.ndarray
+    39	    rate: int
+    40	
+    41	    @property
+    42	    def duration_ms(self) -> float:
+    43	        return len(self.samples) / self.rate * 1000.0
+    44	
+    45	
+    46	def _read_audio(path: Path) -> _Audio:
+    47	    """Decode an audio file (EdgeTTS MP3 in prod, WAV in tests) to float32 samples."""
+    48	    samples, rate = sf.read(str(path), dtype=_SAMPLE_DTYPE, always_2d=True)
+    49	    return _Audio(samples, int(rate))
+    50	
+    51	
+    52	def _silence(duration_ms: float, like: _Audio) -> _Audio:
+    53	    """A silent buffer of *duration_ms*, matching *like*'s rate and channel count."""
+    54	    frames = round(duration_ms / 1000.0 * like.rate)
+    55	    return _Audio(np.zeros((frames, like.samples.shape[1]), dtype=_SAMPLE_DTYPE), like.rate)
+    56	
+    57	
+    58	def _concat(parts: list[_Audio]) -> _Audio:
+    59	    """Concatenate audio buffers that share sample rate and channel count.
+    60	
+    61	    EdgeTTS emits a uniform 24 kHz mono stream for every voice, so this holds in
+    62	    practice. A mismatch means a foreign/corrupt input; we fail loudly rather
+    63	    than silently re-speed it — pydub's implicit ``_sync`` resample used to hide
+    64	    that. Always called with a non-empty list (a section always has ≥1 phrase;
+    65	    the full mix always starts with the lesson title).
+    66	    """
+    67	    head = parts[0]
+    68	    channels = head.samples.shape[1]
+    69	    for part in parts[1:]:
+    70	        if part.rate != head.rate or part.samples.shape[1] != channels:
+    71	            raise ValueError(
+    72	                "cannot concatenate audio with mismatched format: "
+    73	                f"expected {head.rate} Hz / {channels} ch, "
+    74	                f"got {part.rate} Hz / {part.samples.shape[1]} ch"
+    75	            )
+    76	    return _Audio(np.concatenate([p.samples for p in parts], axis=0), head.rate)
+    77	
+    78	
+    79	def _write_wav(path: Path, audio: _Audio) -> None:
+    80	    """Write *audio* to *path* as a 16-bit PCM WAV."""
+    81	    sf.write(str(path), audio.samples, audio.rate, subtype=_WAV_SUBTYPE)
+    82	
+    83	
+    84	class LessonRenderer:
+    85	    """Renders a Lesson to a WAV audio file using soundfile + numpy for assembly.
+    86	
+    87	    Pipeline per phrase:
+    88	      1. Preprocess text (language-specific)
+    89	      2. Synthesize via TTS → temp file
+    90	      3. Decode to samples, measure actual duration
+    91	      4. Calculate post-phrase pause from real duration
+    92	      5. Concatenate all buffers with boundary gaps
+    93	    Then export the combined buffer as WAV.
+    94	    """
+    95	
+    96	    def __init__(
+    97	        self,
+    98	        tts: TTSService,
+    99	        preprocessors: dict[str, TextPreprocessor],
+   100	        pause_calculator: NaturalPauseCalculator,
+   101	        delivery_codec: str = "wav",
+   102	        delivery_bitrate: str = "28k",
+   103	    ) -> None:
+   104	        self._tts = tts
+   105	        self._preprocessors = preprocessors
+   106	        self._calc = pause_calculator
+   107	        self._delivery_codec = delivery_codec
+   108	        self._delivery_bitrate = delivery_bitrate
+   109	
+   110	    def _write_audio(self, path: Path, audio: _Audio) -> None:
+   111	        """Write *audio* to *path* in the configured delivery codec.
+   112	
+   113	        ``"wav"`` writes uncompressed PCM (the historical default); any other
+   114	        codec routes the buffer through ffmpeg for a compressed, mobile-friendly
+   115	        file. The caller is responsible for giving *path* the matching extension.
+   116	        """
+   117	        if self._delivery_codec == "wav":
+   118	            _write_wav(path, audio)
+   119	        else:
+   120	            path.write_bytes(encode_audio(audio.samples, audio.rate, self._delivery_codec, self._delivery_bitrate))
+   121	
+   122	    def _assemble_section_audio(
+   123	        self,
+   124	        section: Section,
+   125	        phrase_files: list[Path],
+   126	        calc: NaturalPauseCalculator,
+   127	    ) -> tuple[_Audio, list[tuple[int, int, int]]]:
+   128	        """Synchronous assembly of a section's audio from pre-synthesised phrase files.
+   129	
+   130	        Extracted so the caller can offload it with ``asyncio.to_thread`` and
+   131	        keep the event loop responsive during file I/O and numpy operations.
+   132	        """
+   133	        parts: list[_Audio] = []
+   134	        section_cues: list[tuple[int, int, int]] = []
+   135	        current_frame = 0
+   136	        for i, phrase in enumerate(section.phrases):
+   137	            phrase_audio = _read_audio(phrase_files[i])
+   138	            start_frame = current_frame
+   139	            end_frame = current_frame + len(phrase_audio.samples)
+   140	            section_cues.append((i, start_frame, end_frame))
+   141	            parts.append(phrase_audio)
+   142	            current_frame = end_frame
+   143	            pause_ms = calc.get_phrase_pause(
+   144	                audio_duration_s=phrase_audio.duration_ms / 1000.0,
+   145	                word_count=len(phrase.text.split()),
+   146	                section_type=section.section_type,
+   147	                language_code=phrase.language_code,
+   148	            )
+   149	            if pause_ms > 0:
+   150	                pause = _silence(pause_ms, phrase_audio)
+   151	                parts.append(pause)
+   152	                current_frame += len(pause.samples)
+   153	        return _concat(parts), section_cues
+   154	
+   155	    async def _render_section(
+   156	        self, section: Section, tmp: Path, section_idx: int, language_code: str
+   157	    ) -> tuple[_Audio, list[tuple[int, int, int]]]:
+   158	        """Render a single section to an audio buffer (no boundary silence).
+   159	
+   160	        Args:
+   161	            section: The Section to render.
+   162	            tmp: Temp directory for intermediate TTS files.
+   163	            section_idx: Index used for temp file naming.
+   164	            language_code: Language code for preprocessor lookup.
+   165	
+   166	        Returns:
+   167	            Tuple of (Audio buffer, per-phrase timing).
+   168	            Timing entries are (phrase_index, start_frame, end_frame) relative
+   169	            to the section start, in frames (not ms).
+   170	        """
+   171	        if language_code not in self._preprocessors:
+   172	            raise ValueError(
+   173	                f"No preprocessor configured for language {language_code!r}; renderer has {sorted(self._preprocessors)}"
+   174	            )
+   175	        preprocessor = self._preprocessors[language_code]
+   176	        phrase_files = [tmp / f"s{section_idx}_p{i}.mp3" for i in range(len(section.phrases))]
+   177	        processed_texts = [preprocessor.preprocess(phrase.text, section.section_type) for phrase in section.phrases]
+   178	
+   179	        # Synthesize all phrases in this section concurrently.
+   180	        # EdgeTTSService._semaphore limits total concurrent requests globally.
+   181	        await asyncio.gather(
+   182	            *[
+   183	                self._tts.synthesize(text, phrase.voice_id, phrase_files[i], rate=phrase.rate)
+   184	                for i, (text, phrase) in enumerate(zip(processed_texts, section.phrases, strict=True))
+   185	            ]
+   186	        )
+   187	
+   188	        # Assemble in phrase order while tracking frame positions.
+   189	        # Offsets are accumulated in frames (not ms) to avoid cumulative drift.
+   190	        # Offload the sync assembly (file I/O + numpy) so the event loop stays
+   191	        # responsive.
+   192	        assembled = await asyncio.to_thread(
+   193	            self._assemble_section_audio,
+   194	            section,
+   195	            phrase_files,
+   196	            self._calc,
+   197	        )
+   198	        return assembled
+   199	
+   200	    async def render(
+   201	        self,
+   202	        lesson: Lesson,
+   203	        output_path: Path,
+   204	        section_paths: list[Path] | None = None,
+   205	    ) -> list[Cue]:
+   206	        """Render *lesson* to *output_path* as a valid WAV file.
+   207	
+   208	        Optionally writes per-section WAV files to *section_paths* (one per
+   209	        section, in lesson order). Each section file contains only the section
+   210	        content with no leading/trailing boundary silence.
+   211	
+   212	        Args:
+   213	            lesson: Lesson with sections and phrases.
+   214	            output_path: Destination file path for the full lesson (written as WAV).
+   215	            section_paths: Optional list of paths for per-section output WAVs.
+   216	                           Must have same length as lesson.sections if provided.
+   217	
+   218	        Returns:
+   219	            Timing manifest (list of Cue objects) for the rendered lesson.
+   220	        """
+   221	        t_start = time.perf_counter()
+   222	
+   223	        with tempfile.TemporaryDirectory() as tmp_dir:
+   224	            tmp = Path(tmp_dir)
+   225	
+   226	            # Render lesson title (full WAV only — not in section files)
+   227	            t0 = time.perf_counter()
+   228	            title_file = tmp / "title.mp3"
+   229	            await self._tts.synthesize(lesson.title, lesson.narrator_voice, title_file, rate="+0%")
+   230	            logger.debug("TTS title → %.0f ms", (time.perf_counter() - t0) * 1000)
+   231	            title_audio = await asyncio.to_thread(_read_audio, title_file)
+   232	
+   233	            # Render all sections concurrently — phrases within each section are
+   234	            # also parallelised; EdgeTTSService._semaphore caps total concurrency.
+   235	            t0 = time.perf_counter()
+   236	            section_results = await asyncio.gather(
+   237	                *[
+   238	                    self._render_section(section, tmp, i, language_code=lesson.language_code)
+   239	                    for i, section in enumerate(lesson.sections)
+   240	                ]
+   241	            )
+   242	            section_audios = [r[0] for r in section_results]
+   243	            section_cue_lists = [r[1] for r in section_results]
+   244	            logger.debug("All sections TTS → %.0f ms", (time.perf_counter() - t0) * 1000)
+   245	
+   246	            if section_paths is not None:
+   247	                for section_idx, sec_audio in enumerate(section_audios):
+   248	                    sp = section_paths[section_idx]
+   249	                    sp.parent.mkdir(parents=True, exist_ok=True)
+   250	                    t0 = time.perf_counter()
+   251	                    await asyncio.to_thread(self._write_audio, sp, sec_audio)
+   252	                    logger.debug("Section %d export → %.0f ms", section_idx, (time.perf_counter() - t0) * 1000)
+   253	
+   254	            # Assemble full lesson: title + bs + sec0 + bs + sec1 + ...
+   255	            boundary = _silence(self._calc.get_section_boundary_pause(), title_audio)
+   256	            parts: list[_Audio] = [title_audio, boundary]
+   257	            for i, sec_audio in enumerate(section_audios):
+   258	                if i > 0:
+   259	                    parts.append(boundary)
+   260	                parts.append(sec_audio)
+   261	            combined = await asyncio.to_thread(_concat, parts)
+   262	
+   263	            # Build cue manifest with absolute frame offsets.
+   264	            # Accumulate offsets in frames (never sum float ms per phrase).
+   265	            timing_entries: list[CueTiming] = [
+   266	                CueTiming(
+   267	                    section_index=None,
+   268	                    phrase_index=0,
+   269	                    start_frame=0,
+   270	                    end_frame=len(title_audio.samples),
+   271	                )
+   272	            ]
+   273	            current_abs_frame = len(title_audio.samples) + len(boundary.samples)
+   274	            for sec_idx, (sec_audio, sec_cues) in enumerate(zip(section_audios, section_cue_lists, strict=True)):
+   275	                for ph_idx, rel_start, rel_end in sec_cues:
+   276	                    timing_entries.append(
+   277	                        CueTiming(
+   278	                            section_index=sec_idx,
+   279	                            phrase_index=ph_idx,
+   280	                            start_frame=current_abs_frame + rel_start,
+   281	                            end_frame=current_abs_frame + rel_end,
+   282	                        )
+   283	                    )
+   284	                current_abs_frame += len(sec_audio.samples)
+   285	                if sec_idx < len(section_audios) - 1:
+   286	                    current_abs_frame += len(boundary.samples)
+   287	
+   288	            rate = int(title_audio.rate)
+   289	            cues = build_cue_manifest(lesson, timing_entries, rate)
+   290	
+   291	        output_path.parent.mkdir(parents=True, exist_ok=True)
+   292	        t0 = time.perf_counter()
+   293	        await asyncio.to_thread(self._write_audio, output_path, combined)
+   294	        logger.debug("Full lesson export → %.0f ms", (time.perf_counter() - t0) * 1000)
+   295	        logger.info(
+   296	            "Rendered lesson to %s (audio: %d ms, wall: %.0f ms)",
+   297	            output_path,
+   298	            round(combined.duration_ms),
+   299	            (time.perf_counter() - t_start) * 1000,
+   300	        )
+   301	
+   302	        return cues
 ```
 
 The renderer is the audio pipeline's main loop, but two production refinements changed the shape significantly:
@@ -3845,103 +3898,227 @@ cat -n backend/app/api/curriculum.py
      2	
      3	from __future__ import annotations
      4	
-     5	import re
-     6	import uuid
-     7	
-     8	from fastapi import APIRouter, HTTPException, Request
-     9	from pydantic import BaseModel
-    10	
-    11	router = APIRouter(prefix="/api/curriculum", tags=["curriculum"])
-    12	
-    13	
-    14	def _slug(text: str) -> str:
-    15	    text = text.lower()
-    16	    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
-    17	    return text[:50]
-    18	
-    19	
-    20	class GenerateCurriculumRequest(BaseModel):
-    21	    topic: str
-    22	    cefr_level: str = "A2"
-    23	    num_days: int = 7
-    24	
-    25	
-    26	@router.post("/generate", status_code=201)
-    27	async def generate_curriculum(body: GenerateCurriculumRequest, request: Request):
-    28	    generator = request.app.state.curriculum_generator
-    29	    language = request.app.state.language
-    30	    store = request.app.state.content_store
-    31	
-    32	    curriculum = await generator.generate(
-    33	        topic=body.topic,
-    34	        language=language,
-    35	        cefr_level=body.cefr_level,
-    36	        num_days=body.num_days,
-    37	    )
-    38	
-    39	    curriculum_id = f"{_slug(body.topic)}-{uuid.uuid4().hex[:8]}"
-    40	    store.save_curriculum(curriculum_id, curriculum)
-    41	
-    42	    return {
-    43	        "id": curriculum_id,
-    44	        "topic": curriculum.topic,
-    45	        "language_code": curriculum.language_code,
-    46	        "days": len(curriculum.days),
-    47	    }
-    48	
-    49	
-    50	@router.get("", status_code=200)
-    51	async def list_curricula(request: Request):
-    52	    store = request.app.state.content_store
-    53	    return store.list_curricula()
-    54	
-    55	
-    56	@router.get("/{curriculum_id}", status_code=200)
-    57	async def get_curriculum(curriculum_id: str, request: Request):
-    58	    store = request.app.state.content_store
-    59	    curriculum = store.get_curriculum(curriculum_id)
-    60	    if curriculum is None:
-    61	        raise HTTPException(status_code=404, detail="Curriculum not found")
-    62	    return {
-    63	        "id": curriculum_id,
-    64	        "topic": curriculum.topic,
-    65	        "language_code": curriculum.language_code,
-    66	        "days": len(curriculum.days),
+     5	from dataclasses import asdict
+     6	
+     7	from fastapi import APIRouter, HTTPException, Request
+     8	
+     9	from app.api._serializers import serialize_lesson
+    10	from app.api.models import (
+    11	    ImportPlanRequest,
+    12	    PlanFeedbackRequest,
+    13	    PlanTurnRequest,
+    14	    StartPlanRequest,
+    15	)
+    16	from app.generation.planner import PlannerError
+    17	from app.models.curriculum import Curriculum, CurriculumDay
+    18	from app.srs.planner_snapshot import build_learner_snapshot
+    19	from app.storage.plan_io import export_plan, get_planner_state, import_plan, mint_curriculum_id
+    20	
+    21	router = APIRouter(prefix="/api/curriculum", tags=["curriculum"])
+    22	
+    23	
+    24	@router.post("/import", status_code=201)
+    25	async def import_curriculum_plan(body: ImportPlanRequest, request: Request):
+    26	    store = request.state.content_store
+    27	    try:
+    28	        cid, curriculum = import_plan(store, body.model_dump())
+    29	    except ValueError as e:
+    30	        raise HTTPException(status_code=422, detail=str(e)) from None
+    31	    except KeyError as e:
+    32	        raise HTTPException(status_code=404, detail=str(e)) from None
+    33	    return {
+    34	        "id": cid,
+    35	        "topic": curriculum.topic,
+    36	        "language_code": curriculum.language_code,
+    37	        "days": len(curriculum.days),
+    38	    }
+    39	
+    40	
+    41	def _get_curriculum_or_404(store, curriculum_id: str) -> Curriculum:
+    42	    curriculum = store.get_curriculum(curriculum_id)
+    43	    if curriculum is None:
+    44	        raise HTTPException(status_code=404, detail="Curriculum not found")
+    45	    return curriculum
+    46	
+    47	
+    48	@router.post("/plan", status_code=201)
+    49	async def start_plan(body: StartPlanRequest, request: Request):
+    50	    """LLM-free: mint an id and save an empty curriculum with empty planner state."""
+    51	    store = request.state.content_store
+    52	    curriculum_id = mint_curriculum_id(body.topic)
+    53	    curriculum = Curriculum(
+    54	        id=curriculum_id,
+    55	        topic=body.topic,
+    56	        language_code=request.state.language_code,
+    57	        cefr_level=body.cefr_level,
+    58	        metadata={"planner": {"chat": [], "proposed": None, "feedback": []}},
+    59	    )
+    60	    store.save_curriculum(curriculum_id, curriculum)
+    61	    return {
+    62	        "id": curriculum_id,
+    63	        "topic": curriculum.topic,
+    64	        "language_code": curriculum.language_code,
+    65	        "cefr_level": curriculum.cefr_level,
+    66	        "days": 0,
     67	    }
     68	
     69	
-    70	@router.get("/{curriculum_id}/progress")
-    71	async def get_curriculum_progress(curriculum_id: str, request: Request):
-    72	    store = request.app.state.content_store
-    73	    if store.get_curriculum(curriculum_id) is None:
-    74	        raise HTTPException(status_code=404, detail="Curriculum not found")
-    75	    return store.get_lesson_days(curriculum_id)
+    70	@router.post("/{curriculum_id}/plan/turn", status_code=200)
+    71	async def plan_turn(curriculum_id: str, body: PlanTurnRequest, request: Request):
+    72	    """One planner chat turn: snapshot → LLM → append chat, set/replace proposed."""
+    73	    store = request.state.content_store
+    74	    curriculum = _get_curriculum_or_404(store, curriculum_id)
+    75	    planner = request.app.state.curriculum_planner
     76	
-    77	
-    78	@router.get("/{curriculum_id}/days/{day}/lesson", status_code=200)
-    79	async def get_lesson_by_day(curriculum_id: str, day: int, request: Request):
-    80	    store = request.app.state.content_store
-    81	    result = store.get_latest_lesson_by_day(curriculum_id, day)
-    82	    if result is None:
-    83	        raise HTTPException(status_code=404, detail=f"No lesson found for day {day}")
-    84	    lesson_id, lesson = result
-    85	    return {
-    86	        "id": lesson_id,
-    87	        "title": lesson.title,
-    88	        "language_code": lesson.language_code,
-    89	        "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in lesson.key_phrases],
-    90	        "sections": [
-    91	            {
-    92	                "type": s.section_type.value,
-    93	                "phrases": [
-    94	                    {"text": p.text, "role": p.role, "language_code": p.language_code, "voice_id": p.voice_id}
-    95	                    for p in s.phrases
-    96	                ],
-    97	            }
-    98	            for s in lesson.sections
-    99	        ],
-   100	    }
-
+    77	    snapshot = build_learner_snapshot(request.state.srs_db)
+    78	    try:
+    79	        turn = await planner.turn(
+    80	            curriculum=curriculum,
+    81	            user_message=body.message,
+    82	            batch_size=body.batch_size,
+    83	            learner_snapshot=snapshot,
+    84	            language=request.state.language,
+    85	        )
+    86	    except PlannerError as e:
+    87	        # Nothing is persisted for a failed turn — the user retries in chat.
+    88	        raise HTTPException(status_code=502, detail=str(e)) from e
+    89	
+    90	    state = get_planner_state(curriculum)
+    91	    state["chat"].append({"role": "user", "content": body.message})
+    92	    state["chat"].append({"role": "planner", "content": turn.reply})
+    93	    if turn.proposed_days is not None:
+    94	        # A new proposing turn replaces any prior proposal (latest-wins);
+    95	        # a pure-chat turn leaves the existing proposal in place.
+    96	        state["proposed"] = {
+    97	            "start_day": turn.proposed_days[0].day,
+    98	            "days": [asdict(d) for d in turn.proposed_days],
+    99	        }
+   100	    curriculum.metadata["planner"] = state
+   101	    store.save_curriculum(curriculum_id, curriculum)
+   102	    return {"reply": turn.reply, "proposed": state["proposed"]}
+   103	
+   104	
+   105	@router.post("/{curriculum_id}/plan/commit", status_code=200)
+   106	async def plan_commit(curriculum_id: str, request: Request):
+   107	    """Append the proposed batch to the committed days and clear the proposal."""
+   108	    store = request.state.content_store
+   109	    curriculum = _get_curriculum_or_404(store, curriculum_id)
+   110	    state = get_planner_state(curriculum)
+   111	    proposed = state.get("proposed")
+   112	    if not proposed:
+   113	        raise HTTPException(status_code=409, detail="No proposed batch to commit")
+   114	
+   115	    # The proposal was numbered against the day list at turn time; if the
+   116	    # committed days changed since (e.g. a plan re-import), appending it would
+   117	    # collide with or gap the existing day numbers.
+   118	    expected_start = max((d.day for d in curriculum.days), default=0) + 1
+   119	    if proposed["days"][0]["day"] != expected_start:
+   120	        raise HTTPException(
+   121	            status_code=409,
+   122	            detail="Proposed batch is stale — the committed days changed since it was proposed; ask the planner to re-propose",
+   123	        )
+   124	
+   125	    days = [CurriculumDay(**d) for d in proposed["days"]]
+   126	    curriculum.days.extend(days)
+   127	    first, last = days[0].day, days[-1].day
+   128	    label = f"day {first}" if first == last else f"days {first}-{last}"
+   129	    state["chat"].append({"role": "event", "content": f"Committed {label}."})
+   130	    state["proposed"] = None
+   131	    curriculum.metadata["planner"] = state
+   132	    store.save_curriculum(curriculum_id, curriculum)
+   133	
+   134	    # Enqueue pipeline jobs for the newly committed days
+   135	    pipeline = getattr(request.app.state, "pipeline", None)
+   136	    if pipeline is not None:
+   137	        for day_entry in days:
+   138	            pipeline.enqueue(request.state.language_code, curriculum_id, day_entry.day, "generate")
+   139	
+   140	    return {"id": curriculum_id, "days": len(curriculum.days)}
+   141	
+   142	
+   143	@router.post("/{curriculum_id}/plan/reset", status_code=200)
+   144	async def plan_reset(curriculum_id: str, request: Request):
+   145	    """Clear the planner chat and proposed batch (keeps feedback and committed days)."""
+   146	    store = request.state.content_store
+   147	    curriculum = _get_curriculum_or_404(store, curriculum_id)
+   148	    state = get_planner_state(curriculum)
+   149	    reply_count = sum(1 for m in state.get("chat", []) if m.get("role") == "planner")
+   150	    state["chat"] = []
+   151	    state["proposed"] = None
+   152	    curriculum.metadata["planner"] = state
+   153	    store.save_curriculum(curriculum_id, curriculum)
+   154	    return {"reply_count_cleared": reply_count}
+   155	
+   156	
+   157	@router.post("/{curriculum_id}/plan/feedback", status_code=200)
+   158	async def plan_feedback(curriculum_id: str, body: PlanFeedbackRequest, request: Request):
+   159	    """Record listening feedback for a committed day; it enters the next turn's prompt."""
+   160	    store = request.state.content_store
+   161	    curriculum = _get_curriculum_or_404(store, curriculum_id)
+   162	    if body.day not in {d.day for d in curriculum.days}:
+   163	        raise HTTPException(status_code=404, detail=f"Unknown day {body.day}")
+   164	    state = get_planner_state(curriculum)
+   165	    state["feedback"].append({"day": body.day, "note": body.note})
+   166	    curriculum.metadata["planner"] = state
+   167	    store.save_curriculum(curriculum_id, curriculum)
+   168	    return {"feedback": state["feedback"]}
+   169	
+   170	
+   171	@router.get("", status_code=200)
+   172	async def list_curricula(request: Request):
+   173	    store = request.state.content_store
+   174	    return store.list_curricula()
+   175	
+   176	
+   177	@router.get("/{curriculum_id}", status_code=200)
+   178	async def get_curriculum(curriculum_id: str, request: Request):
+   179	    store = request.state.content_store
+   180	    curriculum = store.get_curriculum(curriculum_id)
+   181	    if curriculum is None:
+   182	        raise HTTPException(status_code=404, detail="Curriculum not found")
+   183	    return {
+   184	        "id": curriculum_id,
+   185	        "topic": curriculum.topic,
+   186	        "language_code": curriculum.language_code,
+   187	        "cefr_level": curriculum.cefr_level,
+   188	        "days": sorted((asdict(d) for d in curriculum.days), key=lambda d: d["day"]),
+   189	        "proposed": get_planner_state(curriculum)["proposed"],
+   190	    }
+   191	
+   192	
+   193	@router.get("/{curriculum_id}/progress")
+   194	async def get_curriculum_progress(curriculum_id: str, request: Request):
+   195	    store = request.state.content_store
+   196	    if store.get_curriculum(curriculum_id) is None:
+   197	        raise HTTPException(status_code=404, detail="Curriculum not found")
+   198	    return store.get_lesson_days(curriculum_id)
+   199	
+   200	
+   201	@router.get("/{curriculum_id}/source", status_code=200)
+   202	async def get_curriculum_source(curriculum_id: str, request: Request):
+   203	    store = request.state.content_store
+   204	    try:
+   205	        return export_plan(store, curriculum_id)
+   206	    except KeyError:
+   207	        raise HTTPException(status_code=404, detail="Curriculum not found") from None
+   208	
+   209	
+   210	@router.delete("/{curriculum_id}", status_code=200)
+   211	async def delete_curriculum(curriculum_id: str, request: Request):
+   212	    store = request.state.content_store
+   213	    if not store.delete_curriculum(curriculum_id):
+   214	        raise HTTPException(status_code=404, detail="Curriculum not found")
+   215	    return {"deleted": curriculum_id}
+   216	
+   217	
+   218	@router.get("/{curriculum_id}/days/{day}/lesson", status_code=200)
+   219	async def get_lesson_by_day(curriculum_id: str, day: int, request: Request):
+   220	    store = request.state.content_store
+   221	    result = store.get_latest_lesson_by_day(curriculum_id, day)
+   222	    if result is None:
+   223	        raise HTTPException(status_code=404, detail=f"No lesson found for day {day}")
+   224	    lesson_id, lesson = result
+   225	    return serialize_lesson(lesson_id, lesson)
 ```
 
 Four changes from the prototype:
@@ -3959,83 +4136,184 @@ cat -n backend/app/api/generation.py
 
 ```output
      1	"""Story generation endpoints."""
-     2
+     2	
      3	from __future__ import annotations
-     4
-     5	import re
-     6	import uuid
-     7
-     8	from fastapi import APIRouter, HTTPException, Request
-     9	from pydantic import BaseModel
-    10
-    11	from app.models.strategy import ContentStrategy
-    12
-    13	router = APIRouter(prefix="/api/story", tags=["generation"])
-    14
-    15
-    16	def _slug(text: str) -> str:
-    17	    text = text.lower()
-    18	    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
-    19	    return text[:50]
-    20
-    21
-    22	class GenerateStoryRequest(BaseModel):
-    23	    curriculum_id: str
-    24	    day: int = 1
-    25	    strategy: str = "WIDER"
-    26
-    27
-    28	@router.post("/generate", status_code=201)
-    29	async def generate_story(body: GenerateStoryRequest, request: Request):
-    30	    store = request.app.state.content_store
-    31	    curriculum = store.get_curriculum(body.curriculum_id)
-    32	    if curriculum is None:
-    33	        raise HTTPException(status_code=404, detail="Curriculum not found")
-    34
-    35	    days = [d for d in curriculum.days if d.day == body.day]
-    36	    if not days:
-    37	        raise HTTPException(status_code=404, detail=f"Day {body.day} not found in curriculum")
-    38
-    39	    curriculum_day = days[0]
-    40	    strategy = ContentStrategy[body.strategy]
-    41	    language = request.app.state.language
-    42	    generator = request.app.state.story_generator
-    43
-    44	    lesson = await generator.generate(
-    45	        curriculum_day=curriculum_day,
-    46	        language=language,
-    47	        strategy=strategy,
-    48	    )
-    49
-    50	    lesson_id = f"{_slug(lesson.title)}-{uuid.uuid4().hex[:8]}"
-    51	    store.save_lesson(lesson_id, body.curriculum_id, body.day, lesson)
-    52
-    53	    sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
-    54	    return {"id": lesson_id, "title": lesson.title, "sections": sections}
-    55
-    56
-    57	@router.get("/{lesson_id}", status_code=200)
-    58	async def get_lesson(lesson_id: str, request: Request):
-    59	    store = request.app.state.content_store
-    60	    lesson = store.get_lesson(lesson_id)
-    61	    if lesson is None:
-    62	        raise HTTPException(status_code=404, detail="Lesson not found")
-    63	    return {
-    64	        "id": lesson_id,
-    65	        "title": lesson.title,
-    66	        "language_code": lesson.language_code,
-    67	        "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in lesson.key_phrases],
-    68	        "sections": [
-    69	            {
-    70	                "type": s.section_type.value,
-    71	                "phrases": [
-    72	                    {"text": p.text, "role": p.role, "language_code": p.language_code, "voice_id": p.voice_id}
-    73	                    for p in s.phrases
-    74	                ],
-    75	            }
-    76	            for s in lesson.sections
-    77	        ],
-    78	    }
+     4	
+     5	import asyncio
+     6	import logging
+     7	
+     8	import anyio
+     9	from fastapi import APIRouter, HTTPException, Request
+    10	
+    11	from app.api._serializers import serialize_lesson
+    12	from app.api.models import GenerateStoryRequest, ImportLessonRequest
+    13	from app.generation.ids import mint_id
+    14	from app.generation.story import StoryGenerationError
+    15	from app.llm.client import LLMError
+    16	from app.models.lesson import Lesson, SectionType
+    17	from app.models.strategy import ContentStrategy
+    18	from app.srs.database import SRSDatabase
+    19	from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for
+    20	from app.storage.lesson_io import export_lesson, import_lesson, speaker_warnings, sync_curriculum_day_title
+    21	
+    22	_logger = logging.getLogger(__name__)
+    23	
+    24	router = APIRouter(prefix="/api/story", tags=["generation"])
+    25	
+    26	# Strong refs to fire-and-forget pre-warm tasks: the event loop only keeps a
+    27	# weak reference, so an un-anchored task can be garbage-collected mid-flight.
+    28	_background_tasks: set[asyncio.Task] = set()
+    29	
+    30	
+    31	async def _prewarm_lesson(lesson: Lesson, srs_db: SRSDatabase) -> None:
+    32	    """Background pre-warm: cache a freshly generated lesson's sentences.
+    33	
+    34	    Runs the new lesson's natural-speed L2 sentences through
+    35	    ``analyze_sentence_cached`` so the transcript view never triggers a
+    36	    classla load for this content.
+    37	    """
+    38	    try:
+    39	        lemmatizer = get_lemmatizer(lesson.language_code)
+    40	        model_version = model_version_for(lemmatizer)
+    41	        if not model_version:
+    42	            return
+    43	        natural_speed = next(
+    44	            (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
+    45	            None,
+    46	        )
+    47	        if natural_speed is None:
+    48	            return
+    49	        phrases = [(p.text, p.language_code) for p in natural_speed.phrases if p.language_code == lesson.language_code]
+    50	        await anyio.to_thread.run_sync(
+    51	            _prewarm_phrases, phrases, srs_db, lemmatizer, model_version, lesson.language_code
+    52	        )
+    53	    except Exception:
+    54	        _logger.warning("Pre-warm failed for new lesson", exc_info=True)
+    55	
+    56	
+    57	def _prewarm_phrases(
+    58	    phrases: list[tuple[str, str]],
+    59	    srs_db: SRSDatabase,
+    60	    lemmatizer: object,
+    61	    model_version: str,
+    62	    language_code: str,
+    63	) -> None:
+    64	    for text, _ in phrases:
+    65	        analyze_sentence_cached(srs_db, lemmatizer, text, language_code, model_version)
+    66	
+    67	
+    68	@router.post("/generate", status_code=201)
+    69	async def generate_story(body: GenerateStoryRequest, request: Request):
+    70	    store = request.state.content_store
+    71	    curriculum = store.get_curriculum(body.curriculum_id)
+    72	    if curriculum is None:
+    73	        raise HTTPException(status_code=404, detail="Curriculum not found")
+    74	
+    75	    days = [d for d in curriculum.days if d.day == body.day]
+    76	    if not days:
+    77	        raise HTTPException(status_code=404, detail=f"Day {body.day} not found in curriculum")
+    78	
+    79	    curriculum_day = days[0]
+    80	    strategy = ContentStrategy[body.strategy]
+    81	    language = request.state.language
+    82	    generator = request.app.state.story_generator
+    83	
+    84	    try:
+    85	        lesson = await generator.generate(
+    86	            curriculum_day=curriculum_day,
+    87	            language=language,
+    88	            strategy=strategy,
+    89	            cefr_level=curriculum.cefr_level,
+    90	        )
+    91	    except StoryGenerationError as e:
+    92	        # Malformed LLM output — nothing persisted; the user retries.
+    93	        raise HTTPException(status_code=502, detail=str(e)) from e
+    94	    except LLMError as e:
+    95	        # Opt-in fallback: complete() now raises a bare 429/HTTP error instead of
+    96	        # degrading to Ollama. Map to 502 (mirror plan_turn's PlannerError handling)
+    97	        # so the client gets the retry detail, never a raw 500/ASGI traceback. The
+    98	        # lesson-page Regenerate button routes through the pipeline (429 backoff +
+    99	        # sticky-failed) instead — this hardens the sync endpoint's other callers.
+   100	        raise HTTPException(status_code=502, detail=str(e)) from e
+   101	
+   102	    lesson_id = mint_id(lesson.title)
+   103	    store.save_lesson(lesson_id, body.curriculum_id, body.day, lesson)
+   104	    sync_curriculum_day_title(store, body.curriculum_id, body.day, lesson.title)
+   105	
+   106	    # Pre-warm the analysis cache off the request path
+   107	    srs_db = getattr(request.app.state, "srs_db", None)
+   108	    if srs_db is not None:
+   109	        task = asyncio.create_task(_prewarm_lesson(lesson, srs_db))
+   110	        _background_tasks.add(task)
+   111	        task.add_done_callback(_background_tasks.discard)
+   112	
+   113	    # Enqueue a render job for this day
+   114	    pipeline = getattr(request.app.state, "pipeline", None)
+   115	    if pipeline is not None:
+   116	        pipeline.enqueue(request.state.language_code, body.curriculum_id, body.day, "render")
+   117	
+   118	    sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
+   119	    return {"id": lesson_id, "title": lesson.title, "sections": sections}
+   120	
+   121	
+   122	@router.post("/import", status_code=201)
+   123	async def import_story(body: ImportLessonRequest, request: Request):
+   124	    """Rebuild a Lesson from an edited Story-JSON file (docs/lesson-authoring.md).
+   125	
+   126	    Same shape as generate_story's response, plus `warnings` (e.g. a speaker
+   127	    missing from the voice map, which would silently fall back to the narrator).
+   128	    """
+   129	    store = request.state.content_store
+   130	    if store.get_curriculum(body.curriculum_id) is None:
+   131	        raise HTTPException(status_code=404, detail="Curriculum not found")
+   132	
+   133	    language = request.state.language
+   134	    try:
+   135	        lesson_id, lesson = import_lesson(
+   136	            store,
+   137	            {"curriculum_id": body.curriculum_id, "day": body.day, "story": body.story},
+   138	            language,
+   139	        )
+   140	    except ValueError as e:
+   141	        raise HTTPException(status_code=422, detail=str(e)) from e
+   142	
+   143	    # Same background pre-warm as generation, so the transcript view is warm.
+   144	    srs_db = getattr(request.app.state, "srs_db", None)
+   145	    if srs_db is not None:
+   146	        asyncio.create_task(_prewarm_lesson(lesson, srs_db))
+   147	
+   148	    # Enqueue a render job for this day
+   149	    pipeline = getattr(request.app.state, "pipeline", None)
+   150	    if pipeline is not None:
+   151	        pipeline.enqueue(request.state.language_code, body.curriculum_id, body.day, "render")
+   152	
+   153	    sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
+   154	    return {
+   155	        "id": lesson_id,
+   156	        "title": lesson.title,
+   157	        "sections": sections,
+   158	        "warnings": speaker_warnings(body.story, language),
+   159	    }
+   160	
+   161	
+   162	@router.get("/{lesson_id}/source", status_code=200)
+   163	async def get_lesson_source(lesson_id: str, request: Request):
+   164	    """Export a lesson as its editable, self-describing Story-JSON file."""
+   165	    store = request.state.content_store
+   166	    try:
+   167	        return export_lesson(store, lesson_id)
+   168	    except KeyError:
+   169	        raise HTTPException(status_code=404, detail="Lesson not found") from None
+   170	
+   171	
+   172	@router.get("/{lesson_id}", status_code=200)
+   173	async def get_lesson(lesson_id: str, request: Request):
+   174	    store = request.state.content_store
+   175	    row = store.get_lesson_row(lesson_id)
+   176	    if row is None:
+   177	        raise HTTPException(status_code=404, detail="Lesson not found")
+   178	    lesson = Lesson.from_json(row["data_json"])
+   179	    return serialize_lesson(lesson_id, lesson, day=row["day"])
 ```
 
 The generation router is similarly slug-based. Lesson IDs are derived from the lesson title (which the LLM sets), so `arriving-in-ljubljana-a3f1b2c8` is the lesson ID you see in the player URL. The `GET /{lesson_id}` endpoint returns a fully-expanded lesson for the frontend to render the transcript view.
@@ -4051,25 +4329,33 @@ grep -nE "^@router\." backend/app/api/srs.py
 ```
 
 ```output
-111:@router.get("/due", status_code=200)
-128:@router.get("/new", status_code=200)
-144:@router.post("/items/{item_id}/direction/{direction}/feedback", status_code=200)
-175:@router.get("/media/{filename}", status_code=200)
-186:@router.post("/listen", status_code=200)
-245:@router.get("/lesson/{lesson_id}/transcript", status_code=200)
-296:@router.post("/translate-missing", status_code=200)
-328:@router.post("/backfill-translations", status_code=200)
-338:@router.get("/stats", status_code=200)
-345:@router.get("/queue-stats", status_code=200)
-400:@router.post("/items", status_code=201)
-440:@router.get("/items", status_code=200)
-466:@router.patch("/items/{item_id}", status_code=200)
-479:@router.delete("/items/{item_id}", status_code=200)
-488:@router.post("/items/bulk-delete", status_code=200)
-495:@router.post("/items/{item_id}/reset", status_code=200)
-505:@router.post("/items/{item_id}/state", status_code=200)
-519:@router.post("/items/{item_id}/suspend", status_code=200)
-646:@router.get("/review-queue", status_code=200)
+227:@router.get("/due", status_code=200)
+244:@router.get("/new", status_code=200)
+255:@router.post("/items/{item_id}/direction/{direction}/feedback", status_code=200)
+316:@router.post("/items/{item_id}/direction/{direction}/undo", status_code=200)
+345:@router.get("/media/{filename}", status_code=200)
+376:@router.post("/listen", status_code=200)
+657:@router.get("/lesson/{lesson_id}/transcript", status_code=200)
+731:@router.post("/translate", status_code=200)
+747:@router.post("/translate-missing", status_code=200)
+779:@router.post("/backfill-translations", status_code=200)
+789:@router.get("/stats", status_code=200)
+796:@router.get("/queue-stats", status_code=200)
+883:@router.post("/items", status_code=201)
+985:@router.post("/items/base", status_code=200)
+1060:@router.get("/items", status_code=200)
+1086:@router.patch("/items/{item_id}", status_code=200)
+1099:@router.delete("/items/{item_id}", status_code=200)
+1108:@router.post("/items/bulk-delete", status_code=200)
+1115:@router.post("/items/{item_id}/reset", status_code=200)
+1125:@router.post("/items/{item_id}/state", status_code=200)
+1153:@router.post("/items/{item_id}/restore-known", status_code=200)
+1169:@router.post("/items/{item_id}/untrack", status_code=200)
+1181:@router.post("/items/{item_id}/suspend", status_code=200)
+1197:@router.post("/ignored-lemmas", status_code=200)
+1204:@router.delete("/ignored-lemmas", status_code=200)
+1249:@router.post("/inflection-clozes", status_code=200)
+1353:@router.get("/review-queue", status_code=200)
 ```
 
 These cover four functional areas: **learner loop** (due/new/feedback), **per-word capture and transcript** (listen/transcript/translate-missing/backfill-translations/queue-stats/stats), **review queue and media** (review-queue, media/{filename}), and **admin CRUD** (items POST/GET/PATCH/DELETE/state/suspend/reset, items/bulk-delete).
@@ -4079,7 +4365,7 @@ These cover four functional areas: **learner loop** (due/new/feedback), **per-wo
 Every list and detail endpoint serialises through one helper. Response payload includes both flat (legacy) FSRS fields and a per-direction breakdown — plus Anki identity, media URLs, and grammar/note context:
 
 ```bash
-sed -n '56,88p' backend/app/api/srs.py
+sed -n '115,147p' backend/app/api/srs.py
 ```
 
 ```output
@@ -4089,33 +4375,33 @@ def _item_to_dict(
     language_code: str,
     image_url: str | None = None,
     audio_url: str | None = None,
+    ambiguous_surfaces: set[str] | None = None,
 ) -> dict:
-    """Serialize an SRSItem to a response dict."""
+    """Serialize an SRSItem to a response dict.
+
+    Single-template Anki notes (e.g., Basic phonics) have no production
+    direction after migration v15→v16 — emit `null` rather than fabricating
+    one. Flat back-compat fields read from recognition for vocab cards and
+    from production for cloze cards (which have no recognition direction).
+    """
+    rec = item.directions.get(Direction.RECOGNITION)
+    prod = item.directions.get(Direction.PRODUCTION)
+    flat_src = prod if item.syntactic_unit.card_type == "cloze" else rec
+    flat: dict[str, object] = {
+        "state": flat_src.state.value if flat_src else SRSState.NEW.value,
+        "due_at": flat_src.due_at.isoformat() if flat_src else None,
+        "stability": flat_src.stability if flat_src else 1.0,
+        "difficulty": flat_src.difficulty if flat_src else 5.0,
+        "reps": flat_src.reps if flat_src else 0,
+        "lapses": flat_src.lapses if flat_src else 0,
+        "last_review": flat_src.last_review.isoformat() if flat_src and flat_src.last_review else None,
+    }
     return {
         "id": row_id,
         "text": item.syntactic_unit.text,
         "translation": item.syntactic_unit.translation,
         "word_count": item.syntactic_unit.word_count,
-        # Flat recognition shims (back-compat)
-        "state": item.state.value,
-        "due_date": item.due_date.isoformat(),
-        "stability": item.stability,
-        "difficulty": item.difficulty,
-        "reps": item.reps,
-        "lapses": item.lapses,
-        "last_review": item.last_review.isoformat() if item.last_review else None,
-        "language_code": language_code,
-        "guid": item.guid,
-        "anki_note_id": item.anki_note_id,
-        "directions": {
-            "recognition": _direction_to_dict(item.directions[Direction.RECOGNITION]),
-            "production": _direction_to_dict(item.directions[Direction.PRODUCTION]),
-        },
-        "image_url": image_url,
-        "audio_url": audio_url,
-        "grammar": item.syntactic_unit.grammar,
-        "note": item.syntactic_unit.note,
-    }
+        **flat,
 ```
 
 The two `directions` entries each contain `{state, due_date, stability, difficulty, reps, lapses, last_review, anki_card_id, anki_due, dirty_fsrs, last_synced_at, last_rating}` — the full `DirectionState` (PART 4.2). `image_url` and `audio_url` point at `/api/srs/media/{filename}`, populated only when the row has stored media (post-sync).
@@ -4125,7 +4411,7 @@ The two `directions` entries each contain `{state, due_date, stability, difficul
 This replaces the old single-direction `/api/srs/feedback`. The body accepts either an explicit `rating` (`"again"`/`"hard"`/`"good"`/`"easy"`) or an implicit `signal` (`"no_help"`/`"slowdown"`/`"translation_request"`/`"fast_forward"`); `rating_from_input` enforces exactly-one-of:
 
 ```bash
-sed -n '144,165p' backend/app/api/srs.py
+sed -n '255,288p' backend/app/api/srs.py
 ```
 
 ```output
@@ -4141,16 +4427,28 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     result = db.get_collocation_by_id(item_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Item not found")
     _, item, _ = result
 
     fsrs_params, _ = resolve_fsrs_params(db)
-    updated = schedule(item, rating, direction=dir_enum, params=fsrs_params)
+    col_crt = resolve_col_crt(db)
+    now = datetime.datetime.now(datetime.UTC)
+    balancer = build_live_load_balancer(db, now=now, col_crt=col_crt)
+    prev_dir = item.directions[dir_enum]
+    updated = schedule(
+        item,
+        rating,
+        direction=dir_enum,
+        params=fsrs_params,
+        time_ms=body.time_ms,
+        now=now,
+        col_crt=col_crt,
+        load_balancer=balancer,
+    )
     db.update_direction_by_id(item_id, dir_enum, updated.directions[dir_enum])
-
 ```
 
 Three points worth noting:
@@ -4178,7 +4476,7 @@ Three points worth noting:
 - `GET /review-queue` — the unified queue used by `/review`. Merges due + a daily-capped slice of new, alternates direction, attaches media URLs to each card. The cap is read from `anki_state_cache.new_per_day` (PART 12.6).
 - `GET /media/{filename}` — serves images and audio from `media_dir`. The frontend embeds these URLs directly in `<img>` and `<audio>` tags.
 
-**Admin (powering `/admin/srs`):**
+**Admin (powering `/cards`):**
 - `POST /items` — create a new SRS item (text + translation + optional grammar/note). Generates a deterministic GUID via `app.common.guid` so a later sync will round-trip cleanly to Anki.
 - `GET /items?search=&state=&sort=&order=&limit=&offset=` — paginated, filtered, sorted item list. `_item_to_dict` powers each row.
 - `PATCH /items/{id}` — edit text + translation. 409 on UNIQUE collisions, marks `dirty_fields` for the next sync push.
@@ -4199,214 +4497,191 @@ cat -n backend/app/api/audio.py
      3	from __future__ import annotations
      4	
      5	import io
-     6	import re
-     7	import uuid
+     6	import json
+     7	import re
      8	import zipfile
      9	from pathlib import Path
     10	
     11	from fastapi import APIRouter, HTTPException, Request
     12	from fastapi.responses import FileResponse, Response
-    13	from pydantic import BaseModel
-    14	
-    15	from app.generation.section_builder import SECTION_TITLES
-    16	from app.models.lesson import SectionType
-    17	
-    18	router = APIRouter(prefix="/api/audio", tags=["audio"])
+    13	
+    14	from app.api.models import RenderAudioRequest
+    15	from app.audio.render_service import render_lesson_audio
+    16	from app.audio.transcode import EXT_MEDIA_TYPE
+    17	from app.generation.section_builder import SECTION_TITLES
+    18	from app.models.lesson import SectionType
     19	
-    20	
-    21	def _sanitize_filename(name: str) -> str:
-    22	    """Strip filesystem-illegal characters and collapse whitespace to underscores."""
-    23	    name = re.sub(r'[/\\:*?"<>|]', "", name)
-    24	    name = re.sub(r"\s+", "_", name.strip())
-    25	    return name or "audio"
-    26	
-    27	
-    28	def _build_section_filename(topic: str, day: int, section_index: int, section_type: str) -> str:
-    29	    """Build a context-rich section WAV filename: {Topic}_Day{DD}_{NN}_{Title}.wav."""
-    30	    safe_topic = _sanitize_filename(topic)
-    31	    try:
-    32	        st = SectionType(section_type)
-    33	        title = SECTION_TITLES.get(st, section_type)
-    34	    except ValueError:
-    35	        title = section_type
-    36	    safe_title = _sanitize_filename(title)
-    37	    return f"{safe_topic}_Day{day:02d}_{section_index + 1:02d}_{safe_title}.wav"
+    20	router = APIRouter(prefix="/api/audio", tags=["audio"])
+    21	
+    22	
+    23	def _sanitize_filename(name: str) -> str:
+    24	    """Strip filesystem-illegal characters and collapse whitespace to underscores."""
+    25	    name = re.sub(r'[/\\:*?"<>|]', "", name)
+    26	    name = re.sub(r"\s+", "_", name.strip())
+    27	    return name or "audio"
+    28	
+    29	
+    30	def _section_title(section_type: str) -> str:
+    31	    """Resolve a section type string to a human-readable title, falling back raw."""
+    32	    try:
+    33	        st = SectionType(section_type)
+    34	        return SECTION_TITLES.get(st, section_type)
+    35	    except ValueError:
+    36	        return section_type
+    37	
     38	
-    39	
-    40	class RenderAudioRequest(BaseModel):
-    41	    lesson_id: str
-    42	
-    43	
-    44	@router.post("/render", status_code=202)
-    45	async def render_audio(body: RenderAudioRequest, request: Request):
-    46	    store = request.app.state.content_store
-    47	    lesson = store.get_lesson(body.lesson_id)
-    48	    if lesson is None:
-    49	        raise HTTPException(status_code=404, detail="Lesson not found")
-    50	
-    51	    renderer = request.app.state.renderer
-    52	    audio_dir: Path = request.app.state.audio_dir
-    53	    audio_dir.mkdir(parents=True, exist_ok=True)
+    39	def _resolve_topic_day(store, lesson_id: str) -> tuple[str, int]:
+    40	    """Resolve (topic, day) for a lesson, falling back to ('audio', 1)."""
+    41	    topic = "audio"
+    42	    day = 1
+    43	    lesson_row = store.get_lesson_row(lesson_id)
+    44	    if lesson_row is not None:
+    45	        day = lesson_row["day"]
+    46	        curriculum = store.get_curriculum(lesson_row["curriculum_id"])
+    47	        if curriculum is not None:
+    48	            topic = curriculum.topic
+    49	        else:
+    50	            lesson = store.get_lesson(lesson_id)
+    51	            topic = lesson.title
+    52	    return topic, day
+    53	
     54	
-    55	    # Allocate UUIDs for full lesson and each section
-    56	    audio_id = str(uuid.uuid4())
-    57	    full_path = audio_dir / f"{audio_id}.wav"
-    58	
-    59	    section_ids = [str(uuid.uuid4()) for _ in lesson.sections]
-    60	    section_paths = [audio_dir / f"{sid}.wav" for sid in section_ids]
+    55	def _build_section_filename(topic: str, day: int, section_index: int, section_type: str, ext: str = ".wav") -> str:
+    56	    """Build a context-rich section filename: {Topic}_Day{DD}_{NN}_{Title}{ext}."""
+    57	    safe_topic = _sanitize_filename(topic)
+    58	    title = _section_title(section_type)
+    59	    safe_title = _sanitize_filename(title)
+    60	    return f"{safe_topic}_Day{day:02d}_{section_index + 1:02d}_{safe_title}{ext}"
     61	
-    62	    await renderer.render(lesson, full_path, section_paths=section_paths)
-    63	
-    64	    # Persist full lesson row
-    65	    store.save_audio_file(audio_id, body.lesson_id, str(full_path))
-    66	
-    67	    # Persist per-section rows
-    68	    for i, (sid, section) in enumerate(zip(section_ids, lesson.sections, strict=True)):
-    69	        store.save_audio_file(
-    70	            sid,
-    71	            body.lesson_id,
-    72	            str(section_paths[i]),
-    73	            section_index=i,
-    74	            section_type=section.section_type.value,
-    75	        )
-    76	
-    77	    sections = [
-    78	        {
-    79	            "audio_id": sid,
-    80	            "section_index": i,
-    81	            "section_type": section.section_type.value,
-    82	            "title": SECTION_TITLES.get(section.section_type, section.section_type.value),
-    83	        }
-    84	        for i, (sid, section) in enumerate(zip(section_ids, lesson.sections, strict=True))
-    85	    ]
+    62	
+    63	@router.post("/render", status_code=202)
+    64	async def render_audio(body: RenderAudioRequest, request: Request):
+    65	    store = request.state.content_store
+    66	    lesson = store.get_lesson(body.lesson_id)
+    67	    if lesson is None:
+    68	        raise HTTPException(status_code=404, detail="Lesson not found")
+    69	
+    70	    return await render_lesson_audio(
+    71	        store=store,
+    72	        renderer=request.app.state.renderer,
+    73	        audio_dir=request.app.state.audio_dir,
+    74	        lesson_id=body.lesson_id,
+    75	        lesson=lesson,
+    76	    )
+    77	
+    78	
+    79	@router.get("/lesson/{lesson_id}", status_code=200)
+    80	async def get_lesson_audio(lesson_id: str, request: Request):
+    81	    """Return the audio file list for a lesson (full + sections) without re-rendering."""
+    82	    store = request.state.content_store
+    83	    rows = store.list_audio_files_for_lesson(lesson_id)
+    84	    if not rows:
+    85	        raise HTTPException(status_code=404, detail="No audio found for this lesson")
     86	
-    87	    return {"audio_id": audio_id, "lesson_id": body.lesson_id, "sections": sections}
-    88	
-    89	
-    90	@router.get("/lesson/{lesson_id}", status_code=200)
-    91	async def get_lesson_audio(lesson_id: str, request: Request):
-    92	    """Return the audio file list for a lesson (full + sections) without re-rendering."""
-    93	    store = request.app.state.content_store
-    94	    rows = store.list_audio_files_for_lesson(lesson_id)
-    95	    if not rows:
-    96	        raise HTTPException(status_code=404, detail="No audio found for this lesson")
-    97	
-    98	    full_row = next((r for r in rows if r["section_index"] is None), None)
-    99	    if full_row is None:
-   100	        raise HTTPException(status_code=404, detail="Full lesson audio not found")
-   101	
-   102	    section_rows = [r for r in rows if r["section_index"] is not None]
-   103	
-   104	    sections = []
-   105	    for r in section_rows:
-   106	        section_type_str = r["section_type"] or ""
-   107	        try:
-   108	            st = SectionType(section_type_str)
-   109	            title = SECTION_TITLES.get(st, section_type_str)
-   110	        except ValueError:
-   111	            title = section_type_str
-   112	        sections.append(
-   113	            {
-   114	                "audio_id": r["id"],
-   115	                "section_index": r["section_index"],
-   116	                "section_type": section_type_str,
-   117	                "title": title,
-   118	            }
-   119	        )
+    87	    full_row = next((r for r in rows if r["section_index"] is None), None)
+    88	    if full_row is None:
+    89	        raise HTTPException(status_code=404, detail="Full lesson audio not found")
+    90	
+    91	    section_rows = [r for r in rows if r["section_index"] is not None]
+    92	
+    93	    sections = []
+    94	    for r in section_rows:
+    95	        section_type_str = r["section_type"] or ""
+    96	        title = _section_title(section_type_str)
+    97	        section_cues = json.loads(r["cues_json"]) if r["cues_json"] else None
+    98	        sections.append(
+    99	            {
+   100	                "audio_id": r["id"],
+   101	                "section_index": r["section_index"],
+   102	                "section_type": section_type_str,
+   103	                "title": title,
+   104	                "cues": section_cues,
+   105	            }
+   106	        )
+   107	
+   108	    cues: list | None = None
+   109	    raw = full_row.get("cues_json")
+   110	    if raw is not None:
+   111	        cues = json.loads(raw)
+   112	
+   113	    return {
+   114	        "audio_id": full_row["id"],
+   115	        "lesson_id": lesson_id,
+   116	        "sections": sections,
+   117	        "cues": cues,
+   118	    }
+   119	
    120	
-   121	    return {
-   122	        "audio_id": full_row["id"],
-   123	        "lesson_id": lesson_id,
-   124	        "sections": sections,
-   125	    }
-   126	
-   127	
-   128	@router.get("/lesson/{lesson_id}/zip", status_code=200)
-   129	async def download_lesson_zip(lesson_id: str, request: Request):
-   130	    """Return a ZIP of all section WAVs for a lesson with context-rich filenames."""
-   131	    store = request.app.state.content_store
-   132	    rows = store.list_audio_files_for_lesson(lesson_id)
-   133	    full_row = next((r for r in rows if r["section_index"] is None), None)
-   134	    section_rows = [r for r in rows if r["section_index"] is not None]
-   135	
-   136	    if not section_rows:
-   137	        raise HTTPException(status_code=404, detail="No section audio files found for this lesson")
-   138	
-   139	    # Validate all files exist before building the ZIP
-   140	    all_rows = ([full_row] if full_row else []) + section_rows
-   141	    for r in all_rows:
-   142	        if not Path(r["file_path"]).exists():
-   143	            raise HTTPException(status_code=404, detail=f"Audio file missing: {r['file_path']}")
-   144	
-   145	    # Resolve topic and day for naming
-   146	    topic = "audio"
-   147	    day = 1
-   148	    lesson_row = store.get_lesson_row(lesson_id)
-   149	    if lesson_row is not None:
-   150	        day = lesson_row["day"]
-   151	        curriculum = store.get_curriculum(lesson_row["curriculum_id"])
-   152	        if curriculum is not None:
-   153	            topic = curriculum.topic
-   154	        else:
-   155	            lesson = store.get_lesson(lesson_id)
-   156	            topic = lesson.title  # lesson_row exists → lesson exists
-   157	
-   158	    safe_topic = _sanitize_filename(topic)
+   121	@router.get("/lesson/{lesson_id}/zip", status_code=200)
+   122	async def download_lesson_zip(lesson_id: str, request: Request):
+   123	    """Return a ZIP of all section WAVs for a lesson with context-rich filenames."""
+   124	    store = request.state.content_store
+   125	    rows = store.list_audio_files_for_lesson(lesson_id)
+   126	    full_row = next((r for r in rows if r["section_index"] is None), None)
+   127	    section_rows = [r for r in rows if r["section_index"] is not None]
+   128	
+   129	    if not section_rows:
+   130	        raise HTTPException(status_code=404, detail="No section audio files found for this lesson")
+   131	
+   132	    # Validate all files exist before building the ZIP
+   133	    all_rows = ([full_row] if full_row else []) + section_rows
+   134	    for r in all_rows:
+   135	        if not Path(r["file_path"]).exists():
+   136	            raise HTTPException(status_code=404, detail=f"Audio file missing: {r['file_path']}")
+   137	
+   138	    topic, day = _resolve_topic_day(store, lesson_id)
+   139	    safe_topic = _sanitize_filename(topic)
+   140	
+   141	    # Build ZIP in memory: full lesson file first (sorts as _00_), then sections
+   142	    buf = io.BytesIO()
+   143	    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_STORED) as zf:
+   144	        if full_row:
+   145	            full_ext = Path(full_row["file_path"]).suffix or ".wav"
+   146	            full_filename = f"{safe_topic}_Day{day:02d}_00_Full{full_ext}"
+   147	            zf.write(full_row["file_path"], arcname=full_filename)
+   148	        for r in sorted(section_rows, key=lambda x: x["section_index"]):
+   149	            ext = Path(r["file_path"]).suffix or ".wav"
+   150	            filename = _build_section_filename(topic, day, r["section_index"], r["section_type"] or "", ext)
+   151	            zf.write(r["file_path"], arcname=filename)
+   152	
+   153	    zip_name = f"{_sanitize_filename(topic)}_Day{day:02d}.zip"
+   154	    return Response(
+   155	        content=buf.getvalue(),
+   156	        media_type="application/zip",
+   157	        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+   158	    )
    159	
-   160	    # Build ZIP in memory: full lesson file first (sorts as _00_), then sections
-   161	    buf = io.BytesIO()
-   162	    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_STORED) as zf:
-   163	        if full_row:
-   164	            full_filename = f"{safe_topic}_Day{day:02d}_00_Full.wav"
-   165	            zf.write(full_row["file_path"], arcname=full_filename)
-   166	        for r in sorted(section_rows, key=lambda x: x["section_index"]):
-   167	            filename = _build_section_filename(topic, day, r["section_index"], r["section_type"] or "")
-   168	            zf.write(r["file_path"], arcname=filename)
-   169	
-   170	    zip_name = f"{_sanitize_filename(topic)}_Day{day:02d}.zip"
-   171	    return Response(
-   172	        content=buf.getvalue(),
-   173	        media_type="application/zip",
-   174	        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
-   175	    )
-   176	
-   177	
-   178	@router.get("/{audio_id}", status_code=200)
-   179	async def get_audio(audio_id: str, request: Request):
-   180	    store = request.app.state.content_store
-   181	    row = store.get_audio_file_row(audio_id)
-   182	    if row is None:
-   183	        raise HTTPException(status_code=404, detail="Audio not found")
-   184	
-   185	    path = Path(row["file_path"])
-   186	    if not path.exists():
-   187	        raise HTTPException(status_code=404, detail="Audio file missing")
-   188	
-   189	    # Build a friendly download filename with curriculum context
-   190	    lesson_id = row["lesson_id"]
-   191	    topic = "audio"
-   192	    day = 1
-   193	    lesson_row = store.get_lesson_row(lesson_id)
-   194	    if lesson_row is not None:
-   195	        day = lesson_row["day"]
-   196	        curriculum = store.get_curriculum(lesson_row["curriculum_id"])
-   197	        if curriculum is not None:
-   198	            topic = curriculum.topic
-   199	        else:
-   200	            lesson = store.get_lesson(lesson_id)
-   201	            topic = lesson.title  # lesson_row exists → lesson exists
-   202	
-   203	    if row["section_index"] is not None:
-   204	        filename = _build_section_filename(topic, day, row["section_index"], row["section_type"] or "")
-   205	    else:
-   206	        filename = f"{_sanitize_filename(topic)}_Day{day:02d}_full.wav"
-   207	
-   208	    return FileResponse(
-   209	        str(path),
-   210	        media_type="audio/wav",
-   211	        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-   212	    )
-
+   160	
+   161	@router.get("/{audio_id}", status_code=200)
+   162	async def get_audio(audio_id: str, request: Request):
+   163	    store = request.state.content_store
+   164	    row = store.get_audio_file_row(audio_id)
+   165	    if row is None:
+   166	        raise HTTPException(status_code=404, detail="Audio not found")
+   167	
+   168	    path = Path(row["file_path"])
+   169	    if not path.exists():
+   170	        raise HTTPException(status_code=404, detail="Audio file missing")
+   171	
+   172	    # Build a friendly download filename with curriculum context
+   173	    lesson_id = row["lesson_id"]
+   174	    topic, day = _resolve_topic_day(store, lesson_id)
+   175	
+   176	    # Derive extension + media type from the actual stored file, so pre-existing
+   177	    # WAV files and newly-rendered compressed files both serve correctly.
+   178	    ext = path.suffix or ".wav"
+   179	    media_type = EXT_MEDIA_TYPE.get(ext, "application/octet-stream")
+   180	
+   181	    if row["section_index"] is not None:
+   182	        filename = _build_section_filename(topic, day, row["section_index"], row["section_type"] or "", ext)
+   183	    else:
+   184	        filename = f"{_sanitize_filename(topic)}_Day{day:02d}_full{ext}"
+   185	
+   186	    return FileResponse(
+   187	        str(path),
+   188	        media_type=media_type,
+   189	        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+   190	    )
 ```
 
 Four changes from the prototype:
@@ -4466,68 +4741,193 @@ cd backend && uv run pytest --tb=short -q 2>&1
 ```
 
 ```output
+........................................................................ [  1%]
+........................................................................ [  3%]
+........................................................................ [  5%]
+..sssssssss............................................................. [  7%]
+........................................................................ [  9%]
+........................................................................ [ 11%]
+........................................................................ [ 13%]
+........................................................................ [ 15%]
 ........................................................................ [ 17%]
-........................................................................ [ 35%]
-........................................................................ [ 52%]
+........................................................................ [ 19%]
+........................................................................ [ 21%]
+........................................................................ [ 22%]
+........................................................................ [ 24%]
+........................................................................ [ 26%]
+........................................................................ [ 28%]
+........................................................................ [ 30%]
+........................................................................ [ 32%]
+........................................................................ [ 34%]
+........................................................................ [ 36%]
+........................................................................ [ 38%]
+........................................................................ [ 40%]
+........................................................................ [ 42%]
+........................................................................ [ 44%]
+........................................................................ [ 45%]
+........................................................................ [ 47%]
+........................................................................ [ 49%]
+........................................................................ [ 51%]
+........................................................................ [ 53%]
+............ssssssss.................................................... [ 55%]
+........................................................................ [ 57%]
+........................................................................ [ 59%]
+........................................................................ [ 61%]
+........................................................................ [ 63%]
+........................................................................ [ 65%]
+............ssssss.s....................sssssssssssss.sss.......ss...... [ 67%]
+.....sssssss............................................................ [ 68%]
 ........................................................................ [ 70%]
+........................................................................ [ 72%]
+........................................................................ [ 74%]
+........................................................................ [ 76%]
+........................................................................ [ 78%]
+........................................................................ [ 80%]
+........................................................................ [ 82%]
+........................................................................ [ 84%]
+........................................................................ [ 86%]
 ........................................................................ [ 88%]
-.................................................                        [100%]
+........................................................................ [ 90%]
+........................................................................ [ 91%]
+........................................................................ [ 93%]
+........................................................................ [ 95%]
+........................................................................ [ 97%]
+........................................................................ [ 99%]
+...............                                                          [100%]
 ================================ tests coverage ================================
-_______________ coverage: platform darwin, python 3.13.7-final-0 _______________
+_______________ coverage: platform darwin, python 3.14.2-final-0 _______________
 
-Name                                  Stmts   Miss Branch BrPart  Cover   Missing
----------------------------------------------------------------------------------
-app/__init__.py                           0      0      0      0   100%
-app/api/__init__.py                       0      0      0      0   100%
-app/api/audio.py                         73      0     16      0   100%
-app/api/curriculum.py                    42      0      4      0   100%
-app/api/generation.py                    40      0      6      0   100%
-app/api/srs.py                          143      0     28      0   100%
-app/audio/__init__.py                     0      0      0      0   100%
-app/audio/assembler.py                   22      0      4      0   100%
-app/audio/edge_tts.py                    53      0     10      0   100%
-app/audio/pause_calculator.py            20      0      4      0   100%
-app/audio/ports.py                        7      0      0      0   100%
-app/audio/preprocessing/__init__.py       0      0      0      0   100%
-app/audio/preprocessing/base.py           5      0      0      0   100%
-app/audio/preprocessing/slovene.py        5      0      0      0   100%
-app/audio/renderer.py                    61      0     12      0   100%
-app/config.py                             8      0      0      0   100%
-app/generation/__init__.py                0      0      0      0   100%
-app/generation/curriculum.py             32      0      4      0   100%
-app/generation/enforcer.py               35      0     12      0   100%
-app/generation/prompts.py                20      0      4      0   100%
-app/generation/section_builder.py        83      0     38      0   100%
-app/generation/story.py                  37      0      2      0   100%
-app/generation/syllabify.py              32      0     12      0   100%
-app/llm/__init__.py                       0      0      0      0   100%
-app/llm/cassette.py                      72      0     22      0   100%
-app/llm/client.py                       226      0     70      0   100%
-app/main.py                              55      0      2      0   100%
-app/models/__init__.py                    0      0      0      0   100%
-app/models/curriculum.py                 30      0      2      0   100%
-app/models/language.py                   15      0      0      0   100%
-app/models/lesson.py                     45      0      2      0   100%
-app/models/srs_item.py                   26      0      0      0   100%
-app/models/strategy.py                   38      0      0      0   100%
-app/models/syntactic_unit.py             16      0      4      0   100%
-app/srs/__init__.py                       0      0      0      0   100%
-app/srs/database.py                     176      0     44      0   100%
-app/srs/feedback.py                      12      0      2      0   100%
-app/srs/fsrs.py                          57      0      6      0   100%
-app/srs/lemmatizer.py                     7      0      0      0   100%
-app/srs/selector.py                      40      0      8      0   100%
-app/srs/tokenizer.py                      5      0      0      0   100%
-app/srs/transcript.py                    35      0      8      0   100%
-app/storage/__init__.py                   0      0      0      0   100%
-app/storage/store.py                    114      0     28      0   100%
----------------------------------------------------------------------------------
-TOTAL                                  1687      0    354      0   100%
+Name                                            Stmts   Miss Branch BrPart  Cover   Missing
+-------------------------------------------------------------------------------------------
+app/__init__.py                                     0      0      0      0   100%
+app/anki/__init__.py                                0      0      0      0   100%
+app/anki/add_vocab_notetype.py                     41      0     12      0   100%
+app/anki/field_map.py                              18      0      0      0   100%
+app/anki/import_seed.py                           166      0     66      0   100%
+app/anki/media/__init__.py                          0      0      0      0   100%
+app/anki/media/forvo.py                            43      0      8      0   100%
+app/anki/media/normalize.py                        55      0      8      0   100%
+app/anki/media/pipeline.py                         42      0     12      0   100%
+app/anki/media/pixabay.py                          54      0      8      0   100%
+app/anki/media/query_llm.py                        47      0     16      0   100%
+app/anki/media/tts.py                              14      0      4      0   100%
+app/anki/media/vocab_media.py                      43      0      8      0   100%
+app/anki/model_discovery.py                        21      0     10      0   100%
+app/anki/normalize_usns.py                         26      0     12      0   100%
+app/anki/notetype.py                                4      0      0      0   100%
+app/anki/protobuf_wire.py                         125      0     42      0   100%
+app/anki/replay_fsrs_from_revlog.py               120      0     40      0   100%
+app/anki/rollover.py                               22      0      4      0   100%
+app/anki/safety.py                                135      0     32      0   100%
+app/anki/sqlite_reader.py                         275      0    112      0   100%
+app/anki/sync.py                                  130      0     18      0   100%
+app/anki/sync_common.py                           126      0     20      0   100%
+app/anki/sync_engine.py                           507      0    248      0   100%
+app/anki/sync_orchestrator.py                     216      0     48      0   100%
+app/anki/sync_reader.py                            68      0     16      0   100%
+app/anki/sync_writer.py                           327      0     80      0   100%
+app/anki/vocab_notetype.py                         45      0      4      0   100%
+app/api/__init__.py                                 0      0      0      0   100%
+app/api/_serializers.py                             6      0      2      0   100%
+app/api/admin.py                                   11      0      0      0   100%
+app/api/anki.py                                    26      0      0      0   100%
+app/api/audio.py                                  112      0     30      0   100%
+app/api/curriculum.py                             134      0     22      0   100%
+app/api/generation.py                              99      0     22      0   100%
+app/api/llm.py                                     53      0     14      0   100%
+app/api/models.py                                  78      0      0      0   100%
+app/api/pipeline.py                                48      0      8      0   100%
+app/api/srs.py                                    633      0    178      0   100%
+app/audio/__init__.py                               0      0      0      0   100%
+app/audio/backfill_cloze_tts.py                    40      0     10      0   100%
+app/audio/cloze_tts.py                             44      0     16      0   100%
+app/audio/cues.py                                  91      0     30      0   100%
+app/audio/edge_tts.py                              54      0     10      0   100%
+app/audio/pause_calculator.py                      20      0      6      0   100%
+app/audio/ports.py                                  5      0      0      0   100%
+app/audio/preprocessing/__init__.py                 0      0      0      0   100%
+app/audio/preprocessing/base.py                     5      0      0      0   100%
+app/audio/preprocessing/norwegian.py                4      0      0      0   100%
+app/audio/preprocessing/slovene.py                  5      0      0      0   100%
+app/audio/render_service.py                        72      0     32      0   100%
+app/audio/renderer.py                             121      0     26      0   100%
+app/audio/transcode.py                             15      0      2      0   100%
+app/common/__init__.py                              0      0      0      0   100%
+app/common/guid.py                                  8      0      0      0   100%
+app/config.py                                      39      0      0      0   100%
+app/generation/__init__.py                          0      0      0      0   100%
+app/generation/breakdown_preview.py                21      0      6      0   100%
+app/generation/ids.py                               9      0      0      0   100%
+app/generation/json_parsing.py                     60      0     20      0   100%
+app/generation/norwegian_breakdown.py             289      0    158      0   100%
+app/generation/pipeline.py                        220      0     62      0   100%
+app/generation/planner.py                          42      0     10      0   100%
+app/generation/prompts.py                          96      0     26      0   100%
+app/generation/section_builder.py                 168      0     86      0   100%
+app/generation/story.py                           118      0     38      0   100%
+app/generation/syllabify.py                        38      0     10      0   100%
+app/languages.py                                  101      0     22      0   100%
+app/llm/__init__.py                                 0      0      0      0   100%
+app/llm/activity.py                                16      0      0      0   100%
+app/llm/cassette.py                                81      0     24      0   100%
+app/llm/client.py                                 303      0     86      0   100%
+app/llm/translate.py                               22      0      4      0   100%
+app/llm/usage_ledger.py                            34      0      6      0   100%
+app/main.py                                       138      0     30      0   100%
+app/media/__init__.py                               0      0      0      0   100%
+app/media/importer.py                              44      0     14      0   100%
+app/models/__init__.py                              0      0      0      0   100%
+app/models/curriculum.py                           30      0      2      0   100%
+app/models/language.py                             19      0      0      0   100%
+app/models/lesson.py                               60      0     10      0   100%
+app/models/srs_item.py                            116      0      4      0   100%
+app/models/strategy.py                              5      0      0      0   100%
+app/models/syntactic_unit.py                       49      0     10      0   100%
+app/srs/__init__.py                                 0      0      0      0   100%
+app/srs/_anki_rng.py                              117      0     20      0   100%
+app/srs/collocation_matcher.py                     19      0     10      0   100%
+app/srs/database.py                                21      0      0      0   100%
+app/srs/db_base.py                                129      0     26      0   100%
+app/srs/db_collocations.py                        193      0     64      0   100%
+app/srs/db_counts.py                               43      0      0      0   100%
+app/srs/db_directions.py                          120      0     32      0   100%
+app/srs/db_histogram.py                             9      0      0      0   100%
+app/srs/db_ignored_lemmas.py                       13      0      0      0   100%
+app/srs/db_kv_cache.py                             21      0      2      0   100%
+app/srs/db_lemma_cache.py                          46      0      4      0   100%
+app/srs/db_media.py                                52      0      2      0   100%
+app/srs/db_queue.py                                51      0      2      0   100%
+app/srs/db_revlog.py                               76      0     18      0   100%
+app/srs/db_sync.py                                149      0     36      0   100%
+app/srs/db_sync_conflicts.py                        9      0      0      0   100%
+app/srs/direction_fields.py                        37      0      6      0   100%
+app/srs/feedback.py                                15      0      8      0   100%
+app/srs/fsrs.py                                   438      0    120      0   100%
+app/srs/function_words.py                         146      0     54      0   100%
+app/srs/grade_undo.py                              41      0     14      0   100%
+app/srs/lemmatizer.py                              94      0     26      0   100%
+app/srs/load_balancer.py                          110      0     30      0   100%
+app/srs/mastery.py                                 18      0      6      0   100%
+app/srs/migrations.py                             340      0    108      0   100%
+app/srs/planner_snapshot.py                        38      0     12      0   100%
+app/srs/queue_engine.py                           187      0     66      0   100%
+app/srs/queue_stats.py                            569      0    226      0   100%
+app/srs/tokenizer.py                                5      0      0      0   100%
+app/srs/transcript.py                             242      0     86      0   100%
+app/storage/__init__.py                             0      0      0      0   100%
+app/storage/backfill_curriculum_day_titles.py      21      0     12      0   100%
+app/storage/lesson_io.py                           83      0     46      0   100%
+app/storage/lowercase_glosses.py                   28      0     10      0   100%
+app/storage/plan_io.py                             93      0     50      0   100%
+app/storage/regloss_lessons.py                     72      0     28      0   100%
+app/storage/store.py                              142      0     30      0   100%
+-------------------------------------------------------------------------------------------
+TOTAL                                           10259      0   3018      0   100%
 Required test coverage of 100.0% reached. Total coverage: 100.00%
-409 passed in 6.85s
+3710 passed, 49 skipped in 46.27s
 ```
 
-409 tests, **100% branch coverage** *(at the time of the original walkthrough revision)*. As of the Anki-sync work the suite has grown to **1460 tests across 73 files** at **~99.95% branch coverage** — the only remaining uncovered lines are a handful of conditional ALTER guards in `srs/migrations.py` that only fire when re-running a partially applied migration. All in mock mode — no network calls needed. PART 8 below shows the original test snapshot; for an up-to-date breakdown of the new Anki-sync test files see PART 12.
+409 tests, **100% branch coverage** *(at the time of the original walkthrough revision)*. The suite has since grown to **~3700 tests across 139 files** at **100% coverage, enforced** (`fail_under = 100`; the refreshed run above shows the real count). All in mock mode — no network calls needed. PART 8 below shows the original test snapshot; for an up-to-date breakdown of the new Anki-sync test files see PART 12.
 
 ### 8.2 Test File Inventory
 
@@ -4536,81 +4936,145 @@ ls backend/tests/test_*.py | xargs -I{} sh -c "echo \"{}: \$(grep -c \"def test_
 ```
 
 ```output
-backend/tests/test_anki_audit_guids.py: 12 tests
-backend/tests/test_anki_backfill_guids.py: 16 tests
-backend/tests/test_anki_bootstrap_e2e.py: 8 tests
-backend/tests/test_anki_connect_client.py: 24 tests
+backend/tests/test_anki_add_vocab_notetype.py: 9 tests
+backend/tests/test_anki_extra_isolation.py: 1 tests
 backend/tests/test_anki_fallback_log.py: 4 tests
 backend/tests/test_anki_guid.py: 4 tests
-backend/tests/test_anki_import_seed_readonly.py: 27 tests
-backend/tests/test_anki_media_forvo.py: 13 tests
-backend/tests/test_anki_media_normalize.py: 9 tests
-backend/tests/test_anki_media_pipeline.py: 15 tests
-backend/tests/test_anki_media_pixabay.py: 24 tests
+backend/tests/test_anki_import_seed_readonly.py: 47 tests
+backend/tests/test_anki_media_forvo.py: 15 tests
+backend/tests/test_anki_media_normalize.py: 11 tests
+backend/tests/test_anki_media_pipeline.py: 22 tests
+backend/tests/test_anki_media_pixabay.py: 33 tests
+backend/tests/test_anki_media_query_llm.py: 24 tests
 backend/tests/test_anki_media_tts.py: 5 tests
-backend/tests/test_anki_merge_dupes_apply.py: 26 tests
-backend/tests/test_anki_merge_dupes_cli.py: 9 tests
-backend/tests/test_anki_merge_dupes_plan.py: 20 tests
-backend/tests/test_anki_migrate_homonyms.py: 20 tests
-backend/tests/test_anki_model_discovery.py: 16 tests
+backend/tests/test_anki_model_discovery.py: 7 tests
 backend/tests/test_anki_normalize_usns.py: 5 tests
-backend/tests/test_anki_notetype.py: 16 tests
-backend/tests/test_anki_offline_writer_create_note.py: 24 tests
-backend/tests/test_anki_repair_nested_homonyms.py: 14 tests
-backend/tests/test_anki_safety.py: 17 tests
+backend/tests/test_anki_offline_writer_create_note.py: 31 tests
+backend/tests/test_anki_oracle_smoke.py: 2 tests
+backend/tests/test_anki_peer_sync_selfhost.py: 7 tests
+backend/tests/test_anki_protobuf_wire.py: 13 tests
+backend/tests/test_anki_replay_fsrs_from_revlog.py: 39 tests
+backend/tests/test_anki_rng.py: 26 tests
+backend/tests/test_anki_safety.py: 24 tests
 backend/tests/test_anki_safety_rw.py: 11 tests
-backend/tests/test_anki_sqlite_reader.py: 43 tests
-backend/tests/test_anki_sqlite_writer.py: 22 tests
-backend/tests/test_anki_syncKey_preflight.py: 8 tests
-backend/tests/test_anki_sync_create_new.py: 43 tests
-backend/tests/test_anki_sync_force_fsrs.py: 22 tests
-backend/tests/test_anki_sync_mode_detection.py: 19 tests
-backend/tests/test_anki_sync_pull.py: 60 tests
-backend/tests/test_anki_sync_push.py: 43 tests
-backend/tests/test_anki_sync_round_trip.py: 2 tests
-backend/tests/test_api.py: 66 tests
+backend/tests/test_anki_sqlite_reader.py: 117 tests
+backend/tests/test_anki_sync_concurrent_review.py: 16 tests
+backend/tests/test_anki_sync_create_new.py: 64 tests
+backend/tests/test_anki_sync_force_fsrs.py: 12 tests
+backend/tests/test_anki_sync_main.py: 21 tests
+backend/tests/test_anki_sync_merge_equivalence.py: 9 tests
+backend/tests/test_anki_sync_offline_writer.py: 24 tests
+backend/tests/test_anki_sync_orchestrator.py: 64 tests
+backend/tests/test_anki_sync_orphan_recovery.py: 12 tests
+backend/tests/test_anki_sync_pull.py: 105 tests
+backend/tests/test_anki_sync_pull_event_mode.py: 10 tests
+backend/tests/test_anki_sync_push.py: 147 tests
+backend/tests/test_anki_sync_round_trip.py: 11 tests
+backend/tests/test_api.py: 145 tests
 backend/tests/test_api_admin.py: 3 tests
-backend/tests/test_api_anki.py: 10 tests
-backend/tests/test_api_srs.py: 46 tests
-backend/tests/test_api_srs_admin.py: 39 tests
-backend/tests/test_api_srs_directions.py: 25 tests
-backend/tests/test_audio_ports.py: 5 tests
+backend/tests/test_api_anki.py: 5 tests
+backend/tests/test_api_base_cards.py: 13 tests
+backend/tests/test_api_curriculum_plan.py: 26 tests
+backend/tests/test_api_inflection_clozes.py: 22 tests
+backend/tests/test_api_llm_status.py: 12 tests
+backend/tests/test_api_pipeline.py: 11 tests
+backend/tests/test_api_srs.py: 97 tests
+backend/tests/test_api_srs_admin.py: 51 tests
+backend/tests/test_api_srs_directions.py: 39 tests
+backend/tests/test_audio_ports.py: 2 tests
+backend/tests/test_audio_transcode.py: 6 tests
+backend/tests/test_backfill_cloze_tts.py: 8 tests
+backend/tests/test_backfill_curriculum_titles.py: 5 tests
+backend/tests/test_breakdown_preview.py: 7 tests
+backend/tests/test_check_language_literals.py: 30 tests
+backend/tests/test_check_mock_boundaries.py: 29 tests
+backend/tests/test_cloze_tts.py: 7 tests
+backend/tests/test_colday_helper_consistency.py: 8 tests
 backend/tests/test_collocation_matcher.py: 11 tests
-backend/tests/test_config.py: 5 tests
-backend/tests/test_curriculum.py: 13 tests
+backend/tests/test_config.py: 7 tests
+backend/tests/test_coverage_fix.py: 0 tests
+backend/tests/test_cues.py: 19 tests
+backend/tests/test_database_helpers.py: 5 tests
+backend/tests/test_database_mixin_composition.py: 2 tests
+backend/tests/test_direction_fields.py: 6 tests
+backend/tests/test_direction_invariants.py: 21 tests
 backend/tests/test_dirty_fields.py: 11 tests
-backend/tests/test_edge_tts.py: 9 tests
-backend/tests/test_enforcer.py: 10 tests
+backend/tests/test_e2e_listen_to_sync.py: 1 tests
+backend/tests/test_edge_tts.py: 11 tests
 backend/tests/test_feedback_rating_input.py: 13 tests
-backend/tests/test_fsrs.py: 18 tests
-backend/tests/test_lemmatizer.py: 7 tests
-backend/tests/test_llm_cassette.py: 11 tests
-backend/tests/test_llm_client.py: 41 tests
-backend/tests/test_llm_translate.py: 6 tests
-backend/tests/test_main_lifespan.py: 2 tests
-backend/tests/test_media_importer.py: 12 tests
-backend/tests/test_models.py: 37 tests
+backend/tests/test_field_map.py: 4 tests
+backend/tests/test_fsrs.py: 86 tests
+backend/tests/test_fsrs_steps.py: 37 tests
+backend/tests/test_function_words.py: 132 tests
+backend/tests/test_grade_undo.py: 3 tests
+backend/tests/test_json_parsing.py: 30 tests
+backend/tests/test_languages.py: 59 tests
+backend/tests/test_lemmatizer.py: 60 tests
+backend/tests/test_lesson_io.py: 42 tests
+backend/tests/test_llm_activity.py: 11 tests
+backend/tests/test_llm_cassette.py: 14 tests
+backend/tests/test_llm_client.py: 78 tests
+backend/tests/test_llm_translate.py: 12 tests
+backend/tests/test_llm_usage_ledger.py: 8 tests
+backend/tests/test_load_balancer.py: 31 tests
+backend/tests/test_lowercase_glosses.py: 11 tests
+backend/tests/test_main_lifespan.py: 9 tests
+backend/tests/test_mastery.py: 17 tests
+backend/tests/test_media_importer.py: 20 tests
+backend/tests/test_models.py: 43 tests
+backend/tests/test_multilang.py: 11 tests
+backend/tests/test_norwegian_breakdown.py: 93 tests
+backend/tests/test_parity_bury.py: 1 tests
+backend/tests/test_parity_daily_caps.py: 7 tests
+backend/tests/test_parity_fsrs_f32.py: 5 tests
+backend/tests/test_parity_fsrs_schedule.py: 5 tests
+backend/tests/test_parity_learning_steps.py: 3 tests
+backend/tests/test_parity_load_balancer.py: 2 tests
+backend/tests/test_parity_new_sibling_bury.py: 4 tests
+backend/tests/test_parity_queue_order.py: 3 tests
+backend/tests/test_parity_replay_sequences.py: 1 tests
+backend/tests/test_parity_revlog_factor.py: 2 tests
+backend/tests/test_parity_same_day_review.py: 1 tests
+backend/tests/test_parity_stability_clamp.py: 2 tests
+backend/tests/test_parity_transitions.py: 7 tests
 backend/tests/test_pauses.py: 12 tests
+backend/tests/test_pipeline.py: 47 tests
+backend/tests/test_plan_io.py: 53 tests
+backend/tests/test_planner.py: 14 tests
+backend/tests/test_planner_llm.py: 2 tests
+backend/tests/test_planner_prompts.py: 25 tests
+backend/tests/test_planner_snapshot.py: 13 tests
 backend/tests/test_preprocessor.py: 7 tests
-backend/tests/test_prompts.py: 22 tests
-backend/tests/test_queue_stats.py: 35 tests
-backend/tests/test_queue_stats_cache.py: 53 tests
-backend/tests/test_renderer.py: 19 tests
-backend/tests/test_section_builder.py: 24 tests
-backend/tests/test_srs_database.py: 88 tests
-backend/tests/test_srs_database_anki_surface.py: 15 tests
+backend/tests/test_prompts.py: 25 tests
+backend/tests/test_queue_engine_facade_names.py: 1 tests
+backend/tests/test_queue_stats.py: 77 tests
+backend/tests/test_queue_stats_cache.py: 91 tests
+backend/tests/test_queue_stats_learning_steps.py: 23 tests
+backend/tests/test_queue_stats_load_balancer.py: 31 tests
+backend/tests/test_regloss_lessons.py: 15 tests
+backend/tests/test_render_service.py: 12 tests
+backend/tests/test_renderer.py: 23 tests
+backend/tests/test_review_fuzz_parity.py: 17 tests
+backend/tests/test_rollover_hour_single_source.py: 8 tests
+backend/tests/test_section_builder.py: 42 tests
+backend/tests/test_srs_database.py: 219 tests
+backend/tests/test_srs_database_anki_surface.py: 28 tests
+backend/tests/test_srs_database_learning_step_columns.py: 8 tests
 backend/tests/test_srs_direction_state.py: 20 tests
-backend/tests/test_srs_feedback.py: 3 tests
+backend/tests/test_srs_fsrs.py: 18 tests
 backend/tests/test_srs_guid.py: 7 tests
-backend/tests/test_srs_migrations.py: 51 tests
-backend/tests/test_srs_selector.py: 7 tests
-backend/tests/test_srs_sync_scratch.py: 8 tests
-backend/tests/test_storage.py: 25 tests
-backend/tests/test_story.py: 18 tests
-backend/tests/test_syllabify.py: 5 tests
+backend/tests/test_srs_migrations.py: 88 tests
+backend/tests/test_srs_sync_scratch.py: 4 tests
+backend/tests/test_storage.py: 30 tests
+backend/tests/test_story.py: 44 tests
+backend/tests/test_syllabify.py: 12 tests
+backend/tests/test_sync_server_fixture.py: 9 tests
 backend/tests/test_tokenizer.py: 13 tests
-backend/tests/test_transcript.py: 25 tests
-
+backend/tests/test_transcript.py: 104 tests
+backend/tests/test_user_add_to_anki_e2e.py: 3 tests
+backend/tests/test_vocab_media.py: 9 tests
+backend/tests/test_vocab_media_endpoints.py: 3 tests
+backend/tests/test_vocab_notetype.py: 6 tests
 ```
 
 ~1474 tests across 74 files. The big growth is in `app/anki/` — see PART 12.8 for a per-file breakdown of the Anki integration tests. The non-anki test files were largely unchanged in count from the original 26-file walkthrough snapshot; the additional ~48 anki/sync/media/queue-stats files are the diff.
@@ -4627,50 +5091,50 @@ The test suite uses four distinct mocking strategies:
 Here is a typical cassette-backed test from the curriculum module:
 
 ```bash
-head -40 backend/tests/test_curriculum.py | cat -n
+head -40 backend/tests/test_planner.py | cat -n
 ```
 
 ```output
-     1	"""Curriculum generation tests."""
-     2
-     3	import json
-     4	from unittest.mock import AsyncMock, MagicMock
-     5
-     6	import pytest
-     7
-     8	from app.generation.curriculum import CurriculumGenerator
-     9	from app.generation.prompts import PromptBuilder
-    10	from app.models.curriculum import Curriculum
-    11	from app.models.language import Language
-    12
-    13
-    14	@pytest.fixture
-    15	def language():
-    16	    return Language.slovene()
-    17
-    18
-    19	@pytest.fixture
-    20	def prompt_builder(language):
-    21	    return PromptBuilder()
-    22
-    23
-    24	# -- PromptBuilder ----------------------------------------------------------
-    25
-    26
-    27	def test_prompt_includes_topic(prompt_builder, language):
-    28	    prompt = prompt_builder.build_curriculum_prompt(
-    29	        topic="ordering coffee in Ljubljana",
-    30	        language=language,
-    31	        cefr_level="A2",
-    32	        num_days=3,
-    33	    )
-    34	    assert "ordering coffee in Ljubljana" in prompt
-    35
-    36
-    37	def test_prompt_includes_language_name(prompt_builder, language):
-    38	    prompt = prompt_builder.build_curriculum_prompt(
-    39	        topic="coffee",
-    40	        language=language,
+     1	"""Tests for CurriculumPlanner.turn with a stub LLM (no patch, no cassette)."""
+     2	
+     3	from dataclasses import dataclass
+     4	
+     5	import pytest
+     6	
+     7	from app.generation.planner import CurriculumPlanner, PlannerError, PlannerTurn
+     8	from app.models.curriculum import Curriculum, CurriculumDay
+     9	from app.models.language import Language
+    10	
+    11	
+    12	@dataclass
+    13	class StubLLM:
+    14	    """Minimal async LLM stub — NOT a mock/patch, passes the boundary check."""
+    15	
+    16	    response: str
+    17	    prompt_seen: str | None = None
+    18	
+    19	    async def complete(
+    20	        self,
+    21	        prompt: str,
+    22	        system_prompt: str | None = None,
+    23	        temperature: float = 0.7,
+    24	        max_tokens: int = 256,
+    25	    ) -> str:
+    26	        self.prompt_seen = prompt
+    27	        return self.response
+    28	
+    29	
+    30	def _day_dict(day: int, **overrides) -> dict:
+    31	    d = {
+    32	        "day": day,
+    33	        "title": f"Day {day}",
+    34	        "focus": f"Focus {day}",
+    35	        "collocations": ["coll_a", "coll_b"],
+    36	        "learning_objective": f"Objective {day}",
+    37	    }
+    38	    d.update(overrides)
+    39	    return d
+    40	
 ```
 
 API tests inject mocks via `app.state` — no real LLM or TTS calls. The `ASGITransport` runs the FastAPI app in-process, so tests are fast and isolated.
@@ -4765,18 +5229,18 @@ Each step is independently testable: cassettes for LLM, `:memory:` for SRS and C
 | **TTS concurrency** | 3 concurrent EdgeTTS requests | 10 concurrent + `asyncio.gather` parallelises sections (~80s → ~12s on 7-section lesson) |
 | **Pause system** | Complex word_count multiplier table | Flat 500ms (natural/translated) + proportional for KEY_PHRASES L2 + 600ms for SLOW_SPEED |
 | **SRS admin** | No UI | `/srs` SvelteKit admin page + 6 REST endpoints (list/edit/delete/bulk-delete/reset/suspend) |
-| **Testing** | Unit tests only | 1460 tests, ~99.95% branch coverage, cassette fixtures, 4 mock strategies, Playwright e2e |
-| **API endpoints** | 10 endpoints | 28 endpoints |
+| **Testing** | Unit tests only | ~3700 tests, 100% enforced coverage, cassette fixtures, 4 mock strategies, Playwright e2e |
+| **API endpoints** | 10 endpoints | 56 endpoints |
 | **SRS directions** | Single direction (recognition only) | Two directions per item (RECOGNITION L2→L1 + PRODUCTION L1→L2) with independent FSRS state |
 | **SRS states** | new/learning/review/relearning + suspended | + `BURIED` (Anki bury), `KNOWN` (graduated), full Anki queue mapping |
 | **Anki integration** | None | Bidirectional offline sync over `collection.anki2` SQLite (push → drain revlog → pull → create-new) |
 | **Anki safety** | n/a | `safe_open` lock-probe + SHA-256 backup + integrity validation; USN normalization protocol |
 | **Media** | EdgeTTS only | Forvo audio → EdgeTTS fallback + Pixabay images (token-overlap scoring) + ffmpeg LUFS normalize, deduped per-card |
 | **Queue stats** | Live count from SRS DB | Cached daily-new-cap + FSRS-5 params parsed from Anki `deck_config` protobuf |
-| **Frontend** | Generate / lesson / practice routes | + unified `/review`, `/admin/srs`, single Sync button, Anki-running gating |
+| **Frontend** | Generate / lesson / practice routes | + unified `/review`, `/cards` admin, single Sync button, Anki-running gating |
 
 **What was preserved from the prototypes:**
-- Pimsleur 4-section format (KEY_PHRASES, NATURAL_SPEED, SLOW_SPEED, TRANSLATED)
+- Pimsleur section format (KEY_PHRASES, NATURAL_SPEED, SLOW_SPEED, TRANSLATED, + SLOW_TRANSLATED since 2026-07)
 - EdgeTTS rate limiting (200ms delay between requests)
 - Hexagonal architecture / Protocol-based ports
 - Pedagogical scoring weights (40/30/20/10)
@@ -4794,7 +5258,7 @@ Each step is independently testable: cassettes for LLM, `:memory:` for SRS and C
 ### Automated suite
 
 ```bash
-./test.sh   # ruff lint + pytest (~1460 tests) + vitest (frontend) + playwright e2e
+./test.sh   # ruff lint + pytest (~3700 tests) + vitest (frontend) + playwright e2e
 ```
 
 ### Start the dev server
@@ -4809,7 +5273,7 @@ Open http://localhost:5173, enter a topic (e.g. "ordering coffee in Ljubljana"),
 First generate a curriculum and lesson (which registers SRS items via `POST /api/srs/listen`), then navigate to http://localhost:5173/review — the unified queue blends due cards and a daily-capped slice of new ones, alternating directions (L2→L1 and L1→L2). Rate each with Again / Hard / Good / Easy.
 
 ### SRS admin UI
-Navigate to http://localhost:5173/admin/srs to browse and manage SRS items. Features: search (full-text across text and translation), filter by state, sortable columns, inline edit, single and bulk delete, reset schedule, suspend/unsuspend, force state, create new item.
+Navigate to https://localhost:5173/cards to browse and manage SRS items. Features: search (full-text across text and translation), filter by state, sortable columns, inline edit, single and bulk delete, reset schedule, suspend/unsuspend, force state, create new item.
 
 ### Anki sync
 Click **Sync** in the UI (or `POST /api/anki/peer-sync`). The backend runs the peer-sync sequence against TT's own ``tt_collection``, which works with Anki open.
@@ -4821,7 +5285,9 @@ For day-to-day developer commands, testing quirks (cassette modes, the offline-A
 
 ## PART 12: Anki Integration (Stage 3)
 
-The biggest change since the original walkthrough is **bidirectional Anki sync**. TunaTale's SRS database now mirrors a user's Anki collection: items have stable Anki-compatible GUIDs, two review directions (recognition + production matching Anki ord 0/1), and a sync engine that reads and writes `collection.anki2` directly via SQLite. AnkiConnect (the HTTP plugin) is supported for compatibility but is no longer the primary path — offline sync is faster and works while Anki is closed.
+> **2026-07 status.** This PART describes Stage 3 as built (early 2026). Three things have changed structurally since: (1) the 2026-06-11 **sync module split** — `app/anki/sync.py` is now a runner + re-export facade; the `AnkiSync` engine lives in `sync_engine.py`, collection I/O in `sync_reader.py`/`sync_writer.py`, shared helpers in `sync_common.py` (import and patch through `app.anki.sync` as before); (2) **AnkiConnect and the CLI are gone** — `POST /api/anki/peer-sync` is the ONLY sync entry point (legacy `/api/anki/sync` + `/status` endpoints deleted 2026-06-10; the `python -m app.anki.sync` CLI and `--all-languages` removed 2026-06-30); (3) the one-shot migration scripts tabulated in 12.9 moved to `backend/scripts/anki_archive/`. Corrections are inlined below; PART 29 covers the new world.
+
+The biggest change since the original walkthrough is **bidirectional Anki sync**. TunaTale's SRS database now mirrors a user's Anki collection: items have stable Anki-compatible GUIDs, two review directions (recognition + production matching Anki ord 0/1), and a sync engine that reads and writes `collection.anki2` directly via SQLite. AnkiConnect (the HTTP plugin) was initially kept for compatibility, but its support has since been **deleted entirely** — direct offline SQLite access is the only collection I/O, and peer-sync via AnkiWeb is the only sync entry point (PART 29).
 
 This part explains the design from the inside out: domain shape (12.1), safety envelope (12.2), readers/writers (12.3), the four-phase sync flow (12.4), media pipeline (12.5), queue stats from Anki's protobuf deck config (12.6), and the API surface (12.7).
 
@@ -4830,72 +5296,72 @@ This part explains the design from the inside out: domain shape (12.1), safety e
 Each `SRSItem` now has independent FSRS state for two directions: **RECOGNITION** (L2→L1, shown the Slovene word and asked for the English) and **PRODUCTION** (L1→L2, the reverse). Anki models the same shape with `cards.ord = 0/1`. The model lives in `app/models/srs_item.py`.
 
 ```bash
-sed -n '14,75p' backend/app/models/srs_item.py | cat -n
+sed -n '15,76p' backend/app/models/srs_item.py | cat -n
 ```
 
 ```output
-     1	
-     2	from dataclasses import dataclass, field
-     3	from datetime import date
-     4	from enum import Enum
-     5	
-     6	from .syntactic_unit import SyntacticUnit
-     7	
+     1	from dataclasses import dataclass, field
+     2	from datetime import UTC, date, datetime, time
+     3	from enum import Enum
+     4	
+     5	from app.anki.rollover import due_at_rollover_utc
+     6	
+     7	from .syntactic_unit import SyntacticUnit
      8	
-     9	class SRSState(Enum):
-    10	    """Learning state of an SRS item."""
-    11	
-    12	    NEW = "new"
-    13	    LEARNING = "learning"
-    14	    REVIEW = "review"
-    15	    RELEARNING = "relearning"
-    16	    SUSPENDED = "suspended"
-    17	    BURIED = "buried"
-    18	    KNOWN = "known"
-    19	
+     9	
+    10	class SRSState(Enum):
+    11	    """Learning state of an SRS item."""
+    12	
+    13	    NEW = "new"
+    14	    LEARNING = "learning"
+    15	    REVIEW = "review"
+    16	    RELEARNING = "relearning"
+    17	    SUSPENDED = "suspended"
+    18	    BURIED = "buried"
+    19	    KNOWN = "known"
     20	
-    21	class Rating(Enum):
-    22	    """Learner rating for an SRS review."""
-    23	
-    24	    AGAIN = 1  # Complete blackout / forgot
-    25	    HARD = 2  # Significant difficulty
-    26	    GOOD = 3  # Correct with some effort
-    27	    EASY = 4  # Perfect recall
-    28	
+    21	
+    22	class Rating(Enum):
+    23	    """Learner rating for an SRS review."""
+    24	
+    25	    AGAIN = 1  # Complete blackout / forgot
+    26	    HARD = 2  # Significant difficulty
+    27	    GOOD = 3  # Correct with some effort
+    28	    EASY = 4  # Perfect recall
     29	
-    30	class Direction(Enum):
-    31	    """Review direction for an SRS item."""
-    32	
-    33	    RECOGNITION = "recognition"  # L2 → L1 (Anki ord=0)
-    34	    PRODUCTION = "production"  # L1 → L2 (Anki ord=1)
-    35	
+    30	
+    31	class Direction(Enum):
+    32	    """Review direction for an SRS item."""
+    33	
+    34	    RECOGNITION = "recognition"  # L2 → L1 (Anki ord=0)
+    35	    PRODUCTION = "production"  # L1 → L2 (Anki ord=1)
     36	
-    37	@dataclass
-    38	class DirectionState:
-    39	    """FSRS scheduling state for one direction of a collocation."""
-    40	
-    41	    direction: Direction
-    42	    due_date: date
-    43	    stability: float = 1.0
-    44	    difficulty: float = 5.0
-    45	    reps: int = 0
-    46	    lapses: int = 0
-    47	    state: SRSState = field(default=SRSState.NEW)
-    48	    last_review: date | None = None
-    49	    anki_card_id: int | None = None
-    50	    anki_due: int | None = None
-    51	    dirty_fsrs: bool = False
-    52	    last_synced_at: str | None = None
-    53	    last_rating: int | None = None
-    54	
-    55	
-    56	class SRSItem:
-    57	    """An SRS-tracked syntactic unit with per-direction FSRS scheduling.
-    58	
-    59	    Accepts two construction styles:
-    60	
-    61	    1. Two-direction (new): `SRSItem(syntactic_unit=..., directions={...}, guid=..., anki_note_id=...)`.
-    62	    2. Flat legacy:         `SRSItem(syntactic_unit=..., due_date=..., stability=..., state=..., ...)`.
+    37	
+    38	@dataclass
+    39	class DirectionState:
+    40	    """FSRS scheduling state for one direction of a collocation.
+    41	
+    42	    Single source of truth for due-time: ``due_at`` (TEXT iso datetime, UTC).
+    43	    Extended to all states (review/new included), NOT NULL.
+    44	    """
+    45	
+    46	    direction: Direction
+    47	    due_at: datetime
+    48	    stability: float = 1.0
+    49	    difficulty: float = 5.0
+    50	    reps: int = 0
+    51	    lapses: int = 0
+    52	    state: SRSState = field(default=SRSState.NEW)
+    53	    last_review: datetime | None = None
+    54	    last_review_time_ms: int = 0
+    55	    anki_card_id: int | None = None
+    56	    anki_due: int | None = None
+    57	    # Anki's `cards.mod` (modification timestamp). Used as the secondary sort
+    58	    # key under RetrievabilityAscending — Anki tiebreaks via `fnvhash(id, mod)`.
+    59	    anki_card_mod: int | None = None
+    60	    # Source of a buried state: 'user' (manual bury, persists across rollover)
+    61	    # or 'sched' (sibling/auto bury, released at next rollover via Layer 27's
+    62	    # unbury_if_needed sweep). NULL on non-buried rows.
 ```
 
 Three pieces are new since the original walkthrough:
@@ -4913,7 +5379,7 @@ The matching schema in `app/srs/database.py` uses two tables — `collocations` 
 `collection.anki2` is a SQLite file. Touching it directly without the right precautions corrupts AnkiWeb sync state — see the project rule file `.claude/rules/anki-sync.md` for the full theory. Every TunaTale write goes through `app/anki/safety.py::safe_open`, which is the *only* sanctioned way to open the collection.
 
 ```bash
-sed -n '135,205p' backend/app/anki/safety.py | cat -n
+sed -n '172,247p' backend/app/anki/safety.py | cat -n
 ```
 
 ```output
@@ -4977,17 +5443,22 @@ sed -n '135,205p' backend/app/anki/safety.py | cat -n
     58	        _src.close()
     59	
     60	    # Gate 3: backup via Connection.backup()
-    61	    backup_dir.mkdir(parents=True, exist_ok=True)
-    62	    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    63	    backup_path = backup_dir / f"collection.anki2.bak_{timestamp}"
-    64	
-    65	    src_conn = sqlite3.connect(str(collection_path))
-    66	    dst_conn = sqlite3.connect(str(backup_path))
-    67	    try:
-    68	        src_conn.backup(dst_conn)
-    69	    finally:
-    70	        dst_conn.close()
-    71	        src_conn.close()
+    61	    # The timestamp is only second-granularity, so two callers in the same
+    62	    # second (parallel test workers, or two rapid syncs) would otherwise share
+    63	    # a filename and clobber/cross-validate each other's backup. A per-call
+    64	    # token (pid + random) keeps each backup distinct.
+    65	    backup_dir.mkdir(parents=True, exist_ok=True)
+    66	    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    67	    unique = f"{os.getpid()}_{secrets.token_hex(4)}"
+    68	    backup_path = backup_dir / f"collection.anki2.bak_{timestamp}_{unique}"
+    69	
+    70	    src_conn = sqlite3.connect(str(collection_path))
+    71	    dst_conn = sqlite3.connect(str(backup_path))
+    72	    try:
+    73	        src_conn.backup(dst_conn)
+    74	    finally:
+    75	        dst_conn.close()
+    76	        src_conn.close()
 ```
 
 Three gates execute on every `safe_open` call before the caller sees a connection:
@@ -5005,7 +5476,7 @@ Two more pieces complete the protocol — they live alongside `safe_open` and th
 
 ### 12.3 Readers and Writers
 
-The sync engine talks to the underlying store through four ports defined in `app/anki/sync.py`:
+The sync engine talks to the underlying store through two ports — `OfflineReader`/`OfflineWriter` — now defined in `sync_reader.py`/`sync_writer.py` and re-exported through the `app.anki.sync` facade (2026-06-11 split; the AnkiConnect-backed `OnlineReader`/`OnlineWriter` ports below were deleted with AnkiConnect support):
 
 | Port | When used | Backend |
 |------|-----------|---------|
@@ -5017,53 +5488,44 @@ The sync engine talks to the underlying store through four ports defined in `app
 Both *Reader* ports return the same in-memory shapes — `AnkiNote` and `AnkiCard` from `app/anki/sqlite_reader.py`. The card record carries the FSRS state parsed out of Anki's per-card data blob (queue, due, ivl, factor, lapses, reps), plus the `fsrs_data` payload (stability, difficulty, last review).
 
 ```bash
-sed -n '38,80p' backend/app/anki/sqlite_reader.py | cat -n
+sed -n '54,87p' backend/app/anki/sqlite_reader.py | cat -n
 ```
 
 ```output
-     1	def compute_due_date(queue: int, due_raw: int, col_crt: int) -> date:
-     2	    """Convert Anki's queue-dependent due field to a Python date.
+     1	def compute_due_at(queue: int, due_raw: int, col_crt: int, card_type: int = 0) -> datetime:
+     2	    """Convert Anki's queue-dependent due field to a UTC datetime.
      3	
-     4	    queue 2/3 (review/day-learn): due_raw is days since col.crt epoch.
+     4	    queue 2/3 (review/day-learn): due_raw is days since col.crt epoch → midnight UTC.
      5	    queue 1 (learning): due_raw is an absolute unix timestamp (seconds).
-     6	    queue 0 (new) or -1 (suspended): due_raw is a queue position — fall back to today.
-     7	    """
-     8	    if queue in (2, 3):
-     9	        return date.fromtimestamp(col_crt) + timedelta(days=due_raw)
-    10	    if queue == 1:
-    11	        return datetime.fromtimestamp(due_raw).date()
-    12	    return date.today()
+     6	    queue 0 (new): due_raw is a queue position → today at 04:00 UTC.
+     7	
+     8	    queue -1/-2/-3 (suspended/buried): Anki preserves cards.due through bury and
+     9	    suspend; only the queue flips. We dispatch on ``card_type`` (the card's
+    10	    underlying type — 0=new, 1=learn, 2=review, 3=relearn) so the underlying due
+    11	    survives a sync round-trip. Without this, the daily unbury sweep would flip
+    12	    state back to review with a stale "today" due_at (Layer 44, 2026-05-20).
     13	
-    14	
-    15	def find_deck_id(conn: sqlite3.Connection, deck_name: str) -> int | None:
-    16	    """Find deck id by name. Tries col.decks JSON (legacy) then decks table (modern)."""
-    17	    row = conn.execute("SELECT decks FROM col").fetchone()
-    18	    if row:
-    19	        try:
-    20	            deck_data = json.loads(row[0])
-    21	            for did, info in deck_data.items():
-    22	                if isinstance(info, dict) and info.get("name") == deck_name:
-    23	                    return int(did)
-    24	        except (json.JSONDecodeError, KeyError, ValueError, TypeError):
-    25	            pass
+    14	    Database corruption: some queue=2/3 cards have Unix timestamps in due_raw
+    15	    instead of days since col.crt. Detect this by checking if the value is too large
+    16	    to be days since col.crt (i.e., it's a Unix timestamp).
+    17	    """
+    18	    effective_queue = queue
+    19	    if queue in (-1, -2, -3):
+    20	        if card_type == 2:
+    21	            effective_queue = 2
+    22	        elif card_type == 3:
+    23	            effective_queue = 3
+    24	        elif card_type == 1:
+    25	            effective_queue = 1
     26	
-    27	    try:
-    28	        rows = conn.execute("SELECT id, name FROM decks").fetchall()
-    29	        for r in rows:
-    30	            if r[1] == deck_name:
-    31	                return r[0]
-    32	    except sqlite3.OperationalError:
-    33	        pass
+    27	    if effective_queue in (2, 3):
+    28	        if due_raw > 1000000000:
+    29	            return datetime.fromtimestamp(due_raw, tz=UTC)
+    30	        return review_due_at_for_col_day(col_crt, due_raw)
+    31	    if effective_queue == 1:
+    32	        return datetime.fromtimestamp(due_raw, tz=UTC)
+    33	    return due_at_rollover_utc(date.today())
     34	
-    35	    return None
-    36	
-    37	
-    38	def fetch_notes_for_deck(conn: sqlite3.Connection, deck_id: int) -> list[AnkiNote]:
-    39	    """Fetch all notes that have at least one card in the given deck."""
-    40	    rows = conn.execute(
-    41	        """
-    42	        SELECT DISTINCT n.id, n.guid, n.mid, n.mod, n.tags, n.flds
-    43	        FROM notes n
 ```
 
 Two details from the reader are worth highlighting because they're easy to get wrong:
@@ -5078,17 +5540,19 @@ Two details from the reader are worth highlighting because they're easy to get w
 The sync flow (``run_full_sync``) runs four phases in a single transaction. The order matters — getting it wrong loses revlog entries or creates duplicate notes.
 
 ```bash
-grep -nE '    def sync_|    def _direction_differs|class AnkiSync' backend/app/anki/sync.py | head -20
+grep -nE 'def sync_|def _direction_differs|class AnkiSync' backend/app/anki/sync_engine.py | head -20
 ```
 
 ```output
-605:class AnkiSync:
-637:    def sync_pull(self, dry_run: bool = False) -> PullReport:
-773:    def sync_push(self, dry_run: bool = False, force_fsrs: bool = False) -> PushReport:
+47:def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool:
+319:class AnkiSync:
+683:    def sync_pull(self, dry_run: bool = False) -> PullReport:
+1069:    def sync_push(self, dry_run: bool = False, force_fsrs: bool = False) -> PushReport:
+1281:    async def sync_create_new(
 ```
 
 1. **`sync_create_new`** — for every TunaTale collocation that has no `anki_note_id`, fetch media (12.5), call `writer.create_note` to add it to Anki, and stash the new note id back on the SRSItem. New notes are filtered against existing GUIDs/L2-text-with-disambiguation to avoid duplicate-note errors (the B11/B16/B17/B19 fixes from session 2 of S3.11 — `detect_and_link_duplicates` does an id-first lookup before falling back to GUID).
-2. **`sync_push`** — for every direction with `dirty_fsrs=True` or pending field edits, write the FSRS state and field changes to Anki via `writer.update_*`. Push uses `setSpecificValueOfCard` (preflighted in `preflight_set_specific_value_of_card`) since stock AnkiConnect doesn't expose FSRS-state edits. Suspends, due dates, and field text round-trip here.
+2. **`sync_push`** — for every direction with `dirty_fsrs=True` or pending field edits, write the FSRS state and field changes to Anki via `writer.update_*`. Push writes the collection directly through `OfflineWriter` (the AnkiConnect `setSpecificValueOfCard` machinery is gone). Suspends, due dates, and field text round-trip here; since Layer 80 (2026-07-10) push also inserts **one Anki revlog row per TT grade** from `tt_revlog`, instead of one collapsed row per dirty direction.
 3. **Drain pending revlog.** TunaTale records every review locally in a scratch `pending_revlog` table — direction id, rating, ease/factor, time taken — independently of whether Anki was reachable. `drain_pending_revlog_to_writer` flushes those rows to Anki's `revlog` table (this is what populates Anki's review history graph). The drain happens *after* push so the rated card already has its updated FSRS state on the Anki side; running it before push could lose entries if push fails partway. (See commit `67e9a57` — B14 swap.)
 4. **`sync_pull`** — read every note in the deck, diff against TunaTale's local copy, and update SRSItems whose Anki side changed. The diff function `_direction_differs` compares state, due, stability, difficulty, lapses, reps, last_rating, and `anki_due` — anything else (e.g. internal review counts) is treated as noise. **Local FSRS state with `dirty_fsrs=True` is preserved** even if Anki has different values, since the next push will overwrite Anki anyway (the b9bbcb4 fix). Conflicts on field text are recorded in the `sync_conflicts` scratch table for later resolution.
 
@@ -5096,8 +5560,8 @@ Each phase returns a typed report (`CreateNewReport`, `PushReport`, `PullReport`
 
 Two helper concepts appear repeatedly:
 
-- **`force_fsrs` gating** (`ensure_force_fsrs_ack`). Pushing FSRS-state changes to Anki is irreversible from Anki's perspective. The first time a user runs sync the writer prompts for explicit ack and writes a marker file; subsequent runs read the marker and proceed silently.
-- **Mode auto-detection** (`detect_mode`). The CLI wrapper sniffs whether AnkiConnect is reachable on `anki_connect_url`; if yes, it uses Online ports; if no, it falls back to Offline. The HTTP API always uses Offline.
+- **`force_fsrs` gating** — historical. The interactive `--force-fsrs` ack flow was removed with the CLI (2026-06-30); the automatic force-fsrs *write* path inside `sync_push` (recovered / `KNOWN` / `fsrs_force_next` cards) remains.
+- **Mode auto-detection** — deleted. There is no `detect_mode` and no Online mode; every path is Offline against `collection.anki2` (or the peer-sync throwaway collection).
 
 ### 12.5 Media Pipeline
 
@@ -5114,74 +5578,100 @@ cat -n backend/app/anki/media/pipeline.py
      4	
      5	from collections.abc import Awaitable, Callable
      6	from dataclasses import dataclass
-     7	from typing import Any
-     8	
-     9	from .forvo import fetch_forvo_audio
-    10	from .normalize import normalize_audio
-    11	from .pixabay import fetch_pixabay_image
-    12	from .tts import DEFAULT_VOICE, generate_tts_audio
+     7	from functools import partial
+     8	from typing import Any
+     9	
+    10	import anyio
+    11	
+    12	from app.languages import get_tts_voice
     13	
-    14	
-    15	@dataclass
-    16	class MediaResult:
-    17	    audio_bytes: bytes | None = None
-    18	    audio_source: str | None = None
-    19	    image_bytes: bytes | None = None
-    20	    image_ext: str | None = None
-    21	    image_url: str | None = None
-    22	
-    23	
-    24	async def fetch_card_media(
-    25	    word: str,
-    26	    english: str,
-    27	    *,
-    28	    pixabay_key: str,
-    29	    http_client: Any = None,
-    30	    tts_voice: str = DEFAULT_VOICE,
-    31	    normalize: bool = True,
-    32	    used_image_urls: set[str] | None = None,
-    33	    _forvo_fn: Callable[..., bytes | None] | None = None,
-    34	    _tts_fn: Callable[..., Awaitable[bytes | None]] | None = None,
-    35	    _pixabay_fn: Callable[..., Any] | None = None,
-    36	    _normalize_fn: Callable[..., bytes] | None = None,
-    37	) -> MediaResult:
-    38	    """Fetch audio and image for a vocabulary card.
-    39	
-    40	    Tries Forvo first, falls back to edge-tts. Image from Pixabay.
-    41	    Pass used_image_urls (a shared set) across cards to prevent duplicate images.
-    42	    """
-    43	    forvo_fn = _forvo_fn or fetch_forvo_audio
-    44	    tts_fn = _tts_fn or generate_tts_audio
-    45	    pixabay_fn = _pixabay_fn or fetch_pixabay_image
-    46	    norm_fn = _normalize_fn or normalize_audio
-    47	
-    48	    result = MediaResult()
+    14	from .forvo import fetch_forvo_audio
+    15	from .normalize import normalize_audio
+    16	from .pixabay import fetch_pixabay_image
+    17	from .tts import generate_tts_audio
+    18	
+    19	
+    20	@dataclass
+    21	class MediaResult:
+    22	    audio_bytes: bytes | None = None
+    23	    audio_source: str | None = None
+    24	    image_bytes: bytes | None = None
+    25	    image_ext: str | None = None
+    26	    image_url: str | None = None
+    27	
+    28	
+    29	async def fetch_card_media(
+    30	    word: str,
+    31	    english: str,
+    32	    *,
+    33	    pixabay_key: str,
+    34	    language_code: str = "sl",
+    35	    http_client: Any = None,
+    36	    tts_voice: str | None = None,
+    37	    normalize: bool = True,
+    38	    used_image_urls: set[str] | None = None,
+    39	    image_query: str | None = None,
+    40	    _forvo_fn: Callable[..., bytes | None] | None = None,
+    41	    _tts_fn: Callable[..., Awaitable[bytes | None]] | None = None,
+    42	    _pixabay_fn: Callable[..., Any] | None = None,
+    43	    _normalize_fn: Callable[..., bytes] | None = None,
+    44	) -> MediaResult:
+    45	    """Fetch audio and image for a vocabulary card.
+    46	
+    47	    Tries Forvo first, falls back to edge-tts. Image from Pixabay.
+    48	    Pass used_image_urls (a shared set) across cards to prevent duplicate images.
     49	
-    50	    audio = forvo_fn(word, http_client=http_client)
-    51	    if audio is not None:
-    52	        result.audio_source = "forvo"
-    53	        result.audio_bytes = audio
-    54	    else:
-    55	        audio = await tts_fn(word, voice=tts_voice)
-    56	        if audio is not None:
-    57	            result.audio_source = "tts"
-    58	            result.audio_bytes = audio
-    59	
-    60	    if result.audio_bytes is not None and normalize:
-    61	        result.audio_bytes = norm_fn(result.audio_bytes)
+    50	    ``image_query`` controls image selection (see ``query_llm`` contract):
+    51	      * ``None`` — legacy: Pixabay derives the query from ``english``.
+    52	      * ``""``   — skip the image entirely (abstract word, no depiction).
+    53	      * non-empty — sent to Pixabay verbatim as a sense-disambiguated query.
+    54	    """
+    55	    forvo_fn = _forvo_fn or fetch_forvo_audio
+    56	    tts_fn = _tts_fn or generate_tts_audio
+    57	    pixabay_fn = _pixabay_fn or fetch_pixabay_image
+    58	    norm_fn = _normalize_fn or normalize_audio
+    59	    # Resolve the synthesis voice from the card's language so a non-Slovene card
+    60	    # never gets Slovene TTS. Callers may still override explicitly (tests).
+    61	    voice = tts_voice or get_tts_voice(language_code)
     62	
-    63	    img = pixabay_fn(
-    64	        english,
-    65	        api_key=pixabay_key,
-    66	        http_client=http_client,
-    67	        used_urls=frozenset(used_image_urls) if used_image_urls is not None else frozenset(),
-    68	    )
-    69	    if img is not None:
-    70	        result.image_bytes, result.image_ext, result.image_url = img
-    71	        if used_image_urls is not None:
-    72	            used_image_urls.add(result.image_url)
-    73	
-    74	    return result
+    63	    result = MediaResult()
+    64	
+    65	    # Forvo / Pixabay / normalize are synchronous (httpx.Client, ffmpeg
+    66	    # subprocess) — offload to a worker thread so a slow fetch doesn't block
+    67	    # the event loop and stall every other in-flight request.
+    68	    audio = await anyio.to_thread.run_sync(
+    69	        partial(forvo_fn, word, language_code=language_code, http_client=http_client)
+    70	    )
+    71	    if audio is not None:
+    72	        result.audio_source = "forvo"
+    73	        result.audio_bytes = audio
+    74	    else:
+    75	        audio = await tts_fn(word, voice=voice)
+    76	        if audio is not None:
+    77	            result.audio_source = "tts"
+    78	            result.audio_bytes = audio
+    79	
+    80	    if result.audio_bytes is not None and normalize:
+    81	        result.audio_bytes = await anyio.to_thread.run_sync(norm_fn, result.audio_bytes)
+    82	
+    83	    # image_query == "" is the explicit "abstract word, no image" skip sentinel.
+    84	    if image_query != "":
+    85	        img = await anyio.to_thread.run_sync(
+    86	            partial(
+    87	                pixabay_fn,
+    88	                english,
+    89	                api_key=pixabay_key,
+    90	                http_client=http_client,
+    91	                used_urls=frozenset(used_image_urls) if used_image_urls is not None else frozenset(),
+    92	                query=image_query,
+    93	            )
+    94	        )
+    95	        if img is not None:
+    96	            result.image_bytes, result.image_ext, result.image_url = img
+    97	            if used_image_urls is not None:
+    98	                used_image_urls.add(result.image_url)
+    99	
+   100	    return result
 ```
 
 Audio path: **Forvo → EdgeTTS fallback → ffmpeg LUFS normalize**. Forvo is a community pronunciation database — `forvo.py` scrapes the public word page (no API key needed) and returns the first MP3 link. If no Forvo audio exists for the word, EdgeTTS synthesizes a fallback. Either way the resulting bytes go through `normalize.py`, which uses ffmpeg's `loudnorm` filter to clamp output to a target LUFS so cards in the same deck have consistent volume.
@@ -5195,7 +5685,7 @@ The `/api/admin/refresh-media` endpoint and the `app/media/importer.py` module h
 A subtle but important detail: modern Anki stores deck configuration (daily new cap, FSRS parameters, bury settings) as **protobuf-encoded blobs** in the `deck_config` table — not JSON in `col.dconf` like older versions. `app/srs/queue_stats.py` includes a hand-rolled minimal protobuf decoder (`_pb_read_varint`, `_pb_find_varint_field`, `_pb_find_packed_float_field`, etc.) so TunaTale can read those values without a protoc-generated stub.
 
 ```bash
-sed -n '154,235p' backend/app/srs/queue_stats.py | cat -n
+sed -n '202,283p' backend/app/srs/queue_stats.py | cat -n
 ```
 
 ```output
@@ -5209,76 +5699,76 @@ sed -n '154,235p' backend/app/srs/queue_stats.py | cat -n
      8	    if "deck_config" not in tables or "decks" not in tables:
      9	        return None
     10	
-    11	    deck_row = conn.execute("SELECT kind FROM decks WHERE name = ?", (deck_name,)).fetchone()
-    12	    if deck_row is None or not deck_row[0]:
+    11	    conf_id = _read_conf_id_for_deck(conn, deck_name)
+    12	    if conf_id is None:
     13	        return None
     14	
-    15	    kind_blob = deck_row[0]
-    16	    normal_kind_bytes = _pb_find_len_field(kind_blob if isinstance(kind_blob, bytes) else bytes(kind_blob), 1)
-    17	    if normal_kind_bytes is None:
-    18	        return None
-    19	
-    20	    conf_id = _pb_find_varint_field(normal_kind_bytes, 1)
-    21	    if conf_id is None:
-    22	        return None
-    23	
-    24	    config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
-    25	    if config_row is None or not config_row[0]:
-    26	        return None
-    27	
-    28	    config_blob = config_row[0]
-    29	    config_blob = bytes(config_blob) if isinstance(config_blob, memoryview) else config_blob
-    30	
-    31	    weights = _pb_find_packed_float_field(config_blob, _FSRS5_WEIGHTS_FIELD)
-    32	    if weights is None or len(weights) != 19:
-    33	        return None
-    34	
-    35	    retention_raw = _pb_find_fixed32_float_field(config_blob, _DESIRED_RETENTION_FIELD)
-    36	    retention = float(retention_raw) if retention_raw is not None else 0.9
-    37	
-    38	    try:
-    39	        return FSRSParams(weights=tuple(weights), desired_retention=retention)
-    40	    except (ValueError, TypeError):  # pragma: no cover
-    41	        return None  # pragma: no cover
-    42	
+    15	    config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
+    16	    if config_row is None or not config_row[0]:
+    17	        return None
+    18	
+    19	    config_blob = config_row[0]
+    20	    config_blob = bytes(config_blob) if isinstance(config_blob, memoryview) else config_blob
+    21	
+    22	    # Try field 6 first (FSRS-6: 21 floats)
+    23	    weights_6 = _pb_find_packed_float_field(config_blob, _FSRS6_WEIGHTS_FIELD)
+    24	    if weights_6 is not None and len(weights_6) == 21:
+    25	        retention_raw = _pb_find_fixed32_float_field(config_blob, _DESIRED_RETENTION_FIELD)
+    26	        retention = float(retention_raw) if retention_raw is not None else 0.9
+    27	        try:
+    28	            return FSRSParams(weights=tuple(weights_6), desired_retention=retention)
+    29	        except ValueError, TypeError:  # pragma: no cover
+    30	            pass  # fall through to field 5
+    31	
+    32	    # Fall back to field 5 (FSRS-5: 19 floats)
+    33	    weights_5 = _pb_find_packed_float_field(config_blob, _FSRS5_WEIGHTS_FIELD)
+    34	    if weights_5 is not None and len(weights_5) == 19:
+    35	        retention_raw = _pb_find_fixed32_float_field(config_blob, _DESIRED_RETENTION_FIELD)
+    36	        retention = float(retention_raw) if retention_raw is not None else 0.9
+    37	        try:
+    38	            return FSRSParams(weights=tuple(weights_5), desired_retention=retention)
+    39	        except ValueError, TypeError:  # pragma: no cover
+    40	            return None  # pragma: no cover
+    41	
+    42	    return None
     43	
-    44	def _read_new_per_day_from_deck_config_table(conn: sqlite3.Connection, deck_name: str) -> int | None:
-    45	    """Read new-per-day from modern Anki's deck_config table (Anki ≥2.1.55).
-    46	
-    47	    Modern Anki stores deck configs as protobuf BLOBs in the deck_config table.
-    48	    The deck's conf_id is found via decks.kind (protobuf: field 1 LEN → field 1 VARINT).
-    49	    The cap is at field 9 (VARINT) in deck_config.config.
+    44	
+    45	def _read_new_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int | None:
+    46	    """Return new-cards-per-day from Anki's deck config, or None if unavailable.
+    47	
+    48	    Tries the legacy JSON format (col.dconf) first, then the modern protobuf
+    49	    format (deck_config table, Anki =2.1.55).
     50	    """
-    51	    try:
-    52	        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    53	    except sqlite3.Error:  # pragma: no cover
-    54	        return None  # pragma: no cover
+    51	    return _read_config_value_from_deck_config_table(
+    52	        conn, deck_name, proto_field=_NEW_PER_DAY_FIELD, wire_type=_WIRE_TYPE_VARINT, legacy_keys=("new", "perDay")
+    53	    )
+    54	
     55	
-    56	    if "deck_config" not in tables or "decks" not in tables:
-    57	        return None
-    58	
-    59	    deck_row = conn.execute("SELECT kind FROM decks WHERE name = ?", (deck_name,)).fetchone()
-    60	    if deck_row is None or not deck_row[0]:
-    61	        return None
+    56	def refresh_daily_new_cap(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
+    57	    """Read the new-per-day cap from collection.anki2 and write it to the cache."""
+    58	    cap = _read_new_per_day_from_anki(conn, deck_name)
+    59	    if cap is not None:
+    60	        db.set_anki_state_cache("daily_new_cap", str(cap))
+    61	
     62	
-    63	    kind_blob = deck_row[0]
-    64	    # NormalDeckKind: field 1 (LEN) contains the config sub-message
-    65	    normal_kind_bytes = _pb_find_len_field(kind_blob if isinstance(kind_blob, bytes) else bytes(kind_blob), 1)
-    66	    if normal_kind_bytes is None:
-    67	        return None
-    68	
-    69	    # Within NormalDeckKind, field 1 (VARINT) = conf_id
-    70	    conf_id = _pb_find_varint_field(normal_kind_bytes, 1)
-    71	    if conf_id is None:
-    72	        return None
+    63	def _read_reviews_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int | None:
+    64	    """Return reviews-per-day from Anki's deck config, or None if unavailable.
+    65	
+    66	    Tries the legacy JSON format (col.dconf) first, then the modern protobuf
+    67	    format (deck_config table, Anki =2.1.55). Mirrors _read_new_per_day_from_anki
+    68	    but reads rev.perDay instead of new.perDay.
+    69	    """
+    70	    return _read_config_value_from_deck_config_table(
+    71	        conn, deck_name, proto_field=_REVIEWS_PER_DAY_FIELD, wire_type=_WIRE_TYPE_VARINT, legacy_keys=("rev", "perDay")
+    72	    )
     73	
-    74	    config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
-    75	    if config_row is None or not config_row[0]:
-    76	        return None
-    77	
-    78	    config_blob = config_row[0]
-    79	    # DeckConfig.Config: field 9 (VARINT) = new_per_day
-    80	    return _pb_find_varint_field(config_blob if isinstance(config_blob, bytes) else bytes(config_blob), 9)
+    74	
+    75	# Layer 36: daily review cap (render-only).
+    76	def refresh_daily_review_cap(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
+    77	    """Read the reviews-per-day cap from collection.anki2 and write it to the cache."""
+    78	    cap = _read_reviews_per_day_from_anki(conn, deck_name)
+    79	    if cap is not None:
+    80	        db.set_anki_state_cache("daily_review_cap", str(cap))
     81	
     82	
 ```
@@ -5306,15 +5796,12 @@ The new test files exclusively for Anki integration:
 | File | What it covers |
 |------|----------------|
 | `test_anki_safety.py`, `test_anki_safety_rw.py` | `safe_open` lock probe, backup, integrity validation, audit |
-| `test_anki_sqlite_reader.py` | `fetch_notes_for_deck`, `compute_due_date`, dual deck lookup |
-| `test_anki_sqlite_writer.py` | GUID backfill plan + apply, USN bookkeeping |
+| `test_anki_sqlite_reader.py` | `fetch_notes_for_deck`, `compute_due_at`, dual deck lookup |
 | `test_anki_offline_writer_create_note.py` | Stage 3.9 — offline note creation with media dedup |
 | `test_anki_sync_pull.py`, `test_anki_sync_push.py` | Per-direction diffs, conflict recording, dirty-FSRS preservation |
 | `test_anki_sync_create_new.py` | Duplicate detection (id-first then GUID), media linking |
-| `test_anki_sync_round_trip.py` | Full push → drain → pull cycle |
-| `test_anki_sync_force_fsrs.py`, `test_anki_syncKey_preflight.py` | force-FSRS ack flow, setSpecificValueOfCard preflight |
-| `test_anki_sync_mode_detection.py` | Online vs offline auto-detection |
-| `test_anki_connect_client.py` | JSON-RPC client over a mock transport |
+| `test_anki_sync_round_trip.py` | Full push → pull round-trip cycle |
+| `test_anki_sync_force_fsrs.py` | automatic force-FSRS write path (the ack flow + preflight died with the CLI/AnkiConnect; `test_anki_sqlite_writer.py`, `test_anki_syncKey_preflight.py`, `test_anki_sync_mode_detection.py`, `test_anki_connect_client.py` were deleted with their subjects) |
 | `test_anki_model_discovery.py` | Notetype inference from existing notes |
 | `test_anki_normalize_usns.py` | USN clamping after a full upload |
 | `test_anki_migrate_homonyms.py`, `test_anki_repair_nested_homonyms.py` | Disambiguation migrations for homonym L2 forms |
@@ -5341,7 +5828,7 @@ The four-phase sync described in 12.4 only works once a user's Anki collection h
 | **H1** | `app.anki.audit_guids` | Read-only diagnostic. Emits a JSON report of every note whose visible text changed since the last GUID backfill — these are the rows that need attention before re-running backfill. |
 | **H2** | `app.anki.merge_dupes` | Consolidates the two historical "Basic" notetype cards per word (one for recognition, one for production) into a single two-template "Slovene Vocabulary" note. Hand-rolled protobuf (`app.anki.notetype`) builds the new notetype's field/template/CSS config. This is the biggest single anki module and the one that requires a forced full-upload afterward. |
 | **H3** | `app.anki.migrate_homonyms` | Moves disambiguation suffixes (e.g. `(noun)` in `kapus (noun)`) out of the visible Slovene field into a hidden `DisambigKey` field, so two homonyms can share a clean visible form while still hashing to distinct GUIDs. `repair_nested_homonyms` is a 3-row surgical companion for cases the regex missed (parens-inside-parens). |
-| **H4** | `app.anki.backfill_guids` | Rewrites every Anki note GUID to TunaTale's deterministic formula (sha256 of language + visible text + DisambigKey). After this, sync's GUID-based reconciliation works. `app.anki.sqlite_writer.check_anki_web_sync_active` warns the user to force-upload after running. |
+| **H4** | `app.anki.backfill_guids` | Rewrites every Anki note GUID to TunaTale's deterministic formula (sha256 of language + visible text + DisambigKey). After this, sync's GUID-based reconciliation works. (`app.anki.sqlite_writer` has since been deleted; the one-shot scripts now live in `backend/scripts/anki_archive/`.) |
 | **H5** | `app.anki.normalize_usns` | Post-full-upload USN clamp (already covered in 12.2). Resets `cards.usn`, `notes.usn`, `revlog.usn` back to `col.usn` after the user has done a forced full upload. |
 
 Each step has a `__main__` entry point (`uv run python -m app.anki.<module>`), goes through `safe_open` for backup + lock probe, and emits a dry-run plan before mutating. All five test files in PART 12.8 cover these CLIs.
@@ -5354,6 +5841,8 @@ After this pipeline, ongoing sync uses only the peer-sync endpoint (PART 12.4) �
 
 ## PART 13: Frontend Updates
 
+> **2026-07 status.** The component set has roughly tripled since this was written (16+ components under `lib/components/`); `AudioPlayer.svelte` was replaced by `LessonPlayer.svelte` in the 2026-07-09 player rework (per-section cue manifests, phase model — PART 29.7), and the admin page moved from `/admin/srs` to `/cards`.
+
 The SvelteKit app in `frontend/` got significant new UI work alongside the Anki integration.
 
 ### 13.1 Routes
@@ -5365,14 +5854,15 @@ frontend/src/routes/
 ├── c/[curriculumId]/           # Curriculum overview + day picker
 │   └── l/[lessonId]/           # Lesson view: transcript, audio player, render
 ├── review/                     # Unified review queue (replaces the old /practice)
-└── admin/srs/                  # SRS item admin: search/edit/bulk delete/reset/suspend
+└── cards/                      # SRS item admin (was admin/srs): search/edit/bulk delete/reset/suspend
+(The tree has since grown further: `/settings`, `/c/[curriculumId]/plan` for the chat planner — see PART 29.)
 ```
 
 The notable changes:
 
 - **`/review`** replaces the per-lesson `/practice` flow. It pulls from `/api/srs/review-queue`, which serves a unified queue blending due cards with a daily-capped slice of new ones (capped by the `new_per_day` value cached from Anki — see 12.6) and alternates direction per card. Each card shows L2 audio, image, English gloss, and optional grammar/note metadata; the user rates Again / Hard / Good / Easy. Media URLs come pre-populated in the queue payload (commit `52003c2`); `DrillCard` resets its revealed state between cards (commit `472b845`).
 
-- **`/admin/srs`** provides full CRUD over the SRS database: paginated table, search across text and translation, state filter, sortable columns, inline edit, single + bulk delete, reset schedule, suspend/unsuspend, force state, create new item.
+- **`/cards`** (originally `/admin/srs`) provides full CRUD over the SRS database: paginated table, search across text and translation, state filter, sortable columns, inline edit, single + bulk delete, reset schedule, suspend/unsuspend, force state, create new item.
 
 - **Sync button** in the layout calls `POST /api/anki/peer-sync`. On success it shows a toast with the sync report.
 
@@ -5403,6 +5893,8 @@ Run with `./test.sh`, which chains ruff lint, pytest, vitest, and Playwright.
 
 ## PART 14: Updated Settings & Migrations
 
+> **2026-07 status.** The migration chain described here ends at v19; the schema is at **v36** today. Notable later migrations: v27 shadow columns (added) → v32 (dropped, Stage 3b decommission), **v35** — the `CHECK` constraints on `prior_state`/`bury_kind` driven by the field registry `app/srs/direction_fields.py` (PART 29.5), v36 current.
+
 `app/config.py` gained an Anki/media block. Here's the full settings object as it stands now:
 
 ```bash
@@ -5421,25 +5913,105 @@ cat -n backend/app/config.py
      9	    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
     10	
     11	    groq_api_key: str = ""
-    12	    database_url: str = "sqlite:///./tunatale.db"
-    13	    llm_mode: str = "mock"  # mock | live | record | patch
-    14	    llm_model: str = "llama-3.3-70b-versatile"
-    15	
-    16	    anki_collection_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.anki2").expanduser()
-    17	    anki_media_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.media").expanduser()
-    18	    anki_deck_name: str = "0. Slovene"
-    19	    anki_backup_dir: Path = Path("~/.tunatale/anki-backups").expanduser()
-    20	    media_dir: Path = Path("./media")
-    21	    anki_fallback_log: Path = Path("~/.tunatale/logs/anki-fallback.log").expanduser()
-    22	
-    23	    anki_connect_url: str = "http://127.0.0.1:8765"
-    24	    anki_model_name: str = ""
-    25	    forvo_api_key: str = ""
-    26	    pixabay_api_key: str = ""
-    27	    anki_new_per_day_default: int = 20
-    28	
-    29	
-    30	settings = Settings()
+    12	    # Per-language DB (one-DB-per-language isolation). Default is the Slovene DB;
+    13	    # switch languages by flipping target_language AND database_url together
+    14	    # (e.g. sqlite:///./tunatale_no.db for Norwegian).
+    15	    database_url: str = "sqlite:///./tunatale_sl.db"
+    16	    # Phase 5 — simultaneous multi-language. When non-empty, the app opens one
+    17	    # connection per entry (``{"sl": "sqlite:///./tunatale_sl.db", "no": "…_no.db"}``)
+    18	    # and resolves the active one per request from the X-TT-Language header. Empty
+    19	    # (the default) = single-language: one connection from ``database_url`` bound to
+    20	    # ``target_language``. ``target_language`` is the default when no header is sent.
+    21	    database_urls: dict[str, str] = {}
+    22	    llm_mode: str = "mock"  # mock | live | record | patch
+    23	    # gpt-oss-120b replaces llama-3.3-70b-versatile (deprecated by Groq 2026-06-30).
+    24	    # It is a reasoning model — main.py pins reasoning_effort=low via
+    25	    # reasoning_params_for_model() so it emits content instead of burning the whole
+    26	    # budget on reasoning. Free-tier TPM is 8000; WIDER story gen fits, DEEPER (bigger
+    27	    # prompt) can approach the ceiling.
+    28	    llm_model: str = "openai/gpt-oss-120b"
+    29	    # Groq free-tier daily token cap for gpt-oss-120b — the binding limit, but it
+    30	    # appears in no response header, so TT tallies its own spend (UsageLedger) and
+    31	    # the rate-limit UI compares against this number.
+    32	    groq_tokens_per_day_limit: int = 100_000
+    33	    # Ollama/secondary fallback when Groq fails; default off — failures fail loudly.
+    34	    llm_allow_fallback: bool = False
+    35	    llm_usage_ledger_path: Path = Path("~/.tunatale/llm_usage.log").expanduser()
+    36	
+    37	    target_language: str = "sl"
+    38	
+    39	    anki_collection_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.anki2").expanduser()
+    40	    anki_media_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.media").expanduser()
+    41	    anki_deck_name: str = "1. Slovene"
+    42	    anki_backup_dir: Path = Path("~/.tunatale/anki-backups").expanduser()
+    43	    # Retention cap for the safe_open backup directory. safe_open writes a full
+    44	    # ~16 MB collection snapshot on every call; without a cap the directory grows
+    45	    # without bound. Keep the N most recent snapshots (~16 MB each); <= 0 disables.
+    46	    anki_backup_keep: int = 30
+    47	    media_dir: Path = Path("./media")
+    48	    anki_fallback_log: Path = Path("~/.tunatale/logs/anki-fallback.log").expanduser()
+    49	    # Durable per-sync soak log: every non-dry sync (CLI or API) appends a
+    50	    # SYNC_SOAK heartbeat + one RECOMPUTE_DIVERGENCE line per divergence.
+    51	    sync_log: Path = Path("~/.tunatale/logs/sync.log").expanduser()
+    52	
+    53	    # Peer-sync (anki subprocess) config — see sync_orchestrator.py.
+    54	    tt_collection_path: Path = Path("~/.tunatale/tt_collection.anki2").expanduser()
+    55	    sync_enabled: bool = False
+    56	    sync_endpoint: str = ""  # "" → AnkiWeb default; else self-host URL
+    57	    sync_username: str = ""
+    58	    # AnkiWeb password. Prefer the macOS Keychain (see sync_keychain_service); this
+    59	    # env/.env value is an override fallback and should normally stay EMPTY (plaintext).
+    60	    sync_password: str = ""
+    61	    # macOS Keychain generic-password service the AnkiWeb password is stored under
+    62	    # (account = sync_username). Store it with:
+    63	    #   security add-generic-password -s tunatale-ankiweb -a <username> -w
+    64	    sync_keychain_service: str = "tunatale-ankiweb"
+    65	    # Optional pin for the sync subprocess (`uv run --with anki==X`). Empty → latest
+    66	    # anki. Set to match your desktop Anki's sync-protocol version if a mismatch appears.
+    67	    anki_pkg_version: str = ""
+    68	    # Interpreter for the anki driver subprocess. It runs isolated + project-free
+    69	    # (--no-project), which escapes the project lock's stale protobuf 4.21.2 (dragged in
+    70	    # by the classla+anki extras; no cp314 wheel) — a clean resolve pulls a current
+    71	    # protobuf that imports fine on 3.14. Pin to an older Python here only if a future
+    72	    # anki/protobuf breaks on the latest.
+    73	    anki_subprocess_python: str = "3.14"
+    74	
+    75	    anki_model_name: str = ""
+    76	    pixabay_api_key: str = ""
+    77	    # Global lemmatizer gate: "lowercase" (default) forces the deterministic
+    78	    # lowercase engine for EVERY language (the CI/test pin, and how a deployment
+    79	    # disables the heavy PyTorch pipelines). Any other value ("classla", "stanza",
+    80	    # "auto", …) opts in, and the ENGINE is then chosen per language from the
+    81	    # registry (app.languages.get_lemmatizer_type: sl→classla, no→stanza). This is
+    82	    # per-language, not one-engine-per-process, so multi-language mode
+    83	    # (database_urls) analyzes each language with its own model. See get_lemmatizer.
+    84	    lemmatizer_type: str = "lowercase"
+    85	
+    86	    anki_new_per_day_default: int = 20
+    87	    anki_reviews_per_day_default: int = 200
+    88	
+    89	    # Lesson audio delivery format. Opus is ~10-20× smaller than WAV for speech,
+    90	    # cutting mobile-data use when streaming lessons to a phone. Set to "wav" to
+    91	    # restore uncompressed delivery. Codec must be a key of transcode.CODEC_EXT.
+    92	    audio_delivery_codec: str = "opus"  # opus | aac | mp3 | wav
+    93	    audio_delivery_bitrate: str = "28k"
+    94	
+    95	    pipeline_autostart: bool = True
+    96	
+    97	
+    98	settings = Settings()
+    99	
+   100	
+   101	# Anki rolls the study day over at this *local* hour (default 4 AM), not at
+   102	# midnight — a grade timestamped between local midnight and the rollover belongs
+   103	# to the PRIOR Anki day. The rollover arithmetic is single-sourced in
+   104	# `app.anki.rollover` (local-day domain: `local_today_rollover`,
+   105	# `anki_day_bounds_utc`, `anki_today`; due_at convention: `due_at_rollover_utc`);
+   106	# `app.anki.protobuf_wire` owns the separate col-day index domain
+   107	# (`compute_anki_day_index`, `review_due_at_for_col_day`). Both derive from this
+   108	# constant. Promote to a Settings field if it ever needs to be config-driven
+   109	# (Anki stores it per-collection).
+   110	ANKI_ROLLOVER_HOUR = 4
 ```
 
 Most of the new fields are paths to the user's Anki install (`anki_collection_path`, `anki_media_path`, `anki_backup_dir`) plus three optional API keys (`forvo_api_key` is unused — Forvo's web scraper doesn't need one — but `pixabay_api_key` and `groq_api_key` are required if you want media or recording-mode cassettes). `anki_new_per_day_default` is the fallback when no value is in the cache and no deck_config protobuf is parseable.
@@ -5490,65 +6062,71 @@ This part replaces the single-file `walkthrough-listen.md` draft and supersedes 
 
 ### 15.1 The Status Cycle and `/items/{id}/untrack`
 
-`POST /api/srs/items/{id}/state` lets the UI flip a card directly to a non-FSRS state. The valid transitions are `new`, `learning`, `known`, `ignored` — the frontend cycles through them in this order:
+`POST /api/srs/items/{id}/state` lets the UI flip a card directly to a non-FSRS state (`new`, `learning`, `known`, `ignored`). The frontend originally cycled through them on direct click; today the click opens a popover whose grade-button label mirrors that old cycle (PART 25 replaced the hardcoded `STATE_CYCLE`):
 
 ```bash
-sed -n "20,29p" frontend/src/routes/c/\[curriculumId\]/l/\[lessonId\]/+page.svelte
+sed -n "91,107p" frontend/src/lib/WordSpan.svelte
 ```
 
 ```output
-	const STATE_CYCLE: Record<string, string> = {
-		unknown: 'learning',
-		new: 'learning',
-		learning: 'known',
-		review: 'known',
-		relearning: 'known',
-		known: 'ignored',
-		ignored: 'new',
-		suspended: 'new'
-	};
+	// Grade-button label mirrors what the old direct click did (the "cycle"):
+	// unknown → create a base card; due+tracked → grade Good; not-due but readable
+	// → review ahead; otherwise the click was a no-op, so no button.
+	const gradeLabel = $derived(
+		undoable
+			? 'Undo ↩'
+			: onWordClick == null
+				? null
+				: word.active_state === 'unknown'
+					? 'Start learning'
+					: gotItApplies
+						? 'Got it ✓'
+						: readAheadApplies
+							? 'Review ✓'
+							: null
+	);
 ```
 
 A click on a word advances it one step around the cycle (`unknown → learning → known → ignored → new → …`). Stepping into `ignored` no longer calls `set_state_by_id(SUSPENDED)`; it routes through a dedicated endpoint that knows whether the row was ever synced to Anki.
 
-`POST /api/srs/items/{id}/untrack` lives in `backend/app/api/srs.py:624` and delegates to `SRSDatabase.untrack_collocation`:
+`POST /api/srs/items/{id}/untrack` lives in `backend/app/api/srs.py` (near line 1169 today) and delegates to `SRSDatabase.untrack_collocation`:
 
 ```bash
-sed -n "785,815p" backend/app/srs/database.py
+sed -n "315,345p" backend/app/srs/db_directions.py | cat -n
 ```
 
 ```output
-    def untrack_collocation(self, row_id: int) -> dict[str, str]:
-        """Remove a collocation from the user's learning queue.
-
-        If the row was never pushed to Anki (anki_note_id IS NULL), delete it
-        outright (cascade deletes both direction rows). Otherwise suspend both
-        directions and mark dirty_fsrs=1 so the next Anki push suspends the card.
-
-        Returns {"action": "deleted"} or {"action": "suspended"}.
-        """
-        with self._get_conn() as conn:
-            row = conn.execute("SELECT anki_note_id FROM collocations WHERE id = ?", (row_id,)).fetchone()
-            if row is None:
-                return {"action": "deleted"}
-            if row["anki_note_id"] is None:
-                conn.execute(
-                    "DELETE FROM violations WHERE collocation_text = (SELECT text FROM collocations WHERE id = ?)",
-                    (row_id,),
-                )
-                conn.execute("DELETE FROM collocations WHERE id = ?", (row_id,))
-                self._commit(conn)
-                return {"action": "deleted"}
-            conn.execute(
-                "UPDATE collocation_directions SET state = 'suspended', dirty_fsrs = 1 WHERE collocation_id = ?",
-                (row_id,),
-            )
-            conn.execute(
-                "UPDATE collocations SET updated_at = datetime('now') WHERE id = ?",
-                (row_id,),
-            )
-            self._commit(conn)
-            return {"action": "suspended"}
+     1	    def promote_to_learning(
+     2	        self,
+     3	        row_id: int,
+     4	        direction: Direction | None = None,
+     5	    ) -> None:
+     6	        """Set state to LEARNING with today's due_at and a fresh last_review.
+     7	
+     8	        The caller is responsible for ensuring the collocation exists.
+     9	
+    10	        Note: `left` is left as NULL, so sync_push routes to
+    11	        set_due_date (the new/review branch at sync.py:1219), not to
+    12	        set_learning_state. Anki receives "due today" without learning-step
+    13	        metadata — TunaTale shows LEARNING, Anki treats it as effectively new.
+    14	        This matches the "no FSRS grade" intent but creates a silent asymmetry
+    15	        between TT and Anki views.
+    16	        """
+    17	        today_due_at = due_at_rollover_utc(date.today()).isoformat()
+    18	        now = datetime.now(UTC)
+    19	        now_ms = int(now.timestamp() * 1000)
+    20	        now_iso = now.isoformat()
+    21	        with self._get_conn() as conn:
+    22	            if direction is None:
+    23	                conn.execute(
+    24	                    "UPDATE collocation_directions SET state = 'learning',"
+    25	                    " due_at = ?, last_review = ?, last_review_time_ms = ?,"
+    26	                    " dirty_fsrs = 1 WHERE collocation_id = ?",
+    27	                    (today_due_at, now_iso, now_ms, row_id),
+    28	                )
+    29	            else:
+    30	                conn.execute(
+    31	                    "UPDATE collocation_directions SET state = 'learning',"
 ```
 
 Two-path semantics:
@@ -5563,23 +6141,37 @@ The matching state-set endpoint (`/state`) special-cases `"learning"` to call `d
 `POST /api/srs/listen` is the entry point: the user clicks "I listened to this lesson" and the lesson's words are tokenized, lemmatized, and registered as SRS items with a Rating.GOOD grade. It now also branches on `card_type`:
 
 ```bash
-sed -n "220,289p" backend/app/api/srs.py
+sed -n "376,445p" backend/app/api/srs.py
 ```
 
 ```output
 @router.post("/listen", status_code=200)
 async def mark_lesson_listened(body: ListenRequest, request: Request):
-    store = request.app.state.content_store
+    store = request.state.content_store
     lesson = store.get_lesson(body.lesson_id)
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
 
-    db = request.app.state.srs_db
+    db = request.state.srs_db
+    col_crt = resolve_col_crt(db)
+    llm = getattr(request.app.state, "llm", None)
+    # One shared set across this request so two new words don't pick the same image.
+    used_image_urls: set[str] = set()
+    # One session balancer for the whole request; each grade below feeds itself
+    # back via _balancer_add so later grades in this lesson see earlier ones.
+    balancer = build_live_load_balancer(db, now=datetime.datetime.now(datetime.UTC), col_crt=col_crt)
 
     # ── Word-level tracking from NATURAL_SPEED section ──────────────────
-    from app.models.lesson import SectionType
+    from app.models.lesson import Section, SectionType, extract_sentence_translations_from_translated
 
     token_glosses: dict[str, str] = lesson.generation_metadata.get("token_glosses", {})
+    sentence_translations: dict[str, str] = lesson.generation_metadata.get("sentence_translations", {})
+    # Backfill path: pre-Layer-N lessons have no `sentence_translations` in
+    # metadata. Recover from the TRANSLATED section so old lessons can still
+    # populate cloze cards' Back Extra. First-occurrence wins on the merge.
+    derived_st = extract_sentence_translations_from_translated(lesson)
+    for k, v in derived_st.items():
+        sentence_translations.setdefault(k, v)
 
     natural_speed = next(
         (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
@@ -5588,55 +6180,41 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
     unique_lemmas: set[str] = set()
     lemma_to_sentence: dict[str, str] = {}
-    if natural_speed is not None:
-        for phrase in natural_speed.phrases:
+    lemma_to_surfaces: dict[str, set[str]] = {}
+    # The surface as it first appeared, paired with lemma_to_sentence — used to
+    # blank the *surface* (not the dictionary lemma) in plain function-word clozes.
+    lemma_to_first_surface: dict[str, str] = {}
+    # Surface (casefolded) → classla UPOS, for POS-first function-word detection.
+    # Empty/"" under LowercaseLemmatizer, so the curated include-list is the only
+    # signal there (legacy behavior); classla supplies AUX/ADP/PRON/... and catches
+    # the whole biti paradigm (ste/smo/so) without enumerating surfaces.
+    surface_to_upos: dict[str, str] = {}
+
+    lemmatizer = get_lemmatizer(lesson.language_code)
+    model_version = model_version_for(lemmatizer)
+
+    def _analyze_phrases(section: Section) -> None:
+        # Runs the (classla) lemmatizer over the lesson's L2 phrases, filling the
+        # dicts above. Offloaded to a worker thread (below) so the blocking pipeline
+        # doesn't stall the event loop. The await suspends this coroutine until the
+        # thread finishes, so the shared-dict mutation has no concurrent access.
+        for phrase in section.phrases:
             if phrase.language_code != lesson.language_code:
                 continue
-            for surface in tokenize(phrase.text):
-                lemma = _lemmatizer.lemmatize(surface, lesson.language_code)
+            surfaces = tokenize(phrase.text)
+            phrase_lemmas = lemmatize_surfaces_in_context(
+                surfaces, phrase.text, lemmatizer, lesson.language_code, db, model_version
+            )
+            for ta in analyze_sentence_cached(db, lemmatizer, phrase.text, lesson.language_code, model_version):
+                surface_to_upos.setdefault(ta.surface.casefold(), ta.upos)
+            for surface, lemma in zip(surfaces, phrase_lemmas, strict=True):
                 unique_lemmas.add(lemma)
                 if lemma not in lemma_to_sentence:
                     lemma_to_sentence[lemma] = phrase.text
+                    lemma_to_first_surface[lemma] = surface
+                lemma_to_surfaces.setdefault(lemma, set()).add(surface)
 
-    cloze_enabled = lesson.language_code == "sl" and db.get_enable_cloze_cards()
-
-    for lemma in unique_lemmas:
-        is_cloze = cloze_enabled and is_function_word(lemma, lesson.language_code)
-        unit = SyntacticUnit(
-            text=lemma,
-            translation=token_glosses.get(lemma, ""),
-            word_count=1,
-            difficulty=1,
-            source="llm",
-            lemma=lemma,
-            card_type="cloze" if is_cloze else "vocab",
-            source_sentence=lemma_to_sentence.get(lemma, "") if is_cloze else "",
-        )
-        db.add_collocation(unit, language_code=lesson.language_code)
-        item = db.get_collocation_by_lemma(lemma)
-        if item is None:
-            continue  # pragma: no cover — lemma is always filled for single-word units
-        rating = _WORD_RATING_MAP.get(body.word_ratings.get(lemma, "good"), Rating.GOOD)
-        now = datetime.datetime.now(datetime.UTC)
-        updated = schedule(item, rating, params=resolve_fsrs_params(db)[0], now=now)
-        db.update_collocation(updated)
-
-    # ── Key phrase registration (preserves translations) ─────────────────
-    for kp in lesson.key_phrases:
-        if db.get_collocation(kp.phrase) is not None:
-            continue  # idempotent — already registered from a prior listen
-        unit = SyntacticUnit(
-            text=kp.phrase,
-            translation=kp.translation,
-            word_count=min(8, max(1, len(kp.phrase.split()))),
-            difficulty=1,
-            source="llm",
-        )
-        db.add_collocation(unit, language_code=lesson.language_code)
-
-    registered = len(unique_lemmas) + len(lesson.key_phrases)
-    return {"status": "ok", "registered": registered}
-
+    if natural_speed is not None:
 ```
 
 Notable details:
@@ -5648,7 +6226,7 @@ Notable details:
 
 ### 15.3 The Transcript Component (Phase D)
 
-`frontend/src/lib/components/Transcript.svelte` is a 175-line Svelte 5 component (with a 261-line test file) that renders the lesson dialogue with per-word color coding, click-to-cycle state, drag-to-select phrase capture, and an "Add phrase…" affordance for phrases that don't appear verbatim. The data shape comes from `GET /api/srs/lesson/{lesson_id}/transcript` (`backend/app/api/srs.py:291`):
+`frontend/src/lib/components/Transcript.svelte` is a 175-line Svelte 5 component (with a 261-line test file) that renders the lesson dialogue with per-word color coding, click-to-grade popovers (originally click-to-cycle), drag-to-select phrase capture, and an "Add phrase…" affordance for phrases that don't appear verbatim. The data shape comes from `GET /api/srs/lesson/{lesson_id}/transcript` (`backend/app/api/srs.py`, near line 657 today):
 
 ```
 {
@@ -5672,18 +6250,18 @@ Notable details:
 - **known** — no underline
 - **ignored / suspended** — strikethrough, faded
 
-Click a word and the parent page calls `handleStateChange(lemma, srs_item_id)` which (1) reads `currentState` off the most recent transcript snapshot, (2) computes `nextState = STATE_CYCLE[currentState]`, (3) creates an SRS row if needed (`srs_item_id === null` for cards never registered), and (4) calls the appropriate endpoint (`/untrack` for `ignored`, `/state` otherwise). The transcript is then re-fetched so the next click reads the updated state.
+Originally, clicking a word cycled its state directly through a hardcoded `STATE_CYCLE` map. That direct-click cycle is **gone** — PART 25's word-learning state machine replaced it with a popover whose single grade button's label mirrors what the old click did (see the `WordSpan.svelte` excerpt above: unknown → "Start learning", due+tracked → grade Good, not-due-but-readable → review ahead), with `/untrack` still reachable from the popover. The `/state` endpoint survives for the `/cards` admin page.
 
 ### 15.4 Translate Button + Off-Transcript Phrase Entry (Phase E)
 
 When the user drags to select a phrase ("dober dan" → "good day") that isn't pre-translated, the popover shows a ✨ button. Clicking it calls a new endpoint:
 
 ```bash
-sed -n "347,363p" backend/app/api/srs.py
+sed -n "728,746p" backend/app/api/srs.py
 ```
 
 ```output
-_VALID_LANGUAGE_CODES = frozenset({"sl", "en"})
+_VALID_LANGUAGE_CODES = known_language_codes()
 
 
 @router.post("/translate", status_code=200)
@@ -5719,7 +6297,7 @@ The cloze spike (`feat(srs): Phase F` — commit `1006f49`) wires `/listen` to a
 The pipeline:
 
 1. **Detection.** `is_function_word(lemma, "sl")` checks against `SLOVENE_FUNCTION_WORDS` — a curated 22-word frozenset (`je`, `kje`, `v`, `kaj`, `sem`, `si`, `da`, `za`, `tam`, `na`, `kako`, `ni`, `ja`, `se`, `to`, `vam`, `z`, `mi`, `še`, `pa`, `ti`, `po`). The list was generated by `app/srs/build_function_word_list.py` over a 7-day curriculum, then manually curated to drop obvious content words.
-2. **Storage.** Migration v18→v19 adds `collocations.card_type TEXT DEFAULT 'vocab'`. Cloze cards get `card_type='cloze'` and `source_sentence=<the natural-speed phrase>`. `add_collocation` (`backend/app/srs/database.py:238`) only creates a RECOGNITION direction for cloze cards — there's no L1→L2 production side for a function-word fill-in.
+2. **Storage.** Migration v18→v19 adds `collocations.card_type TEXT DEFAULT 'vocab'`. Cloze cards get `card_type='cloze'` and `source_sentence=<the natural-speed phrase>`. `add_collocation` (now `backend/app/srs/db_collocations.py:22`) creates only a **PRODUCTION** direction for cloze cards (`card_type == "cloze"` → `directions = [Direction.PRODUCTION]`, `db_collocations.py:103-106`) — a cloze is a fill-in-the-blank *production* act; there is no recognition side. (An earlier revision of this paragraph said RECOGNITION — wrong; PART 20 has it right.)
 3. **Cloze text generation.** `make_cloze_text(surface, source_sentence)` wraps every word-bounded occurrence of `surface` with `{{c1::surface}}`. It's case-insensitive but case-preserving, idempotent (if `{{c1::...}}` is already present it passes through), and skips empty source sentences.
 4. **Anki note creation.** `OfflineWriter.create_cloze_note` (`backend/app/anki/sync.py:485`) targets Anki's built-in **Cloze** notetype (looked up by `name='Cloze'` in `notetypes`). The fields are `Text` (the cloze-wrapped sentence) and `Back Extra` (left empty). GUID is computed from the cloze-wrapped text + language code via `compute_guid` so duplicate detection works the same way as vocab notes. Each template's `cards.due` is allocated from `MAX(due)+1` over existing new cards.
 5. **Routing.** `sync_create_new` checks `item.syntactic_unit.card_type` and dispatches to `create_cloze_note` (cloze) or `create_note` (vocab). The dispatch is at `backend/app/anki/sync.py:1449`.
@@ -5777,27 +6355,27 @@ New: migration v17→v18 adds `collocation_directions.introduced_at TEXT` plus `
 - `fsrs.schedule` stamps it when the grade event transitions the row out of NEW (TT-side first grade).
 - `sync_pull._resolve_introduced_at` stamps it from `MIN(revlog.id)` for an Anki-side first grade observed during pull.
 
-`count_new_introduced_today` (`backend/app/srs/database.py:1589`) just filters distinct `collocation_id` with `introduced_at` in today's UTC window:
+`count_new_introduced_today` (`backend/app/srs/db_counts.py:131` since the 2026-07-04 database split) just filters distinct `collocation_id` with `introduced_at` in today's UTC window:
 
 ```bash
-sed -n "1602,1615p" backend/app/srs/database.py
+sed -n "131,144p" backend/app/srs/db_counts.py
 ```
 
 ```output
-        local_tz = datetime.now().astimezone().tzinfo
-        start_utc = datetime.combine(today, time(0), tzinfo=local_tz).astimezone(UTC)
-        end_utc = datetime.combine(today + timedelta(days=1), time(0), tzinfo=local_tz).astimezone(UTC)
-        with self._get_conn() as conn:
-            row = conn.execute(
-                """
-                SELECT COUNT(DISTINCT collocation_id) FROM collocation_directions
-                WHERE introduced_at IS NOT NULL
-                  AND introduced_at >= ?
-                  AND introduced_at < ?
-                """,
-                (start_utc.isoformat(), end_utc.isoformat()),
-            ).fetchone()
-            return row[0] if row else 0
+    def count_new_introduced_today(self, today: date) -> int:
+        """Count distinct collocations whose first NEW→non-NEW transition fell today.
+
+        Filters on the explicit `introduced_at` column written once by the grade
+        endpoint (`app.srs.fsrs.schedule`) and by `sync_pull` on the first
+        introduction event. Mirrors Anki's `newToday` counter, which increments
+        only on that first grade — subsequent reviews of the same card on later
+        days do NOT bump it.
+
+        Pre-Layer-26 rows that were introduced before `introduced_at` existed
+        have NULL and naturally fall out of the count. Going forward, every new
+        grade populates the column.
+        """
+        start_iso, end_iso = _anki_day_bounds_utc(today)
 ```
 
 Pre-Layer-26 rows have NULL `introduced_at` and naturally fall out of the count. Going forward, every new grade populates the column. The local-timezone-to-UTC math handles the daily rollover the same way `count_review_due_collocations` does.
@@ -5808,32 +6386,32 @@ The Layer 22 distinction (`introduced_at` is a one-shot stamp, NOT a sticky mark
 
 Anki resets `queue=-2` (sibling-buried) and `queue=-3` (scheduler-buried) cards back to their original queues once per day, on the first queue rebuild after rollover. TT must mirror this — stale `state='buried'` rows from a prior day under-count `count_review_due_collocations` and silently drop cards from the review pool.
 
-`SRSDatabase.unbury_if_needed(today)` (`backend/app/srs/database.py:1483`) runs at the top of three call sites: `/queue-stats`, `/review-queue` (via `_compute_live_main`), and `sync_pull`. It's tracked via `anki_state_cache['last_unbury_day']`:
+`SRSDatabase.unbury_if_needed(today)` (`backend/app/srs/db_queue.py:224` since the database split) runs at the top of three call sites: `/queue-stats`, `/review-queue` (via `_compute_live_main`), and `sync_pull`. It's tracked via `anki_state_cache['last_unbury_day']`:
 
 ```bash
-sed -n "1497,1515p" backend/app/srs/database.py
+sed -n "224,242p" backend/app/srs/db_queue.py
 ```
 
 ```output
+    def unbury_if_needed(self, today: date) -> int:
+        """Anki-parity daily unbury sweep — restores stale sched-buried rows.
+
+        Anki distinguishes two bury kinds: ``queue=-3`` (sched/sibling, auto-
+        released at next rollover) and ``queue=-2`` (user/manual, stays buried
+        until manually unburied). TT mirrors this via ``bury_kind``:
+        only rows where ``bury_kind = 'sched'`` get released here. Manually-
+        buried rows (``bury_kind = 'user'``) survive the sweep, matching
+        Anki's ``unbury_if_needed`` behavior in ``rslib/.../queue/builder/``.
+
+        Tracked via ``anki_state_cache['last_unbury_day']``. Idempotent within a
+        local day — subsequent calls today return 0 without touching anything,
+        which is important because sync_pull within the same day may land new
+        ``state='buried'`` rows for today's sibling-buries that must stick.
+
         Returns the number of rows unburied.
         """
         cached = self.get_anki_state_cache("last_unbury_day")
         today_iso = today.isoformat()
-        if cached and cached[0] == today_iso:
-            return 0
-        with self._get_conn() as conn:
-            cursor = conn.execute(
-                """
-                UPDATE collocation_directions
-                SET state = CASE WHEN reps > 0 THEN 'review' ELSE 'new' END
-                WHERE state = 'buried'
-                """
-            )
-            rowcount = cursor.rowcount
-            self._commit(conn)
-        self.set_anki_state_cache("last_unbury_day", today_iso)
-        return rowcount
-
 ```
 
 Idempotency matters: `sync_pull` within the same day may land *new* `state='buried'` rows (today's sibling-buries that must stick). The `last_unbury_day` cache guards against re-sweeping them.
@@ -5842,10 +6420,10 @@ Idempotency matters: `sync_pull` within the same day may land *new* `state='buri
 
 Per-direction ordering in `get_new_items` is necessary but not sufficient. Anki's `add_new_card` (rslib `queue/builder/gathering.rs:63-169`) gathers BOTH ords in one pass and proactively buries the LATER sibling per note — so the higher-due sibling wins. Then `sort_new` (`sorting.rs:14-36`) stably re-sorts by `ord` (the Template step) so ord=0 (recognition) comes before ord=1 (production) within each note's surviving direction.
 
-TT's `_merge_directions` (`backend/app/api/srs.py:707`) mirrors the gather sort key exactly:
+TT's `_merge_directions` (`backend/app/srs/queue_engine.py:91` since the 2026-07-04 queue-engine extraction) mirrors the gather sort key exactly:
 
 ```bash
-sed -n "707,746p" backend/app/api/srs.py
+sed -n "91,130p" backend/app/srs/queue_engine.py
 ```
 
 ```output
@@ -5871,6 +6449,13 @@ def _merge_directions(
 
     Together with the post-bury Template sort in `get_review_queue`, this
     reproduces the gather → bury → Template-sort pipeline exactly.
+
+    Phase 3 note (Layer 65): the production NEW pool is gated upstream in
+    `get_new_items` — a production card is withheld until its recognition
+    sibling has graduated past the learning arc. So for a paired both-NEW note
+    no production card reaches this merge; recognition wins. The "higher-anki_due
+    sibling wins" behavior only applies once recognition is REVIEW (production
+    introducible) or among recognition cards / cloze cards.
     """
     combined: list[tuple[int, SRSItem, str, Direction]] = []
     for row_id, item, lang in rec:
@@ -5882,13 +6467,6 @@ def _merge_directions(
         t: tuple[int, SRSItem, str, Direction],
     ) -> tuple[int, int, int, int, int]:
         row_id, item, _lang, direction = t
-        ds = item.directions[direction]
-        ord_value = 0 if direction == Direction.RECOGNITION else 1
-        primary = (0, 0) if ds.anki_due is None else (1, -ds.anki_due)
-        return (*primary, ord_value, ds.anki_card_id or (1 << 62), row_id)
-
-    combined.sort(key=_gather_key)
-    return combined
 ```
 
 After `_merge_directions`, `_compute_live_main` runs `_bury` (`backend/app/api/srs.py:850`) to keep only the first-seen survivor per `collocation_id`. Then a final stable sort by `ord` (`nonlearning_new.sort(key=lambda t: 0 if t[3] == Direction.RECOGNITION else 1)`) reproduces Anki's Template step.
@@ -5899,10 +6477,10 @@ Layer 28's fix was the `časa`/`sekira` head-of-queue divergence: per-direction 
 
 `session_main_queue` is the DB-backed frozen queue order — Anki rebuilds it once at session open / sync; TT mirrors the freeze moment. Before Layer 29, `sync_pull` only **cleared** the cache and deferred rebuild to the next `/review-queue` request. Hours could pass before that request, letting the underlying pool shift — the two apps froze their queues at different moments, causing off-by-slot drift on the first-new-card position.
 
-Layer 29 added `build_and_freeze_main_queue(db)` in `backend/app/api/srs.py:871` and called it immediately after the clear in `sync_pull`:
+Layer 29 added `build_and_freeze_main_queue(db)` (now `backend/app/srs/queue_engine.py:308`) and called it immediately after the clear in `sync_pull`:
 
 ```bash
-sed -n "871,882p" backend/app/api/srs.py
+sed -n "308,319p" backend/app/srs/queue_engine.py
 ```
 
 ```output
@@ -5917,10 +6495,9 @@ def build_and_freeze_main_queue(db) -> None:
     today = datetime.date.today()
     live_main = _compute_live_main(db)
     set_session_main_queue(db, today, [(t[0], t[3].value) for t in live_main])
-
 ```
 
-`_compute_live_main` (`backend/app/api/srs.py:801`) was extracted out of `get_review_queue` for this: the live-pool build logic up through the spread step is shared between the route handler and the eager-rebuild call. The route handler still owns cache reconciliation, learning-card assembly, and the collapse hack — those depend on the request-scoped `now`/`cutoff`.
+`_compute_live_main` (now `backend/app/srs/queue_engine.py:188`) was extracted out of `get_review_queue` for this: the live-pool build logic up through the spread step is shared between the route handler and the eager-rebuild call. The route handler still owns cache reconciliation, learning-card assembly, and the collapse hack — those depend on the request-scoped `now`/`cutoff`.
 
 Deploy-time pitfall to remember: the cache lives in `anki_state_cache` (DB-backed), so it survives backend restarts. After changing queue-assembly logic, an existing cache row will replay the OLD order until the next sync — restart alone does NOT invalidate it. When debugging a "fix doesn't seem to be working" report, run `clear_session_main_queue` first (see the diagnostic in `.claude/rules/anki-queue-parity.md`) before concluding the fix is broken.
 
@@ -5928,10 +6505,10 @@ Deploy-time pitfall to remember: the cache lives in `anki_state_cache` (DB-backe
 
 The previous mapper had a fallback `if reps == 0: return SRSState.NEW`. That broke when an Anki user hit "Forget" on a graduated card — `cards.queue` stays at 2 (review) but `cards.reps` resets to 0. The fallback wrongly mapped these to NEW, surfacing them as fresh new cards in TT.
 
-`_queue_to_state` (`backend/app/anki/sync.py:696`) now treats `queue` as authoritative:
+`_queue_to_state` (`backend/app/anki/sync_engine.py:204` since the sync split) now treats `queue` as authoritative:
 
 ```bash
-sed -n "696,719p" backend/app/anki/sync.py
+sed -n "204,227p" backend/app/anki/sync_engine.py
 ```
 
 ```output
@@ -5972,10 +6549,10 @@ Layer 31 adds two pieces:
 1. **`extract_gloss_from_fields`** (`backend/app/anki/sqlite_reader.py:350`) — returns the English gloss when a field uses the pattern.
 2. **A short-circuit in `extract_l2_from_fields`** (`backend/app/anki/sqlite_reader.py:386-389`) — runs before the score-based fallback so the `<b>X</b><br><i>Y</i>` pattern picks the `<b>` group cleanly. The `_B_THEN_I_PATTERN` is a module-level regex anchored at `^\s*<b>([^<]+)</b>\s*<br\s*/?>\s*<i>([^<]+)</i>`.
 
-`import_seed` and the sync_pull `get_note_records` path both use the updated extractor, so new imports come in clean. For the 39 already-mangled rows in the live DB, a one-shot script under `app/anki/fix_html_concat_imports.py` walks the TT DB, cross-checks the linked Anki note, and either renames the row (`text=X, translation=Y`) or deletes it when a clean-X twin collocation already exists. The script is read-only on `collection.anki2`, mutates only `tunatale.db`, supports `--dry-run`, and is invoked as:
+`import_seed` and the sync_pull `get_note_records` path both use the updated extractor, so new imports come in clean. For the 39 already-mangled rows in the live DB, a one-shot script now archived at `backend/scripts/anki_archive/fix_html_concat_imports.py` walks the TT DB, cross-checks the linked Anki note, and either renames the row (`text=X, translation=Y`) or deletes it when a clean-X twin collocation already exists. The script is read-only on `collection.anki2`, mutates only `tunatale.db`, supports `--dry-run`, and is invoked as:
 
 ```
-uv run python -m app.anki.fix_html_concat_imports [--dry-run]
+uv run python -m scripts.anki_archive.fix_html_concat_imports [--dry-run]
 ```
 
 ### 16.8 Layer Summary
@@ -6009,7 +6586,7 @@ if not dry_run:
     self._db.record_sync_conflict(...)
 ```
 
-collapsed to `self._record_conflict(report, guid=..., direction=..., field=..., local=..., remote=..., resolution=..., dry_run=dry_run)` (`backend/app/anki/sync.py:874`).
+collapsed to `self._record_conflict(report, guid=..., direction=..., field=..., local=..., remote=..., resolution=..., dry_run=dry_run)` (now in `backend/app/anki/sync_engine.py`).
 
 **`_resolve_prior_state` closure** (commit `38d2804`). The call-site signature was passing `first_review_ms`, `today_start_ms`, and the local direction state through repeated kwargs. The refactor introduces a per-iteration `_prior` closure that captures `card_rec.first_review_ms` and `today_start_ms` once, leaving the call site as `_prior(local_dir, new_state)`. Same idea applied to `_intro_at = _resolve_introduced_at`. Visual noise dropped, behavior identical.
 
@@ -6033,17 +6610,17 @@ When debugging a queue divergence, dead code is a trap: the divergence playbook 
 
 ## PART 18: Parity Testing Harness
 
-TT mirrors Anki's scheduling algorithms, and the divergence history (`docs/anki-parity-layers.md`, 48 layers) reflects how many subtle branches that touches. The parity harness lets TT pin its parallel functions against Anki's actual scheduler at test time, before divergences reach a user-visible badge.
+TT mirrors Anki's scheduling algorithms, and the divergence history (`docs/anki-parity-layers.md`, 80 layers) reflects how many subtle branches that touches. The parity harness lets TT pin its parallel functions against Anki's actual scheduler at test time, before divergences reach a user-visible badge.
 
 ### 18.1 Subprocess Boundary
 
 `backend/tests/anki_oracle/` holds the three-file harness: `synthetic_collection.py` builds a minimal modern-schema `collection.anki2` on disk (with the `config` table modern Anki actually reads, not just legacy `col.conf` JSON); `oracle.py` is the subprocess that opens the collection, enables V3, and runs JSON-in/JSON-out ops; `harness_fixtures.py` exposes the pytest fixtures + `run_oracle()` helper.
 
-**Backend production code must never `import anki`** (queue-parity rule 1 — TT cannot have a runtime dependency on Anki being installed). The harness spawns a separate process via `uv run --with anki python oracle.py`. Backend tests don't import anki either; they call `run_oracle(collection_path, operations)`. CI runs without `--run-oracle` so it doesn't need anki installable in the image; `./test.sh` passes the flag locally.
+**Backend production code must never `import anki`** (queue-parity rule 1 — TT cannot have a runtime dependency on Anki being installed). The harness spawns a separate process via `uv run --with anki python oracle.py`. Backend tests don't import anki either; they call `run_oracle(collection_path, operations)`. CI runs the harness in a dedicated **oracle-parity job** (`pytest -m oracle --run-oracle -n auto --no-cov`, `.github/workflows/ci.yml`) alongside backend, frontend, and peer-sync jobs; `./test.sh` passes the flag locally too.
 
 ### 18.2 What's Pinned
 
-Five parity-test files under `backend/tests/test_parity_*.py` each cover a cluster:
+The parity-test files under `backend/tests/test_parity_*.py` each cover a cluster (five at the time of writing; **13 today**, adding daily caps, the load balancer, f32 FSRS, revlog factor, and more):
 
 | File | Cluster |
 |------|---------|
@@ -6083,7 +6660,7 @@ The companion script `app/anki/replay_fsrs_from_revlog.py` walks every direction
 
 ### 19.3 Current Status
 
-Writes are live. Reads aren't yet — `sync_pull` still uses field-merge, and the replay script is diagnostic-only. The endgame (collapse field-merge into invariant-check, drop `prior_state` / `introduced_at`) waits on an empirical measurement comparing replay output to Anki's `cards.data` directly. Procedure and decision gate (≥95% / 50–95% / <50%) at `docs/stage-3b-empirical-measurement.md`; measurement script at `backend/app/anki/measure_stage3b_premise.py`.
+**This section is now history on both ends.** The measurement ran (see `docs/stage-3b-empirical-measurement.md`, DONE 2026-05-23 at 100% strict match), `event_sync_pull` flipped to `new` on 2026-06-02, and the whole mode flag was later decommissioned — `sync_pull` has a single path that takes Anki verbatim with a forward-step replay kept only as a recompute-divergence detector (PART 27's status note). On the **read** side, `rebuild_from_revlog` lives in `db_revlog.py`. On the **push** side, Layer 80 (2026-07-10) made `tt_revlog` the source of pushed history: every unpushed row is inserted into Anki's revlog at its own grade-time id, so intermediate TT grades no longer collapse into one row.
 
 ---
 
@@ -6093,7 +6670,7 @@ Cloze cards (introduced in PART 15.5) target Anki's built-in Cloze notetype with
 
 ### 20.1 Cloze Text And Function-Word Detection
 
-`make_cloze_text(sentence, target_word)` in `app/cloze/` wraps the target with Anki's `{{c1::word}}` syntax. The frontend rendering uses Unicode-aware lookarounds to mask the word — ASCII-only `\b` doesn't match around š/č/ž. `is_function_word(word, language)` keys off a per-language list (Slovene lives at `app/cloze/function_words/sl.py`); the `/listen` endpoint creates a cloze row only for function-word matches when the cloze feature flag is enabled, no-op otherwise.
+`make_cloze_text(sentence, target_word)` in `app/srs/function_words.py` wraps the target with Anki's `{{c1::word}}` syntax. The frontend rendering uses Unicode-aware lookarounds to mask the word — ASCII-only `\b` doesn't match around š/č/ž. `is_function_word(word, language)` keys off per-language JSON data (`app/srs/data/function_words/sl.json`, plus `no.json` for Norwegian); the `/listen` endpoint creates a cloze row for function-word matches (the feature flag mentioned below was later deleted — PART 23).
 
 ### 20.2 TTS Audio (Sentence + Word)
 
@@ -6124,7 +6701,7 @@ PART 13 covers the SvelteKit + Vite app at a structural level. The toolchain aro
 - **Format: Oxfmt** for `.ts`/`.js`. Installed to the *root* `package.json` because its Svelte extension wants `svelte/compiler` at the same resolution level — Bun hoists Oxfmt to the repo root while Svelte stays in `frontend/node_modules`. `.oxfmtrc.json` excludes `.svelte` files for now.
 - **Bundler: Vite 8.0.13** (`vite-plugin-svelte` warns "experimental" for Vite 8 / rolldown but all tests pass).
 - **Test runner: Vitest 4** with v8 coverage and a custom Svelte-5 phantom-branch filter (see below).
-- **E2E: Playwright** with 11 specs covering curriculum navigation, day picker, lesson page header, the `/admin/srs` flow, the review loop including Again-rating queue placement, and SRS-seeding helpers shared via `tests/helpers.ts`.
+- **E2E: Playwright** with 11 specs covering curriculum navigation, day picker, lesson page header, the `/cards` admin flow, the review loop including Again-rating queue placement, and SRS-seeding helpers shared via `tests/helpers.ts`.
 
 ### 21.1 Svelte 5 Phantom-Filter Coverage Gate
 
@@ -6134,7 +6711,7 @@ The Svelte 5 compiler injects template fragments that v8 reports as uncovered "b
 
 `frontend/tests/coverage-gate.test.ts` pins every classification against empirical TunaTale cases — adding or changing a rule means updating both the heuristic and the test.
 
-Maintenance note (`.claude/rules/testing.md`): after any `svelte` / `@vitest/coverage-v8` bump, eyeball the gate's "dropped N phantom branch(es)" line (baseline 46 on 21 files). A >20% delta means either a new phantom shape the filter misses or real bugs misclassified as phantom — fix the heuristic, don't lower the threshold.
+Maintenance note (`.claude/rules/testing.md`): after any `svelte` / `@vitest/coverage-v8` bump, eyeball the gate's "dropped N phantom branch(es)" line (baseline 131 on 47 files as of 2026-07-10; it was 46/21 in 2026-05 — growth tracks feature code, not compiler drift). A >20% delta means either a new phantom shape the filter misses or real bugs misclassified as phantom — fix the heuristic, don't lower the threshold.
 
 ---
 
@@ -6147,7 +6724,7 @@ PARTs 12–15 key every SRS card on a **lemma** — the dictionary form. The tra
 `app/srs/lemmatizer.py` defines the `Lemmatizer` Protocol. It used to expose just `lemmatize(word)`; it now also exposes `analyze(word) → (lemma, case, number)` and `analyze_sentence(sentence) → list[TokenAnalysis]`. The sentence method is the load-bearing one — Slovene lemmas are **POS-dependent and only resolvable in context**:
 
 ```bash
-sed -n "230,264p" backend/app/srs/lemmatizer.py
+sed -n "402,446p" backend/app/srs/lemmatizer.py
 ```
 
 ```output
@@ -6156,6 +6733,8 @@ def lemmatize_surfaces_in_context(
     sentence: str,
     lemmatizer: Lemmatizer,
     language_code: str,
+    db: SRSDatabase | None = None,
+    model_version: str = "",
 ) -> list[str]:
     """Lemmatize each surface using its *sentence* context, with a single-word fallback.
 
@@ -6176,8 +6755,16 @@ def lemmatize_surfaces_in_context(
     ``lemma = front.lower()``). classla capitalizes proper-noun lemmas
     (``Ženeve`` → ``Ženeva``), which would otherwise miss the lowercase
     ``ženeva`` card on a case-sensitive ``lemma =`` lookup.
+
+    When *db* and *model_version* are provided the sentence analysis is routed through
+    the persistent ``lemma_analysis_cache`` table so the result survives restarts.
     """
-    context = {ta.surface.lower(): ta.lemma.lower() for ta in lemmatizer.analyze_sentence(sentence, language_code)}
+    # note: this dict collapses on lowercase key. If the sentence contains multiple
+    # surface forms that lowercase to the same key, the last analysis wins. This is
+    # usually correct (same surface → same lemma) but can lose distinct lemmas when
+    # genuinely different words share a lowercase form.
+    analysis = analyze_sentence_cached(db, lemmatizer, sentence, language_code, model_version)
+    context = {ta.surface.lower(): ta.lemma.lower() for ta in analysis}
     result: list[str] = []
     for surface in surfaces:
         key = surface.lower()
@@ -6197,35 +6784,37 @@ For `LowercaseLemmatizer`, `analyze_sentence` is just per-token lowercasing, so 
 `ClasslaLemmatizer` wraps CLASSLA-Stanza (a PyTorch pipeline for South Slavic languages). It is **never imported at module level** — the `classla` import lives inside `_ensure_pipeline()` and a `try/except ImportError` type alias — so CI, which doesn't install PyTorch, never touches it. The factory selects it only when the user opts in:
 
 ```bash
-sed -n "206,227p" backend/app/srs/lemmatizer.py
+sed -n "295,322p" backend/app/srs/lemmatizer.py
 ```
 
 ```output
-@lru_cache(maxsize=1)
-def get_lemmatizer() -> Lemmatizer:
-    """Return a cached lemmatizer based on ``settings.lemmatizer_type``.
+def get_lemmatizer(language_code: str) -> Lemmatizer:
+    """Return a cached lemmatizer for *language_code*.
 
-    * ``"lowercase"`` (default) — ``LowercaseLemmatizer``
-    * ``"classla"`` — ``ClasslaLemmatizer``, falling back to ``LowercaseLemmatizer``
-      with a logged warning if classla is not importable.
+    The engine is a **property of the language** (``app.languages.get_lemmatizer_type``):
+    ``classla`` for Slovene, ``stanza`` for Norwegian, ``lowercase`` otherwise.
+    ``settings.lemmatizer_type == "lowercase"`` (the default, and the test/CI pin)
+    is a global off-switch — every language gets ``LowercaseLemmatizer`` so analysis
+    stays deterministic without the heavy PyTorch deps. **Any other value** opts in
+    and the per-language engine is built, falling back to ``LowercaseLemmatizer``
+    with a logged warning when the engine's package is not importable.
+
+    Cached per ``language_code`` (``functools.cache``) so multi-language mode
+    (``settings.database_urls``, one process serving both languages) gives each
+    language its own engine: a Norwegian request is never analyzed by the Slovene
+    model. The lemmatizer's own methods short-circuit to lowercase for any code
+    other than the one it was built for, so the *code passed to the methods must
+    match the code passed here* — callers resolve from the content's
+    ``language_code`` (lesson / body), not a global default.
     """
     from app.config import settings
+    from app.languages import get_lemmatizer_type
 
-    lemmatizer_type = settings.lemmatizer_type
-    if lemmatizer_type == "classla":
-        try:
-            import classla  # noqa: F401 — check importability at factory time
-
-            return ClasslaLemmatizer()
-        except ImportError:
-            _logger.warning(
-                "classla not installed; falling back to LowercaseLemmatizer. "
-                "Install the opt-in extra: `uv sync --all-groups --extra classla` "
-                "(pins classla==2.2.1; the torch==2.12.0 override for Python 3.14 is "
-                "baked into pyproject.toml). Then set lemmatizer_type=classla. "
-                "See docs/walkthrough.md §22.2."
-            )
-    return LowercaseLemmatizer()
+    # Global off-switch: keep every language on the deterministic lowercase engine
+    # (the CI/test default, and the single flag a deployment flips to disable the
+    # heavy NLP pipelines everywhere).
+    if settings.lemmatizer_type == "lowercase":
+        return LowercaseLemmatizer()
 ```
 
 Configuration is one new setting, `lemmatizer_type` (`"lowercase"` default, `"classla"` opt-in), in `app/config.py`. Tests pin `lemmatizer_type=lowercase` explicitly (commit `ed8937e`) so a developer's local `.env` with the classla flag can't leak PyTorch into a CI-style run. Models live under `CLASSLA_RESOURCES_DIR` (default `~/classla_resources`); run `classla.download("sl")` once before first use — `Pipeline` does not reliably auto-fetch across classla versions. `ClasslaLemmatizer` caches `analyze_sentence` results **per exact sentence string** (commit `fa80ad1`) — lesson text is stable across requests, so the transcript endpoint's state-change refetches drop from ~3.6 s of NLP to a DB-only lookup once warmed.
@@ -6257,19 +6846,28 @@ PART 20 described the cloze pipeline behind two feature flags (a global enable a
 `app/srs/function_words.py` (renamed in scope but same module) produces both cloze flavors. A **plain function-word cloze** blanks the whole word; `is_function_word` is the capability check — true only where a curated set exists (Slovene today):
 
 ```bash
-sed -n "45,53p" backend/app/srs/function_words.py
+sed -n "43,62p" backend/app/srs/function_words.py
 ```
 
 ```output
-def is_function_word(lemma: str, language_code: str) -> bool:
-    """Return True if *lemma* is a known function word in *language_code*.
+def is_function_word(token: str, language_code: str, *, upos: str | None = None) -> bool:
+    """Return True if *token* is a function word in *language_code*.
 
-    Phase F scope: Slovene only (language_code == "sl").
-    Case-insensitive (casefold) lookup against the curated set.
+    POS-first: when an analyzer supplies *upos*, a token whose classla UPOS is in
+    the language's closed-class ``pos`` set counts — so the whole biti AUX paradigm
+    (sem/si/je/smo/ste/so) is caught without enumerating surfaces. The curated
+    ``include`` set adds words POS misses or mistags (the open-class adverbs
+    kje/kako/tam; ``ni``, which classla tags VERB) and is the *sole* signal when no
+    analyzer is present (LowercaseLemmatizer emits ``upos=""``), exactly reproducing
+    the legacy surface-list behavior. ``exclude`` force-removes. Case-insensitive.
     """
-    if language_code == "sl":
-        return lemma.casefold() in SLOVENE_FUNCTION_WORDS
-    return False
+    pos, include, exclude, _ = _load_function_word_config(language_code)
+    t = token.casefold()
+    if t in exclude:
+        return False
+    if t in include:
+        return True
+    return upos is not None and upos in pos
 ```
 
 The plain-cloze blank is built at listen time from the **surface as it appeared in the sentence**, not the dictionary lemma (commit `92140c5`): the cloze must reference the word actually present in the stored sentence, so `make_cloze_text(surface, sentence)` is what runs, keyed off the raw sentence for backfill. The answer-word audio likewise synthesizes the surface, not the lemma (commit `562edab`) — otherwise a learner clozing `sem` would hear `biti`.
@@ -6279,7 +6877,7 @@ The plain-cloze blank is built at listen time from the **surface as it appeared 
 The second flavor — a **morphology cloze** — drills an inflected form. Blanking the entire word would make the card test recall of the whole token; instead, following Fluent Forever, only the **inflectional tail past the lemma↔surface common prefix** is blanked, leaving the stem visible (commit `2db9f6a`):
 
 ```bash
-sed -n "85,157p" backend/app/srs/function_words.py
+sed -n "157,229p" backend/app/srs/function_words.py
 ```
 
 ```output
@@ -6322,40 +6920,39 @@ def _format_morphology_feature(feature: str) -> str:
     return " ".join(p for p in feature.split(":")[1:] if p)
 
 
-def make_morphology_cloze_text(
-    surface: str,
-    lemma: str,
-    feature: str,
-    source_sentence: str,
-) -> str:
-    """Wrap ``surface`` with a hinted cloze: ``{{c1::sem::biti, 1sg}}``.
+def format_morphology_hint(lemma: str, feature: str) -> str:
+    """Return a human-readable grammar hint like ``"biti, 1st person singular"``.
 
-    The hint (``::hint``) tells the learner which lemma + morphology to
-    produce. Anki renders the blank as ``[biti, 1sg]``.
-
-    Idempotent: already-clozed text passes through unchanged.
-    Returns empty string when ``source_sentence`` is empty.
+    Examples:
+      ``("biti", "verb:1sg")``        -> ``"biti, 1st person singular"``
+      ``("ljubljana", "noun:loc:sg")`` -> ``"ljubljana, locative singular"``
+      ``("lep", "adj:nom:f:sg")``      -> ``"lep, nominative feminine singular"``
     """
-    if not source_sentence:
-        return ""
-    if not surface:
-        return source_sentence
-    if _CLOZE_RE.search(source_sentence):
-        return source_sentence
-    label = _format_morphology_feature(feature)
-    pattern = re.compile(rf"\b{re.escape(surface)}\b", re.IGNORECASE)
+    if not feature:
+        return lemma or ""
 
-    def _replacer(m: re.Match) -> str:
-        matched = m.group(0)
-        split = _ending_blank_split(matched, lemma)
-        if split is None:
-            hint = f"{lemma}, {label}" if label else lemma
-            return f"{{{{c1::{matched}::{hint}}}}}"
-        visible, tail = split
-        hint = label or lemma
-        return f"{visible}{{{{c1::{tail}::{hint}}}}}"
+    person_map = {"1": "1st", "2": "2nd", "3": "3rd"}
+    number_map = {"sg": "singular", "pl": "plural", "du": "dual"}
+    case_map = {"nom": "nominative", "acc": "accusative", "loc": "locative"}
+    gender_map = {"m": "masculine", "f": "feminine", "n": "neuter"}
 
-    return pattern.sub(_replacer, source_sentence)
+    parts = feature.split(":")
+    pos = parts[0]
+
+    if pos == "verb" and len(parts) >= 2:
+        fc = parts[1]
+        person_code = fc[0] if fc else ""
+        number_code = fc[1:] if len(fc) > 1 else ""
+        person_str = person_map.get(person_code, person_code)
+        number_str = number_map.get(number_code, number_code)
+        return f"{lemma}, {person_str} person {number_str}".strip()
+
+    if pos == "noun" and len(parts) >= 3:
+        c = parts[1]
+        n = parts[2]
+        case_str = case_map.get(c, c)
+        number_str = number_map.get(n, n)
+        return f"{lemma}, {case_str} {number_str}"
 ```
 
 `_ending_blank_split` computes the longest common prefix of surface and lemma. If it is ≥2 chars and shorter than the whole word, the stem stays visible and only the tail is clozed: `Ljubljan{{c1::i::loc sg}}` rather than `{{c1::Ljubljani}}`. Suppletive forms (`biti`→`sem`, `iti`→`grem`) have LCP < 2, so the split returns `None` and the helper falls back to a whole-word blank with a `lemma, feature` hint (`{{c1::sem::biti, 1sg}}`). When the stem is already visible, the hint shows the **feature only** — the lemma is implied by the stem. `ud_feats_to_tt_feature` (bottom of the module) maps a classla UD analysis (`Case=Loc|Number=Sing`, `upos=NOUN`) to the TT feature string `noun:loc:sg`, returning `None` for combinations outside the A1 whitelist.
@@ -6371,7 +6968,7 @@ A cloze can only be made for a form the lesson actually contains — **form cove
 The LLM builds the `morphology_focus` array last, scanning the dialogue lines it just wrote and tagging inflected words **already present** in them. Two steering rules raised the live card yield from 52% to 91%:
 
 ```bash
-sed -n "134,168p" backend/app/generation/prompts.py
+sed -n "121,155p" backend/app/generation/prompts.py
 ```
 
 ```output
@@ -6409,7 +7006,7 @@ and locative nouns** whose ending changes the word (`kavo`, `sobo`, `Ljubljani`,
 or `adj:` with any case other than `nom` — those are A2+ topics that don't belong in A1 drills.
 
 **Cases derive from the governing word, NOT English gloss:** `v/na/pri/o/po` + static location →
-`loc` (v Ljubljani); `v/na/čez/skozi` + motion → `acc` (grem v Ljubljano); direct object → `acc`.
+`loc` (v Ljubljani); `v/na/čez/skozi` + motion → `acc` (grem v Ljubljano); direct object → `acc`."""
 ```
 
 The producible-form rule (commit `2902cd6`) discards any entry whose surface equals its lemma — a nominative-singular noun or a bare infinitive gives the answer away, so it is a wasted slot (the backend also drops degenerate `lemma == surface` clozes defensively, commit `35630cc`). The case rule (commit `1a19a7c`) derives case from the **governing word, not the English gloss**: `v/na/pri/o/po` + a static location → locative (`v Ljubljani`); `v/na/čez/skozi` + motion → accusative (`grem v Ljubljano`). Cases are whitelisted to nom/acc/loc — gen/dat/ins are A2+ and explicitly forbidden.
@@ -6419,31 +7016,30 @@ The producible-form rule (commit `2902cd6`) discards any entry whose surface equ
 Steering experiments pushed against alternate Groq models, which exposed that the parser assumed clean JSON. Reasoning models (`qwen3`) wrap the answer in `<think>…</think>`; `gpt-oss` prepends prose like `**Lesson Title:** …`. `StoryGenerator._parse_json` (commit `8ba2117`) now strips `<think>` blocks and code fences, then tries the cleaned string and, failing that, the first balanced `{…}` span:
 
 ```bash
-sed -n "137,157p" backend/app/generation/story.py
+sed -n "143,163p" backend/app/generation/story.py
 ```
 
 ```output
     def _parse_json(raw: str) -> dict:
-        # Model-agnostic: drop <think> reasoning, code fences, and any prose the model
-        # wraps around the JSON (gpt-oss prepends "**Lesson Title:** …"; others append
-        # commentary). Try the cleaned string, then the first balanced {…} span.
-        cleaned = _strip_fences(_THINK_RE.sub("", raw).strip())
-        candidates = [cleaned]
-        start, end = cleaned.find("{"), cleaned.rfind("}")
-        if start != -1 and end > start:
-            candidates.append(cleaned[start : end + 1])
-        last_error: json.JSONDecodeError | None = None
-        for candidate in candidates:
-            try:
-                return json.loads(candidate)
-            except json.JSONDecodeError as e:
-                last_error = e
-        logger.error(
-            "LLM returned unparseable response (len=%d): %r",
-            len(cleaned),
-            cleaned[:500],
-        )
-        raise StoryGenerationError(f"LLM returned invalid JSON: {last_error}") from last_error
+        try:
+            return parse_json_object(raw)
+        except ValueError as e:
+            raise StoryGenerationError(str(e)) from e
+
+    def _parse_response(self, data: dict, language: Language) -> Lesson:
+        return build_lesson_from_story(data, language=language)
+
+
+def build_lesson_from_story(data: dict, language: Language) -> Lesson:
+    """Build a Lesson from Story JSON — the ONE Story-JSON → Lesson build step.
+
+    Used by generation (via ``StoryGenerator._parse_response``) and by lesson
+    authoring import (``app.storage.lesson_io``), so authored and generated
+    lessons are identical in shape. See docs/lesson-authoring.md.
+    """
+    key_phrases = data.get("key_phrases", [])
+    scenes = data.get("scenes", [])
+    title = data.get("title", "Lesson")
 ```
 
 The model experiments themselves were dead ends — `gpt-oss-120b` returns prose-not-JSON and 400s on `json_object`, `qwen3-32b` 413s on payload size — so the default stays `llama-3.3-70b-versatile`, and the parser hardening is the durable win.
@@ -6461,34 +7057,34 @@ PARTs 22–24 are the foundation; this part is the model they serve. Each **lemm
 The first gate holds a vocab card's **production** direction out of the new-queue until its **recognition** sibling graduates past the learning arc. This is implemented as a `NOT EXISTS` clause appended to `get_new_items` for the production direction only:
 
 ```bash
-sed -n "733,756p" backend/app/srs/database.py
+sed -n "22,45p" backend/app/srs/db_collocations.py
 ```
 
 ```output
-        # Phase 3 introduction gate (TT-only): a PRODUCTION new card is not
-        # introducible until its recognition sibling has graduated past the
-        # learning arc (recognition state not in new/learning/relearning). This
-        # makes TT introduce recognition before production — which is what Anki
-        # does too: Anki is direction-agnostic and orders new cards by deck
-        # position, and `create_note` places the recognition card (ord 0) at a
-        # lower position than production (ord 1), so recognition surfaces first
-        # (empirically 604/36 across the user's paired notes — the prior
-        # "production-first" parity assumption was wrong). A cloze note has no
-        # recognition direction, so NOT EXISTS is true and it stays introducible.
-        # The recognition direction is never gated. See
-        # ~/.claude/plans/word-learning-state-machine.md Phase 3 and
-        # docs/anki-parity-layers.md.
-        gate = (
-            """
-                  AND NOT EXISTS (
-                    SELECT 1 FROM collocation_directions r
-                    WHERE r.collocation_id = c.id
-                      AND r.direction = 'recognition'
-                      AND r.state IN ('new', 'learning', 'relearning')
-                  )"""
-            if direction == Direction.PRODUCTION
-            else ""
-        )
+    def add_collocation(self, unit: SyntacticUnit, language_code: str = "sl") -> bool:
+        """Insert a new collocation; if it already exists, backfill an empty translation.
+
+        New rows get both recognition and production direction rows (defaults).
+        Single-word units without an explicit lemma get lemma = casefolded text
+        so that get_collocation_by_lemma_with_id lookups succeed. Empty strings
+        count as missing — pre-Phase-F sync paths sometimes wrote empties.
+
+        Returns True if a new row was inserted, False if it already existed.
+        """
+        if not unit.lemma and unit.word_count == 1 and len(card_surface_variants(language_code, unit.text)) == 1:
+            unit.lemma = unit.text.casefold()
+        disambig = unit.disambig_key
+        guid = compute_guid(unit.text, language_code, disambig)
+        is_new = False
+        with self._get_conn() as conn:
+            # Identity is the case-normalized guid; legacy rows may carry a
+            # stale guid that no longer matches the current compute_guid output,
+            # so check guid first, then fall back to (text, language_code,
+            # disambig_key) which is the actual UNIQUE constraint enforced by
+            # the schema. Heal a stale guid in place when the fallback matches.
+            existing = conn.execute(
+                "SELECT id, guid, translation FROM collocations WHERE guid = ?",
+                (guid,),
 ```
 
 This was initially scoped as a TT-only divergence (like `promote_to_learning`), but the binary proved it is **parity-restoring**: real Anki introduces recognition first, 604 vs 36 across the user's 640 paired notes, because Anki orders new cards by deck position and `create_note` places the recognition card (ord 0) below production (ord 1). TT's old production-first behavior was the bug. The fix inverted the stale Layer 28 production-first tests — verified empirically first, per rule 13 (trust the binary). Recognition is never gated; a cloze note has no recognition row so `NOT EXISTS` is trivially true and it stays introducible. No badge change — `count_new_available_collocations` was already consistent.
@@ -6502,54 +7098,64 @@ cat -n backend/app/srs/mastery.py
 ```
 
 ```output
-     1	"""Per-lemma mastery = aggregated retrievability over the learn-set (Phase 5)."""
+     1	"""Per-lemma mastery = aggregated FSRS stability over the learn-set (Phase 5).
      2	
-     3	from __future__ import annotations
-     4	
-     5	from collections.abc import Iterable
-     6	from datetime import date, datetime
-     7	
-     8	from app.models.srs_item import DirectionState, SRSState
-     9	from app.srs.fsrs import compute_retrievability
+     3	Mastery uses *stability*, not retrievability. The scheduler actively regulates
+     4	retrievability toward desired_retention (~0.9), so a review card's R lives in a
+     5	narrow band and can't distinguish a freshly graduated card from a long-mastered
+     6	one — every reviewed word renders the same green. Stability instead grows
+     7	monotonically as a word is learned (the user's deck spans ~3–116 days), so it is
+     8	what the transcript color ramp should track.
+     9	"""
     10	
-    11	
-    12	def component_mastery(
-    13	    ds: DirectionState,
-    14	    today: date,
-    15	    now: datetime | None,
-    16	    col_crt: int | None,
-    17	    desired_retention: float = 0.9,
-    18	) -> float:
-    19	    """Mastery of one component (a direction/card) ∈ [0,1].
-    20	
-    21	    NEW/never-reviewed → 0.0 (unlearned). LEARNING/RELEARNING → 0.15 fixed floor
-    22	    (in-steps, not graduated). REVIEW → aggregated retrievability. KNOWN → 1.0.
-    23	    """
-    24	    if ds.state == SRSState.NEW or ds.last_review is None:
-    25	        return 0.0
-    26	    if ds.state in (SRSState.LEARNING, SRSState.RELEARNING):
-    27	        return 0.15
-    28	    if ds.state == SRSState.KNOWN:
-    29	        return 1.0
-    30	    return compute_retrievability(ds, today, now=now, desired_retention=desired_retention, col_crt=col_crt)
-    31	
+    11	from __future__ import annotations
+    12	
+    13	import math
+    14	from collections.abc import Iterable
+    15	
+    16	from app.models.srs_item import DirectionState, SRSState
+    17	
+    18	# A REVIEW card's mastery is its stability mapped onto [0,1] by a log curve: a
+    19	# card stable for >= this many days reads as fully mastered (green). Log scale
+    20	# because the early stability gains (1→10 days) are the meaningful learning
+    21	# signal while the 100→120 day difference is not; the ceiling is chosen so the
+    22	# observed stability range spreads across the full red→green ramp.
+    23	MASTERY_STABILITY_CEILING_DAYS = 120.0
+    24	
+    25	# In-steps (learning/relearning) cards sit at a fixed low floor: they are being
+    26	# acquired, not yet on the stability ramp.
+    27	_LEARNING_FLOOR = 0.15
+    28	
+    29	
+    30	def component_mastery(ds: DirectionState) -> float:
+    31	    """Mastery of one component (a direction/card) ∈ [0,1].
     32	
-    33	def compute_mastery_progress(
-    34	    directions: Iterable[DirectionState],
-    35	    today: date,
-    36	    now: datetime | None,
-    37	    col_crt: int | None,
-    38	    desired_retention: float = 0.9,
-    39	) -> float | None:
-    40	    """Mean component_mastery over the learn-set. SUSPENDED components excluded.
-    41	    None if the set is empty (→ caller renders as not-on-the-ramp).
+    33	    NEW → 0.0 (unlearned). LEARNING/RELEARNING → 0.15 fixed floor (in-steps, not
+    34	    graduated). KNOWN → 1.0. REVIEW → log-normalized stability, which is
+    35	    time-independent: a word keeps the same color between reviews.
+    36	
+    37	    Mastery does NOT depend on ``last_review`` — a card marked KNOWN (via
+    38	    ``mark_known``) carries high stability but no review timestamp, and must still
+    39	    read as mastered. "Unlearned" is already captured by low stability (s≤1 day →
+    40	    ``log10(1)=0``); a separate ``last_review is None`` guard (a relic of the
+    41	    retrievability-based formula) would wrongly zero those high-stability cards.
     42	    """
-    43	    ms = [
-    44	        component_mastery(d, today, now, col_crt, desired_retention)
-    45	        for d in directions
-    46	        if d.state != SRSState.SUSPENDED
-    47	    ]
-    48	    return sum(ms) / len(ms) if ms else None
+    43	    if ds.state == SRSState.NEW:
+    44	        return 0.0
+    45	    if ds.state in (SRSState.LEARNING, SRSState.RELEARNING):
+    46	        return _LEARNING_FLOOR
+    47	    if ds.state == SRSState.KNOWN:
+    48	        return 1.0
+    49	    mastery = math.log10(max(ds.stability, 1.0)) / math.log10(MASTERY_STABILITY_CEILING_DAYS)
+    50	    return max(0.0, min(1.0, mastery))
+    51	
+    52	
+    53	def compute_mastery_progress(directions: Iterable[DirectionState]) -> float | None:
+    54	    """Mean component_mastery over the learn-set. SUSPENDED components excluded.
+    55	    None if the set is empty (→ caller renders as not-on-the-ramp).
+    56	    """
+    57	    ms = [component_mastery(d) for d in directions if d.state != SRSState.SUSPENDED]
+    58	    return sum(ms) / len(ms) if ms else None
 ```
 
 The per-component carve-out matters: a NEW or never-reviewed component is `0.0`, **not** `compute_retrievability`'s 0.9 NEW fallback (that fallback is for queue placement, not mastery). LEARNING/RELEARNING is a fixed `0.15` floor so a freshly-stepped card doesn't flash green; only REVIEW uses live R; KNOWN is `1.0`. Adding an inflection adds an `m≈0` component, so mastering a new form *lightens* the lemma — an expandable end state, never "100% and done."
@@ -6569,6 +7175,15 @@ cat -n frontend/src/lib/mastery.ts
      6	  const lightness = 50 - p * 8;
      7	  return `hsl(${hue}, 70%, ${lightness}%)`;
      8	}
+     9	
+    10	/** Same red→green hue ramp as {@link masteryColor}, but a low-alpha tint for use
+    11	 *  as a background behind text (e.g. a collocation span). 0 → faint red,
+    12	 *  1 → faint green. */
+    13	export function masteryBackgroundColor(progress: number): string {
+    14	  const p = Math.max(0, Math.min(1, progress));
+    15	  const hue = p * 120;
+    16	  return `hsla(${hue}, 70%, 45%, 0.15)`;
+    17	}
 ```
 
 Lightness co-varies with progress (and due cards get an underline) as a red↔green colorblind hedge. Static states are off the ramp entirely: unknown is indigo, known/ignored are gray.
@@ -6578,7 +7193,7 @@ Lightness co-varies with progress (and due cards get an underline) as a red↔gr
 `extract_transcript` (`app/srs/transcript.py`) now enriches every `WordToken` with seven Phase-5 fields: `card_type`, `active_state`, `active_direction`, `is_due`, `progress`, `inflectable`, and `inflection_feature`. Resolution is **inflection-first**: an exact-surface inflection cloze wins over the base card, which wins over "unknown." The active direction follows the state machine:
 
 ```bash
-sed -n "77,94p" backend/app/srs/transcript.py
+sed -n "137,162p" backend/app/srs/transcript.py
 ```
 
 ```output
@@ -6597,7 +7212,15 @@ def resolve_active_direction(item: object) -> Direction:
     if ct == "cloze":
         return Direction.PRODUCTION
     rec = item.directions.get(Direction.RECOGNITION)
-    if rec is None or rec.state != SRSState.REVIEW:
+    prod = item.directions.get(Direction.PRODUCTION)
+    # Recognition is active until it graduates (REVIEW), then production takes over
+    # — BUT only if production exists. Single-direction cards (the imported
+    # Norwegian deck is recognition-only) have nothing to advance to, so they stay
+    # on the direction they actually have. Returning an absent direction makes the
+    # caller's item.directions[active_dir] KeyError (the lesson-transcript 500).
+    if rec is not None and rec.state == SRSState.REVIEW and prod is not None:
+        return Direction.PRODUCTION
+    if rec is not None:
         return Direction.RECOGNITION
     return Direction.PRODUCTION
 ```
@@ -6609,7 +7232,7 @@ def resolve_active_direction(item: object) -> Direction:
 `/listen` **stopped** auto-minting morphology clozes (Layer 66, commit `6935e93`). The reasoning: a rare form that never gets clicked should never become a card — coverage is the generator's job (PART 24), and auto-minting on every listen flooded the deck. The sole mint path is now `POST /api/srs/inflection-clozes` (commit `f7abf4d`), called when the user clicks an inflected surface that appeared in a lesson:
 
 ```bash
-sed -n "1182,1219p" backend/app/api/srs.py
+sed -n "1249,1286p" backend/app/api/srs.py
 ```
 
 ```output
@@ -6621,36 +7244,36 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
     Idempotent by guid. Follows the add_collocation contract
     (card_type=cloze, no Anki ids).
     """
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     language_code = body.language_code
 
-    # 1. Eligibility gate — base word production must be REVIEW/KNOWN
-    base = db.get_collocation_by_lemma(body.lemma)
-    if base is None:
-        raise HTTPException(status_code=409, detail="Base word not yet learned")
-    prod = base.directions.get(Direction.PRODUCTION)
-    if prod is None or prod.state not in (SRSState.REVIEW, SRSState.KNOWN):
-        raise HTTPException(status_code=409, detail="Base word not yet learned")
+    # 1. Eligibility gate — base word production must be REVIEW/KNOWN.
+    #    Clozes-only verbs (e.g. biti) have no base card and are ungated.
+    if not is_clozes_only_verb(body.lemma, language_code):
+        base = db.get_collocation_by_lemma(body.lemma)
+        if base is None:
+            raise HTTPException(status_code=409, detail="Base word not yet learned")
+        prod = base.directions.get(Direction.PRODUCTION)
+        if prod is None or prod.state not in (SRSState.REVIEW, SRSState.KNOWN):
+            raise HTTPException(status_code=409, detail="Base word not yet learned")
 
     # 2. Degenerate guard — surface == lemma reveals the answer
     if body.lemma.casefold() == body.surface.casefold():
         raise HTTPException(status_code=422, detail="Surface equals lemma — nothing to cloze")
 
-    # 3. Build + create (mirrors /listen morphology-cloze block)
-    disambig = f"morph:{body.feature.replace(':', '-')}"
-    cloze_sent = make_morphology_cloze_text(body.surface, body.lemma, body.feature, body.sentence)
-    unit = SyntacticUnit(
-        text=body.surface,
-        translation="",
-        word_count=1,
-        difficulty=1,
-        source="llm",
-        lemma=body.lemma,
-        disambig_key=disambig,
-        card_type="cloze",
-        source_sentence=cloze_sent,
-    )
-    was_created = db.add_collocation(unit, language_code=language_code)
+    # 3. Resolve word gloss + sentence translation from the lesson, mirroring
+    #    /listen. The grammar hint lives in its own `grammar` field — never the
+    #    translation — so it can't leak into the displayed L1 gloss.
+    word_translation = body.translation
+    sentence_translation = ""
+    if body.lesson_id:
+        from app.models.lesson import extract_sentence_translations_from_translated
+
+        lesson = request.state.content_store.get_lesson(body.lesson_id)
+        if lesson is not None:
+            token_glosses: dict[str, str] = lesson.generation_metadata.get("token_glosses", {})
+            sentence_translations: dict[str, str] = dict(lesson.generation_metadata.get("sentence_translations", {}))
+            for k, v in extract_sentence_translations_from_translated(lesson).items():
 ```
 
 The endpoint is gated on the base word's production being REVIEW/KNOWN (409 otherwise — you can't drill an inflection of a word you haven't learned), guards the degenerate `surface == lemma` case (422), is idempotent by guid, and follows the card-adding contract from `.claude/rules/anki-sync.md` (`card_type="cloze"`, no Anki ids — `sync_create_new` mints and links them).
@@ -6660,7 +7283,7 @@ The endpoint is gated on the base word's production being REVIEW/KNOWN (409 othe
 Clicking an *unknown* word creates its base card. `POST /api/srs/items/base` branches on word type — the heart of the state machine's entry rule:
 
 ```bash
-sed -n "731,758p" backend/app/api/srs.py
+sed -n "985,1025p" backend/app/api/srs.py
 ```
 
 ```output
@@ -6675,15 +7298,28 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
     add_collocation card-adding contract (no Anki ids; sync_create_new mints +
     links). No LLM auto-translate here — the caller passes the transcript gloss.
     """
-    db = request.app.state.srs_db
+    db = request.state.srs_db
     lang = body.language_code
     lemma = body.lemma.casefold()
 
-    # Function-word detection is capability-driven: is_function_word is only true
-    # where a curated list exists (Slovene today). The surface is checked too — an
-    # inflected function form (classla "sem" → lemma "biti") is detected via the
+    # Clozes-only verbs (e.g. biti) have no base card — only per-form conjugation
+    # clozes via /inflection-clozes. Reject so a click can't mint a spurious base.
+    if is_clozes_only_verb(lemma, lang):
+        raise HTTPException(status_code=409, detail="Clozes-only verb has no base card")
+
+    # POS-first function-word detection: read the active surface's UPOS from the
+    # sentence (classla → AUX for biti forms etc.; LowercaseLemmatizer → "" so the
+    # curated include-list is the sole signal). The surface is checked too — an
+    # inflected function form (classla "sem" → lemma "biti") classifies via its
     # surface even when the dictionary lemma isn't itself a function word.
-    is_func = is_function_word(lemma, lang) or is_function_word(body.surface, lang)
+    # Offload the (classla) lemmatizer off the event loop — see get_lesson_transcript.
+    lemmatizer = get_lemmatizer(lang)
+    mv = model_version_for(lemmatizer)
+    analyses = await anyio.to_thread.run_sync(analyze_sentence_cached, db, lemmatizer, body.sentence, lang, mv)
+    upos = next((ta.upos for ta in analyses if ta.surface.casefold() == body.surface.casefold()), None)
+    # Check both lemma and surface with the surface's upos (a single-word click).
+    upos_map = {lemma.casefold(): upos, body.surface.casefold(): upos} if upos else None
+    is_func = is_function_word_for(lemma, {lemma, body.surface}, lang, upos_map)
     if is_func:
         # Blank the surface as it appeared, not the dictionary lemma (Phase 2b):
         # the cloze must reference the word present in the stored sentence.
@@ -6701,13 +7337,12 @@ A function word (detected via lemma *or* surface, so an inflected `sem`→`biti`
 `WordSpan.svelte` renders the model. The static states (`unknown`/`known`/`ignored`) get a fixed class; everything dynamic gets the mastery hue and a due underline (the old hardcoded `STATE_CYCLE` is deleted):
 
 ```bash
-sed -n "66,93p" frontend/src/lib/WordSpan.svelte
+sed -n "52,79p" frontend/src/lib/WordSpan.svelte
 ```
 
 ```output
-
 	const dynamicStyle = $derived(
-		word.active_state !== 'unknown' && word.active_state !== 'known' && word.active_state !== 'suspended'
+		word.active_state !== 'unknown' && word.active_state !== 'suspended' && word.active_state !== 'ignored'
 			? `color: ${masteryColor(word.progress ?? 0)};`
 			: ''
 	);
@@ -6715,24 +7350,25 @@ sed -n "66,93p" frontend/src/lib/WordSpan.svelte
 	const colorClass = $derived(
 		word.active_state === 'unknown'
 			? 'word-unknown'
-			: word.active_state === 'known'
-				? 'word-known'
-				: word.active_state === 'suspended'
-					? 'word-ignored'
-					: ''
+			: word.active_state === 'suspended' || word.active_state === 'ignored'
+				? 'word-ignored'
+				: ''
 	);
 
-	// Show tooltip when: not inside a collocation, OR alt-hover mode is active
+	// Show the popover when: not inside a collocation, OR alt-hover mode is active.
+	// The Tooltip wrapper is ALWAYS rendered (suppressed otherwise) so the DOM
+	// structure stays stable — toggling Alt over a collocation must not reflow the
+	// line (the prior if/else swap caused a visible spacing jump).
 	const showTooltip = $derived(!requireModifier || altHover);
-</script>
 
-{#if showTooltip}
-	<Tooltip translation={word.translation} state={word.srs_state} {word} {sentence} actions={tooltipActions}>
-		<span
-			class="word {colorClass}"
-			class:word-selected={selected}
-			class:word-due={word.is_due}
-			style={dynamicStyle}
+	// Undo cycle: when the page says THIS word holds the last (still-local)
+	// grade, the grade button flips to "Undo ↩" — even though the word is no
+	// longer due post-grade. Single-level, mirrors the backend snapshot.
+	const undoable = $derived(Boolean(tooltipActions?.isGradeUndoable?.(word)));
+
+	// The normal due-grade path: the active direction is due and tracked.
+	const gotItApplies = $derived(
+		word.is_due && word.active_direction != null && word.srs_item_id != null
 ```
 
 Clicks are routed by the lesson `+page.svelte`: clicking an **unknown** word calls `createBaseCard`; clicking a **due** word submits a Good grade on its `active_direction`; clicking a **terminal** (known/suspended) word is a no-op; and clicking inside a collocation reviews the collocation. A hover popover (`Tooltip.svelte`, made interactive with `pointer-events:auto` and a hover bridge) offers create-inflection plus ignore/known/new overrides — note the override set deliberately excludes lapse/restore, so it never touches FSRS scheduling state. The matching `api.ts` methods `createBaseCard` and `createInflectionCloze` complete the loop. This is **Phase 5 complete end-to-end** — every word in a lesson is now a one-click entry point into the learning state machine.
@@ -6741,14 +7377,14 @@ Clicks are routed by the lesson `+page.svelte`: clicking an **unknown** word cal
 
 ## PART 26: FSRS in f32 & Parity Layers 49–66
 
-PART 16 documented queue-parity Layers 24–31. The history has since reached Layer 66 (`docs/anki-parity-layers.md`). Most layers are narrow input-quality or formula-branch fixes; two are structural enough to call out here, and the rest are tabulated.
+PART 16 documented queue-parity Layers 24–31. The history has since reached Layer 80 (`docs/anki-parity-layers.md`); this PART tabulates through 66, and PART 29 summarizes 67–80 (rollover day-bounds, graves, push→pull seams, daily caps, per-grade revlog push). Most layers are narrow input-quality or formula-branch fixes; two are structural enough to call out here, and the rest are tabulated.
 
 ### 26.1 Layer 59 — All FSRS Arithmetic Moved to f32
 
 `fsrs-rs` (Anki's Rust scheduler) computes stability and difficulty in `f32` end-to-end via Burn tensors. TT computed in Python `f64`, which drifts by single ULPs that, at 4-decimal storage precision, surface as false-positive compare-shadow divergences (the persistent ±0.0001 class). Layer 59 (commit `12338fa`) casts every operand and intermediate to `numpy.float32`, returning `f64` only at storage boundaries:
 
 ```bash
-sed -n "18,40p" backend/app/srs/fsrs.py
+sed -n "19,41p" backend/app/srs/fsrs.py
 ```
 
 ```output
@@ -6780,7 +7416,7 @@ def _fsrs_factor_f32(decay: float) -> np.float32:
 Three things had to match Rust exactly, not just the precision: the power-forgetting-curve **factor** is `exp(ln(0.9)/decay) − 1` (not the FSRS-4 `19/81` constant), the `linear_damping` **operation order** in `_next_difficulty`, and Rust's `f32::round` being **half-away-from-zero**, not banker's rounding:
 
 ```bash
-sed -n "102,106p" backend/app/srs/fsrs.py
+sed -n "103,107p" backend/app/srs/fsrs.py
 ```
 
 ```output
@@ -6826,76 +7462,79 @@ Layers 57, 58, and 62 were all surfaced by the Stage-3b compare-shadow soak (PAR
 
 ## PART 27: Stage 3b — Toward Event-Sourced Sync
 
-PART 19 left `tt_revlog` writing events but `sync_pull` still merging state field-by-field, with the endgame ("collapse the 9-branch field-merge into an event-replay") gated on an empirical measurement. That measurement ran (`docs/stage-3b-empirical-measurement.md`: ~87.6% practical match), and Stage 3b is now a **three-mode switch** that lets the new event-replay path run shadowed alongside the legacy merge before it ever takes over.
+> **2026-07 status: the migration this PART describes COMPLETED and was then simplified away.** The three-mode `event_sync_pull` switch (legacy/compare/new) did its job: `new` went live 2026-06-02, and once it held, the flag itself and the compare-shadow machinery were **decommissioned** — `sync_pull` now has a single path that takes Anki's values verbatim, keeping the incremental forward-step replay only as a *recompute-divergence detector* (`recompute_divergences ≈ 0` per sync is the soak signal now; see `.claude/rules/anki-queue-parity.md` §Soak health). The text below is kept as the historical record of how the migration was staged, with the code excerpts re-aimed at what remains.
 
-### 27.1 The Three Modes
+PART 19 left `tt_revlog` writing events but `sync_pull` still merging state field-by-field, with the endgame gated on an empirical measurement. The measurement ran (final result 100% strict match — `docs/stage-3b-empirical-measurement.md`), and Stage 3b staged the takeover as a **three-mode switch** so the event-replay path ran shadowed alongside the legacy merge before it took over.
 
-A single `anki_state_cache` key, `event_sync_pull`, selects the merge strategy:
+### 27.1 The Three Modes (since decommissioned)
+
+A single `anki_state_cache` key, `event_sync_pull`, selected the merge strategy. The clearest surviving record of the arc is the migration that cleaned up after it:
 
 ```bash
-sed -n "128,132p" backend/app/srs/database.py
+sed -n '938,949p' backend/app/srs/migrations.py
 ```
 
 ```output
-# Stage 3b sync_pull merge modes (anki_state_cache['event_sync_pull']):
-#   legacy  — the pre-Stage-3b 9-branch _pull_merge_direction (default)
-#   compare — run legacy + replay, write legacy authoritative + replay to shadow cols
-#   new     — collapsed FSRS branch: take Anki verbatim, forward-step as validator
-_EVENT_SYNC_PULL_MODES = frozenset({"legacy", "compare", "new"})
+def migrate_v31_to_v32(conn: sqlite3.Connection) -> None:
+    """Drop the Stage-3b compare-mode shadow columns from collocation_directions.
+
+    ``stability_replayed`` / ``fsrs_difficulty_replayed`` (added in v27) were
+    written only under ``event_sync_pull='compare'``. Stage 3b decommissioned the
+    ``event_sync_pull`` flag — sync_pull now has a single path (collapsed merge +
+    recompute detector), so the shadow columns are dead. TT-only; no USN, no sync.
+    """
+    for col in ("stability_replayed", "fsrs_difficulty_replayed"):
+        if _column_exists(conn, "collocation_directions", col):
+            conn.execute(f"ALTER TABLE collocation_directions DROP COLUMN {col}")
+    _set_version(conn, 32)
 ```
 
 `legacy` is the pre-Stage-3b 9-branch merge. `compare` runs both: legacy stays authoritative and writes the card, while the incremental replay is written to **shadow columns** and any disagreement is recorded as a divergence — zero production risk, pure observation. `new` collapses the FSRS branch entirely: take Anki's state verbatim, with the forward-step replay acting only as a validator. The getter defaults to `legacy` and falls back to `legacy` on any unrecognized stored value, so a corrupt row can never silently route sync down an unimplemented path:
 
 ```bash
-sed -n "2024,2041p" backend/app/srs/database.py
+sed -n "110,127p" backend/app/srs/db_revlog.py
 ```
 
 ```output
-    def get_event_sync_pull_mode(self) -> str:
-        """Return the sync_pull merge mode (Stage 3b): ``legacy`` / ``compare`` / ``new``.
+    def rebuild_from_revlog(
+        self,
+        collocation_id: int,
+        direction: Direction,
+        params=None,
+        col_crt: int | None = None,
+        exclude_review_kinds: frozenset[int] = frozenset({4}),
+        anki_card_id: int | None = None,
+        starting_state: DirectionState | None = None,
+        since_id: int | None = None,
+    ) -> DirectionState:
+        """Replay tt_revlog rows through FSRS schedule() to derive DirectionState.
 
-        Defaults to ``legacy`` (the pre-Stage-3b 9-branch merge tree) when unset.
-        A corrupt/unrecognised stored value also falls back to ``legacy`` so a
-        bad row can never silently take sync_pull down an unimplemented path.
-        """
-        row = self.get_anki_state_cache("event_sync_pull")
-        if row is None or row[0] not in _EVENT_SYNC_PULL_MODES:
-            return "legacy"
-        return row[0]
+        Reads non-excluded revlog rows for ``(collocation_id, direction)`` ordered
+        by ``id`` ASC and replays them through ``app.srs.fsrs.schedule``.
 
-    def set_event_sync_pull_mode(self, mode: str) -> None:
-        """Persist the sync_pull merge mode; rejects anything but the 3 known modes."""
-        if mode not in _EVENT_SYNC_PULL_MODES:
-            raise ValueError(f"event_sync_pull mode must be one of {sorted(_EVENT_SYNC_PULL_MODES)}, got {mode!r}")
-        self.set_anki_state_cache("event_sync_pull", mode)
-
+        Pass *anki_card_id* to ensure the FSRS interval-fuzz seed matches the
+        real Anki card id; omit or pass ``None`` for TT-only directions.
 ```
 
-### 27.2 The Dispatch in `sync_pull`
+### 27.2 What Survives in `sync_pull`
 
-`compare` and `new` share one incremental forward-step replay; only the write target differs. `sync_pull` resolves the FSRS params and `col_crt` once at the top when either mode is active:
+The incremental forward-step replay survives as the recompute detector: when its forward-step disagrees with Anki's `cards.data`, sync logs a `RECOMPUTE_DIVERGENCE` line and counts it on the report — the signal that Anki ran an Optimize/reschedule/restore the replay couldn't reproduce:
 
 ```bash
-sed -n "1846,1858p" backend/app/anki/sync.py
+grep -n "SYNC_SOAK\|RECOMPUTE_DIVERGENCE" backend/app/anki/sync_engine.py backend/app/anki/sync.py | head -8
 ```
 
 ```output
-        # Stage 3b: compare/new modes both run incremental replay alongside the
-        # legacy merge. Compare writes replay to shadow columns (legacy stays
-        # authoritative); new replaces authoritative FSRS state with replay-derived
-        # values (or Anki's on divergence). Resolve params/col_crt once.
-        event_mode = self._db.get_event_sync_pull_mode()
-        compare_params = None
-        compare_col_crt = None
-        if event_mode in ("compare", "new"):
-            from app.srs.queue_stats import resolve_fsrs_params
-
-            compare_params = resolve_fsrs_params(self._db)[0]
-            compare_col_crt = self._anki_col_crt
-
+backend/app/anki/sync_engine.py:462:        # "RECOMPUTE_DIVERGENCE".
+backend/app/anki/sync_engine.py:464:            "RECOMPUTE_DIVERGENCE cid=%s dir=%s replay_s=%.4f anki_s=%.4f replay_d=%.4f anki_d=%.4f",
+backend/app/anki/sync.py:150:    ``SYNC_SOAK`` heartbeat per sync (even at count 0, so there's positive
+backend/app/anki/sync.py:151:    "ran clean" confirmation) plus one ``RECOMPUTE_DIVERGENCE`` detail line per
+backend/app/anki/sync.py:160:        f"{ts} SYNC_SOAK pull_notes={pull.notes_updated} "
+backend/app/anki/sync.py:167:            f"{ts}   RECOMPUTE_DIVERGENCE cid={d.collocation_id} dir={d.direction} "
+backend/app/anki/sync.py:333:    # SYNC_SOAK heartbeats into the user's real ~/.tunatale/logs/sync.log.
 ```
 
-The replay is **incremental** — it forward-steps from the stored state through the events ingested this sync, rather than replaying from NEW every time (which would be O(history) per card per sync). Compare-mode writes the replayed stability/difficulty to shadow columns; `new`-mode records a `RecomputeDivergence` on `report.recompute_divergences` when its forward-step disagrees with Anki, so a real algorithmic gap surfaces in the sync report.
+The replay is **incremental** — it forward-steps from the stored state through the events ingested this sync, rather than replaying from NEW every time (which would be O(history) per card per sync). Compare-mode used to write the replayed stability/difficulty to shadow columns (dropped in v32); the surviving path records a `RecomputeDivergence` on `report.recompute_divergences` when the forward-step disagrees with Anki, so a real algorithmic gap surfaces in the sync report and the `SYNC_SOAK` heartbeat in `~/.tunatale/logs/sync.log`.
 
 ### 27.3 What the Soak Found
 
@@ -6904,7 +7543,7 @@ Running `compare` against the live deck across many syncs is the soak, and it ea
 - **Layer 58** (commit `3f848cd`): a replayed-stability divergence was **not** an FSRS bug — it was an *ingest gap*. A Good grade landed inside a 41-hour sync gap and was never ingested, so the replay was missing an event. The fix made ingest reconcile against Anki's full revlog (`get_tt_revlog_ids`) instead of trusting a `last_synced_at` watermark. The lesson: a replay divergence can mean "the replay is missing an input," not "the replay math is wrong."
 - **The difficulty floor washed to 0** (2026-05-30): a transient cohort of difficulty-only divergences came from a 2026-05-21 Check-Database/restore that re-stamped ~2333 revlog rows Anki never applied to `card.data` — proving Anki's `card.data` is **not** a pure replay of its revlog. As those cards were re-graded with clean rows, the cohort decayed 104 → 6 → 0.
 
-The soak's health bar is now **0 for both stability and difficulty** — the old "~104 benign floor" is retired. The classifier lives in `.claude/rules/anki-queue-parity.md`; the measurement procedure and decision gate are in `docs/stage-3b-empirical-measurement.md`. Live mode is still `compare`; the flip to `new` and the deletion of the legacy branch follow once the soak holds clean.
+The soak's health bar is **0 for both stability and difficulty** — the old "~104 benign floor" is retired. The soak held clean: `new` went live 2026-06-02, the legacy and compare branches were deleted, and today's signal is `recompute_divergences ≈ 0` per sync (`grep RECOMPUTE_DIVERGENCE ~/.tunatale/logs/sync.log` → expect empty). The classifier notes live in `.claude/rules/anki-queue-parity.md` §Soak health check.
 
 ---
 
@@ -6920,5 +7559,179 @@ The product gained a written identity. `README.md` is the pitch and the map; `do
 
 Two operational docs round it out: `docs/adding-a-language.md` (the plugin checklist — preprocessor, voice map, function-word list, lemmatizer) and `docs/anki-recovery.md` (disaster recovery for the user's primary Anki collection). `AGENTS.md` (this file, also `CLAUDE.md`) had its opening polished and absorbed the new-language and Anki-recovery pointers.
 
-This is where a new contributor — human or agent — should start: the influence docs explain *why* the system is shaped the way the preceding 27 parts describe.
+The operational set has since grown: `docs/anki-parity-diagnostics.md` (every diagnostic snippet + the load-bearing-helper table), `docs/anki-mirror-audit.md` (the inspection-driven audit that found Layers 62–63), `docs/learning-modes.md` (the Review/Listen/Read/Generate/Produce mode map), `docs/language-plugin-hardening.md` (the registry + literal-gate rationale), `docs/curriculum-planning.md` (the chat planner), and `docs/bp-brief-segmenter-homographs-overlap.md` (the Norwegian segmenter design).
 
+This is where a new contributor — human or agent — should start: the influence docs explain *why* the system is shaped the way the preceding parts describe.
+
+---
+
+## PART 29: The 2026-06/07 Restructurings
+
+*Added 2026-07-11.* PARTs 12–27 describe subsystems as they were built; this PART covers the structural work that reshaped them between June and July 2026 — four decompositions, one new language, and the parity layers 67–80. Each subsection names the load-bearing files so the earlier PARTs' pre-split references can be translated on sight.
+
+### 29.1 The Sync Module Split & the One Sync Path
+
+`app/anki/sync.py` had grown into a god-module. The 2026-06-11 split left it as a **runner + re-export facade**: the `AnkiSync` reconcile engine lives in `sync_engine.py`, collection I/O (`OfflineReader`/`OfflineWriter`) in `sync_reader.py`/`sync_writer.py`, and shared leaf helpers in `sync_common.py`. Every old import path still works through the facade — tests import and patch `app.anki.sync` exactly as before.
+
+```bash
+wc -l backend/app/anki/sync.py backend/app/anki/sync_engine.py backend/app/anki/sync_reader.py backend/app/anki/sync_writer.py backend/app/anki/sync_common.py
+```
+
+```output
+     408 backend/app/anki/sync.py
+    1503 backend/app/anki/sync_engine.py
+     168 backend/app/anki/sync_reader.py
+     788 backend/app/anki/sync_writer.py
+     219 backend/app/anki/sync_common.py
+    3086 total
+```
+
+Around the same time the sync *surface* collapsed to one path. The legacy `POST /api/anki/sync` + `GET /api/anki/status` endpoints were deleted (2026-06-10) and the `python -m app.anki.sync` CLI with its `--all-languages` loop followed (2026-06-30). **`POST /api/anki/peer-sync` is the only sync entry point** — it drives `peer_sync → main → run_full_sync`, and `run_full_sync` owns the ONE ordered phase list (`detect_and_reset_orphans → sync_create_new → sync_push → sync_pull → refresh_* + media refresh + soak heartbeat`). The rule exists because of a real regression (`b0a4b8a`): when the Sync button was repointed at peer-sync, the peer path ran only push+pull and silently dropped `sync_create_new` and every `refresh_*`. Three nets now pin the phase list (`TestRunFullSync`, the sociable `TestSociableSync` against a real on-disk collection, and the self-hosted peer-sync round-trip suite). Full protocol rules: `.claude/rules/anki-sync.md`.
+
+### 29.2 The Database God-Module Split
+
+`app/srs/database.py` got the same treatment on 2026-07-04/05: it is now a ~60-line composition facade over per-concern mixins, and the review-queue assembly that lived in `api/srs.py` moved to `app/srs/queue_engine.py` (`_merge_directions`, `_compute_live_main`, `build_and_freeze_main_queue`, `assemble_review_queue`). `api/srs.py` keeps only HTTP-layer code. New DB methods go in the matching `db_*` mixin; imports and patches still go through `app.srs.database`.
+
+```bash
+wc -l backend/app/srs/database.py backend/app/srs/queue_engine.py backend/app/srs/db_base.py backend/app/srs/db_collocations.py backend/app/srs/db_directions.py backend/app/srs/db_queue.py backend/app/srs/db_counts.py backend/app/srs/db_revlog.py backend/app/srs/db_sync.py
+```
+
+```output
+      59 backend/app/srs/database.py
+     489 backend/app/srs/queue_engine.py
+     333 backend/app/srs/db_base.py
+     523 backend/app/srs/db_collocations.py
+     424 backend/app/srs/db_directions.py
+     258 backend/app/srs/db_queue.py
+     253 backend/app/srs/db_counts.py
+     307 backend/app/srs/db_revlog.py
+     450 backend/app/srs/db_sync.py
+    3096 total
+```
+
+(Plus the smaller inert mixins: `db_media`, `db_kv_cache`, `db_histogram`, `db_lemma_cache`, `db_ignored_lemmas`, `db_sync_conflicts`.)
+
+### 29.3 The Language Registry & Norwegian
+
+Norwegian became the second wired language, and the wiring itself was hardened into a registry. `app/languages.py` holds one `LanguageConfig` per language — preprocessor, deck name, vocab notetype, lemmatizer engine, syllabifier, and the Norwegian-specific facets — and every consumer resolves through its accessors or the bundled `resolve_language_context(code, settings) → LanguageContext`. A CI-enforced gate (`backend/scripts/check_language_literals.py`) fails the build on any hardcoded language literal in `backend/app/**` outside the allowlisted plugin modules, so "add an `if code == 'no'` branch" is no longer a possible design. Details: `docs/language-plugin-hardening.md`, `docs/adding-a-language.md`.
+
+```bash
+sed -n '91,101p' backend/app/languages.py
+```
+
+```output
+    "no": LanguageConfig(
+        language=Language.norwegian(),
+        preprocessor_factory=NorwegianPreprocessor,
+        deck_name="0. 6000 Most Frequent Norwegian Words [Part 1]",
+        vocab_notetype=NORWEGIAN_VOCAB,
+        lemmatizer_type="stanza",
+        compound_word_breakdown=True,
+        variant_separator=",",
+        syllabifier="norwegian",
+    ),
+}
+```
+
+Norwegian's empirical quirks: the deck is **recognition-only** (the direction model handles this structurally — directions are whatever rows exist), the lemmatizer is Stanza (classla silently no-ops on Norwegian), and card fronts can carry comma-separated spelling variants (`mot, imot`) split by `card_surface_variants`.
+
+### 29.4 The Norwegian Compound Breakdown
+
+Norwegian is a compounding language, so the generic per-syllable backward buildup (PART 5's syllabifier) reads compounds wrong. `app/generation/norwegian_breakdown.py` (2026-07-07..10) segments a word into frequency-ranked free stems before building the Pimsleur steps — with a closed-class stem stoplist (so `sommer` never splits into `som`+`mer`), s-joint/geminate handling (`busstasjon` → segments `bus|stasjon` but *speaks* `buss, stasjon`), initial-only homograph guards, and preposition first-elements kept productive (`etterforskning` = `etter`+`forskning`). It dispatches through the registry flag `uses_compound_word_breakdown` in `section_builder.py`; the linguistic decisions (stoplist, golden splits) are human-confirmed by ear via the preview CLI. Design history: `docs/bp-brief-segmenter-homographs-overlap.md`.
+
+```bash
+cd backend && uv run python -m app.generation.breakdown_preview etterforskningsteamet busstasjon sommer 2>&1 | head -14
+```
+
+```output
+=== Breakdown Preview: "etterforskningsteamet" ===
+  Compound segments:  etter | forsknings | team | et
+  Slow pronunciation:  etter, forsknings, teamet
+  Pimsleur steps:      etterforskningsteamet → teamet → et → team → teamet → forsknings → nings → forsk → forsknings → forskningsteamet → etter → ter → ett → etter → etterforskningsteamet
+
+=== Breakdown Preview: "busstasjon" ===
+  Compound segments:  bus | stasjon
+  Slow pronunciation:  buss, stasjon
+  Pimsleur steps:      busstasjon → stasjon → sjon → sta → stasjon → buss → busstasjon
+
+=== Breakdown Preview: "sommer" ===
+  Compound segments:  sommer
+  Slow pronunciation:  sommer
+  Pimsleur steps:      sommer → mer → somm → sommer → sommer
+```
+
+### 29.5 The Direction Field Registry
+
+The per-direction schema's invariants used to live in prose (queue-parity rules 7, 8, 10). Since 2026-07-08 they are **declared** in `app/srs/direction_fields.py`: every `collocation_directions` column is a registry entry carrying a `sync_comparable` decision (which derives `_DIR_COLUMNS` and `_direction_differs` — the Layer 17/35/37 diff — so new fields can't silently miss the sync diff), a `WritePolicy` (`STICKY_NEW` for `prior_state`, `ONE_SHOT` for `introduced_at`), and a value domain that migration **v35 turned into SQL `CHECK` constraints** (`bury_kind IN (NULL,'sched','user')`, the `prior_state` domain). `tests/test_direction_fields.py` and `tests/test_direction_invariants.py` pin registry ↔ schema ↔ model ↔ diff to each other.
+
+```bash
+grep -n "class WritePolicy" -A 8 backend/app/srs/direction_fields.py | head -12
+```
+
+```output
+45:class WritePolicy(Enum):
+46-    """Write-time transition invariant for a direction column.
+47-
+48-    Declares, as data, the column-level rules that previously lived only in
+49-    ``.claude/rules/anki-queue-parity.md`` prose (rules 7, 8, 10). The resolver
+50-    functions that actually enforce the transition rules are pinned to this
+51-    declaration by ``tests/test_direction_invariants.py`` — a regression that
+52-    reverts sticky/one-shot behavior fails a test instead of silently drifting.
+53-    """
+```
+
+### 29.6 Parity Layers 67–80: the Daily-Caps Arc and Friends
+
+PART 26's table stopped at Layer 66. The history since (full entries in `docs/anki-parity-layers.md`):
+
+| Layer | One line |
+|---|---|
+| 67 | "Graded today" means the **4 AM-local rollover window**, not midnight — `_anki_day_bounds_utc` threaded through six helpers (badge under-count fix) |
+| 68 | Orphan recovery reads Anki's `graves` — a note grave means the user deleted it: hard-delete in TT, don't resurrect |
+| 69–72 | Push→pull seam fixes: push writes `cards.data`, pull gets a TT-ahead recency guard (native grades no longer clobbered), `fsrs_known` day-level poisoning fixed |
+| 73–74 | Revlog id discipline: TT pushes land at grade-time ids (`preferred_id`), self-echo suppressed on the next pull |
+| 75 | Daily caps limit the **served queue**, not just the badge (a 50-cap deck was serving 1499 reviews) |
+| 76 | New-card intros charge the review-per-day budget (`effective_review_budget` nets out `introduced_today`) |
+| 77 | The review budget also caps how many NEW cards are served (`new = min(new_quota, review_budget − gathered)`) |
+| 78 | Revlog rows mirror the **pre-answer** state (`lastIvl`/`review_kind` keyed on the state before the grade) |
+| 79 | Interday learning (queue=3) charges the review limit; intraday (queue=1) stays exempt |
+| 80 | `sync_push` pushes **one Anki revlog row per TT grade** from `tt_revlog` (watermark = `MAX(revlog.id)` per card), ending the collapsed-row history loss |
+
+The load-bearing helpers for the caps arc:
+
+```bash
+grep -n "def effective_review_budget" backend/app/srs/queue_stats.py; grep -n "def count_interday_learning_due" backend/app/srs/db_counts.py
+```
+
+```output
+332:def effective_review_budget(
+200:    def count_interday_learning_due(self, today: date) -> int:
+```
+
+The collection-level `newCardsIgnoreReviewLimit` flag is synced from Anki's config table and threaded through both the badge and the served queue — when ON, the 76/77 couplings lift. All of it is oracle-pinned in `test_parity_daily_caps.py`.
+
+### 29.7 The Lesson Player Rework
+
+The 2026-07-09/10 player rework replaced the plain `AudioPlayer.svelte` with **`LessonPlayer.svelte`** and a phase model. The renderer now emits **per-section cue manifests** (`render_service.derive_section_cues` splits the full-track cue list per section), lessons gained the `SLOW_TRANSLATED` section (PART 2's fifth type), and the player walks phases with an enunciation-cycle and English-translation track model. Legacy lessons (rendered before per-section cues existed) are gated by `trackMode` — they degrade to the full concatenated track instead of breaking. The transcript's old "Slow" text toggle is gone; slow audio is a *player* concern now.
+
+```bash
+grep -n "def derive_section_cues" backend/app/audio/render_service.py; grep -c "trackMode" frontend/src/lib/components/LessonPlayer.svelte
+```
+
+```output
+28:def derive_section_cues(cues: list[Cue], lesson) -> dict[int, list[Cue]]:
+8
+```
+
+### 29.8 Where to Look Now
+
+| Old reference (PARTs 12–27) | Current home |
+|---|---|
+| `app/anki/sync.py:<line>` internals | `sync_engine.py` (engine), `sync_reader.py`/`sync_writer.py` (I/O), `sync_common.py` (helpers) |
+| `app/srs/database.py:<line>` methods | the matching `db_*` mixin (`db_counts`, `db_queue`, `db_directions`, `db_collocations`, `db_revlog`, …) |
+| `api/srs.py` queue assembly | `app/srs/queue_engine.py` |
+| `app/anki/sqlite_writer.py`, AnkiConnect clients, `detect_mode` | deleted |
+| One-shot migration scripts under `app/anki/` | `backend/scripts/anki_archive/` |
+| `Language.slovene()` hardcoding, `settings.lemmatizer_type` singletons | `app/languages.py` registry + `LanguageContext` |
+| `/admin/srs` | `/cards` |
+| `AudioPlayer.svelte` | `LessonPlayer.svelte` |

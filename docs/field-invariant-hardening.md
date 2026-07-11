@@ -13,7 +13,7 @@ Half B (column invariants) is now mechanically enforced, mirroring Half A:
   `DOMAIN_CONSTRAINED_FIELDS` view; `iter_domain_violations` /
   `iter_coupling_violations` / `iter_direction_invariant_violations` pure validator.
 - **v35 SQL CHECK migration** (`app/srs/migrations.py::migrate_v34_to_v35`,
-  `CURRENT_VERSION=35`): table-recreate adding `CHECK` on `bury_kind` + `prior_state`.
+  `CURRENT_VERSION=35` at the time; schema has since moved on — v36 as of 2026-07): table-recreate adding `CHECK` on `bury_kind` + `prior_state`.
   Frozen literals; pinned to the registry by `test_check_domains_match_registry`.
 - **Sync diagnostic**: `_write_sync_soak_log(..., db=db)` sweeps the TT db post-sync and
   emits `INVARIANT_TRACE` lines (coupling + any domain gap). `conn` in `run_full_sync`

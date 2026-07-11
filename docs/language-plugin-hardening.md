@@ -272,7 +272,7 @@ all 26 entries. Committed `97bc0db` = the weakness-#4 base (ledger 26).
   prod and exists only for **test convenience**. Re-sourcing to `settings.target_language`
   would be an import-time-captured value (footgun) for zero behavioral/architectural gain
   and would churn ~30–50 test call sites. Frozen is correct.
-- `sync.py:327` `getattr(_s, "target_language", "sl")` — defensive fallback for
+- `sync.py:367` `getattr(_s, "target_language", "sl")` — defensive fallback for
   duck-typed `FakeSettings` test doubles; `_s` may intentionally differ from global
   settings, so it can't read `settings.target_language`. Not a registry seam.
 - `regloss_lessons.py:160` — argparse `--language` default; funnels into `get_language()`

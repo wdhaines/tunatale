@@ -138,7 +138,7 @@ If the restored state is older than some TT-created cards/notes, you'll have TT 
 
 - Sync reports `skipped_unknown_guid` for several cards.
 - TT shows phantom rows in `/admin/srs` that don't appear in Anki.
-- The dedup script (`backend/app/anki/dedup_tt_revlog.py`) reports orphans.
+- The dedup script (`backend/scripts/anki_archive/dedup_tt_revlog.py`) reports orphans.
 
 Resolution:
 
@@ -146,13 +146,13 @@ Resolution:
 # 1. Sync once to let TT discover which IDs are gone
 # (the Sync button in the UI runs sync_push → sync_pull)
 
-# 2. Run the orphan-recovery procedure
+# 2. Run the orphan-recovery procedure (one-shot scripts, archived under scripts/)
 cd backend
-uv run python -m app.anki.merge_dupes --dry-run        # surface duplicate Anki notes
-uv run python -m app.anki.repair_nested_homonyms       # if homonym pairs ended up split
+uv run python -m scripts.anki_archive.merge_dupes --dry-run        # surface duplicate Anki notes
+uv run python -m scripts.anki_archive.repair_nested_homonyms       # if homonym pairs ended up split
 ```
 
-The sync code's orphan-recovery path (`9cf4782` — see PART 21.2 of walkthrough.md) is supposed to either re-link by guid or stage for cleanup automatically. If you have orphans surviving a sync, that's a sync-code bug, not a recovery-procedure problem.
+The sync code's orphan-recovery path (`detect_and_reset_orphans` in `backend/app/anki/sync_engine.py`, first landed in `9cf4782`; note-grave handling per Layer 68 — an Anki-side note grave means hard-delete, not resurrect) is supposed to either re-link by guid or stage for cleanup automatically. If you have orphans surviving a sync, that's a sync-code bug, not a recovery-procedure problem.
 
 ## Belt-and-braces: when you don't trust any local backup
 
@@ -177,5 +177,5 @@ This is not a TT-specific procedure — it's general Anki disaster recovery — 
 - `.claude/rules/anki-sync.md` — USN protocol, safety envelope, schema-bump workflow.
 - `backend/app/anki/safety.py` — `safe_open`, backup validation, post-write audit.
 - `backend/app/anki/normalize_usns.py` — the post-restore USN normalizer.
-- `walkthrough.md` PART 12.2 — Safety Envelope deep-dive.
-- `walkthrough.md` PART 21.2 — orphan recovery in sync_push.
+- `walkthrough.md` PART 12 — Anki integration + safety-envelope deep-dive.
+- `backend/app/anki/sync_engine.py::detect_and_reset_orphans` — orphan recovery (graves-aware since Layer 68).

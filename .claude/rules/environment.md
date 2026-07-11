@@ -26,7 +26,7 @@ uv run ruff check app tests
 
 ## Groq Setup
 
-Model: `llama-3.3-70b-versatile` (default)
+Model: `openai/gpt-oss-120b` (default; `llama-3.3-70b-versatile` was deprecated by Groq 2026-06-30)
 Endpoint: `https://api.groq.com/openai/v1/chat/completions`
 
 Rate limits: free tier ~30 RPM, 14,400 TPM. The LLMClient handles 429 retry with header-based backoff.

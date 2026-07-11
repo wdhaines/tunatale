@@ -11,7 +11,7 @@ per new vocab card. For images the path is:
 generate_image_query(word, english, source_sentence, grammar)  →  query (str | "" | None)
         │                                                              │
         │  app/anki/media/query_llm.py                                 ▼
-        └─ cache: image_query_cache (database.py)        fetch_card_media(..., image_query=…)
+        └─ cache: image_query_cache (db_lemma_cache.py)        fetch_card_media(..., image_query=…)
                                                                        │
                                                                        ▼
                                                          fetch_pixabay_image(english, query=…)

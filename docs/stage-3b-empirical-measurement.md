@@ -1,5 +1,7 @@
 # Stage 3b empirical measurement — Anki-only-grading experiment
 
+> **Status (2026-07-11).** Historical record. The measurement concluded 2026-05-23 (100% strict match) and the migration it gated has since **shipped and been simplified past this doc**: `event_sync_pull` mode flipped to `new` on 2026-06-02, and the legacy/compare/new flag machinery was later retired from runtime code entirely (live sync takes Anki verbatim, with forward-step replay kept only as a recompute-divergence detector — see `.claude/rules/anki-queue-parity.md` "Soak health check"). One-shot scripts referenced below were deleted or moved to `backend/scripts/anki_archive/`; commands are preserved as written for the historical record and will not run today.
+
 **Audience**: any chat session picking this up. Self-contained; you don't need the prior conversation.
 
 **Goal**: settle whether Stage 3b of the event-sync migration (`~/.claude/plans/ticklish-questing-fountain.md`) is worth committing 2-3 weeks of refactor work to.

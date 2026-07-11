@@ -252,7 +252,7 @@ are the most-hammered code (Layers 25–39, 56–61) and held up:
   fixed dr/decay, so TT's raw-R sort yields identical order. The `seconds_elapsed`/`days_elapsed`
   branches match `_elapsed_days_for_fsrs`. No-memory cards fall through to the SM2 formula
   `-(days_elapsed+0.001)/ivl` — the Layer 38/43 territory, already understood.
-- **`_direction_differs`** (`sync.py:956`) — every sync-relevant field Anki can mutate is
+- **`_direction_differs`** (`sync_engine.py`, re-exported via the `app.anki.sync` facade) — every sync-relevant field Anki can mutate is
   compared; the not-compared fields (`introduced_at`, `prior_left/stability`,
   `last_review_time_ms`) are either stamped on a co-occurring state change (which *is*
   compared) or are TT-internal grade artifacts Anki never sets. Complete.

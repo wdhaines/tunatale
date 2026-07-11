@@ -15,7 +15,7 @@ In the user's stated frequency order:
 | # | Mode | Posture / context | Lineage | Today |
 |---|------|-------------------|---------|-------|
 | 1 | **Review** (daily anchor) | Clear the SRS queue every day. Audio-first drills. | Pimsleur GIR → FSRS; Fluent Forever card design | ✅ `/review` route |
-| 2 | **Listen** (immersion) | Hands-free / car. Play the 4-section lesson straight through. Glanceable. Passive (Refold *free-flow*). Cards created implicitly. | Pimsleur audio-first + Refold free-flow + LingQ listen-first + implicit grade | ⚠️ exists, crude (AudioPlayer + Mark-as-Listened) |
+| 2 | **Listen** (immersion) | Hands-free / car. Play the 4-section lesson straight through. Glanceable. Passive (Refold *free-flow*). Cards created implicitly. | Pimsleur audio-first + Refold free-flow + LingQ listen-first + implicit grade | ⚠️ exists, crude (LessonPlayer + Mark-as-Listened) |
 | 3 | **Read** (study / cleanup) | Dense transcript. Active immersion. Fine-grained add/remove/grade of SRS by tapping words/phrases. BDT-flavored L2↔L1. | LingQ word-status transcript + Refold active immersion/1T + BDT reception | ⚠️ exists, **first build target** |
 | – | **Generate / Manage** | Setup: create curriculum, regenerate a day. Not a learning mode. | — | ✅ (lesson page Regenerate + `/` library) |
 | – | **Produce / BDT write-back** | Output practice; translate-back; spaced re-encounter. | BDT steps 5–6, PRD §7.4 output mode | ❌ future (`bdt.md` "Phase G") |

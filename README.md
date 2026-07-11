@@ -34,7 +34,7 @@ This is a working personal-use system for **Slovene**, driving the PRD's pedagog
 
 The PRD targets are still ahead:
 
-- Norwegian and Tagalog demos to exercise the pedagogical loop in a second and third language (the language plugins are scaffolded — Slovene preprocessor, voice map, syllabifier — but Slovene is the only one wired end-to-end today).
+- Tagalog to exercise the pedagogical loop in a third language (Norwegian is wired end-to-end as of 2026-07 — recognition-only deck, Stanza lemmatizer, compound-aware word breakdown — Slovene remains the most complete).
 - Target-language audio control phrases ("Más despacio").
 - Mobile / car-optimized native experience (today it's browser-based at `:5173`).
 - The TunaTale mascot in the prep phase, telling travel stories about the new collocations.
@@ -56,7 +56,7 @@ cd ..
 ./start-dev.sh
 ```
 
-Open <http://localhost:5173>.
+Open <https://localhost:5173> (the dev server is HTTPS-only via mkcert — see `start-dev.sh`).
 
 ## Testing
 
@@ -66,7 +66,7 @@ cd backend && uv run pytest            # backend only (100% coverage required)
 cd frontend && bun run test:coverage   # frontend only (100% per-file via a custom Svelte 5 phantom-filter coverage gate)
 ```
 
-CI runs backend and frontend in parallel. The Anki oracle harness (`--run-oracle`) runs locally but not in CI — it spawns Anki's actual scheduler in a subprocess via `uv run --with anki python` and we don't ship a runtime dependency on Anki being installed in production code.
+CI runs four parallel jobs: backend (lint + mock-boundary check + pytest), frontend (svelte-check + vitest), oracle-parity, and peer-sync. The Anki oracle harness (`--run-oracle`) spawns Anki's actual scheduler in a subprocess via `uv run --with anki python` — production code never imports Anki.
 
 ## Stack
 
@@ -86,9 +86,9 @@ CI runs backend and frontend in parallel. The Anki oracle harness (`--run-oracle
   - **[docs/lingq.md](docs/lingq.md)** — the colored-transcript UI, word-status cycle, click-to-untrack, implicit-grade-on-listen.
   - **[docs/refold.md](docs/refold.md)** — 1T sentence clozes, recognition-before-production direction split.
   - **[docs/bdt.md](docs/bdt.md)** — Luca Lampariello's Bi-Directional Translation method; reception side overlaps with TT today, production side (L1→L2 written reconstruction) is a candidate Phase G.
-- **[docs/anki-parity-layers.md](docs/anki-parity-layers.md)** — 48 layers of TT ↔ Anki scheduler parity work, each one a divergence found in production, the mechanism, and the fix. Load-bearing reference for the sync code.
+- **[docs/anki-parity-layers.md](docs/anki-parity-layers.md)** — 80 layers of TT ↔ Anki scheduler parity work, each one a divergence found in production, the mechanism, and the fix. Load-bearing reference for the sync code.
 - **[docs/stage-3b-empirical-measurement.md](docs/stage-3b-empirical-measurement.md)** — procedure for the measurement that gates the next big architectural move (replacing field-merge sync with event-replay).
-- **[docs/adding-a-language.md](docs/adding-a-language.md)** — five touch-points + three optional ones to wire a new L2. Norwegian is next; Tagalog has scaffolding from the original prototype.
+- **[docs/adding-a-language.md](docs/adding-a-language.md)** — the touch-points to wire a new L2 (Norwegian, wired 2026-06/07, is the worked example; Tagalog has scaffolding from the original prototype).
 - **[docs/anki-recovery.md](docs/anki-recovery.md)** — disaster-recovery procedure if TT ever corrupts `collection.anki2`. Read before you need it.
 - **`.claude/rules/`** — project rules cross-model: USN sync protocol, queue-parity playbook + pre-Layer checklist, oracle harness workflow, testing strategy, TDD discipline.
 
@@ -99,24 +99,26 @@ backend/
   app/
     main.py            FastAPI app + lifespan
     config.py          Pydantic settings (env-driven)
-    anki/              Direct SQLite I/O against collection.anki2
+    languages.py       Per-language plugin registry (LanguageContext)
+    anki/              Direct SQLite I/O against collection.anki2 + sync engine
     api/               FastAPI route modules
     audio/             TTS, preprocessing, assembly, cloze TTS
-    cloze/             Function-word detection + cloze rendering
-    generation/        Curriculum + story generators, syllabifier
+    common/            Cross-cutting helpers (guid generation)
+    generation/        Curriculum + story generators, syllabifier, compound breakdown
     llm/               Groq client + cassette system
+    media/             In-app media import (Anki media → TT cache)
     models/            Pure domain models
-    srs/               FSRS-5 scheduler, queue stats, database
+    srs/               FSRS-5 scheduler, queue engine/stats, database mixins
     storage/           ContentStore SQLite repository
   tests/
     anki_oracle/       Subprocess parity-test harness
     cassettes/         Recorded LLM responses
-    test_*.py          ~2300 tests, 100% coverage
+    test_*.py          ~3600 tests, 100% coverage
 
 frontend/
   src/
     routes/            SvelteKit pages incl. /review and /admin/srs
-    lib/               Components (DrillCard, Transcript, AudioPlayer, …)
+    lib/               Components (DrillCard, Transcript, LessonPlayer, …)
   scripts/
     coverage-gate.ts   Custom Svelte 5 phantom-filter coverage gate
   tests/               Vitest + Playwright
@@ -127,7 +129,7 @@ docs/                  Walkthrough + parity history + plans
 
 ## Status
 
-Personal project with one production user (the author, learning Slovene). Slovene is the only fully wired language; Anki integration is single-deck. Not packaged for distribution. If you're an efficiency-focused language learner who'd find value here, the [walkthrough](docs/walkthrough.md) is enough to understand the system and the code is published openly — but there's no installer and no support contract.
+Personal project with one production user (the author, learning Slovene and Norwegian). Anki integration is one deck per language. Not packaged for distribution. If you're an efficiency-focused language learner who'd find value here, the [walkthrough](docs/walkthrough.md) is enough to understand the system and the code is published openly — but there's no installer and no support contract.
 
 ## License
 

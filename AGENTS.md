@@ -1,6 +1,6 @@
 # AGENTS.md — TunaTale
 
-AI-generated audio language curricula — Pimsleur-style listening with content adapted to the learner's vocabulary. Slovene is the only fully wired language today; the architecture is language-plugin based. Integrates bidirectionally with the user's Anki deck rather than replacing it. See `README.md` for the product pitch and `docs/walkthrough.md` for the system tour.
+AI-generated audio language curricula — Pimsleur-style listening with content adapted to the learner's vocabulary. Slovene and Norwegian are wired end-to-end (Slovene most completely); the architecture is language-plugin based. Integrates bidirectionally with the user's Anki deck rather than replacing it. See `README.md` for the product pitch and `docs/walkthrough.md` for the system tour.
 
 ## Developer Commands
 
@@ -29,11 +29,14 @@ cd frontend && bun run test:e2e                 # playwright
 Two main packages:
 
 - **`backend/`** — FastAPI app (`app/main.py`), Python 3.14, `uv` for deps
+  - `app/languages.py` — per-language plugin registry (`LanguageConfig`/`LanguageContext`)
   - `app/anki/` — Anki collection reading & USN sync (use `safety.safe_open`, never raw sqlite3)
   - `app/api/` — FastAPI route modules
+  - `app/common/` — cross-cutting helpers (guid generation)
   - `app/audio/` — EdgeTTS + audio assembly pipeline
   - `app/generation/` — Curriculum + story generation
   - `app/llm/` — Groq LLM client + cassette system
+  - `app/media/` — in-app media import (Anki media → TT cache)
   - `app/models/` — Pure domain models (no I/O)
   - `app/srs/` — FSRS spaced repetition engine
   - `app/storage/` — File/DB storage layer

@@ -1,5 +1,7 @@
 # Stage 3b step 4 — implement `new` mode (handoff)
 
+> **Status (2026-07-11): SUPERSEDED.** This handoff was executed — `new` mode shipped 2026-06-02 — and the code it describes has since been deleted or moved: `_write_compare_shadow` and the `get/set_event_sync_pull_mode` flag system no longer exist (the flag machinery was retired once `new` proved out), and the cited `sync.py`/`database.py` line references predate the 2026-06-11 sync split (`sync_engine.py`) and the 2026-07-04 database mixin split (`db_revlog.py`). Kept as a historical record of the step-4 design; do not follow it as instructions.
+
 **Audience**: a fresh chat session implementing the next step of the event-sync migration. Self-contained; you don't need any prior conversation. Read this top to bottom, then start with the tests.
 
 **Branch**: `stage3b-steps-1-3` (continue here; don't branch off). **Working tree is clean as of handoff.**

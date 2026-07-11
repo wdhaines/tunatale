@@ -229,13 +229,13 @@ If your fix is going to compute X, and one of these helpers already computes som
 | `_merge_by_retrievability_ascending` | `app/srs/queue_engine.py` | R-asc queue sort + FNV tiebreaker (Layer 37). |
 | `_merge_directions` | `app/srs/queue_engine.py` | Cross-direction gather + sibling-bury + Template stable-sort (Layer 28). |
 | `_fnv1a_64_i64` | `app/srs/queue_engine.py` | Anki's tiebreaker hash; required identical port. |
-| `_pull_merge_direction` | `app/anki/sync.py` | Per-card sync_pull merge (post Phase 1.3 extraction). |
-| `_direction_differs` | `app/anki/sync.py` | Field-by-field diff for sync write-back (rule 6, Layers 17/35/37). Derived from `app/srs/direction_fields.py` (`sync_comparable` flags) since 2026-07-05 — register new fields there, don't hand-edit the diff. |
-| `_resolve_prior_state` / `_grade_prior_state` | `app/anki/sync.py` + `app/srs/fsrs.py` | Sticky-NEW `prior_state` (Layers 20-22). |
-| `_resolve_introduced_at` | `app/anki/sync.py` | One-shot intro stamp (Layer 26). |
-| `_anki_step_ahead` | `app/anki/sync.py` | "Anki's `left` is further along than TT's" check (Layers 18, 19). |
-| `_bury_kind_from_queue` | `app/anki/sync.py` | `queue=-2/-3 → 'sched'` mapping (Layer 35, Layer 39). |
-| `_queue_to_state` | `app/anki/sync.py` | `cards.queue → SRSState`, trusts queue not reps (Layer 30). |
+| `_pull_merge_direction` | `app/anki/sync_engine.py` | Per-card sync_pull merge (post Phase 1.3 extraction). |
+| `_direction_differs` | `app/anki/sync_engine.py` | Field-by-field diff for sync write-back (rule 6, Layers 17/35/37). Derived from `app/srs/direction_fields.py` (`sync_comparable` flags) since 2026-07-05 — register new fields there, don't hand-edit the diff. |
+| `_resolve_prior_state` / `_grade_prior_state` | `app/anki/sync_engine.py` + `app/srs/fsrs.py` | Sticky-NEW `prior_state` (Layers 20-22). |
+| `_resolve_introduced_at` | `app/anki/sync_engine.py` | One-shot intro stamp (Layer 26). |
+| `_anki_step_ahead` | `app/anki/sync_engine.py` | "Anki's `left` is further along than TT's" check (Layers 18, 19). |
+| `_bury_kind_from_queue` | `app/anki/sync_engine.py` | `queue=-2/-3 → 'sched'` mapping (Layer 35, Layer 39). |
+| `_queue_to_state` | `app/anki/sync_engine.py` | `cards.queue → SRSState`, trusts queue not reps (Layer 30). |
 | `_read_config_value_from_deck_config_table` | `app/srs/queue_stats.py` | Unified deck-config protobuf/legacy-JSON reader (Phase 1.1). Use this for any new deck-config field. |
 | `count_new_available_collocations` | `app/srs/db_counts.py` | Bury-aware new-badge count: NEW directions minus collocations with a graded-today / learning / review-due-today sibling (`bury_new`, Layer 64). Mirror image of `count_review_due_collocations`. `count_new_available` (raw `COUNT(*)`) stays for the overfetch upper bound only. |
 | `unbury_if_needed` | `app/srs/db_queue.py` | Daily unbury sweep (Layers 27, 35). |
