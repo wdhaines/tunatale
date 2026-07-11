@@ -57,6 +57,9 @@ class _FakeWriter:
     def set_due_date(self, card_ids: list[int], days: str) -> None:
         self.set_due_date_calls.append((list(card_ids), days))
 
+    def max_revlog_id_for_card(self, card_id: int) -> int:
+        return 0
+
     def write_revlog(
         self,
         *,
@@ -71,6 +74,8 @@ class _FakeWriter:
         is_lapse: bool = False,
         ds_reps: int | None = None,
         ds_lapses: int | None = None,
+        reps_bump: int | None = None,
+        lapses_bump: int | None = None,
     ) -> None:
         self.write_revlog_calls.append(
             {"cid": cid, "ease": ease, "ivl": ivl, "time_ms": time_ms, "type_": type_, "preferred_id": preferred_id}

@@ -66,6 +66,9 @@ class _FakeWriter:
     def set_learning_state(self, card_id: int, left: int, due_at: int, *, type_: int = 1) -> None:
         self.set_learning_state_calls.append((card_id, left, due_at))
 
+    def max_revlog_id_for_card(self, card_id: int) -> int:
+        return 0
+
     def write_revlog(
         self,
         *,
@@ -80,6 +83,8 @@ class _FakeWriter:
         is_lapse: bool = False,
         ds_reps: int | None = None,
         ds_lapses: int | None = None,
+        reps_bump: int | None = None,
+        lapses_bump: int | None = None,
     ) -> None:
         self.write_revlog_calls.append(cid)
 

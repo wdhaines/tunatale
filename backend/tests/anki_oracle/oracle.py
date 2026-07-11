@@ -260,6 +260,28 @@ def _op_get_card(col: Any, op: dict) -> dict:
     }
 
 
+def _op_get_revlog(col: Any, op: dict) -> list[dict]:
+    """Read revlog rows for a card, serialized like get_card for consistency."""
+    card_id = op["card_id"]
+    rows = col.db.all(
+        "SELECT id, cid, ease, ivl, lastIvl, factor, time, type FROM revlog WHERE cid=?",
+        card_id,
+    )
+    return [
+        {
+            "id": r[0],
+            "cid": r[1],
+            "ease": r[2],
+            "ivl": r[3],
+            "lastIvl": r[4],
+            "factor": r[5],
+            "time": r[6],
+            "type": r[7],
+        }
+        for r in rows
+    ]
+
+
 def _op_add_review_cards(col: Any, op: dict) -> dict:
     """Add *count* overdue review cards (type=2, queue=2, due in the past) mid-session.
 
@@ -302,6 +324,7 @@ _OPERATIONS: dict[str, Any] = {
     "answer_card": _op_answer_card,
     "add_review_cards": _op_add_review_cards,
     "get_card": _op_get_card,
+    "get_revlog": _op_get_revlog,
     "get_today": _op_get_today,
     "scheduling_states": _op_scheduling_states,
 }

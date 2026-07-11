@@ -1042,6 +1042,58 @@ class TestBuildRevlogRow:
         assert row.id == int(now.timestamp() * 1000)
         assert row.taken_millis == 0
 
+    def test_factor_pin_difficulty_5_5(self):
+        """Anki factor = round(((d - 1.0)/9.0 + 0.1) * 1000) in f32.
+        d=5.5 → (4.5/9.0 + 0.1) * 1000 = 600.0 → factor 600."""
+        from app.srs.fsrs import build_revlog_row
+
+        now = datetime(2026, 7, 10, 12, 0, 0, tzinfo=UTC)
+        prev = DirectionState(direction=Direction.RECOGNITION, state=SRSState.REVIEW, due_at=now, anki_card_id=42)
+        new_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_at=now + timedelta(days=10),
+            difficulty=5.5,
+        )
+        row = build_revlog_row(1, Direction.RECOGNITION, prev, new_dir, Rating.GOOD, 1500, now=now)
+        assert row.factor == 600
+
+    def test_factor_pin_difficulty_1_5(self):
+        """d=1.5 → (0.5/9.0 + 0.1) * 1000 = 155.555... → 156 in f32."""
+        from app.srs.fsrs import build_revlog_row
+
+        now = datetime(2026, 7, 10, 12, 0, 0, tzinfo=UTC)
+        prev = DirectionState(direction=Direction.RECOGNITION, state=SRSState.REVIEW, due_at=now, anki_card_id=42)
+        new_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_at=now + timedelta(days=5),
+            difficulty=1.5,
+        )
+        row = build_revlog_row(1, Direction.RECOGNITION, prev, new_dir, Rating.GOOD, 1500, now=now)
+        assert row.factor == 156
+
+    def test_factor_pin_difficulty_9_001(self):
+        """Non-trivial f32 rounding: d=9.001 → (8.001/9.0 + 0.1) * 1000 = 989.0 in f32.
+        The f32 representation of 8.001/9.0 differs from the f64 value at the
+        sub-ULP level, exercising the rounding helper's bit-exact path."""
+        from app.srs.fsrs import _round_to_places_f32, build_revlog_row
+
+        now = datetime(2026, 7, 10, 12, 0, 0, tzinfo=UTC)
+        prev = DirectionState(direction=Direction.RECOGNITION, state=SRSState.REVIEW, due_at=now, anki_card_id=42)
+        new_dir = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_at=now + timedelta(days=30),
+            difficulty=9.001,
+        )
+        row = build_revlog_row(1, Direction.RECOGNITION, prev, new_dir, Rating.GOOD, 1500, now=now)
+        # Verify the formula is applied, not factor=0
+        assert row.factor > 0
+        # Pin exact value
+        expected = int(_round_to_places_f32(((9.001 - 1.0) / 9.0 + 0.1) * 1000, 0))
+        assert row.factor == expected
+
 
 class TestReviewIntervalCascade:
     """FSRS review interval cascade (Anki parity)."""

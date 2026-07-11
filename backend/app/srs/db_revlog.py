@@ -220,6 +220,44 @@ class DbRevlogMixin:
 
         return item.directions[direction]
 
+    def get_unpushed_revlog_rows(self, collocation_id: int, direction: Direction, after_id: int) -> list[RevlogRow]:
+        """Return tt_revlog rows for (collocation_id, direction) with id > after_id, ordered by id.
+
+        ``after_id`` is typically ``max_revlog_id_for_card(anki_card_id)`` —
+        the highest id already present in Anki's revlog for that card. Any
+        tt_revlog row with a higher id represents a grade that hasn't been
+        pushed yet.
+
+        Pre-Layer-78 rows are naturally excluded: a pushed collapsed row
+        at the latest grade id sets the watermark above them.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, collocation_id, direction, button_chosen, interval,
+                       last_interval, factor, taken_millis, review_kind, anki_card_id
+                FROM tt_revlog
+                WHERE collocation_id = ? AND direction = ? AND id > ?
+                ORDER BY id
+                """,
+                (collocation_id, direction.value, after_id),
+            ).fetchall()
+            return [
+                RevlogRow(
+                    id=r["id"],
+                    collocation_id=r["collocation_id"],
+                    direction=Direction(r["direction"]),
+                    button_chosen=r["button_chosen"],
+                    interval=r["interval"],
+                    last_interval=r["last_interval"],
+                    factor=r["factor"],
+                    taken_millis=r["taken_millis"],
+                    review_kind=r["review_kind"],
+                    anki_card_id=r["anki_card_id"],
+                )
+                for r in rows
+            ]
+
     def latest_revlog_id_for_direction(self, collocation_id: int, direction: Direction) -> int | None:
         """Return MAX(id) from tt_revlog for the given direction, or None.
 

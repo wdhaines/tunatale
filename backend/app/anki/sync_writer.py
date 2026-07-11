@@ -230,6 +230,15 @@ class OfflineWriter:
         """True if a revlog row already uses *revlog_id* (PK-collision probe)."""
         return self._conn.execute("SELECT 1 FROM revlog WHERE id = ? LIMIT 1", (revlog_id,)).fetchone() is not None
 
+    def max_revlog_id_for_card(self, card_id: int) -> int:
+        """Return MAX(id) from revlog for *card_id*, or 0 if no rows exist.
+
+        Used by sync_push to find the watermark for per-grade tt_revlog row
+        selection: any tt_revlog row with id > this value is unpushed.
+        """
+        row = self._conn.execute("SELECT MAX(id) FROM revlog WHERE cid = ?", (card_id,)).fetchone()
+        return row[0] if row and row[0] is not None else 0
+
     def write_revlog(
         self,
         *,
@@ -244,6 +253,8 @@ class OfflineWriter:
         is_lapse: bool = False,
         ds_reps: int | None = None,
         ds_lapses: int | None = None,
+        reps_bump: int | None = None,
+        lapses_bump: int | None = None,
     ) -> None:
         max_row = self._conn.execute("SELECT MAX(id) FROM revlog").fetchone()
         max_id = (max_row[0] or 0) if max_row else 0
@@ -271,10 +282,11 @@ class OfflineWriter:
             (rid, cid, -1, ease, ivl, last_ivl, factor, time_ms, type_),
         )
         ts = int(_time.time())
-        lapse_inc = 1 if is_lapse else 0
+        reps_inc = reps_bump if reps_bump is not None else 1
+        lapse_inc = lapses_bump if lapses_bump is not None else (1 if is_lapse else 0)
         self._conn.execute(
-            "UPDATE cards SET reps = MAX(reps + 1, ?), lapses = MAX(lapses + ?, ?), mod = ?, usn = -1 WHERE id = ?",
-            (ds_reps or 0, lapse_inc, ds_lapses or 0, ts, cid),
+            "UPDATE cards SET reps = MAX(reps + ?, ?), lapses = MAX(lapses + ?, ?), mod = ?, usn = -1 WHERE id = ?",
+            (reps_inc, ds_reps or 0, lapse_inc, ds_lapses or 0, ts, cid),
         )
         self._bump_col(ts)
         self._conn.commit()

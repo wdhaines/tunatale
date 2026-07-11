@@ -43,6 +43,9 @@ class FakeWriter:
     def set_due_date(self, card_ids: list[int], days: str) -> None:
         pass
 
+    def max_revlog_id_for_card(self, card_id: int) -> int:
+        return 0
+
     def write_revlog(
         self,
         *,
@@ -57,6 +60,8 @@ class FakeWriter:
         is_lapse: bool = False,
         ds_reps: int | None = None,
         ds_lapses: int | None = None,
+        reps_bump: int | None = None,
+        lapses_bump: int | None = None,
     ) -> None:
         pass
 
@@ -2681,6 +2686,110 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
                 r["id"] for r in tt_conn.execute("SELECT id FROM tt_revlog WHERE anki_card_id=? ORDER BY id", (cid,))
             ]
         assert ids == [tt_grade_ms, phone_ms], "TT's own pushed grade must not be re-ingested as a duplicate echo"
+
+    def test_per_grade_push_then_pull_no_duplicate_or_inflation(self, fake_anki_db):
+        """Sociable round-trip (Layer 80 guardrail #4): two TT grades on one
+        card (lapse + relearn step) pushed via the real OfflineWriter, then
+        sync_pull ingests from the same Anki collection. Assert:
+        1. tt_revlog row count for the direction is unchanged (no duplicate re-ingest)
+        2. count_reviews_completed_today is unchanged (no inflation — Layer 74 signature)
+        """
+        from datetime import date as _date
+
+        from app.anki.sync import OfflineWriter
+        from app.models.srs_item import RevlogRow
+
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        cid = 10010
+        self._link_banka_to_card(db, guid, cid)
+        coll_id = db.get_collocation_id_by_guid(guid)
+
+        lapse_ms = 1_700_000_000_000
+        relearn_ms = lapse_ms + 6_000
+        for ms, bc, rk, ivl, last_ivl in [
+            (lapse_ms, 1, 1, -600, 10),
+            (relearn_ms, 3, 2, -60, -600),
+        ]:
+            db.append_revlog(
+                RevlogRow(
+                    id=ms,
+                    collocation_id=coll_id,
+                    direction=Direction.RECOGNITION,
+                    button_chosen=bc,
+                    interval=ivl,
+                    last_interval=last_ivl,
+                    factor=0,
+                    taken_millis=2500,
+                    review_kind=rk,
+                    anki_card_id=cid,
+                )
+            )
+
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.now(UTC) + timedelta(minutes=10),
+            stability=0.5,
+            difficulty=5.5,
+            reps=4,
+            lapses=1,
+            state=SRSState.RELEARNING,
+            dirty_fsrs=True,
+            anki_card_id=cid,
+            last_rating=3,
+            left=1001,
+            prior_state=SRSState.REVIEW,
+            prior_left=None,
+            prior_stability=10.0,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        conn = sqlite3.connect(str(fake_anki_db))
+        conn.row_factory = sqlite3.Row
+        try:
+            # Real push: writes both revlog rows into Anki's collection.
+            OfflineWriter(conn).write_revlog(
+                cid=cid,
+                ease=1,
+                ivl=-600,
+                last_ivl=10,
+                factor=0,
+                time_ms=2500,
+                type_=1,
+                preferred_id=lapse_ms,
+            )
+            OfflineWriter(conn).write_revlog(
+                cid=cid,
+                ease=3,
+                ivl=-60,
+                last_ivl=-600,
+                factor=0,
+                time_ms=2500,
+                type_=2,
+                preferred_id=relearn_ms,
+            )
+            pushed_count = conn.execute("SELECT COUNT(*) FROM revlog WHERE cid=?", (cid,)).fetchone()[0]
+            assert pushed_count == 2
+
+            # Snapshot TT-side counts before pull.
+            today = _date.today()
+            reviews_before = db.count_reviews_completed_today(today)
+
+            # Real pull: should NOT re-ingest the pushed grades.
+            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+        finally:
+            conn.close()
+
+        # tt_revlog row count unchanged — no duplicate re-ingest.
+        with db._get_conn() as tt_conn:
+            ids = [
+                r["id"] for r in tt_conn.execute("SELECT id FROM tt_revlog WHERE anki_card_id=? ORDER BY id", (cid,))
+            ]
+        assert ids == [lapse_ms, relearn_ms], f"no duplicate re-ingest; got {ids}"
+
+        # reviews_today unchanged — no inflation (the Layer 74 signature).
+        reviews_after = db.count_reviews_completed_today(today)
+        assert reviews_after == reviews_before, f"reviews_today inflated: {reviews_before} → {reviews_after}"
 
     def test_ingest_keeps_anki_row_when_ease_differs(self, fake_anki_db):
         """Within 5s but *different* ease → not the same event; keep both."""

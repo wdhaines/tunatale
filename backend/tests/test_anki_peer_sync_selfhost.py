@@ -256,6 +256,138 @@ class TestPeerSyncSelfHost:
         assert peer2_card["queue"] == 1, f"lapse not propagated — peer2 card still {peer2_card}"
         assert peer2_card["type"] == 3
 
+    def test_per_grade_revlog_round_trip(self, tmp_path: Path):
+        """Layer 80 round-trip: two TT grades on one card (lapse + relearn step)
+        pushed through peer_sync, then verify the server's revlog holds both rows
+        at their exact tt ids. Run peer_sync a second time — still exactly two
+        rows and reviews_today not inflated."""
+        import sqlite3
+        from datetime import UTC, datetime, timedelta
+
+        from app.models.srs_item import Direction, DirectionState, RevlogRow, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+
+        tt_col = tmp_path / "tt_collection.anki2"
+        peer2_col = tmp_path / "peer2.anki2"
+        auth = _login()
+
+        # Create a card and upload as baseline.
+        _driver({"op": "create_collection", "collection_path": str(tt_col)})
+        add = _driver(
+            {
+                "op": "add_note",
+                "collection_path": str(tt_col),
+                "deck": settings.anki_deck_name,
+                "fields": ["pergrade front", "pergrade back"],
+            }
+        )
+        card_id = add["card_ids"][0]
+        note_id = add["note_id"]
+        _driver({"op": "full_upload", "collection_path": str(tt_col), "auth": auth})
+
+        _driver({"op": "create_collection", "collection_path": str(peer2_col)})
+        _driver({"op": "full_download", "collection_path": str(peer2_col), "auth": auth})
+
+        # Seed two tt_revlog rows (lapse + relearn step) and mark direction dirty.
+        db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+        try:
+            db.add_collocation(
+                SyntacticUnit(text="pergrade", translation="pg", word_count=1, difficulty=1, source="corpus")
+            )
+            guid = db.get_collocation("pergrade").guid
+            db.set_anki_ids(guid, note_id, {Direction.PRODUCTION: card_id})
+            coll_id = db.get_collocation_id_by_guid(guid)
+            now = datetime.now(UTC)
+            lapse_ms = int((now - timedelta(minutes=5)).timestamp() * 1000)
+            relearn_ms = int(now.timestamp() * 1000)
+            db.append_revlog(
+                RevlogRow(
+                    id=lapse_ms,
+                    collocation_id=coll_id,
+                    direction=Direction.PRODUCTION,
+                    button_chosen=1,
+                    interval=-600,
+                    last_interval=10,
+                    factor=0,
+                    taken_millis=2500,
+                    review_kind=1,
+                    anki_card_id=card_id,
+                )
+            )
+            db.append_revlog(
+                RevlogRow(
+                    id=relearn_ms,
+                    collocation_id=coll_id,
+                    direction=Direction.PRODUCTION,
+                    button_chosen=3,
+                    interval=-60,
+                    last_interval=-600,
+                    factor=0,
+                    taken_millis=1800,
+                    review_kind=2,
+                    anki_card_id=card_id,
+                )
+            )
+            db.update_direction(
+                guid,
+                Direction.PRODUCTION,
+                DirectionState(
+                    direction=Direction.PRODUCTION,
+                    state=SRSState.RELEARNING,
+                    left=1001,
+                    due_at=now + timedelta(minutes=10),
+                    reps=2,
+                    lapses=1,
+                    anki_card_id=card_id,
+                    dirty_fsrs=True,
+                    last_rating=3,
+                    last_review=now,
+                    prior_state=SRSState.REVIEW,
+                ),
+            )
+        finally:
+            db.close()
+
+        # First peer_sync: pushes the two revlog rows.
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(settings, "tt_collection_path", tt_col)
+            report = peer_sync(dry_run=False)
+        assert report.tt_push_pull_exit == 0
+
+        # Check tt_col's revlog: both rows at their exact tt ids.
+        conn = sqlite3.connect(str(tt_col))
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = sorted(
+                conn.execute("SELECT id, ease, type FROM revlog WHERE cid=?", (card_id,)).fetchall(),
+                key=lambda r: r["id"],
+            )
+        finally:
+            conn.close()
+        assert len(rows) == 2, f"expected 2 revlog rows, got {len(rows)}"
+        assert rows[0]["id"] == lapse_ms
+        assert rows[0]["ease"] == 1
+        assert rows[0]["type"] == 1
+        assert rows[1]["id"] == relearn_ms
+        assert rows[1]["ease"] == 3
+        assert rows[1]["type"] == 2
+
+        # Second peer_sync: should not insert any new rows.
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(settings, "tt_collection_path", tt_col)
+            report2 = peer_sync(dry_run=False)
+        assert report2.tt_push_pull_exit == 0
+
+        conn = sqlite3.connect(str(tt_col))
+        conn.row_factory = sqlite3.Row
+        try:
+            rows2 = conn.execute("SELECT id FROM revlog WHERE cid=? ORDER BY id", (card_id,)).fetchall()
+        finally:
+            conn.close()
+        assert len(rows2) == 2, f"second sync inflated revlog: expected 2, got {len(rows2)}"
+        assert [r["id"] for r in rows2] == [lapse_ms, relearn_ms]
+
     def test_tt_added_card_reaches_server_through_peer_sync(self, tmp_path: Path):
         """End-to-end guard for the b0a4b8a regression: a card *originated in TT*
         (no anki_note_id) must be minted into tt_collection by the peer-sync

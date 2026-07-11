@@ -124,6 +124,8 @@ class FakeWriter:
         is_lapse: bool = False,
         ds_reps: int | None = None,
         ds_lapses: int | None = None,
+        reps_bump: int | None = None,
+        lapses_bump: int | None = None,
     ) -> None:
         self.calls.append(("write_revlog", cid, ease, ivl, last_ivl, factor, time_ms, type_, preferred_id))
 
@@ -164,6 +166,9 @@ class FakeWriter:
         return 0
 
     def count_reviews_today_for_deck(self, deck_id: int, today_4am_ms: int) -> int:
+        return 0
+
+    def max_revlog_id_for_card(self, card_id: int) -> int:
         return 0
 
     def set_deck_studied_today(self, deck_id: int, today_day_index: int, new_today: int, review_today: int) -> None:
@@ -2213,7 +2218,11 @@ class TestOfflineOrdering:
 
 
 class TestRevlogFactor:
-    """revlog.factor must be derived from difficulty, not hardcoded 2500."""
+    """revlog.factor must use Anki's difficulty_shifted formula, not the old
+    ds.difficulty * 1000 (which wrote SM-2-range values Anki misinterprets).
+
+    Anki factor = round(((d - 1.0)/9.0 + 0.1) * 1000), unclamped.
+    Real FSRS difficulty is bounded [1, 10], so factor ∈ [100, 1100]."""
 
     def _push_with_difficulty(self, difficulty: float) -> list[tuple]:
         db = _make_tt_db()
@@ -2234,25 +2243,23 @@ class TestRevlogFactor:
         AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
         return writer.calls
 
-    def test_difficulty_3_maps_to_factor_3000(self):
-        calls = self._push_with_difficulty(3.0)
+    def test_difficulty_min_gives_factor_100(self):
+        """d=1 (FSRS minimum) → shifted=0.1 → factor=100."""
+        calls = self._push_with_difficulty(1.0)
         revlog_call = next(c for c in calls if c[0] == "write_revlog")
-        assert revlog_call[5] == 3000
+        assert revlog_call[5] == 100
 
-    def test_difficulty_8_maps_to_factor_8000(self):
-        calls = self._push_with_difficulty(8.0)
+    def test_difficulty_5_5_gives_factor_600(self):
+        """d=5.5 → shifted=0.6 → factor=600."""
+        calls = self._push_with_difficulty(5.5)
         revlog_call = next(c for c in calls if c[0] == "write_revlog")
-        assert revlog_call[5] == 8000
+        assert revlog_call[5] == 600
 
-    def test_difficulty_0_5_clamped_to_1300(self):
-        calls = self._push_with_difficulty(0.5)
+    def test_difficulty_max_gives_factor_1100(self):
+        """d=10 (FSRS maximum) → shifted=1.1 → factor=1100."""
+        calls = self._push_with_difficulty(10.0)
         revlog_call = next(c for c in calls if c[0] == "write_revlog")
-        assert revlog_call[5] == 1300
-
-    def test_difficulty_15_clamped_to_13000(self):
-        calls = self._push_with_difficulty(15.0)
-        revlog_call = next(c for c in calls if c[0] == "write_revlog")
-        assert revlog_call[5] == 13000
+        assert revlog_call[5] == 1100
 
 
 # ── TestPushLearningCardLeftAndDue ────────────────────────────────────────
@@ -3406,3 +3413,382 @@ class TestOfflineWriterUpdateCardMemoryState:
         conn = self._make_conn("{}")
         OfflineWriter(conn).update_card_memory_state(99999, stability=2.5, difficulty=6.1)
         assert self._data(conn) == {}  # untouched
+
+
+# ── TestPerGradeRevlogPush ────────────────────────────────────────────────────
+
+
+class TestPerGradeRevlogPush:
+    """Guardrail tests for per-grade tt_revlog row push (MED-LOW parity fix).
+
+    When TT grades a card twice between syncs (e.g. a lapse then a relearn
+    step), the old collapsed-per-direction approach wrote ONE revlog row
+    reflecting only the latest state. The fix pushes each unpushed tt_revlog
+    row verbatim at its own grade-time id.
+    """
+
+    def _seed_tt_revlog_rows(self, db, coll_id, anki_card_id):
+        """Insert two tt_revlog rows for the same card: a lapse (type=1,
+        button_chosen=1) followed by a relearn step (type=2, button_chosen=3).
+        Returns (lapse_id, relearn_id)."""
+        from app.models.srs_item import Direction, RevlogRow
+
+        lapse_ms = int(datetime(2026, 7, 10, 13, 49, 0, tzinfo=UTC).timestamp() * 1000)
+        relearn_ms = int(datetime(2026, 7, 10, 15, 52, 0, tzinfo=UTC).timestamp() * 1000)
+        db.append_revlog(
+            RevlogRow(
+                id=lapse_ms,
+                collocation_id=coll_id,
+                direction=Direction.RECOGNITION,
+                button_chosen=1,
+                interval=-600,
+                last_interval=10,
+                factor=0,
+                taken_millis=2500,
+                review_kind=1,
+                anki_card_id=anki_card_id,
+            )
+        )
+        db.append_revlog(
+            RevlogRow(
+                id=relearn_ms,
+                collocation_id=coll_id,
+                direction=Direction.RECOGNITION,
+                button_chosen=3,
+                interval=-60,
+                last_interval=-600,
+                factor=0,
+                taken_millis=1800,
+                review_kind=2,
+                anki_card_id=anki_card_id,
+            )
+        )
+        return lapse_ms, relearn_ms
+
+    def test_two_grades_pushes_both_revlog_rows(self):
+        """Unit: two TT grades between syncs (lapse + relearn step) → push
+        writes BOTH revlog rows at their exact grade-time ids with
+        tt_revlog-verbatim values."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        coll_id = db.get_collocation_id_by_guid(guid)
+        assert coll_id is not None
+        lapse_ms, relearn_ms = self._seed_tt_revlog_rows(db, coll_id, rec_cid)
+
+        # Mark direction dirty so sync_push fires
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.now(UTC) + timedelta(minutes=10),
+            stability=0.5,
+            difficulty=5.5,
+            reps=4,
+            lapses=1,
+            state=SRSState.RELEARNING,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            left=1001,
+            prior_state=SRSState.REVIEW,
+            prior_left=None,
+            prior_stability=10.0,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        anki_conn = _make_anki_full_db()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid, queue=1, card_type=3, due=0, ivl=-600)
+        anki_conn.execute("UPDATE cards SET left = 1001 WHERE id = ?", (rec_cid,))
+        anki_conn.commit()
+
+        writer = OfflineWriter(anki_conn)
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        rows = sorted(
+            anki_conn.execute("SELECT id, cid, ease, ivl, lastIvl, type FROM revlog").fetchall(),
+            key=lambda r: r["id"],
+        )
+        assert len(rows) == 2, f"Expected 2 revlog rows, got {len(rows)}"
+
+        # Row 0: the lapse (type=1, button_chosen=1) at its exact grade-time id
+        assert rows[0]["id"] == lapse_ms
+        assert rows[0]["cid"] == rec_cid
+        assert rows[0]["ease"] == 1
+        assert rows[0]["type"] == 1  # review_kind from tt_revlog
+        assert rows[0]["lastIvl"] == 10  # last_interval from tt_revlog
+
+        # Row 1: the relearn step (type=2, button_chosen=3) at its exact grade-time id
+        assert rows[1]["id"] == relearn_ms
+        assert rows[1]["ease"] == 3
+        assert rows[1]["type"] == 2  # review_kind from tt_revlog
+        assert rows[1]["ivl"] == -60  # interval from tt_revlog
+
+    def test_reps_lapses_bumped_by_row_count(self):
+        """Reps bumps by total rows inserted; lapses bumps by rows where
+        review_kind=1 AND button_chosen=1.
+
+        Set card's reps=10, lapses=3 directly after seeding so the assertions
+        are NOT inside the MAX(reps+bump, ds.reps) floor's shadow — the test
+        would stay green if the bump regressed to once-per-push."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        coll_id = db.get_collocation_id_by_guid(guid)
+        self._seed_tt_revlog_rows(db, coll_id, rec_cid)
+
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.now(UTC) + timedelta(minutes=10),
+            stability=0.5,
+            difficulty=5.5,
+            reps=4,
+            lapses=1,
+            state=SRSState.RELEARNING,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            left=1001,
+            prior_state=SRSState.REVIEW,
+            prior_left=None,
+            prior_stability=10.0,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        anki_conn = _make_anki_full_db()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid, queue=1, card_type=3, due=0, ivl=-600)
+        anki_conn.execute(
+            "UPDATE cards SET left = 1001, reps = 10, lapses = 3 WHERE id = ?",
+            (rec_cid,),
+        )
+        anki_conn.commit()
+
+        writer = OfflineWriter(anki_conn)
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        card = anki_conn.execute("SELECT reps, lapses FROM cards WHERE id=?", (rec_cid,)).fetchone()
+        # 2 rows inserted → reps = 10 + 2 = 12; 1 lapse row → lapses = 3 + 1 = 4
+        assert card["reps"] == 12, f"Expected reps=12, got {card['reps']}"
+        assert card["lapses"] == 4, f"Expected lapses=4, got {card['lapses']}"
+
+    def test_idempotent_repush_inserts_nothing_new(self):
+        """Idempotency: re-running push inserts nothing new. The second push
+        sees MAX(revlog.id) == relearn_ms, and get_unpushed_revlog_rows
+        returns empty (both tt_revlog ids ≤ the watermark)."""
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        coll_id = db.get_collocation_id_by_guid(guid)
+        lapse_ms, relearn_ms = self._seed_tt_revlog_rows(db, coll_id, rec_cid)
+
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.now(UTC) + timedelta(minutes=10),
+            stability=0.5,
+            difficulty=5.5,
+            reps=4,
+            lapses=1,
+            state=SRSState.RELEARNING,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            left=1001,
+            prior_state=SRSState.REVIEW,
+            prior_left=None,
+            prior_stability=10.0,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        anki_conn = _make_anki_full_db()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid, queue=1, card_type=3, due=0, ivl=-600)
+        anki_conn.execute("UPDATE cards SET left = 1001 WHERE id = ?", (rec_cid,))
+        anki_conn.commit()
+
+        writer = OfflineWriter(anki_conn)
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        count_after_first = anki_conn.execute("SELECT COUNT(*) FROM revlog").fetchone()[0]
+        assert count_after_first == 2
+
+        # Re-push: the direction was cleaned, so list_dirty yields nothing.
+        # But even if it didn't, MAX(revlog.id) == relearn_ms blocks re-insertion.
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+        count_after_second = anki_conn.execute("SELECT COUNT(*) FROM revlog").fetchone()[0]
+        assert count_after_second == 2, (
+            f"Second push must not insert new revlog rows: {count_after_first} → {count_after_second}"
+        )
+
+    def test_outcome_reviews_today_parity(self):
+        """Outcome: after push, count_reviews_today_for_deck (Anki-side) ==
+        count_reviews_completed_today (TT-side) for the same day.
+
+        Seeds TWO same-day review grades on the same card (both review_kind=1,
+        last_interval >= 1) so the test passes ONLY with the per-row mechanism
+        — it would stay green with the old single-row approach disabled."""
+        from app.models.srs_item import RevlogRow
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        coll_id = db.get_collocation_id_by_guid(guid)
+
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        earlier_ms = now_ms - 3_600_000  # 1 hour earlier
+
+        # Two interday review rows (both count for review_today on both sides)
+        for ms, bc in [(earlier_ms, 3), (now_ms, 3)]:
+            db.append_revlog(
+                RevlogRow(
+                    id=ms,
+                    collocation_id=coll_id,
+                    direction=Direction.RECOGNITION,
+                    button_chosen=bc,
+                    interval=15,
+                    last_interval=10,
+                    factor=0,
+                    taken_millis=1500,
+                    review_kind=1,
+                    anki_card_id=rec_cid,
+                )
+            )
+
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.now(UTC) + timedelta(days=15),
+            stability=15.0,
+            difficulty=3.0,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            dirty_fsrs=True,
+            anki_card_id=rec_cid,
+            last_rating=3,
+            last_review=datetime.now(UTC),
+            prior_state=SRSState.REVIEW,
+            prior_left=None,
+            prior_stability=10.0,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        anki_conn = _make_anki_with_decks()
+        _seed_note_and_cards(anki_conn, rec_cid=rec_cid, queue=2, card_type=2, due=10, ivl=15)
+
+        col_crt = 1704067200
+        writer = OfflineWriter(anki_conn)
+        sync = AnkiSync(db=db, _reader=FakeReader(), _writer=writer, _anki_col_crt=col_crt)
+        sync.sync_push()
+
+        # TT-side count
+        today = date.today()
+        tt_count = db.count_reviews_completed_today(today)
+
+        # Anki-side count (recompute from revlog)
+        today_4am_ms = int(_local_today_4am().timestamp() * 1000)
+        anki_count = writer.count_reviews_today_for_deck(1, today_4am_ms)
+
+        assert tt_count == 2, f"TT should see 2 reviews today, got {tt_count}"
+        assert anki_count == 2, f"Anki should see 2 reviews today, got {anki_count}"
+        assert tt_count == anki_count, f"Review count parity failed: TT={tt_count}, Anki={anki_count}"
+
+    def test_max_revlog_id_for_card_returns_zero_when_empty(self):
+        """max_revlog_id_for_card returns 0 for a card with no revlog rows."""
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, rec_cid=90010)
+        writer = OfflineWriter(conn)
+        assert writer.max_revlog_id_for_card(90010) == 0
+
+    def test_max_revlog_id_for_card_returns_max(self):
+        """max_revlog_id_for_card returns the highest revlog id for a card."""
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn, rec_cid=90010)
+        conn.execute(
+            "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) "
+            "VALUES (1000, 90010, -1, 3, 7, 7, 2500, 1500, 1)"
+        )
+        conn.execute(
+            "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) "
+            "VALUES (3000, 90010, -1, 3, 7, 7, 2500, 1500, 1)"
+        )
+        conn.commit()
+        writer = OfflineWriter(conn)
+        assert writer.max_revlog_id_for_card(90010) == 3000
+
+    def test_get_unpushed_revlog_rows(self):
+        """get_unpushed_revlog_rows returns rows with id > after_id."""
+        from app.models.srs_item import RevlogRow
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        coll_id = db.get_collocation_id_by_guid(guid)
+
+        row1_ms = 1000
+        row2_ms = 2000
+        row3_ms = 3000
+        for ms, bc, rk in [(row1_ms, 3, 1), (row2_ms, 1, 1), (row3_ms, 3, 2)]:
+            db.append_revlog(
+                RevlogRow(
+                    id=ms,
+                    collocation_id=coll_id,
+                    direction=Direction.RECOGNITION,
+                    button_chosen=bc,
+                    interval=7,
+                    last_interval=5 if rk == 1 else -60,
+                    factor=0,
+                    taken_millis=1500,
+                    review_kind=rk,
+                    anki_card_id=rec_cid,
+                )
+            )
+
+        # After id=1000 → rows 2000 and 3000 are unpushed
+        rows = db.get_unpushed_revlog_rows(coll_id, Direction.RECOGNITION, 1000)
+        assert len(rows) == 2
+        assert rows[0].id == 2000
+        assert rows[1].id == 3000
+
+        # After id=2500 → only row 3000 is unpushed
+        rows = db.get_unpushed_revlog_rows(coll_id, Direction.RECOGNITION, 2500)
+        assert len(rows) == 1
+        assert rows[0].id == 3000
+
+        # After id=3000 → nothing unpushed
+        rows = db.get_unpushed_revlog_rows(coll_id, Direction.RECOGNITION, 3000)
+        assert len(rows) == 0
+
+    def test_push_revlog_skips_when_anki_card_id_is_none(self):
+        """_push_revlog_for_direction returns immediately when
+        ds.anki_card_id is None (card not yet created in Anki)."""
+        db = _make_tt_db()
+        guid, _, _, _ = _add_banka_with_anki_ids(db)
+        writer = FakeWriter()
+        sync = AnkiSync(db=db, _reader=FakeReader(), _writer=writer)
+
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            anki_card_id=None,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            stability=10.0,
+            difficulty=4.8,
+            due_at=datetime.combine(date.today() + timedelta(days=10), time(4, 0), tzinfo=UTC),
+            last_rating=3,
+        )
+        sync._push_revlog_for_direction(guid, Direction.RECOGNITION, ds)
+        # No write_revlog calls — early return
+        assert not any(c[0] == "write_revlog" for c in writer.calls)
+
+    def test_push_revlog_skips_when_coll_id_is_none(self):
+        """_push_revlog_for_direction returns immediately when
+        get_collocation_id_by_guid returns None (orphaned GUID)."""
+        db = _make_tt_db()
+        writer = FakeWriter()
+        sync = AnkiSync(db=db, _reader=FakeReader(), _writer=writer)
+
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            anki_card_id=99999,
+            reps=3,
+            lapses=0,
+            state=SRSState.REVIEW,
+            stability=10.0,
+            difficulty=4.8,
+            due_at=datetime.combine(date.today() + timedelta(days=10), time(4, 0), tzinfo=UTC),
+            last_rating=3,
+        )
+        sync._push_revlog_for_direction("nonexistent-guid", Direction.RECOGNITION, ds)
+        assert not any(c[0] == "write_revlog" for c in writer.calls)

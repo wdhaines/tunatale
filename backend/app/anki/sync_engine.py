@@ -995,6 +995,77 @@ class AnkiSync:
             review_count = self._writer.count_reviews_today_for_deck(deck_id, today_4am_ms)
             self._writer.set_deck_studied_today(deck_id, day_index, new_count, review_count)
 
+    def _push_revlog_for_direction(self, guid: str, direction: Direction, ds: DirectionState) -> None:
+        """Push unpushed tt_revlog rows for *direction* to Anki's revlog.
+
+        Per-grade push: each tt_revlog row with id > MAX(revlog.id) for the
+        card is inserted at its own grade-time id (Layer 74 collision guard).
+        Verbatim row data replaces the old _derive_revlog_shape reconstruction,
+        preserving intermediate grades (e.g. a lapse followed by a relearn
+        step) that the old collapsed-per-direction approach lost.
+
+        Reps/lapses are bumped once after all inserts with aggregated counts:
+        reps += rows inserted, lapses += rows where review_kind=1 AND
+        button_chosen=1 (lapse on a review-footing card).
+
+        Falls back to _derive_revlog_shape when there are no candidate rows
+        above the watermark (pre-Layer-78 history, test helpers, or the
+        accepted phone-grade-newer edge where a phone grade empties the
+        candidate set).
+        """
+        if ds.anki_card_id is None:
+            return
+        coll_id = self._db.get_collocation_id_by_guid(guid)
+        if coll_id is None:
+            return
+        max_anki_id = self._writer.max_revlog_id_for_card(ds.anki_card_id)
+        rows = self._db.get_unpushed_revlog_rows(coll_id, direction, max_anki_id)
+        if rows:
+            lapse_count = sum(1 for r in rows if r.review_kind == 1 and r.button_chosen == 1)
+            for i, row in enumerate(rows):
+                is_last = i == len(rows) - 1
+                self._writer.write_revlog(
+                    cid=ds.anki_card_id,
+                    ease=row.button_chosen,
+                    ivl=row.interval,
+                    last_ivl=row.last_interval,
+                    factor=row.factor,
+                    time_ms=row.taken_millis,
+                    type_=row.review_kind,
+                    preferred_id=row.id,
+                    is_lapse=(row.review_kind == 1 and row.button_chosen == 1),
+                    reps_bump=len(rows) if is_last else 0,
+                    lapses_bump=lapse_count if is_last else 0,
+                    ds_reps=ds.reps if is_last else None,
+                    ds_lapses=ds.lapses if is_last else None,
+                )
+        else:
+            learn_steps, _ = resolve_learning_steps(self._db)
+            relearn_steps, _ = resolve_relearning_steps(self._db)
+            type_, ivl, last_ivl = _derive_revlog_shape(ds, learn_steps, relearn_steps)
+            ease = ds.last_rating if ds.last_rating is not None else 3
+            # Anki writes factor = round(difficulty_shifted × 1000) where
+            # difficulty_shifted = (difficulty − 1.0)/9.0 + 0.1 (rslib/src/card/mod.rs:115-125).
+            # No clamp: Anki stores the raw shifted value; for real FSRS difficulty [1, 10]
+            # the result is always in [100, 1100].
+            difficulty_shifted = (ds.difficulty - 1.0) / 9.0 + 0.1
+            factor = round(difficulty_shifted * 1000)
+            preferred_id = int(ds.last_review.timestamp() * 1000) if ds.last_review else None
+            is_lapse = ds.prior_state == SRSState.REVIEW and ds.last_rating == Rating.AGAIN.value
+            self._writer.write_revlog(
+                cid=ds.anki_card_id,
+                ease=ease,
+                ivl=ivl,
+                last_ivl=last_ivl,
+                factor=factor,
+                time_ms=ds.last_review_time_ms,
+                type_=type_,
+                preferred_id=preferred_id,
+                is_lapse=is_lapse,
+                ds_reps=ds.reps,
+                ds_lapses=ds.lapses,
+            )
+
     def sync_push(self, dry_run: bool = False, force_fsrs: bool = False) -> PushReport:
         # Deferred: lives in app.anki.sync so it reads the patched _MEDIA_DIR.
         from app.anki.sync import _copy_tt_media_to_anki
@@ -1134,27 +1205,7 @@ class AnkiSync:
                     self._writer.set_due_date([ds.anki_card_id], days_str)
 
                 if ds.reps > 0:
-                    learn_steps, _ = resolve_learning_steps(self._db)
-                    relearn_steps, _ = resolve_relearning_steps(self._db)
-                    type_, ivl, last_ivl = _derive_revlog_shape(ds, learn_steps, relearn_steps)
-                    ease = ds.last_rating if ds.last_rating is not None else 3
-                    factor = max(1300, min(13000, round(ds.difficulty * 1000)))
-                    # Use last_review timestamp for revlog ID
-                    preferred_id = int(ds.last_review.timestamp() * 1000) if ds.last_review else None
-                    is_lapse = ds.prior_state == SRSState.REVIEW and ds.last_rating == Rating.AGAIN.value
-                    self._writer.write_revlog(
-                        cid=ds.anki_card_id,
-                        ease=ease,
-                        ivl=ivl,
-                        last_ivl=last_ivl,
-                        factor=factor,
-                        time_ms=ds.last_review_time_ms,
-                        type_=type_,
-                        preferred_id=preferred_id,
-                        is_lapse=is_lapse,
-                        ds_reps=ds.reps,
-                        ds_lapses=ds.lapses,
-                    )
+                    self._push_revlog_for_direction(guid, direction, ds)
                 schema_ok = self._anki_col_ver is None or self._anki_col_ver <= KNOWN_ANKI_SCHEMA_VER
                 if schema_ok and (ds.reps > 0 or row_force_fsrs):
                     # Layer 70: every grade push carries the post-grade FSRS
@@ -1186,26 +1237,7 @@ class AnkiSync:
                 continue
             if not dry_run:
                 if ds.reps > 0:
-                    learn_steps, _ = resolve_learning_steps(self._db)
-                    relearn_steps, _ = resolve_relearning_steps(self._db)
-                    type_, ivl, last_ivl = _derive_revlog_shape(ds, learn_steps, relearn_steps)
-                    ease = ds.last_rating if ds.last_rating is not None else 3
-                    factor = max(1300, min(13000, round(ds.difficulty * 1000)))
-                    preferred_id = int(ds.last_review.timestamp() * 1000) if ds.last_review else None
-                    is_lapse = ds.prior_state == SRSState.REVIEW and ds.last_rating == Rating.AGAIN.value
-                    self._writer.write_revlog(
-                        cid=ds.anki_card_id,
-                        ease=ease,
-                        ivl=ivl,
-                        last_ivl=last_ivl,
-                        factor=factor,
-                        time_ms=ds.last_review_time_ms,
-                        type_=type_,
-                        preferred_id=preferred_id,
-                        is_lapse=is_lapse,
-                        ds_reps=ds.reps,
-                        ds_lapses=ds.lapses,
-                    )
+                    self._push_revlog_for_direction(guid, direction, ds)
                 # Clear last_rating so it doesn't re-fire next sync
                 self._db.mark_direction_clean(guid, direction)
             report.directions_pushed += 1

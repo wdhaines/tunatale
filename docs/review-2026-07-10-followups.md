@@ -209,7 +209,7 @@ Mobile-data cost only — nothing is broken.
   support. When adding an API field, update the fixtures to the new shape AND keep
   one explicitly-named legacy fixture with degradation assertions (done 2026-07-10).
 
-## 7. sync_push collapses intermediate TT grades out of Anki's revlog (MED-LOW, parity — BP brief, orchestrator review required before commit)
+## 7. sync_push collapses intermediate TT grades out of Anki's revlog (MED-LOW, parity — BP brief, orchestrator review required before commit) — DONE (2026-07-10, Layer 80)
 
 **Problem (observed live 2026-07-10, ~16:00).** TT review badge 45 vs Anki 46 after
 the 15:59 sync. TT counted 5 review answers today; Anki's rebuilt studied-today
@@ -260,3 +260,56 @@ review footing) — so the rows can be pushed verbatim instead of reconstructed.
 **Definition of done**: full `./test.sh` + peer-sync suite output pasted;
 orchestrator (Fable) reviews the diff before commit — this is inside the Anki-write
 danger zone (`.claude/rules/anki-sync.md` envelope applies).
+
+Big Pickle has implemented item 7 of docs/review-2026-07-10-followups.md
+(sync_push must push one Anki revlog row per TT grade instead of one collapsed
+row per dirty direction). Review its work before anything is committed. This is
+inside the Anki-write danger zone — hold a high bar.
+
+Read first (in this order):
+1. docs/review-2026-07-10-followups.md §7 — the brief; its "decisions pre-made"
+   and "do NOT touch" lists are the review contract.
+2. docs/anki-parity-layers.md — Layer 74 (preferred_id / self-echo suppression)
+   and Layer 78 (why tt_revlog rows are now Anki-faithful and thus pushable).
+3. .claude/rules/anki-sync.md — required writes (usn=-1, mod, col.mod; NEVER
+   col.usn) and the one-sync-sequence rule.
+
+Then verify, in the diff and by running things yourself — do not accept pasted
+output as the only evidence:
+
+A. Mechanism. Candidate rows per pushed direction must be tt_revlog rows with
+   id > MAX(revlog.id) for that cid in the Anki collection; each inserted at its
+   own tt_revlog.id via the ONE existing writer path (generalized
+   OfflineWriter.write_revlog_entry with the _revlog_id_exists collision guard),
+   mapping ease=button_chosen, ivl=interval, lastIvl=last_interval,
+   time=taken_millis, type=review_kind, usn=-1. A second/parallel insert path is
+   an automatic reject (the b0a4b8a class). reps/lapses must bump per inserted
+   row, not once per push.
+B. Do-not-touch list respected: cards-table state writes, sync_pull ingest and
+   held_ids, col.usn, _derive_revlog_shape's remaining users. git diff should
+   show NO changes there beyond the reps/lapses increment relocation.
+C. Guardrail tests from the brief all exist (two-grades-both-rows unit test;
+   TestSociableSync-style outcome test asserting count_reviews_today_for_deck ==
+   count_reviews_completed_today; idempotent re-push; peer-sync round-trip
+   proving no duplicate re-ingest and no reviews_today inflation — the Layer 74
+   signature). Each must be sabotage-drilled: disable the mechanism it guards,
+   watch it go red, restore. If BP claims a drill, re-run at least one yourself.
+D. BP's recurring gaps (memory: feedback_bp_review_checklist_recurring_gaps) —
+   check each explicitly: (1) did it run the FULL ./test.sh, not just backend
+   pytest? Run it yourself regardless and paste the tail. (2) Run
+   `cd backend && uv run pytest tests/test_anki_peer_sync_selfhost.py
+   --run-peer-sync --no-cov -v` yourself — mandatory for this change. (3) Any
+   new `patch("app.…")` must be a true boundary, not the integration under test;
+   mock_grandfather.txt must only shrink. (4) Any new `# pragma: no cover` is
+   suspect — read the justification skeptically. (5) Tests must pin Anki-shaped
+   outcomes (rows in the collection file), not TT's own intermediate values.
+E. Edge honesty: the accepted phone-grade-newer edge must be documented, not
+   "solved" with extra machinery; pre-Layer-78 malformed history must be
+   excluded by the MAX(id) bound (verify with a seeded old bad row: kind=2,
+   negative lastIvl, id below the collapsed push — it must NOT be pushed).
+F. Deliverables: a new Layer entry in docs/anki-parity-layers.md, §7 marked DONE
+   in the followups doc, and the commit message stating what was verified and
+   how (Delivering convention in CLAUDE.md).
+
+Report findings ranked by severity with file:line references. Do not fix
+anything yourself unless the user asks — your deliverable is the assessment.

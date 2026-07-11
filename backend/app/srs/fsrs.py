@@ -1565,6 +1565,13 @@ def build_revlog_row(
     """
     if now is None:
         now = datetime.now(tz=UTC)
+    # Anki writes factor = round(difficulty_shifted × 1000) where
+    # difficulty_shifted = (difficulty − 1.0)/9.0 + 0.1, computed from the
+    # post-answer FSRS difficulty (rslib/src/card/mod.rs:115-125,
+    # scheduler/answering/review.rs:29-36).  Use the f32 rounding helper
+    # (Layer 59) for bit-exact parity.
+    difficulty_shifted = (new_dir.difficulty - 1.0) / 9.0 + 0.1
+    factor = int(_round_to_places_f32(difficulty_shifted * 1000, 0))
     return RevlogRow(
         id=int(now.timestamp() * 1000),
         collocation_id=collocation_id,
@@ -1572,7 +1579,7 @@ def build_revlog_row(
         button_chosen=rating.value,
         interval=_compute_revlog_interval(new_dir, now),
         last_interval=_compute_revlog_last_interval(prev, col_crt),
-        factor=0,
+        factor=factor,
         taken_millis=time_ms,
         review_kind=_compute_review_kind(prev.state),
         anki_card_id=prev.anki_card_id,

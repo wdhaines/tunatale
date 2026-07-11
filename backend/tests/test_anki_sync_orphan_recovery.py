@@ -62,6 +62,8 @@ class FakeWriter:
         is_lapse=False,
         ds_reps=None,
         ds_lapses=None,
+        reps_bump=None,
+        lapses_bump=None,
     ):
         self.revlogs.append(
             {
@@ -89,6 +91,9 @@ class FakeWriter:
         desired_retention=None,
     ):
         self.memory_state_calls.append((card_id, stability, difficulty, last_review_secs))
+
+    def max_revlog_id_for_card(self, card_id: int) -> int:
+        return 0
 
     def bury_siblings(
         self,
