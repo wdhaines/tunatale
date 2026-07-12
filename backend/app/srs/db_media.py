@@ -56,15 +56,17 @@ class DbMediaMixin:
         anki_filename: str,
         sha256: str,
         size_bytes: int,
+        *,
+        mtime_ns: int | None = None,
     ) -> int:
         """Insert a media row. Returns the new media id."""
         with self._get_conn() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO media (collocation_id, kind, filename, path, anki_filename, sha256, bytes)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO media (collocation_id, kind, filename, path, anki_filename, sha256, bytes, mtime_ns)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (collocation_id, kind, filename, path, anki_filename, sha256, size_bytes),
+                (collocation_id, kind, filename, path, anki_filename, sha256, size_bytes, mtime_ns),
             )
             self._commit(conn)
             return cursor.lastrowid
@@ -151,11 +153,40 @@ class DbMediaMixin:
             ).fetchone()
         return dict(row) if row is not None else None
 
-    def update_media_file(self, row_id: int, sha256: str, size_bytes: int) -> None:
-        """Update sha256 and size_bytes for an existing media row (used by refresh-media)."""
+    def update_media_file(self, row_id: int, sha256: str, size_bytes: int, *, mtime_ns: int | None = None) -> None:
+        """Update sha256, size_bytes, and optionally mtime_ns for an existing media row."""
+        with self._get_conn() as conn:
+            if mtime_ns is not None:
+                conn.execute(
+                    "UPDATE media SET sha256 = ?, bytes = ?, mtime_ns = ? WHERE id = ?",
+                    (sha256, size_bytes, mtime_ns, row_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE media SET sha256 = ?, bytes = ? WHERE id = ?",
+                    (sha256, size_bytes, row_id),
+                )
+            self._commit(conn)
+
+    def list_media_by_collocation_and_filename(self) -> dict[tuple[int, str], dict[str, Any]]:
+        """Return all media rows keyed by ``(collocation_id, anki_filename)``.
+
+        Used by the media-refresh path to batch-load every media row in one
+        query instead of per-file ``find_media_by_anki_filename`` calls.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT * FROM media WHERE anki_filename IS NOT NULL").fetchall()
+        return {(row["collocation_id"], row["anki_filename"]): dict(row) for row in rows}
+
+    def update_media_stat(self, row_id: int, *, mtime_ns: int, size_bytes: int) -> None:
+        """Stamp mtime_ns and size_bytes on an existing media row without changing sha256.
+
+        Used by the mtime-skip path when content hash matches but the stat
+        metadata was stale or NULL (e.g. first post-migration warm-up).
+        """
         with self._get_conn() as conn:
             conn.execute(
-                "UPDATE media SET sha256 = ?, bytes = ? WHERE id = ?",
-                (sha256, size_bytes, row_id),
+                "UPDATE media SET mtime_ns = ?, bytes = ? WHERE id = ?",
+                (mtime_ns, size_bytes, row_id),
             )
             self._commit(conn)

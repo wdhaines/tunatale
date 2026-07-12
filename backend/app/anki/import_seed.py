@@ -46,6 +46,8 @@ def _refresh_media_for_collocation(
     media_dir: Path,
     db: SRSDatabase,
     results: dict[str, Any],
+    *,
+    preloaded_media: dict[tuple[int, str], dict[str, Any]] | None = None,
 ) -> None:
     """Copy media files for one collocation from Anki media dir to TT media dir.
 
@@ -72,20 +74,36 @@ def _refresh_media_for_collocation(
         src = anki_media_path / filename
         if not src.exists():
             continue
-        existing_row = db.find_media_by_anki_filename(filename, collocation_id=coll_id)
+        if preloaded_media is not None:
+            existing_row = preloaded_media.get((coll_id, filename))
+        else:
+            existing_row = db.find_media_by_anki_filename(filename, collocation_id=coll_id)
         if existing_row is not None:
+            stat = src.stat()
+            if (
+                existing_row["mtime_ns"] is not None
+                and existing_row["mtime_ns"] == stat.st_mtime_ns
+                and existing_row["bytes"] == stat.st_size
+            ):
+                results["unchanged_media"] = results.get("unchanged_media", 0) + 1
+                current_by_kind.setdefault(existing_row["kind"], set()).add(filename)
+                continue
             current_sha = compute_sha256(src)
             if current_sha == existing_row["sha256"]:
+                db.update_media_stat(existing_row["id"], mtime_ns=stat.st_mtime_ns, size_bytes=stat.st_size)
                 results["unchanged_media"] = results.get("unchanged_media", 0) + 1
                 current_by_kind.setdefault(existing_row["kind"], set()).add(filename)
                 continue
             dest_path = media_dir / filename
             shutil.copy2(src, dest_path)
-            db.update_media_file(existing_row["id"], sha256=current_sha, size_bytes=src.stat().st_size)
+            db.update_media_file(
+                existing_row["id"], sha256=current_sha, size_bytes=stat.st_size, mtime_ns=stat.st_mtime_ns
+            )
             results["updated_media"] += 1
             current_by_kind.setdefault(existing_row["kind"], set()).add(filename)
             continue
         copy_result = copy_media_file(src, media_dir)
+        stat = src.stat()
         db.add_media(
             coll_id,
             kind=copy_result.kind,
@@ -94,6 +112,7 @@ def _refresh_media_for_collocation(
             anki_filename=filename,
             sha256=copy_result.sha256,
             size_bytes=copy_result.size_bytes,
+            mtime_ns=stat.st_mtime_ns,
         )
         results["new_media"] += 1
         current_by_kind.setdefault(copy_result.kind, set()).add(filename)
@@ -158,11 +177,21 @@ def refresh_media_from_conn(
     notes = fetch_notes_for_deck(conn, deck_id)
 
     linked = db.list_linked_anki_note_ids()
-    for note in notes:
-        coll_id = linked.get(note.id)
-        if coll_id is None:
-            continue
-        _refresh_media_for_collocation(anki_media_path, note.fields, coll_id, media_dir, db, results)
+    preloaded_media = db.list_media_by_collocation_and_filename()
+    with db.begin_transaction():
+        for note in notes:
+            coll_id = linked.get(note.id)
+            if coll_id is None:
+                continue
+            _refresh_media_for_collocation(
+                anki_media_path,
+                note.fields,
+                coll_id,
+                media_dir,
+                db,
+                results,
+                preloaded_media=preloaded_media,
+            )
 
     return results
 

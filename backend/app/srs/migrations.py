@@ -16,7 +16,7 @@ from app.srs.function_words import format_morphology_hint
 
 _logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 36
+CURRENT_VERSION = 37
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -1127,6 +1127,22 @@ def migrate_v35_to_v36(conn: sqlite3.Connection) -> None:
     _set_version(conn, 36)
 
 
+def migrate_v36_to_v37(conn: sqlite3.Connection) -> None:
+    """Add mtime_ns to media table + index on collocations.anki_note_id.
+
+    ``mtime_ns`` enables the media-refresh optimisation: skip SHA256
+    re-hashing when ``(size_bytes, mtime_ns)`` haven't changed since last
+    sync. Nullable; pre-migration rows get NULL (self-healing warm-up).
+
+    The ``anki_note_id`` index speeds up the peer-sync reconcile's
+    ``get_collocation_by_anki_note_id`` lookups (previously unindexed).
+    """
+    if not _column_exists(conn, "media", "mtime_ns"):
+        conn.execute("ALTER TABLE media ADD COLUMN mtime_ns INTEGER")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_collocations_anki_note_id ON collocations(anki_note_id)")
+    _set_version(conn, 37)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -1164,6 +1180,7 @@ _MIGRATIONS = {
     33: migrate_v33_to_v34,
     34: migrate_v34_to_v35,
     35: migrate_v35_to_v36,
+    36: migrate_v36_to_v37,
 }
 
 

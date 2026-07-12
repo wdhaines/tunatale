@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 36
+        assert CURRENT_VERSION == 37
 
     def test_migrates_v35_to_v36_reclassifies_variant_cards(self, tmp_path):
         """v36 resets word_count=1 for comma-separated spelling-variant fronts.
