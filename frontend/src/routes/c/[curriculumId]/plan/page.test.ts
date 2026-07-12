@@ -39,7 +39,7 @@ vi.mock("$lib/stores/rateLimit.svelte", () => ({
 
 // Keep RateLimitWidget mocked (deeply nested store)
 vi.mock("$lib/components/RateLimitWidget.svelte", () => ({
-  default: ({}) => "<span>LLM —</span>",
+  default: (_props: unknown) => "<span>LLM —</span>",
 }));
 
 import { api } from "$lib/api";
@@ -53,7 +53,6 @@ const mockPlanTurn = vi.mocked(api.planTurn);
 const mockCommitPlan = vi.mocked(api.commitPlan);
 const mockResetPlanChat = vi.mocked(api.resetPlanChat);
 const mockPipelineStoreStart = vi.mocked(pipelineStore.start);
-const mockPipelineStoreStop = vi.mocked(pipelineStore.stop);
 
 const day = (n: number): DayPlan => ({
   day: n,

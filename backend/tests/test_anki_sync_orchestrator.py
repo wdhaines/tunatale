@@ -6,7 +6,9 @@ Covers both Phase 3 (bracket orchestration) and Phase 5 (retargeting).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -29,13 +31,18 @@ def _mock_run(data: dict) -> subprocess.CompletedProcess:
 
 @pytest.fixture(autouse=True)
 def _clear_auth_cache():
-    """The hkey cache is a process-global; reset it around every test so login
-    expectations (subprocess counts) don't leak between cases."""
+    """The hkey cache and driver process are process-globals; reset them around every
+    test so login expectations (subprocess counts) don't leak between cases."""
     import app.anki.sync_orchestrator as so
 
     so._AUTH_CACHE = None
+    # Kill any leftover persistent driver process from a prior test.
+    with so._DRIVER_LOCK:
+        so._kill_driver()
     yield
     so._AUTH_CACHE = None
+    with so._DRIVER_LOCK:
+        so._kill_driver()
 
 
 class TestPeerSync:
@@ -56,7 +63,6 @@ class TestPeerSync:
         different, empty db (real db never pull-merged; soak mode mislabels as
         'legacy'). _tt_settings must hand main() an absolute, CWD-independent path.
         """
-        import os
 
         from app.anki.sync_orchestrator import _tt_settings
 
@@ -368,14 +374,30 @@ class TestHasPendingPush:
 class TestDriverInvalidJson:
     def test_non_json_output_raises(self):
         """Non-JSON driver output surfaces as PeerSyncError."""
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="not json", stderr=""),
-            ),
-            pytest.raises(PeerSyncError, match="not valid JSON"),
-        ):
-            _run_driver_wrapper({"op": "login"})
+        import app.anki.sync_orchestrator as so
+
+        # Patch _driver_cmd so both the initial and retry spawns use a fake
+        # that writes non-JSON to stdout.  Without this, the retry would
+        # spawn the real driver (needs anki) and hang.
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(
+            so,
+            "_driver_cmd",
+            lambda: [
+                sys.executable,
+                "-c",
+                "import sys,os;os.environ['QT_QPA_PLATFORM']='offscreen'\n"
+                "_o=sys.stdout;sys.stdout=sys.stderr\n"
+                "for line in sys.stdin:_o.write('not json\\n');_o.flush()\n",
+            ],
+        )
+        try:
+            with pytest.raises(PeerSyncError, match="not valid JSON"):
+                so._run_driver({"op": "login"})
+        finally:
+            monkeypatch.undo()
+            with so._DRIVER_LOCK:
+                so._kill_driver()
 
 
 def _run_driver_wrapper(command: dict) -> dict:
@@ -425,53 +447,52 @@ def _make_report(**overrides):
 
 
 class TestBootstrap:
-    def test_bootstrap_creates_and_downloads(self, tmp_path):
+    def test_bootstrap_creates_and_downloads(self, tmp_path, monkeypatch):
         """bootstrap_collection creates collection + full_downloads when file missing."""
+        import app.anki.sync_orchestrator as so
+
         collection_path = tmp_path / "tt_collection.anki2"
         assert not collection_path.exists()
 
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[
-                    _mock_run(AUTH_RESPONSE),
-                    _mock_run({"ok": True}),
-                    _mock_run({"ok": True}),
-                ],
-            ) as mock_run,
-            patch.object(settings, "tt_collection_path", collection_path),
-        ):
+        op_log: list[dict] = []
+        responses = iter([AUTH_RESPONSE, {"ok": True}, {"ok": True}])
+
+        def _fake_driver(command: dict, timeout: int = 120) -> dict:
+            op_log.append(command)
+            return next(responses)
+
+        monkeypatch.setattr(so, "_run_driver", _fake_driver)
+        with patch.object(settings, "tt_collection_path", collection_path):
             bootstrap_collection()
 
-        assert mock_run.call_count == 3
-        calls = [json.loads(c.kwargs["input"]) for c in mock_run.call_args_list]
-        assert calls[0]["op"] == "login"
-        assert calls[1]["op"] == "create_collection"
-        assert calls[1]["collection_path"] == str(collection_path)
-        assert calls[2]["op"] == "full_download"
-        assert calls[2]["collection_path"] == str(collection_path)
+        assert len(op_log) == 3
+        assert op_log[0]["op"] == "login"
+        assert op_log[1]["op"] == "create_collection"
+        assert op_log[1]["collection_path"] == str(collection_path)
+        assert op_log[2]["op"] == "full_download"
+        assert op_log[2]["collection_path"] == str(collection_path)
 
-    def test_bootstrap_skips_create_when_exists(self, tmp_path):
+    def test_bootstrap_skips_create_when_exists(self, tmp_path, monkeypatch):
         """bootstrap_collection skips create when file already exists."""
+        import app.anki.sync_orchestrator as so
+
         collection_path = tmp_path / "tt_collection.anki2"
         collection_path.touch()
 
-        with (
-            patch(
-                "app.anki.sync_orchestrator.subprocess.run",
-                side_effect=[
-                    _mock_run(AUTH_RESPONSE),
-                    _mock_run({"ok": True}),
-                ],
-            ) as mock_run,
-            patch.object(settings, "tt_collection_path", collection_path),
-        ):
+        op_log: list[dict] = []
+        responses = iter([AUTH_RESPONSE, {"ok": True}])
+
+        def _fake_driver(command: dict, timeout: int = 120) -> dict:
+            op_log.append(command)
+            return next(responses)
+
+        monkeypatch.setattr(so, "_run_driver", _fake_driver)
+        with patch.object(settings, "tt_collection_path", collection_path):
             bootstrap_collection()
 
-        assert mock_run.call_count == 2
-        calls = [json.loads(c.kwargs["input"]) for c in mock_run.call_args_list]
-        assert calls[0]["op"] == "login"
-        assert calls[1]["op"] == "full_download"
+        assert len(op_log) == 2
+        assert op_log[0]["op"] == "login"
+        assert op_log[1]["op"] == "full_download"
 
 
 class TestSyncPassword:
@@ -597,6 +618,8 @@ def fake_driver(monkeypatch):
             return AUTH_RESPONSE
         if op == "sync":
             return NORMAL_SYNC
+        if op == "media_pending":
+            return {"pending": 0}
         return {"error": f"unknown op: {op}"}
 
     monkeypatch.setattr(so, "_run_driver", _fake)
@@ -671,7 +694,7 @@ class TestSociableSync:
         report = peer_sync(dry_run=False)
 
         ops = [c["op"] for c in fake_driver]
-        assert ops == ["login", "sync", "sync"], f"Expected login+pull+push, got {ops}"
+        assert ops == ["login", "sync", "media_pending", "sync"], f"Expected login+pull+media_pending+push, got {ops}"
 
         assert report.tt_push_pull_exit == 0
 
@@ -735,7 +758,7 @@ class TestSociableSync:
 
         assert report.tt_push_pull_exit == 0
         ops = [c["op"] for c in fake_driver]
-        assert ops == ["login", "sync", "sync"], (
+        assert ops == ["login", "sync", "media_pending", "sync"], (
             f"push leg should fire for the 'no' db's pending change, got {ops} "
             "(login+sync only ⇒ peer_sync reconciled the wrong db)"
         )
@@ -829,7 +852,7 @@ class TestSociableSync:
         import app.anki.sync_orchestrator as so
 
         op_log: list[dict] = []
-        responses = iter([AUTH_RESPONSE, NORMAL_SYNC, FULL_SYNC])
+        responses = iter([AUTH_RESPONSE, NORMAL_SYNC, {"pending": 0}, FULL_SYNC])
 
         def _fake(command: dict, timeout: int = 120) -> dict:
             op_log.append(command)
@@ -838,7 +861,7 @@ class TestSociableSync:
         monkeypatch.setattr(so, "_run_driver", _fake)
         with pytest.raises(PeerSyncError, match="FULL_SYNC"):
             peer_sync(dry_run=False)
-        assert [c["op"] for c in op_log] == ["login", "sync", "sync"]
+        assert [c["op"] for c in op_log] == ["login", "sync", "media_pending", "sync"]
 
     def test_full_sync_error_message_is_actionable(self):
         """The FULL_SYNC abort names the cause and the exact bootstrap fix command."""
@@ -864,17 +887,14 @@ class TestSociableSync:
     # ═════════════════════════════════════════════════════════════════════
 
     def test_driver_error_surfaces(self, monkeypatch):
-        """Driver error surfaces as PeerSyncError — exercises real _run_driver."""
+        """Driver error surfaces as PeerSyncError."""
         import app.anki.sync_orchestrator as so
 
-        def _fake_run(*args, input: str | None = None, **kwargs):
-            return subprocess.CompletedProcess(
-                args=[], returncode=0, stdout=json.dumps({"error": "collection not found"}), stderr=""
-            )
+        def _fake_driver(command: dict, timeout: int = 120) -> dict:
+            raise PeerSyncError("Driver error: collection not found")
 
-        monkeypatch.setattr(so.subprocess, "run", _fake_run)
+        monkeypatch.setattr(so, "_run_driver", _fake_driver)
 
-        # _get_auth calls _run_driver which will hit the fake subprocess
         with pytest.raises(PeerSyncError, match="collection not found"):
             peer_sync(dry_run=False)
 
@@ -1071,7 +1091,7 @@ class TestSociableSync:
 
         report = peer_sync(dry_run=False)
 
-        assert [c["op"] for c in fake_driver] == ["login", "sync", "sync"]
+        assert [c["op"] for c in fake_driver] == ["login", "sync", "media_pending", "sync"]
         assert report.push_message is not None
 
     # ═════════════════════════════════════════════════════════════════════
@@ -1110,6 +1130,7 @@ class TestSociableSync:
             "reconcile",
             "pending_check",
             "mirror_pre_push",
+            "media_pending_check",
             "push",
             "total",
         }

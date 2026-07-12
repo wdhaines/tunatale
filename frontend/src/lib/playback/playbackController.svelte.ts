@@ -1,5 +1,5 @@
 import { untrack } from "svelte";
-import type { Cue, CueRef, LessonAudio, SectionAudio } from "$lib/api";
+import type { Cue, CueRef, LessonAudio } from "$lib/api";
 
 export interface PlaybackController {
   readonly currentCue: Cue | null;

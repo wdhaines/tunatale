@@ -37,7 +37,7 @@ except ImportError as e:
 
 def _emit(result: dict) -> None:
     """Write the one-and-only JSON result line to the real stdout."""
-    print(json.dumps(result), file=_REAL_STDOUT)
+    print(json.dumps(result), file=_REAL_STDOUT, flush=True)
 
 
 def _serialize_sync_auth(auth: Any) -> dict:
@@ -81,18 +81,21 @@ def _op_login(op: dict) -> dict:
             col.close()
 
 
-def _await_media_sync(col, timeout_s: float = 120.0, poll_s: float = 0.2) -> dict:
+def _await_media_sync(col, timeout_s: float = 120.0, poll_s: float = 0.05) -> dict:
     """Poll media_sync_status().active until the background media sync finishes.
 
-    Returns observability for the spike: whether we ever saw active=True (proves
-    the sync actually started), poll count, elapsed seconds, and any error (the
-    status call throws if media sync failed). Does NOT close col — caller owns it.
+    Starts at *poll_s* (default 50ms) and backs off ×1.5 per poll, capped at
+    0.2s.  Returns observability for the spike: whether we ever saw active=True
+    (proves the sync actually started), poll count, elapsed seconds, and any
+    error (the status call throws if media sync failed). Does NOT close col —
+    caller owns it.
     """
     start = time.time()
     deadline = start + timeout_s
     polls = 0
     saw_active = False
     error: str | None = None
+    current_poll = poll_s
     while time.time() < deadline:
         try:
             status = col.media_sync_status()
@@ -106,7 +109,8 @@ def _await_media_sync(col, timeout_s: float = 120.0, poll_s: float = 0.2) -> dic
             break  # was active, now done
         elif polls > 5:
             break  # never went active after a few polls → nothing to sync (or didn't start)
-        time.sleep(poll_s)
+        time.sleep(current_poll)
+        current_poll = min(current_poll * 1.5, 0.2)
     return {
         "completed": error is None,
         "saw_active": saw_active,
@@ -320,6 +324,50 @@ def _op_create_collection(op: dict) -> dict:
         return {"error": str(e)}
 
 
+def _op_media_pending(op: dict) -> dict:
+    """Count media files needing upload.
+
+    Checks two sources:
+    1. Dirty entries in ``<collection>.media.db2`` (``dirty = 1``).
+    2. Files present in the media directory but absent from the sidecar
+       (untracked files placed by the offline reconcile).
+
+    Returns ``{"pending": <count>}`` or ``{"pending": -1}`` when unreadable/missing.
+    """
+    collection_path = Path(op["collection_path"])
+    media_db = Path(str(collection_path).replace(".anki2", ".media.db2"))
+    media_dir = Path(str(collection_path).replace(".anki2", ".media"))
+
+    if not media_db.exists():
+        return {"pending": -1}
+    try:
+        import sqlite3
+
+        con = sqlite3.connect(f"file:{media_db}?mode=ro", uri=True)
+        try:
+            row = con.execute("SELECT COUNT(*) FROM media WHERE dirty = 1").fetchone()
+            dirty_count = row[0] if row else 0
+            if dirty_count > 0:
+                return {"pending": dirty_count}
+
+            if media_dir.is_dir():
+                tracked = {r[0] for r in con.execute("SELECT fname FROM media").fetchall()}
+                untracked = sum(1 for f in media_dir.iterdir() if f.is_file() and f.name not in tracked)
+                if untracked > 0:
+                    return {"pending": untracked}
+
+            return {"pending": 0}
+        finally:
+            con.close()
+    except Exception:
+        return {"pending": -1}
+
+
+def _op_shutdown(_op: dict) -> dict:
+    """Graceful shutdown — emit ok and signal the loop to exit."""
+    return {"ok": True}
+
+
 _OPERATIONS: dict[str, Any] = {
     "login": _op_login,
     "sync": _op_sync,
@@ -329,36 +377,55 @@ _OPERATIONS: dict[str, Any] = {
     "add_note": _op_add_note,
     "add_media_note": _op_add_media_note,
     "media_present": _op_media_present,
+    "media_pending": _op_media_pending,
     "update_note_media": _op_update_note_media,
     "answer_card": _op_answer_card,
     "get_card": _op_get_card,
+    "shutdown": _op_shutdown,
 }
 
 
-def main() -> None:
-    if _IMPORT_ERROR:
-        _emit({"error": f"anki not available: {_IMPORT_ERROR}"})
-        return
+_NOANKI_OPS = {"shutdown", "media_pending"}
 
-    try:
-        command = json.loads(sys.stdin.read())
-    except (json.JSONDecodeError, OSError) as e:
-        _emit({"error": f"Failed to read command: {e}"})
-        return
 
+def _dispatch(command: dict) -> dict:
+    """Dispatch a single command and return the result dict."""
     op_name = command.get("op", "")
+
+    if _IMPORT_ERROR and op_name not in _NOANKI_OPS:
+        return {"error": f"anki not available: {_IMPORT_ERROR}"}
+
     handler = _OPERATIONS.get(op_name)
     if handler is None:
-        _emit({"error": f"Unknown operation: {op_name}"})
-        return
+        return {"error": f"Unknown operation: {op_name}"}
 
     try:
-        result = handler(command)
-        _emit(result)
+        return handler(command)
     except Exception as e:
         import traceback
 
-        _emit({"error": str(e), "traceback": traceback.format_exc()})
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+
+def main() -> None:
+    """Persistent loop: read one JSON command per line from stdin, dispatch,
+    emit exactly one JSON result line to stdout, repeat. Exit on stdin EOF
+    or ``shutdown`` op."""
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            command = json.loads(line)
+        except (json.JSONDecodeError, OSError) as e:
+            _emit({"error": f"Failed to read command: {e}"})
+            continue
+
+        result = _dispatch(command)
+        _emit(result)
+
+        if command.get("op") == "shutdown":
+            break
 
 
 if __name__ == "__main__":

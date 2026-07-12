@@ -355,6 +355,39 @@ async def serve_media(filename: str):
     return FileResponse(file_path)
 
 
+def _resolve_gloss_translation(
+    lemma: str,
+    token_glosses: dict[str, str],
+    surfaces: set[str],
+    first_surface: str,
+    *,
+    language_code: str,
+) -> str:
+    """Resolve a token's English translation from the lesson's gloss map.
+
+    The card is keyed by the runtime lemmatizer's lemma, but the LLM may have
+    glossed the token under a different key: an inflected surface (Stanza
+    lemmatizes ``snøen`` → ``snø`` while the gloss is keyed ``snøen``) or the
+    dictionary infinitive (``gå``) while the card is the surface ``går``. Try the
+    lemma first, then the surface as it first appeared, then any other surface.
+    Returns ``""`` when no gloss covers the token — and logs a warning so the
+    silent-empty-translation class (the ``går`` bug: lemma and surface are both
+    ``går``, but the LLM only glossed ``gå`` + the multiword ``i går``) is
+    visible instead of shipping a blank card.
+    """
+    for key in [lemma, first_surface.lower(), *sorted(s.lower() for s in surfaces)]:
+        gloss = token_glosses.get(key)
+        if gloss:
+            return gloss
+    _logger.warning(
+        "No gloss for lemma %r (surfaces=%s) in %s lesson; card created with empty translation",
+        lemma,
+        sorted(surfaces),
+        language_code,
+    )
+    return ""
+
+
 def _listen_grade_eligible(
     rec: DirectionState | None, today_start: datetime.datetime, today_end: datetime.datetime
 ) -> bool:
@@ -492,7 +525,13 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             stored_sentence = make_cloze_text(lemma_to_first_surface.get(lemma, lemma), sent) if is_func else sent
             unit = SyntacticUnit(
                 text=lemma,
-                translation=token_glosses.get(lemma, ""),
+                translation=_resolve_gloss_translation(
+                    lemma,
+                    token_glosses,
+                    lemma_to_surfaces.get(lemma, set()),
+                    lemma_to_first_surface.get(lemma, lemma),
+                    language_code=lesson.language_code,
+                ),
                 word_count=1,
                 difficulty=1,
                 source="llm",

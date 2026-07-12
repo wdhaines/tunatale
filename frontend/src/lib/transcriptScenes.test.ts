@@ -6,7 +6,7 @@ import {
   findSeekCue,
   findKeyPhraseSeekCue,
 } from "./transcriptScenes";
-import type { Cue, CueRef, DialogueLine, LessonDetail } from "./api";
+import type { Cue, DialogueLine, LessonDetail } from "./api";
 
 function word(surface: string) {
   return {

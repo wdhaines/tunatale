@@ -1636,6 +1636,48 @@ class TestSRSEndpoints:
         assert data["registered"] == 1
 
 
+class TestResolveGlossTranslation:
+    """Gloss lookup for /listen card creation: lemma → surface → warn (no silent '')."""
+
+    def test_lemma_hit(self):
+        from app.api.srs import _resolve_gloss_translation
+
+        got = _resolve_gloss_translation("banka", {"banka": "bank"}, {"banka"}, "banka", language_code="sl")
+        assert got == "bank"
+
+    def test_surface_fallback_when_lemma_missing(self):
+        """Stanza lemmatizes 'snøen' → 'snø' but the LLM glossed the surface 'snøen';
+        the card is keyed by lemma, so fall back to the surface form."""
+        from app.api.srs import _resolve_gloss_translation
+
+        got = _resolve_gloss_translation("snø", {"snøen": "the snow"}, {"snøen"}, "snøen", language_code="no")
+        assert got == "the snow"
+
+    def test_first_surface_preferred_over_other_surfaces(self):
+        from app.api.srs import _resolve_gloss_translation
+
+        got = _resolve_gloss_translation(
+            "x",
+            {"first": "A", "second": "B"},
+            {"first", "second"},
+            "first",
+            language_code="no",
+        )
+        assert got == "A"
+
+    def test_miss_logs_warning_and_returns_empty(self, caplog):
+        """The 'går' bug: lemma 'går' and its only surface 'går' are absent from the
+        gloss map (LLM keyed 'gå' + 'i går'). No silent '' — emit a warning."""
+        from app.api.srs import _resolve_gloss_translation
+
+        with caplog.at_level("WARNING"):
+            got = _resolve_gloss_translation(
+                "går", {"gå": "go / walk", "i går": "yesterday"}, {"går"}, "går", language_code="no"
+            )
+        assert got == ""
+        assert any("går" in r.message and "empty translation" in r.message for r in caplog.records)
+
+
 class TestListenClozeIntegration:
     """Phase F: /listen as recognition-exposure event (Layer 1 redesign)."""
 

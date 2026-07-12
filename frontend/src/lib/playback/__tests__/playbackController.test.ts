@@ -475,7 +475,7 @@ describe("playbackController", () => {
 
     it("wires action handlers when mediaSession is provided", () => {
       const mediaSession = makeFakeMediaSession();
-      const ctrl = createController({ mediaSession: mediaSession as unknown as MediaSession });
+      const _ctrl = createController({ mediaSession: mediaSession as unknown as MediaSession });
 
       expect(mediaSession.setActionHandler).toHaveBeenCalledWith("play", expect.any(Function));
       expect(mediaSession.setActionHandler).toHaveBeenCalledWith("pause", expect.any(Function));
@@ -810,7 +810,7 @@ describe("playbackController", () => {
         configurable: true,
       });
       // When src is set to "", reset currentTime to 0 like a real browser
-      const origDesc = Object.getOwnPropertyDescriptor(HTMLAudioElement.prototype, "src");
+      const _origDesc = Object.getOwnPropertyDescriptor(HTMLAudioElement.prototype, "src");
       Object.defineProperty(zeroesOnClear, "src", {
         get: () => capturedSrc,
         set: (v: string) => {
@@ -863,7 +863,7 @@ describe("playbackController", () => {
 
   describe("per-lesson resume", () => {
     it("saves currentTime to localStorage on pause", () => {
-      const ctrl = createController({ storage: fakeLocalStorage, lessonId: "l1" });
+      const _ctrl = createController({ storage: fakeLocalStorage, lessonId: "l1" });
       audioEl.currentTime = 12.5;
       audioEl.dispatchEvent(new Event("pause"));
       expect(fakeLocalStorage.setItem).toHaveBeenCalledWith("tt-resume-l1", "12.5");
@@ -915,7 +915,7 @@ describe("playbackController", () => {
 
     it("restores only once (later metadata reloads don't rewind)", () => {
       fakeLocalStorage.setItem("tt-resume-l1", "8.3");
-      const ctrl = createController({ storage: fakeLocalStorage, lessonId: "l1" });
+      const _ctrl = createController({ storage: fakeLocalStorage, lessonId: "l1" });
       audioEl.dispatchEvent(new Event("loadedmetadata"));
       audioEl.currentTime = 42;
       audioEl.dispatchEvent(new Event("loadedmetadata"));
@@ -940,7 +940,7 @@ describe("playbackController", () => {
     it("uses different keys for different lessons", () => {
       fakeLocalStorage.setItem("tt-resume-l1", "5.0");
       fakeLocalStorage.setItem("tt-resume-l2", "10.0");
-      const ctrl = createController({ storage: fakeLocalStorage, lessonId: "l2" });
+      const _ctrl = createController({ storage: fakeLocalStorage, lessonId: "l2" });
       audioEl.dispatchEvent(new Event("loadedmetadata"));
       expect(audioEl.currentTime).toBe(10.0);
     });
@@ -1333,7 +1333,7 @@ describe("playbackController", () => {
     });
 
     it("seek falls back to 0 when currentCue is null (no prior ref)", () => {
-      const ctrl = createController({ audio: sectionsAudio });
+      const _ctrl = createController({ audio: sectionsAudio });
       // Don't advance currentTime — currentCue is null because all cues start > 0
       // (first cue starts at 0ms, but currentTime is 0 so it IS the current cue;
       // instead, use an audio with late-starting cues)

@@ -45,7 +45,7 @@ vi.mock("$lib/stores/rateLimit.svelte", () => ({
 }));
 
 vi.mock("$lib/components/RateLimitWidget.svelte", () => ({
-  default: ({}) => "<span>LLM —</span>",
+  default: (_props: unknown) => "<span>LLM —</span>",
 }));
 
 import { api } from "$lib/api";

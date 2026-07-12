@@ -11,11 +11,16 @@ Uses ``app.anki.sync_driver`` via subprocess for the anki-side operations.
 
 from __future__ import annotations
 
+import atexit
+import collections
+import contextlib
 import json
 import logging
 import os
+import select
 import sqlite3
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -32,6 +37,77 @@ _DRIVER_PATH = str(Path(__file__).with_name("sync_driver.py"))
 # backend/ — the directory the server runs from (start-dev.sh `cd backend`) and the
 # anchor for the default CWD-relative `sqlite:///./tunatale.db`. From app/anki/.
 _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+
+# ── Persistent driver process ────────────────────────────────────────────────
+_DRIVER_PROC: subprocess.Popen | None = None
+_DRIVER_LOCK = threading.Lock()
+_STDERR_LINES = 200  # bounded deque of most-recent stderr lines for error messages
+
+
+def _drain_stderr(proc: subprocess.Popen, buf: collections.deque[str]) -> None:
+    """Daemon thread: read driver stderr into *buf* (avoids pipe deadlock).
+
+    Appends live into the shared deque (bound to the proc by ``_ensure_driver``)
+    so ``_kill_driver`` can read what accumulated so far after joining the
+    thread — publishing only at EOF would lose the context exactly when the
+    process died mid-command and the error message needs it.
+    """
+    try:
+        assert proc.stderr is not None
+        for raw in proc.stderr:
+            buf.append(raw)
+    except ValueError, OSError:
+        pass  # pipe closed under us (kill path closes our read end)
+
+
+def _ensure_driver() -> subprocess.Popen:
+    """Spawn the driver subprocess if not already running. Must be called under _DRIVER_LOCK."""
+    global _DRIVER_PROC
+    if _DRIVER_PROC is not None and _DRIVER_PROC.poll() is None:
+        return _DRIVER_PROC
+    proc = subprocess.Popen(
+        _driver_cmd(),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+    )
+    buf: collections.deque[str] = collections.deque(maxlen=_STDERR_LINES)
+    proc._stderr_buf = buf  # type: ignore[attr-defined]
+    t = threading.Thread(target=_drain_stderr, args=(proc, buf), daemon=True)
+    t.start()
+    proc._stderr_thread = t  # type: ignore[attr-defined]
+    _DRIVER_PROC = proc
+    return proc
+
+
+def _kill_driver() -> str:
+    """Kill the current driver process (under _DRIVER_LOCK); return its stderr.
+
+    Closes our pipe ends (else each dead driver leaks three file objects —
+    ResourceWarning under tests) and joins the drain thread so the returned
+    stderr text is complete. The capture must happen HERE, not in a later
+    module-global lookup: this function clears ``_DRIVER_PROC``, so any
+    "read the last dead process" accessor would see None and return nothing.
+    """
+    global _DRIVER_PROC
+    proc = _DRIVER_PROC
+    _DRIVER_PROC = None
+    if proc is None:
+        return ""
+    with contextlib.suppress(OSError):
+        proc.kill()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=5)
+    for stream in (proc.stdin, proc.stdout, proc.stderr):
+        if stream is not None:
+            with contextlib.suppress(OSError):
+                stream.close()
+    thread = getattr(proc, "_stderr_thread", None)
+    if thread is not None:
+        thread.join(timeout=1)
+    return "".join(getattr(proc, "_stderr_buf", []))
 
 
 logger = logging.getLogger(__name__)
@@ -203,24 +279,68 @@ def _driver_cmd() -> list[str]:
     ]
 
 
-def _run_driver(command: dict, timeout: int = 120) -> dict:
-    """Run sync_driver subprocess with *command* JSON, return parsed result."""
-    proc = subprocess.run(
-        _driver_cmd(),
-        input=json.dumps(command),
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
-    )
-    try:
-        result = json.loads(proc.stdout)
-    except (json.JSONDecodeError, OSError) as e:
-        raise PeerSyncError(f"Driver output not valid JSON: {e}\nstderr: {proc.stderr}") from None
+def _atexit_shutdown_driver() -> None:
+    """Close driver stdin on interpreter exit — the driver exits on EOF."""
+    with _DRIVER_LOCK:
+        proc = _DRIVER_PROC
+        if proc is not None and proc.poll() is None and proc.stdin:
+            with contextlib.suppress(OSError):
+                proc.stdin.close()
 
-    if "error" in result:
-        raise PeerSyncError(f"Driver error: {result['error']}")
-    return result
+
+atexit.register(_atexit_shutdown_driver)
+
+
+def _run_driver(command: dict, timeout: int = 120) -> dict:
+    """Send *command* to the persistent driver subprocess, return parsed result.
+
+    The driver speaks a line protocol: one JSON object per line on stdin/stdout.
+    On timeout, EOF, or malformed response: kill, respawn, retry once.  Second
+    failure raises ``PeerSyncError`` (same shape as before, including stderr).
+    """
+    with _DRIVER_LOCK:
+        return _run_driver_locked(command, timeout)
+
+
+def _run_driver_locked(command: dict, timeout: int) -> dict:
+    """Core driver interaction under the lock.  Retries once on transport failure.
+
+    Every transport failure — write to a dead process, response timeout, EOF,
+    non-JSON output, a pipe we closed — funnels through ONE except path:
+    kill (capturing stderr for the message), respawn, retry. ``TimeoutError``/
+    ``EOFError`` are raised locally to reuse that path; ``json.JSONDecodeError``
+    is a ``ValueError`` subclass and ``BrokenPipeError`` an ``OSError`` one.
+    A driver-reported ``error`` result is an application error, not transport:
+    the process is healthy, so it raises without burning the retry.
+    """
+    last_err: str | None = None
+    for _attempt in range(2):
+        proc = _ensure_driver()
+        assert proc.stdin is not None
+        assert proc.stdout is not None
+        try:
+            proc.stdin.write(json.dumps(command) + "\n")
+            proc.stdin.flush()
+            # Read one result line with timeout via select (macOS/Linux).
+            ready, _, _ = select.select([proc.stdout], [], [], timeout)
+            if not ready:
+                raise TimeoutError(f"Driver timed out after {timeout}s")
+            line = proc.stdout.readline()
+            if not line:
+                raise EOFError("Driver stdout closed (EOF)")
+            try:
+                result = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Driver output not valid JSON: {e}\nstdout: {line!r}") from None
+        except (TimeoutError, EOFError, OSError, ValueError) as e:
+            last_err = f"{e}\nstderr: {_kill_driver()}"
+            continue
+
+        if "error" in result:
+            raise PeerSyncError(f"Driver error: {result['error']}")
+        return result
+
+    raise PeerSyncError(f"Driver failed after retry: {last_err}")
 
 
 def _keychain_password(service: str, account: str) -> str | None:
@@ -412,6 +532,15 @@ def _sync_leg(auth: dict, *, sync_media: bool = False) -> dict:
     )
 
 
+def _media_pending() -> int:
+    """Check how many media files need upload from tt_collection's media sidecar.
+
+    Returns the count of dirty media entries, or -1 if unreadable/missing.
+    """
+    result = _run_driver({"op": "media_pending", "collection_path": str(settings.tt_collection_path)})
+    return result.get("pending", -1)
+
+
 def peer_sync(dry_run: bool = False, *, media_fn=None, language_code: str | None = None) -> PeerSyncReport:
     """Execute the full peer-sync bracket.
 
@@ -500,11 +629,15 @@ def peer_sync(dry_run: bool = False, *, media_fn=None, language_code: str | None
             t0 = time.perf_counter()
             _mirror_real_curdeck_into_tt(settings.anki_collection_path, settings.tt_collection_path)
             report.timings["mirror_pre_push"] = time.perf_counter() - t0
-            # Media-enabled push: uploads any media the reconcile generated for
-            # new TT cards. Aligned with the pending-rows gate — new cards (which
-            # carry the new media) are exactly what makes the push run.
+            # Only sync media on the push leg when there are pending media uploads
+            # or the media state is unknown.  The pull leg (always sync_media=True)
+            # is the only channel for server→TT media edits — the push leg's media
+            # sync is purely for files generated during the reconcile.
             t0 = time.perf_counter()
-            push_out = _sync_leg(auth, sync_media=True)
+            pending_media = _media_pending()
+            report.timings["media_pending_check"] = time.perf_counter() - t0
+            t0 = time.perf_counter()
+            push_out = _sync_leg(auth, sync_media=(pending_media != 0))
             report.timings["push"] = time.perf_counter() - t0
             report.push_required = push_out.get("required")
             report.push_message = push_out.get("server_message", "")
