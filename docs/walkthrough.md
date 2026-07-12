@@ -6779,7 +6779,7 @@ def lemmatize_surfaces_in_context(
 
 For `LowercaseLemmatizer`, `analyze_sentence` is just per-token lowercasing, so the new path is a **no-op for the default** — it only sharpens the real engine. The lemmas are lowercased on the way out to match the card keyspace (`import_seed` stores `lemma = front.lower()`); classla capitalizes proper-noun lemmas (`Ženeve` → `Ženeva`), which would otherwise miss the lowercase `ženeva` card on a case-sensitive lookup (commit `0c26e23`).
 
-### 22.2 The classla Engine Is Opt-In and CI-Invisible
+### 22.2 The Lemmatizer Engines: Default-On for Dev, Opt-Out for CI
 
 `ClasslaLemmatizer` wraps CLASSLA-Stanza (a PyTorch pipeline for South Slavic languages). It is **never imported at module level** — the `classla` import lives inside `_ensure_pipeline()` and a `try/except ImportError` type alias — so CI, which doesn't install PyTorch, never touches it. The factory selects it only when the user opts in:
 
@@ -6821,13 +6821,13 @@ Configuration is one new setting, `lemmatizer_type` (`"lowercase"` default, `"cl
 
 **Python 3.14 install caveat (verified 2026-06-02; made reproducible 2026-06-02).** The latest working classla (`2.2.1`) pins `torch<=2.6`, but torch `<=2.6` ships no 3.14 (`cp314`) wheel — torch only gained 3.14 support at `2.12`. So a bare `pip install classla` on 3.14 silently resolves to the ancient `classla==1.1.0`, which crashes on modern torch (PyTorch-2.6 `weights_only=True` → "Vector file is not provided"), and the factory returns a `ClasslaLemmatizer` that fails at first use rather than falling back. classla `2.2.1` is pure-Python, so the fix is to override its torch pin to a 3.14-capable build.
 
-This is now **declared, not ad-hoc.** classla is a `[project.optional-dependencies]` *extra* in `backend/pyproject.toml` (`classla = ["classla==2.2.1"]`), and `[tool.uv] override-dependencies = ["torch==2.12.0"]` forces the 3.14 torch over classla's `torch<=2.6` pin. Install it reproducibly:
+This is now **declared, not ad-hoc.** classla (and its Norwegian sibling stanza) live in a `lemmatizers` group under `[dependency-groups]` in `backend/pyproject.toml` (`lemmatizers = ["classla==2.2.1", "stanza"]`), and `[tool.uv] override-dependencies = ["torch==2.12.0", "protobuf>=5.29"]` forces the 3.14 torch/protobuf over classla's `torch<=2.6` / `protobuf==4.21.2` pins. Install reproducibly:
 
 ```bash
-cd backend && uv sync --all-groups --extra classla
+cd backend && uv sync   # a plain sync; --all-groups also works
 ```
 
-It is an *extra*, not a `[dependency-groups]` group, on purpose: CI and the standard dev setup both run `uv sync --all-groups`, which does **not** pull extras — so PyTorch stays out of CI and the lemmatizer falls back to lowercase there. The override is inert unless the extra is synced (nothing else pulls torch). The model still lives under `CLASSLA_RESOURCES_DIR` (`~/classla_resources`); run `classla.download("sl")` once if it's absent. With this combo the pipeline produces correct lemmas on 3.14 (`hoteli → hoteti`, `smo → biti`, `ste → biti`). (The previous one-off `uv pip install "classla==2.2.1" --override <(echo "torch==2.12.0")` still works but isn't tracked in the lock, which is exactly why it vanished on the 3.13→3.14 upgrade.)
+It is a **default `[dependency-groups]` group** (`[tool.uv] default-groups = ["dev", "lemmatizers"]`), *not* an extra — a deliberate 2026-07-11 inversion of the earlier design. Under the old scheme classla/stanza were `[project.optional-dependencies]` extras, so a working dev env required `uv sync --all-groups --extra classla --extra stanza` on *every* sync — and because `uv sync` prunes anything outside the requested set, a bare `uv sync` (the documented default) or a one-extra sync silently uninstalled the other engine. That "sync BOTH or one prunes the other" trap is what kept re-surfacing the `stanza not installed` warning. Now the default sync installs and keeps both, and **CI carries the opt-out flag instead**: all three backend CI jobs run `uv sync --all-groups --no-group lemmatizers` to stay PyTorch-free. The principle behind the inversion: the party that wants the *unusual* behaviour (torch-free CI) holds the flag — in machine-controlled yaml that never forgets — not the human, who demonstrably does. The overrides are inert on the CI path (nothing pulls torch/protobuf there). The models still live under `CLASSLA_RESOURCES_DIR` (`~/classla_resources`) and the stanza cache (`~/Library/Caches/stanza`); run `classla.download("sl")` / `stanza.download("nb")` once if absent — uv manages the package, never the downloaded model, so a prune-then-resync doesn't cost a re-download. With this combo the pipeline produces correct lemmas on 3.14 (`hoteli → hoteti`, `smo → biti`, `ste → biti`). (The previous one-off `uv pip install "classla==2.2.1" --override <(echo "torch==2.12.0")` still works but isn't tracked in the lock, which is exactly why it vanished on the 3.13→3.14 upgrade.)
 
 ### 22.3 What Was *Not* Built: Bulk Re-Lemmatization
 

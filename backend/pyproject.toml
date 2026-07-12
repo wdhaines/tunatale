@@ -19,30 +19,13 @@ dependencies = [
     "numpy>=2.0.0",
 ]
 
-# Opt-in Slovene morphological analyzer (sentence-aware lemmas + A1 morphology
-# features). Deliberately an *extra*, not a dependency-group: CI and the standard
-# dev setup both run `uv sync --all-groups`, which does NOT pull extras — so this
-# keeps PyTorch out of CI (the lemmatizer falls back to LowercaseLemmatizer when
-# classla is absent). Install it explicitly:
-#     uv sync --all-groups --extra classla
-# classla 2.2.1 pins torch<=2.6, but torch only ships cp314 wheels from 2.12; the
-# `[tool.uv] override-dependencies` below forces a 3.14-capable torch so the
-# resolve succeeds. See docs/walkthrough.md §22.2.
 [project.optional-dependencies]
 # Anki sync engine. Optional + sync-only: imported ONLY in app/anki/sync_driver.py,
 # which runs in a `uv run --with anki` subprocess. A no-sync user never installs it;
-# the default `uv sync --all-groups` does NOT pull it (extra, not group). The runtime
-# version is pinned via the `anki_pkg_version` setting (empty → latest), not here, so
-# this stays a valid specifier regardless of which desktop Anki the user runs.
+# neither a plain `uv sync` nor `--all-groups` pulls it (extra, not group). The
+# runtime version is pinned via the `anki_pkg_version` setting (empty → latest), not
+# here, so this stays a valid specifier regardless of which desktop Anki the user runs.
 anki = ["anki"]
-classla = ["classla==2.2.1"]
-# Opt-in Stanford Stanza analyzer — the Norwegian (Bokmål/Nynorsk) analogue of the
-# classla Slovene extra, and Stanza is the upstream project classla forks. Same
-# extra-not-group treatment (keeps PyTorch out of CI; the torch==2.12.0 override
-# below is shared). Install: `uv sync --all-groups --extra stanza`, then download
-# the model once: `uv run python -c "import stanza; stanza.download('nb')"`, then
-# set lemmatizer_type=stanza. See docs/walkthrough.md §22.2.
-stanza = ["stanza"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
@@ -59,11 +42,34 @@ dev = [
     "anyio>=4.0.0",
     "fsrs-rs-python>=0.8.0",
 ]
+# Per-language morphological analyzers (sentence-aware lemmas + A1 morphology
+# features): classla for Slovene, stanza for Norwegian (Bokmål/Nynorsk; stanza is
+# the upstream project classla forks). A DEFAULT dependency-group (see
+# `[tool.uv] default-groups` below), NOT an extra — so every plain `uv sync`,
+# `uv sync --all-groups`, or the implicit sync inside `uv run` installs AND keeps
+# both. This inverts the old extra-based setup, where a human had to remember
+# `--extra classla --extra stanza` on every sync or one would prune the other. CI
+# opts OUT with `--no-group lemmatizers` to stay PyTorch-free — the party that wants
+# the unusual (torch-free) behavior carries the flag, in machine-controlled config.
+# classla 2.2.1 pins torch<=2.6 / protobuf==4.21.2, neither of which has a cp314
+# wheel; the `[tool.uv] override-dependencies` below forces 3.14-capable builds.
+# Models still download once per engine: `classla.download("sl")` /
+# `stanza.download("nb")`. See docs/walkthrough.md §22.2.
+lemmatizers = [
+    "classla==2.2.1",
+    "stanza",
+]
 
 [tool.uv]
-# Two 3.14 pin-overrides, both inert unless a heavy extra (classla/stanza/anki) is
-# synced — protobuf/torch aren't pulled by the default `uv sync --all-groups`, so it
-# stays PyTorch-free. See walkthrough §22.2.
+# The lemmatizers group (classla/stanza) is a DEFAULT group, so a bare `uv sync`,
+# `uv sync --all-groups`, and the implicit sync inside `uv run` all install and keep
+# it — a working Slovene/Norwegian dev env is the default, with no flags to remember.
+# CI stays PyTorch-free by opting out explicitly: `uv sync --all-groups --no-group
+# lemmatizers` (.github/workflows/ci.yml). The `anki` extra is separate (not a group)
+# — pulled only by the `uv run --with anki` driver subprocess, never by these syncs.
+default-groups = ["dev", "lemmatizers"]
+# Two 3.14 pin-overrides for the lemmatizers group. Inert unless torch/protobuf are
+# actually pulled — CI's `--no-group lemmatizers` run never resolves them.
 #   torch:    classla 2.2.1 pins torch<=2.6, which has no cp314 wheel — torch only
 #             gained 3.14 support at 2.12.
 #   protobuf: classla 2.2.1 pins protobuf==4.21.2, whose google._upb C extension has

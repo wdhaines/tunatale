@@ -26,7 +26,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --all-groups --no-group lemmatizers
 
       - name: Lint
         run: uv run ruff check app tests scripts
@@ -89,7 +89,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --all-groups --no-group lemmatizers
 
       - name: Warm anki subprocess env
         run: uv run --isolated --no-project --python 3.14 --with anki python -c "import anki"
@@ -116,7 +116,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --all-groups --no-group lemmatizers
 
       - name: Warm anki subprocess env
         run: uv run --isolated --no-project --python 3.14 --with anki python -c "import anki"
