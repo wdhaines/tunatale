@@ -460,6 +460,21 @@ export interface PeerSyncResult {
   dry_run: boolean;
 }
 
+export interface ImageCandidate {
+  preview_url: string;
+  webformat_url: string;
+  tags: string;
+  width: number;
+  height: number;
+  likes: number;
+}
+
+export interface ImageCandidatesResponse {
+  query: string;
+  status: string;
+  candidates: ImageCandidate[];
+}
+
 export class TunaTaleAPI {
   private baseUrl: string;
 
@@ -864,6 +879,32 @@ export class TunaTaleAPI {
 
   async getLanguages(): Promise<LanguagesResponse> {
     return this.request("/api/languages");
+  }
+
+  async fetchImageCandidates(id: number, query?: string): Promise<ImageCandidatesResponse> {
+    const qs = query ? `?q=${encodeURIComponent(query)}` : "";
+    return this.request(`/api/srs/items/${id}/image/candidates${qs}`);
+  }
+
+  async setItemImageFromUrl(id: number, url: string): Promise<SRSItemDetail> {
+    return this.request(`/api/srs/items/${id}/image`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+  }
+
+  async uploadItemImage(id: number, file: File): Promise<SRSItemDetail> {
+    const form = new FormData();
+    form.append("file", file);
+    return this.request(`/api/srs/items/${id}/image/upload`, {
+      method: "PUT",
+      body: form,
+    });
+  }
+
+  async removeItemImage(id: number): Promise<SRSItemDetail> {
+    return this.request(`/api/srs/items/${id}/image`, { method: "DELETE" });
   }
 }
 

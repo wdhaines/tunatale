@@ -25,6 +25,10 @@ vi.mock("$lib/api", () => {
       resetSRSItem: vi.fn(),
       suspendSRSItem: vi.fn(),
       fetchQueueStats: vi.fn(),
+      fetchImageCandidates: vi.fn(),
+      setItemImageFromUrl: vi.fn(),
+      uploadItemImage: vi.fn(),
+      removeItemImage: vi.fn(),
     },
   };
 });
@@ -37,6 +41,8 @@ const mockBulkDelete = vi.mocked(api.bulkDeleteSRSItems);
 const mockReset = vi.mocked(api.resetSRSItem);
 const mockSuspend = vi.mocked(api.suspendSRSItem);
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
+const mockFetchImageCandidates = vi.mocked(api.fetchImageCandidates);
+const mockRemoveItemImage = vi.mocked(api.removeItemImage);
 import { syncStore } from "$lib/stores/sync.svelte";
 import { makeSRSItemDetail } from "../../test/factories";
 
@@ -58,6 +64,7 @@ beforeEach(() => {
     cap_source: "default",
     fsrs_source: "default",
   });
+  mockFetchImageCandidates.mockResolvedValue({ query: "", status: "ok", candidates: [] });
 });
 
 describe("cards/+page.svelte", () => {
@@ -937,10 +944,117 @@ describe("cards/+page.svelte", () => {
 
       await openRowMenu(findByLabelText, "zdravo");
       const menuItems = getAllByRole("menuitem");
-      expect(menuItems).toHaveLength(4);
+      expect(menuItems).toHaveLength(5);
       for (const mi of menuItems) {
         expect(mi.tagName).toBe("BUTTON");
       }
+    });
+  });
+
+  // ── image column ──────────────────────────────────────────────────────
+
+  it("renders thumbnail for items with image_url", async () => {
+    mockList.mockResolvedValue({
+      items: [makeSRSItemDetail({ id: 1, text: "zdravo", image_url: "/api/media/zdravo.jpg" })],
+      total: 1,
+    });
+    const { findByText } = render(CardsPage);
+    await findByText("zdravo");
+    const imgs = document.querySelectorAll(".thumb-btn img");
+    expect(imgs.length).toBe(1);
+    expect((imgs[0] as HTMLImageElement).src).toContain("/api/media/zdravo.jpg");
+  });
+
+  it("no thumbnail for items without image_url", async () => {
+    mockList.mockResolvedValue({
+      items: [makeSRSItemDetail({ id: 1, text: "zdravo", image_url: null })],
+      total: 1,
+    });
+    const { findByText } = render(CardsPage);
+    await findByText("zdravo");
+    expect(document.querySelectorAll(".thumb-btn img").length).toBe(0);
+    expect(document.querySelectorAll(".thumb-empty").length).toBe(1);
+  });
+
+  it("Change image menu item opens modal", async () => {
+    mockFetchImageCandidates.mockResolvedValue({ query: "", status: "ok", candidates: [] });
+    const item = makeSRSItemDetail({ id: 1, text: "zdravo" });
+    mockList.mockResolvedValue({ items: [item], total: 1 });
+
+    const { findByText, findByLabelText } = render(CardsPage);
+    await findByText("zdravo");
+
+    await openRowMenu(findByLabelText, "zdravo");
+    await fireEvent.click(await findByText("Change image…"));
+
+    expect(await findByText("Edit Image")).toBeTruthy();
+  });
+
+  it("clicking thumbnail with image_url opens modal", async () => {
+    mockFetchImageCandidates.mockResolvedValue({ query: "", status: "ok", candidates: [] });
+    mockList.mockResolvedValue({
+      items: [makeSRSItemDetail({ id: 1, text: "zdravo", image_url: "/api/media/zdravo.jpg" })],
+      total: 1,
+    });
+    const { findByText } = render(CardsPage);
+    await findByText("zdravo");
+    const thumb = document.querySelector(".thumb-btn") as HTMLButtonElement;
+    await fireEvent.click(thumb);
+    expect(await findByText("Edit Image")).toBeTruthy();
+  });
+
+  it("clicking empty thumbnail opens modal", async () => {
+    mockFetchImageCandidates.mockResolvedValue({ query: "", status: "ok", candidates: [] });
+    mockList.mockResolvedValue({
+      items: [makeSRSItemDetail({ id: 1, text: "zdravo", image_url: null })],
+      total: 1,
+    });
+    const { findByText } = render(CardsPage);
+    await findByText("zdravo");
+    const thumb = document.querySelector(".thumb-empty") as HTMLButtonElement;
+    await fireEvent.click(thumb);
+    expect(await findByText("Edit Image")).toBeTruthy();
+  });
+
+  it("modal onupdated closes modal and reloads items", async () => {
+    const item = makeSRSItemDetail({ id: 1, text: "zdravo", image_url: "/img/zdravo.jpg" });
+    mockList.mockResolvedValue({ items: [item], total: 1 });
+    mockFetchImageCandidates.mockResolvedValue({ query: "", status: "ok", candidates: [] });
+    mockRemoveItemImage.mockResolvedValue(makeSRSItemDetail({ id: 1, image_url: null }));
+    const { findByText, queryByText } = render(CardsPage);
+    await findByText("zdravo");
+
+    const thumb = document.querySelector(".thumb-btn") as HTMLButtonElement;
+    await fireEvent.click(thumb);
+    await findByText("Edit Image");
+
+    const removeBtn = await findByText("Remove");
+    await fireEvent.click(removeBtn);
+
+    await waitFor(() => {
+      expect(mockRemoveItemImage).toHaveBeenCalledWith(1);
+      expect(queryByText("Edit Image")).toBeNull();
+    });
+    expect(mockList.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("pressing Escape closes the image modal and clears imageEditItem", async () => {
+    mockFetchImageCandidates.mockResolvedValue({ query: "", status: "ok", candidates: [] });
+    const item = makeSRSItemDetail({ id: 1, text: "zdravo", image_url: "/img/zdravo.jpg" });
+    mockList.mockResolvedValue({ items: [item], total: 1 });
+
+    const { findByText, queryByText } = render(CardsPage);
+    await findByText("zdravo");
+
+    const thumb = document.querySelector(".thumb-btn") as HTMLButtonElement;
+    await fireEvent.click(thumb);
+    await findByText("Edit Image");
+
+    const backdrop = document.querySelector(".backdrop")!;
+    await fireEvent.keyDown(backdrop, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(queryByText("Edit Image")).toBeNull();
     });
   });
 });

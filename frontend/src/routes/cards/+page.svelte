@@ -3,6 +3,7 @@
 	import { api } from '$lib/api';
 	import type { SRSItemDetail, SRSListParams, QueueStats } from '$lib/api';
 	import { syncStore } from '$lib/stores/sync.svelte';
+	import ImageEditModal from '$lib/components/ImageEditModal.svelte';
 
 	const PAGE_SIZE = 50;
 
@@ -23,6 +24,7 @@
 	let queueStats = $state<QueueStats | null>(null);
 	let syncStatus = $state<string | null>(null);
 	let openMenuId = $state<number | null>(null);
+	let imageEditItem = $state<SRSItemDetail | null>(null);
 
 	function handleSyncResult() {
 		syncStatus = 'Synced with AnkiWeb';
@@ -264,6 +266,7 @@
 			<span class="col-check">
 				<input type="checkbox" checked={selected.size === items.length && items.length > 0} onchange={toggleSelectAll} />
 			</span>
+			<span class="col-img"></span>
 			<span class="col-text"><button class="sort-btn" onclick={() => setSort('text')}>text{sortIndicator('text')}</button></span>
 			<span class="col-trans"><button class="sort-btn" onclick={() => setSort('translation')}>translation{sortIndicator('translation')}</button></span>
 			<span class="col-state"><button class="sort-btn" onclick={() => setSort('state')}>state{sortIndicator('state')}</button></span>
@@ -281,6 +284,7 @@
 				{#if editingId === item.id}
 					<div class="row editing">
 						<span class="col-check"></span>
+						<span class="col-img"></span>
 						<input class="col-text" bind:value={editText} />
 						<input class="col-trans" bind:value={editTranslation} />
 						<span class="col-state">{item.state}</span>
@@ -295,6 +299,15 @@
 					<div class="row">
 						<span class="col-check">
 							<input type="checkbox" checked={selected.has(item.id)} onchange={() => toggleSelect(item.id)} />
+						</span>
+						<span class="col-img">
+							{#if item.image_url}
+								<button class="thumb-btn" onclick={() => { closeMenu(); imageEditItem = item; }} title="Change image">
+									<img src={item.image_url} alt="" />
+								</button>
+							{:else}
+								<button class="thumb-btn thumb-empty" onclick={() => { closeMenu(); imageEditItem = item; }} title="Add image">+</button>
+							{/if}
 						</span>
 						<span class="col-text">{stripSoundTags(item.text)}</span>
 						<span class="col-trans">{stripSoundTags(item.translation)}</span>
@@ -313,6 +326,7 @@
 							</button>
 							{#if openMenuId === item.id}
 								<div class="menu" role="menu">
+									<button role="menuitem" onclick={() => { closeMenu(); imageEditItem = item; }}>Change image…</button>
 									<button role="menuitem" onclick={() => startEdit(item)}>Edit</button>
 									<button role="menuitem" onclick={() => { closeMenu(); resetItem(item.id); }}>Reset</button>
 									<button role="menuitem" onclick={() => { closeMenu(); toggleSuspend(item); }}>
@@ -335,6 +349,10 @@
 		<button disabled={page >= totalPages - 1} onclick={() => { page += 1; }}>next ▶</button>
 	</div>
 </main>
+
+{#if imageEditItem}
+	<ImageEditModal item={imageEditItem} onclose={() => imageEditItem = null} onupdated={() => { imageEditItem = null; loadItems(); }} />
+{/if}
 
 <style>
 	main {
@@ -475,6 +493,31 @@
 	}
 	.col-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; padding-top: 0.25rem; }
 	.col-actions button { min-height: 44px; flex: 1; }
+	.col-img { display: flex; align-items: center; justify-content: center; }
+	.thumb-btn {
+		padding: 0;
+		border: none;
+		background: none;
+		cursor: pointer;
+		border-radius: 4px;
+		overflow: hidden;
+		width: 3rem;
+		height: 3rem;
+	}
+	.thumb-btn img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		display: block;
+	}
+	.thumb-empty {
+		color: var(--color-muted);
+		font-size: 1.2rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	.thumb-btn:hover { outline: 2px solid var(--color-primary); }
 	.actions-menu {
 		position: relative;
 		justify-content: flex-end;
@@ -560,7 +603,7 @@
 
 		.table-wrap {
 			display: grid;
-			grid-template-columns: 2rem 1fr 1fr 7rem 7rem 4rem auto;
+			grid-template-columns: 2rem 3rem 1fr 1fr 7rem 7rem 4rem auto;
 		}
 		.table-wrap > p { grid-column: 1 / -1; }
 		.row {

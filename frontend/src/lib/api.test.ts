@@ -3,6 +3,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TunaTaleAPI } from "./api";
+import { makeSRSItemDetail } from "../test/factories";
 
 const BASE = "http://test-backend";
 
@@ -1587,5 +1588,95 @@ describe("pipeline API", () => {
     await expect(api.retryPipelineDay("cid-1", 2)).rejects.toThrow(
       "POST /api/curriculum/cid-1/pipeline/retry: Day 2 is already active",
     );
+  });
+});
+
+describe("image methods", () => {
+  let api: TunaTaleAPI;
+
+  beforeEach(() => {
+    api = new TunaTaleAPI(BASE);
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetchImageCandidates returns candidates", async () => {
+    const response = {
+      query: "water",
+      status: "ok",
+      candidates: [
+        {
+          preview_url: "http://x/a.jpg",
+          webformat_url: "http://x/b.jpg",
+          tags: "water",
+          width: 100,
+          height: 100,
+          likes: 5,
+        },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(response)));
+
+    const result = await api.fetchImageCandidates(1);
+
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/items/1/image/candidates`);
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0].preview_url).toBe("http://x/a.jpg");
+  });
+
+  it("fetchImageCandidates includes query param when provided", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(mockOk({ query: "water", status: "ok", candidates: [] })),
+    );
+
+    await api.fetchImageCandidates(5, "water");
+
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/items/5/image/candidates?q=water`);
+  });
+
+  it("setItemImageFromUrl calls PUT with JSON body", async () => {
+    const updated = makeSRSItemDetail({ id: 1, image_url: "http://x/new.jpg" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(updated)));
+
+    const result = await api.setItemImageFromUrl(1, "http://x/new.jpg");
+
+    expect(fetch).toHaveBeenCalledWith(
+      `${BASE}/api/srs/items/1/image`,
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ url: "http://x/new.jpg" }),
+      }),
+    );
+    expect(result.image_url).toBe("http://x/new.jpg");
+  });
+
+  it("uploadItemImage sends FormData without Content-Type header", async () => {
+    const updated = makeSRSItemDetail({ id: 1, image_url: "http://x/uploaded.jpg" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(updated)));
+
+    const file = new File(["dummy"], "photo.jpg", { type: "image/jpeg" });
+    const result = await api.uploadItemImage(1, file);
+
+    const init = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit;
+    expect(init.body).toBeInstanceOf(FormData);
+    expect(init.headers).toBeUndefined();
+    expect(result.image_url).toBe("http://x/uploaded.jpg");
+  });
+
+  it("removeItemImage calls DELETE", async () => {
+    const updated = makeSRSItemDetail({ id: 1, image_url: null });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(updated)));
+
+    const result = await api.removeItemImage(1);
+
+    expect(fetch).toHaveBeenCalledWith(
+      `${BASE}/api/srs/items/1/image`,
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    expect(result.image_url).toBeNull();
   });
 });
