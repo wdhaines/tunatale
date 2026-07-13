@@ -1108,7 +1108,24 @@ class AnkiSync:
                 if "source_sentence" in dirty_set:
                     # Vocab example sentence lives in the Anki "Note" field.
                     fields["Note"] = item.syntactic_unit.source_sentence or ""
+                if "image" in dirty_set:
+                    # A TT-side image swap or removal. Write the Anki note's Image
+                    # field so the media-refresh collapse (which runs LATER in
+                    # run_full_sync) sees the new file referenced and preserves it
+                    # instead of reverting the swap; copy the bytes into
+                    # collection.media alongside, same as the sentence-audio path
+                    # above. Removal (no TT image) clears the field to "".
+                    img = self._db.get_image_filename(coll_id)
+                    fields["Image"] = f'<img src="{img}">' if img else ""
+                    if img and not dry_run:
+                        _copy_tt_media_to_anki(self._writer, img)
             if not fields:
+                # A cloze note has no Image field, so a stray "image" flag would
+                # never produce a field here and would pin dirty_fields across
+                # every future sync (the create/push cycle never clears it).
+                # Drop just that flag so the row goes clean.
+                if "image" in dirty_set and not dry_run:
+                    self._db.set_dirty_fields(guid, ",".join(sorted(dirty_set - {"image"})))
                 continue
             if not dry_run:
                 self._writer.update_note_fields(anki_note_id, fields)

@@ -3792,3 +3792,188 @@ class TestPerGradeRevlogPush:
         )
         sync._push_revlog_for_direction("nonexistent-guid", Direction.RECOGNITION, ds)
         assert not any(c[0] == "write_revlog" for c in writer.calls)
+
+
+class TestSyncPushImage:
+    """Step 7: a TT-side image swap/removal pushes the Anki note's Image field.
+
+    Mirrors the sentence-audio copy-alongside-field precedent so the media-refresh
+    collapse (which runs later in run_full_sync) sees the new file referenced and
+    keeps it instead of reverting the swap.
+    """
+
+    def test_dirty_image_pushes_image_field_and_copies_media(self, tmp_path, monkeypatch):
+        import app.anki.sync as sync_mod
+
+        monkeypatch.setattr(sync_mod, "_MEDIA_DIR", tmp_path)
+        db = _make_tt_db()
+        guid, note_id, *_ = _add_banka_with_anki_ids(db)
+        coll_id = db.get_collocation_id_by_guid(guid)
+        (tmp_path / "img_banka_ab12cd34.jpg").write_bytes(b"jpeg-bytes")
+        db.add_media(
+            collocation_id=coll_id,
+            kind="image",
+            filename="img_banka_ab12cd34.jpg",
+            path=str(tmp_path / "img_banka_ab12cd34.jpg"),
+            anki_filename="img_banka_ab12cd34.jpg",
+            sha256="deadbeef",
+            size_bytes=10,
+        )
+        db.set_dirty_fields(guid, "image")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        call = next(c for c in writer.calls if c[0] == "update_note_fields")
+        assert call[1] == note_id
+        assert call[2]["Image"] == '<img src="img_banka_ab12cd34.jpg">'
+        # FakeWriter records store_media_file as (name, len(data)); the bytes came
+        # from _MEDIA_DIR/<filename> (b"jpeg-bytes", 10 bytes).
+        assert ("store_media_file", "img_banka_ab12cd34.jpg", 10) in writer.calls
+        assert db.get_dirty_fields(guid) == ""
+
+    def test_dirty_image_removal_writes_empty_field_and_skips_copy(self):
+        db = _make_tt_db()
+        guid, note_id, *_ = _add_banka_with_anki_ids(db)
+        # No image media row → get_image_filename returns None: this is a removal.
+        db.set_dirty_fields(guid, "image")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        call = next(c for c in writer.calls if c[0] == "update_note_fields")
+        assert call[2]["Image"] == ""
+        assert "store_media_file" not in writer.action_names()
+        assert db.get_dirty_fields(guid) == ""
+
+    def test_dirty_image_dry_run_preserves_flag_and_writes_nothing(self, tmp_path, monkeypatch):
+        import app.anki.sync as sync_mod
+
+        monkeypatch.setattr(sync_mod, "_MEDIA_DIR", tmp_path)
+        db = _make_tt_db()
+        guid, *_ = _add_banka_with_anki_ids(db)
+        coll_id = db.get_collocation_id_by_guid(guid)
+        (tmp_path / "img_x.jpg").write_bytes(b"x")
+        db.add_media(
+            collocation_id=coll_id,
+            kind="image",
+            filename="img_x.jpg",
+            path=str(tmp_path / "img_x.jpg"),
+            anki_filename="img_x.jpg",
+            sha256="x",
+            size_bytes=1,
+        )
+        db.set_dirty_fields(guid, "image")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push(dry_run=True)
+
+        assert "update_note_fields" not in writer.action_names()
+        assert "store_media_file" not in writer.action_names()
+        assert db.get_dirty_fields(guid) == "image"
+
+    def _add_cloze(self, db) -> str:
+        unit = SyntacticUnit(
+            text="vsak",
+            translation="every",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="vsak",
+            card_type="cloze",
+            source_sentence="Odprto je vsak dan",
+        )
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation_by_lemma("vsak")
+        db.set_anki_ids(item.guid, 7777, {Direction.PRODUCTION: 70001})
+        return item.guid
+
+    def test_cloze_stray_image_flag_is_discarded_not_pushed(self):
+        db = _make_tt_db()
+        guid = self._add_cloze(db)
+        db.set_dirty_fields(guid, "image")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        # Cloze notes have no Image field: nothing is pushed, but the stray flag
+        # is dropped so it can't pin dirty_fields across every future sync.
+        assert "update_note_fields" not in writer.action_names()
+        assert db.get_dirty_fields(guid) == ""
+
+    def test_cloze_stray_image_flag_preserved_on_dry_run(self):
+        db = _make_tt_db()
+        guid = self._add_cloze(db)
+        db.set_dirty_fields(guid, "image")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push(dry_run=True)
+
+        assert db.get_dirty_fields(guid) == "image"
+
+    def test_pushed_image_reference_survives_media_refresh(self, tmp_path):
+        """The <img src="FNAME"> the push writes keeps the TT image row alive
+        through the media-refresh collapse — the reason the push must update the
+        Anki Image field alongside the media copy (step 7's core contract)."""
+        import hashlib
+
+        from app.anki.import_seed import _refresh_media_for_collocation
+
+        db = _make_tt_db()
+        guid, *_ = _add_banka_with_anki_ids(db)
+        coll_id = db.get_collocation_id_by_guid(guid)
+        data = b"the-swapped-image"
+        fname = "img_banka_swapped.jpg"
+        db.add_media(
+            collocation_id=coll_id,
+            kind="image",
+            filename=fname,
+            path=f"media/{fname}",
+            anki_filename=fname,
+            sha256=hashlib.sha256(data).hexdigest(),
+            size_bytes=len(data),
+        )
+        anki_dir = tmp_path / "anki_media"
+        anki_dir.mkdir()
+        (anki_dir / fname).write_bytes(data)
+        media_dir = tmp_path / "media"
+        media_dir.mkdir()
+        results = {"new_media": 0, "updated_media": 0, "unchanged_media": 0, "collapsed_media": 0}
+
+        _refresh_media_for_collocation(anki_dir, [f'<img src="{fname}">'], coll_id, media_dir, db, results)
+
+        assert db.get_image_filename(coll_id) == fname  # survived, not collapsed
+        assert results["collapsed_media"] == 0
+
+    def test_unreferenced_image_collapses_on_media_refresh(self, tmp_path):
+        """The mirror: if the Anki note does NOT reference the TT image (what
+        happens if the push is dropped), the media refresh collapses the row."""
+        import hashlib
+
+        from app.anki.import_seed import _refresh_media_for_collocation
+
+        db = _make_tt_db()
+        guid, *_ = _add_banka_with_anki_ids(db)
+        coll_id = db.get_collocation_id_by_guid(guid)
+        data = b"orphaned-image"
+        fname = "img_banka_orphan.jpg"
+        db.add_media(
+            collocation_id=coll_id,
+            kind="image",
+            filename=fname,
+            path=f"media/{fname}",
+            anki_filename=fname,
+            sha256=hashlib.sha256(data).hexdigest(),
+            size_bytes=len(data),
+        )
+        anki_dir = tmp_path / "anki_media"
+        anki_dir.mkdir()
+        media_dir = tmp_path / "media"
+        media_dir.mkdir()
+        results = {"new_media": 0, "updated_media": 0, "unchanged_media": 0, "collapsed_media": 0}
+
+        # The note references no image — the swap was never pushed to Anki.
+        _refresh_media_for_collocation(anki_dir, [""], coll_id, media_dir, db, results)
+
+        assert db.get_image_filename(coll_id) is None  # collapsed
+        assert results["collapsed_media"] == 1
