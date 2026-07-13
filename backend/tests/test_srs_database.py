@@ -3825,6 +3825,48 @@ class TestConnectionPragmas:
         finally:
             db.close()
 
+
+class TestGetImageFilenames:
+    """Tests for DbMediaMixin.get_image_filenames (batched lookup)."""
+
+    def test_returns_empty_for_no_ids(self, srs_db):
+        assert srs_db.get_image_filenames([]) == {}
+
+    def test_returns_empty_when_no_media(self, srs_db):
+        srs_db.add_collocation(_unit("voda", "water"), language_code="sl")
+        cid = _id_for_text(srs_db, "voda")
+        assert srs_db.get_image_filenames([cid]) == {}
+
+    def test_returns_single_image(self, srs_db):
+        srs_db.add_collocation(_unit("voda", "water"), language_code="sl")
+        cid = _id_for_text(srs_db, "voda")
+        srs_db.add_media(cid, "image", "voda.jpg", "/tmp/voda.jpg", "voda.jpg", "abc123", 1024)
+        assert srs_db.get_image_filenames([cid]) == {cid: "voda.jpg"}
+
+    def test_returns_multiple_images(self, srs_db):
+        srs_db.add_collocation(_unit("voda", "water"), language_code="sl")
+        srs_db.add_collocation(_unit("ogenj", "fire"), language_code="sl")
+        c1 = _id_for_text(srs_db, "voda")
+        c2 = _id_for_text(srs_db, "ogenj")
+        srs_db.add_media(c1, "image", "voda.jpg", "/tmp/voda.jpg", "voda.jpg", "aaa", 100)
+        srs_db.add_media(c2, "image", "ogenj.png", "/tmp/ogenj.png", "ogenj.png", "bbb", 200)
+        result = srs_db.get_image_filenames([c1, c2])
+        assert result == {c1: "voda.jpg", c2: "ogenj.png"}
+
+    def test_uses_most_recent_per_collocation(self, srs_db):
+        srs_db.add_collocation(_unit("voda", "water"), language_code="sl")
+        cid = _id_for_text(srs_db, "voda")
+        srs_db.add_media(cid, "image", "old.jpg", "/tmp/old.jpg", "old.jpg", "aaa", 100)
+        srs_db.add_media(cid, "image", "new.jpg", "/tmp/new.jpg", "new.jpg", "bbb", 200)
+        result = srs_db.get_image_filenames([cid])
+        assert result == {cid: "new.jpg"}
+
+    def test_ignores_non_image_media(self, srs_db):
+        srs_db.add_collocation(_unit("voda", "water"), language_code="sl")
+        cid = _id_for_text(srs_db, "voda")
+        srs_db.add_media(cid, "audio_forvo", "voda.mp3", "/tmp/voda.mp3", "voda.mp3", "ccc", 300)
+        assert srs_db.get_image_filenames([cid]) == {}
+
     def test_concurrent_read_during_write_transaction_does_not_lock(self, tmp_path):
         """A live read on a separate connection reads the committed snapshot (WAL)
         instead of erroring while a write transaction is held open."""

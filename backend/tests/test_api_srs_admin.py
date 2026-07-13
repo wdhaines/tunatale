@@ -115,6 +115,33 @@ class TestListItems:
         assert item["directions"]["recognition"] is not None
         assert item["directions"]["production"] is None
 
+    async def test_list_items_includes_image_url(self):
+        db = _db()
+        db.add_collocation(_unit("voda", "water"), language_code="sl")
+        rows, _ = db.list_collocations(search="voda", limit=1)
+        coll_id = rows[0][0]
+        db.add_media(coll_id, "image", "voda.jpg", "/tmp/voda.jpg", "voda.jpg", "abc123", 1024)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/items", params={"search": "voda"})
+
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert len(items) == 1
+        assert items[0]["image_url"] == "/api/srs/media/voda.jpg"
+
+    async def test_list_items_image_url_null_when_no_image(self):
+        db = _db()
+        db.add_collocation(_unit("voda", "water"), language_code="sl")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/items", params={"search": "voda"})
+
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert len(items) == 1
+        assert items[0]["image_url"] is None
+
 
 class TestPatchItem:
     """Tests for PATCH /api/srs/items/{id}."""

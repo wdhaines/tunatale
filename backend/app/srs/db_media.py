@@ -190,3 +190,26 @@ class DbMediaMixin:
                 (mtime_ns, size_bytes, row_id),
             )
             self._commit(conn)
+
+    def get_image_filenames(self, ids: list[int]) -> dict[int, str]:
+        """Batched lookup: return ``{collocation_id: filename}`` for image media.
+
+        Single query over the provided IDs; returns the most-recent image per
+        collocation (highest ``id`` = ``ORDER BY id DESC``, first seen wins).
+        Empty input returns ``{}``."""
+        if not ids:
+            return {}
+        placeholders = ",".join("?" * len(ids))
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                f"SELECT collocation_id, filename FROM media "
+                f"WHERE collocation_id IN ({placeholders}) AND kind = 'image' "
+                f"ORDER BY id DESC",
+                ids,
+            ).fetchall()
+        result: dict[int, str] = {}
+        for row in rows:
+            cid = row["collocation_id"]
+            if cid not in result:
+                result[cid] = row["filename"]
+        return result

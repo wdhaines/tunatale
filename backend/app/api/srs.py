@@ -1119,7 +1119,19 @@ async def list_items(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"items": [_item_to_dict(rid, item, lang) for rid, item, lang in rows], "total": total}
+    image_map = db.get_image_filenames([rid for rid, _, _ in rows])
+    return {
+        "items": [
+            _item_to_dict(
+                rid,
+                item,
+                lang,
+                image_url=f"/api/srs/media/{image_map[rid]}" if rid in image_map else None,
+            )
+            for rid, item, lang in rows
+        ],
+        "total": total,
+    }
 
 
 @router.patch("/items/{item_id}", status_code=200)
