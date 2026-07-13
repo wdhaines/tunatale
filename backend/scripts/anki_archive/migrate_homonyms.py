@@ -14,8 +14,8 @@ demand a full upload on next sync. See ``.claude/rules/anki-sync.md`` for the
 required 3-step post-migration workflow (full upload → normalize_usns).
 
 Usage:
-    uv run python -m app.anki.migrate_homonyms [--deck "0. Slovene"] [--dry-run]
-    uv run python -m app.anki.migrate_homonyms --audit-json ~/.tunatale/logs/guid-divergence-*.json
+    uv run python -m scripts.anki_archive.migrate_homonyms [--deck "0. Slovene"] [--dry-run]
+    uv run python -m scripts.anki_archive.migrate_homonyms --audit-json ~/.tunatale/logs/guid-divergence-*.json
 """
 
 from __future__ import annotations

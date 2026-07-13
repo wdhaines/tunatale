@@ -3,7 +3,7 @@
 **Status:** DONE (2026-07-08) — Phases 1–3 landed + verified; Phase 4 docs/memory done;
 final `./test.sh` evidence at the bottom of the progress log.
 **Owner/handoff:** this doc is the pick-up point for a fresh chat context. Read it
-top-to-bottom before touching code. Sibling workstream `field-invariant-hardening.md`
+top-to-bottom before touching code. Sibling workstream `docs/archive/field-invariant-hardening.md`
 (weakness #3) is the template — same shape: single declarative source + mechanical pin.
 
 ## The problem being fixed (architectural weakness #4)
@@ -150,7 +150,7 @@ phase boundary. Phase 3 is the parity-sensitive one — sociable + peer-sync pin
 - `app/srs/lemmatizer.py` — `get_lemmatizer(code)` (already per-code)
 - `scripts/check_mock_boundaries.py` + `tests/mock_grandfather.txt` — the ledger PATTERN to copy
 - `tests/test_no_hardcoded_language.py` (NEW, Phase 1) + `tests/language_literals_grandfather.txt` (NEW ledger)
-- `docs/bug-refactor-backlog.md` §§21/25/28 — the fixed-seam history
+- `docs/archive/bug-refactor-backlog.md` §§21/25/28 — the fixed-seam history
 
 ## Progress log
 - 2026-07-08: Opened workstream. Confirmed #21/#25/#28 already fixed; registry

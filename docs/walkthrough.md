@@ -5,7 +5,7 @@
 
 ## Purpose of This Document
 
-This walkthrough covers the production TunaTale codebase — the unified application rebuilt from the two prototypes documented in `walkthrough-prototypes.md`. It serves two audiences: (1) a human reader wanting to understand how TunaTale works, and (2) an AI agent extending or maintaining the system.
+This walkthrough covers the production TunaTale codebase — the unified application rebuilt from the two prototypes documented in `docs/archive/walkthrough-prototypes.md`. It serves two audiences: (1) a human reader wanting to understand how TunaTale works, and (2) an AI agent extending or maintaining the system.
 
 **What changed from the prototypes:** The production rebuild unified the audio pipeline (micro-demo-0.0) and the content engine (micro-demo-0.1) under a single FastAPI application. Hardcoded language logic was replaced with pluggable preprocessors and voice maps. The mock LLM (MD5-hashed) became a cassette system with multiple modes. FSRS-5 replaced the custom SRS scheduler. The entire codebase follows hexagonal architecture with Protocol-based ports. Since the initial production build: ContentStore added SQLite persistence for curricula/lessons/audio, per-word SRS tracking added lemmatizer/tokenizer/transcript modules, section_builder extracted from StoryGenerator (now a thin orchestrator), Slovene syllabification added for Pimsleur backward buildup, pydub replaced raw-PCM concatenation, SRS admin UI added (6 admin endpoints + SvelteKit admin page).
 
@@ -7559,7 +7559,7 @@ The product gained a written identity. `README.md` is the pitch and the map; `do
 
 Two operational docs round it out: `docs/adding-a-language.md` (the plugin checklist — preprocessor, voice map, function-word list, lemmatizer) and `docs/anki-recovery.md` (disaster recovery for the user's primary Anki collection). `AGENTS.md` (this file, also `CLAUDE.md`) had its opening polished and absorbed the new-language and Anki-recovery pointers.
 
-The operational set has since grown: `docs/anki-parity-diagnostics.md` (every diagnostic snippet + the load-bearing-helper table), `docs/anki-mirror-audit.md` (the inspection-driven audit that found Layers 62–63), `docs/learning-modes.md` (the Review/Listen/Read/Generate/Produce mode map), `docs/language-plugin-hardening.md` (the registry + literal-gate rationale), `docs/curriculum-planning.md` (the chat planner), and `docs/bp-brief-segmenter-homographs-overlap.md` (the Norwegian segmenter design).
+The operational set has since grown: `docs/anki-parity-diagnostics.md` (every diagnostic snippet + the load-bearing-helper table), `docs/anki-mirror-audit.md` (the inspection-driven audit that found Layers 62–63), `docs/learning-modes.md` (the Review/Listen/Read/Generate/Produce mode map), `docs/language-plugin-hardening.md` (the registry + literal-gate rationale), `docs/curriculum-planning.md` (the chat planner), and `docs/archive/bp-brief-segmenter-homographs-overlap.md` (the Norwegian segmenter design).
 
 This is where a new contributor — human or agent — should start: the influence docs explain *why* the system is shaped the way the preceding parts describe.
 
@@ -7637,7 +7637,7 @@ Norwegian's empirical quirks: the deck is **recognition-only** (the direction mo
 
 ### 29.4 The Norwegian Compound Breakdown
 
-Norwegian is a compounding language, so the generic per-syllable backward buildup (PART 5's syllabifier) reads compounds wrong. `app/generation/norwegian_breakdown.py` (2026-07-07..10) segments a word into frequency-ranked free stems before building the Pimsleur steps — with a closed-class stem stoplist (so `sommer` never splits into `som`+`mer`), s-joint/geminate handling (`busstasjon` → segments `bus|stasjon` but *speaks* `buss, stasjon`), initial-only homograph guards, and preposition first-elements kept productive (`etterforskning` = `etter`+`forskning`). It dispatches through the registry flag `uses_compound_word_breakdown` in `section_builder.py`; the linguistic decisions (stoplist, golden splits) are human-confirmed by ear via the preview CLI. Design history: `docs/bp-brief-segmenter-homographs-overlap.md`.
+Norwegian is a compounding language, so the generic per-syllable backward buildup (PART 5's syllabifier) reads compounds wrong. `app/generation/norwegian_breakdown.py` (2026-07-07..10) segments a word into frequency-ranked free stems before building the Pimsleur steps — with a closed-class stem stoplist (so `sommer` never splits into `som`+`mer`), s-joint/geminate handling (`busstasjon` → segments `bus|stasjon` but *speaks* `buss, stasjon`), initial-only homograph guards, and preposition first-elements kept productive (`etterforskning` = `etter`+`forskning`). It dispatches through the registry flag `uses_compound_word_breakdown` in `section_builder.py`; the linguistic decisions (stoplist, golden splits) are human-confirmed by ear via the preview CLI. Design history: `docs/archive/bp-brief-segmenter-homographs-overlap.md`.
 
 ```bash
 cd backend && uv run python -m app.generation.breakdown_preview etterforskningsteamet busstasjon sommer 2>&1 | head -14

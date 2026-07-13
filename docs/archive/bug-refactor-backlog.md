@@ -79,7 +79,7 @@ to Big Pickle as-is.
 |---|-------|------|-----------|
 | ~~18~~ | ✅ | Cassette hash ignores `system_prompt` | **FIXED 2026-07-04** (branch `fix/backlog-sweep`) — hash includes `system_prompt`, cassette JSON is versioned (v2) with a loud load-time mismatch error. Re-recorded on the **production model gpt-oss-120b** (llama is deprecated), which required story `max_tokens` 5500→4096 (free-tier 8k TPM cap) and a `_extract_punct_pairs` fix (gpt-oss en-dash dialogue crashed `/transcript`). Only 2 story entries in `e2e.json` were live; 4 dead curriculum/translate entries dropped. See §18. |
 | ~~—~~ | ✅ | 4 AM rollover constant in 3 places (de-dup) | **FIXED 2026-07-03** — `app/anki/rollover.py` single-sources the local-day helpers (`local_today_rollover`, `anki_day_bounds_utc`, `anki_today`) + the `due_at_rollover_utc` 4am-UTC convention; legacy names (`_local_today_4am`, `_anki_day_bounds_utc`) are identity aliases; hardcoded `rollover_hour=4` defaults (fsrs ×3, sqlite_reader) and eight `time(4, 0)` literals routed through it. Identity + source-ratchet pins in `test_rollover_hour_single_source.py`. Oracle 66/66 green before AND after. |
-| — | Claude | `date.today()` midnight-vs-4am audit (~10 sites) | Per-call-site parity judgment. See danger-zone notes. **Routing target now exists**: `app.anki.rollover.anki_today()`. |
+| ~~—~~ | ➡️ | `date.today()` midnight-vs-4am audit (~10 sites) | **MIGRATED 2026-07-13** to `docs/refactor-suggestions-2026-07.md` #11 (this backlog is now all-closed and archive-bound; the last open item moved to a surviving active doc). Routing target: `app.anki.rollover.anki_today()`. |
 
 **Cassette-affecting batch — done.** #10 landed 2026-07-03 with **no** re-record
 (its gloss path is AsyncMock-stubbed, not cassette-backed). #18 landed 2026-07-04
@@ -828,7 +828,8 @@ applies a stored opt-out without an init() call" (fresh module via
   modules). Oracle harness 66/66 green before AND after; full suite 100% cov.
 
 - **`date.today()` (midnight-local) still feeds several request paths that
-  Layer 67 didn't cover.** Verified concretely: the reading-transcript `is_due`
+  Layer 67 didn't cover.** ➡️ **MIGRATED 2026-07-13 to `docs/refactor-suggestions-2026-07.md` #11** (with refreshed line numbers) — the detail below is retained for history; treat #11 as authoritative.
+  Verified concretely: the reading-transcript `is_due`
   / `collocation_is_due` flags (`api/srs.py:657` → `transcript.py::_is_due`,
   `due_at.date() <= today`) use the midnight boundary, while the badges/queue
   use the 4 AM-anchored Anki day (`_anki_day_bounds_utc`). In the

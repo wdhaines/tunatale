@@ -1,7 +1,7 @@
 """Stage 2b orchestrator: rewrite Anki ``notes.guid`` to deterministic TunaTale values.
 
 Usage:
-    uv run python -m app.anki.backfill_guids --deck "0. Slovene" [--dry-run] [--force]
+    uv run python -m scripts.anki_archive.backfill_guids --deck "0. Slovene" [--dry-run] [--force]
 
 Safety:
     - ``safe_open(mode="rw")`` creates a validated backup before any write.
@@ -26,7 +26,7 @@ from typing import Any
 from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
 from app.anki.safety import safe_open
 from app.anki.sqlite_reader import find_deck_id
-from app.anki.sqlite_writer import (
+from scripts.anki_archive.sqlite_writer import (
     apply_guid_backfill,
     check_anki_web_sync_active,
     plan_guid_backfill,

@@ -70,7 +70,7 @@ def anki_today(now: datetime | None = None) -> date:
     In the `[midnight, rollover)` local window this is *yesterday's* date,
     where `date.today()` would already say today. Route "which Anki day is
     it?" call sites through this instead of `date.today()` (the danger-zone-2
-    audit target in docs/bug-refactor-backlog.md).
+    audit target, docs/refactor-suggestions-2026-07.md item #11).
     """
     return local_today_rollover(now).date()
 

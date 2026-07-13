@@ -2,7 +2,7 @@
 
 Three fixes to `backend/app/generation/norwegian_breakdown.py`, follow-ups to
 commit `8438629` (closed-class stoplist + anchor-rank scoring). Read that
-commit and `docs/review-2026-07-10-followups.md` brief #1 first.
+commit and `docs/archive/review-2026-07-10-followups.md` brief #1 first.
 
 Work TDD red→green, fixes in order (1 → 2 → 3): each has its own red tests and
 a green full-suite checkpoint before the next. **Goldens marked PROPOSED below

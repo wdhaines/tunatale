@@ -7,7 +7,7 @@ Your job is adversarial review of its UNCOMMITTED changes in the working tree
 of `/Users/wdhaines/CascadeProjects/tunatale`, then a verdict. Do NOT commit
 anything. Trust nothing in BP's report you haven't reproduced yourself.
 
-The spec BP executed is `docs/bp-brief-image-selection.md` — read it fully
+The spec BP executed is `docs/archive/bp-brief-image-selection.md` — read it fully
 first; every pinned interface there is a review item. Broader feature context
 (not needed in depth): `~/.claude/plans/can-you-improve-the-warm-puppy.md`.
 Note: the brief is batch 1 of a larger plan — the `sync_push`/dirty-fields

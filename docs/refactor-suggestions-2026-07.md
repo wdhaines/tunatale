@@ -2,8 +2,8 @@
 
 Assessment only — nothing here is implemented. Collected while verifying every doc
 claim against the code for the 2026-07-11 documentation refresh. Ranked by value.
-Items already tracked in `docs/review-2026-07-10-followups.md`,
-`docs/ui-review-backlog.md`, or `docs/bug-refactor-backlog.md` are excluded
+Items already tracked in `docs/archive/review-2026-07-10-followups.md`,
+`docs/ui-review-backlog.md`, or `docs/archive/bug-refactor-backlog.md` are excluded
 (one pointer exception noted at the bottom).
 
 1. **`norwegian_breakdown.py` — duplicated derivational-suffix-stripping loop.**
@@ -39,12 +39,17 @@ Items already tracked in `docs/review-2026-07-10-followups.md`,
    AnkiConnect-era. Why: the facade's own `run_full_sync` docstring contradicts
    it; first thing a new reader sees is wrong.
 
-6. **Archived one-shot scripts still self-document the old invocation.**
-   e.g. `backend/scripts/anki_archive/merge_dupes.py:20` says
+6. ✅ FIXED (2026-07-13). **Archived one-shot scripts still self-document the old invocation.**
+   e.g. `backend/scripts/anki_archive/merge_dupes.py:20` said
    `uv run python -m app.anki.merge_dupes` — the module moved to
    `scripts.anki_archive.*` (fixed in `docs/anki-recovery.md` this sweep, but the
    scripts' own usage strings still lie). Why: a recovery scenario is exactly
    when you paste a usage string verbatim.
+   Fix: the usage strings in `backfill_guids.py`, `merge_dupes.py`, and
+   `migrate_homonyms.py` now read `-m scripts.anki_archive.*`. Same pass restored
+   runnability: `sqlite_writer.py` (deleted from `app/` in dceffed but still
+   imported by `backfill_guids`/`merge_dupes`) was relocated into the archive
+   package next to `notetype_builders.py`; all four archive modules import clean.
 
 7. **`app/anki/notetype.py` — 16-line back-compat shim.** Kept, per its own
    docstring, only for the archived one-shot migrations. Why: if those archive
@@ -71,14 +76,25 @@ Items already tracked in `docs/review-2026-07-10-followups.md`,
     `###`-heading-per-subsection convention (or symbol references) would make
     cross-doc links verifiable.
 
-Pointer (already tracked elsewhere, re-flagged because its line numbers rotted):
-the unaudited `date.today()`-vs-4AM-rollover concern in
-`docs/bug-refactor-backlog.md:838-841` is still real and unfixed; the cited lines
-have drifted (now `api/srs.py:230,450,667,792,802,1144`,
-`queue_engine.py:201,316,331`, `transcript.py:251`).
+11. **Unaudited `date.today()` (midnight-local) vs 4 AM Anki-rollover — the live
+    item migrated here from `docs/archive/bug-refactor-backlog.md` (2026-07-13).** Authority
+    moved because that backlog is fully closed (35/36 fixed) and slated for
+    `docs/archive/`; this is the one item that was still open, so it lives here now
+    to keep it findable. Layer 67 fixed the badge/queue surfaces to the 4 AM-anchored
+    Anki day, but ~10 `date.today()` call sites still use the midnight boundary.
+    Confirmed divergence: the reading-transcript `is_due`/`collocation_is_due` flags
+    (`api/srs.py:667` → `transcript.py::_is_due`, `due_at.date() <= today`) bold words
+    as due in the `[midnight, 4 AM)` window that the review surfaces don't serve yet —
+    same class as the Layer-67 undercount, lower stakes (cosmetic, self-corrects at
+    4 AM). Current sites: `api/srs.py:230,450,667,792,802,1144`,
+    `queue_engine.py:201,316,331`, `transcript.py:251`. Each needs a per-call-site
+    "calendar day vs Anki day" judgment routed through the existing
+    `app.anki.rollover.anki_today()` helper — NOT a mechanical replace. Parity-
+    sensitive; keep out of Big Pickle's hands.
 
 Ruled out during verification (don't re-report): the Stage-3b shadow columns are
 NOT dead schema weight — migration v32 (`migrations.py:938-949`) already dropped
-them; no `sqlite_writer`/AnkiConnect/`detect_mode` code stragglers exist; rollover
+them; no `sqlite_writer`/AnkiConnect/`detect_mode` stragglers remain in `app/` (the
+archive keeps a relocated `sqlite_writer.py` for its migrations — see item #6); rollover
 and retrievability helpers are already single-sourced; zero TODO/FIXME in
 `backend/app`.
