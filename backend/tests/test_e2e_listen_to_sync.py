@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import io
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.anki.sync import AnkiSync, OfflineWriter
 from app.main import app
 from app.models.lesson import Lesson, Phrase, Section, SectionType
+from app.models.srs_item import Direction
+from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 from app.storage.store import ContentStore
 
@@ -185,3 +189,76 @@ class TestListenToSyncRoundTrip:
             cards = anki_conn.execute("SELECT id, ord, type, queue FROM cards WHERE nid = ?", (note["id"],)).fetchall()
             assert len(cards) == 1
             assert cards[0]["ord"] == 0
+
+
+class TestImageEndpointToSyncSeam:
+    """Sociable seam: the real image-upload endpoint sets exactly the state the
+    real sync_push consumes, all the way into a real Anki note's Image field.
+
+    The endpoint (``test_srs_image_endpoints``) and the push
+    (``test_anki_sync_push::TestSyncPushImage``) are each green in isolation; the
+    contract *between* them is only a ``dirty_fields`` value plus a stored TT
+    media row. This drives HTTP upload → ``sync_push`` → ``OfflineWriter``
+    end-to-end against a real in-memory collection, so a drift in that contract
+    (filename convention, dirty-flag name, media ``kind``) can't hide in the gap
+    between two green halves — the b0a4b8a failure shape.
+    """
+
+    _JPG = b"\xff\xd8\xff" + b"\x00" * 64  # minimal JPEG magic + padding
+
+    async def test_upload_endpoint_edit_reaches_anki_note_via_push(self, tmp_path, monkeypatch):
+        import app.anki.media.vocab_media as vocab_media
+        import app.anki.sync as sync_mod
+
+        # Both _MEDIA_DIR constants resolve to backend/media independently. Point
+        # both at one tmp dir so the endpoint's write and the push's read share it
+        # (and the real media tree is untouched).
+        media_dir = tmp_path / "tt_media"
+        media_dir.mkdir()
+        monkeypatch.setattr(vocab_media, "_MEDIA_DIR", media_dir)
+        monkeypatch.setattr(sync_mod, "_MEDIA_DIR", media_dir)
+
+        # ── TT side: a vocab collocation linked to a pre-existing Anki note ──
+        db = SRSDatabase(":memory:")
+        unit = SyntacticUnit(text="voda", translation="water", word_count=1, difficulty=1, source="corpus")
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation("voda")
+        assert item is not None
+        guid = item.guid
+        coll_id = db.get_collocation_id_by_guid(guid)
+        note_id, rec_cid, prod_cid = 5001, 50010, 50011
+        db.set_anki_ids(guid, note_id, {Direction.RECOGNITION: rec_cid, Direction.PRODUCTION: prod_cid})
+
+        # ── Anki side: real collection holding that linked vocab note, Image empty ──
+        anki_conn = _make_dual_collection_conn()
+        flds = "\x1f".join(["voda", "water", "", "", "", "", ""])  # 7 vocab fields; Image=ord 3
+        anki_conn.execute(
+            "INSERT INTO notes VALUES (?, ?, 1000001, 0, 0, '', ?, 'voda', 0, 0, '')",
+            (note_id, guid, flds),
+        )
+        anki_conn.commit()
+        anki_media = tmp_path / "collection.media"
+        anki_media.mkdir()
+        writer = OfflineWriter(anki_conn, media_dir=anki_media)
+
+        # ── 1. Real HTTP upload → stores TT media + stamps dirty_fields="image" ──
+        app.state.srs_db = db
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.put(
+                f"/api/srs/items/{coll_id}/image/upload",
+                files={"file": ("photo.jpg", io.BytesIO(self._JPG), "image/jpeg")},
+            )
+        assert resp.status_code == 200
+        fname = db.get_image_filename(coll_id)
+        assert fname is not None and fname.endswith(".jpg")
+        assert db.get_dirty_fields(guid) == "image"
+
+        # ── 2. Real sync_push consumes exactly that state ──
+        AnkiSync(db=db, _reader=FakeReaderE2E(), _writer=writer).sync_push()
+
+        # ── 3. The Anki note's Image field + media file reflect the upload ──
+        row = anki_conn.execute("SELECT flds, usn FROM notes WHERE id = ?", (note_id,)).fetchone()
+        assert row["flds"].split("\x1f")[3] == f'<img src="{fname}">'
+        assert row["usn"] == -1  # dirty → pushed to AnkiWeb on next sync
+        assert (anki_media / fname).read_bytes() == self._JPG  # bytes copied into collection.media
+        assert db.get_dirty_fields(guid) == ""  # flag cleared by the push
