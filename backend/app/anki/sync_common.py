@@ -128,6 +128,9 @@ class CreateNewReport:
     linked: int = 0
     skipped: int = 0
     notes_created_from_anki: int = 0
+    image_ok: int = 0
+    image_no_results: int = 0
+    image_failed: int = 0
 
 
 _BACK_EXTRA_TRANS = re.compile(r"^\s*<i>([^<]+)</i>\s*<br\s*/?>\s*<br\s*/?>\s*(.*)", re.DOTALL)

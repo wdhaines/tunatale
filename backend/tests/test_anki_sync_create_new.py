@@ -1295,6 +1295,84 @@ class TestSyncCreateNew:
         assert len(create_calls) == 3
 
 
+# ── Image status counter tests ─────────────────────────────────────────────────
+
+
+class TestSyncCreateNewImageCounters:
+    async def test_image_ok_increments_ok_counter(self):
+        async def _ok_media(word, english, *, used_image_urls, **_kwargs):
+            url = f"https://cdn.pixabay.com/{english}.jpg"
+            used_image_urls.add(url)
+            return MediaResult(
+                audio_bytes=b"x",
+                audio_source="forvo",
+                image_bytes=b"i",
+                image_ext="jpg",
+                image_url=url,
+                image_status="ok",
+            )
+
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter()
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", _media_fn=_ok_media
+        )
+        assert report.image_ok == 1
+        assert report.image_no_results == 0
+        assert report.image_failed == 0
+
+    async def test_image_no_results_increments_counter(self):
+        async def _no_results_media(word, english, *, used_image_urls, **_kwargs):
+            return MediaResult(audio_bytes=b"x", audio_source="forvo", image_status="no_results")
+
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter()
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", _media_fn=_no_results_media
+        )
+        assert report.image_ok == 0
+        assert report.image_no_results == 1
+        assert report.image_failed == 0
+
+    async def test_image_rate_limited_increments_failed_counter(self):
+        async def _rate_limited_media(word, english, *, used_image_urls, **_kwargs):
+            return MediaResult(audio_bytes=b"x", audio_source="forvo", image_status="rate_limited")
+
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        writer = FakeCreateWriter()
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", _media_fn=_rate_limited_media
+        )
+        assert report.image_ok == 0
+        assert report.image_no_results == 0
+        assert report.image_failed == 1
+
+    async def test_existing_tt_media_no_media_fn_counters_zero(self):
+        """A card with existing TT media (no _media_fn call) leaves counters at 0."""
+        import app.anki.sync as sync_mod
+
+        db = _make_db()
+        _add_item(db, "voda", "water")
+        coll_id = db.get_collocation_id_by_guid(db.get_collocation("voda").guid)
+
+        (sync_mod._MEDIA_DIR / "sl_voda.mp3").write_bytes(b"addtime-aud")
+        (sync_mod._MEDIA_DIR / "img_water.jpg").write_bytes(b"addtime-img")
+        db.add_media(coll_id, "audio_forvo", "sl_voda.mp3", "media/sl_voda.mp3", "sl_voda.mp3", "s", 11)
+        db.add_media(coll_id, "image", "img_water.jpg", "media/img_water.jpg", "img_water.jpg", "s", 11)
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary", _media_fn=None
+        )
+        assert report.image_ok == 0
+        assert report.image_no_results == 0
+        assert report.image_failed == 0
+
+
 # ── Reverse-import tests (Layer 22: Anki→TT) ──────────────────────────────────
 
 

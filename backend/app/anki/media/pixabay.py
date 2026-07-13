@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import re
+from dataclasses import dataclass
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 _PIXABAY_API = "https://pixabay.com/api/"
 
@@ -394,6 +398,82 @@ def build_query(english: str) -> str:
     return re.sub(r"\s*\(.*?\)", "", english).strip()
 
 
+@dataclass
+class PixabaySearch:
+    """Result of a Pixabay search API call with status classification."""
+
+    hits: list[dict]
+    status: str  # exactly one of: "ok" | "no_results" | "rate_limited" | "api_error"
+
+
+def search_pixabay(
+    query: str,
+    *,
+    api_key: str,
+    http_client: httpx.Client | None = None,
+    per_page: int = 50,
+) -> PixabaySearch:
+    """Search Pixabay for images matching *query*. Returns classified status.
+
+    Only HTTP calls get try/except — a programming error must raise, not be
+    swallowed.
+    """
+    owned = http_client is None
+    client = http_client or httpx.Client()
+    try:
+        resp = client.get(
+            _PIXABAY_API,
+            params={
+                "key": api_key,
+                "q": query,
+                "image_type": "photo",
+                "safesearch": "true",
+                "per_page": per_page,
+                "min_width": 300,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        hits = resp.json().get("hits", [])
+        if not hits:
+            return PixabaySearch(hits=[], status="no_results")
+        return PixabaySearch(hits=hits, status="ok")
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 429:
+            return PixabaySearch(hits=[], status="rate_limited")
+        logger.warning("Pixabay search failed for %r: %s", query, exc)
+        return PixabaySearch(hits=[], status="api_error")
+    except (httpx.TransportError, OSError) as exc:
+        logger.warning("Pixabay search failed for %r: %s", query, exc)
+        return PixabaySearch(hits=[], status="api_error")
+    finally:
+        if owned:
+            client.close()
+
+
+def download_hit(hit: dict, *, http_client: httpx.Client | None = None) -> tuple[bytes, str, str] | None:
+    """Download a single Pixabay hit's webformat image. Returns (bytes, ext, url) or None."""
+    img_url = hit.get("webformatURL", "")
+    if not img_url:
+        return None
+    owned = http_client is None
+    client = http_client or httpx.Client()
+    try:
+        r = client.get(img_url, timeout=15)
+        r.raise_for_status()
+        # jpg is Pixabay's dominant format, so it's the default; only a real
+        # .png path (query string aside) gets png. The old `"jpg" in url`
+        # substring check mislabelled .jpeg files as png.
+        ext = "png" if img_url.lower().split("?")[0].endswith(".png") else "jpg"
+        return r.content, ext, img_url
+    except httpx.HTTPStatusError, httpx.TransportError, OSError:
+        logger.warning("Pixabay image download failed for %s", img_url)
+        return None
+    finally:
+        if owned:
+            client.close()
+
+
 _RELEVANCE_WEIGHT = 10.0
 _EDITORS_CHOICE_BONUS = 1.0
 
@@ -449,40 +529,18 @@ def fetch_pixabay_image(
     sent verbatim (e.g. an LLM-generated, sense-disambiguated query); otherwise
     the legacy :func:`build_query` mapping derived from ``english`` is used.
     """
-    query = query or build_query(english)
+    effective_query = query or build_query(english)
     owned = http_client is None
     client = http_client or httpx.Client()
     try:
-        resp = client.get(
-            _PIXABAY_API,
-            params={
-                "key": api_key,
-                "q": query,
-                "image_type": "photo",
-                "safesearch": "true",
-                "per_page": 50,
-                "min_width": 300,
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        hits = resp.json().get("hits", [])
-        available = [h for h in hits if h.get("webformatURL", "") not in used_urls]
-        hit = best_hit(available, query)
+        search = search_pixabay(effective_query, api_key=api_key, http_client=client)
+        if search.status != "ok" or not search.hits:
+            return None
+        available = [h for h in search.hits if h.get("webformatURL", "") not in used_urls]
+        hit = best_hit(available, effective_query)
         if hit is None:
             return None
-        img_url = hit.get("webformatURL", "")
-        if not img_url:
-            return None
-        r = client.get(img_url, timeout=15)
-        r.raise_for_status()
-        # jpg is Pixabay's dominant format, so it's the default; only a real
-        # .png path (query string aside) gets png. The old `"jpg" in url`
-        # substring check mislabelled .jpeg files as png.
-        ext = "png" if img_url.lower().split("?")[0].endswith(".png") else "jpg"
-        return r.content, ext, img_url
-    except Exception:
-        return None
+        return download_hit(hit, http_client=client)
     finally:
         if owned:
             client.close()

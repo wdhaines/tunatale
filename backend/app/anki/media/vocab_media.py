@@ -112,6 +112,7 @@ async def generate_vocab_media(
             language_code=language_code,
             used_image_urls=used_image_urls,
             image_query=image_query,
+            llm=llm,
         )
     except Exception as exc:  # noqa: BLE001 — media is best-effort; never block card creation
         logger.warning("vocab media generation failed for %r: %s", word, exc)
@@ -133,5 +134,16 @@ async def generate_vocab_media(
         img_filename = f"{safe_stem(english, 'img')}.{ext}"
         store_tt_media(db, coll_id, "image", img_filename, media.image_bytes)
         stored["image"] = img_filename
+
+    img_status = getattr(media, "image_status", None)
+    if img_status is not None:
+        stored["image_status"] = img_status
+        if media.image_bytes is None and img_status not in (None, "skipped"):
+            logger.warning(
+                "image fetch failed for %r: status=%s query=%s",
+                word,
+                img_status,
+                getattr(media, "image_query_used", None),
+            )
 
     return stored

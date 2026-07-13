@@ -1315,6 +1315,9 @@ class AnkiSync:
         created = 0
         linked = 0
         skipped = 0
+        image_ok = 0
+        image_no_results = 0
+        image_failed = 0
 
         for guid, item, coll_id in items:
             from app.srs.function_words import make_cloze_text
@@ -1398,6 +1401,22 @@ class AnkiSync:
                 self._writer.store_media_file(img_filename, media.image_bytes)
                 image_tag = f'<img src="{img_filename}">'
                 _store_tt_media(self._db, coll_id, "image", img_filename, media.image_bytes)
+
+            # Classify image fetch status into report counters
+            if media is not None:
+                img_status = getattr(media, "image_status", None)
+                if img_status == "ok":
+                    image_ok += 1
+                elif img_status == "no_results":
+                    image_no_results += 1
+                elif img_status and img_status not in (None, "skipped"):
+                    image_failed += 1
+                    _log.warning(
+                        "image fetch failed for %r: status=%s query=%s",
+                        word,
+                        img_status,
+                        getattr(media, "image_query_used", None),
+                    )
 
             # The L2 word lives in the mint notetype's sort field (ord 0) — "Slovene"
             # for Slovene Vocabulary, "Norwegian" for Norwegian Vocabulary.
@@ -1500,4 +1519,7 @@ class AnkiSync:
             linked=linked,
             skipped=skipped,
             notes_created_from_anki=notes_created_from_anki,
+            image_ok=image_ok,
+            image_no_results=image_no_results,
+            image_failed=image_failed,
         )

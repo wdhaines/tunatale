@@ -36,6 +36,7 @@ def _build_media_fn(llm, db):
             language_code=settings.target_language,
             used_image_urls=used_image_urls,
             image_query=image_query,
+            llm=llm,
         )
 
     return _media_fn

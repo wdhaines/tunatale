@@ -11,8 +11,10 @@ from app.anki.media.pixabay import (
     QUERY_MAP,
     best_hit,
     build_query,
+    download_hit,
     fetch_pixabay_image,
     score_hit,
+    search_pixabay,
 )
 
 # ── build_query ────────────────────────────────────────────────────────────────
@@ -251,7 +253,7 @@ class TestFetchPixabayImage:
         class FakeClient:
             def get(self, url, *, params=None, timeout=None):
                 calls.append("get")
-                raise RuntimeError("no network in test")
+                raise httpx.ConnectError("no network in test")
 
             def close(self):
                 calls.append("close")
@@ -351,3 +353,193 @@ class TestFetchPixabayImage:
             used_urls=frozenset({"https://cdn.pixabay.com/used.jpg"}),
         )
         assert result is None
+
+
+# ── search_pixabay ────────────────────────────────────────────────────────────
+
+
+class _SearchTransport(httpx.BaseTransport):
+    """Fake transport that returns a configurable status code or raises."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int = 200,
+        hits: list[dict] | None = None,
+        exc: Exception | None = None,
+    ) -> None:
+        self._status_code = status_code
+        self._hits = hits if hits is not None else []
+        self._exc = exc
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        if self._exc is not None:
+            raise self._exc
+        if self._status_code == 429:
+            raise httpx.HTTPStatusError(
+                "429 Too Many Requests",
+                request=request,
+                response=httpx.Response(429),
+            )
+        if self._status_code >= 400:
+            raise httpx.HTTPStatusError(
+                f"{self._status_code}",
+                request=request,
+                response=httpx.Response(self._status_code),
+            )
+        return httpx.Response(200, json={"hits": self._hits, "totalHits": len(self._hits)})
+
+
+class TestSearchPixabay:
+    def test_429_returns_rate_limited(self):
+        client = httpx.Client(transport=_SearchTransport(status_code=429))
+        result = search_pixabay("tree", api_key="k", http_client=client)
+        assert result.status == "rate_limited"
+        assert result.hits == []
+
+    def test_500_returns_api_error_and_logs(self, caplog):
+        client = httpx.Client(transport=_SearchTransport(status_code=500))
+        with caplog.at_level("WARNING"):
+            result = search_pixabay("tree", api_key="k", http_client=client)
+        assert result.status == "api_error"
+        assert result.hits == []
+        assert any("tree" in r.message for r in caplog.records)
+
+    def test_network_exception_returns_api_error(self, caplog):
+        client = httpx.Client(transport=_SearchTransport(exc=ConnectionError("no route")))
+        with caplog.at_level("WARNING"):
+            result = search_pixabay("tree", api_key="k", http_client=client)
+        assert result.status == "api_error"
+        assert any("tree" in r.message for r in caplog.records)
+
+    def test_empty_hits_returns_no_results(self):
+        client = httpx.Client(transport=_SearchTransport(hits=[]))
+        result = search_pixabay("tree", api_key="k", http_client=client)
+        assert result.status == "no_results"
+        assert result.hits == []
+
+    def test_happy_path_returns_ok_with_hits(self):
+        hits = [{"tags": "tree", "webformatURL": "https://cdn.pixabay.com/t.jpg"}]
+        client = httpx.Client(transport=_SearchTransport(hits=hits))
+        result = search_pixabay("tree", api_key="k", http_client=client)
+        assert result.status == "ok"
+        assert len(result.hits) == 1
+        assert result.hits[0]["tags"] == "tree"
+
+    def test_programming_error_propagates(self):
+        """A programming error (not HTTP/network) must raise, not be swallowed."""
+
+        class _Bug(httpx.BaseTransport):
+            def handle_request(self, request):
+                raise TypeError("bug in test code")
+
+        client = httpx.Client(transport=_Bug())
+        with pytest.raises(TypeError, match="bug in test code"):
+            search_pixabay("tree", api_key="k", http_client=client)
+
+    def test_creates_own_client_when_none_given(self, monkeypatch):
+        """When no http_client is passed, search_pixabay creates and closes its own."""
+        calls: list[str] = []
+        transport = _SearchTransport(hits=[])
+
+        class FakeClient:
+            def __init__(self):
+                self._transport = transport
+
+            def get(self, url, *, params=None, timeout=None):
+                calls.append("get")
+                return httpx.Response(200, json={"hits": [], "totalHits": 0}, request=httpx.Request("GET", url))
+
+            def close(self):
+                calls.append("close")
+
+        monkeypatch.setattr("app.anki.media.pixabay.httpx.Client", lambda: FakeClient())
+        result = search_pixabay("tree", api_key="k")
+        assert result.status == "no_results"
+        assert "close" in calls
+
+
+# ── download_hit ──────────────────────────────────────────────────────────────
+
+
+class TestDownloadHit:
+    def test_returns_bytes_and_ext(self):
+        class _ImgTransport(httpx.BaseTransport):
+            def handle_request(self, request):
+                return httpx.Response(200, content=b"\xff\xd8fake_jpg")
+
+        client = httpx.Client(transport=_ImgTransport())
+        hit = {"webformatURL": "https://cdn.pixabay.com/photo/tree.jpg"}
+        result = download_hit(hit, http_client=client)
+        assert result is not None
+        data, ext, url = result
+        assert data == b"\xff\xd8fake_jpg"
+        assert ext == "jpg"
+        assert url == "https://cdn.pixabay.com/photo/tree.jpg"
+
+    def test_png_ext_for_png_url(self):
+        class _ImgTransport(httpx.BaseTransport):
+            def handle_request(self, request):
+                return httpx.Response(200, content=b"fake_png")
+
+        client = httpx.Client(transport=_ImgTransport())
+        hit = {"webformatURL": "https://cdn.pixabay.com/photo/tree.png"}
+        result = download_hit(hit, http_client=client)
+        assert result is not None
+        assert result[1] == "png"
+
+    def test_network_failure_returns_none_and_logs(self, caplog):
+        client = httpx.Client(transport=_SearchTransport(exc=ConnectionError("down")))
+        hit = {"webformatURL": "https://cdn.pixabay.com/photo/tree.jpg"}
+        with caplog.at_level("WARNING"):
+            result = download_hit(hit, http_client=client)
+        assert result is None
+        assert any("download" in r.message.lower() or "tree" in r.message for r in caplog.records)
+
+    def test_empty_url_returns_none(self):
+        """A hit with no webformatURL should fail gracefully."""
+        client = httpx.Client(transport=_SearchTransport())
+        hit = {"webformatURL": ""}
+        result = download_hit(hit, http_client=client)
+        assert result is None
+
+    def test_creates_own_client_when_none_given(self, monkeypatch):
+        """When no http_client is passed, download_hit creates and closes its own."""
+        calls: list[str] = []
+
+        class FakeClient:
+            def get(self, url, *, timeout=None):
+                calls.append("get")
+                return httpx.Response(200, content=b"img", request=httpx.Request("GET", url))
+
+            def close(self):
+                calls.append("close")
+
+        monkeypatch.setattr("app.anki.media.pixabay.httpx.Client", lambda: FakeClient())
+        hit = {"webformatURL": "https://cdn.pixabay.com/photo/tree.jpg"}
+        result = download_hit(hit)
+        assert result is not None
+        assert "close" in calls
+
+
+# ── wrapper still works ──────────────────────────────────────────────────────
+
+
+class TestFetchPixabayImageWrapper:
+    def test_wrapper_still_returns_tuple_on_happy_path(self):
+        hits = [
+            {
+                "likes": 10,
+                "views": 100,
+                "tags": "tree",
+                "imageType": "photo",
+                "webformatURL": "https://cdn.pixabay.com/photo/tree.jpg",
+            }
+        ]
+        client = httpx.Client(transport=_PixabayTransport(hits, b"wrapper_bytes"))
+        result = fetch_pixabay_image("tree", api_key="key123", http_client=client)
+        assert result is not None
+        data, ext, url = result
+        assert data == b"wrapper_bytes"
+        assert ext == "jpg"
+        assert url == "https://cdn.pixabay.com/photo/tree.jpg"

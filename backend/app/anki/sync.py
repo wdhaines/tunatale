@@ -228,7 +228,13 @@ async def run_full_sync(
     pull_report = sync.sync_pull(dry_run=dry_run)
 
     # Default media report (returned on dry-run / no media_dir).
-    media_report: dict[str, int] = {"new_media": 0, "updated_media": 0, "unchanged_media": 0, "collapsed_media": 0}
+    media_report: dict[str, int] = {
+        "new_media": 0,
+        "updated_media": 0,
+        "unchanged_media": 0,
+        "collapsed_media": 0,
+        "image_fetch_failed": 0,
+    }
 
     if not dry_run:
         from app.srs.queue_stats import (
@@ -279,6 +285,11 @@ async def run_full_sync(
                 media_dir=_MEDIA_DIR,
                 db=db,
             )
+
+        # Merge AFTER the media refresh: on the media_dir path the line above
+        # reassigns media_report to refresh_media_from_conn's dict, which has no
+        # image key. Setting it here survives both paths.
+        media_report["image_fetch_failed"] = getattr(create_report, "image_failed", 0)
 
         _write_sync_soak_log(
             sync_log_path,

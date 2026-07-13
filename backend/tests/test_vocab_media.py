@@ -199,3 +199,39 @@ async def test_fetch_exception_is_swallowed(media_dir, caplog) -> None:
     assert out == {}
     assert db.media == []
     assert any("vocab media generation failed" in r.message for r in caplog.records)
+
+
+async def test_image_rate_limited_logs_warning(media_dir, caplog) -> None:
+    """A rate_limited image_status → warning, no image key, image_status stored."""
+    db = _FakeDB()
+
+    async def _query(*_a, **_k):
+        return "water"
+
+    async def _fetch(*_a, **_k):
+        return MediaResult(image_status="rate_limited")
+
+    with caplog.at_level("WARNING"):
+        out = await vocab_media.generate_vocab_media(
+            db, 1, "voda", "water", llm=object(), pixabay_key="k", _query_fn=_query, _fetch_fn=_fetch
+        )
+    assert "image" not in out
+    assert out["image_status"] == "rate_limited"
+    assert any("image fetch failed" in r.message for r in caplog.records)
+
+
+async def test_image_ok_sets_status(media_dir) -> None:
+    """Happy path: image_status='ok' propagated to stored dict."""
+    db = _FakeDB()
+
+    async def _query(*_a, **_k):
+        return "water"
+
+    async def _fetch(*_a, **_k):
+        return MediaResult(image_bytes=b"IMG", image_ext="jpg", image_status="ok")
+
+    out = await vocab_media.generate_vocab_media(
+        db, 1, "voda", "water", llm=object(), pixabay_key="k", _query_fn=_query, _fetch_fn=_fetch
+    )
+    assert out["image"] == "img_water.jpg"
+    assert out["image_status"] == "ok"
