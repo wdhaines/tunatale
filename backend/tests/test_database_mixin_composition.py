@@ -48,4 +48,5 @@ def test_public_method_count_pinned() -> None:
     # 100 + count_interday_learning_due (Layer 79); the variant scan+hydrate
     # single-query merge was a net-zero swap; +get_unpushed_revlog_rows (Layer 80)
     # +list_media_by_collocation_and_filename +update_media_stat (media refresh optimisation)
-    assert count == 104
+    # +add_dirty_field_by_id (Step 6: manual image-update API)
+    assert count == 105

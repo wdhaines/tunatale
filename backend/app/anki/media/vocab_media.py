@@ -65,6 +65,18 @@ def store_tt_media(db: Any, coll_id: int, kind: str, filename: str, data: bytes)
     )
 
 
+def replace_item_image(db: Any, coll_id: int, english: str, data: bytes, ext: str) -> str:
+    """Replace a card's TT image: delete old media row, store new, flag dirty.
+
+    Returns the new filename.
+    """
+    filename = f"{safe_stem(english, 'img')}_{hashlib.sha256(data).hexdigest()[:8]}.{ext}"
+    db.delete_all_media_for_kind(coll_id, "image")
+    store_tt_media(db, coll_id, "image", filename, data)
+    db.add_dirty_field_by_id(coll_id, "image")
+    return filename
+
+
 async def generate_vocab_media(
     db: Any,
     coll_id: int,

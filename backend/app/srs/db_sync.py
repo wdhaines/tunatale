@@ -366,6 +366,20 @@ class DbSyncMixin:
             )
             self._commit(conn)
 
+    def add_dirty_field_by_id(self, collocation_id: int, field: str) -> None:
+        """Append *field* to the comma-separated dirty_fields set (no dupes), by row id."""
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT dirty_fields FROM collocations WHERE id = ?", (collocation_id,)).fetchone()
+            if row is None:
+                return
+            existing = {f for f in (row["dirty_fields"] or "").split(",") if f}
+            existing.add(field)
+            conn.execute(
+                "UPDATE collocations SET dirty_fields = ? WHERE id = ?",
+                (",".join(sorted(existing)), collocation_id),
+            )
+            self._commit(conn)
+
     def get_dirty_fields(self, guid: str) -> str:
         """Return dirty_fields for the collocation identified by guid, or ''."""
         with self._get_conn() as conn:

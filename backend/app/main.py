@@ -232,11 +232,13 @@ async def _resolve_language_state(request, call_next):
 from app.api import admin, anki, audio, curriculum, generation, srs  # noqa: E402
 from app.api import llm as llm_api  # noqa: E402
 from app.api import pipeline as pipeline_api  # noqa: E402
+from app.api import srs_images as srs_images_api  # noqa: E402
 
 app.include_router(curriculum.router)
 app.include_router(pipeline_api.router)
 app.include_router(generation.router)
 app.include_router(srs.router)
+app.include_router(srs_images_api.router)
 app.include_router(audio.router)
 app.include_router(anki.router)
 app.include_router(admin.router)

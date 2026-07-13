@@ -3149,6 +3149,44 @@ class TestAddDirtyField:
         assert srs_db.get_dirty_fields(guid) == "a,y"
 
 
+class TestAddDirtyFieldById:
+    """Tests for add_dirty_field_by_id on collocations."""
+
+    def _id_for_text(self, srs_db, text: str) -> int:
+        with srs_db._get_conn() as conn:
+            return conn.execute("SELECT id FROM collocations WHERE text = ?", (text,)).fetchone()[0]
+
+    def test_add_dirty_field_by_id_sets_flag(self, srs_db):
+        srs_db.add_collocation(_unit(), language_code="sl")
+        coll_id = self._id_for_text(srs_db, "dober dan")
+        srs_db.add_dirty_field_by_id(coll_id, "image")
+        with srs_db._get_conn() as conn:
+            row = conn.execute("SELECT dirty_fields FROM collocations WHERE id = ?", (coll_id,)).fetchone()
+        assert row["dirty_fields"] == "image"
+
+    def test_add_dirty_field_by_id_is_idempotent(self, srs_db):
+        srs_db.add_collocation(_unit(), language_code="sl")
+        coll_id = self._id_for_text(srs_db, "dober dan")
+        srs_db.add_dirty_field_by_id(coll_id, "image")
+        srs_db.add_dirty_field_by_id(coll_id, "image")
+        with srs_db._get_conn() as conn:
+            row = conn.execute("SELECT dirty_fields FROM collocations WHERE id = ?", (coll_id,)).fetchone()
+        assert row["dirty_fields"] == "image"
+
+    def test_add_dirty_field_by_id_coexists_with_existing_flag(self, srs_db):
+        srs_db.add_collocation(_unit(), language_code="sl")
+        coll_id = self._id_for_text(srs_db, "dober dan")
+        srs_db.add_dirty_field_by_id(coll_id, "translation")
+        srs_db.add_dirty_field_by_id(coll_id, "image")
+        with srs_db._get_conn() as conn:
+            row = conn.execute("SELECT dirty_fields FROM collocations WHERE id = ?", (coll_id,)).fetchone()
+        assert row["dirty_fields"] == "image,translation"
+
+    def test_add_dirty_field_by_id_unknown_id_is_noop(self, srs_db):
+        """Calling add_dirty_field_by_id with a non-existent id is a no-op."""
+        srs_db.add_dirty_field_by_id(999999, "image")
+
+
 class TestSetSentenceTranslationDirty:
     """Tests for set_sentence_translation_dirty edge cases."""
 
