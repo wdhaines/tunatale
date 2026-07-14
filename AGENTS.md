@@ -30,7 +30,8 @@ Two main packages:
 
 - **`backend/`** — FastAPI app (`app/main.py`), Python 3.14, `uv` for deps
   - `app/languages.py` — per-language plugin registry (`LanguageConfig`/`LanguageContext`)
-  - `app/anki/` — Anki collection reading & USN sync (use `safety.safe_open`, never raw sqlite3)
+  - `app/cards/` — vocab-card notetypes (`vocab_notetype`, `field_map`) + media-fetch pipeline (Forvo/Pixabay/EdgeTTS); no `anki` runtime dep
+  - `app/plugins/anki_sync/` — optional Anki collection reading & USN sync (use `safety.safe_open`, never raw sqlite3); gated on `sync_enabled` + package presence
   - `app/api/` — FastAPI route modules
   - `app/common/` — cross-cutting helpers (guid generation)
   - `app/audio/` — EdgeTTS + audio assembly pipeline

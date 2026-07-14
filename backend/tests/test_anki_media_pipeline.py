@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from app.anki.media.pipeline import MediaResult, fetch_card_media
-from app.anki.media.pixabay import PixabaySearch
+from app.cards.media.pipeline import MediaResult, fetch_card_media
+from app.cards.media.pixabay import PixabaySearch
 
 # ── Fakes ──────────────────────────────────────────────────────────────────────
 

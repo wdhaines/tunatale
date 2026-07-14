@@ -15,7 +15,7 @@ Upload to AnkiWeb). See ``.claude/rules/anki-sync.md`` for the full workflow
 and diagnostic queries.
 
 Usage:
-    uv run python -m app.anki.normalize_usns [--dry-run]
+    uv run python -m app.plugins.anki_sync.normalize_usns [--dry-run]
 """
 
 from __future__ import annotations

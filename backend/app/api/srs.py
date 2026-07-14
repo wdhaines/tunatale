@@ -207,7 +207,7 @@ async def _generate_add_time_media(
     """
     if unit.card_type == "cloze":
         return
-    from app.anki.media.vocab_media import generate_vocab_media
+    from app.cards.media.vocab_media import generate_vocab_media
     from app.config import settings
 
     await generate_vocab_media(

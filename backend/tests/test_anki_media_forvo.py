@@ -6,7 +6,7 @@ import base64
 
 import httpx
 
-from app.anki.media.forvo import _extract_mp3_url, fetch_forvo_audio
+from app.cards.media.forvo import _extract_mp3_url, fetch_forvo_audio
 
 
 def _make_forvo_html(b64_path: str, *, use_single_quotes: bool = False) -> str:
@@ -61,7 +61,7 @@ class TestExtractMp3Url:
         assert _extract_mp3_url(html) is None
 
     def test_make_client_returns_httpx_client(self):
-        from app.anki.media.forvo import _make_client
+        from app.cards.media.forvo import _make_client
 
         client = _make_client()
         assert isinstance(client, httpx.Client)
@@ -159,7 +159,7 @@ class TestFetchForvoAudio:
             def close(self):
                 calls.append("close")
 
-        monkeypatch.setattr("app.anki.media.forvo._make_client", lambda: FakeClient())
+        monkeypatch.setattr("app.cards.media.forvo._make_client", lambda: FakeClient())
         result = fetch_forvo_audio("voda")
         assert result is None
         assert "close" in calls

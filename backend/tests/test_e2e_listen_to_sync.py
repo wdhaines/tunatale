@@ -27,7 +27,7 @@ class FakeReaderE2E:
 def _make_dual_collection_conn():
     import sqlite3
 
-    from app.anki.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
+    from app.cards.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -207,7 +207,7 @@ class TestImageEndpointToSyncSeam:
     _JPG = b"\xff\xd8\xff" + b"\x00" * 64  # minimal JPEG magic + padding
 
     async def test_upload_endpoint_edit_reaches_anki_note_via_push(self, tmp_path, monkeypatch):
-        import app.anki.media.vocab_media as vocab_media
+        import app.cards.media.vocab_media as vocab_media
         import app.plugins.anki_sync.sync as sync_mod
 
         # Both _MEDIA_DIR constants resolve to backend/media independently. Point

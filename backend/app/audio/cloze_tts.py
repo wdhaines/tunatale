@@ -6,8 +6,8 @@ import hashlib
 import logging
 from pathlib import Path
 
-from app.anki.media.tts import generate_tts_audio
-from app.anki.media.vocab_media import safe_stem
+from app.cards.media.tts import generate_tts_audio
+from app.cards.media.vocab_media import safe_stem
 
 logger = logging.getLogger(__name__)
 

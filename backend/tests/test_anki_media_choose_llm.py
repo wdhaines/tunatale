@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.anki.media.choose_llm import (
+from app.cards.media.choose_llm import (
     build_image_choice_prompt,
     choose_image_hit,
     parse_image_choice_response,

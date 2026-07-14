@@ -869,7 +869,7 @@ cat -n backend/app/models/syntactic_unit.py
     18	    """One extracted rich back-of-card field: a labelled HTML fragment + its tier.
     19	
     20	    Sourced from an Anki notetype's secondary fields (see
-    21	    ``app.anki.field_map.NotetypeProfile.back_fields``); display-only, never
+    21	    ``app.cards.field_map.NotetypeProfile.back_fields``); display-only, never
     22	    edited in TT. ``html`` is already sanitized at extraction time.
     23	    """
     24	
@@ -4802,19 +4802,19 @@ Name                                            Stmts   Miss Branch BrPart  Cove
 app/__init__.py                                     0      0      0      0   100%
 app/anki/__init__.py                                0      0      0      0   100%
 app/plugins/anki_sync/add_vocab_notetype.py                     41      0     12      0   100%
-app/anki/field_map.py                              18      0      0      0   100%
+app/cards/field_map.py                              18      0      0      0   100%
 app/plugins/anki_sync/import_seed.py                           166      0     66      0   100%
-app/anki/media/__init__.py                          0      0      0      0   100%
-app/anki/media/forvo.py                            43      0      8      0   100%
-app/anki/media/normalize.py                        55      0      8      0   100%
-app/anki/media/pipeline.py                         42      0     12      0   100%
-app/anki/media/pixabay.py                          54      0      8      0   100%
-app/anki/media/query_llm.py                        47      0     16      0   100%
-app/anki/media/tts.py                              14      0      4      0   100%
-app/anki/media/vocab_media.py                      43      0      8      0   100%
+app/cards/media/__init__.py                          0      0      0      0   100%
+app/cards/media/forvo.py                            43      0      8      0   100%
+app/cards/media/normalize.py                        55      0      8      0   100%
+app/cards/media/pipeline.py                         42      0     12      0   100%
+app/cards/media/pixabay.py                          54      0      8      0   100%
+app/cards/media/query_llm.py                        47      0     16      0   100%
+app/cards/media/tts.py                              14      0      4      0   100%
+app/cards/media/vocab_media.py                      43      0      8      0   100%
 app/plugins/anki_sync/model_discovery.py                        21      0     10      0   100%
 app/plugins/anki_sync/normalize_usns.py                         26      0     12      0   100%
-app/anki/notetype.py                                4      0      0      0   100%
+app/cards/notetype.py                                4      0      0      0   100%
 app/srs/anki_mirror/protobuf_wire.py                         125      0     42      0   100%
 app/plugins/anki_sync/replay_fsrs_from_revlog.py               120      0     40      0   100%
 app/srs/anki_mirror/rollover.py                               22      0      4      0   100%
@@ -4826,7 +4826,7 @@ app/plugins/anki_sync/sync_engine.py                           507      0    248
 app/plugins/anki_sync/sync_orchestrator.py                     216      0     48      0   100%
 app/plugins/anki_sync/sync_reader.py                            68      0     16      0   100%
 app/plugins/anki_sync/sync_writer.py                           327      0     80      0   100%
-app/anki/vocab_notetype.py                         45      0      4      0   100%
+app/cards/vocab_notetype.py                         45      0      4      0   100%
 app/api/__init__.py                                 0      0      0      0   100%
 app/api/_serializers.py                             6      0      2      0   100%
 app/api/admin.py                                   11      0      0      0   100%
@@ -5565,10 +5565,10 @@ Two helper concepts appear repeatedly:
 
 ### 12.5 Media Pipeline
 
-`fetch_card_media(word, english, *, used_image_urls)` in `app/anki/media/pipeline.py` is the single entry point that the sync engine calls when creating a new Anki note. It returns a `MediaResult` with audio bytes, image bytes, and chosen filenames.
+`fetch_card_media(word, english, *, used_image_urls)` in `app/cards/media/pipeline.py` is the single entry point that the sync engine calls when creating a new Anki note. It returns a `MediaResult` with audio bytes, image bytes, and chosen filenames.
 
 ```bash
-cat -n backend/app/anki/media/pipeline.py
+cat -n backend/app/cards/media/pipeline.py
 ```
 
 ```output
@@ -5826,7 +5826,7 @@ The four-phase sync described in 12.4 only works once a user's Anki collection h
 | Step | Module | What it does |
 |------|--------|--------------|
 | **H1** | `app.anki.audit_guids` | Read-only diagnostic. Emits a JSON report of every note whose visible text changed since the last GUID backfill — these are the rows that need attention before re-running backfill. |
-| **H2** | `app.anki.merge_dupes` | Consolidates the two historical "Basic" notetype cards per word (one for recognition, one for production) into a single two-template "Slovene Vocabulary" note. Hand-rolled protobuf (`app.anki.notetype`) builds the new notetype's field/template/CSS config. This is the biggest single anki module and the one that requires a forced full-upload afterward. |
+| **H2** | `app.anki.merge_dupes` | Consolidates the two historical "Basic" notetype cards per word (one for recognition, one for production) into a single two-template "Slovene Vocabulary" note. Hand-rolled protobuf (`app.cards.notetype`) builds the new notetype's field/template/CSS config. This is the biggest single anki module and the one that requires a forced full-upload afterward. |
 | **H3** | `app.anki.migrate_homonyms` | Moves disambiguation suffixes (e.g. `(noun)` in `kapus (noun)`) out of the visible Slovene field into a hidden `DisambigKey` field, so two homonyms can share a clean visible form while still hashing to distinct GUIDs. `repair_nested_homonyms` is a 3-row surgical companion for cases the regex missed (parens-inside-parens). |
 | **H4** | `app.anki.backfill_guids` | Rewrites every Anki note GUID to TunaTale's deterministic formula (sha256 of language + visible text + DisambigKey). After this, sync's GUID-based reconciliation works. (`app.anki.sqlite_writer` has since been deleted; the one-shot scripts now live in `backend/scripts/anki_archive/`.) |
 | **H5** | `app.plugins.anki_sync.normalize_usns` | Post-full-upload USN clamp (already covered in 12.2). Resets `cards.usn`, `notes.usn`, `revlog.usn` back to `col.usn` after the user has done a forced full upload. |

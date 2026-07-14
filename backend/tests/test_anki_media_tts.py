@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.anki.media.tts import DEFAULT_VOICE, generate_tts_audio
+from app.cards.media.tts import DEFAULT_VOICE, generate_tts_audio
 
 
 class TestGenerateTtsAudio:

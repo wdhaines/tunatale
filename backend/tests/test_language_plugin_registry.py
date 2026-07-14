@@ -131,8 +131,8 @@ class TestLanguagesModuleTopNoAnkiOrPreprocessorImport:
         tree = ast.parse(src)
 
         forbidden_prefixes = (
-            "app.anki.vocab_notetype",
-            "app.anki.",
+            "app.cards.vocab_notetype",
+            "app.plugins.anki_sync",
             "app.audio.preprocessing.slovene",
             "app.audio.preprocessing.norwegian",
         )

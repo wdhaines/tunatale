@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 
-from app.anki.media.normalize import normalize_audio
+from app.cards.media.normalize import normalize_audio
 
 
 def _fake_run_factory(stderr_json: dict | None, returncode: int = 0):
@@ -43,7 +43,7 @@ class TestNormalizeAudio:
 
         monkeypatch.setattr("subprocess.run", fake_run)
         monkeypatch.setattr(
-            "app.anki.media.normalize._apply_normalization",
+            "app.cards.media.normalize._apply_normalization",
             lambda src, dst, stats, target_lufs: dst.write_bytes(normalized_bytes),
         )
 
@@ -67,8 +67,8 @@ class TestNormalizeAudio:
             stats_seen.append(stats)
             dst.write_bytes(b"result")
 
-        monkeypatch.setattr("app.anki.media.normalize._measure_loudness", fake_measure)
-        monkeypatch.setattr("app.anki.media.normalize._apply_normalization", fake_apply)
+        monkeypatch.setattr("app.cards.media.normalize._measure_loudness", fake_measure)
+        monkeypatch.setattr("app.cards.media.normalize._apply_normalization", fake_apply)
 
         normalize_audio(b"input")
         assert stats_seen[0]["input_i"] == "-18.0"
@@ -76,9 +76,9 @@ class TestNormalizeAudio:
     def test_fallback_to_onepass_when_measure_returns_empty(self, monkeypatch):
         stats_seen: list[dict] = []
 
-        monkeypatch.setattr("app.anki.media.normalize._measure_loudness", lambda p: {})
+        monkeypatch.setattr("app.cards.media.normalize._measure_loudness", lambda p: {})
         monkeypatch.setattr(
-            "app.anki.media.normalize._apply_normalization",
+            "app.cards.media.normalize._apply_normalization",
             lambda src, dst, stats, target_lufs: (stats_seen.append(stats), dst.write_bytes(b"r")),
         )
 
@@ -131,9 +131,9 @@ class TestNormalizeAudio:
                 return self._f.__exit__(*a)
 
         monkeypatch.setattr("tempfile.NamedTemporaryFile", TrackingNTF)
-        monkeypatch.setattr("app.anki.media.normalize._measure_loudness", lambda p: {})
+        monkeypatch.setattr("app.cards.media.normalize._measure_loudness", lambda p: {})
         monkeypatch.setattr(
-            "app.anki.media.normalize._apply_normalization",
+            "app.cards.media.normalize._apply_normalization",
             lambda src, dst, stats, tl: dst.write_bytes(b"ok"),
         )
 
@@ -160,7 +160,7 @@ class TestNormalizeAudio:
 
         from pathlib import Path
 
-        from app.anki.media.normalize import _measure_loudness
+        from app.cards.media.normalize import _measure_loudness
 
         result = _measure_loudness(Path("/fake.mp3"))
         assert result["input_i"] == "-22.0"
@@ -173,7 +173,7 @@ class TestNormalizeAudio:
 
         from pathlib import Path
 
-        from app.anki.media.normalize import _measure_loudness
+        from app.cards.media.normalize import _measure_loudness
 
         result = _measure_loudness(Path("/fake.mp3"))
         assert result == {}
@@ -186,7 +186,7 @@ class TestNormalizeAudio:
 
         from pathlib import Path
 
-        from app.anki.media.normalize import _measure_loudness
+        from app.cards.media.normalize import _measure_loudness
 
         result = _measure_loudness(Path("/fake.mp3"))
         assert result == {}
@@ -198,7 +198,7 @@ class TestNormalizeAudio:
             lambda cmd, **kw: (cmds.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1],
         )
 
-        from app.anki.media.normalize import _apply_normalization
+        from app.cards.media.normalize import _apply_normalization
 
         src = tmp_path / "src.mp3"
         dst = tmp_path / "dst.mp3"
@@ -216,7 +216,7 @@ class TestNormalizeAudio:
             lambda cmd, **kw: (cmds.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1],
         )
 
-        from app.anki.media.normalize import _apply_normalization
+        from app.cards.media.normalize import _apply_normalization
 
         stats = {
             "input_i": "-20.0",

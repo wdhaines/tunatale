@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from app.anki.vocab_notetype import VocabNotetype
+    from app.cards.vocab_notetype import VocabNotetype
     from app.config import Settings
 
 

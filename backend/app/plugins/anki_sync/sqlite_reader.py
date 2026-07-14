@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from app.anki.field_map import get_profile
+from app.cards.field_map import get_profile
 from app.config import ANKI_ROLLOVER_HOUR
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import BackField

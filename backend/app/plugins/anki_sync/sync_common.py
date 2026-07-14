@@ -2,7 +2,7 @@
 
 Moved verbatim out of ``app/anki/sync.py`` (Phase 9 mechanical split): constants,
 exceptions, the record/report dataclasses, the Cloze ``Back Extra`` text utils,
-and the time helpers. ``app.anki.sync`` re-exports everything here, so external
+and the time helpers. ``app.plugins.anki_sync.sync`` re-exports everything here, so external
 imports (tests, archive scripts) keep working unchanged.
 """
 
@@ -218,5 +218,5 @@ def _ms_to_datetime(ms: int | None) -> datetime | None:
 
 
 # Single-sourced in app.srs.anki_mirror.rollover; the legacy name stays importable here
-# (and via the app.anki.sync facade) for existing call sites and tests.
+# (and via the app.plugins.anki_sync.sync facade) for existing call sites and tests.
 _local_today_4am = local_today_rollover

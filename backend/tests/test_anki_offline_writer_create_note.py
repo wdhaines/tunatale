@@ -8,7 +8,7 @@ import sqlite3
 
 import pytest
 
-from app.anki.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
+from app.cards.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
 from app.common.guid import compute_guid
 from app.plugins.anki_sync.sync import DuplicateNoteError, OfflineWriter
 
@@ -389,7 +389,7 @@ _NO_DECK_ID = 54321
 
 def _make_norwegian_collection_conn() -> sqlite3.Connection:
     """In-memory collection with a Norwegian Vocabulary notetype (2 templates)."""
-    from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+    from app.cards.vocab_notetype import NORWEGIAN_VOCAB
 
     conn = _make_collection_conn()
     conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, x'')", (_NO_DECK_ID, _NO_DECK_NAME))
@@ -465,14 +465,14 @@ class TestNorwegianCreateNote:
         fields = _make_norwegian_fields("bilen", "the car")
         fields["English"] = "the car"
         note_id = writer.create_note(_NO_DECK_NAME, "Norwegian Vocabulary", fields, ["tunatale"], language_code="no")
-        from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+        from app.cards.vocab_notetype import NORWEGIAN_VOCAB
 
         row = conn.execute("SELECT flds FROM notes WHERE id = ?", (note_id,)).fetchone()
         expected = "\x1f".join(fields.get(name, "") for name in NORWEGIAN_VOCAB.field_names)
         assert row["flds"] == expected
 
     def test_image_lands_in_norwegian_image_field(self):
-        from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+        from app.cards.vocab_notetype import NORWEGIAN_VOCAB
 
         conn = _make_norwegian_collection_conn()
         writer = OfflineWriter(conn)

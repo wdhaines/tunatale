@@ -12,8 +12,8 @@ from __future__ import annotations
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.anki.media import vocab_media
-from app.anki.media.pipeline import MediaResult
+from app.cards.media import vocab_media
+from app.cards.media.pipeline import MediaResult
 from app.config import settings
 from app.main import app
 

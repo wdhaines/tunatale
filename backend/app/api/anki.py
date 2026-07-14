@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.anki.media.pipeline import fetch_card_media
-from app.anki.media.query_llm import generate_image_query
+from app.cards.media.pipeline import fetch_card_media
+from app.cards.media.query_llm import generate_image_query
 
 router = APIRouter(prefix="/api/anki", tags=["anki"])
 

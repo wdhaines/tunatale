@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from app.anki.vocab_notetype import SLOVENE_VOCAB
+from app.cards.vocab_notetype import SLOVENE_VOCAB
 from app.languages import LanguageConfig, register
 from app.models.language import Language
 from app.plugins.languages.sl.preprocessor import SlovenePreprocessor

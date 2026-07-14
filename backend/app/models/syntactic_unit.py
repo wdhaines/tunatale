@@ -18,7 +18,7 @@ class BackField:
     """One extracted rich back-of-card field: a labelled HTML fragment + its tier.
 
     Sourced from an Anki notetype's secondary fields (see
-    ``app.anki.field_map.NotetypeProfile.back_fields``); display-only, never
+    ``app.cards.field_map.NotetypeProfile.back_fields``); display-only, never
     edited in TT. ``html`` is already sanitized at extraction time.
     """
 

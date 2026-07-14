@@ -7,7 +7,7 @@ import math
 import httpx
 import pytest
 
-from app.anki.media.pixabay import (
+from app.cards.media.pixabay import (
     QUERY_MAP,
     best_hit,
     build_query,
@@ -258,7 +258,7 @@ class TestFetchPixabayImage:
             def close(self):
                 calls.append("close")
 
-        monkeypatch.setattr("app.anki.media.pixabay.httpx.Client", lambda: FakeClient())
+        monkeypatch.setattr("app.cards.media.pixabay.httpx.Client", lambda: FakeClient())
         result = fetch_pixabay_image("tree", api_key="key")
         assert result is None
         assert "close" in calls
@@ -453,7 +453,7 @@ class TestSearchPixabay:
             def close(self):
                 calls.append("close")
 
-        monkeypatch.setattr("app.anki.media.pixabay.httpx.Client", lambda: FakeClient())
+        monkeypatch.setattr("app.cards.media.pixabay.httpx.Client", lambda: FakeClient())
         result = search_pixabay("tree", api_key="k")
         assert result.status == "no_results"
         assert "close" in calls
@@ -515,7 +515,7 @@ class TestDownloadHit:
             def close(self):
                 calls.append("close")
 
-        monkeypatch.setattr("app.anki.media.pixabay.httpx.Client", lambda: FakeClient())
+        monkeypatch.setattr("app.cards.media.pixabay.httpx.Client", lambda: FakeClient())
         hit = {"webformatURL": "https://cdn.pixabay.com/photo/tree.jpg"}
         result = download_hit(hit)
         assert result is not None

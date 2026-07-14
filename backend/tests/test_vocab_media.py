@@ -1,4 +1,4 @@
-"""Unit tests for app.anki.media.vocab_media — add-time vocab media generation.
+"""Unit tests for app.cards.media.vocab_media — add-time vocab media generation.
 
 Covers the helper that the card-adding endpoints call so a new vocab card is
 complete (image + word audio) in /review without waiting for a sync. The image
@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.anki.media import vocab_media
-from app.anki.media.pipeline import MediaResult
+from app.cards.media import vocab_media
+from app.cards.media.pipeline import MediaResult
 
 
 class _FakeDB:

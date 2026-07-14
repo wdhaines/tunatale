@@ -35,7 +35,7 @@ from .query_llm import generate_image_query
 logger = logging.getLogger(__name__)
 
 # backend/media — the frontend serves this dir at /api/srs/media/{filename}.
-# Mirrors app.anki.sync._MEDIA_DIR (vocab_media.py is one level deeper).
+# Mirrors app.plugins.anki_sync.sync._MEDIA_DIR (vocab_media.py is one level deeper).
 _MEDIA_DIR = Path(__file__).parent.parent.parent.parent / "media"
 
 

@@ -1,6 +1,6 @@
-"""Tests for notetype field-role profiles (app.anki.field_map)."""
+"""Tests for notetype field-role profiles (app.cards.field_map)."""
 
-from app.anki.field_map import NotetypeProfile, get_profile
+from app.cards.field_map import NotetypeProfile, get_profile
 
 
 class TestGetProfile:

@@ -160,6 +160,6 @@ class TestBuildMediaFn:
         assert "Šel je na sodišče." in fake_llm.prompts[0]
         assert "noun, neuter" in fake_llm.prompts[0]
 
-        from app.anki.media.query_llm import IMAGE_QUERY_MODEL_VERSION
+        from app.cards.media.query_llm import IMAGE_QUERY_MODEL_VERSION
 
         assert db.get_image_query("sodišče", "court", IMAGE_QUERY_MODEL_VERSION) == "courtroom interior"

@@ -1,7 +1,7 @@
 """Stage 2a orchestrator: read-only Anki → TunaTale import.
 
 Usage:
-    uv run python -m app.anki.import_seed --deck "0. Slovene" [--dry-run]
+    uv run python -m app.plugins.anki_sync.import_seed --deck "0. Slovene" [--dry-run]
 
 All TunaTale writes are wrapped in a single transaction: --dry-run issues
 ROLLBACK, real mode issues COMMIT, any exception triggers ROLLBACK.

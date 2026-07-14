@@ -60,7 +60,7 @@ def _dirty_fields(db: SRSDatabase, coll_id: int) -> str:
 
 def _make_fake_search(hits=None, status="ok"):
     """Return a mock search_pixabay function."""
-    from app.anki.media.pixabay import PixabaySearch
+    from app.cards.media.pixabay import PixabaySearch
 
     if hits is None:
         hits = [
@@ -165,7 +165,7 @@ class TestCandidates:
         from app.config import settings
 
         monkeypatch.setattr(settings, "pixabay_api_key", "test-key")
-        monkeypatch.setattr("app.anki.media.pixabay.search_pixabay", _make_fake_search(status="ok"))
+        monkeypatch.setattr("app.cards.media.pixabay.search_pixabay", _make_fake_search(status="ok"))
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -182,7 +182,7 @@ class TestCandidates:
         from app.config import settings
 
         monkeypatch.setattr(settings, "pixabay_api_key", "test-key")
-        monkeypatch.setattr("app.anki.media.pixabay.search_pixabay", _make_fake_search(hits=[], status="no_results"))
+        monkeypatch.setattr("app.cards.media.pixabay.search_pixabay", _make_fake_search(hits=[], status="no_results"))
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -195,7 +195,7 @@ class TestCandidates:
         from app.config import settings
 
         monkeypatch.setattr(settings, "pixabay_api_key", "test-key")
-        monkeypatch.setattr("app.anki.media.pixabay.search_pixabay", _make_fake_search(hits=[], status="rate_limited"))
+        monkeypatch.setattr("app.cards.media.pixabay.search_pixabay", _make_fake_search(hits=[], status="rate_limited"))
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -206,7 +206,7 @@ class TestCandidates:
         from app.config import settings
 
         monkeypatch.setattr(settings, "pixabay_api_key", "test-key")
-        monkeypatch.setattr("app.anki.media.pixabay.search_pixabay", _make_fake_search(hits=[], status="api_error"))
+        monkeypatch.setattr("app.cards.media.pixabay.search_pixabay", _make_fake_search(hits=[], status="api_error"))
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -218,13 +218,13 @@ class TestCandidates:
 
         monkeypatch.setattr(settings, "pixabay_api_key", "test-key")
         captured = []
-        from app.anki.media.pixabay import PixabaySearch
+        from app.cards.media.pixabay import PixabaySearch
 
         def _capture(query, *, api_key, http_client=None, per_page=50):
             captured.append(query)
             return PixabaySearch(hits=[], status="ok")
 
-        monkeypatch.setattr("app.anki.media.pixabay.search_pixabay", _capture)
+        monkeypatch.setattr("app.cards.media.pixabay.search_pixabay", _capture)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -238,13 +238,13 @@ class TestCandidates:
 
         monkeypatch.setattr(settings, "pixabay_api_key", "test-key")
         captured = []
-        from app.anki.media.pixabay import PixabaySearch
+        from app.cards.media.pixabay import PixabaySearch
 
         def _capture(query, *, api_key, http_client=None, per_page=50):
             captured.append(query)
             return PixabaySearch(hits=[], status="ok")
 
-        monkeypatch.setattr("app.anki.media.pixabay.search_pixabay", _capture)
+        monkeypatch.setattr("app.cards.media.pixabay.search_pixabay", _capture)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         api.set_image_query("voda", "water", "v1", "crystal clear water")
@@ -268,7 +268,7 @@ class TestCandidates:
             }
             for i in range(30)
         ]
-        monkeypatch.setattr("app.anki.media.pixabay.search_pixabay", _make_fake_search(hits=big_hits))
+        monkeypatch.setattr("app.cards.media.pixabay.search_pixabay", _make_fake_search(hits=big_hits))
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -282,7 +282,7 @@ class TestCandidates:
 class TestPutImageUrl:
     @respx.mock
     async def test_happy_jpg(self, api, monkeypatch, tmp_path):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         respx.get("http://img.test/photo.jpg").mock(
@@ -300,7 +300,7 @@ class TestPutImageUrl:
     @respx.mock
     async def test_ext_from_magic_not_url(self, api, monkeypatch, tmp_path):
         """URL says .gif but content is PNG → ext must be png."""
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         respx.get("http://img.test/fake.gif").mock(
@@ -314,7 +314,7 @@ class TestPutImageUrl:
 
     @respx.mock
     async def test_old_media_deleted_on_replace(self, api, monkeypatch, tmp_path):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         # Set an initial image
@@ -349,7 +349,7 @@ class TestPutImageUrl:
 
     @respx.mock
     async def test_replace_shared_file_not_unlinked(self, api, monkeypatch, tmp_path):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit("ja", "yes"), language_code="sl")
         api.add_collocation(_unit("da", "yes"), language_code="sl")
         cid_a = _id_for_text(api, "ja")
@@ -397,7 +397,7 @@ class TestPutImageUrl:
 
     @respx.mock
     async def test_422_non_image_content_type_and_magic(self, api, monkeypatch, tmp_path):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         respx.get("http://img.test/file.txt").mock(
@@ -409,7 +409,7 @@ class TestPutImageUrl:
 
     @respx.mock
     async def test_422_oversize(self, api, monkeypatch, tmp_path):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         respx.get("http://img.test/big.jpg").mock(
@@ -421,7 +421,7 @@ class TestPutImageUrl:
 
     @respx.mock
     async def test_dirty_flag_set(self, api, monkeypatch, tmp_path):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         assert _dirty_fields(api, cid) == ""
@@ -434,7 +434,7 @@ class TestPutImageUrl:
 
     @respx.mock
     async def test_422_on_http_error_status(self, api, monkeypatch, tmp_path):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         respx.get("http://img.test/missing.jpg").mock(
@@ -447,7 +447,7 @@ class TestPutImageUrl:
 
     @respx.mock
     async def test_422_on_redirect(self, api, monkeypatch, tmp_path):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         respx.get("http://img.test/redir.jpg").mock(
@@ -467,7 +467,7 @@ class TestPutImageUrl:
 
 class TestPutImageUpload:
     async def test_happy_png(self, api, monkeypatch, tmp_path):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -483,7 +483,7 @@ class TestPutImageUpload:
 
     async def test_ext_from_magic_not_filename(self, api, monkeypatch, tmp_path):
         """File named .txt but contains JPEG → ext must be jpg."""
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -496,7 +496,7 @@ class TestPutImageUpload:
         assert filename.endswith(".jpg"), f"ext should come from magic bytes, got {filename}"
 
     async def test_422_oversize(self, api, monkeypatch, tmp_path):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -507,7 +507,7 @@ class TestPutImageUpload:
         assert resp.status_code == 422
 
     async def test_422_not_image(self, api, monkeypatch, tmp_path):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -518,7 +518,7 @@ class TestPutImageUpload:
         assert resp.status_code == 422
 
     async def test_dirty_flag_set(self, api, monkeypatch, tmp_path):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         assert _dirty_fields(api, cid) == ""
@@ -530,7 +530,7 @@ class TestPutImageUpload:
         assert "image" in _dirty_fields(api, cid)
 
     async def test_gif_upload(self, api, monkeypatch, tmp_path):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -548,7 +548,7 @@ class TestPutImageUpload:
 class TestDeleteImage:
     @respx.mock
     async def test_happy(self, api, monkeypatch, tmp_path):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         # First, set an image
@@ -585,7 +585,7 @@ class TestDeleteImage:
 
     @respx.mock
     async def test_delete_unlinks_unshared_file(self, api, monkeypatch, tmp_path):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         respx.get("http://img.test/sole.jpg").mock(
@@ -605,7 +605,7 @@ class TestDeleteImage:
     async def test_shared_file_not_unlinked_when_other_collocation_still_references_it(
         self, api, monkeypatch, tmp_path
     ):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         # Add two collocations
         api.add_collocation(_unit("ja", "yes"), language_code="sl")
         api.add_collocation(_unit("da", "yes"), language_code="sl")
@@ -643,7 +643,7 @@ class TestDeleteImage:
 
     @respx.mock
     async def test_delete_missing_file_is_swallowed(self, api, monkeypatch, tmp_path):
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         # Manually insert a media row with a filename that doesn't exist on disk
@@ -659,7 +659,7 @@ class TestDeleteImage:
     async def test_replace_skips_new_file_from_unlink(self, api, monkeypatch, tmp_path):
         """When replacing, the new filename must not be unlinked even if it
         happens to match an old row (defensive: normal hashes differ)."""
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         # Manually insert an image row whose filename equals the one replace_item_image will produce
@@ -691,7 +691,7 @@ class TestDeleteImage:
     @respx.mock
     async def test_unlink_os_error_is_swallowed(self, api, monkeypatch, tmp_path):
         """An OSError during unlink must not 500 the request."""
-        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
         # Set an initial image

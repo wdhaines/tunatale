@@ -1,7 +1,7 @@
 """OfflineWriter — write notes/cards/config/media into collection.anki2 via raw sqlite3.
 
 Moved verbatim out of ``app/anki/sync.py`` (Phase 9 mechanical split).
-``app.anki.sync`` re-exports ``OfflineWriter``, so existing imports keep working.
+``app.plugins.anki_sync.sync`` re-exports ``OfflineWriter``, so existing imports keep working.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ class OfflineWriter:
         notetype/fields tables are absent (some unit-test fixtures) or the mid has
         no field rows.
         """
-        from app.anki.notetype import SLOVENE_VOCAB_FIELD_NAMES
+        from app.cards.notetype import SLOVENE_VOCAB_FIELD_NAMES
 
         try:
             rows = self._conn.execute("SELECT name FROM fields WHERE ntid = ? ORDER BY ord", (mid,)).fetchall()

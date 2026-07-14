@@ -1,6 +1,6 @@
 """LLM-generated, sense-disambiguated image search queries.
 
-The legacy :func:`app.anki.media.pixabay.build_query` is a ~400-entry hand-curated
+The legacy :func:`app.cards.media.pixabay.build_query` is a ~400-entry hand-curated
 map keyed on the English gloss; everything outside it falls back to the raw gloss.
 New cards (especially from the lemma pipeline) are exactly the ones *not* in the
 map, so they get the worst-quality query — and an ambiguous gloss ("court",

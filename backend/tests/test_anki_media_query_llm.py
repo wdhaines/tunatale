@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.anki.media.query_llm import (
+from app.cards.media.query_llm import (
     IMAGE_QUERY_MODEL_VERSION,
     build_image_query_prompt,
     generate_image_query,

@@ -12,12 +12,12 @@ from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 
-from app.anki.media.vocab_media import safe_stem as _safe_stem  # noqa: F401 — re-export (archive scripts, cloze_tts)
-from app.anki.media.vocab_media import store_tt_media as _store_tt_media  # noqa: F401 — re-export (archive scripts)
+from app.cards.media.vocab_media import safe_stem as _safe_stem  # noqa: F401 — re-export (archive scripts, cloze_tts)
+from app.cards.media.vocab_media import store_tt_media as _store_tt_media  # noqa: F401 — re-export (archive scripts)
 
 # Phase 9 split: leaf helpers live in sync_common / sync_reader; imported here both
 # for use by the remaining sync code AND as the stable re-export surface (tests +
-# archive scripts import these names from app.anki.sync). The redundant `X as X`
+# archive scripts import these names from app.plugins.anki_sync.sync). The redundant `X as X`
 # form marks them as explicit re-exports so ruff's F401 autofix never strips one
 # whose last in-module use moves out in a later split commit.
 from app.plugins.anki_sync.sync_common import (
@@ -197,7 +197,7 @@ async def run_full_sync(
     reconcile (``trigger_peer_sync`` → ``peer_sync`` → ``main``, which threads the
     LLM/image ``media_fn`` and the active language via ``_tt_settings`` through).
     ``main`` is the internal reconcile driver — not a standalone command (the
-    ``python -m app.anki.sync`` CLI was removed 2026-06-30). The ONLY legitimate
+    ``python -m app.plugins.anki_sync.sync`` CLI was removed 2026-06-30). The ONLY legitimate
     per-caller difference is the media generator. Everything else —
     orphan recovery, note creation, push, pull, every deck-config refresh, the
     Anki→TT media propagation, the soak heartbeat — lives here so neither path

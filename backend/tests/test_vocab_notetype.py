@@ -1,10 +1,10 @@
-"""Tests for app.anki.vocab_notetype (TT-managed vocab notetype descriptors)."""
+"""Tests for app.cards.vocab_notetype (TT-managed vocab notetype descriptors)."""
 
 from __future__ import annotations
 
 import sqlite3
 
-from app.anki.vocab_notetype import (
+from app.cards.vocab_notetype import (
     NORWEGIAN_VOCAB,
     SLOVENE_VOCAB,
     build_field_config,

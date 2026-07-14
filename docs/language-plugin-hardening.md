@@ -146,7 +146,7 @@ phase boundary. Phase 3 is the parity-sensitive one — sociable + peer-sync pin
 - `app/models/language.py` — `Language` domain model (`tts_voice_map`, direction sets?)
 - `app/plugins/anki_sync/sync.py` / `sync_*.py` — `_tt_settings`, peer-sync language threading
 - `app/audio/preprocessing/{base,slovene,norwegian}.py` — preprocessor plugins
-- `app/anki/vocab_notetype.py` — notetype plugins
+- `app/cards/vocab_notetype.py` — notetype plugins
 - `app/srs/lemmatizer.py` — `get_lemmatizer(code)` (already per-code)
 - `scripts/check_mock_boundaries.py` + `tests/mock_grandfather.txt` — the ledger PATTERN to copy
 - `tests/test_no_hardcoded_language.py` (NEW, Phase 1) + `tests/language_literals_grandfather.txt` (NEW ledger)
@@ -254,7 +254,7 @@ all 26 entries. Committed `97bc0db` = the weakness-#4 base (ledger 26).
   Committed `378df0e`.
 
 **Batch B — allowlist a schema home (20 → 18):**
-- `app/anki/field_map.py` → **ALLOWLISTED**. Its flagged literals are Anki notetype +
+- `app/cards/field_map.py` → **ALLOWLISTED**. Its flagged literals are Anki notetype +
   FIELD NAMES (the "6000 Most Frequent Norwegian Words" notetype's "Norwegian word"
   field) — external Anki schema strings, exactly like the allowlisted `vocab_notetype.py`.
 - **Tried & reverted**: sourcing `tts.DEFAULT_VOICE` from `get_tts_voice("sl")` — the

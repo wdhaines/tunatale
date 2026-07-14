@@ -501,7 +501,7 @@ class TestOfflineWriter:
         """Generalized update_note_fields maps by the note's actual notetype fields.
         Updating the L2 field 'Norwegian' (absent from the legacy Slovene roster)
         proves it reads field names from the collection, not a hardcoded list."""
-        from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+        from app.cards.vocab_notetype import NORWEGIAN_VOCAB
 
         conn = _make_anki_full_db()
         conn.execute(

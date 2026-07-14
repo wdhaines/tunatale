@@ -3,8 +3,8 @@ the `collocation_directions` field registry.
 
 Two hand-maintained lists currently derive from this schema by hand:
 `_DIR_COLUMNS` in `app/srs/db_base.py` and the field-by-field comparison in
-`_direction_differs` (`app/anki/sync_engine.py`, re-exported via
-`app.anki.sync`). Layers 17/35/37 were each a field missing from one of these
+`_direction_differs` (`app/plugins/anki_sync/sync_engine.py`, re-exported via
+`app.plugins.anki_sync.sync`). Layers 17/35/37 were each a field missing from one of these
 hand-maintained lists (`left`, `bury_kind`, `anki_card_mod` respectively).
 These tests assert that both derive mechanically from a single
 `DIRECTION_FIELDS` registry, so a future field addition can't repeat that

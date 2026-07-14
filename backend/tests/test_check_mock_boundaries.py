@@ -155,7 +155,7 @@ class TestAllowlist:
         patterns = ["app.audio.edge_tts.edge_tts.*", "app.config.settings.*"]
         assert matches_allowlist("app.audio.edge_tts.edge_tts.Communicate", patterns) is True
         assert matches_allowlist("app.config.settings.anki_collection_path", patterns) is True
-        assert matches_allowlist("app.anki.sync.main", patterns) is False
+        assert matches_allowlist("app.plugins.anki_sync.sync.main", patterns) is False
 
     def test_matches_allowlist_star_dot_star(self):
         patterns = ["app.*.settings.*"]
@@ -215,7 +215,7 @@ class TestGrandfatherOutput:
             "from unittest.mock import patch\n"
             "\n"
             "def test_x():\n"
-            '    patch("app.anki.sync.main")\n'
+            '    patch("app.plugins.anki_sync.sync.main")\n'
             '    patch("app.config.settings.database_url")\n'
         )
 
@@ -231,7 +231,7 @@ class TestGrandfatherOutput:
             sys.stdout = old_stdout
 
         output = captured.getvalue()
-        assert "app.anki.sync.main" in output, "non-allowlisted target should appear in grandfather output"
+        assert "app.plugins.anki_sync.sync.main" in output, "non-allowlisted target should appear in grandfather output"
         assert "app.config.settings.database_url" not in output, (
             "allowlisted target should NOT appear in grandfather output"
         )

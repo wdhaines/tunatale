@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+from app.cards.vocab_notetype import NORWEGIAN_VOCAB
 from app.plugins.anki_sync.add_vocab_notetype import add_vocab_notetype, run
 
 

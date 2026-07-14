@@ -1,5 +1,5 @@
-tests/test_anki_media_normalize.py	app.anki.media.normalize._apply_normalization	4
-tests/test_anki_media_normalize.py	app.anki.media.normalize._measure_loudness	3
+tests/test_anki_media_normalize.py	app.cards.media.normalize._apply_normalization	4
+tests/test_anki_media_normalize.py	app.cards.media.normalize._measure_loudness	3
 tests/test_anki_sync_main.py	app.plugins.anki_sync.import_seed.refresh_media_from_conn	3
 tests/test_anki_sync_main.py	app.plugins.anki_sync.sync.AnkiSync.detect_and_reset_orphans	1
 tests/test_anki_sync_main.py	app.plugins.anki_sync.sync.AnkiSync.sync_pull	6

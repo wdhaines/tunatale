@@ -104,7 +104,7 @@ def _settings_overrides(monkeypatch, tmp_path):
     tt_media.mkdir(exist_ok=True)
     monkeypatch.setattr("app.plugins.anki_sync.sync._MEDIA_DIR", tt_media)
     monkeypatch.setattr("app.api.srs._MEDIA_DIR", tt_media)
-    monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tt_media)
+    monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tt_media)
     # Model-name discovery caches to ~/.tunatale/anki_model_name.txt. Pin to tmp so
     # tests neither read a developer's real cache (masking failures — the file is
     # absent on CI) nor write the real one.

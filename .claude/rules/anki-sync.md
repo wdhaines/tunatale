@@ -1,6 +1,6 @@
 # Anki Sync Protocol
 
-Any tool under `backend/app/anki/` that writes to `collection.anki2` must preserve AnkiWeb sync consistency. Skip this and the user's next sync re-uploads hundreds of cards every time.
+Any tool under `backend/app/plugins/anki_sync/` that writes to `collection.anki2` must preserve AnkiWeb sync consistency. Skip this and the user's next sync re-uploads hundreds of cards every time.
 
 ## The USN desync trap
 
@@ -79,7 +79,7 @@ Never call `sqlite3.connect` on `collection.anki2` directly. Use `app.plugins.an
 
 ## When building a new Anki migration
 
-- Add it under `backend/app/anki/`, following the shape of `archive/backfill_guids.py` or `archive/migrate_homonyms.py`.
+- Add it under `backend/app/plugins/anki_sync/`, following the shape of `archive/backfill_guids.py` or `archive/migrate_homonyms.py`.
 - Tests under `backend/tests/test_anki_<name>.py` — build minimal in-memory DBs, no real `collection.anki2`.
 - If the migration bumps `col.scm`, the module docstring MUST point to this file.
 - TDD red-green always (see `.claude/rules/tdd.md`).

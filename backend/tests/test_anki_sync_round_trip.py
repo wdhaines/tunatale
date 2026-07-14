@@ -442,7 +442,7 @@ def _make_anki_conn():
     """In-memory Anki collection with Slovene notetype, one note, one card."""
     import sqlite3
 
-    from app.anki.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
+    from app.cards.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

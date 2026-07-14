@@ -289,12 +289,12 @@ class TestGetDeckName:
 
 class TestGetVocabNotetype:
     def test_returns_slovene_vocab_for_sl(self):
-        from app.anki.vocab_notetype import SLOVENE_VOCAB
+        from app.cards.vocab_notetype import SLOVENE_VOCAB
 
         assert get_vocab_notetype("sl") is SLOVENE_VOCAB
 
     def test_returns_norwegian_vocab_for_no(self):
-        from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+        from app.cards.vocab_notetype import NORWEGIAN_VOCAB
 
         assert get_vocab_notetype("no") is NORWEGIAN_VOCAB
 

@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime, time
 
 import pytest
 
-from app.anki.media.pipeline import MediaResult
+from app.cards.media.pipeline import MediaResult
 from app.models.srs_item import Direction, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.plugins.anki_sync.sync import (
@@ -30,7 +30,7 @@ def _make_collection_conn():
     """Build minimal in-memory collection.anki2 for OfflineWriter.create_note tests."""
     import sqlite3
 
-    from app.anki.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
+    from app.cards.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -370,7 +370,7 @@ def _make_dual_collection_conn():
     """In-memory collection.anki2 with both Slovene Vocabulary and Cloze notetypes."""
     import sqlite3
 
-    from app.anki.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
+    from app.cards.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -1199,7 +1199,7 @@ class TestSyncCreateNew:
 
     async def test_creates_notes_with_higher_due_for_newer_items(self):
         """sync_create_new with real OfflineWriter: newer items get higher cards.due."""
-        from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
+        from app.cards.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
         from app.plugins.anki_sync.sync import OfflineWriter
 
         db = _make_db()
@@ -1226,7 +1226,7 @@ class TestSyncCreateNew:
 
     async def test_preserves_existing_anki_due(self):
         """sync_create_new doesn't touch existing cards' due values."""
-        from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
+        from app.cards.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
         from app.plugins.anki_sync.sync import OfflineWriter
 
         db = _make_db()
@@ -1747,7 +1747,7 @@ _NO_DECK_ID = 77777
 
 def _make_norwegian_collection_conn():
     """Collection with the Norwegian deck + a Norwegian Vocabulary notetype."""
-    from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+    from app.cards.vocab_notetype import NORWEGIAN_VOCAB
 
     conn = _make_dual_collection_conn()  # reuse the table schema + Slovene/Cloze notetypes
     conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, x'')", (_NO_DECK_ID, _NO_DECK))
@@ -1797,7 +1797,7 @@ class TestSyncCreateNewNorwegian:
     async def test_attaches_image_to_norwegian_image_field(self, monkeypatch):
         """An add-time/fetched image round-trips into the Norwegian Vocabulary
         Image field via sync_create_new (on-demand images for Norwegian)."""
-        from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+        from app.cards.vocab_notetype import NORWEGIAN_VOCAB
         from app.plugins.anki_sync.sync_engine import settings as _engine_settings
 
         monkeypatch.setattr(_engine_settings, "target_language", "no")

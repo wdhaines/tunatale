@@ -6,7 +6,7 @@ Drives the sync bracket:
   2. ``sync.main()`` — TT's existing push/pull against tt_collection
   3. ``sync_collection`` via driver (push tt_collection → server)
 
-Uses ``app.anki.sync_driver`` via subprocess for the anki-side operations.
+Uses ``app.plugins.anki_sync.sync_driver`` via subprocess for the anki-side operations.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from app.config import settings
 # The driver imports `anki` (+ protobuf), which does NOT import on Python 3.14.
 # It is also self-contained (stdlib + anki only, no `app.*` imports), so we run it
 # isolated + project-free under a separate interpreter (settings.anki_subprocess_python)
-# and invoke it by file path rather than `-m app.anki.sync_driver`.
+# and invoke it by file path rather than `-m app.plugins.anki_sync.sync_driver`.
 _DRIVER_PATH = str(Path(__file__).with_name("sync_driver.py"))
 
 # backend/ — the directory the server runs from (start-dev.sh `cd backend`) and the
@@ -202,7 +202,7 @@ def _full_sync_error(leg: str, required: int | None, server_message: str) -> Pee
         "does a full one-way sync with AnkiWeb — e.g. choosing 'Upload to AnkiWeb' after a "
         "schema / notetype / deck-preset change — which leaves TunaTale's sync mirror behind "
         "the server. Fix by re-downloading the mirror, then sync again:\n"
-        "    cd backend && uv run python -m app.anki.sync_orchestrator --bootstrap\n"
+        "    cd backend && uv run python -m app.plugins.anki_sync.sync_orchestrator --bootstrap\n"
         "This is download-only: it does NOT modify your Anki desktop collection or AnkiWeb."
         + (f"\nServer message: {msg}" if msg else "")
     )
@@ -696,7 +696,7 @@ def bootstrap_collection() -> None:
 
 
 def main_cli() -> None:
-    """CLI entry point: ``python -m app.anki.sync_orchestrator [--bootstrap]``."""
+    """CLI entry point: ``python -m app.plugins.anki_sync.sync_orchestrator [--bootstrap]``."""
     import argparse
 
     parser = argparse.ArgumentParser(description="TunaTale Anki peer-sync orchestrator")

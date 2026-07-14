@@ -13,7 +13,7 @@ Stage 3 uses the MATCH + REPAIR count to know which directions are eligible
 for merge-branch elimination.
 
 Usage:
-    uv run python -m app.anki.replay_fsrs_from_revlog [--dry-run]
+    uv run python -m app.plugins.anki_sync.replay_fsrs_from_revlog [--dry-run]
 """
 
 import argparse

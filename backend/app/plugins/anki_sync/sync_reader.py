@@ -1,7 +1,7 @@
 """OfflineReader — read NoteRecords from a raw sqlite3 connection to collection.anki2.
 
 Moved verbatim out of ``app/anki/sync.py`` (Phase 9 mechanical split).
-``app.anki.sync`` re-exports ``OfflineReader``, so existing imports keep working.
+``app.plugins.anki_sync.sync`` re-exports ``OfflineReader``, so existing imports keep working.
 """
 
 from __future__ import annotations

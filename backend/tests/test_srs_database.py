@@ -1482,7 +1482,7 @@ class TestAnkiRolloverDayBoundary:
 
     Anki rolls the day over at `rollover` (default 4 AM local), so a grade
     timestamped between local midnight and 4 AM belongs to the PRIOR Anki day.
-    `app.anki.sync._local_today_4am` already does this for sync-side counts; the
+    `app.plugins.anki_sync.sync._local_today_4am` already does this for sync-side counts; the
     `database.py` badge counts must agree or TT under-counts the review badge by
     sibling-burying cards Anki considers "graded yesterday" (the 66-vs-73 bug,
     2026-06-02).

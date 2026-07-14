@@ -1,8 +1,8 @@
 """AnkiSync — the TT↔Anki reconcile engine (pull / push / create-new / orphans).
 
 Moved verbatim out of ``app/anki/sync.py`` (Phase 9 mechanical split), together
-with its module-level pull helpers. ``app.anki.sync`` re-exports the public
-names, so existing imports and ``patch("app.anki.sync.AnkiSync.…")`` targets
+with its module-level pull helpers. ``app.plugins.anki_sync.sync`` re-exports the public
+names, so existing imports and ``patch("app.plugins.anki_sync.sync.AnkiSync.…")`` targets
 keep working (class-attribute patches bind to this class object regardless of
 the importing module).
 """
@@ -12,8 +12,8 @@ from __future__ import annotations
 import logging
 from datetime import UTC, date, datetime, time
 
-from app.anki.media.vocab_media import safe_stem as _safe_stem
-from app.anki.media.vocab_media import store_tt_media as _store_tt_media
+from app.cards.media.vocab_media import safe_stem as _safe_stem
+from app.cards.media.vocab_media import store_tt_media as _store_tt_media
 from app.common.guid import compute_guid
 from app.config import settings
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
@@ -1067,7 +1067,7 @@ class AnkiSync:
             )
 
     def sync_push(self, dry_run: bool = False, force_fsrs: bool = False) -> PushReport:
-        # Deferred: lives in app.anki.sync so it reads the patched _MEDIA_DIR.
+        # Deferred: lives in app.plugins.anki_sync.sync so it reads the patched _MEDIA_DIR.
         from app.plugins.anki_sync.sync import _copy_tt_media_to_anki
 
         """Push TunaTale → Anki. Returns a PushReport summarising changes."""
@@ -1303,7 +1303,7 @@ class AnkiSync:
         dry_run: bool = False,
         _media_fn=None,
     ) -> CreateNewReport:
-        # Deferred: lives in app.anki.sync so it reads the patched _MEDIA_DIR.
+        # Deferred: lives in app.plugins.anki_sync.sync so it reads the patched _MEDIA_DIR.
         from app.plugins.anki_sync.sync import _copy_tt_media_to_anki
 
         """Create Anki notes for SRS items that have no anki_note_id yet.
@@ -1380,7 +1380,7 @@ class AnkiSync:
 
             # Reuse media already generated at card-creation time — the add-time
             # paths (POST /items, /listen, base/key-phrase) now fetch image+audio
-            # inline (app.anki.media.vocab_media), so a card is complete in TT
+            # inline (app.cards.media.vocab_media), so a card is complete in TT
             # before it ever syncs. Only *fetch* here for cards that still have no
             # TT media (legacy rows, seed imports, Anki-originated notes). This is
             # what keeps a card from getting a second, different Pixabay image.

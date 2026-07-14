@@ -2,7 +2,7 @@
 
 Invoked via::
 
-    uv run --with anki python -m app.anki.sync_driver
+    uv run --with anki python -m app.plugins.anki_sync.sync_driver
 
 Reads one JSON command from stdin, writes one JSON result to stdout.
 This is the ONLY module in ``app/`` that imports ``anki``.

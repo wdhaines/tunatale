@@ -9,11 +9,11 @@
 # add a new line here or bump a count up. Regenerate with:
 #   uv run python scripts/check_language_literals.py --write-grandfather
 # and re-apply this header, or diff by hand to confirm only shrinkage.
-app/anki/media/forvo.py	sl	2
-app/anki/media/pipeline.py	sl	1
-app/anki/media/pixabay.py	no	1
-app/anki/media/tts.py	sl-SI-PetraNeural	1
-app/anki/media/vocab_media.py	sl	1
+app/cards/media/forvo.py	sl	2
+app/cards/media/pipeline.py	sl	1
+app/cards/media/pixabay.py	no	1
+app/cards/media/tts.py	sl-SI-PetraNeural	1
+app/cards/media/vocab_media.py	sl	1
 app/plugins/anki_sync/sqlite_reader.py	class="slovene"[^>]*>\\s*([^<]+?)\\s*<	2
 app/plugins/anki_sync/sync.py	sl	1
 app/plugins/anki_sync/sync_writer.py	sl	2

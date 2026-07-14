@@ -10,15 +10,15 @@ Inserting a notetype bumps ``col.scm`` → AnkiWeb demands a one-time full uploa
 Workflow (``.claude/rules/anki-sync.md``):
 
 1. Quit Anki (this tool needs exclusive write access via ``safe_open``).
-2. ``uv run python -m app.anki.add_vocab_notetype --language no``
+2. ``uv run python -m app.plugins.anki_sync.add_vocab_notetype --language no``
 3. Open Anki → File → Sync → **Upload to AnkiWeb**.
-4. After Anki closes again: ``uv run python -m app.anki.normalize_usns``.
+4. After Anki closes again: ``uv run python -m app.plugins.anki_sync.normalize_usns``.
 
 Idempotent: re-running when the notetype already exists is a no-op (no col.scm
 bump), so it's safe to run twice.
 
 Usage:
-    uv run python -m app.anki.add_vocab_notetype [--language no] [--dry-run]
+    uv run python -m app.plugins.anki_sync.add_vocab_notetype [--language no] [--dry-run]
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from app.anki.vocab_notetype import VocabNotetype, create_vocab_notetype
+from app.cards.vocab_notetype import VocabNotetype, create_vocab_notetype
 from app.config import settings
 from app.languages import get_vocab_notetype
 from app.plugins.anki_sync.safety import safe_open
@@ -90,7 +90,7 @@ def run(
         print(
             f"[DONE] Created notetype {vocab.name!r} (col.scm bumped).\n"
             "  Next: open Anki → File → Sync → Upload to AnkiWeb, then run\n"
-            "        uv run python -m app.anki.normalize_usns",
+            "        uv run python -m app.plugins.anki_sync.normalize_usns",
             flush=True,
         )
     else:

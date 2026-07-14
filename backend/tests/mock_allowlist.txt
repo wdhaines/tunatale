@@ -4,13 +4,13 @@ app.plugins.anki_sync.sync_orchestrator._run_driver          # designated driver
 app.plugins.anki_sync.sync_orchestrator._keychain_password   # macOS Keychain boundary
 app.audio.edge_tts.edge_tts.*                   # EdgeTTS network boundary (Communicate, list_voices)
 app.audio.edge_tts.asyncio.sleep                # EdgeTTS retry sleep
-app.anki.media.pixabay.*                        # Pixabay HTTP client boundary
-app.anki.media.forvo._make_client               # Forvo HTTP client boundary
+app.cards.media.pixabay.*                        # Pixabay HTTP client boundary
+app.cards.media.forvo._make_client               # Forvo HTTP client boundary
 app.api.anki.fetch_card_media                   # Pixabay/Forvo network boundary (card media fetch)
 # The Settings singleton pinned through any module's import of it
 app.*.settings.*
 # Path-constant pins — test infrastructure writes to temp dirs
 app.plugins.anki_sync.sync._MEDIA_DIR
 app.api.srs._MEDIA_DIR
-app.anki.media.vocab_media._MEDIA_DIR
+app.cards.media.vocab_media._MEDIA_DIR
 app.plugins.anki_sync.model_discovery._CACHE_PATH
