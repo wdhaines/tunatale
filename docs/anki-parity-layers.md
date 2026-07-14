@@ -22,7 +22,7 @@ Each layer = one identifiable divergence + the fix that resolved it. Layers are 
 
 **Fix.** New `anki_state_cache` key `learning_cutoff`. `advance_learning_cutoff(db, now)` is called at every grade event and every `sync_pull` ingest. `resolve_learning_cutoff(db, fallback=now)` reads it. `/review-queue` uses the cached value, not live now.
 
-**Files.** `app/srs/anki_mirror/queue_stats.py` (`resolve_/advance_learning_cutoff`), `app/api/srs.py` (call sites), `app/anki/sync.py` (advance after ingest).
+**Files.** `app/srs/anki_mirror/queue_stats.py` (`resolve_/advance_learning_cutoff`), `app/api/srs.py` (call sites), `app/plugins/anki_sync/sync.py` (advance after ingest).
 
 ---
 
@@ -70,7 +70,7 @@ Each layer = one identifiable divergence + the fix that resolved it. Layers are 
 
 **Fix.** Decode the unfuzzed step from `left + last_rating`, with Hard-on-first-step special case (Anki uses `(steps[0]+steps[1])/2` there).
 
-**Files.** `app/anki/sync.py:_derive_revlog_shape`.
+**Files.** `app/plugins/anki_sync/sync.py:_derive_revlog_shape`.
 
 ---
 
@@ -83,7 +83,7 @@ Each layer = one identifiable divergence + the fix that resolved it. Layers are 
 - `/review-queue` drops review-state latecomers instead of appending them at the tail.
 - `clear_session_main_queue` helper + `delete_anki_state_cache` DB method.
 
-**Files.** `app/srs/anki_mirror/queue_stats.py:clear_session_main_queue`, `app/srs/database.py:delete_anki_state_cache`, `app/anki/sync.py`, `app/api/srs.py`.
+**Files.** `app/srs/anki_mirror/queue_stats.py:clear_session_main_queue`, `app/srs/database.py:delete_anki_state_cache`, `app/plugins/anki_sync/sync.py`, `app/api/srs.py`.
 
 ---
 
@@ -127,7 +127,7 @@ Each layer = one identifiable divergence + the fix that resolved it. Layers are 
 
 **Fix.** Drop upper bound on `SyntacticUnit.word_count` and `import_seed` filter; keep `>=1`. Backfilled via re-run.
 
-**Files.** `app/models/syntactic_unit.py:31`, `app/anki/import_seed.py:115`.
+**Files.** `app/models/syntactic_unit.py:31`, `app/plugins/anki_sync/import_seed.py:115`.
 
 ---
 
@@ -157,7 +157,7 @@ Each layer = one identifiable divergence + the fix that resolved it. Layers are 
 
 **Fix.** Extract `lrt` from `cards.data` JSON when available; fall back to day-level `_compute_last_review`. Sync uses `card_rec.last_review` directly.
 
-**Files.** `app/anki/sqlite_reader.py:235-241`, `app/anki/sync.py:755-766`.
+**Files.** `app/plugins/anki_sync/sqlite_reader.py:235-241`, `app/plugins/anki_sync/sync.py:755-766`.
 
 ---
 
@@ -209,7 +209,7 @@ Each layer = one identifiable divergence + the fix that resolved it. Layers are 
 
 **Fix.** Added all three to the comparison.
 
-**Files.** `app/anki/sync.py:506-530`.
+**Files.** `app/plugins/anki_sync/sync.py:506-530`.
 
 ---
 
@@ -223,7 +223,7 @@ Each layer = one identifiable divergence + the fix that resolved it. Layers are 
 
 New helper `_anki_step_ahead(anki_left, local_left)` encapsulates the `% 1000` comparison (shared with Layer 19).
 
-**Files.** `app/anki/sync.py`, `tests/test_anki_sync_pull.py`.
+**Files.** `app/plugins/anki_sync/sync.py`, `tests/test_anki_sync_pull.py`.
 
 ---
 
@@ -235,7 +235,7 @@ New helper `_anki_step_ahead(anki_left, local_left)` encapsulates the `% 1000` c
 
 `FakeWriter` in `tests/test_anki_sync_push.py` gained `current_states: dict[int, dict]` + `get_current_card_state(card_id)`.
 
-**Files.** `app/anki/sync.py`, `tests/test_anki_sync_push.py`.
+**Files.** `app/plugins/anki_sync/sync.py`, `tests/test_anki_sync_push.py`.
 
 ---
 
@@ -250,7 +250,7 @@ New helper `_anki_step_ahead(anki_left, local_left)` encapsulates the `% 1000` c
 
 Wired into all 6 direction-construction sites in `sync_pull`. Extended `CardRecord` with `first_review_ms` (sourced from `MIN(revlog.id)` in `OfflineReader`).
 
-**Files.** `app/anki/sync.py`, `tests/test_anki_sync_pull.py`.
+**Files.** `app/plugins/anki_sync/sync.py`, `tests/test_anki_sync_pull.py`.
 
 ---
 
@@ -280,7 +280,7 @@ return prev.state
 - `_grade_prior_state` now releases sticky-NEW only on REVIEW→RELEARNING (lapse), where revlog `type=1` correctness needs `prior_state='review'`. All other transitions preserve `'new'`.
 - `_resolve_prior_state` self-heal broadened: fires whenever `first_review_ms >= today_start_ms` and new_state isn't NEW, regardless of current `prior_state` value. Recovers stale cards on re-sync without manual SQL.
 
-**Files.** `app/srs/fsrs.py:209`, `app/anki/sync.py:_resolve_prior_state`, `tests/test_srs_fsrs.py`, `tests/test_anki_sync_pull.py`.
+**Files.** `app/srs/fsrs.py:209`, `app/plugins/anki_sync/sync.py:_resolve_prior_state`, `tests/test_srs_fsrs.py`, `tests/test_anki_sync_pull.py`.
 
 ---
 
@@ -356,7 +356,7 @@ When adding a new layer to this file:
 
 **Sync impact.** None. `created_at` is a TT-side column; sync doesn't carry it. `cards.usn = -1, mod = ts` already set by `create_note`. No `col.scm` change, no new sync code path. The existing `MAX(due)+1` allocator is unchanged.
 
-**Files.** `backend/app/srs/database.py:622-634` (ORDER BY), `backend/app/srs/database.py` — new `get_created_at_by_guid` helper, `backend/app/anki/sync.py:1295-1297` (sort), `backend/app/srs/migrations.py` (v16→v17), `.claude/rules/anki-queue-parity.md` (playbook), `docs/anki-parity-layers.md` (this entry).
+**Files.** `backend/app/srs/database.py:622-634` (ORDER BY), `backend/app/srs/database.py` — new `get_created_at_by_guid` helper, `backend/app/plugins/anki_sync/sync.py:1295-1297` (sort), `backend/app/srs/migrations.py` (v16→v17), `.claude/rules/anki-queue-parity.md` (playbook), `docs/anki-parity-layers.md` (this entry).
 
 ---
 
@@ -386,7 +386,7 @@ When adding a new layer to this file:
 
 **Why not keep the sticky-NEW filter and add a `reps=1` gate?** A NEW + Again grade today produces `reps=2 + prior_state=new + last_review=today`, which is still a today-introduction. A `reps=1` gate would drop it. `introduced_at` decouples "is this on the intro arc?" (sticky `prior_state`) from "when did the intro happen?" (single-stamp `introduced_at`).
 
-**Files.** `backend/app/models/srs_item.py` (DirectionState field), `backend/app/srs/migrations.py` (v17→v18 + CURRENT_VERSION = 18), `backend/app/srs/database.py` (`_DIR_COLUMNS`, `update_direction`, `_row_to_directions`, `count_new_introduced_today`), `backend/app/srs/fsrs.py` (`_schedule_new`, `_graduate_to_review`), `backend/app/anki/sync.py` (`_resolve_introduced_at` + 9 sync-merge call sites), `backend/tests/test_srs_database.py` (`TestCountNewIntroducedToday`), `backend/tests/test_srs_migrations.py` (v17→v18 test).
+**Files.** `backend/app/models/srs_item.py` (DirectionState field), `backend/app/srs/migrations.py` (v17→v18 + CURRENT_VERSION = 18), `backend/app/srs/database.py` (`_DIR_COLUMNS`, `update_direction`, `_row_to_directions`, `count_new_introduced_today`), `backend/app/srs/fsrs.py` (`_schedule_new`, `_graduate_to_review`), `backend/app/plugins/anki_sync/sync.py` (`_resolve_introduced_at` + 9 sync-merge call sites), `backend/tests/test_srs_database.py` (`TestCountNewIntroducedToday`), `backend/tests/test_srs_migrations.py` (v17→v18 test).
 
 ---
 
@@ -401,7 +401,7 @@ When adding a new layer to this file:
 
 **Why "reps>0 → review, reps=0 → new"?** TT's BURIED state only enters via `sync_pull` mirroring Anki's queue=-2/-3 (the sibling-bury or user-bury terminal states). For those, the pre-bury state was either review (graded card whose sibling was today's grade) or new (rare, but possible for sibling-buried news under `bury_new=true`). `reps` is the only signal in the row that distinguishes them.
 
-**Files.** `backend/app/srs/database.py` (`unbury_if_needed`), `backend/app/api/srs.py:get_review_queue, get_queue_stats` (call sites), `backend/app/anki/sync.py:sync_pull` (pre-merge sweep), `backend/tests/test_srs_database.py` (`TestUnburyIfNeeded`), `backend/tests/test_api_srs.py` (queue-endpoint integration test).
+**Files.** `backend/app/srs/database.py` (`unbury_if_needed`), `backend/app/api/srs.py:get_review_queue, get_queue_stats` (call sites), `backend/app/plugins/anki_sync/sync.py:sync_pull` (pre-merge sweep), `backend/tests/test_srs_database.py` (`TestUnburyIfNeeded`), `backend/tests/test_api_srs.py` (queue-endpoint integration test).
 
 ---
 
@@ -429,7 +429,7 @@ TT did this in three separated steps (`get_new_items(REC)`, `get_new_items(PROD)
 
 **Fix.** `sync_pull` now eagerly rebuilds the cache via `build_and_freeze_main_queue(db)` immediately after `clear_session_main_queue`. The freeze moment is the sync moment, matching Anki's `requires_study_queue_rebuild`. Extracted `_compute_live_main(db)` from inside `get_review_queue` so the rebuild logic has one home (deduped: route handler and sync_pull both call it).
 
-**Files.** `backend/app/api/srs.py` (new `_compute_live_main` + `build_and_freeze_main_queue`; `get_review_queue` refactored to call the helper), `backend/app/anki/sync.py:1257-1267` (sync_pull now calls build + freeze), `backend/tests/test_anki_sync_pull.py` (updated `test_sync_pull_clears_…` to `test_sync_pull_rebuilds_…` reflecting the new contract).
+**Files.** `backend/app/api/srs.py` (new `_compute_live_main` + `build_and_freeze_main_queue`; `get_review_queue` refactored to call the helper), `backend/app/plugins/anki_sync/sync.py:1257-1267` (sync_pull now calls build + freeze), `backend/tests/test_anki_sync_pull.py` (updated `test_sync_pull_clears_…` to `test_sync_pull_rebuilds_…` reflecting the new contract).
 
 **Aftermath / lesson.** The stale-cache trap from Layer 28's aftermath is now eliminated for the sync_pull path. Deploy-time stale cache (cache held in DB across backend restart) is still a concern — `clear_session_main_queue` from a manual diagnostic remains the right escape hatch when reasoning about ordering bugs against an old freeze. Documented in principle 2 of `.claude/rules/anki-queue-parity.md`.
 
@@ -441,7 +441,7 @@ TT did this in three separated steps (`get_new_items(REC)`, `get_new_items(PROD)
 
 **Fix.** `_queue_to_state` now uses `queue` as the authoritative signal: `queue=2 → REVIEW`, `queue=0 → NEW`, regardless of `reps`. The reps fallback only fires for unknown queue values (never happens against current Anki, but defensively kept for future-proofing).
 
-**Files.** `backend/app/anki/sync.py:_queue_to_state` (explicit `queue == 2` arm added before the reps fallback; `queue == 0` arm explicit too), `backend/tests/test_anki_sync_pull.py::test_queue_to_state_mapping` (added `(queue=2, reps=0) → REVIEW` and `(queue=2, reps=7) → REVIEW` parametrize cases; updated existing `(queue=0, reps=5)` from REVIEW to NEW to reflect "queue is authoritative").
+**Files.** `backend/app/plugins/anki_sync/sync.py:_queue_to_state` (explicit `queue == 2` arm added before the reps fallback; `queue == 0` arm explicit too), `backend/tests/test_anki_sync_pull.py::test_queue_to_state_mapping` (added `(queue=2, reps=0) → REVIEW` and `(queue=2, reps=7) → REVIEW` parametrize cases; updated existing `(queue=0, reps=5)` from REVIEW to NEW to reflect "queue is authoritative").
 
 **How to spot in the wild.** Run the diagnostic:
 ```sql
@@ -455,7 +455,7 @@ Any row here is a "Forget"-style or manually-edited card. After Layer 30 these c
 
 ## Layer 31 — `<b>L2</b><br><i>EN</i>` import bug + one-shot cleanup script
 
-**Trigger.** User noticed `ničnothing` at the head of TT's new bucket — clearly mangled text (Slovene `nič` concatenated with English gloss `nothing`). Traced to `extract_l2_from_fields` in `app/anki/sqlite_reader.py`: the HTML-strip fallback `re.sub(r"<[^>]+>", "", field)` removes tags without inserting whitespace, so Anki's Pronunciation/Basic notetype Front field `<b>nič</b><br><i>nothing</i>` collapsed into the single token `ničnothing`. Saved as TT's `text`, English gloss lost. 39 rows affected in the user's deck (every Basic-notetype note that used the `<b>L2</b><br><i>EN</i>` formatting).
+**Trigger.** User noticed `ničnothing` at the head of TT's new bucket — clearly mangled text (Slovene `nič` concatenated with English gloss `nothing`). Traced to `extract_l2_from_fields` in `app/plugins/anki_sync/sqlite_reader.py`: the HTML-strip fallback `re.sub(r"<[^>]+>", "", field)` removes tags without inserting whitespace, so Anki's Pronunciation/Basic notetype Front field `<b>nič</b><br><i>nothing</i>` collapsed into the single token `ničnothing`. Saved as TT's `text`, English gloss lost. 39 rows affected in the user's deck (every Basic-notetype note that used the `<b>L2</b><br><i>EN</i>` formatting).
 
 **Fix (import side).** Added `extract_gloss_from_fields(fields) -> str | None` that recognises the `<b>L2</b><br><i>EN</i>` pattern and returns the gloss. Updated `extract_l2_from_fields` to short-circuit on the same pattern returning the L2 group. `import_seed.py` now checks `extract_gloss_from_fields` before falling back to the "other field" stripped-HTML translation extractor. Future imports of these notes do the right thing.
 
@@ -465,7 +465,7 @@ Any row here is a "Forget"-style or manually-edited card. After Layer 30 these c
 
 Defensive: if a rename hits a UNIQUE conflict at apply-time, it falls back to delete. Tests cover both planning and apply phases, plus the CLI's dry-run / missing-DB / mixed-output paths.
 
-**Files.** `backend/app/anki/sqlite_reader.py` (added `_B_THEN_I_PATTERN`, `extract_gloss_from_fields`, second-pass arm in `extract_l2_from_fields`), `backend/app/anki/import_seed.py:128-144` (uses `extract_gloss_from_fields` when matched), `backend/app/anki/fix_html_concat_imports.py` (new one-shot script), `backend/tests/test_anki_sqlite_reader.py` (extractor tests), `backend/tests/test_anki_import_seed_readonly.py` (round-trip test), `backend/tests/test_anki_fix_html_concat_imports.py` (script tests).
+**Files.** `backend/app/plugins/anki_sync/sqlite_reader.py` (added `_B_THEN_I_PATTERN`, `extract_gloss_from_fields`, second-pass arm in `extract_l2_from_fields`), `backend/app/plugins/anki_sync/import_seed.py:128-144` (uses `extract_gloss_from_fields` when matched), `backend/app/anki/fix_html_concat_imports.py` (new one-shot script), `backend/tests/test_anki_sqlite_reader.py` (extractor tests), `backend/tests/test_anki_import_seed_readonly.py` (round-trip test), `backend/tests/test_anki_fix_html_concat_imports.py` (script tests).
 
 **Aftermath.** Live cleanup applied: 19 renames + 20 deletes, no fallback-deletes needed. User's queue now serves clean Slovene words; `ničnothing` and friends are gone.
 
@@ -521,8 +521,8 @@ The underlying homonym corruption (TT collocation guid points to one Anki note w
 - For each, looks up TT's collocation by `anki_note_id` and checks for a Slovene-Voc twin by `LOWER(sfld) = LOWER(slovene)` (with '/'-split fallback so `ulica / cesta` matches twin `ulica`).
 - DELETE plan items: drop the Basic note + cards; relink TT collocation to the Slovene-Voc nid; clear `anki_card_id`/`anki_due` on the directions so sync_pull repopulates.
 - CONVERT plan items: change `notes.mid` to Slovene-Voc, reshape 2-field Basic flds → 7-field Slovene-Voc, recompute guid; keep the existing card as ord=0 (Recognition) so revlog stays attached; create a new ord=1 (Production) card; add the matching Production direction to TT. Bumps `col.scm` (notetype-of-note change is schema-significant per Anki's sync model).
-- Uses `app.anki.safety.safe_open(mode='rw')` for backup + integrity check + post-write audit.
-- Following the standard schema-bump workflow from `.claude/rules/anki-sync.md`: prints "File → Sync → Upload to AnkiWeb, then run `app.anki.normalize_usns`".
+- Uses `app.plugins.anki_sync.safety.safe_open(mode='rw')` for backup + integrity check + post-write audit.
+- Following the standard schema-bump workflow from `.claude/rules/anki-sync.md`: prints "File → Sync → Upload to AnkiWeb, then run `app.plugins.anki_sync.normalize_usns`".
 
 **Spec tests pinned** (so the buggy importer can't come back):
 - `test_anki_sync_create_new.py::test_sync_create_new_uses_slovene_voc_for_source_llm` — `/listen`'s `source='llm'` rows become Slovene-Voc notes with both Recognition + Production card_ids populated in TT.
@@ -541,11 +541,11 @@ The underlying homonym corruption (TT collocation guid points to one Anki note w
 
 **Fix.** New column `collocation_directions.bury_kind TEXT` (migration v19→v20, `backend/app/srs/migrations.py:570-586`). Values: `'sched'` for sibling-bury (released by the daily sweep), `'user'` for manual-bury (stuck until manual unbury or sync_pull seeing Anki's card no longer buried), `NULL` for non-buried rows.
 
-- `_bury_kind_from_queue(queue)` helper at `backend/app/anki/sync.py:916-928`: maps Anki's queue value (-3 → `'sched'`, -2 → `'user'`, else `None`). All 7 direction-construction sites in `sync_pull` pass `bury_kind=_bury_kind_from_queue(card_rec.queue)` (5 sites) or explicit `bury_kind=None` (2 sites, for non-buried writes).
+- `_bury_kind_from_queue(queue)` helper at `backend/app/plugins/anki_sync/sync.py:916-928`: maps Anki's queue value (-3 → `'sched'`, -2 → `'user'`, else `None`). All 7 direction-construction sites in `sync_pull` pass `bury_kind=_bury_kind_from_queue(card_rec.queue)` (5 sites) or explicit `bury_kind=None` (2 sites, for non-buried writes).
 - `unbury_if_needed` (`backend/app/srs/database.py:1595-1604`) now filters `WHERE state='buried' AND bury_kind='sched'`. User-buried rows survive the sweep, matching Anki's `unbury_if_needed` (which only releases queue=-3).
 - Migration backfill: every existing `state='buried'` row gets `bury_kind='user'` (pessimistic — better to leave a sibling-bury sticky for one extra day than wipe a user-bury). The next sync_pull rewrites the kind from Anki's actual queue value.
 
-**Files.** `backend/app/srs/migrations.py:570-586` (migration v19→v20), `backend/app/anki/sync.py:916-928` (helper) + 7 `bury_kind=` sites in `sync_pull` (5 `_bury_kind_from_queue`, 2 explicit `None`), `backend/app/srs/database.py:389/413/489` (column read/write), `backend/app/srs/database.py:1595-1604` (filtered sweep), `backend/app/models/srs_item.py` (DirectionState field), corresponding tests in `backend/tests/test_srs_migrations.py`, `backend/tests/test_anki_link_tt_images.py`, `backend/tests/test_srs_database.py`.
+**Files.** `backend/app/srs/migrations.py:570-586` (migration v19→v20), `backend/app/plugins/anki_sync/sync.py:916-928` (helper) + 7 `bury_kind=` sites in `sync_pull` (5 `_bury_kind_from_queue`, 2 explicit `None`), `backend/app/srs/database.py:389/413/489` (column read/write), `backend/app/srs/database.py:1595-1604` (filtered sweep), `backend/app/models/srs_item.py` (DirectionState field), corresponding tests in `backend/tests/test_srs_migrations.py`, `backend/tests/test_anki_link_tt_images.py`, `backend/tests/test_srs_database.py`.
 
 **Aftermath.** Manually-buried cards survive across days. The pre-Layer-35 footgun — "an unconditional `UPDATE … WHERE state='buried'` wipes user-buries on every poll" — is recorded in `.claude/rules/anki-queue-parity.md` principle 10 as the canonical anti-pattern. Code committed as part of `09dc812 fix(media): copy image file in link_tt_images so nič's card image isn't broken` (commit message footer notes "Also includes pre-existing bury_kind feature").
 
@@ -579,11 +579,11 @@ The underlying homonym corruption (TT collocation guid points to one Anki note w
 
 **Trigger.** Three R-tied review cards (`iz`, `nič`, `dobrodošli` — all `data='{}'`, all queue=2, all due today) had different head positions between TT and Anki. Anki sorted them by `fnvhash(cards.id, cards.mod)`; TT's mirror agreed on the algorithm but used stale `anki_card_mod` values pulled from a prior sync, producing different hashes and a different ordering inside the tied group.
 
-**Cause.** `_direction_differs(local, candidate)` in `backend/app/anki/sync.py` checked every sync-relevant FSRS field but NOT `anki_card_mod`. Whenever Anki bumped `cards.mod` for any reason that didn't also change an FSRS field — server-side sync mtime resolution, scheduler housekeeping, bury actions — sync_pull's diff returned False and TT's local copy stayed stale. The FNV tiebreaker (Anki's `fnvhash(id, mod)` appended last in every `review_order_sql` variant — `rslib/src/storage/card/mod.rs:897`) silently diverged.
+**Cause.** `_direction_differs(local, candidate)` in `backend/app/plugins/anki_sync/sync.py` checked every sync-relevant FSRS field but NOT `anki_card_mod`. Whenever Anki bumped `cards.mod` for any reason that didn't also change an FSRS field — server-side sync mtime resolution, scheduler housekeeping, bury actions — sync_pull's diff returned False and TT's local copy stayed stale. The FNV tiebreaker (Anki's `fnvhash(id, mod)` appended last in every `review_order_sql` variant — `rslib/src/storage/card/mod.rs:897`) silently diverged.
 
 **Fix.** One line in `_direction_differs`: `or local.anki_card_mod != candidate.anki_card_mod`. Sync_pull already constructs candidates with `anki_card_mod=card_rec.anki_card_mod` (the current Anki value), so once the diff fires, `update_direction` refreshes the column.
 
-**Files.** `backend/app/anki/sync.py:841-866` (diff check); regression tests in `backend/tests/test_anki_sync_pull.py` (`test_direction_differs_detects_anki_card_mod_change`, `test_sync_pull_refreshes_stale_anki_card_mod`).
+**Files.** `backend/app/plugins/anki_sync/sync.py:841-866` (diff check); regression tests in `backend/tests/test_anki_sync_pull.py` (`test_direction_differs_detects_anki_card_mod_change`, `test_sync_pull_refreshes_stale_anki_card_mod`).
 
 **Aftermath.** R-tied groups across both apps now agree on the tiebreaker. Write volume on sync is slightly higher (any mod-only Anki bump triggers a TT-side update), but each write is one small UPDATE.
 
@@ -805,13 +805,13 @@ This is the col-day computation, matching Anki's `extract_fsrs_retrievability` f
 - `test_parity_day_level_elapsed_matches_anki` (oracle) — seeds a non-lrt card with raw `due/ivl`, exercises `_compute_last_review` → `_elapsed_days_for_fsrs`, compares elapsed against Anki's oracle.
 - 3 hardcoded date assertions updated in `test_anki_sqlite_reader.py` that used the old wrong formula.
 
-**Files.** `backend/app/anki/sqlite_reader.py:265-297` (`_compute_last_review` rewrite), `backend/app/srs/fsrs.py:128-158` (`_elapsed_days_for_fsrs` col-day branch), `backend/app/srs/anki_mirror/queue_stats.py` (`refresh_col_crt`/`resolve_col_crt` trio), `backend/app/api/anki.py` (sync wiring), `backend/app/api/srs.py` (col_crt threaded through entry points). Tests: `backend/tests/test_fsrs.py` (3 unit tests), `backend/tests/test_anki_sqlite_reader.py` (1 regression + 3 date fixes), `backend/tests/test_parity_fsrs_schedule.py` (1 oracle test refactored).
+**Files.** `backend/app/plugins/anki_sync/sqlite_reader.py:265-297` (`_compute_last_review` rewrite), `backend/app/srs/fsrs.py:128-158` (`_elapsed_days_for_fsrs` col-day branch), `backend/app/srs/anki_mirror/queue_stats.py` (`refresh_col_crt`/`resolve_col_crt` trio), `backend/app/api/anki.py` (sync wiring), `backend/app/api/srs.py` (col_crt threaded through entry points). Tests: `backend/tests/test_fsrs.py` (3 unit tests), `backend/tests/test_anki_sqlite_reader.py` (1 regression + 3 date fixes), `backend/tests/test_parity_fsrs_schedule.py` (1 oracle test refactored).
 
 ## Layer 46 — `compute_due_at` preserves underlying due through bury/suspend
 
 **Trigger.** Morning of 2026-05-20: TT badge `30 + 7 + 205` vs Anki `30 + 7 + 196`. New/learning identical, review off by 9. No grades today on either side; last sync was 5/19 22:25 EDT. Forensics traced 22 TT directions whose `due_at=2026-05-19T04:00:00Z` while their `anki_due=4522` (= 2026-05-23). Same row, internally inconsistent.
 
-**Root cause.** `compute_due_at(queue, due_raw, col_crt)` in `app/anki/sqlite_reader.py` only branched on `queue` and treated everything outside `{1, 2, 3}` as "today at 04:00 UTC", discarding `due_raw`. Anki preserves `cards.due` through bury and suspend — only `cards.queue` flips. When `sync_pull` read these 22 sibling-buried review cards (queue=-2, due=4522 from Monday's last grade), `compute_due_at` returned `today` instead of `2026-05-23`. The merge wrote inconsistent `due_at` / `anki_due` to the same row. The daily unbury sweep (Layer 27/35) then flipped state `buried→review` without touching `due_at`, surfacing 22 stale-due cards in today's review badge.
+**Root cause.** `compute_due_at(queue, due_raw, col_crt)` in `app/plugins/anki_sync/sqlite_reader.py` only branched on `queue` and treated everything outside `{1, 2, 3}` as "today at 04:00 UTC", discarding `due_raw`. Anki preserves `cards.due` through bury and suspend — only `cards.queue` flips. When `sync_pull` read these 22 sibling-buried review cards (queue=-2, due=4522 from Monday's last grade), `compute_due_at` returned `today` instead of `2026-05-23`. The merge wrote inconsistent `due_at` / `anki_due` to the same row. The daily unbury sweep (Layer 27/35) then flipped state `buried→review` without touching `due_at`, surfacing 22 stale-due cards in today's review badge.
 
 **Mechanism reconstructed:**
 1. Monday: card graded in Anki → `cards.due = today + ivl`, queue=2.
@@ -831,7 +831,7 @@ This is the col-day computation, matching Anki's `extract_fsrs_retrievability` f
 
 **Cleanup path for live data.** The existing `backfill_due_date_from_anki_due` migration now sees buried-state rows (was already included in its `state IN (...)` filter) and rewrites them correctly with the new `card_type`-aware `compute_due_at`. One `uv run python -m app.anki.backfill_due_date_from_anki_due` pass will repair the 22 stuck directions in the user's TT db.
 
-**Files.** `backend/app/anki/sqlite_reader.py:40-67` (`compute_due_at` rewrite + signature), `backend/app/anki/sqlite_reader.py:188` (`parse_fsrs_data` passes `card_type`), `backend/app/anki/backfill_due_date_from_anki_due.py:57-64` (migration script reads/passes `cards.type`). Tests: `backend/tests/test_anki_sqlite_reader.py` (6 unit + 1 integration test).
+**Files.** `backend/app/plugins/anki_sync/sqlite_reader.py:40-67` (`compute_due_at` rewrite + signature), `backend/app/plugins/anki_sync/sqlite_reader.py:188` (`parse_fsrs_data` passes `card_type`), `backend/app/anki/backfill_due_date_from_anki_due.py:57-64` (migration script reads/passes `cards.type`). Tests: `backend/tests/test_anki_sqlite_reader.py` (6 unit + 1 integration test).
 
 ## Layer 47 — `sync_push` replicates Anki's grade-time sibling-bury
 
@@ -863,7 +863,7 @@ The push-side does NOT bury on the "Anki-won-by-timestamp" path (`list_recently_
 - `TestSyncPushBuriesSiblings.test_sync_push_buries_review_sibling_when_bury_review_enabled` / `_skips_bury_when_no_revlog_emitted` / `_passes_learning_queue_for_relearning_state` / `_skips_bury_when_state_is_suspended` — end-to-end via `AnkiSync.sync_push` against `FakeWriter`.
 - `test_state_to_anki_queue_mappings` — branch coverage on the state→queue helper.
 
-**Files.** `backend/app/anki/sync.py` (`OfflineWriter.bury_siblings`, `_state_to_anki_queue` + `_STATE_VALUE_TO_ANKI_QUEUE` helpers, `AnkiSync._backfill_bury_siblings_for_today_grades`, `resolve_bury_*` imports, `sync_push` tail call). `backend/app/srs/database.py` (`SRSDatabase.list_anki_cards_graded_today`). Tests: `backend/tests/test_anki_sync_push.py` (10 unit `bury_siblings` tests + 6 backfill integration tests + `_state_to_anki_queue` enum coverage), plus `bury_siblings` stubs added to four pre-existing `FakeWriter` classes in `test_anki_sync_orphan_recovery.py`, `test_anki_sync_force_fsrs.py`, `test_anki_sync_round_trip.py`, `test_anki_sync_concurrent_review.py`.
+**Files.** `backend/app/plugins/anki_sync/sync.py` (`OfflineWriter.bury_siblings`, `_state_to_anki_queue` + `_STATE_VALUE_TO_ANKI_QUEUE` helpers, `AnkiSync._backfill_bury_siblings_for_today_grades`, `resolve_bury_*` imports, `sync_push` tail call). `backend/app/srs/database.py` (`SRSDatabase.list_anki_cards_graded_today`). Tests: `backend/tests/test_anki_sync_push.py` (10 unit `bury_siblings` tests + 6 backfill integration tests + `_state_to_anki_queue` enum coverage), plus `bury_siblings` stubs added to four pre-existing `FakeWriter` classes in `test_anki_sync_orphan_recovery.py`, `test_anki_sync_force_fsrs.py`, `test_anki_sync_round_trip.py`, `test_anki_sync_concurrent_review.py`.
 
 **Future work.** `bury_interday_learning` deck-config flag isn't yet cached or threaded through; harmless until a user enables it (default False). When wiring it, add `resolve_bury_interday_learning` in `queue_stats.py`, add it to `refresh_deck_config_cache`, and pass `bury_interday_learning=...` from the backfill site.
 
@@ -906,7 +906,7 @@ The push-side does NOT bury on the "Anki-won-by-timestamp" path (`list_recently_
 
 **Diagnosis**. Two code paths produced day-level review-state due_at with different conventions:
 
-- ``compute_due_at`` (``app/anki/sqlite_reader.py:72``, sync_pull writeback): ``datetime.combine(col_crt_utc_date + due_raw days, time(4, 0), tzinfo=UTC)`` — 04:00 UTC on the calendar date matching Anki's col_day arithmetic.
+- ``compute_due_at`` (``app/plugins/anki_sync/sqlite_reader.py:72``, sync_pull writeback): ``datetime.combine(col_crt_utc_date + due_raw days, time(4, 0), tzinfo=UTC)`` — 04:00 UTC on the calendar date matching Anki's col_day arithmetic.
 - ``schedule()`` (``app/srs/fsrs.py``, two sites at lines 547 and 935): ``datetime.combine(review_date + interval days, time(0, 0), tzinfo=UTC)`` — midnight UTC on ``now.date()`` + interval, ignoring rollover_hour entirely and using UTC calendar date instead of Anki's col_day.
 
 The 4-hour deltas came from time-of-day disagreement (00:00 UTC vs 04:00 UTC). The 20h/44h/68h deltas came from a second issue: grades fired between 00:00 and 04:00 UTC belong to "yesterday's col_day" by Anki's reckoning but to "today UTC" by ``schedule()``'s reckoning — landing the derived due_date one day too far.
@@ -944,7 +944,7 @@ This was self-consistency drift within TT, not TT-vs-Anki — both endpoints dis
 
 - Full ``./test.sh`` green (2481 backend tests, frontend 100% coverage gate, 11 E2E specs).
 
-**Files.** ``backend/app/srs/anki_mirror/protobuf_wire.py`` (+helper). ``backend/app/anki/sqlite_reader.py`` (refactor ``compute_due_at`` to use the helper, drop unused ``timedelta`` import). ``backend/app/srs/fsrs.py`` (new ``_review_due_at_from_interval`` wrapper, ``col_crt`` and ``review_date`` plumbed through three private schedulers and their 8 call sites, two day-level due_at construction sites updated). ``backend/tests/test_fsrs.py`` (4 new tests). ``docs/anki-parity-layers.md`` (this entry).
+**Files.** ``backend/app/srs/anki_mirror/protobuf_wire.py`` (+helper). ``backend/app/plugins/anki_sync/sqlite_reader.py`` (refactor ``compute_due_at`` to use the helper, drop unused ``timedelta`` import). ``backend/app/srs/fsrs.py`` (new ``_review_due_at_from_interval`` wrapper, ``col_crt`` and ``review_date`` plumbed through three private schedulers and their 8 call sites, two day-level due_at construction sites updated). ``backend/tests/test_fsrs.py`` (4 new tests). ``docs/anki-parity-layers.md`` (this entry).
 
 **Cross-reference.** Layer 11/15/40 (``_elapsed_days_for_fsrs`` dual-branch + col_day arithmetic for elapsed time) — same shape as this fix, applied to the elapsed-days side. ``compute_anki_day_index`` (``protobuf_wire.py:196``) — companion helper in the *opposite* direction. **Correction (Layer 54):** the two are NOT round-trip inverses — ``review_due_at_for_col_day(N)`` fed back through ``compute_anki_day_index`` yields ``N − 1``. That is intentional and inert (see Layer 54); do not "fix" it. The remaining off-by-1-day deltas in the measurement are tracked as Layer 50 (stability port drift, scattered ~5-7% in ``_next_stability_recall``).
 
@@ -1293,7 +1293,7 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 
 **Scope.** Prerequisite for flipping `event_sync_pull` compare→new — the legacy path masks the gap, the new path would persist the understated stability. No effect on legacy/synced cards (still verbatim `cards.data`).
 
-**Files.** `app/anki/sync.py` (`_ingest_anki_revlog_for_card` reconcile + caller), `app/srs/database.py` (`get_tt_revlog_ids`). Tests: `tests/test_anki_sync_pull.py::TestSyncPullIngestsAnkiRevlogIntoTtRevlog::{test_ingest_ignores_last_synced_at_and_backfills_older_rows, test_interior_revlog_gap_is_backfilled}` (the latter pins the exact incident shape), `tests/test_srs_database.py::TestRevlog::{test_get_tt_revlog_ids_returns_held_ids_for_direction, test_get_tt_revlog_ids_empty_when_none}`.
+**Files.** `app/plugins/anki_sync/sync.py` (`_ingest_anki_revlog_for_card` reconcile + caller), `app/srs/database.py` (`get_tt_revlog_ids`). Tests: `tests/test_anki_sync_pull.py::TestSyncPullIngestsAnkiRevlogIntoTtRevlog::{test_ingest_ignores_last_synced_at_and_backfills_older_rows, test_interior_revlog_gap_is_backfilled}` (the latter pins the exact incident shape), `tests/test_srs_database.py::TestRevlog::{test_get_tt_revlog_ids_returns_held_ids_for_direction, test_get_tt_revlog_ids_empty_when_none}`.
 
 **Surfaced by.** Stage 3b compare-soak daily check (2026-05-27): shadow-vs-authoritative diff, root-caused via per-day Anki-vs-tt_revlog grade audit + backfilled `rebuild_from_revlog` reproduction.
 
@@ -1341,7 +1341,7 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 
 **Validation.** `./test.sh`-equivalent backend gate green (2590 passed, 100% coverage). New tests: `tests/test_anki_sync_pull.py::TestSyncPullIngestsAnkiRevlogIntoTtRevlog::test_ingest_keeps_distinct_anki_grades_within_5s_same_ease` (two Anki grades 3s apart, same ease → both ingest) and `tests/test_srs_database.py::TestRevlog::test_has_revision_near_ignore_ids_excludes_anki_origin_rows`; `test_skips_anki_row_that_duplicates_tt_grade` still pins the TT-written-mirror suppression.
 
-**Files.** `app/srs/database.py` (`has_revision_near` + `ignore_ids`), `app/anki/sync.py` (`_ingest_anki_revlog_for_card` passes `anki_ids`).
+**Files.** `app/srs/database.py` (`has_revision_near` + `ignore_ids`), `app/plugins/anki_sync/sync.py` (`_ingest_anki_revlog_for_card` passes `anki_ids`).
 
 **Surfaced by.** 2026-05-29 forced-full-sync recovery (`project_forced_full_sync_revlog_risk`): a Download-recovered phone session whose two dropped grades, traced through `tt_revlog`, exposed the same-ease rapid-grade collapse. Replay-only impact; matters when the stage3b compare-soak recomputes from `tt_revlog`.
 
@@ -1355,7 +1355,7 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 
 **Validation.** Backend suite green (2554 passed, 100% coverage); five col-usn assertions flipped from `== -1` to "preserved" (set a known anchor, assert unchanged): `tests/test_anki_sync_push.py::TestOfflineWriter::{test_write_revlog_bumps_col_mod_preserves_usn, test_update_note_fields_replaces_named_field_and_bumps_usn, <bury_siblings>}`, `tests/test_anki_offline_writer_create_note.py::…::test_bumps_col_mod_preserves_usn`, `tests/test_anki_sync_offline_writer.py::TestBumpDeckNewToday::test_inserts_field_when_absent`. Live validation: re-run the `~/.tunatale/sync_trace.sh` repro — `tonight-after-tt` should now show a *positive* `col.usn` instead of `-1`, and the multi-device File→Sync should go incremental instead of forcing.
 
-**Files.** `app/anki/sync.py` (`OfflineWriter._bump_col`), `.claude/rules/anki-sync.md` (rule corrected).
+**Files.** `app/plugins/anki_sync/sync.py` (`OfflineWriter._bump_col`), `.claude/rules/anki-sync.md` (rule corrected).
 
 **Surfaced by.** 2026-05-29 user report ("why does it force a full sync after TunaTale?") → forensic timeline (`project_forced_full_sync_revlog_risk`) → controlled reproduction with `sync_trace.sh`.
 
@@ -1431,7 +1431,7 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 
 **The bug.** Reported as "TunaTale shows 66 to review, Anki shows 73" (2026-06-02, Slovene deck). The six `database.py` "today" count/list helpers (`count_review_due_collocations`, `count_new_introduced_today`, `count_reviews_completed_today`, `count_new_available_collocations`, `list_anki_cards_graded_today`, `list_collocations_reviewed_today`) bucketed by **local midnight** (`datetime.combine(today, time(0), tzinfo=local_tz)`). Anki rolls the study day over at the configured `rollover` hour — **4 AM local** (the user's, and Anki's default). A direction graded in the `[midnight, 4 AM)` local window is "today" for TT but **"yesterday" for Anki**, so TT's "graded-today" sibling-bury fired on review-due siblings Anki had not yet buried. Exactly 7 dual-direction notes had a direction graded at 04:02–04:06 UTC (= 00:02–00:06 EDT) → TT undercounted 73 → 66. The reverse set (TT counts, Anki doesn't) was empty, confirming a single mechanism.
 
-**Why it was a latent inconsistency, not a fresh regression.** `app/anki/sync.py` already had the right boundary via `_local_today_4am()` (used by `list_decks_with_revlog_today`, `count_first_grades_today_for_deck`), and `app/srs/anki_mirror/protobuf_wire.py::compute_anki_day_index` defaults `rollover_hour=4`. Only the badge/count side in `database.py` used midnight — so the badge disagreed with both Anki *and* TT's own sync-side counts.
+**Why it was a latent inconsistency, not a fresh regression.** `app/plugins/anki_sync/sync.py` already had the right boundary via `_local_today_4am()` (used by `list_decks_with_revlog_today`, `count_first_grades_today_for_deck`), and `app/srs/anki_mirror/protobuf_wire.py::compute_anki_day_index` defaults `rollover_hour=4`. Only the badge/count side in `database.py` used midnight — so the badge disagreed with both Anki *and* TT's own sync-side counts.
 
 **Fix.** New module-level `ANKI_ROLLOVER_HOUR = 4` + `_anki_day_bounds_utc(today, now=None)` → returns the UTC `[start, end)` ISO bounds of the Anki day anchored on `today`, with a before-rollover shift (when wall-clock `now` is before today's 4 AM, the active Anki day is yesterday's, mirroring `_local_today_4am`). All six helpers now call it. The `today.isoformat()` legacy date-only equality and the `end_of_day_utc` due-cutoff are unchanged (different domains — a date-only `last_review` can't be sub-day bucketed, and the due cutoff is calendar-granular). **Not touched:** `review_due_at_for_col_day`'s 4 AM-**UTC** `due_at` storage convention (Layer 54 "don't fix the helpers" — separate domain).
 
@@ -1449,7 +1449,7 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 
 **Honors going forward, not retroactively.** The graves already in Anki are the *old* ids TT no longer points to (the resurrection already advanced TT's pointers to live ids), so they match nothing now (`delete_collocations_for_graves` returns `[]`). The loop breaks the *next* time the user deletes a currently-linked note and syncs.
 
-**Files.** `app/anki/sync.py` (`OfflineReader.get_grave_note_ids`, `detect_and_reset_orphans` grave-delete branch); `app/srs/database.py` (`delete_collocations_for_graves`). Tests: `tests/test_anki_sync_orphan_recovery.py::TestGraveHonoring` (hard-delete / recover-when-not-graved / unmatched-grave no-op) and `::TestOfflineReaderGraves` (type=1 filter; absent-table → empty). Backend gate green (2745 passed, 100% coverage); full `./test.sh` green incl. `--run-oracle`.
+**Files.** `app/plugins/anki_sync/sync.py` (`OfflineReader.get_grave_note_ids`, `detect_and_reset_orphans` grave-delete branch); `app/srs/database.py` (`delete_collocations_for_graves`). Tests: `tests/test_anki_sync_orphan_recovery.py::TestGraveHonoring` (hard-delete / recover-when-not-graved / unmatched-grave no-op) and `::TestOfflineReaderGraves` (type=1 filter; absent-table → empty). Backend gate green (2745 passed, 100% coverage); full `./test.sh` green incl. `--run-oracle`.
 
 **Surfaced by.** 2026-06-02 user report (frontend-created base cards keep coming back after deletion in Anki).
 
@@ -1459,7 +1459,7 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 
 **Fix.** `OfflineWriter.get_current_card_state` now also returns `mod` (Anki `cards.mod`, epoch secs). `sync_push` adds a recency guard: when `anki_ahead` and `ds.last_review` is newer than `anki.mod`, set `anki_ahead = False` (TT is the newer authority → push the lapse). When `mod` is unavailable or TT's grade isn't provably newer, the conservative Fix-3 default (defer) holds. Closes the same hole in the closed-SQLite sync (shared code path).
 
-**Files.** `app/anki/sync.py` (`OfflineWriter.get_current_card_state`; the `sync_push` recency guard). Tests: `tests/test_anki_sync_push.py::TestSyncPushGuardsAgainstAnkiAhead` — `test_push_relearning_when_tt_graded_after_anki` (the regression), `_defers_when_anki_graduated_and_newer_than_tt`, `_defers_when_anki_graduated_and_mod_unknown`, and the real-writer assertion updated for `mod`. Full `./test.sh` green incl. `--run-oracle` (FSRS parity unaffected).
+**Files.** `app/plugins/anki_sync/sync.py` (`OfflineWriter.get_current_card_state`; the `sync_push` recency guard). Tests: `tests/test_anki_sync_push.py::TestSyncPushGuardsAgainstAnkiAhead` — `test_push_relearning_when_tt_graded_after_anki` (the regression), `_defers_when_anki_graduated_and_newer_than_tt`, `_defers_when_anki_graduated_and_mod_unknown`, and the real-writer assertion updated for `mod`. Full `./test.sh` green incl. `--run-oracle` (FSRS parity unaffected).
 
 **Surfaced by.** 2026-06-07 user report after the new AnkiWeb peer-sync button ("studied a card, pushed, it overwrote the relearn"). Memory: `project_anki_subprocess_python314_protobuf`.
 
@@ -1476,7 +1476,7 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 
 **Healing the 165 stale directions**: no code — run Anki's Optimize (recompute_memory_state) once; Anki's revlog has the full TT grade history (pushed rows), so it re-derives correct values which flow back on the next pull through the now-guarded merge.
 
-**Files.** `app/anki/sync.py` (`_tt_memory_newer`, guard branch in `_pull_merge_direction`, detector gate, `OfflineWriter.update_card_memory_state`, `sync_push` call site + `push_desired_retention`). Tests: `tests/test_anki_sync_pull.py::TestPullRecencyGuardLayer70` (stale-keeps-local / fresh-takes-Anki / missing-or-equal-takes-Anki / relearning queue mapping / scheduling pass-through), `tests/test_anki_sync_pull_event_mode.py::test_new_mode_detector_skips_*`, `tests/test_anki_sync_push.py::TestPushMemoryStateLayer70` + `TestOfflineWriterUpdateCardMemoryState` (merge semantics incl. malformed/non-dict data), and the end-to-end 428-arc regression `tests/test_anki_sync_round_trip.py::test_tt_grade_memory_state_survives_push_pull_round_trip` against a real collection file. Full `./test.sh` green incl. 100% coverage + Playwright; `--run-oracle` 66/66.
+**Files.** `app/plugins/anki_sync/sync.py` (`_tt_memory_newer`, guard branch in `_pull_merge_direction`, detector gate, `OfflineWriter.update_card_memory_state`, `sync_push` call site + `push_desired_retention`). Tests: `tests/test_anki_sync_pull.py::TestPullRecencyGuardLayer70` (stale-keeps-local / fresh-takes-Anki / missing-or-equal-takes-Anki / relearning queue mapping / scheduling pass-through), `tests/test_anki_sync_pull_event_mode.py::test_new_mode_detector_skips_*`, `tests/test_anki_sync_push.py::TestPushMemoryStateLayer70` + `TestOfflineWriterUpdateCardMemoryState` (merge semantics incl. malformed/non-dict data), and the end-to-end 428-arc regression `tests/test_anki_sync_round_trip.py::test_tt_grade_memory_state_survives_push_pull_round_trip` against a real collection file. Full `./test.sh` green incl. 100% coverage + Playwright; `--run-oracle` 66/66.
 
 **Surfaced by.** 2026-06-11 soak check for the Stage-3b collapse decision (the failing `recompute_divergences ≈ 0` gate). Memory: `project_pull_clobbers_tt_native_grades`. **Blocks lifted**: this was the prerequisite for the ticklish-questing-fountain step-2 merge-tree collapse (re-soak first).
 
@@ -1486,7 +1486,7 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 
 **Fix.** `latest_revlog_id_for_direction(collocation_id, direction)` — the anchor now keys on the exact domain `rebuild_from_revlog` walks. Pre-link NULL-akid rows and old-card-id rows count toward the anchor; zero new rows ⇒ replay returns the stored state ⇒ silent. `latest_revlog_id_for_card` deleted (single call site; would otherwise survive as test-only dead code).
 
-**Files.** `app/srs/database.py` (`latest_revlog_id_for_direction`, replacing `latest_revlog_id_for_card`); `app/anki/sync.py` (anchor call site in the pull loop). Tests: `tests/test_anki_sync_pull_event_mode.py::test_new_mode_detector_ignores_unlinked_revlog_rows` (red-test reproduction: stored state + NULL-akid history + zero new rows must not fire), `tests/test_srs_database.py::TestRevlog` (direction-keyed anchor incl. NULL-akid inclusion + cross-direction exclusion). Full `./test.sh` green (2733 passed, 100% coverage, frontend gate, 11 e2e); `--run-oracle` 66/66.
+**Files.** `app/srs/database.py` (`latest_revlog_id_for_direction`, replacing `latest_revlog_id_for_card`); `app/plugins/anki_sync/sync.py` (anchor call site in the pull loop). Tests: `tests/test_anki_sync_pull_event_mode.py::test_new_mode_detector_ignores_unlinked_revlog_rows` (red-test reproduction: stored state + NULL-akid history + zero new rows must not fire), `tests/test_srs_database.py::TestRevlog` (direction-keyed anchor incl. NULL-akid inclusion + cross-direction exclusion). Full `./test.sh` green (2733 passed, 100% coverage, frontend gate, 11 e2e); `--run-oracle` 66/66.
 
 **Surfaced by.** The Layer-70 post-Optimize verification syncs (2026-06-11): divergences dropped 1375 → 2 → 2, with the residual 2 re-firing identical values. Credit: this is the "since_id boundary" hypothesis from the soak-check review — wrong about the main cohort (that was Layer 70's clobber), right about this one.
 
@@ -1494,11 +1494,11 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 
 **The bug.** 2026-06-12 soak: proxy showed 1/1381 stability+difficulty divergence that a direct sync could NOT heal — upogniti recognition stuck at the `fsrs_known`-clobber placeholder (s=1.0/d=5.0) while Anki held real post-Optimize values (s=4.8369/d=3.379). Cause: the card's TT `last_review` was `2026-05-21T00:00:00Z` (`last_review_time_ms=0`) — `parse_fsrs_data`'s **day-level reconstruction** (`due - ivl`, no `lrt` in `cards.data`) round-tripped back from an earlier pull, not a TT grade time. Day truncation overshot the real grade (05-20 16:08Z) by ~8h, so `_tt_memory_newer` read TT as "graded later" and blocked take-Anki on every pull, permanently. Left alone, a TT grade of the card would have pushed placeholder-derived state into Anki.
 
-**Fix.** Extracted the existing midnight-UTC marker check from `_elapsed_days_for_fsrs` into `is_day_level_last_review` (`app/srs/fsrs.py`) and added it to `_tt_memory_newer` (`app/anki/sync_engine.py`): a day-level local timestamp never counts as "TT newer". Safe because TT-native grades always stamp sub-second `datetime.now(UTC)` — including the listen-grade paths, which pass `time_ms=0` but a real `now` (so an ms-based discriminator would have been WRONG; the midnight marker is the correct house convention, same tradeoff as the R-branch select).
+**Fix.** Extracted the existing midnight-UTC marker check from `_elapsed_days_for_fsrs` into `is_day_level_last_review` (`app/srs/fsrs.py`) and added it to `_tt_memory_newer` (`app/plugins/anki_sync/sync_engine.py`): a day-level local timestamp never counts as "TT newer". Safe because TT-native grades always stamp sub-second `datetime.now(UTC)` — including the listen-grade paths, which pass `time_ms=0` but a real `now` (so an ms-based discriminator would have been WRONG; the midnight marker is the correct house convention, same tradeoff as the R-branch select).
 
 **Data heal.** The stuck row was repaired live (last_review → Anki's real lrt) + re-sync; proxy 1381/1381 bit-exact. Two more day-truncated rows existed (cids 854, 883) with currently-matching s/d — latent, now defused by this fix.
 
-**Files.** `app/srs/fsrs.py` (`is_day_level_last_review`, factored from `_elapsed_days_for_fsrs`); `app/anki/sync_engine.py` (`_tt_memory_newer` + import). Tests: `tests/test_fsrs.py::TestIsDayLevelLastReview`, `tests/test_anki_sync_pull.py::TestPullRecencyGuardLayer70::test_day_level_local_timestamp_does_not_block_take_anki` (red-test reproduction of the stuck card).
+**Files.** `app/srs/fsrs.py` (`is_day_level_last_review`, factored from `_elapsed_days_for_fsrs`); `app/plugins/anki_sync/sync_engine.py` (`_tt_memory_newer` + import). Tests: `tests/test_fsrs.py::TestIsDayLevelLastReview`, `tests/test_anki_sync_pull.py::TestPullRecencyGuardLayer70::test_day_level_local_timestamp_does_not_block_take_anki` (red-test reproduction of the stuck card).
 
 **Surfaced by.** Routine soak (2026-06-12). The detector side benefits too: a day-level local no longer suppresses the recompute detector at the second `_tt_memory_newer` call site, so genuine recompute events on such cards are now recorded instead of silently skipped.
 
@@ -1510,7 +1510,7 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 
 **Fix.** Added `OfflineWriter.count_reviews_today_for_deck(deck_id, today_4am_ms)` (the predicate above, the `count_first_grades_today_for_deck` sibling for `new_today`); replaced `set_deck_new_today` with `set_deck_studied_today(deck_id, day_index, new_today, review_today)`, which writes the recomputed `review_today` on **both** branches instead of dropping it; wired both into `_recompute_anki_studied_today_all_decks`. `seconds_today` is still dropped on rollover — it drives only the time-studied stat (no due badge); revlog-reconstructing it (`SUM(revlog.time)`) is a deferred follow-up.
 
-**Files.** `app/anki/sync_writer.py` (`count_reviews_today_for_deck`, `set_deck_studied_today`); `app/anki/sync_engine.py` (`_recompute_anki_studied_today_all_decks` + `required` tuple). Tests: `tests/test_anki_sync_offline_writer.py::TestCountReviewsTodayForDeck` (predicate: interday review/relearn/learn count; intraday/filtered/manual/cross-deck/pre-today excluded; rows-not-distinct), `::TestSetDeckStudiedToday::test_rollover_recomputes_review_instead_of_zeroing` (the regression), `tests/test_anki_sync_push.py::...::test_sync_push_recomputes_review_today_from_revlog` (end-to-end through `sync_push`).
+**Files.** `app/plugins/anki_sync/sync_writer.py` (`count_reviews_today_for_deck`, `set_deck_studied_today`); `app/plugins/anki_sync/sync_engine.py` (`_recompute_anki_studied_today_all_decks` + `required` tuple). Tests: `tests/test_anki_sync_offline_writer.py::TestCountReviewsTodayForDeck` (predicate: interday review/relearn/learn count; intraday/filtered/manual/cross-deck/pre-today excluded; rows-not-distinct), `::TestSetDeckStudiedToday::test_rollover_recomputes_review_instead_of_zeroing` (the regression), `tests/test_anki_sync_push.py::...::test_sync_push_recomputes_review_today_from_revlog` (end-to-end through `sync_push`).
 
 **Companion fix — TT's *own* review badge (`count_reviews_completed_today`).** The same `review_today` semantic drives TT's live review badge (`reviews_today` subtracted from the daily review cap in `api/srs.py`). It was computed from `collocation_directions` state — `state IN ('review','relearning') AND last_review today` — which has the *opposite* two divergences from Anki: it **over-counted** intraday relearning (every `state='relearning'` graded today, but Anki answers an intraday relearn from the `Learn` queue → no bump) and **under-counted** interday learning (`state='learning'` excluded, but Anki answers an interday learn from `DayLearn` → bump). Neither is recoverable from current direction state: a card graded today holds its *post*-grade interval (`due_at - last_review`), whereas the discriminator is the *pre*-grade interval. The pre-grade interval lives only in the revlog. Rewrote the helper to read `tt_revlog` with the identical predicate — `review_kind IN (0,1,2) AND last_interval >= 1` over the 4am window (`tt_revlog.last_interval` is written with Anki's days-positive/seconds-negative sign by `_compute_revlog_last_interval`, and carries Anki's verbatim `lastIvl`/`type` for sync-ingested rows). `tt_revlog` holds both TT-native (grade-time) and Anki-pulled (`_ingest_anki_revlog_for_card`) rows, so this dropped the `last_rating` and `introduced_at` crutches: a new-card intro is `last_interval=0` and falls out for free. (Narrow window: a freshly-imported deck's today-in-Anki grades aren't in `tt_revlog` until the first `sync_pull` ingests them — self-heals on that sync, and the badge is only consulted during post-sync review sessions.) Files: `app/srs/database.py` (`count_reviews_completed_today`); tests `tests/test_srs_database.py::TestCountReviewsCompletedToday` (rewritten to seed `tt_revlog`: interday review/relearn/learn count; intraday-relearn/new-intro/filtered/manual/prior-day excluded; rows-not-distinct; both directions).
 
@@ -1526,7 +1526,7 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 
 **Not a bug (documented for the next reader):** grading the *same* card in two apps genuinely *is* two answer-events; Anki counts both (per-answer), and so does TT after this fix — that's why parallel-grading 2 cards lands at 46, not the per-*card* "48" one might expect. A residual ~1 TT-vs-Anki gap can remain from the separately-accepted interval-clamp divergence (TT lets a collapsed-stability `review` card hold a sub-day interval where Anki clamps review intervals to ≥1 day, so TT skips that card's grade as intraday while Anki counts it).
 
-**Files.** `app/anki/sync_writer.py` (`write_revlog` id selection, `_revlog_id_exists`). Tests: `tests/test_anki_sync_push.py::TestOfflineWriter` (`test_write_revlog_uses_preferred_id_when_free`, `…_keeps_preferred_id_even_with_a_later_row_present` = the echo regression, `…_bumps_on_preferred_id_collision`); `tests/test_anki_sync_pull.py::…::test_pushed_grade_at_preferred_id_is_not_re_ingested_as_echo` (sociable: real `OfflineWriter` push → real `OfflineReader` ingest → no duplicate; sabotage-drilled red without the fix).
+**Files.** `app/plugins/anki_sync/sync_writer.py` (`write_revlog` id selection, `_revlog_id_exists`). Tests: `tests/test_anki_sync_push.py::TestOfflineWriter` (`test_write_revlog_uses_preferred_id_when_free`, `…_keeps_preferred_id_even_with_a_later_row_present` = the echo regression, `…_bumps_on_preferred_id_collision`); `tests/test_anki_sync_pull.py::…::test_pushed_grade_at_preferred_id_is_not_re_ingested_as_echo` (sociable: real `OfflineWriter` push → real `OfflineReader` ingest → no duplicate; sabotage-drilled red without the fix).
 
 **Surfaced by.** User parallel-grading `like`/`tenke` in AnkiDroid + TT during Norwegian Phase 1, then syncing.
 

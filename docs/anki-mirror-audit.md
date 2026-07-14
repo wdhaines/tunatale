@@ -2,7 +2,7 @@
 
 A repeatable, inspection-driven process for finding divergences between TunaTale's
 FSRS/scheduler mirror (`backend/app/srs/fsrs.py`, `queue_stats.py`, `app/api/srs.py`,
-`app/anki/sync.py`) and Anki's reference implementation — **before** they surface as
+`app/plugins/anki_sync/sync.py`) and Anki's reference implementation — **before** they surface as
 a user-visible divergence report.
 
 This complements, and is upstream of, the two existing safety nets:
@@ -80,7 +80,7 @@ sqlite3 /tmp/anki_inspect.db "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
 import sqlite3
 from app.srs.anki_mirror.protobuf_wire import find_varint_field, find_fixed32_field
 from app.srs.queue_stats import _pb_find_packed_float_field, _read_conf_id_for_deck
-from app.anki.safety import _register_anki_collations
+from app.plugins.anki_sync.safety import _register_anki_collations
 c = sqlite3.connect("file:/tmp/anki_inspect.db?mode=ro", uri=True); _register_anki_collations(c)
 blob = bytes(c.execute("SELECT config FROM deck_config WHERE id=?",
             (_read_conf_id_for_deck(c, "0. Slovene"),)).fetchone()[0])
@@ -252,7 +252,7 @@ are the most-hammered code (Layers 25–39, 56–61) and held up:
   fixed dr/decay, so TT's raw-R sort yields identical order. The `seconds_elapsed`/`days_elapsed`
   branches match `_elapsed_days_for_fsrs`. No-memory cards fall through to the SM2 formula
   `-(days_elapsed+0.001)/ivl` — the Layer 38/43 territory, already understood.
-- **`_direction_differs`** (`sync_engine.py`, re-exported via the `app.anki.sync` facade) — every sync-relevant field Anki can mutate is
+- **`_direction_differs`** (`sync_engine.py`, re-exported via the `app.plugins.anki_sync.sync` facade) — every sync-relevant field Anki can mutate is
   compared; the not-compared fields (`introduced_at`, `prior_left/stability`,
   `last_review_time_ms`) are either stamped on a co-occurring state change (which *is*
   compared) or are TT-internal grade artifacts Anki never sets. Complete.

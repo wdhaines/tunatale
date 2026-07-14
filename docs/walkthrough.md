@@ -4801,9 +4801,9 @@ Name                                            Stmts   Miss Branch BrPart  Cove
 -------------------------------------------------------------------------------------------
 app/__init__.py                                     0      0      0      0   100%
 app/anki/__init__.py                                0      0      0      0   100%
-app/anki/add_vocab_notetype.py                     41      0     12      0   100%
+app/plugins/anki_sync/add_vocab_notetype.py                     41      0     12      0   100%
 app/anki/field_map.py                              18      0      0      0   100%
-app/anki/import_seed.py                           166      0     66      0   100%
+app/plugins/anki_sync/import_seed.py                           166      0     66      0   100%
 app/anki/media/__init__.py                          0      0      0      0   100%
 app/anki/media/forvo.py                            43      0      8      0   100%
 app/anki/media/normalize.py                        55      0      8      0   100%
@@ -4812,20 +4812,20 @@ app/anki/media/pixabay.py                          54      0      8      0   100
 app/anki/media/query_llm.py                        47      0     16      0   100%
 app/anki/media/tts.py                              14      0      4      0   100%
 app/anki/media/vocab_media.py                      43      0      8      0   100%
-app/anki/model_discovery.py                        21      0     10      0   100%
-app/anki/normalize_usns.py                         26      0     12      0   100%
+app/plugins/anki_sync/model_discovery.py                        21      0     10      0   100%
+app/plugins/anki_sync/normalize_usns.py                         26      0     12      0   100%
 app/anki/notetype.py                                4      0      0      0   100%
 app/srs/anki_mirror/protobuf_wire.py                         125      0     42      0   100%
-app/anki/replay_fsrs_from_revlog.py               120      0     40      0   100%
+app/plugins/anki_sync/replay_fsrs_from_revlog.py               120      0     40      0   100%
 app/srs/anki_mirror/rollover.py                               22      0      4      0   100%
-app/anki/safety.py                                135      0     32      0   100%
-app/anki/sqlite_reader.py                         275      0    112      0   100%
-app/anki/sync.py                                  130      0     18      0   100%
-app/anki/sync_common.py                           126      0     20      0   100%
-app/anki/sync_engine.py                           507      0    248      0   100%
-app/anki/sync_orchestrator.py                     216      0     48      0   100%
-app/anki/sync_reader.py                            68      0     16      0   100%
-app/anki/sync_writer.py                           327      0     80      0   100%
+app/plugins/anki_sync/safety.py                                135      0     32      0   100%
+app/plugins/anki_sync/sqlite_reader.py                         275      0    112      0   100%
+app/plugins/anki_sync/sync.py                                  130      0     18      0   100%
+app/plugins/anki_sync/sync_common.py                           126      0     20      0   100%
+app/plugins/anki_sync/sync_engine.py                           507      0    248      0   100%
+app/plugins/anki_sync/sync_orchestrator.py                     216      0     48      0   100%
+app/plugins/anki_sync/sync_reader.py                            68      0     16      0   100%
+app/plugins/anki_sync/sync_writer.py                           327      0     80      0   100%
 app/anki/vocab_notetype.py                         45      0      4      0   100%
 app/api/__init__.py                                 0      0      0      0   100%
 app/api/_serializers.py                             6      0      2      0   100%
@@ -5285,7 +5285,7 @@ For day-to-day developer commands, testing quirks (cassette modes, the offline-A
 
 ## PART 12: Anki Integration (Stage 3)
 
-> **2026-07 status.** This PART describes Stage 3 as built (early 2026). Three things have changed structurally since: (1) the 2026-06-11 **sync module split** — `app/anki/sync.py` is now a runner + re-export facade; the `AnkiSync` engine lives in `sync_engine.py`, collection I/O in `sync_reader.py`/`sync_writer.py`, shared helpers in `sync_common.py` (import and patch through `app.anki.sync` as before); (2) **AnkiConnect and the CLI are gone** — `POST /api/anki/peer-sync` is the ONLY sync entry point (legacy `/api/anki/sync` + `/status` endpoints deleted 2026-06-10; the `python -m app.anki.sync` CLI and `--all-languages` removed 2026-06-30); (3) the one-shot migration scripts tabulated in 12.9 moved to `backend/scripts/anki_archive/`. Corrections are inlined below; PART 29 covers the new world.
+> **2026-07 status.** This PART describes Stage 3 as built (early 2026). Three things have changed structurally since: (1) the 2026-06-11 **sync module split** — `app/plugins/anki_sync/sync.py` is now a runner + re-export facade; the `AnkiSync` engine lives in `sync_engine.py`, collection I/O in `sync_reader.py`/`sync_writer.py`, shared helpers in `sync_common.py` (import and patch through `app.plugins.anki_sync.sync` as before); (2) **AnkiConnect and the CLI are gone** — `POST /api/anki/peer-sync` is the ONLY sync entry point (legacy `/api/anki/sync` + `/status` endpoints deleted 2026-06-10; the `python -m app.plugins.anki_sync.sync` CLI and `--all-languages` removed 2026-06-30); (3) the one-shot migration scripts tabulated in 12.9 moved to `backend/scripts/anki_archive/`. Corrections are inlined below; PART 29 covers the new world.
 
 The biggest change since the original walkthrough is **bidirectional Anki sync**. TunaTale's SRS database now mirrors a user's Anki collection: items have stable Anki-compatible GUIDs, two review directions (recognition + production matching Anki ord 0/1), and a sync engine that reads and writes `collection.anki2` directly via SQLite. AnkiConnect (the HTTP plugin) was initially kept for compatibility, but its support has since been **deleted entirely** — direct offline SQLite access is the only collection I/O, and peer-sync via AnkiWeb is the only sync entry point (PART 29).
 
@@ -5376,10 +5376,10 @@ The matching schema in `app/srs/database.py` uses two tables — `collocations` 
 
 ### 12.2 Safety Envelope: `safe_open`, USN, Backups
 
-`collection.anki2` is a SQLite file. Touching it directly without the right precautions corrupts AnkiWeb sync state — see the project rule file `.claude/rules/anki-sync.md` for the full theory. Every TunaTale write goes through `app/anki/safety.py::safe_open`, which is the *only* sanctioned way to open the collection.
+`collection.anki2` is a SQLite file. Touching it directly without the right precautions corrupts AnkiWeb sync state — see the project rule file `.claude/rules/anki-sync.md` for the full theory. Every TunaTale write goes through `app/plugins/anki_sync/safety.py::safe_open`, which is the *only* sanctioned way to open the collection.
 
 ```bash
-sed -n '172,247p' backend/app/anki/safety.py | cat -n
+sed -n '172,247p' backend/app/plugins/anki_sync/safety.py | cat -n
 ```
 
 ```output
@@ -5476,7 +5476,7 @@ Two more pieces complete the protocol — they live alongside `safe_open` and th
 
 ### 12.3 Readers and Writers
 
-The sync engine talks to the underlying store through two ports — `OfflineReader`/`OfflineWriter` — now defined in `sync_reader.py`/`sync_writer.py` and re-exported through the `app.anki.sync` facade (2026-06-11 split; the AnkiConnect-backed `OnlineReader`/`OnlineWriter` ports below were deleted with AnkiConnect support):
+The sync engine talks to the underlying store through two ports — `OfflineReader`/`OfflineWriter` — now defined in `sync_reader.py`/`sync_writer.py` and re-exported through the `app.plugins.anki_sync.sync` facade (2026-06-11 split; the AnkiConnect-backed `OnlineReader`/`OnlineWriter` ports below were deleted with AnkiConnect support):
 
 | Port | When used | Backend |
 |------|-----------|---------|
@@ -5485,10 +5485,10 @@ The sync engine talks to the underlying store through two ports — `OfflineRead
 | `OnlineReader` | Compatibility / legacy paths | AnkiConnect JSON-RPC (`findNotes`, `notesInfo`) |
 | `OnlineWriter` | Compatibility / legacy paths | AnkiConnect (`addNote`, `updateNoteFields`, `storeMediaFile`) |
 
-Both *Reader* ports return the same in-memory shapes — `AnkiNote` and `AnkiCard` from `app/anki/sqlite_reader.py`. The card record carries the FSRS state parsed out of Anki's per-card data blob (queue, due, ivl, factor, lapses, reps), plus the `fsrs_data` payload (stability, difficulty, last review).
+Both *Reader* ports return the same in-memory shapes — `AnkiNote` and `AnkiCard` from `app/plugins/anki_sync/sqlite_reader.py`. The card record carries the FSRS state parsed out of Anki's per-card data blob (queue, due, ivl, factor, lapses, reps), plus the `fsrs_data` payload (stability, difficulty, last review).
 
 ```bash
-sed -n '54,87p' backend/app/anki/sqlite_reader.py | cat -n
+sed -n '54,87p' backend/app/plugins/anki_sync/sqlite_reader.py | cat -n
 ```
 
 ```output
@@ -5540,7 +5540,7 @@ Two details from the reader are worth highlighting because they're easy to get w
 The sync flow (``run_full_sync``) runs four phases in a single transaction. The order matters — getting it wrong loses revlog entries or creates duplicate notes.
 
 ```bash
-grep -nE 'def sync_|def _direction_differs|class AnkiSync' backend/app/anki/sync_engine.py | head -20
+grep -nE 'def sync_|def _direction_differs|class AnkiSync' backend/app/plugins/anki_sync/sync_engine.py | head -20
 ```
 
 ```output
@@ -5787,7 +5787,7 @@ Two test files exercise this end-to-end with synthesized protobuf blobs: `test_q
 
 ### 12.7 Anki API Surface
 
-One FastAPI route drives the Anki integration — ``POST /api/anki/peer-sync``, which drives ``app.anki.sync_orchestrator.peer_sync``. Unlike the old offline sync, this path works with Anki open and threads a media generator so new TT cards reach AnkiWeb with audio and images attached.
+One FastAPI route drives the Anki integration — ``POST /api/anki/peer-sync``, which drives ``app.plugins.anki_sync.sync_orchestrator.peer_sync``. Unlike the old offline sync, this path works with Anki open and threads a media generator so new TT cards reach AnkiWeb with audio and images attached.
 
 ### 12.8 Anki Test Inventory
 
@@ -5829,13 +5829,13 @@ The four-phase sync described in 12.4 only works once a user's Anki collection h
 | **H2** | `app.anki.merge_dupes` | Consolidates the two historical "Basic" notetype cards per word (one for recognition, one for production) into a single two-template "Slovene Vocabulary" note. Hand-rolled protobuf (`app.anki.notetype`) builds the new notetype's field/template/CSS config. This is the biggest single anki module and the one that requires a forced full-upload afterward. |
 | **H3** | `app.anki.migrate_homonyms` | Moves disambiguation suffixes (e.g. `(noun)` in `kapus (noun)`) out of the visible Slovene field into a hidden `DisambigKey` field, so two homonyms can share a clean visible form while still hashing to distinct GUIDs. `repair_nested_homonyms` is a 3-row surgical companion for cases the regex missed (parens-inside-parens). |
 | **H4** | `app.anki.backfill_guids` | Rewrites every Anki note GUID to TunaTale's deterministic formula (sha256 of language + visible text + DisambigKey). After this, sync's GUID-based reconciliation works. (`app.anki.sqlite_writer` has since been deleted; the one-shot scripts now live in `backend/scripts/anki_archive/`.) |
-| **H5** | `app.anki.normalize_usns` | Post-full-upload USN clamp (already covered in 12.2). Resets `cards.usn`, `notes.usn`, `revlog.usn` back to `col.usn` after the user has done a forced full upload. |
+| **H5** | `app.plugins.anki_sync.normalize_usns` | Post-full-upload USN clamp (already covered in 12.2). Resets `cards.usn`, `notes.usn`, `revlog.usn` back to `col.usn` after the user has done a forced full upload. |
 
 Each step has a `__main__` entry point (`uv run python -m app.anki.<module>`), goes through `safe_open` for backup + lock probe, and emits a dry-run plan before mutating. All five test files in PART 12.8 cover these CLIs.
 
 After this pipeline, ongoing sync uses only the peer-sync endpoint (PART 12.4) — no further bootstrap is needed unless the user adds a third notetype or imports a substantially new deck.
 
-`app.anki.model_discovery` is a small support utility: given a deck and an open Anki connection (or just the offline collection), it figures out which notetype's notes to sync. Called by the sync handler whenever `settings.anki_model_name` is unset.
+`app.plugins.anki_sync.model_discovery` is a small support utility: given a deck and an open Anki connection (or just the offline collection), it figures out which notetype's notes to sync. Called by the sync handler whenever `settings.anki_model_name` is unset.
 
 ---
 
@@ -6048,8 +6048,8 @@ Migrations are guarded by `_column_exists` / `_table_exists` so they're idempote
 
 Two CLI entry points worth knowing:
 
-- `uv run python -m app.anki.normalize_usns` — the post-full-upload USN clamp. Run it whenever `*_gt_col > 0` from the diagnostic in `.claude/rules/anki-sync.md`.
-- `uv run python -m app.anki.import_seed` — refresh Anki media into TunaTale's local cache.
+- `uv run python -m app.plugins.anki_sync.normalize_usns` — the post-full-upload USN clamp. Run it whenever `*_gt_col > 0` from the diagnostic in `.claude/rules/anki-sync.md`.
+- `uv run python -m app.plugins.anki_sync.import_seed` — refresh Anki media into TunaTale's local cache.
 
 
 ---
@@ -6299,8 +6299,8 @@ The pipeline:
 1. **Detection.** `is_function_word(lemma, "sl")` checks against `SLOVENE_FUNCTION_WORDS` — a curated 22-word frozenset (`je`, `kje`, `v`, `kaj`, `sem`, `si`, `da`, `za`, `tam`, `na`, `kako`, `ni`, `ja`, `se`, `to`, `vam`, `z`, `mi`, `še`, `pa`, `ti`, `po`). The list was generated by `app/srs/build_function_word_list.py` over a 7-day curriculum, then manually curated to drop obvious content words.
 2. **Storage.** Migration v18→v19 adds `collocations.card_type TEXT DEFAULT 'vocab'`. Cloze cards get `card_type='cloze'` and `source_sentence=<the natural-speed phrase>`. `add_collocation` (now `backend/app/srs/db_collocations.py:22`) creates only a **PRODUCTION** direction for cloze cards (`card_type == "cloze"` → `directions = [Direction.PRODUCTION]`, `db_collocations.py:103-106`) — a cloze is a fill-in-the-blank *production* act; there is no recognition side. (An earlier revision of this paragraph said RECOGNITION — wrong; PART 20 has it right.)
 3. **Cloze text generation.** `make_cloze_text(surface, source_sentence)` wraps every word-bounded occurrence of `surface` with `{{c1::surface}}`. It's case-insensitive but case-preserving, idempotent (if `{{c1::...}}` is already present it passes through), and skips empty source sentences.
-4. **Anki note creation.** `OfflineWriter.create_cloze_note` (`backend/app/anki/sync.py:485`) targets Anki's built-in **Cloze** notetype (looked up by `name='Cloze'` in `notetypes`). The fields are `Text` (the cloze-wrapped sentence) and `Back Extra` (left empty). GUID is computed from the cloze-wrapped text + language code via `compute_guid` so duplicate detection works the same way as vocab notes. Each template's `cards.due` is allocated from `MAX(due)+1` over existing new cards.
-5. **Routing.** `sync_create_new` checks `item.syntactic_unit.card_type` and dispatches to `create_cloze_note` (cloze) or `create_note` (vocab). The dispatch is at `backend/app/anki/sync.py:1449`.
+4. **Anki note creation.** `OfflineWriter.create_cloze_note` (`backend/app/plugins/anki_sync/sync.py:485`) targets Anki's built-in **Cloze** notetype (looked up by `name='Cloze'` in `notetypes`). The fields are `Text` (the cloze-wrapped sentence) and `Back Extra` (left empty). GUID is computed from the cloze-wrapped text + language code via `compute_guid` so duplicate detection works the same way as vocab notes. Each template's `cards.due` is allocated from `MAX(due)+1` over existing new cards.
+5. **Routing.** `sync_create_new` checks `item.syntactic_unit.card_type` and dispatches to `create_cloze_note` (cloze) or `create_note` (vocab). The dispatch is at `backend/app/plugins/anki_sync/sync.py:1449`.
 
 The flag default is OFF; turning it on only affects new function-word lemmas going forward. Existing rows aren't backfilled — they stay as `vocab` cards.
 
@@ -6331,7 +6331,7 @@ Phase C threads recency through both the gather query and the sync_create_new al
 
 ## PART 16: Anki Queue Parity — Layers 24–31
 
-Stage 3 (PART 12) introduced bidirectional sync. Between syncs, both apps schedule independently, and TT must mirror Anki's algorithms closely enough that switching apps doesn't feel discontinuous. The "layers" history lives in `docs/anki-parity-layers.md` and the principles plus a divergence decision tree live in `.claude/rules/anki-queue-parity.md` — read those before editing `app/api/srs.py`, `app/srs/fsrs.py`, `app/srs/anki_mirror/queue_stats.py`, or `app/anki/sync.py`.
+Stage 3 (PART 12) introduced bidirectional sync. Between syncs, both apps schedule independently, and TT must mirror Anki's algorithms closely enough that switching apps doesn't feel discontinuous. The "layers" history lives in `docs/anki-parity-layers.md` and the principles plus a divergence decision tree live in `.claude/rules/anki-queue-parity.md` — read those before editing `app/api/srs.py`, `app/srs/fsrs.py`, `app/srs/anki_mirror/queue_stats.py`, or `app/plugins/anki_sync/sync.py`.
 
 This section documents Layers 24–31, all landed since the previous walkthrough.
 
@@ -6505,10 +6505,10 @@ Deploy-time pitfall to remember: the cache lives in `anki_state_cache` (DB-backe
 
 The previous mapper had a fallback `if reps == 0: return SRSState.NEW`. That broke when an Anki user hit "Forget" on a graduated card — `cards.queue` stays at 2 (review) but `cards.reps` resets to 0. The fallback wrongly mapped these to NEW, surfacing them as fresh new cards in TT.
 
-`_queue_to_state` (`backend/app/anki/sync_engine.py:204` since the sync split) now treats `queue` as authoritative:
+`_queue_to_state` (`backend/app/plugins/anki_sync/sync_engine.py:204` since the sync split) now treats `queue` as authoritative:
 
 ```bash
-sed -n "204,227p" backend/app/anki/sync_engine.py
+sed -n "204,227p" backend/app/plugins/anki_sync/sync_engine.py
 ```
 
 ```output
@@ -6546,8 +6546,8 @@ The user's Anki collection has a Pronunciation/Basic notetype that stores both t
 
 Layer 31 adds two pieces:
 
-1. **`extract_gloss_from_fields`** (`backend/app/anki/sqlite_reader.py:350`) — returns the English gloss when a field uses the pattern.
-2. **A short-circuit in `extract_l2_from_fields`** (`backend/app/anki/sqlite_reader.py:386-389`) — runs before the score-based fallback so the `<b>X</b><br><i>Y</i>` pattern picks the `<b>` group cleanly. The `_B_THEN_I_PATTERN` is a module-level regex anchored at `^\s*<b>([^<]+)</b>\s*<br\s*/?>\s*<i>([^<]+)</i>`.
+1. **`extract_gloss_from_fields`** (`backend/app/plugins/anki_sync/sqlite_reader.py:350`) — returns the English gloss when a field uses the pattern.
+2. **A short-circuit in `extract_l2_from_fields`** (`backend/app/plugins/anki_sync/sqlite_reader.py:386-389`) — runs before the score-based fallback so the `<b>X</b><br><i>Y</i>` pattern picks the `<b>` group cleanly. The `_B_THEN_I_PATTERN` is a module-level regex anchored at `^\s*<b>([^<]+)</b>\s*<br\s*/?>\s*<i>([^<]+)</i>`.
 
 `import_seed` and the sync_pull `get_note_records` path both use the updated extractor, so new imports come in clean. For the 39 already-mangled rows in the live DB, a one-shot script now archived at `backend/scripts/anki_archive/fix_html_concat_imports.py` walks the TT DB, cross-checks the linked Anki note, and either renames the row (`text=X, translation=Y`) or deletes it when a clean-X twin collocation already exists. The script is read-only on `collection.anki2`, mutates only `tunatale.db`, supports `--dry-run`, and is invoked as:
 
@@ -6586,7 +6586,7 @@ if not dry_run:
     self._db.record_sync_conflict(...)
 ```
 
-collapsed to `self._record_conflict(report, guid=..., direction=..., field=..., local=..., remote=..., resolution=..., dry_run=dry_run)` (now in `backend/app/anki/sync_engine.py`).
+collapsed to `self._record_conflict(report, guid=..., direction=..., field=..., local=..., remote=..., resolution=..., dry_run=dry_run)` (now in `backend/app/plugins/anki_sync/sync_engine.py`).
 
 **`_resolve_prior_state` closure** (commit `38d2804`). The call-site signature was passing `first_review_ms`, `today_start_ms`, and the local direction state through repeated kwargs. The refactor introduces a per-iteration `_prior` closure that captures `card_rec.first_review_ms` and `today_start_ms` once, leaving the call site as `_prior(local_dir, new_state)`. Same idea applied to `_intro_at = _resolve_introduced_at`. Visual noise dropped, behavior identical.
 
@@ -6656,7 +6656,7 @@ A content-based dedup helper, `SRSDatabase.has_revision_near(...)`, lets `_inges
 
 `SRSDatabase.rebuild_from_revlog(collocation_id, direction, anki_card_id=None, exclude_review_kinds=frozenset({4}))` replays the rows through `schedule()` starting from NEW, returns a `DirectionState`. The `anki_card_id` parameter is required — FSRS interval fuzz seeds off `(card.id + reps)`, so omitting it drifts replayed stabilities by O(fuzz days).
 
-The companion script `app/anki/replay_fsrs_from_revlog.py` walks every direction and classifies each as MATCH (replay agrees with stored state), REPAIR (raw UPDATE preserves the 8 non-FSRS columns), or one of three SKIP buckets (synthetic-only, pre-FSRS SM-2 era, unknown). `--dry-run` snapshots both sides; concurrency guard via `BEGIN IMMEDIATE`.
+The companion script `app/plugins/anki_sync/replay_fsrs_from_revlog.py` walks every direction and classifies each as MATCH (replay agrees with stored state), REPAIR (raw UPDATE preserves the 8 non-FSRS columns), or one of three SKIP buckets (synthetic-only, pre-FSRS SM-2 era, unknown). `--dry-run` snapshots both sides; concurrency guard via `BEGIN IMMEDIATE`.
 
 ### 19.3 Current Status
 
@@ -7521,17 +7521,17 @@ sed -n "110,127p" backend/app/srs/db_revlog.py
 The incremental forward-step replay survives as the recompute detector: when its forward-step disagrees with Anki's `cards.data`, sync logs a `RECOMPUTE_DIVERGENCE` line and counts it on the report — the signal that Anki ran an Optimize/reschedule/restore the replay couldn't reproduce:
 
 ```bash
-grep -n "SYNC_SOAK\|RECOMPUTE_DIVERGENCE" backend/app/anki/sync_engine.py backend/app/anki/sync.py | head -8
+grep -n "SYNC_SOAK\|RECOMPUTE_DIVERGENCE" backend/app/plugins/anki_sync/sync_engine.py backend/app/plugins/anki_sync/sync.py | head -8
 ```
 
 ```output
-backend/app/anki/sync_engine.py:462:        # "RECOMPUTE_DIVERGENCE".
-backend/app/anki/sync_engine.py:464:            "RECOMPUTE_DIVERGENCE cid=%s dir=%s replay_s=%.4f anki_s=%.4f replay_d=%.4f anki_d=%.4f",
-backend/app/anki/sync.py:150:    ``SYNC_SOAK`` heartbeat per sync (even at count 0, so there's positive
-backend/app/anki/sync.py:151:    "ran clean" confirmation) plus one ``RECOMPUTE_DIVERGENCE`` detail line per
-backend/app/anki/sync.py:160:        f"{ts} SYNC_SOAK pull_notes={pull.notes_updated} "
-backend/app/anki/sync.py:167:            f"{ts}   RECOMPUTE_DIVERGENCE cid={d.collocation_id} dir={d.direction} "
-backend/app/anki/sync.py:333:    # SYNC_SOAK heartbeats into the user's real ~/.tunatale/logs/sync.log.
+backend/app/plugins/anki_sync/sync_engine.py:462:        # "RECOMPUTE_DIVERGENCE".
+backend/app/plugins/anki_sync/sync_engine.py:464:            "RECOMPUTE_DIVERGENCE cid=%s dir=%s replay_s=%.4f anki_s=%.4f replay_d=%.4f anki_d=%.4f",
+backend/app/plugins/anki_sync/sync.py:150:    ``SYNC_SOAK`` heartbeat per sync (even at count 0, so there's positive
+backend/app/plugins/anki_sync/sync.py:151:    "ran clean" confirmation) plus one ``RECOMPUTE_DIVERGENCE`` detail line per
+backend/app/plugins/anki_sync/sync.py:160:        f"{ts} SYNC_SOAK pull_notes={pull.notes_updated} "
+backend/app/plugins/anki_sync/sync.py:167:            f"{ts}   RECOMPUTE_DIVERGENCE cid={d.collocation_id} dir={d.direction} "
+backend/app/plugins/anki_sync/sync.py:333:    # SYNC_SOAK heartbeats into the user's real ~/.tunatale/logs/sync.log.
 ```
 
 The replay is **incremental** — it forward-steps from the stored state through the events ingested this sync, rather than replaying from NEW every time (which would be O(history) per card per sync). Compare-mode used to write the replayed stability/difficulty to shadow columns (dropped in v32); the surviving path records a `RecomputeDivergence` on `report.recompute_divergences` when the forward-step disagrees with Anki, so a real algorithmic gap surfaces in the sync report and the `SYNC_SOAK` heartbeat in `~/.tunatale/logs/sync.log`.
@@ -7571,22 +7571,22 @@ This is where a new contributor — human or agent — should start: the influen
 
 ### 29.1 The Sync Module Split & the One Sync Path
 
-`app/anki/sync.py` had grown into a god-module. The 2026-06-11 split left it as a **runner + re-export facade**: the `AnkiSync` reconcile engine lives in `sync_engine.py`, collection I/O (`OfflineReader`/`OfflineWriter`) in `sync_reader.py`/`sync_writer.py`, and shared leaf helpers in `sync_common.py`. Every old import path still works through the facade — tests import and patch `app.anki.sync` exactly as before.
+`app/plugins/anki_sync/sync.py` had grown into a god-module. The 2026-06-11 split left it as a **runner + re-export facade**: the `AnkiSync` reconcile engine lives in `sync_engine.py`, collection I/O (`OfflineReader`/`OfflineWriter`) in `sync_reader.py`/`sync_writer.py`, and shared leaf helpers in `sync_common.py`. Every old import path still works through the facade — tests import and patch `app.plugins.anki_sync.sync` exactly as before.
 
 ```bash
-wc -l backend/app/anki/sync.py backend/app/anki/sync_engine.py backend/app/anki/sync_reader.py backend/app/anki/sync_writer.py backend/app/anki/sync_common.py
+wc -l backend/app/plugins/anki_sync/sync.py backend/app/plugins/anki_sync/sync_engine.py backend/app/plugins/anki_sync/sync_reader.py backend/app/plugins/anki_sync/sync_writer.py backend/app/plugins/anki_sync/sync_common.py
 ```
 
 ```output
-     408 backend/app/anki/sync.py
-    1503 backend/app/anki/sync_engine.py
-     168 backend/app/anki/sync_reader.py
-     788 backend/app/anki/sync_writer.py
-     219 backend/app/anki/sync_common.py
+     408 backend/app/plugins/anki_sync/sync.py
+    1503 backend/app/plugins/anki_sync/sync_engine.py
+     168 backend/app/plugins/anki_sync/sync_reader.py
+     788 backend/app/plugins/anki_sync/sync_writer.py
+     219 backend/app/plugins/anki_sync/sync_common.py
     3086 total
 ```
 
-Around the same time the sync *surface* collapsed to one path. The legacy `POST /api/anki/sync` + `GET /api/anki/status` endpoints were deleted (2026-06-10) and the `python -m app.anki.sync` CLI with its `--all-languages` loop followed (2026-06-30). **`POST /api/anki/peer-sync` is the only sync entry point** — it drives `peer_sync → main → run_full_sync`, and `run_full_sync` owns the ONE ordered phase list (`detect_and_reset_orphans → sync_create_new → sync_push → sync_pull → refresh_* + media refresh + soak heartbeat`). The rule exists because of a real regression (`b0a4b8a`): when the Sync button was repointed at peer-sync, the peer path ran only push+pull and silently dropped `sync_create_new` and every `refresh_*`. Three nets now pin the phase list (`TestRunFullSync`, the sociable `TestSociableSync` against a real on-disk collection, and the self-hosted peer-sync round-trip suite). Full protocol rules: `.claude/rules/anki-sync.md`.
+Around the same time the sync *surface* collapsed to one path. The legacy `POST /api/anki/sync` + `GET /api/anki/status` endpoints were deleted (2026-06-10) and the `python -m app.plugins.anki_sync.sync` CLI with its `--all-languages` loop followed (2026-06-30). **`POST /api/anki/peer-sync` is the only sync entry point** — it drives `peer_sync → main → run_full_sync`, and `run_full_sync` owns the ONE ordered phase list (`detect_and_reset_orphans → sync_create_new → sync_push → sync_pull → refresh_* + media refresh + soak heartbeat`). The rule exists because of a real regression (`b0a4b8a`): when the Sync button was repointed at peer-sync, the peer path ran only push+pull and silently dropped `sync_create_new` and every `refresh_*`. Three nets now pin the phase list (`TestRunFullSync`, the sociable `TestSociableSync` against a real on-disk collection, and the self-hosted peer-sync round-trip suite). Full protocol rules: `.claude/rules/anki-sync.md`.
 
 ### 29.2 The Database God-Module Split
 
@@ -7727,7 +7727,7 @@ grep -n "def derive_section_cues" backend/app/audio/render_service.py; grep -c "
 
 | Old reference (PARTs 12–27) | Current home |
 |---|---|
-| `app/anki/sync.py:<line>` internals | `sync_engine.py` (engine), `sync_reader.py`/`sync_writer.py` (I/O), `sync_common.py` (helpers) |
+| `app/plugins/anki_sync/sync.py:<line>` internals | `sync_engine.py` (engine), `sync_reader.py`/`sync_writer.py` (I/O), `sync_common.py` (helpers) |
 | `app/srs/database.py:<line>` methods | the matching `db_*` mixin (`db_counts`, `db_queue`, `db_directions`, `db_collocations`, `db_revlog`, …) |
 | `api/srs.py` queue assembly | `app/srs/anki_mirror/queue_engine.py` |
 | `app/anki/sqlite_writer.py`, AnkiConnect clients, `detect_mode` | deleted |

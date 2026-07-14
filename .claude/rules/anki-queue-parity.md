@@ -1,6 +1,6 @@
 # TT ↔ Anki Queue Parity
 
-Required reading before changing `backend/app/api/srs.py`, `backend/app/srs/fsrs.py`, `backend/app/srs/anki_mirror/queue_stats.py`, or the sync modules (`backend/app/anki/sync.py` — runner + facade; since the 2026-06-11 split, the reconcile engine lives in `sync_engine.py`, the collection I/O in `sync_reader.py`/`sync_writer.py`, shared leaf helpers in `sync_common.py`; `app.anki.sync` re-exports everything, so "sync.py" references below mean the facade surface). Full layer history at `docs/anki-parity-layers.md` — open only when "have we hit this exact thing before?"
+Required reading before changing `backend/app/api/srs.py`, `backend/app/srs/fsrs.py`, `backend/app/srs/anki_mirror/queue_stats.py`, or the sync modules (`backend/app/plugins/anki_sync/sync.py` — runner + facade; since the 2026-06-11 split, the reconcile engine lives in `sync_engine.py`, the collection I/O in `sync_reader.py`/`sync_writer.py`, shared leaf helpers in `sync_common.py`; `app.plugins.anki_sync.sync` re-exports everything, so "sync.py" references below mean the facade surface). Full layer history at `docs/anki-parity-layers.md` — open only when "have we hit this exact thing before?"
 
 ## What "parity" means
 
@@ -52,7 +52,7 @@ Both apps freeze the main review queue and never re-sort mid-session (Anki `Card
 
 **TT rebuilds only on `sync_pull`** (rule 2). Grading does not rebuild in either app.
 
-**Critical non-obvious trigger: TT sync itself triggers an Anki rebuild.** TT's `safe_open(mode="rw")` (`backend/app/anki/safety.py:148-162`) requires Anki to be closed. User closes Anki → runs TT sync → reopens Anki → **the reopen rebuilds Anki's queue with current R values**. TT's sync_pull moment and Anki's reopen moment can be seconds-to-minutes apart, and an R-asc cross can land between them. This is how "I only synced once, never touched Anki" still produces divergent heads. Forensic signature: a multi-minute gap in Anki's revlog spanning the cross point.
+**Critical non-obvious trigger: TT sync itself triggers an Anki rebuild.** TT's `safe_open(mode="rw")` (`backend/app/plugins/anki_sync/safety.py:148-162`) requires Anki to be closed. User closes Anki → runs TT sync → reopens Anki → **the reopen rebuilds Anki's queue with current R values**. TT's sync_pull moment and Anki's reopen moment can be seconds-to-minutes apart, and an R-asc cross can land between them. This is how "I only synced once, never touched Anki" still produces divergent heads. Forensic signature: a multi-minute gap in Anki's revlog spanning the cross point.
 
 **Signature**: both apps show a *review* card at head, same candidate set, two different cards with **wildly different stabilities** (e.g. s=0.65 vs s=7.5), R values near-tie (delta ~0.001–0.005). R decays at `1/(s·86400)`/sec, so low-s decays ~12× faster than high-s — small wall-clock gaps between rebuild moments invert near-tie pairs.
 
@@ -179,7 +179,7 @@ Walk this tree on a divergence report. Each leaf → mechanism that handles it; 
 - Push doesn't currently write `reps`/`lapses` — open issue.
 
 **Sync silently skipped a card:**
-- TT row missing for Anki note. `sync_pull` doesn't create new TT rows; only `import_seed` does. Run `uv run python -m app.anki.import_seed --deck "0. Slovene"`.
+- TT row missing for Anki note. `sync_pull` doesn't create new TT rows; only `import_seed` does. Run `uv run python -m app.plugins.anki_sync.import_seed --deck "0. Slovene"`.
 
 ## Diagnostic commands
 

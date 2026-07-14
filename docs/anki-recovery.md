@@ -6,7 +6,7 @@ The point of this doc is to make the recovery procedure cold-readable when you'r
 
 ## Where backups live
 
-`backend/app/anki/safety.py::safe_open(..., mode="rw")` writes a backup to `settings.anki_backup_dir` before every mutation. Default: `~/.tunatale/anki-backups/`. Filenames look like:
+`backend/app/plugins/anki_sync/safety.py::safe_open(..., mode="rw")` writes a backup to `settings.anki_backup_dir` before every mutation. Default: `~/.tunatale/anki-backups/`. Filenames look like:
 
 ```
 collection.anki2.bak_20260424_132004
@@ -104,7 +104,7 @@ After any forced upload/download, run the post-schema-bump USN normalization (pe
 
 ```bash
 cd backend
-uv run python -m app.anki.normalize_usns
+uv run python -m app.plugins.anki_sync.normalize_usns
 ```
 
 Verify with the read-only diagnostic at the bottom of `.claude/rules/anki-sync.md`:
@@ -152,7 +152,7 @@ uv run python -m scripts.anki_archive.merge_dupes --dry-run        # surface dup
 uv run python -m scripts.anki_archive.repair_nested_homonyms       # if homonym pairs ended up split
 ```
 
-The sync code's orphan-recovery path (`detect_and_reset_orphans` in `backend/app/anki/sync_engine.py`, first landed in `9cf4782`; note-grave handling per Layer 68 — an Anki-side note grave means hard-delete, not resurrect) is supposed to either re-link by guid or stage for cleanup automatically. If you have orphans surviving a sync, that's a sync-code bug, not a recovery-procedure problem.
+The sync code's orphan-recovery path (`detect_and_reset_orphans` in `backend/app/plugins/anki_sync/sync_engine.py`, first landed in `9cf4782`; note-grave handling per Layer 68 — an Anki-side note grave means hard-delete, not resurrect) is supposed to either re-link by guid or stage for cleanup automatically. If you have orphans surviving a sync, that's a sync-code bug, not a recovery-procedure problem.
 
 ## Belt-and-braces: when you don't trust any local backup
 
@@ -175,7 +175,7 @@ This is not a TT-specific procedure — it's general Anki disaster recovery — 
 ## Cross-references
 
 - `.claude/rules/anki-sync.md` — USN protocol, safety envelope, schema-bump workflow.
-- `backend/app/anki/safety.py` — `safe_open`, backup validation, post-write audit.
-- `backend/app/anki/normalize_usns.py` — the post-restore USN normalizer.
+- `backend/app/plugins/anki_sync/safety.py` — `safe_open`, backup validation, post-write audit.
+- `backend/app/plugins/anki_sync/normalize_usns.py` — the post-restore USN normalizer.
 - `walkthrough.md` PART 12 — Anki integration + safety-envelope deep-dive.
-- `backend/app/anki/sync_engine.py::detect_and_reset_orphans` — orphan recovery (graves-aware since Layer 68).
+- `backend/app/plugins/anki_sync/sync_engine.py::detect_and_reset_orphans` — orphan recovery (graves-aware since Layer 68).

@@ -79,7 +79,7 @@ All commands use `uv run` (no manual venv activation).
 - **No hardcoded language logic** — resolve every per-language facet through the registry `app/languages.py` (`get_language` / `get_preprocessor` / `get_deck_name` / `get_tts_voice` / `get_lemmatizer_type` / `get_vocab_notetype`, or the bundled `resolve_language_context(code, settings) → LanguageContext`). **Enforced**: `scripts/check_language_literals.py` (in `./test.sh` + the CI backend job) fails on a hardcoded language literal (`"sl"`/`"no"`, `Slovene`/`Norwegian`, `classla`/`stanza`, `*-Neural` voices) in `backend/app/**` outside the allowlisted plugin modules (`tests/language_literals_allowlist.txt`). Adding one means routing it through the registry, or recording it in the shrink-only ledger `tests/language_literals_grandfather.txt`. Rationale + remaining seams: `docs/language-plugin-hardening.md`.
 - **No module-level side effects** — config via Pydantic Settings in `app/config.py`
 - **LLM tests must use cassettes** — never hit live API in tests
-- **Anki writes**: always use `app.anki.safety.safe_open()` — handles lock probe, SHA256 backup, integrity check
+- **Anki writes**: always use `app.plugins.anki_sync.safety.safe_open()` — handles lock probe, SHA256 backup, integrity check
 - **Anki mutations**: always set `usn=-1`, `mod=now_ts` on touched rows, and update `col` — see `.claude/rules/anki-sync.md`
 - **Cloze items** (Phase F): set `card_type="cloze"` on the `SyntacticUnit`; only produce PRODUCTION direction; sync uses `OfflineWriter.create_cloze_note()` targeting Anki's built-in Cloze notetype
 

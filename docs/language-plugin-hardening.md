@@ -73,7 +73,7 @@ and **two residual ad-hoc seams** below.
    miss (fail loud) + drop the `"sl"` default. Behavior-preserving for correct usage.
 
 3. **`_tt_settings(language_code)` threads per-language settings ad-hoc.** At
-   `app/anki/sync_orchestrator.py:150-178`: returns a **cloned `Settings`** via
+   `app/plugins/anki_sync/sync_orchestrator.py:150-178`: returns a **cloned `Settings`** via
    `settings.model_copy(update=…)` — no language-context type; threads
    `database_url` / `anki_deck_name` (`get_deck_name`) / `target_language` as three
    ad-hoc keys, **only when `settings.database_urls.get(code)` is truthy** (multi-lang
@@ -144,7 +144,7 @@ phase boundary. Phase 3 is the parity-sensitive one — sociable + peer-sync pin
 ## Key files
 - `app/languages.py` — the registry (extend: `directions`, maybe `db_url`) + `get_directions`
 - `app/models/language.py` — `Language` domain model (`tts_voice_map`, direction sets?)
-- `app/anki/sync.py` / `sync_*.py` — `_tt_settings`, peer-sync language threading
+- `app/plugins/anki_sync/sync.py` / `sync_*.py` — `_tt_settings`, peer-sync language threading
 - `app/audio/preprocessing/{base,slovene,norwegian}.py` — preprocessor plugins
 - `app/anki/vocab_notetype.py` — notetype plugins
 - `app/srs/lemmatizer.py` — `get_lemmatizer(code)` (already per-code)
