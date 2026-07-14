@@ -42,28 +42,32 @@ Nothing to upgrade; the overrides are intentional, not debt. See the comment blo
 ### 2. stanza — already latest (1.13.0)
 Unpinned by design (kept as the latest the resolver picks). No floor to raise.
 
-### 3. Anki — pinned `anki==25.9.5`, held behind PyPI-latest (26.x)
-`backend/app/config.py:anki_pkg_version` set from `""` (→latest) to `"25.9.5"` to match
-the user's **desktop** Anki 25.09.5. The sync subprocess must speak the same sync
-protocol and mirror the same scheduler the parity code is tuned to
-(`.claude/rules/anki-queue-parity.md`, "trust the binary"). PyPI-latest 26.5 is *ahead*
-of the desktop, so we deliberately hold. This one setting drives the sync driver, the
-peer-sync server (via `_anki_with_spec`), and — newly single-sourced this pass — the
-oracle harness (`tests/anki_oracle/harness_fixtures.py`) and the two CI warm-env steps,
-so parity is validated against the exact version we sync with. The wheel is `abi3`
-(cp39-abi3, requires_python>=3.9) so it imports fine on Python 3.14. **Bump in lockstep
-when desktop Anki is upgraded.** Verified: oracle 34 passed, peer-sync 7 passed at 25.9.5.
+### 3. Anki — pinned `anki==26.5`, matched to desktop
+`backend/app/config.py:anki_pkg_version` is pinned to match the user's **desktop** Anki
+(originally 25.09.5 → `25.9.5`; bumped to **26.05 → `26.5`** when the user upgraded the
+desktop). The sync subprocess must speak the same sync protocol and mirror the same
+scheduler the parity code is tuned to (`.claude/rules/anki-queue-parity.md`, "trust the
+binary"). This one setting drives the sync driver, the peer-sync server (via
+`_anki_with_spec`), and — single-sourced this pass — the oracle harness
+(`tests/anki_oracle/harness_fixtures.py`) and the two CI warm-env steps, so parity is
+validated against the exact version we sync with. The 26.x wheel is `abi3`
+(cp310-abi3, requires_python>=3.10) so it imports fine on Python 3.14. **Bump this one
+setting in lockstep with desktop Anki, and re-run oracle + peer-sync.** Verified against
+26.5: oracle 34 passed, peer-sync 7 passed.
 
 ### 4. fsrs-rs-python — held at `>=0.8.2,<0.9` (behind 0.9.x)
 fsrs-rs-python is the **bit-exact precision oracle** for TT's FSRS math
 (`tests/test_parity_fsrs_f32.py`, `test_parity_same_day_review.py`, …). 0.9.2 changed
-the **same-day HARD short-term stability formula** — it returns `132.667` where 0.8.2
-and TT give `99.4537` (3 `test_parity_same_day_review` cases fail on 0.9.2). TT still
-mirrors the older formula, which is bit-exact with the fsrs crate bundled in the user's
-Anki 25.09.5 (soak-verified). Adopting 0.9.x would put the precision oracle *ahead* of
-the Anki we mirror — the same logic as the Anki pin. The explicit `<0.9` upper cap stops
-`uv lock --upgrade` from silently re-pulling it (which it did this pass). **Bump — and
-re-run the `test_parity_*` suite — only when desktop Anki ships the 0.9.x formula.**
+the **same-day HARD short-term stability formula** ("Non-decreasing SInc(Hard)") — it
+returns `132.667` where 0.8.2 and TT give `99.4537` (3 `test_parity_same_day_review`
+cases fail on 0.9.2). **Empirically probed against the real Anki binary: 26.05 still
+produces `99.453697` for this scenario** (throwaway `answer_card` HARD grade via the
+oracle harness) — i.e. **even Anki 26.05 has NOT adopted the non-decreasing formula**,
+so TT (which mirrors it, soak-verified) stays correct and fsrs-rs-python 0.9.x would put
+the precision oracle *ahead* of the Anki we mirror. The `<0.9` cap stops `uv lock
+--upgrade` from silently re-pulling it (which it did this pass). **Bump — and re-run the
+`test_parity_*` suite — only when a future desktop Anki adopts the 0.9.x SInc(Hard)
+formula** (re-probe with the same `answer_card` scenario to check).
 
 ### 5. TypeScript — held at `^6.0.0` (6.0.3), TS 7 deferred until 7.1
 **Not a TunaTale limitation — an officially-acknowledged ecosystem gap.** TypeScript
