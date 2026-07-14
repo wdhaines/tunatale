@@ -52,33 +52,38 @@ dev = [
     "fsrs-rs-python>=0.8.2,<0.9",
 ]
 # Per-language morphological analyzers (sentence-aware lemmas + A1 morphology
-# features): classla for Slovene, stanza for Norwegian (Bokmål/Nynorsk; stanza is
-# the upstream project classla forks). A DEFAULT dependency-group (see
-# `[tool.uv] default-groups` below), NOT an extra — so every plain `uv sync`,
-# `uv sync --all-groups`, or the implicit sync inside `uv run` installs AND keeps
-# both. This inverts the old extra-based setup, where a human had to remember
-# `--extra classla --extra stanza` on every sync or one would prune the other. CI
-# opts OUT with `--no-group lemmatizers` to stay PyTorch-free — the party that wants
-# the unusual (torch-free) behavior carries the flag, in machine-controlled config.
-# classla 2.2.1 pins torch<=2.6 / protobuf==4.21.2, neither of which has a cp314
-# wheel; the `[tool.uv] override-dependencies` below forces 3.14-capable builds.
-# Models still download once per engine: `classla.download("sl")` /
+# features), split into per-language dependency groups: classla for Slovene,
+# stanza for Norwegian (Bokmål/Nynorsk; stanza is the upstream project classla
+# forks). Both are DEFAULT dependency groups (see `[tool.uv] default-groups`
+# below), NOT extras — so every plain `uv sync`, `uv sync --all-groups`, or
+# the implicit sync inside `uv run` installs both. CI opts OUT per-language
+# with `--no-group slovene --no-group norwegian` to stay PyTorch-free — the
+# party that wants the unusual (torch-free) behavior carries the flag, in
+# machine-controlled config.
+# classla 2.2.1 pins torch<=2.6 / protobuf==4.21.2, neither of which has a
+# cp314 wheel; the `[tool.uv] override-dependencies` below forces 3.14-capable
+# builds. Models still download once per engine: `classla.download("sl")` /
 # `stanza.download("nb")`. See docs/walkthrough.md §22.2.
-lemmatizers = [
+slovene = [
     "classla==2.2.1",
+]
+norwegian = [
     "stanza",
 ]
 
 [tool.uv]
-# The lemmatizers group (classla/stanza) is a DEFAULT group, so a bare `uv sync`,
-# `uv sync --all-groups`, and the implicit sync inside `uv run` all install and keep
-# it — a working Slovene/Norwegian dev env is the default, with no flags to remember.
-# CI stays PyTorch-free by opting out explicitly: `uv sync --all-groups --no-group
-# lemmatizers` (.github/workflows/ci.yml). The `anki` extra is separate (not a group)
-# — pulled only by the `uv run --with anki` driver subprocess, never by these syncs.
-default-groups = ["dev", "lemmatizers"]
-# Two 3.14 pin-overrides for the lemmatizers group. Inert unless torch/protobuf are
-# actually pulled — CI's `--no-group lemmatizers` run never resolves them.
+# The slovene/norwegian groups (classla/stanza) are DEFAULT groups, so a bare
+# `uv sync`, `uv sync --all-groups`, and the implicit sync inside `uv run` all
+# install and keep them — a working Slovene/Norwegian dev env is the default,
+# with no flags to remember. CI stays PyTorch-free by opting out explicitly:
+# `uv sync --all-groups --no-group slovene --no-group norwegian`
+# (.github/workflows/ci.yml). The `anki` extra is separate (not a group) —
+# pulled only by the `uv run --with anki` driver subprocess, never by these
+# syncs.
+default-groups = ["dev", "slovene", "norwegian"]
+# Two 3.14 pin-overrides for the slovene/norwegian groups. Inert unless
+# torch/protobuf are actually pulled — CI's `--no-group slovene --no-group
+# norwegian` run never resolves them.
 #   torch:    classla 2.2.1 pins torch<=2.6, which has no cp314 wheel — torch only
 #             gained 3.14 support at 2.12.
 #   protobuf: classla 2.2.1 pins protobuf==4.21.2, whose google._upb C extension has

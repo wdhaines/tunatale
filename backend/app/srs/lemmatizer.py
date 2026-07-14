@@ -329,8 +329,8 @@ def get_lemmatizer(language_code: str) -> Lemmatizer:
         except ImportError:
             _logger.warning(
                 "classla not installed; falling back to LowercaseLemmatizer for %s. "
-                "It's in the default `lemmatizers` dependency-group — a plain "
-                "`uv sync` installs and keeps it (only `--no-group lemmatizers` / "
+                "It's in the default `slovene` dependency-group — a plain "
+                "`uv sync` installs and keeps it (only `--no-group slovene` / "
                 "`--only-group` prunes it). Then run `classla.download('sl')` once. "
                 "See docs/walkthrough.md §22.2.",
                 language_code,
@@ -343,8 +343,8 @@ def get_lemmatizer(language_code: str) -> Lemmatizer:
         except ImportError:
             _logger.warning(
                 "stanza not installed; falling back to LowercaseLemmatizer for %s. "
-                "It's in the default `lemmatizers` dependency-group — a plain "
-                "`uv sync` installs and keeps it (only `--no-group lemmatizers` / "
+                "It's in the default `norwegian` dependency-group — a plain "
+                "`uv sync` installs and keeps it (only `--no-group norwegian` / "
                 "`--only-group` prunes it). Then download the model once — "
                 '`uv run python -c "import stanza; '
                 "stanza.download('nb')\"`. See docs/walkthrough.md §22.2.",

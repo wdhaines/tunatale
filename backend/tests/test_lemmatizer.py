@@ -387,7 +387,7 @@ class TestClasslaIntegration:
 def stanza_lemmatizer():
     """Session-scoped StanzaLemmatizer — one pipeline load for all stanza tests.
 
-    Requires ``stanza`` installed (in the default ``lemmatizers`` group, so a plain
+    Requires ``stanza`` installed (in the default ``norwegian`` group, so a plain
     ``uv sync`` provides it) and the Norwegian Bokmål model downloaded
     (``uv run python -c "import stanza; stanza.download('nb')"``).
     """
