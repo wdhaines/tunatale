@@ -19,3 +19,5 @@ Contents:
 | `bp-brief-image-selection.md` | Big Pickle task spec for the in-app image editor; all target commits landed. |
 | `bp-review-prompt-image-selection.md` | Reviewer prompt for the image-selection batch above. |
 | `bp-brief-segmenter-homographs-overlap.md` | Task spec for the Norwegian segmenter homograph/overlap fixes; landed. |
+| `image-feature-handoff.md` | Adversarial-review handoff for the image-selection feature; review complete, all findings fixed or consciously accepted (2026-07-14). |
+| `image-review-delegation-brief.md` | Delegation brief for the review fixes #2/#4/#5 (Big Pickle); landed. |
