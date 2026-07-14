@@ -23,3 +23,7 @@ app/generation/syllabify.py
 # FIELD NAMES (e.g. the "6000 Most Frequent Norwegian Words" notetype's "Norwegian
 # word" field). Those are external Anki schema strings, like vocab_notetype.py.
 app/anki/field_map.py
+# Language plugin packages: each builds a LanguageConfig from existing
+# plugin/registry code and calls register() — deck names, lemma types,
+# and other language literals belong here alongside app/languages.py.
+app/plugins/languages/*/__init__.py

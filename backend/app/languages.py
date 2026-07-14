@@ -2,24 +2,25 @@
 
 A ``LanguageConfig`` wraps a ``Language`` domain model plus phase-specific
 wiring (preprocessor factory, deck name, notetype profile). The registry is
-the single source of truth for "which languages are wired" — adding a language
-means adding one entry to ``_CONFIGS``.
+populated by language plugin packages under ``app.plugins.languages`` — each
+plugin imports its concrete wiring and calls :func:`register` at import time.
 """
 
 from __future__ import annotations
 
+import importlib
+import pkgutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from app.anki.vocab_notetype import NORWEGIAN_VOCAB, SLOVENE_VOCAB, VocabNotetype
+import app.plugins.languages as _plugins_pkg
 from app.audio.preprocessing.base import TextPreprocessor
-from app.audio.preprocessing.norwegian import NorwegianPreprocessor
-from app.audio.preprocessing.slovene import SlovenePreprocessor
 from app.models.language import Language
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from app.anki.vocab_notetype import VocabNotetype
     from app.config import Settings
 
 
@@ -60,7 +61,7 @@ class LanguageConfig:
     compound_word_breakdown: bool = False
     # Name of the onset-maximization syllabifier profile for this language
     # (``"slovene"`` / ``"norwegian"``).  ``None`` for languages with no
-    # syllabification wiring (``en``); callers fall back to Slovene onset rules.
+    # syllabifier wiring (``en``); callers fall back to Slovene onset rules.
     syllabifier: str | None = None
     # Morphology-drill profile injected into the story prompt (``"slavic"`` = the
     # case/dual tagging block); ``None`` omits the block.
@@ -72,33 +73,40 @@ class LanguageConfig:
     variant_separator: str | None = None
 
 
-_CONFIGS: dict[str, LanguageConfig] = {
-    "sl": LanguageConfig(
-        language=Language.slovene(),
-        preprocessor_factory=SlovenePreprocessor,
-        deck_name="1. Slovene",
-        vocab_notetype=SLOVENE_VOCAB,
-        lemmatizer_type="classla",
-        morphology_profile="slavic",
-        syllabifier="slovene",
-    ),
-    "en": LanguageConfig(
-        language=Language.english(),
-        preprocessor_factory=None,
-        deck_name=None,
-        vocab_notetype=None,
-    ),
-    "no": LanguageConfig(
-        language=Language.norwegian(),
-        preprocessor_factory=NorwegianPreprocessor,
-        deck_name="0. 6000 Most Frequent Norwegian Words [Part 1]",
-        vocab_notetype=NORWEGIAN_VOCAB,
-        lemmatizer_type="stanza",
-        compound_word_breakdown=True,
-        variant_separator=",",
-        syllabifier="norwegian",
-    ),
-}
+_CONFIGS: dict[str, LanguageConfig] = {}
+
+
+def register(code: str, config: LanguageConfig) -> None:
+    """Register a language plugin.  Raises ``ValueError`` on duplicate *code*."""
+    if code in _CONFIGS:
+        raise ValueError(f"Language {code!r} is already registered")
+    _CONFIGS[code] = config
+
+
+_discovered = False
+
+
+def _discover_plugins() -> None:
+    """Import every subpackage of ``app.plugins.languages`` so they self-register.
+
+    Idempotent — guarded by the module-level ``_discovered`` flag.
+    Raises ``RuntimeError`` when no language plugin (other than ``en``) is present.
+    """
+    global _discovered  # noqa: PLW0603
+    if _discovered:
+        return
+    _discovered = True
+
+    for _importer, modname, _ispkg in pkgutil.iter_modules(_plugins_pkg.__path__, prefix=_plugins_pkg.__name__ + "."):
+        importlib.import_module(modname)
+
+    non_en = {c for c in _CONFIGS if c != "en"}
+    if not non_en:
+        raise RuntimeError(
+            "No language plugin registered.  Install a language plugin package "
+            "(e.g. the 'slovene' or 'norwegian' dependency group) so that at "
+            "least one language besides 'en' is available."
+        )
 
 
 def get_language(code: str) -> Language:
@@ -331,3 +339,11 @@ def resolve_language_context(code: str | None, settings: Settings) -> LanguageCo
         lemmatizer_type=config.lemmatizer_type if config else "lowercase",
         vocab_notetype=config.vocab_notetype if config else None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Trigger plugin discovery — must be last.  The plugin ``__init__`` files do
+# ``from app.languages import LanguageConfig, register`` which only resolves
+# because those names are defined above.
+# ---------------------------------------------------------------------------
+_discover_plugins()
