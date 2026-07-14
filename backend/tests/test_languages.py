@@ -4,8 +4,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.audio.preprocessing.norwegian import NorwegianPreprocessor
-from app.audio.preprocessing.slovene import SlovenePreprocessor
 from app.languages import (
     LanguageContext,
     card_surface_variants,
@@ -22,6 +20,8 @@ from app.languages import (
     uses_compound_word_breakdown,
 )
 from app.models.language import Language
+from app.plugins.languages.no.preprocessor import NorwegianPreprocessor
+from app.plugins.languages.sl.preprocessor import SlovenePreprocessor
 
 
 class TestBreakdownAndMorphologyFlags:

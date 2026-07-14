@@ -1,9 +1,9 @@
 """Norwegian language plugin."""
 
 from app.anki.vocab_notetype import NORWEGIAN_VOCAB
-from app.audio.preprocessing.norwegian import NorwegianPreprocessor
 from app.languages import LanguageConfig, register
 from app.models.language import Language
+from app.plugins.languages.no.preprocessor import NorwegianPreprocessor
 
 register(
     "no",

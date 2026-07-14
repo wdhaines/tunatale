@@ -2,8 +2,8 @@
 
 import pytest
 
-from app.audio.preprocessing.slovene import SlovenePreprocessor
 from app.models.lesson import SectionType
+from app.plugins.languages.sl.preprocessor import SlovenePreprocessor
 
 
 @pytest.fixture

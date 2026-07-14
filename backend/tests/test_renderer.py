@@ -15,9 +15,9 @@ import soundfile as sf
 
 from app.audio.cues import Cue
 from app.audio.pause_calculator import NaturalPauseCalculator
-from app.audio.preprocessing.slovene import SlovenePreprocessor
 from app.audio.renderer import LessonRenderer
 from app.models.lesson import Lesson, Phrase, Section, SectionType
+from app.plugins.languages.sl.preprocessor import SlovenePreprocessor
 
 # Shared test helpers
 _PHRASE_RATE = 11025
