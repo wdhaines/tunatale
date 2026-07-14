@@ -385,6 +385,35 @@ class TestPutImageUrl:
             await c.put(f"/api/srs/items/{cid}/image", json={"url": "http://img.test/d.jpg"})
         assert "image" in _dirty_fields(api, cid)
 
+    @respx.mock
+    async def test_422_on_http_error_status(self, api, monkeypatch, tmp_path):
+        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        api.add_collocation(_unit(), language_code="sl")
+        cid = _id_for_text(api, "voda")
+        respx.get("http://img.test/missing.jpg").mock(
+            return_value=httpx.Response(404, content=b"<html>Not Found</html>"),
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.put(f"/api/srs/items/{cid}/image", json={"url": "http://img.test/missing.jpg"})
+        assert resp.status_code == 422
+        assert "HTTP 404" in resp.json()["detail"]
+
+    @respx.mock
+    async def test_422_on_redirect(self, api, monkeypatch, tmp_path):
+        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        api.add_collocation(_unit(), language_code="sl")
+        cid = _id_for_text(api, "voda")
+        respx.get("http://img.test/redir.jpg").mock(
+            return_value=httpx.Response(
+                302,
+                headers={"Location": "http://img.test/moved.jpg"},
+            ),
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.put(f"/api/srs/items/{cid}/image", json={"url": "http://img.test/redir.jpg"})
+        assert resp.status_code == 422
+        assert "redirect" in resp.json()["detail"].lower()
+
 
 # -- PUT image upload ---------------------------------------------------------
 

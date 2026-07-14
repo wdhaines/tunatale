@@ -143,6 +143,14 @@ async def put_image_from_url(
     async with httpx.AsyncClient(follow_redirects=False, timeout=_DOWNLOAD_TIMEOUT) as client:
         resp = await client.get(body.url)
 
+    if resp.is_redirect or (300 <= resp.status_code < 400):
+        raise HTTPException(status_code=422, detail="URL redirected; provide a direct image link")
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not fetch image (HTTP {resp.status_code})",
+        )
+
     data = resp.content
 
     if len(data) > _MAX_UPLOAD_BYTES:
