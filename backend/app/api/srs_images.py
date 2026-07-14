@@ -137,31 +137,36 @@ async def put_image_from_url(
     if parsed.scheme not in ("http", "https"):
         raise HTTPException(status_code=422, detail="URL scheme must be http or https")
 
-    # Trust boundary: the URL is user-controlled and fetched server-side.
-    # follow_redirects=False blocks redirect pivots, but the initial request
-    # can still reach localhost / internal IPs.  Safe today (single-user
-    # localhost); revisit if the server is ever exposed.
-    async with httpx.AsyncClient(follow_redirects=False, timeout=_DOWNLOAD_TIMEOUT) as client:
-        resp = await client.get(body.url)
+    # Trust boundary: user-controlled URL fetched server-side. Redirects are
+    # disabled (no redirect pivot) and the body is streamed with a hard cap so
+    # an oversized URL can't buffer an unbounded amount into memory. Loopback /
+    # private / LAN targets are intentionally NOT blocked: TunaTale is a
+    # single-user localhost tool and pasting an image URL from your own local /
+    # LAN server is a supported workflow (see tests/card-image.spec.ts). The
+    # SSRF-to-localhost vector is accepted at this trust boundary.
+    data = bytearray()
+    async with (
+        httpx.AsyncClient(follow_redirects=False, timeout=_DOWNLOAD_TIMEOUT) as client,
+        client.stream("GET", body.url) as resp,
+    ):
+        if resp.is_redirect or (300 <= resp.status_code < 400):
+            raise HTTPException(status_code=422, detail="URL redirected; provide a direct image link")
+        if resp.status_code >= 400:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Could not fetch image (HTTP {resp.status_code})",
+            )
+        async for chunk in resp.aiter_bytes():
+            data += chunk
+            if len(data) > _MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=422, detail="Image exceeds 10 MB limit")
 
-    if resp.is_redirect or (300 <= resp.status_code < 400):
-        raise HTTPException(status_code=422, detail="URL redirected; provide a direct image link")
-    if resp.status_code >= 400:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Could not fetch image (HTTP {resp.status_code})",
-        )
-
-    data = resp.content
-
-    if len(data) > _MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=422, detail="Image exceeds 10 MB limit")
-
-    ext = _sniff_ext(data)
+    image_bytes = bytes(data)
+    ext = _sniff_ext(image_bytes)
     if ext is None:
         raise HTTPException(status_code=422, detail="Content is not an image")
 
-    replace_item_image(db, coll_id, item.syntactic_unit.translation, data, ext)
+    replace_item_image(db, coll_id, item.syntactic_unit.translation, image_bytes, ext)
 
     return _item_response(db, coll_id, item)
 

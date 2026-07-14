@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import type { SRSItemDetail, ImageCandidate, ImageCandidatesResponse } from '$lib/api';
 	import { api } from '$lib/api';
 
@@ -114,8 +115,12 @@
 		}
 	}
 
+	// Load once on mount. untrack: loadCandidates reads candidateQuery (bound to
+	// the search box) synchronously, so without this the effect would re-run —
+	// and fire a Pixabay search — on every keystroke. Re-search is driven only
+	// by the explicit Search button / Enter key.
 	$effect(() => {
-		loadCandidates();
+		untrack(() => loadCandidates());
 	});
 </script>
 

@@ -111,6 +111,27 @@ describe("ImageEditModal", () => {
     expect(mockFetchCandidates).toHaveBeenCalledWith(7, undefined);
   });
 
+  it("does not re-fetch candidates on every keystroke (mount effect must not track the query)", async () => {
+    const item = makeSRSItemDetail({ id: 7, image_url: null });
+    const { getByPlaceholderText } = render(ImageEditModal, {
+      props: { item, onclose: vi.fn(), onupdated: vi.fn() },
+    });
+    // Mount fetches exactly once.
+    await waitFor(() => expect(mockFetchCandidates).toHaveBeenCalledTimes(1));
+
+    // Typing must NOT trigger further fetches. The bug: the mount $effect read
+    // candidateQuery synchronously, so it re-ran — one Pixabay call per char,
+    // racing the manual Search button and burning the rate limit.
+    const input = getByPlaceholderText("Search query");
+    await fireEvent.input(input, { target: { value: "c" } });
+    await fireEvent.input(input, { target: { value: "co" } });
+    await fireEvent.input(input, { target: { value: "cof" } });
+    // Let any (wrongly-scheduled) reactive effect flush.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(mockFetchCandidates).toHaveBeenCalledTimes(1);
+  });
+
   it("hides candidates section when fetch returns 409 (no key)", async () => {
     mockFetchCandidates.mockRejectedValue(
       new Error("POST /api/srs/items/1/image/candidates: HTTP 409"),
