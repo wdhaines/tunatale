@@ -7,17 +7,17 @@ name = "tunatale-backend"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "fastapi>=0.104.0",
-    "uvicorn>=0.24.0",
-    "pydantic>=2.5.0",
-    "pydantic-settings>=2.0.0",
-    "httpx>=0.25.0",
-    "python-dotenv>=1.0.0",
-    "python-multipart>=0.0.6",
-    "edge-tts>=6.1.0",
-    "soundfile>=0.12.1",
-    "aiofiles>=23.0.0",
-    "numpy>=2.0.0",
+    "fastapi>=0.139.0",
+    "uvicorn>=0.51.0",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.14.2",
+    "httpx>=0.28.1",
+    "python-dotenv>=1.2.2",
+    "python-multipart>=0.0.32",
+    "edge-tts>=7.2.8",
+    "soundfile>=0.14.0",
+    "aiofiles>=25.1.0",
+    "numpy>=2.5.1",
 ]
 
 [project.optional-dependencies]
@@ -33,15 +33,23 @@ packages = ["app"]
 
 [dependency-groups]
 dev = [
-    "pre-commit>=4.5.1",
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=5.0.0",
-    "pytest-xdist>=3.6.0",
-    "respx>=0.22.0",
-    "ruff>=0.9.0",
-    "anyio>=4.0.0",
-    "fsrs-rs-python>=0.8.0",
+    "pre-commit>=4.6.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.8.0",
+    "respx>=0.23.1",
+    "ruff>=0.15.21",
+    "anyio>=4.14.2",
+    # HELD at 0.8.x deliberately. fsrs-rs-python is the bit-exact precision oracle for
+    # TT's FSRS math (tests/test_parity_fsrs_f32.py, test_parity_same_day_review.py, …).
+    # 0.9.2 changed the same-day HARD short-term stability formula (returns 132.667 where
+    # 0.8.2/TT give 99.4537), which is AHEAD of the fsrs crate bundled in the user's Anki
+    # 25.09.5 — TT still mirrors that older formula (soak-verified bit-exact). Adopting
+    # 0.9.x would make the precision oracle disagree with the Anki we mirror. The `<0.9`
+    # cap stops `uv lock --upgrade` from silently re-pulling it. Bump this (and re-verify
+    # the test_parity_* suite) only when desktop Anki ships the 0.9.x short-term formula.
+    "fsrs-rs-python>=0.8.2,<0.9",
 ]
 # Per-language morphological analyzers (sentence-aware lemmas + A1 morphology
 # features): classla for Slovene, stanza for Norwegian (Bokmål/Nynorsk; stanza is
@@ -78,7 +86,7 @@ default-groups = ["dev", "lemmatizers"]
 #             supported" at import. classla tolerates it (imports protobuf lazily);
 #             `import stanza` does NOT (it eagerly pulls google.protobuf via its
 #             CoreNLP server bindings), so stanza needs a 3.14-capable protobuf.
-override-dependencies = ["torch==2.12.0", "protobuf>=5.29"]
+override-dependencies = ["torch==2.13.0", "protobuf>=5.29"]
 
 [tool.ruff]
 target-version = "py314"
