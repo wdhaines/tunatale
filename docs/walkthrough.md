@@ -154,9 +154,9 @@ cat -n backend/app/config.py
    101	# Anki rolls the study day over at this *local* hour (default 4 AM), not at
    102	# midnight — a grade timestamped between local midnight and the rollover belongs
    103	# to the PRIOR Anki day. The rollover arithmetic is single-sourced in
-   104	# `app.anki.rollover` (local-day domain: `local_today_rollover`,
+   104	# `app.srs.anki_mirror.rollover` (local-day domain: `local_today_rollover`,
    105	# `anki_day_bounds_utc`, `anki_today`; due_at convention: `due_at_rollover_utc`);
-   106	# `app.anki.protobuf_wire` owns the separate col-day index domain
+   106	# `app.srs.anki_mirror.protobuf_wire` owns the separate col-day index domain
    107	# (`compute_anki_day_index`, `review_due_at_for_col_day`). Both derive from this
    108	# constant. Promote to a Settings field if it ever needs to be config-driven
    109	# (Anki stores it per-collection).
@@ -972,7 +972,7 @@ cat -n backend/app/models/srs_item.py
     16	from datetime import UTC, date, datetime, time
     17	from enum import Enum
     18	
-    19	from app.anki.rollover import due_at_rollover_utc
+    19	from app.srs.anki_mirror.rollover import due_at_rollover_utc
     20	
     21	from .syntactic_unit import SyntacticUnit
     22	
@@ -4815,9 +4815,9 @@ app/anki/media/vocab_media.py                      43      0      8      0   100
 app/anki/model_discovery.py                        21      0     10      0   100%
 app/anki/normalize_usns.py                         26      0     12      0   100%
 app/anki/notetype.py                                4      0      0      0   100%
-app/anki/protobuf_wire.py                         125      0     42      0   100%
+app/srs/anki_mirror/protobuf_wire.py                         125      0     42      0   100%
 app/anki/replay_fsrs_from_revlog.py               120      0     40      0   100%
-app/anki/rollover.py                               22      0      4      0   100%
+app/srs/anki_mirror/rollover.py                               22      0      4      0   100%
 app/anki/safety.py                                135      0     32      0   100%
 app/anki/sqlite_reader.py                         275      0    112      0   100%
 app/anki/sync.py                                  130      0     18      0   100%
@@ -4884,7 +4884,7 @@ app/models/srs_item.py                            116      0      4      0   100
 app/models/strategy.py                              5      0      0      0   100%
 app/models/syntactic_unit.py                       49      0     10      0   100%
 app/srs/__init__.py                                 0      0      0      0   100%
-app/srs/_anki_rng.py                              117      0     20      0   100%
+app/srs/anki_mirror/_anki_rng.py                              117      0     20      0   100%
 app/srs/collocation_matcher.py                     19      0     10      0   100%
 app/srs/database.py                                21      0      0      0   100%
 app/srs/db_base.py                                129      0     26      0   100%
@@ -4906,12 +4906,12 @@ app/srs/fsrs.py                                   438      0    120      0   100
 app/srs/function_words.py                         146      0     54      0   100%
 app/srs/grade_undo.py                              41      0     14      0   100%
 app/srs/lemmatizer.py                              94      0     26      0   100%
-app/srs/load_balancer.py                          110      0     30      0   100%
+app/srs/anki_mirror/load_balancer.py                          110      0     30      0   100%
 app/srs/mastery.py                                 18      0      6      0   100%
 app/srs/migrations.py                             340      0    108      0   100%
 app/srs/planner_snapshot.py                        38      0     12      0   100%
-app/srs/queue_engine.py                           187      0     66      0   100%
-app/srs/queue_stats.py                            569      0    226      0   100%
+app/srs/anki_mirror/queue_engine.py                           187      0     66      0   100%
+app/srs/anki_mirror/queue_stats.py                            569      0    226      0   100%
 app/srs/tokenizer.py                                5      0      0      0   100%
 app/srs/transcript.py                             242      0     86      0   100%
 app/storage/__init__.py                             0      0      0      0   100%
@@ -5304,7 +5304,7 @@ sed -n '15,76p' backend/app/models/srs_item.py | cat -n
      2	from datetime import UTC, date, datetime, time
      3	from enum import Enum
      4	
-     5	from app.anki.rollover import due_at_rollover_utc
+     5	from app.srs.anki_mirror.rollover import due_at_rollover_utc
      6	
      7	from .syntactic_unit import SyntacticUnit
      8	
@@ -5682,10 +5682,10 @@ The `/api/admin/refresh-media` endpoint and the `app/media/importer.py` module h
 
 ### 12.6 Queue Stats from Anki's Protobuf Deck Config
 
-A subtle but important detail: modern Anki stores deck configuration (daily new cap, FSRS parameters, bury settings) as **protobuf-encoded blobs** in the `deck_config` table — not JSON in `col.dconf` like older versions. `app/srs/queue_stats.py` includes a hand-rolled minimal protobuf decoder (`_pb_read_varint`, `_pb_find_varint_field`, `_pb_find_packed_float_field`, etc.) so TunaTale can read those values without a protoc-generated stub.
+A subtle but important detail: modern Anki stores deck configuration (daily new cap, FSRS parameters, bury settings) as **protobuf-encoded blobs** in the `deck_config` table — not JSON in `col.dconf` like older versions. `app/srs/anki_mirror/queue_stats.py` includes a hand-rolled minimal protobuf decoder (`_pb_read_varint`, `_pb_find_varint_field`, `_pb_find_packed_float_field`, etc.) so TunaTale can read those values without a protoc-generated stub.
 
 ```bash
-sed -n '202,283p' backend/app/srs/queue_stats.py | cat -n
+sed -n '202,283p' backend/app/srs/anki_mirror/queue_stats.py | cat -n
 ```
 
 ```output
@@ -6005,9 +6005,9 @@ cat -n backend/app/config.py
    101	# Anki rolls the study day over at this *local* hour (default 4 AM), not at
    102	# midnight — a grade timestamped between local midnight and the rollover belongs
    103	# to the PRIOR Anki day. The rollover arithmetic is single-sourced in
-   104	# `app.anki.rollover` (local-day domain: `local_today_rollover`,
+   104	# `app.srs.anki_mirror.rollover` (local-day domain: `local_today_rollover`,
    105	# `anki_day_bounds_utc`, `anki_today`; due_at convention: `due_at_rollover_utc`);
-   106	# `app.anki.protobuf_wire` owns the separate col-day index domain
+   106	# `app.srs.anki_mirror.protobuf_wire` owns the separate col-day index domain
    107	# (`compute_anki_day_index`, `review_due_at_for_col_day`). Both derive from this
    108	# constant. Promote to a Settings field if it ever needs to be config-driven
    109	# (Anki stores it per-collection).
@@ -6331,7 +6331,7 @@ Phase C threads recency through both the gather query and the sync_create_new al
 
 ## PART 16: Anki Queue Parity — Layers 24–31
 
-Stage 3 (PART 12) introduced bidirectional sync. Between syncs, both apps schedule independently, and TT must mirror Anki's algorithms closely enough that switching apps doesn't feel discontinuous. The "layers" history lives in `docs/anki-parity-layers.md` and the principles plus a divergence decision tree live in `.claude/rules/anki-queue-parity.md` — read those before editing `app/api/srs.py`, `app/srs/fsrs.py`, `app/srs/queue_stats.py`, or `app/anki/sync.py`.
+Stage 3 (PART 12) introduced bidirectional sync. Between syncs, both apps schedule independently, and TT must mirror Anki's algorithms closely enough that switching apps doesn't feel discontinuous. The "layers" history lives in `docs/anki-parity-layers.md` and the principles plus a divergence decision tree live in `.claude/rules/anki-queue-parity.md` — read those before editing `app/api/srs.py`, `app/srs/fsrs.py`, `app/srs/anki_mirror/queue_stats.py`, or `app/anki/sync.py`.
 
 This section documents Layers 24–31, all landed since the previous walkthrough.
 
@@ -6420,10 +6420,10 @@ Idempotency matters: `sync_pull` within the same day may land *new* `state='buri
 
 Per-direction ordering in `get_new_items` is necessary but not sufficient. Anki's `add_new_card` (rslib `queue/builder/gathering.rs:63-169`) gathers BOTH ords in one pass and proactively buries the LATER sibling per note — so the higher-due sibling wins. Then `sort_new` (`sorting.rs:14-36`) stably re-sorts by `ord` (the Template step) so ord=0 (recognition) comes before ord=1 (production) within each note's surviving direction.
 
-TT's `_merge_directions` (`backend/app/srs/queue_engine.py:91` since the 2026-07-04 queue-engine extraction) mirrors the gather sort key exactly:
+TT's `_merge_directions` (`backend/app/srs/anki_mirror/queue_engine.py:91` since the 2026-07-04 queue-engine extraction) mirrors the gather sort key exactly:
 
 ```bash
-sed -n "91,130p" backend/app/srs/queue_engine.py
+sed -n "91,130p" backend/app/srs/anki_mirror/queue_engine.py
 ```
 
 ```output
@@ -6477,10 +6477,10 @@ Layer 28's fix was the `časa`/`sekira` head-of-queue divergence: per-direction 
 
 `session_main_queue` is the DB-backed frozen queue order — Anki rebuilds it once at session open / sync; TT mirrors the freeze moment. Before Layer 29, `sync_pull` only **cleared** the cache and deferred rebuild to the next `/review-queue` request. Hours could pass before that request, letting the underlying pool shift — the two apps froze their queues at different moments, causing off-by-slot drift on the first-new-card position.
 
-Layer 29 added `build_and_freeze_main_queue(db)` (now `backend/app/srs/queue_engine.py:308`) and called it immediately after the clear in `sync_pull`:
+Layer 29 added `build_and_freeze_main_queue(db)` (now `backend/app/srs/anki_mirror/queue_engine.py:308`) and called it immediately after the clear in `sync_pull`:
 
 ```bash
-sed -n "308,319p" backend/app/srs/queue_engine.py
+sed -n "308,319p" backend/app/srs/anki_mirror/queue_engine.py
 ```
 
 ```output
@@ -6497,7 +6497,7 @@ def build_and_freeze_main_queue(db) -> None:
     set_session_main_queue(db, today, [(t[0], t[3].value) for t in live_main])
 ```
 
-`_compute_live_main` (now `backend/app/srs/queue_engine.py:188`) was extracted out of `get_review_queue` for this: the live-pool build logic up through the spread step is shared between the route handler and the eager-rebuild call. The route handler still owns cache reconciliation, learning-card assembly, and the collapse hack — those depend on the request-scoped `now`/`cutoff`.
+`_compute_live_main` (now `backend/app/srs/anki_mirror/queue_engine.py:188`) was extracted out of `get_review_queue` for this: the live-pool build logic up through the spread step is shared between the route handler and the eager-rebuild call. The route handler still owns cache reconciliation, learning-card assembly, and the collapse hack — those depend on the request-scoped `now`/`cutoff`.
 
 Deploy-time pitfall to remember: the cache lives in `anki_state_cache` (DB-backed), so it survives backend restarts. After changing queue-assembly logic, an existing cache row will replay the OLD order until the next sync — restart alone does NOT invalidate it. When debugging a "fix doesn't seem to be working" report, run `clear_session_main_queue` first (see the diagnostic in `.claude/rules/anki-queue-parity.md`) before concluding the fix is broken.
 
@@ -6598,7 +6598,7 @@ collapsed to `self._record_conflict(report, guid=..., direction=..., field=..., 
 
 **Review-count pipeline** (commit `b4e6fd7`). An entire `count_review_*` family inside `queue_stats.py` plus a 512-line test file (`tests/test_queue_stats_review.py`) and a 193-line cache test file (`tests/test_queue_stats_cache.py`) — all driving a badge logic path that hadn't been wired to the API since the Phase A refactor. The `count_review_due_collocations` method (the path the UI actually reads) was left in `database.py`. Deletes:
 
-- 251 lines from `app/srs/queue_stats.py`
+- 251 lines from `app/srs/anki_mirror/queue_stats.py`
 - `tests/test_queue_stats_cache.py` (193 lines)
 - `tests/test_queue_stats_review.py` (512 lines)
 
@@ -7590,15 +7590,15 @@ Around the same time the sync *surface* collapsed to one path. The legacy `POST 
 
 ### 29.2 The Database God-Module Split
 
-`app/srs/database.py` got the same treatment on 2026-07-04/05: it is now a ~60-line composition facade over per-concern mixins, and the review-queue assembly that lived in `api/srs.py` moved to `app/srs/queue_engine.py` (`_merge_directions`, `_compute_live_main`, `build_and_freeze_main_queue`, `assemble_review_queue`). `api/srs.py` keeps only HTTP-layer code. New DB methods go in the matching `db_*` mixin; imports and patches still go through `app.srs.database`.
+`app/srs/database.py` got the same treatment on 2026-07-04/05: it is now a ~60-line composition facade over per-concern mixins, and the review-queue assembly that lived in `api/srs.py` moved to `app/srs/anki_mirror/queue_engine.py` (`_merge_directions`, `_compute_live_main`, `build_and_freeze_main_queue`, `assemble_review_queue`). `api/srs.py` keeps only HTTP-layer code. New DB methods go in the matching `db_*` mixin; imports and patches still go through `app.srs.database`.
 
 ```bash
-wc -l backend/app/srs/database.py backend/app/srs/queue_engine.py backend/app/srs/db_base.py backend/app/srs/db_collocations.py backend/app/srs/db_directions.py backend/app/srs/db_queue.py backend/app/srs/db_counts.py backend/app/srs/db_revlog.py backend/app/srs/db_sync.py
+wc -l backend/app/srs/database.py backend/app/srs/anki_mirror/queue_engine.py backend/app/srs/db_base.py backend/app/srs/db_collocations.py backend/app/srs/db_directions.py backend/app/srs/db_queue.py backend/app/srs/db_counts.py backend/app/srs/db_revlog.py backend/app/srs/db_sync.py
 ```
 
 ```output
       59 backend/app/srs/database.py
-     489 backend/app/srs/queue_engine.py
+     489 backend/app/srs/anki_mirror/queue_engine.py
      333 backend/app/srs/db_base.py
      523 backend/app/srs/db_collocations.py
      424 backend/app/srs/db_directions.py
@@ -7700,7 +7700,7 @@ PART 26's table stopped at Layer 66. The history since (full entries in `docs/an
 The load-bearing helpers for the caps arc:
 
 ```bash
-grep -n "def effective_review_budget" backend/app/srs/queue_stats.py; grep -n "def count_interday_learning_due" backend/app/srs/db_counts.py
+grep -n "def effective_review_budget" backend/app/srs/anki_mirror/queue_stats.py; grep -n "def count_interday_learning_due" backend/app/srs/db_counts.py
 ```
 
 ```output
@@ -7729,7 +7729,7 @@ grep -n "def derive_section_cues" backend/app/audio/render_service.py; grep -c "
 |---|---|
 | `app/anki/sync.py:<line>` internals | `sync_engine.py` (engine), `sync_reader.py`/`sync_writer.py` (I/O), `sync_common.py` (helpers) |
 | `app/srs/database.py:<line>` methods | the matching `db_*` mixin (`db_counts`, `db_queue`, `db_directions`, `db_collocations`, `db_revlog`, …) |
-| `api/srs.py` queue assembly | `app/srs/queue_engine.py` |
+| `api/srs.py` queue assembly | `app/srs/anki_mirror/queue_engine.py` |
 | `app/anki/sqlite_writer.py`, AnkiConnect clients, `detect_mode` | deleted |
 | One-shot migration scripts under `app/anki/` | `backend/scripts/anki_archive/` |
 | `Language.slovene()` hardcoding, `settings.lemmatizer_type` singletons | `app/languages.py` registry + `LanguageContext` |

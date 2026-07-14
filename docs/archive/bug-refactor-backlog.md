@@ -78,8 +78,8 @@ to Big Pickle as-is.
 | # | Owner | Item | Why not BP |
 |---|-------|------|-----------|
 | ~~18~~ | ✅ | Cassette hash ignores `system_prompt` | **FIXED 2026-07-04** (branch `fix/backlog-sweep`) — hash includes `system_prompt`, cassette JSON is versioned (v2) with a loud load-time mismatch error. Re-recorded on the **production model gpt-oss-120b** (llama is deprecated), which required story `max_tokens` 5500→4096 (free-tier 8k TPM cap) and a `_extract_punct_pairs` fix (gpt-oss en-dash dialogue crashed `/transcript`). Only 2 story entries in `e2e.json` were live; 4 dead curriculum/translate entries dropped. See §18. |
-| ~~—~~ | ✅ | 4 AM rollover constant in 3 places (de-dup) | **FIXED 2026-07-03** — `app/anki/rollover.py` single-sources the local-day helpers (`local_today_rollover`, `anki_day_bounds_utc`, `anki_today`) + the `due_at_rollover_utc` 4am-UTC convention; legacy names (`_local_today_4am`, `_anki_day_bounds_utc`) are identity aliases; hardcoded `rollover_hour=4` defaults (fsrs ×3, sqlite_reader) and eight `time(4, 0)` literals routed through it. Identity + source-ratchet pins in `test_rollover_hour_single_source.py`. Oracle 66/66 green before AND after. |
-| ~~—~~ | ➡️ | `date.today()` midnight-vs-4am audit (~10 sites) | **MIGRATED 2026-07-13** to `docs/refactor-suggestions-2026-07.md` #11 (this backlog is now all-closed and archive-bound; the last open item moved to a surviving active doc). Routing target: `app.anki.rollover.anki_today()`. |
+| ~~—~~ | ✅ | 4 AM rollover constant in 3 places (de-dup) | **FIXED 2026-07-03** — `app/srs/anki_mirror/rollover.py` single-sources the local-day helpers (`local_today_rollover`, `anki_day_bounds_utc`, `anki_today`) + the `due_at_rollover_utc` 4am-UTC convention; legacy names (`_local_today_4am`, `_anki_day_bounds_utc`) are identity aliases; hardcoded `rollover_hour=4` defaults (fsrs ×3, sqlite_reader) and eight `time(4, 0)` literals routed through it. Identity + source-ratchet pins in `test_rollover_hour_single_source.py`. Oracle 66/66 green before AND after. |
+| ~~—~~ | ➡️ | `date.today()` midnight-vs-4am audit (~10 sites) | **MIGRATED 2026-07-13** to `docs/refactor-suggestions-2026-07.md` #11 (this backlog is now all-closed and archive-bound; the last open item moved to a surviving active doc). Routing target: `app.srs.anki_mirror.rollover.anki_today()`. |
 
 **Cassette-affecting batch — done.** #10 landed 2026-07-03 with **no** re-record
 (its gloss path is AsyncMock-stubbed, not cassette-backed). #18 landed 2026-07-04
@@ -815,7 +815,7 @@ applies a stored opt-out without an init() call" (fresh module via
 
 ## Danger-zone observations (NOT for Big Pickle — needs owner decision)
 
-- **FIXED 2026-07-03 — 4 AM rollover single-sourced in `app/anki/rollover.py`.**
+- **FIXED 2026-07-03 — 4 AM rollover single-sourced in `app/srs/anki_mirror/rollover.py`.**
   Was: `database._anki_day_bounds_utc`, `sync_common._local_today_4am`, hardcoded
   `rollover_hour: int = 4` defaults (fsrs ×3, sqlite_reader), and eight
   `time(4, 0)` due_at literals across five files. Now: one leaf module (stdlib +
@@ -838,7 +838,7 @@ applies a stored opt-out without an init() call" (fresh module via
   undercount, on a lower-stakes surface (cosmetic bolding, self-corrects at
   4 AM). ~10 more `date.today()` call sites deserve the same audit — after the
   2026-07-04 queue-engine extraction they're split across `api/srs.py`
-  (225, 442, 657, 781, 791, 1115) and `app/srs/queue_engine.py`
+  (225, 442, 657, 781, 791, 1115) and `app/srs/anki_mirror/queue_engine.py`
   (199, 286, 301), plus `transcript.py:208`: for each, decide
   "calendar day is right here" vs "Anki day is right here." Any fix should
   route through ONE shared `anki_today()` helper (see the 3-places item

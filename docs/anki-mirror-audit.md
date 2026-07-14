@@ -78,7 +78,7 @@ sqlite3 /tmp/anki_inspect.db "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
 ```python
 # cd backend && uv run python
 import sqlite3
-from app.anki.protobuf_wire import find_varint_field, find_fixed32_field
+from app.srs.anki_mirror.protobuf_wire import find_varint_field, find_fixed32_field
 from app.srs.queue_stats import _pb_find_packed_float_field, _read_conf_id_for_deck
 from app.anki.safety import _register_anki_collations
 c = sqlite3.connect("file:/tmp/anki_inspect.db?mode=ro", uri=True); _register_anki_collations(c)

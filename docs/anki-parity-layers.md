@@ -22,7 +22,7 @@ Each layer = one identifiable divergence + the fix that resolved it. Layers are 
 
 **Fix.** New `anki_state_cache` key `learning_cutoff`. `advance_learning_cutoff(db, now)` is called at every grade event and every `sync_pull` ingest. `resolve_learning_cutoff(db, fallback=now)` reads it. `/review-queue` uses the cached value, not live now.
 
-**Files.** `app/srs/queue_stats.py` (`resolve_/advance_learning_cutoff`), `app/api/srs.py` (call sites), `app/anki/sync.py` (advance after ingest).
+**Files.** `app/srs/anki_mirror/queue_stats.py` (`resolve_/advance_learning_cutoff`), `app/api/srs.py` (call sites), `app/anki/sync.py` (advance after ingest).
 
 ---
 
@@ -42,7 +42,7 @@ Each layer = one identifiable divergence + the fix that resolved it. Layers are 
 
 **Fix.** Cache the built main queue keyed on `today.isoformat()`. First call builds + freezes; later calls keep the cached order, filter out graded cards, and append mid-day arrivals at the tail.
 
-**Files.** `app/srs/queue_stats.py` (`get_/set_session_main_queue`), `app/api/srs.py`.
+**Files.** `app/srs/anki_mirror/queue_stats.py` (`get_/set_session_main_queue`), `app/api/srs.py`.
 
 ---
 
@@ -60,9 +60,9 @@ Each layer = one identifiable divergence + the fix that resolved it. Layers are 
 
 **Bug.** TT scheduled learning steps with no fuzz. Anki adds uniform `[0, min(0.25*step, 300))` seconds. TT's `due_at` always landed exactly at `+60s` while Anki's was `+60..+74s`, so the cutoff fell between them and the cards diverged.
 
-**Fix.** `app/srs/_anki_rng.py` — bit-exact port of Rust's `StdRng::seed_from_u64(seed) → rng.random_range(low..high)`. Chain: SplitMix64 → ChaCha12 → Canon's biased widening-multiply method. Seeded by `(card_id + reps) mod 2^64`. SplitMix64 verified against canonical reference values; downstream functions are regression-pinned against our own output.
+**Fix.** `app/srs/anki_mirror/_anki_rng.py` — bit-exact port of Rust's `StdRng::seed_from_u64(seed) → rng.random_range(low..high)`. Chain: SplitMix64 → ChaCha12 → Canon's biased widening-multiply method. Seeded by `(card_id + reps) mod 2^64`. SplitMix64 verified against canonical reference values; downstream functions are regression-pinned against our own output.
 
-**Files.** NEW `app/srs/_anki_rng.py`, `app/srs/fsrs.py:_learning_step_fuzz_seconds`, NEW `tests/test_anki_rng.py`.
+**Files.** NEW `app/srs/anki_mirror/_anki_rng.py`, `app/srs/fsrs.py:_learning_step_fuzz_seconds`, NEW `tests/test_anki_rng.py`.
 
 ### Layer 6b — revlog shape decode
 
@@ -83,7 +83,7 @@ Each layer = one identifiable divergence + the fix that resolved it. Layers are 
 - `/review-queue` drops review-state latecomers instead of appending them at the tail.
 - `clear_session_main_queue` helper + `delete_anki_state_cache` DB method.
 
-**Files.** `app/srs/queue_stats.py:clear_session_main_queue`, `app/srs/database.py:delete_anki_state_cache`, `app/anki/sync.py`, `app/api/srs.py`.
+**Files.** `app/srs/anki_mirror/queue_stats.py:clear_session_main_queue`, `app/srs/database.py:delete_anki_state_cache`, `app/anki/sync.py`, `app/api/srs.py`.
 
 ---
 
@@ -167,7 +167,7 @@ Each layer = one identifiable divergence + the fix that resolved it. Layers are 
 
 **Fix.** Local-date subtraction + rollover-hour adjustment (mirrors `scheduler/timing.rs::sched_timing_today_v2_new`).
 
-**Files.** `app/srs/queue_stats.py:39-82`.
+**Files.** `app/srs/anki_mirror/queue_stats.py:39-82`.
 
 ---
 
@@ -199,7 +199,7 @@ Each layer = one identifiable divergence + the fix that resolved it. Layers are 
 
 **Fix.** Both call sites swapped to `db.count_new_introduced_today(today)` — pure TT state (`prior_state='new' AND last_review today`). Function deleted along with its 9-test class. Stale `patch()` calls in `test_api.py` simplified.
 
-**Files.** `app/api/srs.py`, `app/srs/queue_stats.py`, `tests/test_queue_stats_cache.py`, `tests/test_api.py`, `tests/test_api_srs.py`.
+**Files.** `app/api/srs.py`, `app/srs/anki_mirror/queue_stats.py`, `tests/test_queue_stats_cache.py`, `tests/test_api.py`, `tests/test_api_srs.py`.
 
 ---
 
@@ -567,7 +567,7 @@ The underlying homonym corruption (TT collocation guid points to one Anki note w
 
 **Important: render-only.** The cap is NOT applied inside `_compute_live_main` or anywhere in queue assembly. Anki doesn't cap the queue's served cards — only the badge. Defer capping the queue until requested.
 
-**Files.** `backend/app/config.py` (new setting), `backend/app/srs/queue_stats.py` (trio), `backend/app/srs/database.py` (`count_reviews_completed_today`), `backend/app/api/anki.py` (wired), `backend/app/api/srs.py` (cap applied).
+**Files.** `backend/app/config.py` (new setting), `backend/app/srs/anki_mirror/queue_stats.py` (trio), `backend/app/srs/database.py` (`count_reviews_completed_today`), `backend/app/api/anki.py` (wired), `backend/app/api/srs.py` (cap applied).
 
 **Aftermath.** TT's review badge now matches Anki's deck-list "Due" count within ±1 (boundary drift at rollover acceptable). The `daily_review_cap` and `review_cap_source` fields appear in the `/queue-stats` response.
 
@@ -597,16 +597,16 @@ The underlying homonym corruption (TT collocation guid points to one Anki note w
 
 **Empirical finding (Anki 25.09.4).** With the snapshot inspected via `uv run --with anki python` + `col.sched.get_queued_cards(fetch_limit=20)`, Anki places `data='{}'` review cards at the position `desired_retention` would occupy in R-asc. For the user's deck (`desired_retention=0.86`), nič landed between `streljati` (R=0.859) and `steklenica` (R=0.862). Same SQL run via `col.db.all(...)` with Anki's own UDFs returns NULL for nič, and the ORDER BY says NULLs-first — i.e. Anki's own SQL predicts head placement. The actual queue places it mid-pool. **The source-vs-binary contradiction was not resolved; the binary behavior was adopted as ground truth.** The `/tmp/anki-source` checkout is a shallow clone at `main` tip with no version tag — almost certainly newer than 25.09.4 — so the SQL-level explanation may live in a code path that has since been replaced.
 
-**Pre-existing bug surfaced.** `_DESIRED_RETENTION_FIELD` in `app/srs/queue_stats.py` was set to **40**, but per `proto/anki/deck_config.proto:188`, field 37 is `desired_retention` and field 40 is `historical_retention`. The existing `refresh_fsrs_params` was caching `historical_retention` thinking it was `desired_retention` (often 0.9 vs the user's 0.86 — close but wrong). Fixed both the production constant and the test helper (`tests/_helpers/anki_db.py:12`).
+**Pre-existing bug surfaced.** `_DESIRED_RETENTION_FIELD` in `app/srs/anki_mirror/queue_stats.py` was set to **40**, but per `proto/anki/deck_config.proto:188`, field 37 is `desired_retention` and field 40 is `historical_retention`. The existing `refresh_fsrs_params` was caching `historical_retention` thinking it was `desired_retention` (often 0.9 vs the user's 0.86 — close but wrong). Fixed both the production constant and the test helper (`tests/_helpers/anki_db.py:12`).
 
 **Fix.**
 - `compute_retrievability(state, today, now=None, desired_retention=0.9)` — when stability or last_review is None, returns `desired_retention` instead of `None` (Approach 2) or `1.0` (pre-Approach 2).
-- New `find_fixed32_field(data, target)` helper in `app/anki/protobuf_wire.py`.
-- New trio in `app/srs/queue_stats.py` mirroring `daily_new_cap`: `_read_desired_retention_from_deck_config_table`, `refresh_desired_retention`, `resolve_desired_retention` (cache → 0.9 default).
+- New `find_fixed32_field(data, target)` helper in `app/srs/anki_mirror/protobuf_wire.py`.
+- New trio in `app/srs/anki_mirror/queue_stats.py` mirroring `daily_new_cap`: `_read_desired_retention_from_deck_config_table`, `refresh_desired_retention`, `resolve_desired_retention` (cache → 0.9 default).
 - `refresh_desired_retention` wired into `app/api/anki.py` alongside the other refresh calls.
 - `_merge_by_retrievability_ascending` resolves `desired_retention` once per call and threads it into `compute_retrievability`. The `sort_r = -1.0 if r is None else r` Approach-2 workaround is gone.
 
-**Files.** `app/srs/fsrs.py:91-115` (signature + body), `app/srs/queue_stats.py:31` (constant 40→37) + `:280-339` (new trio), `app/anki/protobuf_wire.py:118-140` (helper), `app/api/srs.py:783-799` (resolve + thread), `app/api/anki.py:91-104` (sync wiring), `tests/_helpers/anki_db.py:12` (test helper field number); new tests in `test_srs_fsrs.py::test_*_returns_desired_retention`, `test_api_srs.py::test_merge_retrievability_null_card_lands_mid_pool_at_dr`, `test_queue_stats.py::test_resolve_desired_retention_*`, `test_queue_stats_cache.py::TestDesiredRetentionCache`.
+**Files.** `app/srs/fsrs.py:91-115` (signature + body), `app/srs/anki_mirror/queue_stats.py:31` (constant 40→37) + `:280-339` (new trio), `app/srs/anki_mirror/protobuf_wire.py:118-140` (helper), `app/api/srs.py:783-799` (resolve + thread), `app/api/anki.py:91-104` (sync wiring), `tests/_helpers/anki_db.py:12` (test helper field number); new tests in `test_srs_fsrs.py::test_*_returns_desired_retention`, `test_api_srs.py::test_merge_retrievability_null_card_lands_mid_pool_at_dr`, `test_queue_stats.py::test_resolve_desired_retention_*`, `test_queue_stats_cache.py::TestDesiredRetentionCache`.
 
 **Operational note.** After deploying this fix, run sync_pull (writes the `desired_retention` cache key) and then `clear_session_main_queue` — otherwise the DB-backed frozen queue replays the old order until next sync.
 
@@ -805,7 +805,7 @@ This is the col-day computation, matching Anki's `extract_fsrs_retrievability` f
 - `test_parity_day_level_elapsed_matches_anki` (oracle) — seeds a non-lrt card with raw `due/ivl`, exercises `_compute_last_review` → `_elapsed_days_for_fsrs`, compares elapsed against Anki's oracle.
 - 3 hardcoded date assertions updated in `test_anki_sqlite_reader.py` that used the old wrong formula.
 
-**Files.** `backend/app/anki/sqlite_reader.py:265-297` (`_compute_last_review` rewrite), `backend/app/srs/fsrs.py:128-158` (`_elapsed_days_for_fsrs` col-day branch), `backend/app/srs/queue_stats.py` (`refresh_col_crt`/`resolve_col_crt` trio), `backend/app/api/anki.py` (sync wiring), `backend/app/api/srs.py` (col_crt threaded through entry points). Tests: `backend/tests/test_fsrs.py` (3 unit tests), `backend/tests/test_anki_sqlite_reader.py` (1 regression + 3 date fixes), `backend/tests/test_parity_fsrs_schedule.py` (1 oracle test refactored).
+**Files.** `backend/app/anki/sqlite_reader.py:265-297` (`_compute_last_review` rewrite), `backend/app/srs/fsrs.py:128-158` (`_elapsed_days_for_fsrs` col-day branch), `backend/app/srs/anki_mirror/queue_stats.py` (`refresh_col_crt`/`resolve_col_crt` trio), `backend/app/api/anki.py` (sync wiring), `backend/app/api/srs.py` (col_crt threaded through entry points). Tests: `backend/tests/test_fsrs.py` (3 unit tests), `backend/tests/test_anki_sqlite_reader.py` (1 regression + 3 date fixes), `backend/tests/test_parity_fsrs_schedule.py` (1 oracle test refactored).
 
 ## Layer 46 — `compute_due_at` preserves underlying due through bury/suspend
 
@@ -915,7 +915,7 @@ This was self-consistency drift within TT, not TT-vs-Anki — both endpoints dis
 
 **Fix.**
 
-1. **New helper** in ``backend/app/anki/protobuf_wire.py`` (lives next to ``compute_anki_day_index`` since it's the inverse direction):
+1. **New helper** in ``backend/app/srs/anki_mirror/protobuf_wire.py`` (lives next to ``compute_anki_day_index`` since it's the inverse direction):
 
    ```python
    def review_due_at_for_col_day(col_crt: int, col_day: int, rollover_hour: int = 4) -> datetime:
@@ -944,7 +944,7 @@ This was self-consistency drift within TT, not TT-vs-Anki — both endpoints dis
 
 - Full ``./test.sh`` green (2481 backend tests, frontend 100% coverage gate, 11 E2E specs).
 
-**Files.** ``backend/app/anki/protobuf_wire.py`` (+helper). ``backend/app/anki/sqlite_reader.py`` (refactor ``compute_due_at`` to use the helper, drop unused ``timedelta`` import). ``backend/app/srs/fsrs.py`` (new ``_review_due_at_from_interval`` wrapper, ``col_crt`` and ``review_date`` plumbed through three private schedulers and their 8 call sites, two day-level due_at construction sites updated). ``backend/tests/test_fsrs.py`` (4 new tests). ``docs/anki-parity-layers.md`` (this entry).
+**Files.** ``backend/app/srs/anki_mirror/protobuf_wire.py`` (+helper). ``backend/app/anki/sqlite_reader.py`` (refactor ``compute_due_at`` to use the helper, drop unused ``timedelta`` import). ``backend/app/srs/fsrs.py`` (new ``_review_due_at_from_interval`` wrapper, ``col_crt`` and ``review_date`` plumbed through three private schedulers and their 8 call sites, two day-level due_at construction sites updated). ``backend/tests/test_fsrs.py`` (4 new tests). ``docs/anki-parity-layers.md`` (this entry).
 
 **Cross-reference.** Layer 11/15/40 (``_elapsed_days_for_fsrs`` dual-branch + col_day arithmetic for elapsed time) — same shape as this fix, applied to the elapsed-days side. ``compute_anki_day_index`` (``protobuf_wire.py:196``) — companion helper in the *opposite* direction. **Correction (Layer 54):** the two are NOT round-trip inverses — ``review_due_at_for_col_day(N)`` fed back through ``compute_anki_day_index`` yields ``N − 1``. That is intentional and inert (see Layer 54); do not "fix" it. The remaining off-by-1-day deltas in the measurement are tracked as Layer 50 (stability port drift, scattered ~5-7% in ``_next_stability_recall``).
 
@@ -1184,7 +1184,7 @@ Pre-Layer-52, TT routed graduation through `_passing_intervals_with_fuzz(..., sc
 
 **Mechanism.** Anki's `with_review_fuzz` (`rslib/.../states/fuzz.rs:36-42`) tries `load_balancer_ctx.find_interval(...)` *first* and only falls back to pure fuzz when the balancer is absent. The balancer is wired into both the live answer path (`answering/mod.rs:237-258`, populated when the study queue is built) and the "Reschedule cards on change" path (`fsrs/memory_state.rs:218` → `rescheduler.find_interval`, using `get_fuzz_seed(card, true)` = `reps−1`). It relocates each card's interval to the least-loaded day inside the fuzz window, using the **whole collection's** due-date histogram. The s↔ivl inconsistency resolves cleanly under Optimize+Reschedule: recompute rewrites `cards.data.s` via full-history replay (a sub-0.01 nudge TT also reproduces), while reschedule rewrites `cards.ivl = loadbalance(fuzz(next_interval(recomputed_s), seed = id + reps − 1))` — and the load-balance step is the visible ±1–2 days.
 
-**Update (2026-05): the balancer WAS ported, bit-exact.** The "not reproducible / Path-2-class" call below was the *parity* decision (sync reads `cards.due`, so no fix is needed for sync correctness). As a follow-up the balancer was nonetheless ported and proven bit-exact — see `app/srs/load_balancer.py`, `_anki_rng.py` (`uniform_f32_sample`/`weighted_index_sample`), the `load_balancer` param on `schedule()`, and `test_parity_load_balancer.py`. Oracle sweep: 24/24 bit-exact (incl. the `f32::powf(2.15)` term); real-data replay within-1h **58/89 → 81/89**. Plan: `~/.claude/plans/delegated-puzzling-bee.md`. The "structurally unreproducible" framing was wrong — for the single-preset Slovene deck TT holds the entire histogram. The points below remain true as the *parity* rationale (sync still pass-through; production live-grading port is Phase 2).
+**Update (2026-05): the balancer WAS ported, bit-exact.** The "not reproducible / Path-2-class" call below was the *parity* decision (sync reads `cards.due`, so no fix is needed for sync correctness). As a follow-up the balancer was nonetheless ported and proven bit-exact — see `app/srs/anki_mirror/load_balancer.py`, `_anki_rng.py` (`uniform_f32_sample`/`weighted_index_sample`), the `load_balancer` param on `schedule()`, and `test_parity_load_balancer.py`. Oracle sweep: 24/24 bit-exact (incl. the `f32::powf(2.15)` term); real-data replay within-1h **58/89 → 81/89**. Plan: `~/.claude/plans/delegated-puzzling-bee.md`. The "structurally unreproducible" framing was wrong — for the single-preset Slovene deck TT holds the entire histogram. The points below remain true as the *parity* rationale (sync still pass-through; production live-grading port is Phase 2).
 
 **Resolution (parity) — no TT code fix required.**
 
@@ -1200,7 +1200,7 @@ Pre-Layer-52, TT routed graduation through `_passing_intervals_with_fuzz(..., sc
 
 ## Layer 54 — The col-day helpers are NOT inverses (and that's fine): a ground-truthed non-bug
 
-**Surfaced**: load-balancer replay drilling (2026-05-24, post Layer 53). `review_due_at_for_col_day(col_crt, N)` (`app/anki/protobuf_wire.py:205`) and `compute_anki_day_index(col_crt, 4, now)` (same module) are not round-trip inverses: `N → datetime → N − 1` for every N (verified N=4521/4524/4525/4600 against `col_crt=1388836800`). Layer 49's own cross-reference had called them inverses (corrected above). The lead was `_review_due_at_from_interval` (`app/srs/fsrs.py:65`, the live review-grade path), which *crosses* them — `today = compute_anki_day_index(now)` then `review_due_at_for_col_day(today + interval)` — raising the question: does a TT-native review grade store a `due_at` a full day off from what Anki surfaces for the same `cards.due`?
+**Surfaced**: load-balancer replay drilling (2026-05-24, post Layer 53). `review_due_at_for_col_day(col_crt, N)` (`app/srs/anki_mirror/protobuf_wire.py:205`) and `compute_anki_day_index(col_crt, 4, now)` (same module) are not round-trip inverses: `N → datetime → N − 1` for every N (verified N=4521/4524/4525/4600 against `col_crt=1388836800`). Layer 49's own cross-reference had called them inverses (corrected above). The lead was `_review_due_at_from_interval` (`app/srs/fsrs.py:65`, the live review-grade path), which *crosses* them — `today = compute_anki_day_index(now)` then `review_due_at_for_col_day(today + interval)` — raising the question: does a TT-native review grade store a `due_at` a full day off from what Anki surfaces for the same `cards.due`?
 
 **Ground truth (the decisive step — taken before any fix).** Opened the real collection with `uv run --with anki` (Anki closed) and read Anki's own scheduler:
 
@@ -1238,7 +1238,7 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 
 ## Layer 55 — Wire the FSRS load balancer into TT's live grade path
 
-**What changed.** TT-native grades now load-balance like Anki when `loadBalancerEnabled` is set. This consumes the bit-exact port from Layer 53 (`app/srs/load_balancer.py`, proven oracle + per-card real-deck). Layer 53 only read Anki's load-balanced `cards.due` at sync (`sync_pull` pass-through); a card *graded in TT* still got the pure-fuzz interval. Layer 55 builds a live balancer from TT state and threads it into the three `schedule()` call sites.
+**What changed.** TT-native grades now load-balance like Anki when `loadBalancerEnabled` is set. This consumes the bit-exact port from Layer 53 (`app/srs/anki_mirror/load_balancer.py`, proven oracle + per-card real-deck). Layer 53 only read Anki's load-balanced `cards.due` at sync (`sync_pull` pass-through); a card *graded in TT* still got the pure-fuzz interval. Layer 55 builds a live balancer from TT state and threads it into the three `schedule()` call sites.
 
 **Worth-doing check (done first, per the task's own gate).** Phase 2 only affects TT-native grades — synced cards take Anki's `cards.due` verbatim regardless. Measured the grading surface: of 14,467 `tt_revlog` rows, 13,867 (95.8%) are exact-id imports from Anki and only 600 (4.1%) are TT-native — and those 600 fall on exactly two days (2026-05-20/21), vs 200–700 Anki grades *every* day. So the feature is a UX nicety for a path used 2 days in 2 months. Built anyway at the user's explicit direction; the cost is low because the port and the `schedule(load_balancer=…)` threading already existed.
 
@@ -1251,7 +1251,7 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 
 **Single-preset invariant + col-day domain (the two gotchas).** Bit-exactness depends on `0. Slovene` being the only deck on its preset (so TT's `collocation_directions` IS the whole same-preset histogram). `warn_if_multi_deck_preset` logs a WARNING at sync if a second deck joins the preset. Histogram offsets stay in the **index domain** (`anki_due − today`) — never round-trip a `due_at` datetime through `compute_anki_day_index` (Layer 54's flagged side-stat; this build deliberately avoids that inversion). Fuzz seed reused from `schedule()` is `(anki_card_id or 0) + reps`.
 
-**Files.** `app/srs/load_balancer.py` (`bury_reviews` flag), `app/srs/queue_stats.py` (resolvers + `build_live_load_balancer` + `warn_if_multi_deck_preset`), `app/srs/database.py` (`get_load_balancer_histogram`, `get_load_balancer_session_replay`), `app/api/srs.py` (`_balancer_add` + 3 wiring points), `app/api/anki.py` (sync-time refresh + warn). Tests: `tests/test_load_balancer.py::TestBuryReviewsGating`, `tests/test_queue_stats_load_balancer.py` (resolvers + builder + warn), `tests/test_api_srs_directions.py::TestDrillLoadBalancerWiring`, `tests/test_parity_load_balancer.py::test_live_builder_matches_anki` (oracle: TT live builder reproduces Anki's relocated interval bit-exact).
+**Files.** `app/srs/anki_mirror/load_balancer.py` (`bury_reviews` flag), `app/srs/anki_mirror/queue_stats.py` (resolvers + `build_live_load_balancer` + `warn_if_multi_deck_preset`), `app/srs/database.py` (`get_load_balancer_histogram`, `get_load_balancer_session_replay`), `app/api/srs.py` (`_balancer_add` + 3 wiring points), `app/api/anki.py` (sync-time refresh + warn). Tests: `tests/test_load_balancer.py::TestBuryReviewsGating`, `tests/test_queue_stats_load_balancer.py` (resolvers + builder + warn), `tests/test_api_srs_directions.py::TestDrillLoadBalancerWiring`, `tests/test_parity_load_balancer.py::test_live_builder_matches_anki` (oracle: TT live builder reproduces Anki's relocated interval bit-exact).
 
 **Non-mirror reminder (unchanged).** Synced cards are still read straight from Anki's load-balanced `cards.due` at `sync_pull`. The cosmetic ±1–2 day `due_at` residual from `.claude/rules/anki-queue-parity.md` ("already-decided non-mirror") applies only to a *TT-native grade never re-graded in Anki* — which Layer 55 now also balances, so even that residual shrinks for the single-preset deck.
 
@@ -1431,7 +1431,7 @@ So col_day `N` surfaces at **4am-LOCAL** on calendar date `2026-05-24 + (N − 4
 
 **The bug.** Reported as "TunaTale shows 66 to review, Anki shows 73" (2026-06-02, Slovene deck). The six `database.py` "today" count/list helpers (`count_review_due_collocations`, `count_new_introduced_today`, `count_reviews_completed_today`, `count_new_available_collocations`, `list_anki_cards_graded_today`, `list_collocations_reviewed_today`) bucketed by **local midnight** (`datetime.combine(today, time(0), tzinfo=local_tz)`). Anki rolls the study day over at the configured `rollover` hour — **4 AM local** (the user's, and Anki's default). A direction graded in the `[midnight, 4 AM)` local window is "today" for TT but **"yesterday" for Anki**, so TT's "graded-today" sibling-bury fired on review-due siblings Anki had not yet buried. Exactly 7 dual-direction notes had a direction graded at 04:02–04:06 UTC (= 00:02–00:06 EDT) → TT undercounted 73 → 66. The reverse set (TT counts, Anki doesn't) was empty, confirming a single mechanism.
 
-**Why it was a latent inconsistency, not a fresh regression.** `app/anki/sync.py` already had the right boundary via `_local_today_4am()` (used by `list_decks_with_revlog_today`, `count_first_grades_today_for_deck`), and `app/anki/protobuf_wire.py::compute_anki_day_index` defaults `rollover_hour=4`. Only the badge/count side in `database.py` used midnight — so the badge disagreed with both Anki *and* TT's own sync-side counts.
+**Why it was a latent inconsistency, not a fresh regression.** `app/anki/sync.py` already had the right boundary via `_local_today_4am()` (used by `list_decks_with_revlog_today`, `count_first_grades_today_for_deck`), and `app/srs/anki_mirror/protobuf_wire.py::compute_anki_day_index` defaults `rollover_hour=4`. Only the badge/count side in `database.py` used midnight — so the badge disagreed with both Anki *and* TT's own sync-side counts.
 
 **Fix.** New module-level `ANKI_ROLLOVER_HOUR = 4` + `_anki_day_bounds_utc(today, now=None)` → returns the UTC `[start, end)` ISO bounds of the Anki day anchored on `today`, with a before-rollover shift (when wall-clock `now` is before today's 4 AM, the active Anki day is yesterday's, mirroring `_local_today_4am`). All six helpers now call it. The `today.isoformat()` legacy date-only equality and the `end_of_day_utc` due-cutoff are unchanged (different domains — a date-only `last_review` can't be sub-day bucketed, and the due cutoff is calendar-granular). **Not touched:** `review_due_at_for_col_day`'s 4 AM-**UTC** `due_at` storage convention (Layer 54 "don't fix the helpers" — separate domain).
 
@@ -1559,13 +1559,13 @@ if !new_cards_ignore_review_limit {
 }
 ```
 
-So Anki's remaining review budget = `reviews_per_day − reviews_done − new_introduced_today`. TT computed only `review_cap − reviews_today` (`app/api/srs.py` badge and `app/srs/queue_engine.py` served queue), missing the `− introduced_today` term. `reviews_today` (`count_reviews_completed_today`, Layer 73) counts genuine reviews only — a new-card intro is `last_interval=0`, excluded — and `introduced_today` (`count_new_introduced_today`, Layer 26) is tracked separately; the two sets are disjoint, so TT had the number available but never subtracted it. With the user's deck (240 review-due ≫ 50 cap) the review count is pinned to `cap − done`, so every TT-introduced card left the badge one too high until the discrepancy was noticed against Anki.
+So Anki's remaining review budget = `reviews_per_day − reviews_done − new_introduced_today`. TT computed only `review_cap − reviews_today` (`app/api/srs.py` badge and `app/srs/anki_mirror/queue_engine.py` served queue), missing the `− introduced_today` term. `reviews_today` (`count_reviews_completed_today`, Layer 73) counts genuine reviews only — a new-card intro is `last_interval=0`, excluded — and `introduced_today` (`count_new_introduced_today`, Layer 26) is tracked separately; the two sets are disjoint, so TT had the number available but never subtracted it. With the user's deck (240 review-due ≫ 50 cap) the review count is pinned to `cap − done`, so every TT-introduced card left the badge one too high until the discrepancy was noticed against Anki.
 
 **Why it's cross-rebuild (and how it was proven).** The interaction only shows once reviews saturate the limit, but saturated reviews prevent new cards from being *gathered* in the same fresh build (Anki caps `new` to the remaining review budget via `RemainingLimits::decrement`'s `cap_new_to_review`). So a single queue build can't exhibit it. Proven against the real 25.09 scheduler: study 5 new cards (no reviews present) → `new_studied=5`; then add 100 due reviews → `deck_due_tree` review count = **45** = `50 − 0 − 5` (would be 50 without the charge).
 
-**Fix.** New single-source helper `effective_review_budget(review_cap, reviews_today, introduced_today) = max(0, review_cap − reviews_today − introduced_today)` in `app/srs/queue_stats.py`, wired into both the `/queue-stats` badge (`app/api/srs.py`, used for `review_remaining` AND the new-badge review-budget cap) and the served-queue cap (`app/srs/queue_engine.py`, Layer 75's `nonlearning_due[:review_remaining]`). Assumes `new_cards_ignore_review_limit` off — the same assumption TT already makes for the new badge; honouring an explicitly-enabled flag would need the collection bool synced into the cache (follow-up).
+**Fix.** New single-source helper `effective_review_budget(review_cap, reviews_today, introduced_today) = max(0, review_cap − reviews_today − introduced_today)` in `app/srs/anki_mirror/queue_stats.py`, wired into both the `/queue-stats` badge (`app/api/srs.py`, used for `review_remaining` AND the new-badge review-budget cap) and the served-queue cap (`app/srs/anki_mirror/queue_engine.py`, Layer 75's `nonlearning_due[:review_remaining]`). Assumes `new_cards_ignore_review_limit` off — the same assumption TT already makes for the new badge; honouring an explicitly-enabled flag would need the collection bool synced into the cache (follow-up).
 
-**Files.** `app/srs/queue_stats.py` (`effective_review_budget`), `app/api/srs.py` (badge), `app/srs/queue_engine.py` (served queue). Tests: `tests/test_queue_stats.py::TestEffectiveReviewBudget` (helper arithmetic + zero-clamp); `tests/test_api.py::TestQueueStatsEndpoint::test_queue_stats_review_budget_excludes_new_introduced_today` (endpoint regression, sabotage-drilled red without the fix); `tests/test_parity_daily_caps.py::test_anki_review_count_charges_new_cards_studied_today` (oracle: answer 2 new → inject 10 reviews via the new `add_review_cards` oracle op → Anki review = 5−2 = 3). Full backend suite green at 100% coverage with `--run-oracle`.
+**Files.** `app/srs/anki_mirror/queue_stats.py` (`effective_review_budget`), `app/api/srs.py` (badge), `app/srs/anki_mirror/queue_engine.py` (served queue). Tests: `tests/test_queue_stats.py::TestEffectiveReviewBudget` (helper arithmetic + zero-clamp); `tests/test_api.py::TestQueueStatsEndpoint::test_queue_stats_review_budget_excludes_new_introduced_today` (endpoint regression, sabotage-drilled red without the fix); `tests/test_parity_daily_caps.py::test_anki_review_count_charges_new_cards_studied_today` (oracle: answer 2 new → inject 10 reviews via the new `add_review_cards` oracle op → Anki review = 5−2 = 3). Full backend suite green at 100% coverage with `--run-oracle`.
 
 **Surfaced by.** User creating cards in TT, studying them, syncing, and seeing the Norwegian review count sit above Anki's by the number of new cards introduced that day.
 
@@ -1579,7 +1579,7 @@ So Anki's remaining review budget = `reviews_per_day − reviews_done − new_in
 
 **Fix.** One line in `_compute_live_main` after the review slice: `new_quota = min(new_quota, review_remaining − len(nonlearning_due))`. Non-negative by construction (the due slice is capped at `review_remaining`). Mid-session self-consistency mirrors Layer 75's argument: grading a review decrements the budget by 1 AND removes the card from the due pool, so the new-card headroom is stable — no mid-session drops of already-frozen new cards. The frozen-queue reconciliation only tail-appends NEW latecomers that survive `_compute_live_main`, so the cap can't leak back in through that path.
 
-**Files.** `app/srs/queue_engine.py` (the cap), `app/api/srs.py` (stale "badge-only" comment corrected). Tests: `tests/test_api_srs.py::TestReviewQueue::test_review_queue_new_cards_suppressed_when_review_budget_consumed` (exhausted-budget case, red pre-fix: served 2 new where Anki serves 0) and `::test_review_queue_new_cards_capped_by_remaining_review_budget` (partial-budget discriminator, red pre-fix: served 4 where Anki serves 3); `tests/test_parity_daily_caps.py::test_anki_caps_new_cards_to_remaining_review_budget` (oracle pin of the dynamic decrement).
+**Files.** `app/srs/anki_mirror/queue_engine.py` (the cap), `app/api/srs.py` (stale "badge-only" comment corrected). Tests: `tests/test_api_srs.py::TestReviewQueue::test_review_queue_new_cards_suppressed_when_review_budget_consumed` (exhausted-budget case, red pre-fix: served 2 new where Anki serves 0) and `::test_review_queue_new_cards_capped_by_remaining_review_budget` (partial-budget discriminator, red pre-fix: served 4 where Anki serves 3); `tests/test_parity_daily_caps.py::test_anki_caps_new_cards_to_remaining_review_budget` (oracle pin of the dynamic decrement).
 
 **Still open (known, deliberate).** (a) `new_cards_ignore_review_limit` is assumed off, not synced from the collection config — flipping it in Anki would diverge (documented in Layer 76 too). (b) Source reading during this fix showed *interday* learning cards (queue=3) also charge the review limit in Anki (gathering.rs:16+53) — rule 12's "learning cards are exempt" only holds for intraday (queue=1). Not yet mirrored or oracle-verified; candidate Layer 78 if learning-heavy days show divergence.
 
@@ -1611,7 +1611,7 @@ So Anki's remaining review budget = `reviews_per_day − reviews_done − new_in
 
 **Known residual (documented, not mirrored).** When the interday count *exceeds* the remaining budget, Anki gathers only budget-many interday cards (its learning count shrinks); TT serves them all. Requires day-scale learning steps stacked past the review cap — not reachable with the user's sub-day step config.
 
-**Files.** `app/srs/db_counts.py`, `app/srs/queue_stats.py`, `app/srs/queue_engine.py`, `app/api/srs.py`. Tests: the oracle pin; `test_queue_stats.py::TestEffectiveReviewBudget` (charge + flag-ON charge); `test_srs_database.py::TestCountInterdayLearningDue` (footings, window, promote exclusion); endpoint pair `test_api_srs.py::TestReviewQueue::test_review_queue_interday_learning_charges_review_budget` + `test_queue_stats_review_badge_charged_by_interday_learning` (both sabotage-drilled: neutralizing the charge flips them red).
+**Files.** `app/srs/db_counts.py`, `app/srs/anki_mirror/queue_stats.py`, `app/srs/anki_mirror/queue_engine.py`, `app/api/srs.py`. Tests: the oracle pin; `test_queue_stats.py::TestEffectiveReviewBudget` (charge + flag-ON charge); `test_srs_database.py::TestCountInterdayLearningDue` (footings, window, promote exclusion); endpoint pair `test_api_srs.py::TestReviewQueue::test_review_queue_interday_learning_charges_review_budget` + `test_queue_stats_review_badge_charged_by_interday_learning` (both sabotage-drilled: neutralizing the charge flips them red).
 
 ## Layer 80 — sync_push collapsed intermediate TT grades out of Anki's revlog (per-row push + factor fidelity)
 

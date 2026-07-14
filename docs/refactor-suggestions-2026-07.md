@@ -21,7 +21,7 @@ Items already tracked in `docs/archive/review-2026-07-10-followups.md`,
    Pimsleur buildup shape identical across the compound and generic paths.
 
 3. **`queue_stats.py` — 38 `# pragma: no cover` lines, mostly bare
-   "defensive".** e.g. `backend/app/srs/queue_stats.py:230,240,322,433,467,494,
+   "defensive".** e.g. `backend/app/srs/anki_mirror/queue_stats.py:230,240,322,433,467,494,
    521,559,585,710,778,805,863,1097`. Why: the project's own pragma-discipline
    rule (`.claude/rules/testing.md`) says "defensive" alone is not a
    justification — a batch audit would likely convert several to real
@@ -89,7 +89,7 @@ Items already tracked in `docs/archive/review-2026-07-10-followups.md`,
     4 AM). Current sites: `api/srs.py:230,450,667,792,802,1144`,
     `queue_engine.py:201,316,331`, `transcript.py:251`. Each needs a per-call-site
     "calendar day vs Anki day" judgment routed through the existing
-    `app.anki.rollover.anki_today()` helper — NOT a mechanical replace. Parity-
+    `app.srs.anki_mirror.rollover.anki_today()` helper — NOT a mechanical replace. Parity-
     sensitive; keep out of Big Pickle's hands.
 
 Ruled out during verification (don't re-report): the Stage-3b shadow columns are
