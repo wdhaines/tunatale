@@ -71,6 +71,10 @@ class LanguageConfig:
     # ``None`` (the default) means the language has no such convention, so a card
     # front is always a single surface form. See ``card_surface_variants``.
     variant_separator: str | None = None
+    # Per-language authenticity rules injected into the story system prompt.
+    # Loaded from the plugin's ``data/style.md`` at import time; empty string
+    # when the language has no style file (``en``).
+    style_notes: str = ""
 
 
 _CONFIGS: dict[str, LanguageConfig] = {}
@@ -252,6 +256,15 @@ def get_variant_separator(code: str) -> str | None:
     """
     config = _CONFIGS.get(code)
     return config.variant_separator if config else None
+
+
+def get_style_notes(code: str) -> str:
+    """Return the per-language authenticity rules for the story system prompt.
+
+    Empty string when the language has no style file or is unknown.
+    """
+    config = _CONFIGS.get(code)
+    return config.style_notes if config else ""
 
 
 def card_surface_variants(code: str, text: str) -> list[str]:

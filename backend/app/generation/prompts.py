@@ -6,24 +6,9 @@ All prompts request JSON responses for deterministic parsing.
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from app.languages import get_morphology_profile
+from app.languages import get_morphology_profile, get_style_notes
 from app.models.language import Language
 from app.models.strategy import ContentStrategy
-
-# Per-language style notes live next to this file in language_styles/
-_STYLE_NOTES_DIR = Path(__file__).parent / "language_styles"
-
-
-def _load_style_notes(language_code: str) -> str:
-    """Return the per-language authenticity rules, or empty string if none exist."""
-    style_file = _STYLE_NOTES_DIR / f"{language_code}_style.md"
-    try:
-        return style_file.read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        return ""
-
 
 # ── Story system prompt (always applied) ─────────────────────────────────
 
@@ -170,11 +155,11 @@ def _morphology_sections(language_code: str) -> tuple[str, str]:
 def build_story_system_prompt(language: Language) -> str:
     """Build the story system prompt for a given language, including style notes.
 
-    Loads per-language authenticity rules from language_styles/{code}_style.md
-    and injects them into the SYSTEM_PROMPT template. Falls back to a generic
-    instruction when no style file exists for the language.
+    Loads per-language authenticity rules from the plugin registry and injects
+    them into the SYSTEM_PROMPT template. Falls back to a generic instruction
+    when no style notes exist for the language.
     """
-    style_notes = _load_style_notes(language.code)
+    style_notes = get_style_notes(language.code)
     if not style_notes:
         style_notes = f"Use authentic, natural {language.name} as a native speaker would write and speak."
     morphology_schema, morphology_block = _morphology_sections(language.code)

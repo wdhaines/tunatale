@@ -5,10 +5,10 @@ from app.generation.prompts import (
     STORY_PROMPT_WIDER_TEMPLATE,
     SYSTEM_PROMPT,
     _build_cefr_block,
-    _load_style_notes,
     build_story_system_prompt,
     get_strategy_prompt,
 )
+from app.languages import get_style_notes
 from app.models.language import Language
 from app.models.strategy import ContentStrategy
 
@@ -86,13 +86,13 @@ def test_get_strategy_prompt_raises_for_unknown_strategy():
 
 
 def test_load_style_notes_returns_string_for_slovene():
-    notes = _load_style_notes("sl")
+    notes = get_style_notes("sl")
     assert isinstance(notes, str)
     assert len(notes) > 0
 
 
 def test_load_style_notes_returns_empty_for_unknown_language():
-    notes = _load_style_notes("xx")
+    notes = get_style_notes("xx")
     assert notes == ""
 
 
@@ -114,8 +114,8 @@ def test_build_story_system_prompt_slovene_warns_against_croatian_chars():
     assert "ć" in prompt or "Croatian" in prompt
 
 
-def test_build_story_system_prompt_tagalog_contains_puwede():
-    """Tagalog prompt must enforce 2007 standardized spelling."""
+def test_build_story_system_prompt_unregistered_language_uses_fallback():
+    """Languages without a registered plugin should use the generic fallback."""
     tl = Language(
         code="tl",
         name="Tagalog",
@@ -124,7 +124,8 @@ def test_build_story_system_prompt_tagalog_contains_puwede():
         tts_voice_map={},
     )
     prompt = build_story_system_prompt(tl)
-    assert "puwede" in prompt.lower()
+    assert "Tagalog" in prompt
+    assert "native speaker" in prompt.lower() or "authentic" in prompt.lower()
 
 
 def test_build_story_system_prompt_fallback_for_language_without_style_file():
