@@ -2,8 +2,8 @@
 
 import json
 
-from app.anki.sqlite_reader import parse_fsrs_data
 from app.models.srs_item import SRSState
+from app.plugins.anki_sync.sqlite_reader import parse_fsrs_data
 
 
 def test_fallback_creates_log_entry(tmp_path):

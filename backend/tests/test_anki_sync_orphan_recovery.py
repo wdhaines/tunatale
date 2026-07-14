@@ -14,9 +14,9 @@ from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 
-from app.anki.sync import AnkiSync, OrphanThresholdExceededError
 from app.models.srs_item import Direction, SRSState
 from app.models.syntactic_unit import SyntacticUnit
+from app.plugins.anki_sync.sync import AnkiSync, OrphanThresholdExceededError
 from app.srs.database import SRSDatabase
 from tests.conftest import make_card_record, make_note_record
 
@@ -260,7 +260,7 @@ class TestSyncPushHonorsRecoveryFlag:
         After sync_create_new assigns a fresh anki_card_id, sync_push must
         write force_fsrs (cards.data) regardless of the global flag.
         """
-        from app.anki.sync import KNOWN_ANKI_SCHEMA_VER
+        from app.plugins.anki_sync.sync import KNOWN_ANKI_SCHEMA_VER
 
         db, guid = _make_db_with_link("zdravo", note_id=999, rec_cid=998, prod_cid=997)
         item = db.get_collocation("zdravo")
@@ -374,7 +374,7 @@ class TestOfflineReaderGraves:
     def test_reads_type1_note_graves_only(self):
         import sqlite3
 
-        from app.anki.sync import OfflineReader
+        from app.plugins.anki_sync.sync import OfflineReader
 
         conn = sqlite3.connect(":memory:")
         conn.execute(
@@ -393,7 +393,7 @@ class TestOfflineReaderGraves:
     def test_empty_set_when_graves_table_absent(self):
         import sqlite3
 
-        from app.anki.sync import OfflineReader
+        from app.plugins.anki_sync.sync import OfflineReader
 
         conn = sqlite3.connect(":memory:")  # minimal collection, no graves table
         reader = OfflineReader(conn, "0. Slovene")

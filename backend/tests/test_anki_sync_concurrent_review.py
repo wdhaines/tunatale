@@ -15,8 +15,8 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, time
 from typing import Any
 
-from app.anki.sync import AnkiSync, CardRecord, NoteRecord
 from app.models.srs_item import Direction, DirectionState, Rating, SRSState
+from app.plugins.anki_sync.sync import AnkiSync, CardRecord, NoteRecord
 from app.srs.database import SRSDatabase
 
 

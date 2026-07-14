@@ -10,7 +10,7 @@ app/languages.py
 app/models/language.py
 app/audio/preprocessing/*.py
 app/anki/vocab_notetype.py
-app/anki/add_vocab_notetype.py
+app/plugins/anki_sync/add_vocab_notetype.py
 app/srs/lemmatizer.py
 app/config.py
 # Phonotactics DATA home: its per-language onset inventories hold consonant

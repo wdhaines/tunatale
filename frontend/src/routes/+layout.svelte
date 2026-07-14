@@ -64,7 +64,7 @@
 	<div class="nav-links">
 		<span class="review-group">
 			<a href="/review" class="nav-link" class:active={onReview}>Review</a>
-			{#if queueStatsStore.stats}
+			{#if queueStatsStore.stats && languageStore.syncAvailable}
 				<span class="review-badge"><QueueStatsWidget stats={queueStatsStore.stats} /></span>
 			{/if}
 		</span>
@@ -79,7 +79,7 @@
 			aria-label="Settings"
 			title="Settings"
 		>⚙️</a>
-		<SyncButton />
+		<SyncButton syncAvailable={languageStore.syncAvailable} />
 	</div>
 </nav>
 

@@ -29,6 +29,10 @@ export interface LanguageOption {
 export interface LanguagesResponse {
   languages: LanguageOption[];
   active: string;
+  // Whether the optional anki_sync plugin is installed AND settings.sync_enabled
+  // is on for this deployment (see backend app/main.py). Absent on older backends;
+  // callers should treat a missing value as available (fail open).
+  sync_available?: boolean;
 }
 
 export interface DayPlan {

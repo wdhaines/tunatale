@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 
-from app.anki.sync import (
+from app.plugins.anki_sync.sync import (
     CreateNewReport,
     PullReport,
     PushReport,
@@ -80,7 +80,7 @@ class TestRunFullSync:
         refreshed: list[str] = []
         sync = self._make_spy_sync(calls)
         self._patch_refreshes(monkeypatch, refreshed)
-        monkeypatch.setattr("app.anki.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
+        monkeypatch.setattr("app.plugins.anki_sync.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
 
         db = MagicMock()
 
@@ -117,7 +117,7 @@ class TestRunFullSync:
         refreshed: list[str] = []
         sync = self._make_spy_sync(calls)
         self._patch_refreshes(monkeypatch, refreshed)
-        monkeypatch.setattr("app.anki.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
+        monkeypatch.setattr("app.plugins.anki_sync.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
 
         db = MagicMock()
 
@@ -156,7 +156,7 @@ class TestRunFullSync:
         sync.sync_push = MagicMock(side_effect=lambda **kw: captured.update(force=kw.get("force_fsrs")) or PushReport())
         sync.sync_pull = MagicMock(return_value=PullReport())
         self._patch_refreshes(monkeypatch, [])
-        monkeypatch.setattr("app.anki.sync._write_sync_soak_log", lambda *a, **k: None)
+        monkeypatch.setattr("app.plugins.anki_sync.sync._write_sync_soak_log", lambda *a, **k: None)
 
         sentinel = object()
         db = MagicMock()
@@ -201,7 +201,7 @@ class TestRunFullSync:
 
         sync.sync_create_new = _create_with_failures
         self._patch_refreshes(monkeypatch, [])
-        monkeypatch.setattr("app.anki.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
+        monkeypatch.setattr("app.plugins.anki_sync.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
 
         def _media_refresh(*a, **k):
             calls.append("media_refresh")
@@ -210,7 +210,7 @@ class TestRunFullSync:
             return {"new_media": 0, "updated_media": 0, "unchanged_media": 0, "collapsed_media": 0}
 
         media_spy = MagicMock(side_effect=_media_refresh)
-        monkeypatch.setattr("app.anki.import_seed.refresh_media_from_conn", media_spy)
+        monkeypatch.setattr("app.plugins.anki_sync.import_seed.refresh_media_from_conn", media_spy)
 
         db = MagicMock()
 
@@ -238,10 +238,10 @@ class TestRunFullSync:
         calls: list[str] = []
         sync = self._make_spy_sync(calls)
         self._patch_refreshes(monkeypatch, [])
-        monkeypatch.setattr("app.anki.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
+        monkeypatch.setattr("app.plugins.anki_sync.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
 
         media_spy = MagicMock()
-        monkeypatch.setattr("app.anki.import_seed.refresh_media_from_conn", media_spy)
+        monkeypatch.setattr("app.plugins.anki_sync.import_seed.refresh_media_from_conn", media_spy)
 
         db = MagicMock()
 
@@ -272,10 +272,10 @@ class TestRunFullSync:
         calls: list[str] = []
         sync = self._make_spy_sync(calls)
         self._patch_refreshes(monkeypatch, [])
-        monkeypatch.setattr("app.anki.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
+        monkeypatch.setattr("app.plugins.anki_sync.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
 
         media_spy = MagicMock()
-        monkeypatch.setattr("app.anki.import_seed.refresh_media_from_conn", media_spy)
+        monkeypatch.setattr("app.plugins.anki_sync.import_seed.refresh_media_from_conn", media_spy)
 
         db = MagicMock()
 
@@ -314,7 +314,7 @@ class TestMainDelegatesToRunFullSync:
         anki_conn.commit()
 
         spy = AsyncMock(return_value=(CreateNewReport(), PushReport(), PullReport(), {}))
-        monkeypatch.setattr("app.anki.sync.run_full_sync", spy)
+        monkeypatch.setattr("app.plugins.anki_sync.sync.run_full_sync", spy)
 
         tt_db = SRSDatabase(":memory:")
 
@@ -369,15 +369,15 @@ class TestMainDelegatesToRunFullSync:
                 {"new_media": 0, "updated_media": 0, "collapsed_media": 0},
             )
         )
-        monkeypatch.setattr("app.anki.sync.run_full_sync", spy)
+        monkeypatch.setattr("app.plugins.anki_sync.sync.run_full_sync", spy)
         captured_media_dir = {}
-        real_writer = __import__("app.anki.sync", fromlist=["OfflineWriter"]).OfflineWriter
+        real_writer = __import__("app.plugins.anki_sync.sync", fromlist=["OfflineWriter"]).OfflineWriter
 
         def _spy_writer(conn, media_dir=None):
             captured_media_dir["v"] = media_dir
             return real_writer(conn, media_dir=media_dir)
 
-        monkeypatch.setattr("app.anki.sync.OfflineWriter", _spy_writer)
+        monkeypatch.setattr("app.plugins.anki_sync.sync.OfflineWriter", _spy_writer)
 
         tt_db = SRSDatabase(":memory:")
         sentinel_fn = object()
@@ -417,7 +417,7 @@ class TestMainOrphanThreshold:
     the peer path, exposing it."""
 
     def test_orphan_threshold_returns_1_not_raises(self, tmp_path, monkeypatch):
-        from app.anki.sync import OrphanThresholdExceededError
+        from app.plugins.anki_sync.sync import OrphanThresholdExceededError
 
         anki_conn = sqlite3.connect(":memory:")
         anki_conn.execute("CREATE TABLE col (ver INTEGER, crt INTEGER)")
@@ -428,7 +428,7 @@ class TestMainOrphanThreshold:
         def _raise(self):
             raise OrphanThresholdExceededError("too many orphans — aborting")
 
-        monkeypatch.setattr("app.anki.sync.AnkiSync.detect_and_reset_orphans", _raise)
+        monkeypatch.setattr("app.plugins.anki_sync.sync.AnkiSync.detect_and_reset_orphans", _raise)
 
         class FakeSettings:
             anki_collection_path = "unused"
@@ -483,11 +483,11 @@ class TestMainCreateNew:
 
         # Isolate the create-new behavior from the heavy push/pull/refresh machinery.
         monkeypatch.setattr(
-            "app.anki.sync.AnkiSync.sync_push",
+            "app.plugins.anki_sync.sync.AnkiSync.sync_push",
             lambda self, dry_run=False, force_fsrs=False: PushReport(),
         )
         monkeypatch.setattr(
-            "app.anki.sync.AnkiSync.sync_pull",
+            "app.plugins.anki_sync.sync.AnkiSync.sync_pull",
             lambda self, dry_run=False: PullReport(),
         )
         _patch_all_refreshes(monkeypatch)
@@ -508,7 +508,7 @@ class TestMainCreateNew:
         """Anki→TT: a changed <img> ref on a linked note in tt_collection updates TT's
         media row + copies the new file into backend/media, so an image swapped in
         Anki shows up in TunaTale (the pull-direction media gap)."""
-        import app.anki.sync as sync_mod
+        import app.plugins.anki_sync.sync as sync_mod
         from app.models.srs_item import Direction
         from app.models.syntactic_unit import SyntacticUnit
         from tests.test_anki_sync_create_new import _make_dual_collection_conn
@@ -551,9 +551,9 @@ class TestMainCreateNew:
             yield type("Ctx", (), {"conn": anki_conn})()
 
         monkeypatch.setattr(
-            "app.anki.sync.AnkiSync.sync_push", lambda self, dry_run=False, force_fsrs=False: PushReport()
+            "app.plugins.anki_sync.sync.AnkiSync.sync_push", lambda self, dry_run=False, force_fsrs=False: PushReport()
         )
-        monkeypatch.setattr("app.anki.sync.AnkiSync.sync_pull", lambda self, dry_run=False: PullReport())
+        monkeypatch.setattr("app.plugins.anki_sync.sync.AnkiSync.sync_pull", lambda self, dry_run=False: PullReport())
         _patch_all_refreshes(monkeypatch)
 
         exit_code = main(
@@ -586,11 +586,11 @@ class TestMainCreateNew:
             yield type("Ctx", (), {"conn": anki_conn})()
 
         monkeypatch.setattr(
-            "app.anki.sync.AnkiSync.sync_push",
+            "app.plugins.anki_sync.sync.AnkiSync.sync_push",
             lambda self, dry_run=False, force_fsrs=False: PushReport(),
         )
         monkeypatch.setattr(
-            "app.anki.sync.AnkiSync.sync_pull",
+            "app.plugins.anki_sync.sync.AnkiSync.sync_pull",
             lambda self, dry_run=False: PullReport(),
         )
 
@@ -612,7 +612,7 @@ class TestMainCreateNew:
         target_language is a code with no configured vocab notetype, so neither of the
         first two tiers fires and main() discovers the model via the cache. _CACHE_PATH
         is pinned to tmp by conftest, so seed it explicitly."""
-        import app.anki.model_discovery as md
+        import app.plugins.anki_sync.model_discovery as md
         from app.models.syntactic_unit import SyntacticUnit
         from tests.test_anki_sync_create_new import _make_dual_collection_conn
 
@@ -636,11 +636,11 @@ class TestMainCreateNew:
             yield type("Ctx", (), {"conn": anki_conn})()
 
         monkeypatch.setattr(
-            "app.anki.sync.AnkiSync.sync_push",
+            "app.plugins.anki_sync.sync.AnkiSync.sync_push",
             lambda self, dry_run=False, force_fsrs=False: PushReport(),
         )
         monkeypatch.setattr(
-            "app.anki.sync.AnkiSync.sync_pull",
+            "app.plugins.anki_sync.sync.AnkiSync.sync_pull",
             lambda self, dry_run=False: PullReport(),
         )
         _patch_all_refreshes(monkeypatch)
@@ -817,11 +817,11 @@ class TestSyncSoakLog:
             conn.close()
 
         monkeypatch.setattr(
-            "app.anki.sync.AnkiSync.sync_push",
+            "app.plugins.anki_sync.sync.AnkiSync.sync_push",
             lambda self, dry_run=False, force_fsrs=False: PushReport(directions_pushed=3),
         )
         monkeypatch.setattr(
-            "app.anki.sync.AnkiSync.sync_pull",
+            "app.plugins.anki_sync.sync.AnkiSync.sync_pull",
             lambda self, dry_run=False: PullReport(directions_updated=4),
         )
         _patch_all_refreshes(monkeypatch)
@@ -864,11 +864,11 @@ class TestSyncSoakLog:
             conn.close()
 
         monkeypatch.setattr(
-            "app.anki.sync.AnkiSync.sync_push",
+            "app.plugins.anki_sync.sync.AnkiSync.sync_push",
             lambda self, dry_run=False, force_fsrs=False: PushReport(),
         )
         monkeypatch.setattr(
-            "app.anki.sync.AnkiSync.sync_pull",
+            "app.plugins.anki_sync.sync.AnkiSync.sync_pull",
             lambda self, dry_run=False: PullReport(),
         )
 

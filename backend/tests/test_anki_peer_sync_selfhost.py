@@ -36,8 +36,8 @@ from pathlib import Path
 
 import pytest
 
-from app.anki.sync_orchestrator import _driver_cmd, peer_sync
 from app.config import settings
+from app.plugins.anki_sync.sync_orchestrator import _driver_cmd, peer_sync
 
 # The first isolated `uv run --with anki` may build the ephemeral env from a cold
 # cache; give each driver call headroom.
@@ -482,7 +482,7 @@ class TestPeerSyncSelfHost:
         tt_media_src = tmp_path / "tt_media_src"
         tt_media_src.mkdir()
         (tt_media_src / "sentence_xyz.mp3").write_bytes(b"ID3-fake-audio-bytes")
-        monkeypatch.setattr("app.anki.sync._MEDIA_DIR", tt_media_src)
+        monkeypatch.setattr("app.plugins.anki_sync.sync._MEDIA_DIR", tt_media_src)
 
         # Baseline (also creates the TT deck create_cloze_note needs), mirror to peer2.
         _driver({"op": "create_collection", "collection_path": str(tt_col)})
@@ -619,7 +619,7 @@ class TestPeerSyncMediaDriver:
         # TT's source media dir — refresh_media_from_conn writes here.
         tt_media_src = tmp_path / "tt_media_src"
         tt_media_src.mkdir()
-        monkeypatch.setattr("app.anki.sync._MEDIA_DIR", tt_media_src)
+        monkeypatch.setattr("app.plugins.anki_sync.sync._MEDIA_DIR", tt_media_src)
 
         # ── Shared setup ──────────────────────────────────────────────
         # Both media ops use deck="0. Slovene" (see class docstring).

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from app.anki.import_seed import import_seed
-
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
@@ -15,6 +13,11 @@ async def refresh_media() -> dict:
 
     Returns counts: {updated, unchanged, new, errors}.
     """
+    try:
+        from app.plugins.anki_sync.import_seed import import_seed
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail="Anki sync plugin not available") from exc
+
     try:
         result = import_seed()
     except RuntimeError as exc:

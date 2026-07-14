@@ -7,7 +7,9 @@ from datetime import UTC, date, datetime, time
 import pytest
 
 from app.anki.media.pipeline import MediaResult
-from app.anki.sync import (
+from app.models.srs_item import Direction, SRSState
+from app.models.syntactic_unit import SyntacticUnit
+from app.plugins.anki_sync.sync import (
     AnkiSync,
     CardRecord,
     DuplicateNoteError,
@@ -15,8 +17,6 @@ from app.anki.sync import (
     OfflineWriter,
     _safe_stem,
 )
-from app.models.srs_item import Direction, SRSState
-from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -520,7 +520,7 @@ class TestSyncCreateNewRouting:
         coll_id = db.get_collocation_by_lemma_with_id("še")[0]
         # Seed the audio media row + the source file in TT's media dir (where
         # _copy_tt_media_to_anki reads from — conftest pins _MEDIA_DIR to tmp).
-        import app.anki.sync as sync_mod
+        import app.plugins.anki_sync.sync as sync_mod
 
         (sync_mod._MEDIA_DIR / "tts_sentence_abc.mp3").write_bytes(b"fake-mp3")
         db.add_media(
@@ -568,7 +568,7 @@ class TestSyncCreateNewRouting:
         """Sync-generated vocab media must also land in TT's media dir + a media row
         so the frontend serves it — not only Anki's collection.media. Regression for
         'image works in Anki but is broken/absent in TunaTale'."""
-        import app.anki.sync as sync_mod
+        import app.plugins.anki_sync.sync as sync_mod
 
         db = _make_db()
         _add_item(db, "voda", "water")
@@ -592,7 +592,7 @@ class TestSyncCreateNewRouting:
         """A card completed at add time (image + audio already in TT) must NOT be
         re-fetched at sync — sync attaches the existing media. Without this a card
         would get a second, different Pixabay image and Anki↔TT would diverge."""
-        import app.anki.sync as sync_mod
+        import app.plugins.anki_sync.sync as sync_mod
 
         db = _make_db()
         _add_item(db, "voda", "water")
@@ -1178,7 +1178,7 @@ class TestSyncCreateNew:
 
     async def test_duplicate_note_error_links_offline(self):
         """DuplicateNoteError from OfflineWriter links without calling find_notes."""
-        from app.anki.sync import DuplicateNoteError
+        from app.plugins.anki_sync.sync import DuplicateNoteError
 
         db = _make_db()
         _add_item(db, "voda", "water")
@@ -1200,7 +1200,7 @@ class TestSyncCreateNew:
     async def test_creates_notes_with_higher_due_for_newer_items(self):
         """sync_create_new with real OfflineWriter: newer items get higher cards.due."""
         from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
-        from app.anki.sync import OfflineWriter
+        from app.plugins.anki_sync.sync import OfflineWriter
 
         db = _make_db()
         guid_old = _add_item(db, "staro", "old")
@@ -1227,7 +1227,7 @@ class TestSyncCreateNew:
     async def test_preserves_existing_anki_due(self):
         """sync_create_new doesn't touch existing cards' due values."""
         from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
-        from app.anki.sync import OfflineWriter
+        from app.plugins.anki_sync.sync import OfflineWriter
 
         db = _make_db()
         _add_item_with_anki_ids(db, "obstojeca", "existing", note_id=9999)
@@ -1352,7 +1352,7 @@ class TestSyncCreateNewImageCounters:
 
     async def test_existing_tt_media_no_media_fn_counters_zero(self):
         """A card with existing TT media (no _media_fn call) leaves counters at 0."""
-        import app.anki.sync as sync_mod
+        import app.plugins.anki_sync.sync as sync_mod
 
         db = _make_db()
         _add_item(db, "voda", "water")
@@ -1766,8 +1766,8 @@ def _make_norwegian_collection_conn():
 
 class TestSyncCreateNewNorwegian:
     async def test_mints_norwegian_vocab_note_with_recognition_and_production(self, monkeypatch):
-        from app.anki.sync_engine import settings as _engine_settings
         from app.common.guid import compute_guid
+        from app.plugins.anki_sync.sync_engine import settings as _engine_settings
 
         monkeypatch.setattr(_engine_settings, "target_language", "no")
 
@@ -1797,8 +1797,8 @@ class TestSyncCreateNewNorwegian:
     async def test_attaches_image_to_norwegian_image_field(self, monkeypatch):
         """An add-time/fetched image round-trips into the Norwegian Vocabulary
         Image field via sync_create_new (on-demand images for Norwegian)."""
-        from app.anki.sync_engine import settings as _engine_settings
         from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+        from app.plugins.anki_sync.sync_engine import settings as _engine_settings
 
         monkeypatch.setattr(_engine_settings, "target_language", "no")
 
@@ -1820,8 +1820,8 @@ class TestSyncCreateNewNorwegian:
     async def test_mints_norwegian_preposition_cloze_into_cloze_notetype(self, monkeypatch):
         """A Norwegian preposition cloze (Phase 4) round-trips into the built-in
         Cloze notetype with a 'no'-folded GUID."""
-        from app.anki.sync_engine import settings as _engine_settings
         from app.common.guid import compute_guid
+        from app.plugins.anki_sync.sync_engine import settings as _engine_settings
 
         monkeypatch.setattr(_engine_settings, "target_language", "no")
 

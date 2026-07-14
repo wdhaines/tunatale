@@ -1,4 +1,4 @@
-"""Tests for app.anki.add_vocab_notetype (schema migration: create vocab notetype)."""
+"""Tests for app.plugins.anki_sync.add_vocab_notetype (schema migration: create vocab notetype)."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from app.anki.add_vocab_notetype import add_vocab_notetype, run
 from app.anki.vocab_notetype import NORWEGIAN_VOCAB
+from app.plugins.anki_sync.add_vocab_notetype import add_vocab_notetype, run
 
 
 def _make_conn() -> sqlite3.Connection:
@@ -121,7 +121,7 @@ class TestRun:
         assert result == "dry-run"
 
     def test_run_uses_settings_defaults_when_paths_none(self, tmp_path, monkeypatch):
-        import app.anki.add_vocab_notetype as mod
+        import app.plugins.anki_sync.add_vocab_notetype as mod
 
         db_path = _build_collection_file(tmp_path)
 

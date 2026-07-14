@@ -32,7 +32,7 @@ def _make_offline_conn_with_model(model_name: str, deck_name: str = "0. Slovene"
 
 
 def test_get_or_discover_model_name_offline_returns_name(tmp_path, monkeypatch):
-    import app.anki.model_discovery as md
+    import app.plugins.anki_sync.model_discovery as md
 
     cache_file = tmp_path / "anki_model_name.txt"
     monkeypatch.setattr(md, "_CACHE_PATH", cache_file)
@@ -43,7 +43,7 @@ def test_get_or_discover_model_name_offline_returns_name(tmp_path, monkeypatch):
 
 
 def test_get_or_discover_model_name_offline_writes_cache(tmp_path, monkeypatch):
-    import app.anki.model_discovery as md
+    import app.plugins.anki_sync.model_discovery as md
 
     cache_file = tmp_path / "anki_model_name.txt"
     monkeypatch.setattr(md, "_CACHE_PATH", cache_file)
@@ -55,7 +55,7 @@ def test_get_or_discover_model_name_offline_writes_cache(tmp_path, monkeypatch):
 
 def test_get_or_discover_model_name_offline_uses_cache(tmp_path, monkeypatch):
     """Cache hit must not query the DB."""
-    import app.anki.model_discovery as md
+    import app.plugins.anki_sync.model_discovery as md
 
     cache_file = tmp_path / "anki_model_name.txt"
     cache_file.write_text("Cached Model\n")
@@ -71,7 +71,7 @@ def test_get_or_discover_model_name_offline_uses_cache(tmp_path, monkeypatch):
 
 
 def test_get_or_discover_model_name_offline_returns_empty_when_deck_not_found(tmp_path, monkeypatch):
-    import app.anki.model_discovery as md
+    import app.plugins.anki_sync.model_discovery as md
 
     cache_file = tmp_path / "anki_model_name.txt"
     monkeypatch.setattr(md, "_CACHE_PATH", cache_file)
@@ -83,7 +83,7 @@ def test_get_or_discover_model_name_offline_returns_empty_when_deck_not_found(tm
 
 def test_get_or_discover_model_name_offline_returns_empty_when_no_notes(tmp_path, monkeypatch):
     """Deck exists but has no notes → return ''."""
-    import app.anki.model_discovery as md
+    import app.plugins.anki_sync.model_discovery as md
 
     cache_file = tmp_path / "anki_model_name.txt"
     monkeypatch.setattr(md, "_CACHE_PATH", cache_file)
@@ -98,7 +98,7 @@ def test_get_or_discover_model_name_offline_returns_empty_when_no_notes(tmp_path
 
 def test_get_or_discover_model_name_offline_cache_empty_falls_through(tmp_path, monkeypatch):
     """Cache file exists but is empty → must still query the DB."""
-    import app.anki.model_discovery as md
+    import app.plugins.anki_sync.model_discovery as md
 
     cache_file = tmp_path / "anki_model_name.txt"
     cache_file.write_text("")  # empty file
@@ -111,7 +111,7 @@ def test_get_or_discover_model_name_offline_cache_empty_falls_through(tmp_path, 
 
 def test_get_or_discover_model_name_offline_empty_name_no_cache(tmp_path, monkeypatch):
     """Notetype exists but has empty name → return '' without writing cache."""
-    import app.anki.model_discovery as md
+    import app.plugins.anki_sync.model_discovery as md
 
     cache_file = tmp_path / "anki_model_name.txt"
     monkeypatch.setattr(md, "_CACHE_PATH", cache_file)

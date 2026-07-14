@@ -14,9 +14,9 @@ app/anki/media/pipeline.py	sl	1
 app/anki/media/pixabay.py	no	1
 app/anki/media/tts.py	sl-SI-PetraNeural	1
 app/anki/media/vocab_media.py	sl	1
-app/anki/sqlite_reader.py	class="slovene"[^>]*>\\s*([^<]+?)\\s*<	2
-app/anki/sync.py	sl	1
-app/anki/sync_writer.py	sl	2
+app/plugins/anki_sync/sqlite_reader.py	class="slovene"[^>]*>\\s*([^<]+?)\\s*<	2
+app/plugins/anki_sync/sync.py	sl	1
+app/plugins/anki_sync/sync_writer.py	sl	2
 app/audio/cloze_tts.py	sl-SI-PetraNeural	1
 app/generation/breakdown_audio.py	Preview + render Norwegian Pimsleur breakdowns.	1
 app/generation/breakdown_audio.py	no	1

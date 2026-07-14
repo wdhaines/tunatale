@@ -51,7 +51,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 
-from app.anki.sqlite_reader import compute_due_at
+from app.plugins.anki_sync.sqlite_reader import compute_due_at
 from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index, review_due_at_for_col_day
 from app.srs.fsrs import _review_due_at_from_interval
 

@@ -244,13 +244,30 @@ from app.api import llm as llm_api  # noqa: E402
 from app.api import pipeline as pipeline_api  # noqa: E402
 from app.api import srs_images as srs_images_api  # noqa: E402
 
+
+def _anki_sync_importable() -> bool:
+    """Check whether the optional anki_sync plugin is importable.
+
+    ``find_spec`` can raise (not just return None) when a parent package is
+    broken or partially installed; treat any failure as "not available"
+    rather than letting it crash app startup.
+    """
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec("app.plugins.anki_sync") is not None
+    except ImportError, ValueError, ModuleNotFoundError:
+        return False
+
+
 app.include_router(curriculum.router)
 app.include_router(pipeline_api.router)
 app.include_router(generation.router)
 app.include_router(srs.router)
 app.include_router(srs_images_api.router)
 app.include_router(audio.router)
-app.include_router(anki.router)
+if settings.sync_enabled and _anki_sync_importable():
+    app.include_router(anki.router)
 app.include_router(admin.router)
 app.include_router(llm_api.router)
 
@@ -275,4 +292,8 @@ async def languages(request: Request):
         items = [{"code": lang.code, "name": lang.name}] if lang is not None else []
     else:
         items = [{"code": code, "name": lang.name} for code, lang in langs.items()]
-    return {"languages": items, "active": request.state.language_code}
+    return {
+        "languages": items,
+        "active": request.state.language_code,
+        "sync_available": bool(settings.sync_enabled and _anki_sync_importable()),
+    }

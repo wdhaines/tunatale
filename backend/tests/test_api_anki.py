@@ -7,9 +7,9 @@ from unittest.mock import ANY, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.anki.sync_orchestrator import PeerSyncError
 from app.main import app
 from app.models.syntactic_unit import SyntacticUnit
+from app.plugins.anki_sync.sync_orchestrator import PeerSyncError
 from app.srs.database import SRSDatabase
 
 
@@ -27,13 +27,13 @@ def _clean_app_state():
 
 
 class TestPeerSync:
-    """POST /api/anki/peer-sync — drives app.anki.sync_orchestrator.peer_sync."""
+    """POST /api/anki/peer-sync — drives app.plugins.anki_sync.sync_orchestrator.peer_sync."""
 
     async def test_returns_report(self):
-        from app.anki.sync_orchestrator import PeerSyncReport
+        from app.plugins.anki_sync.sync_orchestrator import PeerSyncReport
 
         report = PeerSyncReport(auth_success=True, pull_required=0, push_required=1, tt_push_pull_exit=0, dry_run=False)
-        with patch("app.anki.sync_orchestrator.peer_sync", return_value=report) as mock_ps:
+        with patch("app.plugins.anki_sync.sync_orchestrator.peer_sync", return_value=report) as mock_ps:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 # X-TT-Language must reach peer_sync as language_code, or the Sync
                 # button always syncs the .env default language's deck/db regardless
@@ -53,9 +53,11 @@ class TestPeerSync:
         mock_ps.assert_called_once_with(False, media_fn=ANY, language_code="no")
 
     async def test_forwards_dry_run(self):
-        from app.anki.sync_orchestrator import PeerSyncReport
+        from app.plugins.anki_sync.sync_orchestrator import PeerSyncReport
 
-        with patch("app.anki.sync_orchestrator.peer_sync", return_value=PeerSyncReport(dry_run=True)) as mock_ps:
+        with patch(
+            "app.plugins.anki_sync.sync_orchestrator.peer_sync", return_value=PeerSyncReport(dry_run=True)
+        ) as mock_ps:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 response = await c.post("/api/anki/peer-sync?dry_run=true")
 
@@ -76,7 +78,7 @@ class TestPeerSync:
     async def test_sync_failure_surfaces_detail(self, exc, status, needle):
         """Both expected and unexpected sync failures pass a useful reason through to
         the UI. One ``patch`` call site (the grandfathered seam) covers both branches."""
-        with patch("app.anki.sync_orchestrator.peer_sync", side_effect=exc):
+        with patch("app.plugins.anki_sync.sync_orchestrator.peer_sync", side_effect=exc):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 response = await c.post("/api/anki/peer-sync")
 

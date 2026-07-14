@@ -20,7 +20,7 @@ def get_or_discover_model_name_offline(conn: sqlite3.Connection, deck_name: str)
         if cached:
             return cached
 
-    from app.anki.sqlite_reader import find_deck_id
+    from app.plugins.anki_sync.sqlite_reader import find_deck_id
 
     deck_id = find_deck_id(conn, deck_name)
     if deck_id is None:

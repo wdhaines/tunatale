@@ -99,4 +99,17 @@ describe("SyncButton", () => {
     await fireEvent.click(getByText("Sync to AnkiWeb"));
     expect(await findByText("string error")).toBeTruthy();
   });
+
+  // ── syncAvailable (Stage 4 — anki_sync plugin capability gate) ────────────
+
+  it("renders nothing when syncAvailable is false", () => {
+    const { container, queryByText } = render(SyncButton, { props: { syncAvailable: false } });
+    expect(queryByText("Sync to AnkiWeb")).toBeNull();
+    expect(container.querySelector(".sync-button")).toBeNull();
+  });
+
+  it("renders the button when syncAvailable is true", () => {
+    const { getByText } = render(SyncButton, { props: { syncAvailable: true } });
+    expect(getByText("Sync to AnkiWeb")).toBeTruthy();
+  });
 });

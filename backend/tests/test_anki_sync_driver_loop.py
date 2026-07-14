@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from app.anki.sync_orchestrator import PeerSyncError
+from app.plugins.anki_sync.sync_orchestrator import PeerSyncError
 
 _DRIVER_PATH = str(Path(__file__).resolve().parent.parent / "app" / "anki" / "sync_driver.py")
 _FAKE_DRIVER = str(Path(__file__).resolve().parent / "_fake_driver.py")
@@ -198,19 +198,19 @@ class TestPersistentDriver:
 
     def _patch_driver_cmd(self, monkeypatch):
         """Make _driver_cmd return the fake driver invocation."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         monkeypatch.setattr(so, "_driver_cmd", lambda: [sys.executable, _FAKE_DRIVER])
 
     def _cleanup_driver(self):
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         with so._DRIVER_LOCK:
             so._kill_driver()
 
     def test_two_sequential_calls_reuse_pid(self, monkeypatch):
         """Two _run_driver calls in sequence reuse the same PID."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         self._patch_driver_cmd(monkeypatch)
         try:
@@ -226,7 +226,7 @@ class TestPersistentDriver:
 
     def test_kill_between_calls_respawns_and_retries(self, monkeypatch):
         """Kill the driver between calls; the second call spawns a new process."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         self._patch_driver_cmd(monkeypatch)
         try:
@@ -251,7 +251,7 @@ class TestPersistentDriver:
 
     def test_hanging_driver_is_killed_and_retried(self, monkeypatch):
         """A driver that hangs past timeout → kill/respawn/retry succeeds."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         self._patch_driver_cmd(monkeypatch)
         try:
@@ -265,7 +265,7 @@ class TestPersistentDriver:
 
     def test_driver_transport_fails_twice_raises(self, monkeypatch):
         """Driver transport failure on both attempts → PeerSyncError after retry."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         # Patch _driver_cmd to return a script that exits immediately (EOF on stdout).
         monkeypatch.setattr(
@@ -281,7 +281,7 @@ class TestPersistentDriver:
 
     def test_stderr_chatter_doesnt_deadlock(self, monkeypatch):
         """A driver that floods stderr doesn't block a large response."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         self._patch_driver_cmd(monkeypatch)
         try:
@@ -298,7 +298,7 @@ class TestPersistentDriver:
         an empty stderr section — the one diagnostic that explains WHY the driver
         died was always missing.
         """
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         self._patch_driver_cmd(monkeypatch)
         try:
@@ -310,7 +310,7 @@ class TestPersistentDriver:
 
     def test_atexit_noop_without_driver(self):
         """The atexit handler is a no-op when no driver is running."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         self._cleanup_driver()  # deterministic: no live driver
         assert so._DRIVER_PROC is None
@@ -318,7 +318,7 @@ class TestPersistentDriver:
 
     def test_atexit_closes_stdin(self, monkeypatch):
         """The atexit handler closes driver stdin so it exits on interpreter shutdown."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         self._patch_driver_cmd(monkeypatch)
         try:
@@ -343,7 +343,7 @@ class TestOrchestratorCoverage:
 
     def test_driver_cmd_returns_list(self):
         """_driver_cmd() returns a non-empty command list (line 268)."""
-        from app.anki.sync_orchestrator import _driver_cmd
+        from app.plugins.anki_sync.sync_orchestrator import _driver_cmd
 
         cmd = _driver_cmd()
         assert isinstance(cmd, list)
@@ -356,7 +356,7 @@ class TestOrchestratorCoverage:
         import threading
         from types import SimpleNamespace
 
-        from app.anki.sync_orchestrator import _drain_stderr
+        from app.plugins.anki_sync.sync_orchestrator import _drain_stderr
 
         class BrokenStderr:
             """Iterating raises ValueError (pipe closed under us)."""
@@ -374,7 +374,7 @@ class TestOrchestratorCoverage:
 
     def test_kill_driver_with_none_streams(self):
         """_kill_driver tolerates a process with None streams (branch 104→103)."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         class FakeProc:
             stdin = None
@@ -394,7 +394,7 @@ class TestOrchestratorCoverage:
 
     def test_kill_driver_with_no_stderr_thread(self):
         """_kill_driver tolerates a process without _stderr_thread (branch 108→110)."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         class FakeStream:
             def close(self):
@@ -419,7 +419,7 @@ class TestOrchestratorCoverage:
 
     def test_run_driver_error_result_raises(self, monkeypatch):
         """_run_driver_locked raises PeerSyncError when the driver returns an error (line 340)."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         monkeypatch.setattr(so, "_driver_cmd", lambda: [sys.executable, _FAKE_DRIVER])
         try:
@@ -440,7 +440,7 @@ class TestPushLegMediaGating:
 
     @pytest.fixture(autouse=True)
     def _clear_auth(self):
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         so._AUTH_CACHE = None
         yield
@@ -448,7 +448,7 @@ class TestPushLegMediaGating:
 
     def _make_fake_driver_with_media_pending(self, monkeypatch, pending_count: int):
         """Create a fake _run_driver that tracks ops and returns media_pending count."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         op_log: list[dict] = []
 
@@ -495,7 +495,7 @@ class TestPushLegMediaGating:
             language_code="sl",
         )
 
-        from app.anki.sync_orchestrator import peer_sync
+        from app.plugins.anki_sync.sync_orchestrator import peer_sync
 
         report = peer_sync(dry_run=False)
         assert report.tt_push_pull_exit == 0
@@ -535,7 +535,7 @@ class TestPushLegMediaGating:
             language_code="sl",
         )
 
-        from app.anki.sync_orchestrator import peer_sync
+        from app.plugins.anki_sync.sync_orchestrator import peer_sync
 
         report = peer_sync(dry_run=False)
         assert report.tt_push_pull_exit == 0
@@ -573,7 +573,7 @@ class TestPushLegMediaGating:
             language_code="sl",
         )
 
-        from app.anki.sync_orchestrator import peer_sync
+        from app.plugins.anki_sync.sync_orchestrator import peer_sync
 
         report = peer_sync(dry_run=False)
         assert report.tt_push_pull_exit == 0
@@ -595,7 +595,7 @@ class TestPushLegMediaGating:
 
         op_log = self._make_fake_driver_with_media_pending(monkeypatch, pending_count=0)
 
-        from app.anki.sync_orchestrator import peer_sync
+        from app.plugins.anki_sync.sync_orchestrator import peer_sync
 
         report = peer_sync(dry_run=False)
         assert report.tt_push_pull_exit == 0
@@ -633,7 +633,7 @@ class TestPushLegMediaGating:
             language_code="sl",
         )
 
-        from app.anki.sync_orchestrator import peer_sync
+        from app.plugins.anki_sync.sync_orchestrator import peer_sync
 
         report = peer_sync(dry_run=False)
         assert report.tt_push_pull_exit == 0
@@ -664,7 +664,7 @@ class TestPushLegMediaGating:
         coll.save()
         monkeypatch.setattr(settings, "anki_model_name", "Cloze")
 
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         op_log: list[dict] = []
 
@@ -698,7 +698,7 @@ class TestPushLegMediaGating:
             language_code="sl",
         )
 
-        from app.anki.sync_orchestrator import peer_sync
+        from app.plugins.anki_sync.sync_orchestrator import peer_sync
 
         report = peer_sync(dry_run=False)
         assert report.tt_push_pull_exit == 0
@@ -718,7 +718,7 @@ class TestAwaitMediaSyncBackoff:
 
     def test_idle_case_bails_after_few_polls(self):
         """When media never goes active, polls bail after 5 polls."""
-        from app.anki.sync_driver import _await_media_sync
+        from app.plugins.anki_sync.sync_driver import _await_media_sync
 
         class FakeStatus:
             active = False
@@ -735,7 +735,7 @@ class TestAwaitMediaSyncBackoff:
 
     def test_active_then_done(self):
         """When media goes active then finishes, the dict reflects it."""
-        from app.anki.sync_driver import _await_media_sync
+        from app.plugins.anki_sync.sync_driver import _await_media_sync
 
         call_count = 0
 
@@ -758,7 +758,7 @@ class TestAwaitMediaSyncBackoff:
 
     def test_exception_recorded(self):
         """A media_sync_status() exception is captured in the dict."""
-        from app.anki.sync_driver import _await_media_sync
+        from app.plugins.anki_sync.sync_driver import _await_media_sync
 
         class FakeCol:
             def media_sync_status(self):
@@ -770,7 +770,7 @@ class TestAwaitMediaSyncBackoff:
 
     def test_backoff_timing(self):
         """Poll intervals back off ×1.5, capped at 0.2s. Verify via elapsed time."""
-        from app.anki.sync_driver import _await_media_sync
+        from app.plugins.anki_sync.sync_driver import _await_media_sync
 
         class FakeStatus:
             active = False

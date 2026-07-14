@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.anki.sync import NoteRecord
 from app.models.srs_item import Direction
+from app.plugins.anki_sync.sync import NoteRecord
 from app.srs.database import SRSDatabase
 
 

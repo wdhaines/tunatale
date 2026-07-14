@@ -6,13 +6,13 @@ from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 
-from app.anki.sync import (
+from app.models.srs_item import Direction, DirectionState, SRSState
+from app.models.syntactic_unit import SyntacticUnit
+from app.plugins.anki_sync.sync import (
     KNOWN_ANKI_SCHEMA_VER,
     AnkiSync,
     OfflineWriter,
 )
-from app.models.srs_item import Direction, DirectionState, SRSState
-from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────

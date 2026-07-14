@@ -15,8 +15,14 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
-from app.anki.safety import safe_open
-from app.anki.sqlite_reader import (
+from app.common.guid import compute_guid
+from app.config import settings
+from app.languages import card_surface_variants, get_deck_name
+from app.media.importer import compute_sha256, copy_media_file
+from app.models.srs_item import Direction, DirectionState
+from app.models.syntactic_unit import BackField, SyntacticUnit
+from app.plugins.anki_sync.safety import safe_open
+from app.plugins.anki_sync.sqlite_reader import (
     AnkiCard,
     extract_disambig_from_fields,
     extract_gloss_from_fields,
@@ -30,12 +36,6 @@ from app.anki.sqlite_reader import (
     find_deck_id,
     list_media_refs,
 )
-from app.common.guid import compute_guid
-from app.config import settings
-from app.languages import card_surface_variants, get_deck_name
-from app.media.importer import compute_sha256, copy_media_file
-from app.models.srs_item import Direction, DirectionState
-from app.models.syntactic_unit import BackField, SyntacticUnit
 from app.srs.database import SRSDatabase
 
 

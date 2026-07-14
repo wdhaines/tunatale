@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from app.anki.sync import CardRecord, NoteRecord
+from app.plugins.anki_sync.sync import CardRecord, NoteRecord
 
 pytest.register_assert_rewrite("tests.conftest")
 
@@ -102,13 +102,13 @@ def _settings_overrides(monkeypatch, tmp_path):
     # the writer (sync), the server (srs), and the add-time store (vocab_media).
     tt_media = tmp_path / "tt-media"
     tt_media.mkdir(exist_ok=True)
-    monkeypatch.setattr("app.anki.sync._MEDIA_DIR", tt_media)
+    monkeypatch.setattr("app.plugins.anki_sync.sync._MEDIA_DIR", tt_media)
     monkeypatch.setattr("app.api.srs._MEDIA_DIR", tt_media)
     monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tt_media)
     # Model-name discovery caches to ~/.tunatale/anki_model_name.txt. Pin to tmp so
     # tests neither read a developer's real cache (masking failures — the file is
     # absent on CI) nor write the real one.
-    monkeypatch.setattr("app.anki.model_discovery._CACHE_PATH", tmp_path / "anki_model_name.txt")
+    monkeypatch.setattr("app.plugins.anki_sync.model_discovery._CACHE_PATH", tmp_path / "anki_model_name.txt")
     # Non-empty so _resolve_sync_password short-circuits and tests never shell out to
     # the real macOS Keychain. Tests of the Keychain path override this to "". The
     # gated --run-peer-sync integration test provides a real throwaway password via

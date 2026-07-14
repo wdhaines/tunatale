@@ -8,8 +8,13 @@
 	// the closed-SQLite "Sync with Anki" flow, which required Anki to be quit.)
 	let {
 		onSyncResult,
+		syncAvailable = true,
 	}: {
 		onSyncResult?: (result: PeerSyncResult) => void;
+		// Whether the backend's anki_sync plugin is available (Stage 4 capability
+		// gate). Defaults true so callers that don't thread it through (most
+		// existing tests) keep the pre-Stage-4 behavior.
+		syncAvailable?: boolean;
 	} = $props();
 
 	let syncLoading = $state(false);
@@ -40,21 +45,23 @@
 	}
 </script>
 
-<div class="sync-button">
-	<button
-		onclick={handleSync}
-		disabled={syncLoading}
-		title="Sync TunaTale with AnkiWeb (Anki can stay open; changes reach AnkiDroid)."
-	>
-		{syncLoading ? 'Syncing…' : 'Sync to AnkiWeb'}
-	</button>
+{#if syncAvailable}
+	<div class="sync-button">
+		<button
+			onclick={handleSync}
+			disabled={syncLoading}
+			title="Sync TunaTale with AnkiWeb (Anki can stay open; changes reach AnkiDroid)."
+		>
+			{syncLoading ? 'Syncing…' : 'Sync to AnkiWeb'}
+		</button>
 
-	{#if error}
-		<span class="sync-toast error" role="alert">{error}</span>
-	{:else if syncResult && !onSyncResult}
-		<span class="sync-toast success" role="status">Synced with AnkiWeb</span>
-	{/if}
-</div>
+		{#if error}
+			<span class="sync-toast error" role="alert">{error}</span>
+		{:else if syncResult && !onSyncResult}
+			<span class="sync-toast success" role="status">Synced with AnkiWeb</span>
+		{/if}
+	</div>
+{/if}
 
 <style>
 	.sync-button {

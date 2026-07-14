@@ -1,5 +1,6 @@
 """Tests for admin endpoints."""
 
+import sys
 from unittest.mock import patch
 
 from httpx import ASGITransport, AsyncClient
@@ -8,7 +9,19 @@ from app.main import app
 
 
 class TestRefreshMediaEndpoint:
-    @patch("app.api.admin.import_seed")
+    async def test_returns_503_when_anki_sync_plugin_not_importable(self, monkeypatch):
+        """The anki_sync plugin is optional; refresh-media degrades to 503, not a crash.
+
+        Simulates a missing/broken plugin package by making its import fail —
+        the lazy `from app.plugins.anki_sync.import_seed import import_seed`
+        inside the endpoint must catch this and return 503, never propagate.
+        """
+        monkeypatch.setitem(sys.modules, "app.plugins.anki_sync.import_seed", None)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/admin/refresh-media")
+        assert resp.status_code == 503
+
+    @patch("app.plugins.anki_sync.import_seed.import_seed")
     async def test_maps_counts_correctly(self, mock_import_seed, api_app_state):
         mock_import_seed.return_value = {
             "updated_media": 3,
@@ -23,7 +36,7 @@ class TestRefreshMediaEndpoint:
         data = resp.json()
         assert data == {"updated": 3, "unchanged": 100, "new": 5, "errors": 1}
 
-    @patch("app.api.admin.import_seed")
+    @patch("app.plugins.anki_sync.import_seed.import_seed")
     async def test_errors_only_counts_guid_collisions(self, mock_import_seed, api_app_state):
         mock_import_seed.return_value = {
             "updated_media": 0,
@@ -37,7 +50,7 @@ class TestRefreshMediaEndpoint:
         assert resp.status_code == 200
         assert resp.json()["errors"] == 0
 
-    @patch("app.api.admin.import_seed")
+    @patch("app.plugins.anki_sync.import_seed.import_seed")
     async def test_raises_500_on_runtime_error(self, mock_import_seed, api_app_state):
         mock_import_seed.side_effect = RuntimeError("broken")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

@@ -12,11 +12,11 @@ and a source-level ratchet against new hardcoded literals.
 import inspect
 from datetime import UTC, date, datetime
 
-from app.anki import sqlite_reader, sync_common
-from app.anki.sync_common import _local_today_4am
 from app.api import srs as api_srs
 from app.config import ANKI_ROLLOVER_HOUR
 from app.models import srs_item
+from app.plugins.anki_sync import sqlite_reader, sync_common
+from app.plugins.anki_sync.sync_common import _local_today_4am
 from app.srs import database as database_mod
 from app.srs import fsrs
 from app.srs.anki_mirror import protobuf_wire, rollover

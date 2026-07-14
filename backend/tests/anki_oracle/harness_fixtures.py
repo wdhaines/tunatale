@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from app.anki.sync_orchestrator import _anki_with_spec
+from app.plugins.anki_sync.sync_orchestrator import _anki_with_spec
 from tests.anki_oracle.synthetic_collection import (
     BASIC_NOTETYPE_MID,
     SyntheticCollection,

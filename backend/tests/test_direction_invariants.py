@@ -21,9 +21,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.anki.sync_engine import _bury_kind_from_queue, _resolve_introduced_at
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
+from app.plugins.anki_sync.sync_engine import _bury_kind_from_queue, _resolve_introduced_at
 from app.srs.database import SRSDatabase
 from app.srs.direction_fields import (
     BURY_KIND_DOMAIN,

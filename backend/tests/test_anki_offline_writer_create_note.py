@@ -9,8 +9,8 @@ import sqlite3
 import pytest
 
 from app.anki.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
-from app.anki.sync import DuplicateNoteError, OfflineWriter
 from app.common.guid import compute_guid
+from app.plugins.anki_sync.sync import DuplicateNoteError, OfflineWriter
 
 _SVNT_MID = 1000001
 _DECK_ID = 12345

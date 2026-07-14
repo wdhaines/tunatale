@@ -6,7 +6,8 @@ from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 
-from app.anki.sqlite_reader import (
+from app.models.srs_item import Direction, SRSState
+from app.plugins.anki_sync.sqlite_reader import (
     compute_due_at,
     extract_l2,
     extract_l2_from_fields,
@@ -17,7 +18,6 @@ from app.anki.sqlite_reader import (
     list_media_refs,
     parse_fsrs_data,
 )
-from app.models.srs_item import Direction, SRSState
 
 
 class TestComputeDueAt:
@@ -807,25 +807,25 @@ class TestExtractGlossFromFields:
     """Layer 31: extract the English gloss from a `<b>L2</b><br><i>EN</i>` field."""
 
     def test_returns_gloss_for_b_then_i_pattern(self):
-        from app.anki.sqlite_reader import extract_gloss_from_fields
+        from app.plugins.anki_sync.sqlite_reader import extract_gloss_from_fields
 
         fields = ["<b>nič</b><br><i>nothing</i>", "[sound:sl_nic.mp3]"]
         assert extract_gloss_from_fields(fields) == "nothing"
 
     def test_returns_gloss_with_whitespace_and_self_closing_br(self):
-        from app.anki.sqlite_reader import extract_gloss_from_fields
+        from app.plugins.anki_sync.sqlite_reader import extract_gloss_from_fields
 
         fields = ["<b>ulica</b><br/> <i>street</i>", "[sound:sl_ulica.mp3]"]
         assert extract_gloss_from_fields(fields) == "street"
 
     def test_returns_none_when_no_pattern_match(self):
-        from app.anki.sqlite_reader import extract_gloss_from_fields
+        from app.plugins.anki_sync.sqlite_reader import extract_gloss_from_fields
 
         fields = ["banka", "bank"]
         assert extract_gloss_from_fields(fields) is None
 
     def test_returns_none_for_phonics_question_field(self):
-        from app.anki.sqlite_reader import extract_gloss_from_fields
+        from app.plugins.anki_sync.sqlite_reader import extract_gloss_from_fields
 
         fields = ["What sound is <b>v</b> word-initial?", "[wː]"]
         assert extract_gloss_from_fields(fields) is None
@@ -900,7 +900,7 @@ class TestExtractInlineImages:
     """
 
     def test_decodes_base64_jpeg_with_jpg_extension(self):
-        from app.anki.sqlite_reader import extract_inline_images
+        from app.plugins.anki_sync.sqlite_reader import extract_inline_images
 
         # Smallest possible valid base64 ("AAAA" → 3 bytes), arbitrary content.
         field = '<img src="data:image/jpeg;base64,AAAA">'
@@ -910,7 +910,7 @@ class TestExtractInlineImages:
         assert out[0].data == b"\x00\x00\x00"
 
     def test_normalizes_svg_xml_to_svg(self):
-        from app.anki.sqlite_reader import extract_inline_images
+        from app.plugins.anki_sync.sqlite_reader import extract_inline_images
 
         field = '<img src="data:image/svg+xml;base64,PHN2Zy8+">'
         out = extract_inline_images([field])
@@ -920,7 +920,7 @@ class TestExtractInlineImages:
 
     def test_passes_through_unknown_subtype(self):
         """E.g., ``webp`` keeps its own extension; only jpeg/svg+xml need rewriting."""
-        from app.anki.sqlite_reader import extract_inline_images
+        from app.plugins.anki_sync.sqlite_reader import extract_inline_images
 
         field = '<img src="data:image/webp;base64,AAAA">'
         out = extract_inline_images([field])
@@ -928,31 +928,31 @@ class TestExtractInlineImages:
 
     def test_skips_url_encoded_data_uri(self):
         """Non-base64 data URIs are not supported — skip rather than misdecode."""
-        from app.anki.sqlite_reader import extract_inline_images
+        from app.plugins.anki_sync.sqlite_reader import extract_inline_images
 
         field = '<img src="data:image/svg+xml,%3Csvg%2F%3E">'
         assert extract_inline_images([field]) == []
 
     def test_skips_non_image_data_uri(self):
-        from app.anki.sqlite_reader import extract_inline_images
+        from app.plugins.anki_sync.sqlite_reader import extract_inline_images
 
         field = '<img src="data:text/plain;base64,aGk=">'
         assert extract_inline_images([field]) == []
 
     def test_skips_file_based_src(self):
-        from app.anki.sqlite_reader import extract_inline_images
+        from app.plugins.anki_sync.sqlite_reader import extract_inline_images
 
         assert extract_inline_images(['<img src="banka.jpg">']) == []
 
     def test_skips_invalid_base64(self):
         """Invalid base64 (e.g. illegal chars) is dropped, not crashed on."""
-        from app.anki.sqlite_reader import extract_inline_images
+        from app.plugins.anki_sync.sqlite_reader import extract_inline_images
 
         field = '<img src="data:image/jpeg;base64,not!valid!base64!@#$">'
         assert extract_inline_images([field]) == []
 
     def test_extracts_multiple_inline_images(self):
-        from app.anki.sqlite_reader import extract_inline_images
+        from app.plugins.anki_sync.sqlite_reader import extract_inline_images
 
         fields = [
             '<img src="data:image/png;base64,iVBORw0KGgo=">',
@@ -963,7 +963,7 @@ class TestExtractInlineImages:
         assert len(out) == 2
 
     def test_returns_empty_when_no_data_uris(self):
-        from app.anki.sqlite_reader import extract_inline_images
+        from app.plugins.anki_sync.sqlite_reader import extract_inline_images
 
         assert extract_inline_images(["no media here", "[sound:a.mp3]"]) == []
 
@@ -1137,7 +1137,7 @@ class TestNotetypeProfileExtraction:
         )
 
     def test_extract_via_profile_reads_roles_by_name(self, tmp_path):
-        from app.anki.sqlite_reader import extract_via_profile
+        from app.plugins.anki_sync.sqlite_reader import extract_via_profile
 
         note = self._note(tmp_path)[0]
         # disambig comes from 'Word class' ('verb'); article from 'Article' (blank — verb).
@@ -1145,7 +1145,7 @@ class TestNotetypeProfileExtraction:
         assert extract_via_profile(note) == ("være", "to be", "verb", "", ())
 
     def test_extract_via_profile_reads_article_for_nouns(self, tmp_path):
-        from app.anki.sqlite_reader import extract_via_profile
+        from app.plugins.anki_sync.sqlite_reader import extract_via_profile
         from tests.conftest import build_norwegian_anki_db
 
         db_path = build_norwegian_anki_db(tmp_path, with_homographs=True)
@@ -1159,13 +1159,13 @@ class TestNotetypeProfileExtraction:
         assert extract_via_profile(noun) == ("løfte", "promise", "noun", "et", ())
 
     def test_extract_via_profile_returns_none_without_profile(self):
-        from app.anki.sqlite_reader import AnkiNote, extract_via_profile
+        from app.plugins.anki_sync.sqlite_reader import AnkiNote, extract_via_profile
 
         note = AnkiNote(id=1, anki_guid="g", mid=999, mod=0, tags=[], fields=["x"], notetype_name="Unprofiled")
         assert extract_via_profile(note) is None
 
     def test_offline_reader_uses_profile_for_norwegian_notes(self, tmp_path):
-        from app.anki.sync import OfflineReader
+        from app.plugins.anki_sync.sync import OfflineReader
         from tests.conftest import build_norwegian_anki_db
 
         db_path = build_norwegian_anki_db(tmp_path)
@@ -1204,7 +1204,7 @@ _NORWEGIAN_FIELD_NAMES = (
 
 def _full_norwegian_note(field_values: dict[str, str]):
     """Build an AnkiNote on the 17-field Norwegian notetype from a name→value map."""
-    from app.anki.sqlite_reader import AnkiNote
+    from app.plugins.anki_sync.sqlite_reader import AnkiNote
 
     fields = [field_values.get(name, "") for name in _NORWEGIAN_FIELD_NAMES]
     return AnkiNote(
@@ -1223,7 +1223,7 @@ class TestSanitizeBackHtml:
     """`sanitize_back_html` strips unsafe/irrelevant markup, keeps the rest."""
 
     def test_strips_style_block(self):
-        from app.anki.sqlite_reader import sanitize_back_html
+        from app.plugins.anki_sync.sqlite_reader import sanitize_back_html
 
         html = '<style type="text/css">.tg{border:1px}</style><table class="tg"><tr><td>er</td></tr></table>'
         out = sanitize_back_html(html)
@@ -1231,17 +1231,17 @@ class TestSanitizeBackHtml:
         assert "<table" in out and "er" in out
 
     def test_strips_script_block(self):
-        from app.anki.sqlite_reader import sanitize_back_html
+        from app.plugins.anki_sync.sqlite_reader import sanitize_back_html
 
         assert sanitize_back_html("<script>alert(1)</script>hi") == "hi"
 
     def test_strips_sound_tags(self):
-        from app.anki.sqlite_reader import sanitize_back_html
+        from app.plugins.anki_sync.sqlite_reader import sanitize_back_html
 
         assert sanitize_back_html("Hun er lærer [sound:azure-abc.mp3]") == "Hun er lærer"
 
     def test_empty_when_only_noise(self):
-        from app.anki.sqlite_reader import sanitize_back_html
+        from app.plugins.anki_sync.sqlite_reader import sanitize_back_html
 
         assert sanitize_back_html("  [sound:x.mp3]  ") == ""
 
@@ -1250,7 +1250,7 @@ class TestExtractBackFields:
     """`extract_back_fields` returns the profile-declared rich fields present."""
 
     def test_returns_present_fields_in_profile_order_with_tiers(self):
-        from app.anki.sqlite_reader import extract_back_fields
+        from app.plugins.anki_sync.sqlite_reader import extract_back_fields
 
         note = _full_norwegian_note(
             {
@@ -1272,7 +1272,7 @@ class TestExtractBackFields:
         assert extras[0].html == "/ˈʋæːɾə/"
 
     def test_sanitizes_field_html(self):
-        from app.anki.sqlite_reader import extract_back_fields
+        from app.plugins.anki_sync.sqlite_reader import extract_back_fields
 
         note = _full_norwegian_note({"Example sentences": "Hun er lærer [sound:x.mp3]"})
         extras = extract_back_fields(note)
@@ -1280,18 +1280,18 @@ class TestExtractBackFields:
         assert extras[0].html == "Hun er lærer"
 
     def test_empty_when_no_back_fields_present(self):
-        from app.anki.sqlite_reader import extract_back_fields
+        from app.plugins.anki_sync.sqlite_reader import extract_back_fields
 
         assert extract_back_fields(_full_norwegian_note({"Norwegian word": "være"})) == ()
 
     def test_empty_for_unprofiled_notetype(self):
-        from app.anki.sqlite_reader import AnkiNote, extract_back_fields
+        from app.plugins.anki_sync.sqlite_reader import AnkiNote, extract_back_fields
 
         note = AnkiNote(id=1, anki_guid="g", mid=999, mod=0, tags=[], fields=["x"], notetype_name="Unprofiled")
         assert extract_back_fields(note) == ()
 
     def test_extract_via_profile_includes_extras(self):
-        from app.anki.sqlite_reader import extract_via_profile
+        from app.plugins.anki_sync.sqlite_reader import extract_via_profile
 
         note = _full_norwegian_note(
             {"Norwegian word": "være", "Word class": "verb", "English translation": "to be", "IPA": "/ˈʋæːɾə/"}

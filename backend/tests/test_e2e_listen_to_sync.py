@@ -7,11 +7,11 @@ import io
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.anki.sync import AnkiSync, OfflineWriter
 from app.main import app
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.models.srs_item import Direction
 from app.models.syntactic_unit import SyntacticUnit
+from app.plugins.anki_sync.sync import AnkiSync, OfflineWriter
 from app.srs.database import SRSDatabase
 from app.storage.store import ContentStore
 
@@ -208,7 +208,7 @@ class TestImageEndpointToSyncSeam:
 
     async def test_upload_endpoint_edit_reaches_anki_note_via_push(self, tmp_path, monkeypatch):
         import app.anki.media.vocab_media as vocab_media
-        import app.anki.sync as sync_mod
+        import app.plugins.anki_sync.sync as sync_mod
 
         # Both _MEDIA_DIR constants resolve to backend/media independently. Point
         # both at one tmp dir so the endpoint's write and the push's read share it

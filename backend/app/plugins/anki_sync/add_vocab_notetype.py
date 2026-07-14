@@ -28,10 +28,10 @@ import sqlite3
 import time
 from pathlib import Path
 
-from app.anki.safety import safe_open
 from app.anki.vocab_notetype import VocabNotetype, create_vocab_notetype
 from app.config import settings
 from app.languages import get_vocab_notetype
+from app.plugins.anki_sync.safety import safe_open
 
 
 def add_vocab_notetype(conn: sqlite3.Connection, vocab: VocabNotetype, *, now_ms: int | None = None) -> str:

@@ -22,8 +22,8 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from app.anki.safety import safe_open
 from app.config import settings
+from app.plugins.anki_sync.safety import safe_open
 
 logger = logging.getLogger(__name__)
 

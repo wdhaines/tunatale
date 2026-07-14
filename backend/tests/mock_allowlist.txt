@@ -1,7 +1,7 @@
 # Process/network boundaries — never shrink these
-app.anki.sync_orchestrator.subprocess.run       # subprocess boundary (inside _run_driver)
-app.anki.sync_orchestrator._run_driver          # designated driver boundary for sociable peer-sync tests
-app.anki.sync_orchestrator._keychain_password   # macOS Keychain boundary
+app.plugins.anki_sync.sync_orchestrator.subprocess.run       # subprocess boundary (inside _run_driver)
+app.plugins.anki_sync.sync_orchestrator._run_driver          # designated driver boundary for sociable peer-sync tests
+app.plugins.anki_sync.sync_orchestrator._keychain_password   # macOS Keychain boundary
 app.audio.edge_tts.edge_tts.*                   # EdgeTTS network boundary (Communicate, list_voices)
 app.audio.edge_tts.asyncio.sleep                # EdgeTTS retry sleep
 app.anki.media.pixabay.*                        # Pixabay HTTP client boundary
@@ -10,7 +10,7 @@ app.api.anki.fetch_card_media                   # Pixabay/Forvo network boundary
 # The Settings singleton pinned through any module's import of it
 app.*.settings.*
 # Path-constant pins — test infrastructure writes to temp dirs
-app.anki.sync._MEDIA_DIR
+app.plugins.anki_sync.sync._MEDIA_DIR
 app.api.srs._MEDIA_DIR
 app.anki.media.vocab_media._MEDIA_DIR
-app.anki.model_discovery._CACHE_PATH
+app.plugins.anki_sync.model_discovery._CACHE_PATH

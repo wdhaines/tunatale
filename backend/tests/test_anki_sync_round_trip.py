@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
 
-from app.anki.sync import AnkiSync, CardRecord, NoteRecord, OfflineWriter
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
+from app.plugins.anki_sync.sync import AnkiSync, CardRecord, NoteRecord, OfflineWriter
 from app.srs.database import SRSDatabase
 
 
@@ -422,7 +422,7 @@ def test_sync_pull_state_not_clobbered_by_media_refresh():
     # refresh_media_from_conn must not touch direction state (writes only media table).
     from pathlib import Path
 
-    from app.anki.import_seed import refresh_media_from_conn
+    from app.plugins.anki_sync.import_seed import refresh_media_from_conn
 
     anki_conn = _make_anki_conn()
     refresh_media_from_conn(
@@ -688,7 +688,7 @@ def test_tt_grade_memory_state_survives_push_pull_round_trip(fake_anki_db):
     import json as _json
     import sqlite3 as _sqlite3
 
-    from app.anki.sync import OfflineReader
+    from app.plugins.anki_sync.sync import OfflineReader
 
     conn = _sqlite3.connect(str(fake_anki_db))
     conn.row_factory = _sqlite3.Row  # production uses safe_open, which sets this

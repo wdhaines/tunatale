@@ -7,14 +7,14 @@ import sqlite3
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 
-from app.anki.sync import (
+from app.models.srs_item import Direction, DirectionState, SRSState
+from app.models.syntactic_unit import SyntacticUnit
+from app.plugins.anki_sync.sync import (
     AnkiSync,
     OfflineWriter,
     _local_today_4am,
     build_cloze_back_extra,
 )
-from app.models.srs_item import Direction, DirectionState, SRSState
-from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 from tests.conftest import make_card_record, make_note_record
 
@@ -2052,27 +2052,27 @@ class TestSyncPushRevlogTransitions:
 
 class TestRevlogShapeHelpers:
     def test_step_minutes_from_left_returns_none_for_missing_inputs(self):
-        from app.anki.sync import _step_minutes_from_left
+        from app.plugins.anki_sync.sync import _step_minutes_from_left
 
         assert _step_minutes_from_left(None, [1.0, 10.0]) is None
         assert _step_minutes_from_left(0, [1.0, 10.0]) is None
         assert _step_minutes_from_left(2002, []) is None
 
     def test_step_minutes_from_left_returns_none_for_zero_packed_fields(self):
-        from app.anki.sync import _step_minutes_from_left
+        from app.plugins.anki_sync.sync import _step_minutes_from_left
 
         # total_steps == 0 (lower 3 digits are zero)
         assert _step_minutes_from_left(2000, [1.0, 10.0]) is None
 
     def test_step_minutes_from_left_returns_none_for_out_of_range_step_index(self):
-        from app.anki.sync import _step_minutes_from_left
+        from app.plugins.anki_sync.sync import _step_minutes_from_left
 
         # left=1003 → steps_remaining=1, total_steps=3, step_index=2; only 2 steps configured
         assert _step_minutes_from_left(1003, [1.0, 10.0]) is None
 
     def test_derive_shape_falls_back_for_legacy_learning_state(self):
         """prior_state=None + state=LEARNING uses Learning revlog kind (0)."""
-        from app.anki.sync import _derive_revlog_shape
+        from app.plugins.anki_sync.sync import _derive_revlog_shape
 
         ds = DirectionState(
             direction=Direction.RECOGNITION,
@@ -2088,7 +2088,7 @@ class TestRevlogShapeHelpers:
 
     def test_derive_shape_falls_back_for_legacy_relearning_state(self):
         """prior_state=None + state=RELEARNING uses Relearning revlog kind (2)."""
-        from app.anki.sync import _derive_revlog_shape
+        from app.plugins.anki_sync.sync import _derive_revlog_shape
 
         ds = DirectionState(
             direction=Direction.RECOGNITION,
@@ -2102,7 +2102,7 @@ class TestRevlogShapeHelpers:
 
     def test_derive_shape_relearning_with_unparseable_left_falls_back_to_first_step(self):
         """state=RELEARNING with left=None still produces -relearn_steps[0]*60 ivl."""
-        from app.anki.sync import _derive_revlog_shape
+        from app.plugins.anki_sync.sync import _derive_revlog_shape
 
         ds = DirectionState(
             direction=Direction.RECOGNITION,
@@ -2121,7 +2121,7 @@ class TestRevlogShapeHelpers:
     def test_derive_shape_unexpected_prior_state_uses_fallback_last_ivl(self):
         """A prior_state outside the four known transitions (e.g. BURIED) falls
         through to the stability-based last_ivl branch."""
-        from app.anki.sync import _derive_revlog_shape
+        from app.plugins.anki_sync.sync import _derive_revlog_shape
 
         ds = DirectionState(
             direction=Direction.RECOGNITION,
@@ -2147,8 +2147,8 @@ class TestRevlogShapeHelpers:
         """
         from datetime import UTC, datetime, timedelta
 
-        from app.anki.sync import _derive_revlog_shape
         from app.models.srs_item import Rating
+        from app.plugins.anki_sync.sync import _derive_revlog_shape
 
         last_review = datetime(2026, 5, 8, 17, 5, 28, tzinfo=UTC)
         due_at = last_review + timedelta(seconds=330)
@@ -3803,7 +3803,7 @@ class TestSyncPushImage:
     """
 
     def test_dirty_image_pushes_image_field_and_copies_media(self, tmp_path, monkeypatch):
-        import app.anki.sync as sync_mod
+        import app.plugins.anki_sync.sync as sync_mod
 
         monkeypatch.setattr(sync_mod, "_MEDIA_DIR", tmp_path)
         db = _make_tt_db()
@@ -3847,7 +3847,7 @@ class TestSyncPushImage:
         assert db.get_dirty_fields(guid) == ""
 
     def test_dirty_image_dry_run_preserves_flag_and_writes_nothing(self, tmp_path, monkeypatch):
-        import app.anki.sync as sync_mod
+        import app.plugins.anki_sync.sync as sync_mod
 
         monkeypatch.setattr(sync_mod, "_MEDIA_DIR", tmp_path)
         db = _make_tt_db()
@@ -3917,7 +3917,7 @@ class TestSyncPushImage:
         Anki Image field alongside the media copy (step 7's core contract)."""
         import hashlib
 
-        from app.anki.import_seed import _refresh_media_for_collocation
+        from app.plugins.anki_sync.import_seed import _refresh_media_for_collocation
 
         db = _make_tt_db()
         guid, *_ = _add_banka_with_anki_ids(db)
@@ -3950,7 +3950,7 @@ class TestSyncPushImage:
         happens if the push is dropped), the media refresh collapses the row."""
         import hashlib
 
-        from app.anki.import_seed import _refresh_media_for_collocation
+        from app.plugins.anki_sync.import_seed import _refresh_media_for_collocation
 
         db = _make_tt_db()
         guid, *_ = _add_banka_with_anki_ids(db)

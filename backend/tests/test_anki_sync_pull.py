@@ -12,7 +12,10 @@ from datetime import time as _time
 
 import pytest
 
-from app.anki.sync import (
+from app.common.guid import compute_guid
+from app.models.srs_item import Direction, DirectionState, SRSState
+from app.models.syntactic_unit import SyntacticUnit
+from app.plugins.anki_sync.sync import (
     AnkiSync,
     NoteRecord,
     OfflineReader,
@@ -21,9 +24,6 @@ from app.anki.sync import (
     extract_cloze_sentence_translation,
     extract_cloze_translation,
 )
-from app.common.guid import compute_guid
-from app.models.srs_item import Direction, DirectionState, SRSState
-from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 from tests.conftest import make_card_record, make_note_record
 
@@ -2186,7 +2186,7 @@ class TestGap1MissingPhonicsCards:
         This is a code review test to verify import_seed doesn't have a
         timestamp filter that would skip the 2026-03-27 batch.
         """
-        from app.anki.import_seed import import_seed
+        from app.plugins.anki_sync.import_seed import import_seed
 
         source = inspect.getsource(import_seed)
         # Verify it calls fetch_notes_for_deck (which has no timestamp filter)
@@ -2332,8 +2332,8 @@ class TestResolveIntroducedAt:
         """Sticky: if local already has introduced_at, return it unchanged."""
         from datetime import date as _date
 
-        from app.anki.sync import _resolve_introduced_at
         from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.plugins.anki_sync.sync import _resolve_introduced_at
 
         existing = _dt(2026, 1, 15, 10, 30, tzinfo=UTC)
         local_dir = DirectionState(
@@ -2348,8 +2348,8 @@ class TestResolveIntroducedAt:
     def test_returns_none_for_new_state(self):
         from datetime import date as _date
 
-        from app.anki.sync import _resolve_introduced_at
         from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.plugins.anki_sync.sync import _resolve_introduced_at
 
         local_dir = DirectionState(
             direction=Direction.RECOGNITION,
@@ -2361,8 +2361,8 @@ class TestResolveIntroducedAt:
     def test_returns_none_when_no_revlog(self):
         from datetime import date as _date
 
-        from app.anki.sync import _resolve_introduced_at
         from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.plugins.anki_sync.sync import _resolve_introduced_at
 
         local_dir = DirectionState(
             direction=Direction.RECOGNITION,
@@ -2374,8 +2374,8 @@ class TestResolveIntroducedAt:
     def test_stamps_from_first_revlog_when_local_is_null(self):
         from datetime import date as _date
 
-        from app.anki.sync import _resolve_introduced_at
         from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.plugins.anki_sync.sync import _resolve_introduced_at
 
         local_dir = DirectionState(
             direction=Direction.RECOGNITION,
@@ -2640,8 +2640,8 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
         card synced. Fails without the write_revlog fix (echo lands at phone_ms+1
         and is ingested as a third row).
         """
-        from app.anki.sync import OfflineWriter
         from app.models.srs_item import RevlogRow
+        from app.plugins.anki_sync.sync import OfflineWriter
 
         db = _make_tt_db()
         guid = _add_banka(db)
@@ -2696,8 +2696,8 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
         """
         from datetime import date as _date
 
-        from app.anki.sync import OfflineWriter
         from app.models.srs_item import RevlogRow
+        from app.plugins.anki_sync.sync import OfflineWriter
 
         db = _make_tt_db()
         guid = _add_banka(db)

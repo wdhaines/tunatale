@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from app.anki.replay_fsrs_from_revlog import _parse_stored_due, _states_match, replay_fsrs_from_revlog
 from app.models.srs_item import Direction, DirectionState, SRSState
+from app.plugins.anki_sync.replay_fsrs_from_revlog import _parse_stored_due, _states_match, replay_fsrs_from_revlog
 from app.srs.database import SRSDatabase
 from tests.conftest import seed_direction
 
@@ -544,7 +544,7 @@ class TestRebuildPreFSRS:
         ]
         anki, tt, card_id, row_id = _make_anki_linked_scenario(tmp_path, revlog_rows)
 
-        from app.anki.replay_fsrs_from_revlog import _has_pre_fsrs_rows
+        from app.plugins.anki_sync.replay_fsrs_from_revlog import _has_pre_fsrs_rows
 
         conn = _open_tt(tt)
         assert _has_pre_fsrs_rows(conn, row_id, "recognition")
@@ -790,7 +790,7 @@ class TestReplayScript:
         monkeypatch.setattr("app.config.settings.anki_collection_path", str(anki))
         monkeypatch.setattr("app.config.settings.database_url", f"sqlite:///{tt}")
 
-        from app.anki.replay_fsrs_from_revlog import main
+        from app.plugins.anki_sync.replay_fsrs_from_revlog import main
 
         assert main(["--dry-run"]) == 0
 
@@ -807,7 +807,7 @@ class TestReplayScript:
         monkeypatch.setattr("app.config.settings.anki_collection_path", str(anki))
         monkeypatch.setattr("app.config.settings.database_url", f"sqlite:///{tt}")
 
-        from app.anki.replay_fsrs_from_revlog import main
+        from app.plugins.anki_sync.replay_fsrs_from_revlog import main
 
         assert main(["--dry-run"]) == 0
         captured = capsys.readouterr()
@@ -820,7 +820,7 @@ class TestReplayScript:
         tt = _build_tt_db(tmp_path)
         seed_direction(SRSDatabase(str(tt)), text="test", anki_card_id=None)
 
-        caplog.set_level("WARNING", logger="app.anki.replay_fsrs_from_revlog")
+        caplog.set_level("WARNING", logger="app.plugins.anki_sync.replay_fsrs_from_revlog")
         replay_fsrs_from_revlog(tt, anki, dry_run=True)
 
         assert any("Using default FSRS params" in record.message for record in caplog.records), (
@@ -842,7 +842,7 @@ class TestReplayScript:
             json.dumps({"weights": list(_DEFAULT_WEIGHTS), "desired_retention": 0.9}),
         )
 
-        caplog.set_level("WARNING", logger="app.anki.replay_fsrs_from_revlog")
+        caplog.set_level("WARNING", logger="app.plugins.anki_sync.replay_fsrs_from_revlog")
         replay_fsrs_from_revlog(tt, anki, dry_run=True)
 
         assert not any("Using default FSRS params" in record.message for record in caplog.records), (

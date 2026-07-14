@@ -12,8 +12,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from app.anki.sqlite_reader import extract_translation
 from app.models.syntactic_unit import BackField
+from app.plugins.anki_sync.sqlite_reader import extract_translation
 from app.srs.anki_mirror.rollover import local_today_rollover
 
 KNOWN_ANKI_SCHEMA_VER = 18

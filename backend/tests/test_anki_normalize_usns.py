@@ -1,11 +1,11 @@
-"""Tests for app.anki.normalize_usns (post-full-upload USN repair)."""
+"""Tests for app.plugins.anki_sync.normalize_usns (post-full-upload USN repair)."""
 
 from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
 
-from app.anki.normalize_usns import normalize_usns
+from app.plugins.anki_sync.normalize_usns import normalize_usns
 
 
 def _build_db(
@@ -124,7 +124,7 @@ class TestNormalizeUsns:
         assert _read_usns(db_path, "revlog") == [(100, 7)]
 
     def test_uses_settings_defaults_when_args_are_none(self, tmp_path, monkeypatch):
-        import app.anki.normalize_usns as mod
+        import app.plugins.anki_sync.normalize_usns as mod
 
         db_path = _build_db(tmp_path, col_usn=0, cards=[(1, 5)], notes=[], revlog=[])
         backup_dir = tmp_path / "bak_settings"

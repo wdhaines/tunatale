@@ -14,7 +14,11 @@ from datetime import UTC, date, datetime, time
 
 from app.anki.media.vocab_media import safe_stem as _safe_stem
 from app.anki.media.vocab_media import store_tt_media as _store_tt_media
-from app.anki.sync_common import (
+from app.common.guid import compute_guid
+from app.config import settings
+from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
+from app.models.syntactic_unit import SyntacticUnit, serialize_extras
+from app.plugins.anki_sync.sync_common import (
     _FSRS_REPLAY_TOLERANCE,
     KNOWN_ANKI_SCHEMA_VER,
     CardRecord,
@@ -28,10 +32,6 @@ from app.anki.sync_common import (
     _local_today_4am,
     build_cloze_back_extra,
 )
-from app.common.guid import compute_guid
-from app.config import settings
-from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
-from app.models.syntactic_unit import SyntacticUnit, serialize_extras
 from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index
 from app.srs.database import SRSDatabase
 from app.srs.direction_fields import SYNC_COMPARABLE_MODEL_FIELDS
@@ -1068,7 +1068,7 @@ class AnkiSync:
 
     def sync_push(self, dry_run: bool = False, force_fsrs: bool = False) -> PushReport:
         # Deferred: lives in app.anki.sync so it reads the patched _MEDIA_DIR.
-        from app.anki.sync import _copy_tt_media_to_anki
+        from app.plugins.anki_sync.sync import _copy_tt_media_to_anki
 
         """Push TunaTale → Anki. Returns a PushReport summarising changes."""
         from app.srs.queue_stats import resolve_fsrs_params
@@ -1304,7 +1304,7 @@ class AnkiSync:
         _media_fn=None,
     ) -> CreateNewReport:
         # Deferred: lives in app.anki.sync so it reads the patched _MEDIA_DIR.
-        from app.anki.sync import _copy_tt_media_to_anki
+        from app.plugins.anki_sync.sync import _copy_tt_media_to_anki
 
         """Create Anki notes for SRS items that have no anki_note_id yet.
 

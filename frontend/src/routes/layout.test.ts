@@ -43,6 +43,7 @@ import Layout from "./+layout.svelte";
 
 const mockPeerSync = vi.mocked(api.peerSync);
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
+const mockGetLanguages = vi.mocked(api.getLanguages);
 
 const RESULT = {
   auth_success: true,
@@ -272,5 +273,37 @@ describe("root +layout.svelte", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(mockFetchQueueStats.mock.calls.length).toBe(callsBefore);
+  });
+
+  // ── sync_available (Stage 4 — anki_sync plugin capability gate) ───────────
+
+  it("hides the Sync button and review badge when the backend reports sync unavailable", async () => {
+    mockGetLanguages.mockResolvedValueOnce({ languages: [], active: "sl", sync_available: false });
+    mockFetchQueueStats.mockResolvedValue({
+      new: 5,
+      learning: 2,
+      review: 3,
+      daily_new_cap: 20,
+      cap_source: "cache",
+      fsrs_source: "cache",
+    });
+    const { queryByText, container } = renderLayout();
+    await waitFor(() => expect(queryByText("Sync to AnkiWeb")).toBeNull());
+    expect(container.querySelector(".review-badge")).toBeNull();
+  });
+
+  it("shows the Sync button and review badge when the backend reports sync available", async () => {
+    mockGetLanguages.mockResolvedValueOnce({ languages: [], active: "sl", sync_available: true });
+    mockFetchQueueStats.mockResolvedValue({
+      new: 5,
+      learning: 2,
+      review: 3,
+      daily_new_cap: 20,
+      cap_source: "cache",
+      fsrs_source: "cache",
+    });
+    const { findByText } = renderLayout();
+    await findByText("Sync to AnkiWeb");
+    expect(await findByText("5")).toBeTruthy();
   });
 });

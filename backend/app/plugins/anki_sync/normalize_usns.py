@@ -23,8 +23,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from app.anki.safety import safe_open
 from app.config import settings
+from app.plugins.anki_sync.safety import safe_open
 
 
 def normalize_usns(

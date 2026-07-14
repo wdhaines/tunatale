@@ -58,9 +58,13 @@ class Settings(BaseSettings):
     # SYNC_SOAK heartbeat + one RECOMPUTE_DIVERGENCE line per divergence.
     sync_log: Path = Path("~/.tunatale/logs/sync.log").expanduser()
 
-    # Peer-sync (anki subprocess) config — see sync_orchestrator.py.
+    # Peer-sync (anki subprocess) config — see sync_orchestrator.py. Also the
+    # master toggle main.py reads (alongside plugin importability) to decide
+    # whether to mount app.api.anki.router at all — defaults True to preserve
+    # the pre-Stage-4 behavior (the router was mounted unconditionally); set
+    # False to run TunaTale with the anki_sync plugin fully disabled.
     tt_collection_path: Path = Path("~/.tunatale/tt_collection.anki2").expanduser()
-    sync_enabled: bool = False
+    sync_enabled: bool = True
     sync_endpoint: str = ""  # "" → AnkiWeb default; else self-host URL
     sync_username: str = ""
     # AnkiWeb password. Prefer the macOS Keychain (see sync_keychain_service); this

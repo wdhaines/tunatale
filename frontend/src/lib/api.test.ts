@@ -1436,13 +1436,18 @@ describe("TunaTaleAPI language header", () => {
   it("getLanguages calls GET /api/languages", async () => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValue(mockOk({ languages: [{ code: "sl", name: "Slovene" }], active: "sl" })),
+      vi.fn().mockResolvedValue(
+        mockOk({
+          languages: [{ code: "sl", name: "Slovene" }],
+          active: "sl",
+          sync_available: true,
+        }),
+      ),
     );
     const result = await api.getLanguages();
     expect(fetch).toHaveBeenCalledWith(`${BASE}/api/languages`);
     expect(result.active).toBe("sl");
+    expect(result.sync_available).toBe(true);
   });
 });
 

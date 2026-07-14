@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from app.anki.sync import OfflineWriter
+from app.plugins.anki_sync.sync import OfflineWriter
 from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
 _REAL_BLOB = bytes.fromhex("18A12338ABA702")

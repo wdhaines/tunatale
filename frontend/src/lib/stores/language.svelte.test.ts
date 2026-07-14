@@ -71,4 +71,24 @@ describe("languageStore", () => {
     await languageStore.init();
     expect(languageStore.name).toBe("");
   });
+
+  // ── syncAvailable (Stage 4 — anki_sync plugin capability gate) ────────────
+
+  it("init sets syncAvailable false when the backend reports the plugin unavailable", async () => {
+    mockGet.mockResolvedValue({ ...TWO, sync_available: false });
+    await languageStore.init();
+    expect(languageStore.syncAvailable).toBe(false);
+  });
+
+  it("init sets syncAvailable true when the backend reports the plugin available", async () => {
+    mockGet.mockResolvedValue({ ...TWO, sync_available: true });
+    await languageStore.init();
+    expect(languageStore.syncAvailable).toBe(true);
+  });
+
+  it("init defaults syncAvailable to true when the backend is unreachable (fail open)", async () => {
+    mockGet.mockRejectedValue(new Error("down"));
+    await languageStore.init();
+    expect(languageStore.syncAvailable).toBe(true);
+  });
 });

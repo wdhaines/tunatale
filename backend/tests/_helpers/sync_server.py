@@ -28,8 +28,8 @@ from typing import Any
 import httpx
 import pytest
 
-from app.anki.sync_orchestrator import _anki_with_spec
 from app.config import settings
+from app.plugins.anki_sync.sync_orchestrator import _anki_with_spec
 
 _SYNC_USER1 = "tt-test:tt-test-pw"
 _SYNC_USERNAME = "tt-test"

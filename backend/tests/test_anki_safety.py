@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.anki.safety import safe_open
+from app.plugins.anki_sync.safety import safe_open
 
 
 class TestSafeOpen:
@@ -43,7 +43,7 @@ class TestSafeOpen:
         mock_copyfile.assert_not_called()
 
     def test_source_sha256_unchanged_after_exit(self, fake_anki_db, tmp_path):
-        from app.anki.safety import _sha256_file
+        from app.plugins.anki_sync.safety import _sha256_file
 
         pre = _sha256_file(fake_anki_db)
         with safe_open(fake_anki_db, backup_dir=tmp_path / "bak") as ctx:
@@ -70,7 +70,7 @@ class TestSafeOpen:
 
     def test_uses_settings_backup_dir_when_none_passed(self, fake_anki_db, tmp_path, monkeypatch):
         """When backup_dir=None, safe_open uses settings.anki_backup_dir."""
-        from app.anki import safety as safety_mod
+        from app.plugins.anki_sync import safety as safety_mod
 
         custom_dir = tmp_path / "custom_bak"
         fake_settings = type("S", (), {"anki_backup_dir": custom_dir})()
@@ -83,7 +83,7 @@ class TestSafeOpen:
         """SHA256 mismatch on context exit must raise RuntimeError, not just warn."""
         from unittest.mock import patch
 
-        from app.anki import safety
+        from app.plugins.anki_sync import safety
 
         call_count = [0]
 
@@ -102,7 +102,7 @@ class TestSafeOpen:
         """SHA256 mismatch prints a warning to stderr AND raises RuntimeError."""
         from unittest.mock import patch
 
-        from app.anki import safety
+        from app.plugins.anki_sync import safety
 
         call_count = [0]
 
@@ -130,7 +130,7 @@ class TestSafeOpen:
         """
         from datetime import datetime
 
-        from app.anki import safety as safety_mod
+        from app.plugins.anki_sync import safety as safety_mod
 
         fixed = datetime(2026, 5, 28, 22, 4, 34)
 
@@ -161,7 +161,7 @@ class TestSafeOpen:
         conn.execute("INSERT INTO notes VALUES (1)")
         conn.commit()
         conn.close()
-        from app.anki.safety import _validate_backup
+        from app.plugins.anki_sync.safety import _validate_backup
 
         with pytest.raises((RuntimeError, Exception)):
             _validate_backup(bak, source_note_count=99)  # mismatch: 1 vs 99
@@ -171,8 +171,8 @@ class TestSafeOpen:
         """_validate_backup deletes backup and raises when integrity_check returns non-ok."""
         from unittest.mock import MagicMock, patch
 
-        from app.anki import safety as safety_mod
-        from app.anki.safety import _validate_backup
+        from app.plugins.anki_sync import safety as safety_mod
+        from app.plugins.anki_sync.safety import _validate_backup
 
         bak = tmp_path / "bak.anki2"
         bak.write_bytes(b"placeholder")
@@ -192,7 +192,7 @@ class TestSafeOpen:
 
     def test_bad_backup_deleted_on_integrity_failure(self, fake_anki_db, tmp_path):
         """If the backup fails integrity_check, it is deleted and run aborts."""
-        from app.anki.safety import _validate_backup
+        from app.plugins.anki_sync.safety import _validate_backup
 
         bad = tmp_path / "bad.anki2"
         bad.write_bytes(b"not sqlite")
@@ -251,7 +251,7 @@ class TestBackupRetention:
             (d / f"{name}{sc}").write_bytes(b"")
 
     def test_keeps_n_most_recent_snapshots(self, tmp_path):
-        from app.anki.safety import _prune_old_backups
+        from app.plugins.anki_sync.safety import _prune_old_backups
 
         d = tmp_path / "bak"
         d.mkdir()
@@ -270,7 +270,7 @@ class TestBackupRetention:
         assert len(deleted) == 3
 
     def test_keep_ge_count_deletes_nothing(self, tmp_path):
-        from app.anki.safety import _prune_old_backups
+        from app.plugins.anki_sync.safety import _prune_old_backups
 
         d = tmp_path / "bak"
         d.mkdir()
@@ -280,7 +280,7 @@ class TestBackupRetention:
         assert len(list(d.glob("collection.anki2.bak_*"))) == 2
 
     def test_keep_zero_or_negative_disables_pruning(self, tmp_path):
-        from app.anki.safety import _prune_old_backups
+        from app.plugins.anki_sync.safety import _prune_old_backups
 
         d = tmp_path / "bak"
         d.mkdir()
@@ -290,7 +290,7 @@ class TestBackupRetention:
         assert len(list(d.glob("collection.anki2.bak_*"))) == 1
 
     def test_deletes_sidecars_of_pruned_keeps_sidecars_of_kept(self, tmp_path):
-        from app.anki.safety import _prune_old_backups
+        from app.plugins.anki_sync.safety import _prune_old_backups
 
         d = tmp_path / "bak"
         d.mkdir()
@@ -313,7 +313,7 @@ class TestBackupRetention:
         """A failed unlink must never propagate — the sync already succeeded."""
         import pathlib
 
-        from app.anki.safety import _prune_old_backups
+        from app.plugins.anki_sync.safety import _prune_old_backups
 
         d = tmp_path / "bak"
         d.mkdir()
@@ -330,7 +330,7 @@ class TestBackupRetention:
 
     def test_safe_open_prunes_to_keep_setting(self, fake_anki_db, tmp_path, monkeypatch):
         """End-to-end: repeated safe_open calls leave at most `anki_backup_keep` snapshots."""
-        from app.anki import safety as safety_mod
+        from app.plugins.anki_sync import safety as safety_mod
 
         monkeypatch.setattr(safety_mod.settings, "anki_backup_keep", 3, raising=False)
         backup_dir = tmp_path / "bak"
@@ -346,14 +346,14 @@ class TestBackupRetention:
 
 class TestProbeLock:
     def test_returns_false_when_lock_acquirable(self, fake_anki_db):
-        from app.anki.safety import probe_lock
+        from app.plugins.anki_sync.safety import probe_lock
 
         assert probe_lock(fake_anki_db) is False
 
     def test_returns_true_when_db_locked(self, fake_anki_db):
         import sqlite3
 
-        from app.anki.safety import probe_lock
+        from app.plugins.anki_sync.safety import probe_lock
 
         lock_conn = sqlite3.connect(str(fake_anki_db), timeout=0)
         lock_conn.execute("BEGIN EXCLUSIVE")
@@ -365,7 +365,7 @@ class TestProbeLock:
 
 
 def test_anki_running_error_is_runtime_error():
-    from app.anki.safety import AnkiRunningError
+    from app.plugins.anki_sync.safety import AnkiRunningError
 
     err = AnkiRunningError("test")
     assert isinstance(err, RuntimeError)

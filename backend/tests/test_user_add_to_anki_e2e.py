@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.anki.sync import AnkiSync
 from app.models.syntactic_unit import SyntacticUnit
+from app.plugins.anki_sync.sync import AnkiSync
 from app.srs.database import SRSDatabase
 
 

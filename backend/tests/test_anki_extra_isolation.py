@@ -23,7 +23,7 @@ def test_anki_not_imported_by_core():
         import app.api.srs
         import app.srs.fsrs
         import app.srs.queue_stats
-        import app.anki.sync
+        import app.plugins.anki_sync.sync
 
         assert "anki" not in sys.modules, (
             f"anki was transitively imported: {sys.modules.get('anki')}"

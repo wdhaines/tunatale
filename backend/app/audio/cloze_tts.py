@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 
 from app.anki.media.tts import generate_tts_audio
-from app.anki.sync import _safe_stem
+from app.anki.media.vocab_media import safe_stem
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ async def synthesize_cloze_audios(
         wrote_sentence = True
 
     # ── Word audio ──────────────────────────────────────────────────────
-    stem = _safe_stem(word, "tts")
+    stem = safe_stem(word, "tts")
     word_filename = f"{stem}.mp3"
     word_path = media_root / word_filename
 

@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-from app.anki.import_seed import import_seed
-from app.anki.safety import _sha256_file
+from app.plugins.anki_sync.import_seed import import_seed
+from app.plugins.anki_sync.safety import _sha256_file
 
 
 def _run(fake_anki_db, tmp_path, **kwargs):
@@ -312,7 +312,7 @@ class TestMissingCardDirection:
 class TestSettingsDefaults:
     def test_all_settings_defaults_used_when_none_passed(self, fake_anki_db, tmp_path, monkeypatch):
         """When all optional params are None, every setting is read from the settings object."""
-        from app.anki import import_seed as mod
+        from app.plugins.anki_sync import import_seed as mod
 
         fake_settings = type(
             "S",
@@ -896,7 +896,7 @@ class TestLanguageCode:
 class TestCLI:
     def test_cli_dry_run_prints_dry_run(self, fake_anki_db, tmp_path, monkeypatch, capsys):
         """_cli() runs without error in dry-run mode."""
-        from app.anki import import_seed as mod
+        from app.plugins.anki_sync import import_seed as mod
 
         monkeypatch.setattr("sys.argv", ["import_seed", "--dry-run"])
         monkeypatch.setattr(
@@ -916,7 +916,7 @@ class TestCLI:
 
     def test_cli_language_resolves_registered_deck(self, monkeypatch):
         """--language no resolves the Norwegian deck from the registry and threads the code."""
-        from app.anki import import_seed as mod
+        from app.plugins.anki_sync import import_seed as mod
 
         captured = {}
 
@@ -936,7 +936,7 @@ class TestCLI:
 class TestTransactionRollback:
     def test_exception_mid_import_rolls_back_all_writes(self, fake_anki_db, tmp_path):
         """A crash mid-import leaves TunaTale with zero rows written."""
-        from app.anki import sqlite_reader
+        from app.plugins.anki_sync import sqlite_reader
 
         call_count = [0]
         original_upsert_area = sqlite_reader.fetch_notes_for_deck
@@ -973,7 +973,7 @@ class TestRefreshMediaFromConn:
         """deck not found in the collection → early return, no media work."""
         from pathlib import Path
 
-        from app.anki.import_seed import refresh_media_from_conn
+        from app.plugins.anki_sync.import_seed import refresh_media_from_conn
         from app.srs.database import SRSDatabase
         from tests.test_anki_sync_create_new import _make_dual_collection_conn
 
@@ -995,9 +995,9 @@ class TestRefreshMediaFromConn:
         """refresh_media_from_conn processes linked notes and returns media dict."""
         from pathlib import Path
 
-        from app.anki.import_seed import refresh_media_from_conn
         from app.models.srs_item import Direction
         from app.models.syntactic_unit import SyntacticUnit
+        from app.plugins.anki_sync.import_seed import refresh_media_from_conn
         from app.srs.database import SRSDatabase
         from tests.test_anki_sync_create_new import _make_dual_collection_conn
 
@@ -1038,8 +1038,8 @@ class TestRefreshMediaFromConn:
         """refresh_media_from_conn skips notes not linked in TT."""
         from pathlib import Path
 
-        from app.anki.import_seed import refresh_media_from_conn
         from app.models.syntactic_unit import SyntacticUnit
+        from app.plugins.anki_sync.import_seed import refresh_media_from_conn
         from app.srs.database import SRSDatabase
         from tests.test_anki_sync_create_new import _make_dual_collection_conn
 

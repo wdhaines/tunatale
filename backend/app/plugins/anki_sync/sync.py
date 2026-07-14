@@ -20,80 +20,82 @@ from app.anki.media.vocab_media import store_tt_media as _store_tt_media  # noqa
 # archive scripts import these names from app.anki.sync). The redundant `X as X`
 # form marks them as explicit re-exports so ruff's F401 autofix never strips one
 # whose last in-module use moves out in a later split commit.
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     _FSRS_REPLAY_TOLERANCE as _FSRS_REPLAY_TOLERANCE,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     KNOWN_ANKI_SCHEMA_VER as KNOWN_ANKI_SCHEMA_VER,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     CardRecord as CardRecord,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     CreateNewReport as CreateNewReport,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     DuplicateNoteError as DuplicateNoteError,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     NoteRecord as NoteRecord,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     OrphanThresholdExceededError as OrphanThresholdExceededError,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     PullReport as PullReport,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     PushReport as PushReport,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     RecomputeDivergence as RecomputeDivergence,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     SyncConflict as SyncConflict,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     _local_today_4am as _local_today_4am,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     _ms_to_datetime as _ms_to_datetime,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     build_cloze_back_extra as build_cloze_back_extra,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     extract_cloze_note as extract_cloze_note,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     extract_cloze_sentence_translation as extract_cloze_sentence_translation,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     extract_cloze_translation as extract_cloze_translation,
 )
-from app.anki.sync_engine import (
+from app.plugins.anki_sync.sync_engine import (
     AnkiSync as AnkiSync,
 )
-from app.anki.sync_engine import (
+from app.plugins.anki_sync.sync_engine import (
     _derive_revlog_shape as _derive_revlog_shape,
 )
-from app.anki.sync_engine import (
+from app.plugins.anki_sync.sync_engine import (
     _direction_differs as _direction_differs,
 )
-from app.anki.sync_engine import (
+from app.plugins.anki_sync.sync_engine import (
     _resolve_introduced_at as _resolve_introduced_at,
 )
-from app.anki.sync_engine import (
+from app.plugins.anki_sync.sync_engine import (
     _step_minutes_from_left as _step_minutes_from_left,
 )
-from app.anki.sync_reader import OfflineReader as OfflineReader
-from app.anki.sync_writer import OfflineWriter as OfflineWriter
+from app.plugins.anki_sync.sync_reader import OfflineReader as OfflineReader
+from app.plugins.anki_sync.sync_writer import OfflineWriter as OfflineWriter
 from app.srs.database import SRSDatabase
 
 _log = logging.getLogger(__name__)
 
 
-_MEDIA_DIR = Path(__file__).parent.parent.parent / "media"
+# app/plugins/anki_sync/ is one level deeper than the pre-Stage-4 app/anki/,
+# hence the extra .parent to still land on backend/media.
+_MEDIA_DIR = Path(__file__).parent.parent.parent.parent / "media"
 
 
 def _copy_tt_media_to_anki(writer: OfflineWriter, filename: str) -> None:
@@ -276,7 +278,7 @@ async def run_full_sync(
         # swapped in Anki shows up in TunaTale. Peer path only (media_dir set);
         # source = where the pulled media lives, dest = _MEDIA_DIR (frontend).
         if media_dir is not None:
-            from app.anki.import_seed import refresh_media_from_conn
+            from app.plugins.anki_sync.import_seed import refresh_media_from_conn
 
             media_report = refresh_media_from_conn(
                 conn,
@@ -309,8 +311,8 @@ def _resolve_model_name(_s, code: str, conn, deck_name: str) -> str:
     notetype discovery would return) > deck-discovered model (the Slovene case,
     where deck notetype == mint notetype).
     """
-    from app.anki import model_discovery
     from app.languages import get_vocab_notetype
+    from app.plugins.anki_sync import model_discovery
 
     vocab = get_vocab_notetype(code)
     return (
@@ -333,8 +335,8 @@ def main(
     import argparse
     import sys
 
-    from app.anki.safety import safe_open
     from app.config import settings as _default_settings
+    from app.plugins.anki_sync.safety import safe_open
 
     _s = _settings if _settings is not None else _default_settings
     _so = _safe_open_fn if _safe_open_fn is not None else safe_open

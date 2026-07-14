@@ -17,8 +17,8 @@ from __future__ import annotations
 import dataclasses
 from datetime import UTC, datetime, timedelta
 
-from app.anki.sync import _direction_differs
 from app.models.srs_item import Direction, DirectionState, SRSState
+from app.plugins.anki_sync.sync import _direction_differs
 from app.srs.database import SRSDatabase
 from app.srs.db_base import _DIR_COLUMNS
 from app.srs.direction_fields import (

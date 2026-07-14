@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from app.anki.sqlite_reader import (
+from app.models.syntactic_unit import BackField
+from app.plugins.anki_sync.sqlite_reader import (
     extract_disambig_from_fields,
     extract_l2_from_fields,
     extract_translation,
@@ -17,7 +18,7 @@ from app.anki.sqlite_reader import (
     fetch_notes_for_deck,
     find_deck_id,
 )
-from app.anki.sync_common import (
+from app.plugins.anki_sync.sync_common import (
     CardRecord,
     NoteRecord,
     _ms_to_datetime,
@@ -25,7 +26,6 @@ from app.anki.sync_common import (
     extract_cloze_sentence_translation,
     extract_cloze_translation,
 )
-from app.models.syntactic_unit import BackField
 
 
 class OfflineReader:

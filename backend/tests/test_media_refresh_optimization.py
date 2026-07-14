@@ -245,7 +245,7 @@ class TestHashSkip:
         with different content but restore the original (st_mtime_ns, size) via
         os.utime and same-length content. Refresh again → reports unchanged.
         """
-        from app.anki.import_seed import _refresh_media_for_collocation
+        from app.plugins.anki_sync.import_seed import _refresh_media_for_collocation
 
         # Setup
         media_dir = tmp_path / "tt_media"
@@ -303,7 +303,7 @@ class TestHashSkip:
 
     def test_null_mtime_warmup_stamps_on_matching_sha(self, tmp_path):
         """Row with NULL mtime_ns but matching sha → unchanged count + mtime_ns stamped."""
-        from app.anki.import_seed import _refresh_media_for_collocation
+        from app.plugins.anki_sync.import_seed import _refresh_media_for_collocation
 
         media_dir = tmp_path / "tt_media"
         media_dir.mkdir()
@@ -347,7 +347,7 @@ class TestHashSkip:
 
     def test_changed_content_detected_after_mtime_match(self, tmp_path):
         """When content changes AND mtime changes, hash is computed and update happens."""
-        from app.anki.import_seed import _refresh_media_for_collocation
+        from app.plugins.anki_sync.import_seed import _refresh_media_for_collocation
 
         media_dir = tmp_path / "tt_media"
         media_dir.mkdir()
@@ -474,9 +474,9 @@ class TestRefreshMediaBatchPreload:
 
     def test_process_linked_notes_with_preload(self, tmp_path):
         """refresh_media_from_conn processes linked notes and handles media correctly."""
-        from app.anki.import_seed import refresh_media_from_conn
         from app.models.srs_item import Direction
         from app.models.syntactic_unit import SyntacticUnit
+        from app.plugins.anki_sync.import_seed import refresh_media_from_conn
         from tests.test_anki_sync_create_new import _make_dual_collection_conn
 
         anki_dir = tmp_path / "anki_media"
@@ -523,7 +523,7 @@ class TestRefreshMediaBatchPreload:
         """import_seed's internal call to _refresh_media_for_collocation works
         with the batch preload dict.
         """
-        from app.anki.import_seed import _refresh_media_for_collocation
+        from app.plugins.anki_sync.import_seed import _refresh_media_for_collocation
 
         anki_dir = tmp_path / "anki_media"
         anki_dir.mkdir()

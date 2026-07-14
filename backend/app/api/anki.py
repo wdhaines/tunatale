@@ -55,7 +55,7 @@ async def trigger_peer_sync(request: Request, dry_run: bool = False):
     """
     from fastapi.concurrency import run_in_threadpool
 
-    from app.anki.sync_orchestrator import PeerSyncError, peer_sync
+    from app.plugins.anki_sync.sync_orchestrator import PeerSyncError, peer_sync
 
     db = request.state.srs_db
     llm = getattr(request.app.state, "llm", None)

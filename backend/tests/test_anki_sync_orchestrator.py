@@ -1,4 +1,4 @@
-"""Tests for app.anki.sync_orchestrator (peer-sync bracket).
+"""Tests for app.plugins.anki_sync.sync_orchestrator (peer-sync bracket).
 
 Covers both Phase 3 (bracket orchestration) and Phase 5 (retargeting).
 """
@@ -13,9 +13,9 @@ from unittest.mock import patch
 
 import pytest
 
-from app.anki.sync_orchestrator import PeerSyncError, bootstrap_collection, main_cli, peer_sync
 from app.config import settings
 from app.models.syntactic_unit import SyntacticUnit
+from app.plugins.anki_sync.sync_orchestrator import PeerSyncError, bootstrap_collection, main_cli, peer_sync
 
 AUTH_RESPONSE = {"hkey": "test-hkey", "endpoint": "http://localhost:8080/"}
 NORMAL_SYNC = {"required": 1, "server_message": "OK"}
@@ -33,7 +33,7 @@ def _mock_run(data: dict) -> subprocess.CompletedProcess:
 def _clear_auth_cache():
     """The hkey cache and driver process are process-globals; reset them around every
     test so login expectations (subprocess counts) don't leak between cases."""
-    import app.anki.sync_orchestrator as so
+    import app.plugins.anki_sync.sync_orchestrator as so
 
     so._AUTH_CACHE = None
     # Kill any leftover persistent driver process from a prior test.
@@ -48,7 +48,7 @@ def _clear_auth_cache():
 class TestPeerSync:
     def test_tt_settings_retargets_path(self):
         """_tt_settings clones settings with anki_collection_path = tt_collection_path."""
-        from app.anki.sync_orchestrator import _tt_settings
+        from app.plugins.anki_sync.sync_orchestrator import _tt_settings
 
         s = _tt_settings()
         assert s.anki_collection_path == settings.tt_collection_path
@@ -64,7 +64,7 @@ class TestPeerSync:
         'legacy'). _tt_settings must hand main() an absolute, CWD-independent path.
         """
 
-        from app.anki.sync_orchestrator import _tt_settings
+        from app.plugins.anki_sync.sync_orchestrator import _tt_settings
 
         monkeypatch.setattr(settings, "database_url", "sqlite:///./tunatale.db")
         path = _tt_settings().database_url.removeprefix("sqlite:///")
@@ -81,7 +81,7 @@ class TestPeerSync:
     )
     def test_tt_settings_leaves_cwd_independent_db_untouched(self, monkeypatch, url):
         """Already-absolute, in-memory, and non-sqlite URLs are passed through verbatim."""
-        from app.anki.sync_orchestrator import _tt_settings
+        from app.plugins.anki_sync.sync_orchestrator import _tt_settings
 
         monkeypatch.setattr(settings, "database_url", url)
         assert _tt_settings().database_url == url
@@ -96,7 +96,7 @@ class TestPeerSync:
         reconcile pushed the Norwegian deck/db. _tt_settings(code) must pick the
         per-language db + deck so the active language is the one that syncs.
         """
-        from app.anki.sync_orchestrator import _tt_settings
+        from app.plugins.anki_sync.sync_orchestrator import _tt_settings
 
         monkeypatch.setattr(
             settings,
@@ -110,7 +110,7 @@ class TestPeerSync:
 
     def test_tt_settings_unknown_or_none_language_uses_default(self, monkeypatch):
         """None (CLI path) or an unconfigured code falls back to the default db + deck."""
-        from app.anki.sync_orchestrator import _tt_settings
+        from app.plugins.anki_sync.sync_orchestrator import _tt_settings
 
         monkeypatch.setattr(settings, "database_urls", {"sl": "sqlite:///./tunatale_sl.db"})
         monkeypatch.setattr(settings, "database_url", "sqlite:///./tunatale_sl.db")
@@ -122,7 +122,7 @@ class TestPeerSync:
 
     def test_anki_with_spec(self):
         """Empty version → bare 'anki' (never a malformed 'anki=='); set → pinned."""
-        from app.anki.sync_orchestrator import _anki_with_spec
+        from app.plugins.anki_sync.sync_orchestrator import _anki_with_spec
 
         with patch.object(settings, "anki_pkg_version", ""):
             assert _anki_with_spec() == "anki"
@@ -184,14 +184,14 @@ class TestCurDeckMirror:
     # ── _read_real_curdeck ────────────────────────────────────────────────────
 
     def test_reads_curdeck_value(self, tmp_path):
-        from app.anki.sync_orchestrator import _read_real_curdeck
+        from app.plugins.anki_sync.sync_orchestrator import _read_real_curdeck
 
         real = tmp_path / "real.anki2"
         _make_collection_with_curdeck(real, val=NORWEGIAN_DECK)
         assert _read_real_curdeck(real) == NORWEGIAN_DECK
 
     def test_missing_collection_reads_none(self, tmp_path):
-        from app.anki.sync_orchestrator import _read_real_curdeck
+        from app.plugins.anki_sync.sync_orchestrator import _read_real_curdeck
 
         assert _read_real_curdeck(tmp_path / "absent.anki2") is None
 
@@ -199,7 +199,7 @@ class TestCurDeckMirror:
         """config table present but no curDeck row → None (user never selected a deck)."""
         import sqlite3
 
-        from app.anki.sync_orchestrator import _read_real_curdeck
+        from app.plugins.anki_sync.sync_orchestrator import _read_real_curdeck
 
         real = tmp_path / "real.anki2"
         con = sqlite3.connect(real)
@@ -210,7 +210,7 @@ class TestCurDeckMirror:
 
     def test_unreadable_collection_reads_none(self, tmp_path):
         """A present-but-unusable collection (no config table) is swallowed → None."""
-        from app.anki.sync_orchestrator import _read_real_curdeck
+        from app.plugins.anki_sync.sync_orchestrator import _read_real_curdeck
 
         garbage = tmp_path / "garbage.anki2"
         garbage.write_bytes(b"not a sqlite database")
@@ -226,7 +226,7 @@ class TestCurDeckMirror:
         import sqlite3
         import time as _time
 
-        from app.anki.sync_orchestrator import _read_real_curdeck
+        from app.plugins.anki_sync.sync_orchestrator import _read_real_curdeck
 
         real = tmp_path / "real.anki2"
         _make_collection_with_curdeck(real, val=SLOVENE_DECK)
@@ -234,7 +234,7 @@ class TestCurDeckMirror:
         holder.execute("BEGIN EXCLUSIVE")
         try:
             t0 = _time.monotonic()
-            with caplog.at_level(logging.WARNING, logger="app.anki.sync_orchestrator"):
+            with caplog.at_level(logging.WARNING, logger="app.plugins.anki_sync.sync_orchestrator"):
                 assert _read_real_curdeck(real) is None
             assert _time.monotonic() - t0 < 2.0, "must fail fast, not wait out the 5s default timeout"
             assert "curDeck mirror" in caplog.text
@@ -245,7 +245,7 @@ class TestCurDeckMirror:
     # ── _mirror_real_curdeck_into_tt ──────────────────────────────────────────
 
     def test_mirror_copies_real_value_into_tt(self, tmp_path):
-        from app.anki.sync_orchestrator import _mirror_real_curdeck_into_tt
+        from app.plugins.anki_sync.sync_orchestrator import _mirror_real_curdeck_into_tt
 
         real, tt = tmp_path / "real.anki2", tmp_path / "tt.anki2"
         _make_collection_with_curdeck(real, val=SLOVENE_DECK)
@@ -267,7 +267,7 @@ class TestCurDeckMirror:
         """
         import time
 
-        from app.anki.sync_orchestrator import _mirror_real_curdeck_into_tt
+        from app.plugins.anki_sync.sync_orchestrator import _mirror_real_curdeck_into_tt
 
         real, tt = tmp_path / "real.anki2", tmp_path / "tt.anki2"
         _make_collection_with_curdeck(real, val=SLOVENE_DECK)
@@ -281,7 +281,7 @@ class TestCurDeckMirror:
 
     def test_mirror_noop_when_real_absent(self, tmp_path):
         """No real value → TT's curDeck is left untouched (not blanked)."""
-        from app.anki.sync_orchestrator import _mirror_real_curdeck_into_tt
+        from app.plugins.anki_sync.sync_orchestrator import _mirror_real_curdeck_into_tt
 
         tt = tmp_path / "tt.anki2"
         _make_collection_with_curdeck(tt, val=NORWEGIAN_DECK)
@@ -290,7 +290,7 @@ class TestCurDeckMirror:
 
     def test_mirror_noop_when_tt_absent(self, tmp_path):
         """Real value present but no TT collection → silent no-op (does not raise)."""
-        from app.anki.sync_orchestrator import _mirror_real_curdeck_into_tt
+        from app.plugins.anki_sync.sync_orchestrator import _mirror_real_curdeck_into_tt
 
         real = tmp_path / "real.anki2"
         _make_collection_with_curdeck(real, val=SLOVENE_DECK)
@@ -303,7 +303,7 @@ class TestCurDeckMirror:
         import sqlite3
         import time as _time
 
-        from app.anki.sync_orchestrator import _mirror_real_curdeck_into_tt
+        from app.plugins.anki_sync.sync_orchestrator import _mirror_real_curdeck_into_tt
 
         real, tt = tmp_path / "real.anki2", tmp_path / "tt.anki2"
         _make_collection_with_curdeck(real, val=SLOVENE_DECK)
@@ -312,7 +312,7 @@ class TestCurDeckMirror:
         holder.execute("BEGIN EXCLUSIVE")
         try:
             t0 = _time.monotonic()
-            with caplog.at_level(logging.WARNING, logger="app.anki.sync_orchestrator"):
+            with caplog.at_level(logging.WARNING, logger="app.plugins.anki_sync.sync_orchestrator"):
                 _mirror_real_curdeck_into_tt(real, tt)  # must not raise
             assert _time.monotonic() - t0 < 2.0
             assert "curDeck mirror" in caplog.text
@@ -343,14 +343,14 @@ def _make_tt_collection(path, *, pending: bool = False, curdeck_val: bytes = NOR
 
 class TestHasPendingPush:
     def test_pending_row_is_true(self, tmp_path):
-        from app.anki.sync_orchestrator import _has_pending_push
+        from app.plugins.anki_sync.sync_orchestrator import _has_pending_push
 
         col = tmp_path / "tt.anki2"
         _make_tt_collection(col, pending=True)
         assert _has_pending_push(col) is True
 
     def test_clean_collection_is_false(self, tmp_path):
-        from app.anki.sync_orchestrator import _has_pending_push
+        from app.plugins.anki_sync.sync_orchestrator import _has_pending_push
 
         col = tmp_path / "tt.anki2"
         _make_tt_collection(col, pending=False)
@@ -358,13 +358,13 @@ class TestHasPendingPush:
 
     def test_missing_file_is_true(self, tmp_path):
         """Unknown → push (safe default)."""
-        from app.anki.sync_orchestrator import _has_pending_push
+        from app.plugins.anki_sync.sync_orchestrator import _has_pending_push
 
         assert _has_pending_push(tmp_path / "absent.anki2") is True
 
     def test_unreadable_is_true(self, tmp_path):
         """A collection missing the synced tables → push (safe default), never crash."""
-        from app.anki.sync_orchestrator import _has_pending_push
+        from app.plugins.anki_sync.sync_orchestrator import _has_pending_push
 
         col = tmp_path / "tt.anki2"
         _make_collection_with_curdeck(col, val=NORWEGIAN_DECK)  # config only, no cards table
@@ -374,7 +374,7 @@ class TestHasPendingPush:
 class TestDriverInvalidJson:
     def test_non_json_output_raises(self):
         """Non-JSON driver output surfaces as PeerSyncError."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         # Patch _driver_cmd so both the initial and retry spawns use a fake
         # that writes non-JSON to stdout.  Without this, the retry would
@@ -402,7 +402,7 @@ class TestDriverInvalidJson:
 
 def _run_driver_wrapper(command: dict) -> dict:
     """Thin wrapper so test can import the private function."""
-    from app.anki.sync_orchestrator import _run_driver
+    from app.plugins.anki_sync.sync_orchestrator import _run_driver
 
     return _run_driver(command)
 
@@ -411,7 +411,7 @@ class TestCli:
     def test_bootstrap_flag(self):
         """CLI --bootstrap calls bootstrap_collection."""
         with (
-            patch("app.anki.sync_orchestrator.bootstrap_collection") as mock_bootstrap,
+            patch("app.plugins.anki_sync.sync_orchestrator.bootstrap_collection") as mock_bootstrap,
             patch("sys.argv", ["prog", "--bootstrap"]),
         ):
             main_cli()
@@ -421,7 +421,7 @@ class TestCli:
     def test_dry_run_flag(self):
         """CLI --dry-run calls peer_sync(dry_run=True)."""
         with (
-            patch("app.anki.sync_orchestrator.peer_sync", return_value=_make_report()) as mock_sync,
+            patch("app.plugins.anki_sync.sync_orchestrator.peer_sync", return_value=_make_report()) as mock_sync,
             patch("sys.argv", ["prog", "--dry-run"]),
         ):
             main_cli()
@@ -431,7 +431,7 @@ class TestCli:
     def test_default_routing(self):
         """CLI with no flags calls peer_sync(dry_run=False)."""
         with (
-            patch("app.anki.sync_orchestrator.peer_sync", return_value=_make_report()) as mock_sync,
+            patch("app.plugins.anki_sync.sync_orchestrator.peer_sync", return_value=_make_report()) as mock_sync,
             patch("sys.argv", ["prog"]),
         ):
             main_cli()
@@ -440,7 +440,7 @@ class TestCli:
 
 
 def _make_report(**overrides):
-    from app.anki.sync_orchestrator import PeerSyncReport
+    from app.plugins.anki_sync.sync_orchestrator import PeerSyncReport
 
     defaults = PeerSyncReport()
     return PeerSyncReport(**{**defaults.__dict__, **overrides})
@@ -449,7 +449,7 @@ def _make_report(**overrides):
 class TestBootstrap:
     def test_bootstrap_creates_and_downloads(self, tmp_path, monkeypatch):
         """bootstrap_collection creates collection + full_downloads when file missing."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         collection_path = tmp_path / "tt_collection.anki2"
         assert not collection_path.exists()
@@ -474,7 +474,7 @@ class TestBootstrap:
 
     def test_bootstrap_skips_create_when_exists(self, tmp_path, monkeypatch):
         """bootstrap_collection skips create when file already exists."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         collection_path = tmp_path / "tt_collection.anki2"
         collection_path.touch()
@@ -497,67 +497,69 @@ class TestBootstrap:
 
 class TestSyncPassword:
     def test_keychain_password_found(self):
-        from app.anki.sync_orchestrator import _keychain_password
+        from app.plugins.anki_sync.sync_orchestrator import _keychain_password
 
         with patch(
-            "app.anki.sync_orchestrator.subprocess.run",
+            "app.plugins.anki_sync.sync_orchestrator.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="hunter2\n", stderr=""),
         ) as mock_run:
             assert _keychain_password("svc", "acct") == "hunter2"
         assert mock_run.call_args.args[0][0] == "security"
 
     def test_keychain_password_not_found(self):
-        from app.anki.sync_orchestrator import _keychain_password
+        from app.plugins.anki_sync.sync_orchestrator import _keychain_password
 
         with patch(
-            "app.anki.sync_orchestrator.subprocess.run",
+            "app.plugins.anki_sync.sync_orchestrator.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=44, stdout="", stderr="not found"),
         ):
             assert _keychain_password("svc", "acct") is None
 
     def test_keychain_password_empty_stdout(self):
-        from app.anki.sync_orchestrator import _keychain_password
+        from app.plugins.anki_sync.sync_orchestrator import _keychain_password
 
         with patch(
-            "app.anki.sync_orchestrator.subprocess.run",
+            "app.plugins.anki_sync.sync_orchestrator.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="\n", stderr=""),
         ):
             assert _keychain_password("svc", "acct") is None
 
     def test_keychain_password_security_unavailable(self):
-        from app.anki.sync_orchestrator import _keychain_password
+        from app.plugins.anki_sync.sync_orchestrator import _keychain_password
 
-        with patch("app.anki.sync_orchestrator.subprocess.run", side_effect=FileNotFoundError):
+        with patch("app.plugins.anki_sync.sync_orchestrator.subprocess.run", side_effect=FileNotFoundError):
             assert _keychain_password("svc", "acct") is None
 
     def test_resolve_prefers_env_over_keychain(self):
-        from app.anki.sync_orchestrator import _resolve_sync_password
+        from app.plugins.anki_sync.sync_orchestrator import _resolve_sync_password
 
         with (
             patch.object(settings, "sync_password", "from-env"),
-            patch("app.anki.sync_orchestrator._keychain_password") as mock_kc,
+            patch("app.plugins.anki_sync.sync_orchestrator._keychain_password") as mock_kc,
         ):
             assert _resolve_sync_password() == "from-env"
             mock_kc.assert_not_called()
 
     def test_resolve_falls_back_to_keychain(self):
-        from app.anki.sync_orchestrator import _resolve_sync_password
+        from app.plugins.anki_sync.sync_orchestrator import _resolve_sync_password
 
         with (
             patch.object(settings, "sync_password", ""),
             patch.object(settings, "sync_username", "me@example.com"),
             patch.object(settings, "sync_keychain_service", "svc"),
-            patch("app.anki.sync_orchestrator._keychain_password", return_value="from-keychain") as mock_kc,
+            patch(
+                "app.plugins.anki_sync.sync_orchestrator._keychain_password", return_value="from-keychain"
+            ) as mock_kc,
         ):
             assert _resolve_sync_password() == "from-keychain"
             mock_kc.assert_called_once_with("svc", "me@example.com")
 
     def test_resolve_missing_raises(self):
-        from app.anki.sync_orchestrator import _resolve_sync_password
+        from app.plugins.anki_sync.sync_orchestrator import _resolve_sync_password
 
         with (
             patch.object(settings, "sync_password", ""),
-            patch("app.anki.sync_orchestrator._keychain_password", return_value=None),
+            patch("app.plugins.anki_sync.sync_orchestrator._keychain_password", return_value=None),
             pytest.raises(PeerSyncError, match="No AnkiWeb password"),
         ):
             _resolve_sync_password()
@@ -607,7 +609,7 @@ def fake_driver(monkeypatch):
 
     Yields the op log (a list of commands received) for assertion use.
     """
-    import app.anki.sync_orchestrator as so
+    import app.plugins.anki_sync.sync_orchestrator as so
 
     op_log: list[dict] = []
 
@@ -661,8 +663,8 @@ class TestSociableSync:
         assert item is not None
         assert item.anki_note_id is not None, f"Expected anki_note_id for {text}, got None"
 
-        from app.anki.safety import safe_open
-        from app.anki.sync import OfflineReader
+        from app.plugins.anki_sync.safety import safe_open
+        from app.plugins.anki_sync.sync import OfflineReader
 
         with safe_open(settings.tt_collection_path, mode="ro") as ctx:
             reader = OfflineReader(ctx.conn, settings.anki_deck_name)
@@ -701,8 +703,8 @@ class TestSociableSync:
         item = db.get_collocation(text)
         assert item is not None
         assert item.anki_note_id is not None
-        from app.anki.safety import safe_open
-        from app.anki.sync import OfflineReader
+        from app.plugins.anki_sync.safety import safe_open
+        from app.plugins.anki_sync.sync import OfflineReader
 
         with safe_open(settings.tt_collection_path, mode="ro") as ctx:
             reader = OfflineReader(ctx.conn, settings.anki_deck_name)
@@ -818,7 +820,7 @@ class TestSociableSync:
     @pytest.mark.parametrize("response", [FULL_SYNC, FULL_DOWNLOAD, FULL_UPLOAD])
     def test_pull_full_sync_variants_abort(self, monkeypatch, response):
         """Any full-sync-required code on pull aborts before TT reconcile."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         op_log: list[dict] = []
 
@@ -849,7 +851,7 @@ class TestSociableSync:
         con.commit()
         con.close()
 
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         op_log: list[dict] = []
         responses = iter([AUTH_RESPONSE, NORMAL_SYNC, {"pending": 0}, FULL_SYNC])
@@ -865,7 +867,7 @@ class TestSociableSync:
 
     def test_full_sync_error_message_is_actionable(self):
         """The FULL_SYNC abort names the cause and the exact bootstrap fix command."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         msg = str(so._full_sync_error("pull", 2, "please full-sync"))
         assert "FULL_SYNC" in msg  # kept so existing match= assertions still fire
@@ -876,7 +878,7 @@ class TestSociableSync:
 
     def test_full_sync_error_omits_server_message_when_blank(self):
         """No dangling 'Server message:' when the server sent none."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         msg = str(so._full_sync_error("push", 4, ""))
         assert "Server message:" not in msg
@@ -888,7 +890,7 @@ class TestSociableSync:
 
     def test_driver_error_surfaces(self, monkeypatch):
         """Driver error surfaces as PeerSyncError."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         def _fake_driver(command: dict, timeout: int = 120) -> dict:
             raise PeerSyncError("Driver error: collection not found")
@@ -900,7 +902,7 @@ class TestSociableSync:
 
     def test_login_error(self, monkeypatch):
         """Login failure surfaces as PeerSyncError."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         def _fake(command: dict, timeout: int = 120) -> dict:
             if command.get("op") == "login":
@@ -970,7 +972,7 @@ class TestSociableSync:
     @pytest.mark.usefixtures("sociable_tt_collection")
     def test_stale_cached_auth_relogins_and_retries(self, monkeypatch):
         """A cached hkey the server rejects on the pull → re-login + retry once."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         so._AUTH_CACHE = {"hkey": "stale-key", "endpoint": "http://localhost:8080/"}
 
@@ -1000,7 +1002,7 @@ class TestSociableSync:
 
     def test_fresh_auth_failure_not_retried(self, monkeypatch):
         """A pull failure on a *fresh* (uncached) login isn't an expiry → no retry."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         op_log: list[dict] = []
 
@@ -1175,7 +1177,7 @@ class TestSociableSync:
 
     def test_no_timing_log_on_pull_abort(self, monkeypatch):
         """A full-sync abort raises before any timing line is written."""
-        import app.anki.sync_orchestrator as so
+        import app.plugins.anki_sync.sync_orchestrator as so
 
         def _fake(command: dict, timeout: int = 120) -> dict:
             if command.get("op") == "login":
@@ -1214,7 +1216,7 @@ class TestMediaDirResolution:
     """
 
     def _cfg(self, monkeypatch, real, tt_col):
-        from app.anki import sync_orchestrator as so
+        from app.plugins.anki_sync import sync_orchestrator as so
 
         monkeypatch.setattr(so.settings, "anki_media_path", real)
         monkeypatch.setattr(so.settings, "tt_collection_path", tt_col)

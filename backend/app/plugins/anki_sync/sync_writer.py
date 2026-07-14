@@ -12,9 +12,9 @@ import sqlite3
 import time as _time
 from pathlib import Path
 
-from app.anki.sqlite_reader import find_deck_id
-from app.anki.sync_common import DuplicateNoteError
 from app.common.guid import compute_guid
+from app.plugins.anki_sync.sqlite_reader import find_deck_id
+from app.plugins.anki_sync.sync_common import DuplicateNoteError
 from app.srs.anki_mirror.protobuf_wire import (
     find_varint_field,
     pb_remove_field,

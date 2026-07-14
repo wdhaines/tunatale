@@ -35,8 +35,9 @@ from app.config import settings
 _DRIVER_PATH = str(Path(__file__).with_name("sync_driver.py"))
 
 # backend/ — the directory the server runs from (start-dev.sh `cd backend`) and the
-# anchor for the default CWD-relative `sqlite:///./tunatale.db`. From app/anki/.
-_BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+# anchor for the default CWD-relative `sqlite:///./tunatale.db`. From
+# app/plugins/anki_sync/ (one level deeper than the pre-Stage-4 app/anki/).
+_BACKEND_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
 # ── Persistent driver process ────────────────────────────────────────────────
 _DRIVER_PROC: subprocess.Popen | None = None
@@ -596,7 +597,7 @@ def peer_sync(dry_run: bool = False, *, media_fn=None, language_code: str | None
     if _full_sync_required(sync_out.get("required")):
         raise _full_sync_error("pull", sync_out.get("required"), sync_out.get("server_message", ""))
 
-    from app.anki.sync import main as tt_sync_main
+    from app.plugins.anki_sync.sync import main as tt_sync_main
 
     t0 = time.perf_counter()
     report.tt_push_pull_exit = tt_sync_main(

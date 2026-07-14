@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Anki sync engine. Optional + sync-only: imported ONLY in app/anki/sync_driver.py,
+# Anki sync engine. Optional + sync-only: imported ONLY in app/plugins/anki_sync/sync_driver.py,
 # which runs in a `uv run --with anki` subprocess. A no-sync user never installs it;
 # neither a plain `uv sync` nor `--all-groups` pulls it (extra, not group). The
 # runtime version is pinned via the `anki_pkg_version` setting (empty → latest), not
@@ -148,7 +148,7 @@ omit = [
     # scripts/anki_archive/ (outside source=["app"]), so they need no omit here.
     # See scripts/anki_archive/__init__.py.
     "app/srs/build_function_word_list.py",
-    "app/anki/sync_driver.py",
+    "app/plugins/anki_sync/sync_driver.py",
     # CLI audio-preview glue: pure TTS-process + filesystem I/O. Testable logic
     # lives in norwegian_breakdown / breakdown_preview (both fully covered).
     "app/generation/breakdown_audio.py",

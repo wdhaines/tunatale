@@ -9,6 +9,11 @@ import { api, LANGUAGE_STORAGE_KEY, type LanguageOption } from "$lib/api";
 function createLanguageStore() {
   let code = $state<string>("");
   let options = $state<LanguageOption[]>([]);
+  // Whether the backend's anki_sync plugin is available (Stage 4 capability
+  // gate). Defaults true (fail open) so the Sync button/review badge don't
+  // flicker hidden before the first successful /api/languages response, and
+  // stay shown if the backend is briefly unreachable.
+  let syncAvailable = $state<boolean>(true);
 
   function set(next: string): void {
     code = next;
@@ -25,6 +30,7 @@ function createLanguageStore() {
       const codes = resp.languages.map((l) => l.code);
       code = stored && codes.includes(stored) ? stored : resp.active;
       localStorage.setItem(LANGUAGE_STORAGE_KEY, code);
+      syncAvailable = resp.sync_available ?? true;
     } catch {
       // Backend unreachable — fall back to the stored choice (or empty → default).
       code = stored ?? "";
@@ -40,6 +46,9 @@ function createLanguageStore() {
     },
     get name(): string {
       return options.find((l) => l.code === code)?.name ?? "";
+    },
+    get syncAvailable(): boolean {
+      return syncAvailable;
     },
     init,
     set,

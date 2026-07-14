@@ -13,7 +13,7 @@ import sqlite3
 
 import pytest
 
-from app.anki.safety import safe_open
+from app.plugins.anki_sync.safety import safe_open
 
 
 class TestSafeOpenRWMode:
@@ -26,7 +26,7 @@ class TestSafeOpenRWMode:
 
     def test_rw_mode_skips_post_run_sha256_check(self, fake_anki_db, tmp_path):
         """Modifying the source in rw mode must NOT raise on context exit."""
-        from app.anki.safety import _sha256_file
+        from app.plugins.anki_sync.safety import _sha256_file
 
         pre = _sha256_file(fake_anki_db)
         with safe_open(fake_anki_db, backup_dir=tmp_path / "bak", mode="rw") as ctx:
