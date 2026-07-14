@@ -70,9 +70,16 @@ class Settings(BaseSettings):
     # (account = sync_username). Store it with:
     #   security add-generic-password -s tunatale-ankiweb -a <username> -w
     sync_keychain_service: str = "tunatale-ankiweb"
-    # Optional pin for the sync subprocess (`uv run --with anki==X`). Empty → latest
-    # anki. Set to match your desktop Anki's sync-protocol version if a mismatch appears.
-    anki_pkg_version: str = ""
+    # Pin for the anki subprocess (`uv run --with anki==X`). Empty → latest anki.
+    # Pinned to match the user's desktop Anki (25.09.5 → PyPI `anki==25.9.5`): the
+    # sync subprocess must speak the same sync-protocol and mirror the same scheduler
+    # the parity code (see .claude/rules/anki-queue-parity.md, "trust the binary") is
+    # tuned to — PyPI-latest (26.x) is AHEAD of the desktop, so we deliberately hold
+    # here. This spec also drives the peer-sync server (via _anki_with_spec) and the
+    # oracle harness, so parity is validated against the same version we sync with.
+    # The wheel is abi3 (cp39-abi3, requires_python>=3.9), so it imports on 3.14 fine;
+    # bump this in lockstep when you upgrade desktop Anki.
+    anki_pkg_version: str = "25.9.5"
     # Interpreter for the anki driver subprocess. It runs isolated + project-free
     # (--no-project), which escapes the project lock's stale protobuf 4.21.2 (dragged in
     # by the classla+anki extras; no cp314 wheel) — a clean resolve pulls a current

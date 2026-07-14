@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from app.anki.sync_orchestrator import _anki_with_spec
 from tests.anki_oracle.synthetic_collection import (
     BASIC_NOTETYPE_MID,
     SyntheticCollection,
@@ -102,8 +103,11 @@ def run_oracle(collection_path: Path, operations: list[dict]) -> OracleResult:
                     "--no-project",
                     "--python",
                     "3.14",
+                    # Single-sourced from settings.anki_pkg_version (via _anki_with_spec,
+                    # same as the peer-sync server) so the oracle validates parity against
+                    # the exact Anki version we sync with — currently anki==25.9.5.
                     "--with",
-                    "anki",
+                    _anki_with_spec(),
                     "python",
                     str(ORACLE_SCRIPT),
                     str(collection_path),
