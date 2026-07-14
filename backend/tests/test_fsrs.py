@@ -247,7 +247,7 @@ class TestReviewScheduling:
         from dataclasses import replace
         from datetime import datetime as _dt
 
-        from app.anki.protobuf_wire import compute_anki_day_index
+        from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index
         from app.srs.fsrs import (
             _forgetting_curve,
             _next_stability_recall,
@@ -917,7 +917,7 @@ class TestBuildRevlogRow:
         """With ``anki_due`` + ``col_crt`` available, the REVIEW branch uses the
         ``_scheduled_days_for_grade`` col-day reconstruction (exactly ``card.ivl``
         at sync time), not the truncating wall-clock delta."""
-        from app.anki.protobuf_wire import compute_anki_day_index
+        from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index
         from app.srs.fsrs import _compute_revlog_last_interval
 
         col_crt = int(datetime(2024, 1, 1, tzinfo=UTC).timestamp())
@@ -1313,7 +1313,7 @@ class TestReviewDueAtRolloverConvention:
         what sync_pull would write back. Pre-Layer-49, schedule() used now.date()
         UTC and landed one day too far for grades in the 00:00–04:00 UTC band.
         """
-        from app.anki.protobuf_wire import compute_anki_day_index, review_due_at_for_col_day
+        from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index, review_due_at_for_col_day
 
         now = datetime(2026, 5, 22, 3, 0, tzinfo=UTC)
         item = self._wrap(self._review_prev())

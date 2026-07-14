@@ -3,7 +3,7 @@
 The rollover hour and its arithmetic used to be reimplemented per module:
 database `_anki_day_bounds_utc`, sync_common `_local_today_4am`, hardcoded
 `rollover_hour: int = 4` signature defaults in fsrs/sqlite_reader, and eight
-`time(4, 0)` due_at literals across five files. `app.anki.rollover` is now the
+`time(4, 0)` due_at literals across five files. `app.srs.anki_mirror.rollover` is now the
 single home. This pins the canonical constant (`app.config`), the helper
 identities (the old names must BE the rollover-module functions, not copies),
 and a source-level ratchet against new hardcoded literals.
@@ -12,14 +12,15 @@ and a source-level ratchet against new hardcoded literals.
 import inspect
 from datetime import UTC, date, datetime
 
-from app.anki import protobuf_wire, rollover, sqlite_reader, sync_common
-from app.anki.protobuf_wire import review_due_at_for_col_day
+from app.anki import sqlite_reader, sync_common
 from app.anki.sync_common import _local_today_4am
 from app.api import srs as api_srs
 from app.config import ANKI_ROLLOVER_HOUR
 from app.models import srs_item
 from app.srs import database as database_mod
 from app.srs import fsrs
+from app.srs.anki_mirror import protobuf_wire, rollover
+from app.srs.anki_mirror.protobuf_wire import review_due_at_for_col_day
 
 
 def test_canonical_value_and_home():
@@ -69,7 +70,7 @@ def test_due_at_rollover_utc_convention():
 
 
 def test_no_hardcoded_rollover_literals_remain():
-    # Ratchet: new day-boundary code must route through app.anki.rollover
+    # Ratchet: new day-boundary code must route through app.srs.anki_mirror.rollover
     # (or take the constant), never re-hardcode the hour.
     for mod in (database_mod, sync_common, fsrs, sqlite_reader, srs_item, api_srs, protobuf_wire):
         src = inspect.getsource(mod)

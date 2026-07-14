@@ -9,11 +9,11 @@ upsert_by_guid — the card-adding contract entry point (see
 import sqlite3
 from datetime import date
 
-from app.anki.rollover import due_at_rollover_utc
 from app.common.guid import compute_guid
 from app.languages import card_surface_variants
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit, serialize_extras
+from app.srs.anki_mirror.rollover import due_at_rollover_utc
 
 
 class DbCollocationsMixin:

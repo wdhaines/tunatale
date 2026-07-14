@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.anki.protobuf_wire import encode_tag, encode_varint, encode_varint_field
+from app.srs.anki_mirror.protobuf_wire import encode_tag, encode_varint, encode_varint_field
 
 # Shared field roster for TT vocab notetypes. Only the L2 (first) field name
 # differs between languages; the rest are identical so the write path is uniform.

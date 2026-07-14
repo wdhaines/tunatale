@@ -14,7 +14,7 @@ import sqlite3
 import struct
 from datetime import UTC, datetime
 
-from app.anki.protobuf_wire import compute_anki_day_index
+from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index
 from app.srs.database import SRSDatabase
 from app.srs.load_balancer import LOAD_BALANCE_DAYS
 from app.srs.queue_stats import (

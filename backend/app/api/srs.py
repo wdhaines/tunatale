@@ -13,7 +13,6 @@ import anyio
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 
-from app.anki.rollover import due_at_rollover_utc
 from app.api.models import (
     BulkDeleteRequest,
     CreateBaseCardRequest,
@@ -33,6 +32,7 @@ from app.languages import get_tts_voice, known_language_codes
 from app.llm.translate import generate_word_gloss, translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
+from app.srs.anki_mirror.rollover import due_at_rollover_utc
 from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, build_revlog_row, schedule
 from app.srs.function_words import (

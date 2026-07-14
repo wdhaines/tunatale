@@ -441,8 +441,8 @@ def test_parity_day_level_elapsed_matches_anki(synthetic_collection: SyntheticCo
     also covered by
     ``test_anki_sqlite_reader.py::test_parse_fsrs_data_last_review_col_day_matches_anki``.
     """
-    from app.anki.protobuf_wire import compute_anki_day_index
     from app.anki.sqlite_reader import _compute_last_review
+    from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index
     from app.srs.fsrs import _elapsed_days_for_fsrs
 
     col_crt = -572400

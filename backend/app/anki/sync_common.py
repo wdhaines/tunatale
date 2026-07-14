@@ -12,9 +12,9 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from app.anki.rollover import local_today_rollover
 from app.anki.sqlite_reader import extract_translation
 from app.models.syntactic_unit import BackField
+from app.srs.anki_mirror.rollover import local_today_rollover
 
 KNOWN_ANKI_SCHEMA_VER = 18
 
@@ -217,6 +217,6 @@ def _ms_to_datetime(ms: int | None) -> datetime | None:
     return datetime.fromtimestamp(ms / 1000, tz=UTC) if ms is not None else None
 
 
-# Single-sourced in app.anki.rollover; the legacy name stays importable here
+# Single-sourced in app.srs.anki_mirror.rollover; the legacy name stays importable here
 # (and via the app.anki.sync facade) for existing call sites and tests.
 _local_today_4am = local_today_rollover

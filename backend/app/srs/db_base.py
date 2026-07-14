@@ -12,9 +12,9 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.anki.rollover import anki_day_bounds_utc
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit, deserialize_extras
+from app.srs.anki_mirror.rollover import anki_day_bounds_utc
 from app.srs.direction_fields import DIRECTION_FIELDS
 from app.srs.migrations import migrate
 
@@ -30,7 +30,7 @@ def _parse_last_review(value: str | None) -> datetime | None:
     return dt
 
 
-# Single-sourced in app.anki.rollover; the legacy name stays importable here
+# Single-sourced in app.srs.anki_mirror.rollover; the legacy name stays importable here
 # for existing call sites and tests.
 _anki_day_bounds_utc = anki_day_bounds_utc
 

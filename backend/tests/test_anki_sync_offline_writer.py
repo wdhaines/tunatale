@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from app.anki.protobuf_wire import find_varint_field
 from app.anki.sync import OfflineWriter
+from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
 _REAL_BLOB = bytes.fromhex("18A12338ABA702")
 _DECK_ID = 1
@@ -26,7 +26,7 @@ def _make_decks_db(common_blob: bytes | None = None) -> sqlite3.Connection:
 def _make_decks_db_with_review_new_reset() -> sqlite3.Connection:
     """Decks row with fields 3=4512 (yesterday), 4=10, 5=20, 7=100."""
     blob = b""
-    from app.anki.protobuf_wire import encode_varint_field
+    from app.srs.anki_mirror.protobuf_wire import encode_varint_field
 
     blob += encode_varint_field(3, 4512)
     blob += encode_varint_field(4, 10)
@@ -57,7 +57,7 @@ class TestBumpDeckNewToday:
 
     def test_increments_existing_field(self):
         blob = b""
-        from app.anki.protobuf_wire import encode_varint_field
+        from app.srs.anki_mirror.protobuf_wire import encode_varint_field
 
         blob += encode_varint_field(3, 4513)
         blob += encode_varint_field(4, 5)
@@ -255,7 +255,7 @@ class TestSetDeckStudiedToday:
 
     def test_overwrites_existing_values(self):
         blob = b""
-        from app.anki.protobuf_wire import encode_varint_field
+        from app.srs.anki_mirror.protobuf_wire import encode_varint_field
 
         blob += encode_varint_field(3, 4513)
         blob += encode_varint_field(4, 30)  # the overcounted new value

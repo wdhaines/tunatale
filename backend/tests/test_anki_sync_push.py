@@ -2694,7 +2694,7 @@ class TestSyncPushBumpNewToday:
 
         # Verify decks.common field 4 == 1
         row = anki_conn.execute("SELECT common FROM decks WHERE id = 1").fetchone()
-        from app.anki.protobuf_wire import find_varint_field
+        from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
         assert find_varint_field(bytes(row[0]), 4) == 1
 
@@ -2768,7 +2768,7 @@ class TestSyncPushBumpNewToday:
         sync.sync_push()
 
         row = anki_conn.execute("SELECT common FROM decks WHERE id = 1").fetchone()
-        from app.anki.protobuf_wire import find_varint_field
+        from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
         assert find_varint_field(bytes(row[0]), 4) == 1
 
@@ -2853,7 +2853,7 @@ class TestSyncPushBumpNewToday:
         sync.sync_push()
 
         row = anki_conn.execute("SELECT common FROM decks WHERE id = 1").fetchone()
-        from app.anki.protobuf_wire import find_varint_field
+        from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
         assert find_varint_field(bytes(row[0]), 4) == 0
 
@@ -2922,7 +2922,7 @@ class TestSyncPushBumpNewToday:
         sync.sync_push(dry_run=True)
 
         row = anki_conn.execute("SELECT common FROM decks WHERE id = 1").fetchone()
-        from app.anki.protobuf_wire import find_varint_field
+        from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
         assert find_varint_field(bytes(row[0]), 4) is None
 
@@ -2978,7 +2978,7 @@ class TestSyncPushBumpNewToday:
         sync.sync_push()
 
         row = anki_conn.execute("SELECT common FROM decks WHERE id = 1").fetchone()
-        from app.anki.protobuf_wire import find_varint_field
+        from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
         # Distinct cid count whose first revlog is today = 1 (rec_cid).
         # Both revlog entries are today's, but they share one cid.
@@ -3021,7 +3021,7 @@ class TestSyncPushBumpNewToday:
         sync = AnkiSync(db=db, _reader=FakeReader(), _writer=writer, _anki_col_crt=col_crt)
         sync.sync_push()
 
-        from app.anki.protobuf_wire import find_varint_field
+        from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
         row = anki_conn.execute("SELECT common, usn FROM decks WHERE id = 1").fetchone()
         blob = bytes(row[0])
@@ -3071,7 +3071,7 @@ class TestSyncPushBumpNewToday:
         )
         sync.sync_push()
 
-        from app.anki.protobuf_wire import find_varint_field
+        from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
         row = anki_conn.execute("SELECT common FROM decks WHERE id = 1").fetchone()
         assert find_varint_field(bytes(row[0]), 4) == 1, "first push should bump"
@@ -3150,7 +3150,7 @@ class TestSyncPushBumpNewToday:
         sync.sync_push()
 
         row = anki_conn.execute("SELECT common FROM decks WHERE id = 1").fetchone()
-        from app.anki.protobuf_wire import find_varint_field
+        from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
         assert find_varint_field(bytes(row[0]), 4) is None
 

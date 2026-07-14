@@ -8,8 +8,8 @@ see .claude/rules/anki-queue-parity.md before changing anything here.
 
 from datetime import UTC, date, datetime
 
-from app.anki.rollover import due_at_rollover_utc
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
+from app.srs.anki_mirror.rollover import due_at_rollover_utc
 from app.srs.db_base import _NEW_RESET_SET
 
 

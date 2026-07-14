@@ -12,11 +12,11 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 from app.anki.field_map import get_profile
-from app.anki.protobuf_wire import review_due_at_for_col_day
-from app.anki.rollover import due_at_rollover_utc
 from app.config import ANKI_ROLLOVER_HOUR
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import BackField
+from app.srs.anki_mirror.protobuf_wire import review_due_at_for_col_day
+from app.srs.anki_mirror.rollover import due_at_rollover_utc
 
 
 @dataclass

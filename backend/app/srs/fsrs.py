@@ -11,10 +11,10 @@ from functools import cache
 
 import numpy as np
 
-from app.anki.protobuf_wire import compute_anki_day_index, review_due_at_for_col_day
 from app.config import ANKI_ROLLOVER_HOUR
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSItem, SRSState
 from app.srs._anki_rng import ChaCha12Rng, random_range_f32, random_range_u32
+from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index, review_due_at_for_col_day
 
 # fsrs-rs (rslib/.../fsrs/model.rs) computes stability + difficulty in f32 end-to-end
 # via Burn tensors. TT mirrors that precision by casting all arithmetic operands and

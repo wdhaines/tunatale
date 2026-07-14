@@ -178,7 +178,7 @@ class TestPbParsing:
 
     def test_pb_read_varint_empty_data(self):
         """Empty bytes → returns (0, 0) without error."""
-        from app.anki.protobuf_wire import decode_varint
+        from app.srs.anki_mirror.protobuf_wire import decode_varint
 
         value, pos = decode_varint(b"", 0)
         assert value == 0
@@ -186,7 +186,7 @@ class TestPbParsing:
 
     def test_pb_skip_field_wire_type_1(self):
         """Wire type 1 (64-bit) skips exactly 8 bytes."""
-        from app.anki.protobuf_wire import skip_field
+        from app.srs.anki_mirror.protobuf_wire import skip_field
 
         data = b"\x00" * 10
         new_pos = skip_field(data, 0, 1)
@@ -194,7 +194,7 @@ class TestPbParsing:
 
     def test_pb_skip_field_wire_type_5(self):
         """Wire type 5 (32-bit) skips exactly 4 bytes."""
-        from app.anki.protobuf_wire import skip_field
+        from app.srs.anki_mirror.protobuf_wire import skip_field
 
         data = b"\x00" * 8
         new_pos = skip_field(data, 0, 5)
@@ -202,7 +202,7 @@ class TestPbParsing:
 
     def test_pb_find_varint_field_memoryview(self):
         """Accepts memoryview and converts to bytes."""
-        from app.anki.protobuf_wire import find_varint_field
+        from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
         blob = pb_varint_field(9, 30)
         result = find_varint_field(memoryview(blob), 9)
@@ -210,7 +210,7 @@ class TestPbParsing:
 
     def test_pb_find_len_field_memoryview(self):
         """Accepts memoryview and converts to bytes."""
-        from app.anki.protobuf_wire import find_len_field
+        from app.srs.anki_mirror.protobuf_wire import find_len_field
 
         inner = pb_varint_field(1, 42)
         blob = pb_len_field(1, inner)
@@ -221,7 +221,7 @@ class TestPbParsing:
         """Fields with different wire types before the target are skipped correctly."""
         import struct
 
-        from app.anki.protobuf_wire import find_varint_field
+        from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
         # field 3 (wire_type=1, 64-bit fixed), then field 9 (VARINT)
         fixed64_tag = (3 << 3) | 1
@@ -233,7 +233,7 @@ class TestPbParsing:
         """Field 37 with wire_type=5 (fixed32) decoded as a little-endian IEEE float."""
         import struct
 
-        from app.anki.protobuf_wire import find_fixed32_field
+        from app.srs.anki_mirror.protobuf_wire import find_fixed32_field
 
         # Anki's deck_config field 37 (desired_retention) is wire_type=5.
         tag = (37 << 3) | 5
@@ -244,7 +244,7 @@ class TestPbParsing:
 
     def test_pb_find_fixed32_field_returns_none_when_absent(self):
         """Missing field 37 → returns None so callers can fall back to a default."""
-        from app.anki.protobuf_wire import find_fixed32_field
+        from app.srs.anki_mirror.protobuf_wire import find_fixed32_field
 
         blob = pb_varint_field(9, 30) + pb_varint_field(10, 9999)
         assert find_fixed32_field(blob, 37) is None
@@ -253,7 +253,7 @@ class TestPbParsing:
         """Accepts memoryview, like the other helpers."""
         import struct
 
-        from app.anki.protobuf_wire import find_fixed32_field
+        from app.srs.anki_mirror.protobuf_wire import find_fixed32_field
 
         tag = (37 << 3) | 5
         blob = encode_varint(tag) + struct.pack("<f", 0.9)
@@ -263,7 +263,7 @@ class TestPbParsing:
 
     def test_pb_find_len_field_exception_on_corrupt_data(self):
         """Corrupted bytes in LEN field → returns None without raising."""
-        from app.anki.protobuf_wire import find_len_field
+        from app.srs.anki_mirror.protobuf_wire import find_len_field
 
         # Craft a tag for field 1 LEN but then malformed length varint (all continuation bits set)
         corrupt = bytes([(1 << 3) | 2]) + bytes([0xFF, 0xFF, 0xFF])  # tag + truncated varint length
@@ -273,7 +273,7 @@ class TestPbParsing:
 
     def test_pb_skip_field_wire_type_2_via_find(self):
         """Skip a LEN-delimited field before finding the target VARINT."""
-        from app.anki.protobuf_wire import find_varint_field
+        from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
         # field 2 (LEN, wire_type=2) with 3-byte payload, then field 9 (VARINT=30)
         blob = pb_len_field(2, b"\x00\x01\x02") + pb_varint_field(9, 30)
@@ -282,7 +282,7 @@ class TestPbParsing:
 
     def test_pb_skip_varint_with_continuation_byte(self):
         """Skip a multi-byte varint field before finding the target."""
-        from app.anki.protobuf_wire import find_varint_field
+        from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
         # field 3 (VARINT, value=300 which requires 2 bytes), then field 9 (VARINT=7)
         # 300 in varint: 0xAC 0x02
@@ -293,7 +293,7 @@ class TestPbParsing:
 
     def test_pb_find_varint_field_corrupt_tag(self):
         """Completely corrupted tag varint → returns None."""
-        from app.anki.protobuf_wire import find_varint_field
+        from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
         # All continuation bits set but no terminator — infinite loop guard via pos advance
         corrupt = bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])
@@ -303,7 +303,7 @@ class TestPbParsing:
 
     def test_pb_find_varint_field_skip_raises(self):
         """When skip_field raises (unknown wire type in blob), returns None."""
-        from app.anki.protobuf_wire import find_varint_field
+        from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
         # Wire type 3 is deprecated and not handled; skip_field returns same pos → infinite?
         # Actually skip_field just returns pos unchanged for unhandled wire types.
@@ -316,7 +316,7 @@ class TestPbParsing:
 
     def test_pb_find_len_field_skips_varint_field(self):
         """Skip a VARINT field before finding the target LEN field."""
-        from app.anki.protobuf_wire import find_len_field
+        from app.srs.anki_mirror.protobuf_wire import find_len_field
 
         # field 2 (VARINT=5), then field 1 (LEN)
         inner = b"\x01\x02\x03"

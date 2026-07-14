@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time
 from enum import Enum
 
-from app.anki.rollover import due_at_rollover_utc
+from app.srs.anki_mirror.rollover import due_at_rollover_utc
 
 from .syntactic_unit import SyntacticUnit
 

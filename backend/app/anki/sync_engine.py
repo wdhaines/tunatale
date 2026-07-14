@@ -14,7 +14,6 @@ from datetime import UTC, date, datetime, time
 
 from app.anki.media.vocab_media import safe_stem as _safe_stem
 from app.anki.media.vocab_media import store_tt_media as _store_tt_media
-from app.anki.protobuf_wire import compute_anki_day_index
 from app.anki.sync_common import (
     _FSRS_REPLAY_TOLERANCE,
     KNOWN_ANKI_SCHEMA_VER,
@@ -33,6 +32,7 @@ from app.common.guid import compute_guid
 from app.config import settings
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
 from app.models.syntactic_unit import SyntacticUnit, serialize_extras
+from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index
 from app.srs.database import SRSDatabase
 from app.srs.direction_fields import SYNC_COMPARABLE_MODEL_FIELDS
 from app.srs.fsrs import is_day_level_last_review

@@ -12,14 +12,14 @@ import sqlite3
 import time as _time
 from pathlib import Path
 
-from app.anki.protobuf_wire import (
+from app.anki.sqlite_reader import find_deck_id
+from app.anki.sync_common import DuplicateNoteError
+from app.common.guid import compute_guid
+from app.srs.anki_mirror.protobuf_wire import (
     find_varint_field,
     pb_remove_field,
     pb_replace_or_insert_varint,
 )
-from app.anki.sqlite_reader import find_deck_id
-from app.anki.sync_common import DuplicateNoteError
-from app.common.guid import compute_guid
 
 
 class OfflineWriter:

@@ -655,7 +655,7 @@ class TestFsrsMemoryStatePresent:
         producing midnight in the *previous* col_day.  This test pins the full
         pipeline so the off-by-one cannot return.
         """
-        from app.anki.protobuf_wire import compute_anki_day_index
+        from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index
         from app.srs.fsrs import _elapsed_days_for_fsrs
 
         col_crt = 1388836800  # user's real col_crt

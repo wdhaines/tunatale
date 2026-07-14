@@ -3,7 +3,7 @@
 Two day domains exist BY DESIGN (Layer 54) — do not merge them:
 
 - **col-day index domain** — integer day indices anchored on ``col.crt``
-  (``app.anki.protobuf_wire.compute_anki_day_index`` /
+  (``app.srs.anki_mirror.protobuf_wire.compute_anki_day_index`` /
   ``review_due_at_for_col_day``). Owned by ``protobuf_wire``.
 - **local-day domain** (this module) — wall-clock rollover anchors used for
   "graded today" bucketing, Anki-day bounds, and the current Anki-day date.

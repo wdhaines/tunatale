@@ -10,9 +10,9 @@ before changing anything here.
 import time as _time
 from datetime import UTC, date, datetime
 
-from app.anki.rollover import due_at_rollover_utc
 from app.models.srs_item import Direction, DirectionState, RevlogRow, SRSItem
 from app.models.syntactic_unit import SyntacticUnit
+from app.srs.anki_mirror.rollover import due_at_rollover_utc
 
 
 class DbRevlogMixin:

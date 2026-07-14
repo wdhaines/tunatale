@@ -1,8 +1,8 @@
-"""Tests for app.anki.protobuf_wire."""
+"""Tests for app.srs.anki_mirror.protobuf_wire."""
 
 from __future__ import annotations
 
-from app.anki.protobuf_wire import (
+from app.srs.anki_mirror.protobuf_wire import (
     compute_anki_day_index,
     decode_varint,
     encode_varint,
