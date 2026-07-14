@@ -19,6 +19,7 @@ from app.models.language import Language
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from app.anki.vocab_notetype import VocabNotetype
     from app.config import Settings
@@ -75,6 +76,9 @@ class LanguageConfig:
     # Loaded from the plugin's ``data/style.md`` at import time; empty string
     # when the language has no style file (``en``).
     style_notes: str = ""
+    # Path to the per-language function-word JSON config, or ``None`` when the
+    # language has no curated function-word policy.
+    function_words_path: Path | None = None
 
 
 _CONFIGS: dict[str, LanguageConfig] = {}
@@ -265,6 +269,14 @@ def get_style_notes(code: str) -> str:
     """
     config = _CONFIGS.get(code)
     return config.style_notes if config else ""
+
+
+def get_function_words_path(code: str) -> Path | None:
+    """Return the path to the per-language function-word JSON config, or ``None``
+    when the language has no curated function-word policy.
+    """
+    config = _CONFIGS.get(code)
+    return config.function_words_path if config else None
 
 
 def card_surface_variants(code: str, text: str) -> list[str]:

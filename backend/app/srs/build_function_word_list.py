@@ -5,8 +5,8 @@ Usage:
 
 Prints (to stdout) a JSON array of casefolded tokens that occur frequently across
 NATURAL_SPEED phrases and pass cheap heuristics — review, strip obvious content
-words, and paste into the ``include`` field of
-``app/srs/data/function_words/<lang>.json``. A per-token frequency table is written
+words, and paste into the ``include`` field of the language plugin's
+``data/function_words.json``. A per-token frequency table is written
 to stderr. This proposes only the surface ``include`` list; the ``pos`` set
 (closed-class UPOS tags) is hand-maintained.
 """
@@ -85,7 +85,7 @@ def main() -> None:
     print(
         f"# Candidate 'include' list from curriculum {args.curriculum_id!r} over "
         f"{len(lesson_ids)} lessons. Review, strip content words, paste into the "
-        f"'include' field of app/srs/data/function_words/<lang>.json.",
+        f"'include' field of the language plugin's data/function_words.json.",
         file=sys.stderr,
     )
     print("# token  count  lessons", file=sys.stderr)

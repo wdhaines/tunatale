@@ -1,11 +1,11 @@
 """Function-word detection (POS-first, per-language config) + morphology-cloze hints.
 
-Function-word policy is data-driven, one swappable JSON file per language under
-``data/function_words/`` (``pos`` / ``include`` / ``exclude`` — see the file's
-``_comment``). A language with no file simply has no function words (clozes are
-capability-driven). Surfaces for ``include`` are seeded by build_function_word_list.py
-and hand-curated; the classla UPOS ``pos`` set is the primary signal when an
-analyzer is present.
+Function-word policy is data-driven, one swappable JSON file per language in the
+plugin package's ``data/function_words.json`` (``pos`` / ``include`` / ``exclude``
+— see the file's ``_comment``). A language with no file simply has no function
+words (clozes are capability-driven). Surfaces for ``include`` are seeded by
+build_function_word_list.py and hand-curated; the classla UPOS ``pos`` set is the
+primary signal when an analyzer is present.
 """
 
 from __future__ import annotations
@@ -13,9 +13,8 @@ from __future__ import annotations
 import json
 import re
 from functools import cache
-from pathlib import Path
 
-_FUNCTION_WORD_DATA_DIR = Path(__file__).parent / "data" / "function_words"
+from app.languages import get_function_words_path
 
 
 @cache
@@ -29,8 +28,8 @@ def _load_function_word_config(
     ``exclude`` / ``clozes_only_verbs`` are casefolded for case-insensitive
     matching; ``pos`` is the raw UPOS tag set (already uppercase).
     """
-    path = _FUNCTION_WORD_DATA_DIR / f"{language_code}.json"
-    if not path.exists():
+    path = get_function_words_path(language_code)
+    if path is None or not path.exists():
         return frozenset(), frozenset(), frozenset(), frozenset()
     data = json.loads(path.read_text(encoding="utf-8"))
     pos = frozenset(data.get("pos", []))

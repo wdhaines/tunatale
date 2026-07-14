@@ -21,5 +21,6 @@ register(
         variant_separator=",",
         syllabifier="norwegian",
         style_notes=_style_notes,
+        function_words_path=Path(__file__).parent / "data" / "function_words.json",
     ),
 )

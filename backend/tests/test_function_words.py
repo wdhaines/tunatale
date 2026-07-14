@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from app.srs import function_words as fw
+from app.models.language import Language
 from app.srs.function_words import (
     _ending_blank_split,
     _format_morphology_feature,
@@ -122,7 +122,19 @@ class TestFunctionWordConfig:
             json.dumps({"pos": ["AUX"], "include": ["foo"], "exclude": ["bar"]}),
             encoding="utf-8",
         )
-        monkeypatch.setattr(fw, "_FUNCTION_WORD_DATA_DIR", tmp_path)
+        import app.languages as _langs
+
+        monkeypatch.setattr(
+            _langs,
+            "_CONFIGS",
+            {
+                **_langs._CONFIGS,
+                "xx": _langs.LanguageConfig(
+                    language=Language(code="xx", name="XX", native_name="XX", script="latin", tts_voice_map={}),
+                    function_words_path=tmp_path / "xx.json",
+                ),
+            },
+        )
         _load_function_word_config.cache_clear()
         try:
             assert is_function_word("foo", "xx") is True  # include
