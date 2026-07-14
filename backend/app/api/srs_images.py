@@ -14,8 +14,8 @@ from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
 from app.anki.media import pixabay as _pixabay_mod
-from app.anki.media.pixabay import PixabaySearch
 from app.anki.media import vocab_media as _vocab_media
+from app.anki.media.pixabay import PixabaySearch
 from app.anki.media.vocab_media import _unlink_orphaned_images, replace_item_image
 from app.config import settings
 

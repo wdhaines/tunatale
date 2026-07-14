@@ -190,8 +190,6 @@ describe("ImageEditModal", () => {
     expect(await getByText("network boom")).toBeTruthy();
   });
 
-
-
   it("shows rate-limited message when response status is rate_limited", async () => {
     mockFetchCandidates.mockResolvedValue({
       query: "water",
