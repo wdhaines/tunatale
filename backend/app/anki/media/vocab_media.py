@@ -45,6 +45,38 @@ def safe_stem(word: str, prefix: str) -> str:
     return f"{prefix}_{sanitized}"
 
 
+def _unlink_orphaned_images(
+    db: Any, coll_id: int, kind: str, media_dir: Path, *, skip_filename: str | None = None
+) -> None:
+    """Delete media rows for (coll_id, kind) and unlink files no longer referenced.
+
+    Captures filenames *before* deleting the rows, then for each old filename
+    that is (a) not *skip_filename* and (b) not referenced by any other media
+    row, removes the file from *media_dir*. Errors are logged and swallowed —
+    a missing or locked file must not propagate.
+    """
+    with db._get_conn() as conn:
+        rows = conn.execute(
+            "SELECT filename FROM media WHERE collocation_id = ? AND kind = ?",
+            (coll_id, kind),
+        ).fetchall()
+    old_filenames = [r["filename"] for r in rows]
+
+    db.delete_all_media_for_kind(coll_id, kind)
+
+    for fname in old_filenames:
+        if fname == skip_filename:
+            continue
+        if db.is_media_filename_referenced(fname):
+            continue
+        fpath = media_dir / fname
+        if fpath.exists():
+            try:
+                fpath.unlink()
+            except OSError:
+                logger.warning("Could not unlink orphaned image %s", fpath)
+
+
 def store_tt_media(db: Any, coll_id: int, kind: str, filename: str, data: bytes) -> None:
     """Write media bytes to TT's canonical media dir and record the media row.
 
@@ -71,7 +103,7 @@ def replace_item_image(db: Any, coll_id: int, english: str, data: bytes, ext: st
     Returns the new filename.
     """
     filename = f"{safe_stem(english, 'img')}_{hashlib.sha256(data).hexdigest()[:8]}.{ext}"
-    db.delete_all_media_for_kind(coll_id, "image")
+    _unlink_orphaned_images(db, coll_id, "image", _MEDIA_DIR, skip_filename=filename)
     store_tt_media(db, coll_id, "image", filename, data)
     db.add_dirty_field_by_id(coll_id, "image")
     return filename

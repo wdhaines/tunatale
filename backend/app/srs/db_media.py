@@ -213,3 +213,12 @@ class DbMediaMixin:
             if cid not in result:
                 result[cid] = row["filename"]
         return result
+
+    def is_media_filename_referenced(self, filename: str) -> bool:
+        """Return True if any media row (any collocation, any kind) references *filename*."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM media WHERE filename = ? LIMIT 1",
+                (filename,),
+            ).fetchone()
+        return row is not None

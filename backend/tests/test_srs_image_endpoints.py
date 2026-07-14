@@ -9,6 +9,7 @@ ext-from-sniff (not filename/URL).
 from __future__ import annotations
 
 import io
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import httpx
@@ -324,6 +325,8 @@ class TestPutImageUrl:
             await c.put(f"/api/srs/items/{cid}/image", json={"url": "http://img.test/first.jpg"})
         first_filename = api.get_image_filename(cid)
         assert first_filename is not None
+        first_path = tmp_path / first_filename
+        assert first_path.exists()
 
         # Replace
         respx.get("http://img.test/second.jpg").mock(
@@ -334,12 +337,56 @@ class TestPutImageUrl:
         second_filename = api.get_image_filename(cid)
         assert second_filename is not None
         assert second_filename != first_filename
+        # Old file unlinked, new file present
+        assert not first_path.exists(), "Old image file should be unlinked after replace"
+        assert (tmp_path / second_filename).exists()
         # Only one media row should exist
         with api._get_conn() as conn:
             count = conn.execute(
                 "SELECT COUNT(*) FROM media WHERE collocation_id = ? AND kind = 'image'", (cid,)
             ).fetchone()[0]
         assert count == 1
+
+    @respx.mock
+    async def test_replace_shared_file_not_unlinked(self, api, monkeypatch, tmp_path):
+        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        api.add_collocation(_unit("ja", "yes"), language_code="sl")
+        api.add_collocation(_unit("da", "yes"), language_code="sl")
+        cid_a = _id_for_text(api, "ja")
+        cid_b = _id_for_text(api, "da")
+
+        # Set image on A
+        respx.get("http://img.test/shared.jpg").mock(
+            return_value=httpx.Response(200, content=_JPG, headers={"content-type": "image/jpeg"}),
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            await c.put(f"/api/srs/items/{cid_a}/image", json={"url": "http://img.test/shared.jpg"})
+        shared_filename = api.get_image_filename(cid_a)
+        shared_path = tmp_path / shared_filename
+        assert shared_path.exists()
+
+        # Manually add a media row on B referencing the same file
+        import hashlib
+
+        api.add_media(
+            cid_b,
+            "image",
+            shared_filename,
+            f"media/{shared_filename}",
+            shared_filename,
+            hashlib.sha256(_JPG).hexdigest(),
+            len(_JPG),
+        )
+
+        # Replace image on A — shared file must NOT be unlinked
+        respx.get("http://img.test/new.jpg").mock(
+            return_value=httpx.Response(200, content=_JPG2, headers={"content-type": "image/jpeg"}),
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.put(f"/api/srs/items/{cid_a}/image", json={"url": "http://img.test/new.jpg"})
+        assert resp.status_code == 200
+        assert shared_path.exists(), "Shared file must survive replace on another collocation"
+        assert api.get_image_filename(cid_a) != shared_filename
 
     async def test_422_bad_scheme(self, api):
         api.add_collocation(_unit(), language_code="sl")
@@ -535,6 +582,145 @@ class TestDeleteImage:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             await c.delete(f"/api/srs/items/{cid}/image")
         assert "image" in _dirty_fields(api, cid)
+
+    @respx.mock
+    async def test_delete_unlinks_unshared_file(self, api, monkeypatch, tmp_path):
+        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        api.add_collocation(_unit(), language_code="sl")
+        cid = _id_for_text(api, "voda")
+        respx.get("http://img.test/sole.jpg").mock(
+            return_value=httpx.Response(200, content=_JPG, headers={"content-type": "image/jpeg"}),
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            await c.put(f"/api/srs/items/{cid}/image", json={"url": "http://img.test/sole.jpg"})
+        filename = api.get_image_filename(cid)
+        filepath = tmp_path / filename
+        assert filepath.exists()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            await c.delete(f"/api/srs/items/{cid}/image")
+        assert not filepath.exists()
+
+    @respx.mock
+    async def test_shared_file_not_unlinked_when_other_collocation_still_references_it(
+        self, api, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        # Add two collocations
+        api.add_collocation(_unit("ja", "yes"), language_code="sl")
+        api.add_collocation(_unit("da", "yes"), language_code="sl")
+        cid_a = _id_for_text(api, "ja")
+        cid_b = _id_for_text(api, "da")
+
+        # Set image on collocation A
+        respx.get("http://img.test/shared.jpg").mock(
+            return_value=httpx.Response(200, content=_JPG, headers={"content-type": "image/jpeg"}),
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            await c.put(f"/api/srs/items/{cid_a}/image", json={"url": "http://img.test/shared.jpg"})
+        shared_filename = api.get_image_filename(cid_a)
+        shared_path = tmp_path / shared_filename
+        assert shared_path.exists()
+
+        # Manually add a media row on B referencing the same filename
+        import hashlib
+
+        api.add_media(
+            cid_b,
+            "image",
+            shared_filename,
+            f"media/{shared_filename}",
+            shared_filename,
+            hashlib.sha256(_JPG).hexdigest(),
+            len(_JPG),
+        )
+
+        # Delete image from A — file should NOT be unlinked (B still references it)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.delete(f"/api/srs/items/{cid_a}/image")
+        assert resp.status_code == 200
+        assert shared_path.exists(), "Shared file must not be deleted while another collocation references it"
+
+    @respx.mock
+    async def test_delete_missing_file_is_swallowed(self, api, monkeypatch, tmp_path):
+        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        api.add_collocation(_unit(), language_code="sl")
+        cid = _id_for_text(api, "voda")
+        # Manually insert a media row with a filename that doesn't exist on disk
+        import hashlib
+
+        api.add_media(cid, "image", "ghost.jpg", "media/ghost.jpg", "ghost.jpg", hashlib.sha256(b"x").hexdigest(), 1)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.delete(f"/api/srs/items/{cid}/image")
+        assert resp.status_code == 200
+
+    @respx.mock
+    async def test_replace_skips_new_file_from_unlink(self, api, monkeypatch, tmp_path):
+        """When replacing, the new filename must not be unlinked even if it
+        happens to match an old row (defensive: normal hashes differ)."""
+        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        api.add_collocation(_unit(), language_code="sl")
+        cid = _id_for_text(api, "voda")
+        # Manually insert an image row whose filename equals the one replace_item_image will produce
+        import hashlib
+
+        fake_new_fname = f"img_water_{hashlib.sha256(_JPG).hexdigest()[:8]}.jpg"
+        api.add_media(
+            cid,
+            "image",
+            fake_new_fname,
+            f"media/{fake_new_fname}",
+            fake_new_fname,
+            hashlib.sha256(_JPG).hexdigest(),
+            len(_JPG),
+        )
+        fake_path = tmp_path / fake_new_fname
+        fake_path.write_bytes(_JPG)
+        assert fake_path.exists()
+
+        # Replace with the exact same bytes → skip_filename matches → must NOT unlink
+        respx.get("http://img.test/replace.jpg").mock(
+            return_value=httpx.Response(200, content=_JPG, headers={"content-type": "image/jpeg"}),
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.put(f"/api/srs/items/{cid}/image", json={"url": "http://img.test/replace.jpg"})
+        assert resp.status_code == 200
+        assert fake_path.exists(), "skip_filename must prevent unlinking the new file"
+
+    @respx.mock
+    async def test_unlink_os_error_is_swallowed(self, api, monkeypatch, tmp_path):
+        """An OSError during unlink must not 500 the request."""
+        monkeypatch.setattr("app.anki.media.vocab_media._MEDIA_DIR", tmp_path)
+        api.add_collocation(_unit(), language_code="sl")
+        cid = _id_for_text(api, "voda")
+        # Set an initial image
+        respx.get("http://img.test/first.jpg").mock(
+            return_value=httpx.Response(200, content=_JPG, headers={"content-type": "image/jpeg"}),
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            await c.put(f"/api/srs/items/{cid}/image", json={"url": "http://img.test/first.jpg"})
+        old_filename = api.get_image_filename(cid)
+        old_path = tmp_path / old_filename
+        assert old_path.exists()
+
+        # Make unlink raise OSError
+        original_unlink = Path.unlink
+
+        def _raising_unlink(self, *a, **kw):
+            if self == old_path:
+                raise OSError("permission denied")
+            return original_unlink(self, *a, **kw)
+
+        monkeypatch.setattr(Path, "unlink", _raising_unlink)
+
+        # Replace with a different image
+        respx.get("http://img.test/second.jpg").mock(
+            return_value=httpx.Response(200, content=_JPG2, headers={"content-type": "image/jpeg"}),
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.put(f"/api/srs/items/{cid}/image", json={"url": "http://img.test/second.jpg"})
+        assert resp.status_code == 200, "OSError during unlink must not propagate"
 
 
 # -- coverage gap helpers ------------------------------------------------------
