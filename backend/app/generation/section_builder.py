@@ -8,12 +8,8 @@ from __future__ import annotations
 
 import logging
 
-from app.generation.norwegian_breakdown import (
-    build_norwegian_breakdown,
-    slow_norwegian_word,
-)
 from app.generation.syllabify import syllabify_word
-from app.languages import uses_compound_word_breakdown
+from app.languages import get_breakdown, get_slow_word, uses_compound_word_breakdown
 from app.models.lesson import Phrase, Section, SectionType
 
 logger = logging.getLogger(__name__)
@@ -61,7 +57,8 @@ def build_word_breakdown(phrase_text: str, language_code: str = "sl") -> list[st
 
     # Compound/morpheme-aware breakdown (Norwegian) vs. generic syllable buildup.
     if uses_compound_word_breakdown(language_code):
-        return build_norwegian_breakdown(phrase)
+        fn = get_breakdown(language_code)
+        return fn(phrase)
 
     breakdown: list[str] = [phrase]
 
@@ -210,7 +207,8 @@ def build_slow_speed_section(
                 continue
             voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
             if uses_compound_word_breakdown(l2_code):
-                slowed = " ... ".join(slow_norwegian_word(w) for w in text.split())
+                slow_fn = get_slow_word(l2_code)
+                slowed = " ... ".join(slow_fn(w) for w in text.split())
             else:
                 slowed = " ... ".join(text.split())
             phrases.append(Phrase(text=slowed, voice_id=voice_id, language_code=l2_code, role=speaker))
@@ -299,7 +297,8 @@ def build_slow_translated_section(
                 continue
             voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
             if uses_compound_word_breakdown(l2_code):
-                slowed = " ... ".join(slow_norwegian_word(w) for w in text.split())
+                slow_fn = get_slow_word(l2_code)
+                slowed = " ... ".join(slow_fn(w) for w in text.split())
             else:
                 slowed = " ... ".join(text.split())
             phrases.append(Phrase(text=slowed, voice_id=voice_id, language_code=l2_code, role=speaker))

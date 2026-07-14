@@ -1,6 +1,6 @@
 """CLI-friendly text-report helpers for Norwegian Pimsleur breakdown preview."""
 
-from app.generation.norwegian_breakdown import (
+from app.plugins.languages.no.norwegian_breakdown import (
     build_norwegian_breakdown,
     segment_compound,
     slow_norwegian_word,

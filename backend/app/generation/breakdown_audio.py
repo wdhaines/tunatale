@@ -31,12 +31,12 @@ from app.audio.renderer import LessonRenderer
 from app.audio.transcode import CODEC_EXT
 from app.config import settings
 from app.generation.breakdown_preview import format_breakdown_preview
-from app.generation.norwegian_breakdown import (
+from app.languages import get_preprocessor, get_tts_voice
+from app.models.lesson import Phrase, Section, SectionType
+from app.plugins.languages.no.norwegian_breakdown import (
     build_norwegian_breakdown,
     slow_norwegian_word,
 )
-from app.languages import get_preprocessor, get_tts_voice
-from app.models.lesson import Phrase, Section, SectionType
 
 _LANGUAGE_CODE = "no"
 

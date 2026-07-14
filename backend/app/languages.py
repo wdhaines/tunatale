@@ -67,6 +67,13 @@ class LanguageConfig:
     # Morphology-drill profile injected into the story prompt (``"slavic"`` = the
     # case/dual tagging block); ``None`` omits the block.
     morphology_profile: str | None = None
+    # Compound word breakdown function — the Pimsleur-style morpheme-aware
+    # segmentation.  ``None`` for languages that use the generic per-syllable
+    # backward buildup (the fallback in ``section_builder.build_word_breakdown``).
+    breakdown_fn: Callable[..., list[str]] | None = None
+    # Slowed-word function for the slow-speed section (Norwegian morpheme pauses).
+    # ``None`` when the language has no slow-word specialisation.
+    slow_word_fn: Callable[[str], str] | None = None
     # Character that separates alternate accepted spellings of ONE word on a card
     # front (Norwegian's ``mot, imot`` — both spellings of "against/towards").
     # ``None`` (the default) means the language has no such convention, so a card
@@ -249,6 +256,27 @@ def uses_compound_word_breakdown(code: str) -> bool:
     """
     config = _CONFIGS.get(code)
     return config.compound_word_breakdown if config else False
+
+
+def get_breakdown(code: str) -> Callable[..., list[str]] | None:
+    """Return the compound-word breakdown function for *code*, or ``None``.
+
+    Languages without a compound breakdown (everything except Norwegian) return
+    ``None`` — callers fall back to the generic per-syllable buildup in
+    ``section_builder.build_word_breakdown``.
+    """
+    config = _CONFIGS.get(code)
+    return config.breakdown_fn if config else None
+
+
+def get_slow_word(code: str) -> Callable[[str], str] | None:
+    """Return the slow-word function for *code*, or ``None``.
+
+    Norwegian uses morpheme-aware micro-pauses; other languages slow by simple
+    whitespace splitting.
+    """
+    config = _CONFIGS.get(code)
+    return config.slow_word_fn if config else None
 
 
 def get_variant_separator(code: str) -> str | None:

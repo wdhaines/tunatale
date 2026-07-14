@@ -16,7 +16,7 @@ edited to match code. Key design decisions they pin:
   morpheme whole, then breaking it, then rebuilding.
 """
 
-from app.generation.norwegian_breakdown import (
+from app.plugins.languages.no.norwegian_breakdown import (
     _is_content_stem,
     _load_ranked_lexicon,
     _segment_surface,
