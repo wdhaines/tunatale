@@ -35,8 +35,12 @@
 		candidates = [];
 		try {
 			const resp = await api.fetchImageCandidates(item.id, candidateQuery || undefined);
-			if (resp.status === 'no_key') {
-				noApiKey = true;
+			if (resp.status === 'rate_limited') {
+				candidateError = 'Rate limited — try again shortly';
+				return;
+			}
+			if (resp.status === 'api_error') {
+				candidateError = 'Pixabay unavailable — try again shortly';
 				return;
 			}
 			candidates = resp.candidates;
@@ -44,8 +48,6 @@
 			const msg = e instanceof Error ? e.message : String(e);
 			if (msg.includes('409')) {
 				noApiKey = true;
-			} else if (msg.includes('429')) {
-				candidateError = 'Rate limited — try again shortly';
 			} else {
 				candidateError = msg || 'Failed to fetch candidates';
 			}

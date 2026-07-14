@@ -190,10 +190,14 @@ describe("ImageEditModal", () => {
     expect(await getByText("network boom")).toBeTruthy();
   });
 
-  it("shows rate limit error when 429 returned", async () => {
-    mockFetchCandidates.mockRejectedValue(
-      new Error("POST /api/srs/items/1/image/candidates: HTTP 429"),
-    );
+
+
+  it("shows rate-limited message when response status is rate_limited", async () => {
+    mockFetchCandidates.mockResolvedValue({
+      query: "water",
+      status: "rate_limited",
+      candidates: [],
+    });
     const item = makeSRSItemDetail({ id: 1 });
     const { getByText } = render(ImageEditModal, {
       props: { item, onclose: vi.fn(), onupdated: vi.fn() },
@@ -203,14 +207,18 @@ describe("ImageEditModal", () => {
     });
   });
 
-  it("hides candidates section when status is 'no_key'", async () => {
-    mockFetchCandidates.mockResolvedValue({ query: "", status: "no_key", candidates: [] });
+  it("shows pixabay unavailable message when response status is api_error", async () => {
+    mockFetchCandidates.mockResolvedValue({
+      query: "water",
+      status: "api_error",
+      candidates: [],
+    });
     const item = makeSRSItemDetail({ id: 1 });
-    const { queryByText } = render(ImageEditModal, {
+    const { getByText } = render(ImageEditModal, {
       props: { item, onclose: vi.fn(), onupdated: vi.fn() },
     });
     await waitFor(() => {
-      expect(queryByText("Pixabay candidates")).toBeNull();
+      expect(getByText("Pixabay unavailable — try again shortly")).toBeTruthy();
     });
   });
 
