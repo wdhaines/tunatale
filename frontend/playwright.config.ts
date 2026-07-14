@@ -26,6 +26,9 @@ export default defineConfig({
 				// DBs (this silently wiped tunatale_sl.db twice — 2026-06-30, 2026-07-13).
 				// Every language key must be listed here to fully isolate.
 				DATABASE_URLS: '{"sl":"sqlite:///./tunatale-test.db","no":"sqlite:///./tunatale-test-no.db"}',
+				// Startup DB-backup rotation would otherwise snapshot the throwaway
+				// test DB into the real ~/.tunatale/db-backups. 0 disables it for E2E.
+				DB_BACKUP_KEEP_DAYS: '0',
 				// Add-time vocab media (POST /items, /listen) fetches image+audio when
 				// a Pixabay key is set. E2E seeds cards via those endpoints, so a real
 				// key in .env makes the suite hit Pixabay/Forvo live (slow, flaky).
@@ -63,6 +66,8 @@ export default defineConfig({
 				// See the 8001 block: UPPERCASE key (matches .env's DATABASE_URLS) and
 				// every language key listed, or e2e leaks into the real per-language DBs.
 				DATABASE_URLS: '{"sl":"sqlite:///./tunatale-test.db","no":"sqlite:///./tunatale-test-no.db"}',
+				// See the 8001 block — no test-DB snapshots into the real backup dir.
+				DB_BACKUP_KEEP_DAYS: '0',
 				PIXABAY_API_KEY: '',
 				lemmatizer_type: 'lowercase',
 				TARGET_LANGUAGE: 'no'

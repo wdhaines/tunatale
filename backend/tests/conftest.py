@@ -64,6 +64,9 @@ def _settings_overrides(monkeypatch, tmp_path):
     from app.srs.lemmatizer import get_lemmatizer
 
     monkeypatch.setattr(settings, "anki_backup_dir", tmp_path / "anki-backups")
+    # Startup DB-backup rotation writes here; pin to tmp so the suite never
+    # snapshots into the real ~/.tunatale/db-backups.
+    monkeypatch.setattr(settings, "db_backup_dir", tmp_path / "db-backups")
     monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'tunatale.db'}")
     # Pin the active language + deck to deterministic test values so neither the
     # production defaults (config.py) nor a developer's real .env (which may point

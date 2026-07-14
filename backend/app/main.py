@@ -28,6 +28,7 @@ from app.llm.usage_ledger import UsageLedger  # noqa: E402
 from app.models.lesson import SectionType  # noqa: E402
 from app.srs.database import SRSDatabase  # noqa: E402
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for  # noqa: E402
+from app.storage.db_backup import rotate_db_backups  # noqa: E402
 from app.storage.store import ContentStore  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
@@ -120,6 +121,15 @@ async def lifespan(app: FastAPI):
     # isolation is which connection serves the request, not a WHERE clause.
     db_map = _language_db_map()
     default_code = settings.target_language if settings.target_language in db_map else next(iter(db_map))
+
+    # Snapshot each DB before opening it (rolling daily backups, kept N days).
+    # rotate_db_backups is fully self-guarding — it never raises, so a backup
+    # problem can't block startup. See app/storage/db_backup.py for the why.
+    rotate_db_backups(
+        [url.removeprefix("sqlite:///") for url in db_map.values()],
+        settings.db_backup_dir,
+        keep_days=settings.db_backup_keep_days,
+    )
 
     srs_dbs: dict[str, SRSDatabase] = {}
     content_stores: dict[str, ContentStore] = {}

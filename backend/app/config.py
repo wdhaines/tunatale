@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     # ~16 MB collection snapshot on every call; without a cap the directory grows
     # without bound. Keep the N most recent snapshots (~16 MB each); <= 0 disables.
     anki_backup_keep: int = 30
+    # Rolling daily backups of the per-language content/SRS DBs (tunatale_sl.db,
+    # tunatale_no.db). These hold curricula/lessons + FSRS state that is NOT in
+    # Anki, are git-ignored, and had no backup layer until an E2E casing bug
+    # wiped the Slovene curricula (2026-06-30, 2026-07-13). Snapshotted once per
+    # day at startup into a dir OUTSIDE the repo (an in-repo rm/glob can't reach
+    # it); the N most recent daily snapshots are kept. <= 0 disables.
+    db_backup_dir: Path = Path("~/.tunatale/db-backups").expanduser()
+    db_backup_keep_days: int = 5
     media_dir: Path = Path("./media")
     anki_fallback_log: Path = Path("~/.tunatale/logs/anki-fallback.log").expanduser()
     # Durable per-sync soak log: every non-dry sync (CLI or API) appends a
