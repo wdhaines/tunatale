@@ -9,7 +9,7 @@ This walkthrough covers the production TunaTale codebase — the unified applica
 
 **What changed from the prototypes:** The production rebuild unified the audio pipeline (micro-demo-0.0) and the content engine (micro-demo-0.1) under a single FastAPI application. Hardcoded language logic was replaced with pluggable preprocessors and voice maps. The mock LLM (MD5-hashed) became a cassette system with multiple modes. FSRS-5 replaced the custom SRS scheduler. The entire codebase follows hexagonal architecture with Protocol-based ports. Since the initial production build: ContentStore added SQLite persistence for curricula/lessons/audio, per-word SRS tracking added lemmatizer/tokenizer/transcript modules, section_builder extracted from StoryGenerator (now a thin orchestrator), Slovene syllabification added for Pimsleur backward buildup, pydub replaced raw-PCM concatenation, SRS admin UI added (6 admin endpoints + SvelteKit admin page).
 
-**Stage-3 Anki integration (PART 12 onward):** SRS items track two directions independently (RECOGNITION L2→L1 and PRODUCTION L1→L2), mirroring Anki's note/card model. The `app/anki/` package handles direct SQLite access to `collection.anki2` with a backup-and-lock safety envelope (`safe_open`), an offline-first sync engine (orphan recovery → create-new → push → pull → deck-config refreshes; the `pending_revlog` drain phase died with migration v9) that doesn't depend on AnkiConnect, and a media pipeline (Forvo + EdgeTTS fallback + Pixabay + ffmpeg LUFS normalization). Queue stats read FSRS-5 parameters from Anki's deck_config protobuf, cached in `anki_state_cache`. Frontend has a unified review queue, Anki-running status gating, a single Sync button, and a `/cards` admin page (originally `/admin/srs`). PARTs 18–21 cover the parity testing harness, the `tt_revlog` event log, the cloze pipeline, and the frontend toolchain that all support this.
+**Stage-3 Anki integration (PART 12 onward):** SRS items track two directions independently (RECOGNITION L2→L1 and PRODUCTION L1→L2), mirroring Anki's note/card model. Anki integration is split across two packages: `app/plugins/anki_sync/` (optional) handles direct SQLite access to `collection.anki2` with a backup-and-lock safety envelope (`safe_open`) and an offline-first sync engine (orphan recovery → create-new → push → pull → deck-config refreshes; the `pending_revlog` drain phase died with migration v9) that doesn't depend on AnkiConnect, while `app/cards/` holds the card notetypes and a media pipeline (Forvo + EdgeTTS fallback + Pixabay + ffmpeg LUFS normalization). Queue stats read FSRS-5 parameters from Anki's deck_config protobuf, cached in `anki_state_cache`. Frontend has a unified review queue, Anki-running status gating, a single Sync button, and a `/cards` admin page (originally `/admin/srs`). PARTs 18–21 cover the parity testing harness, the `tt_revlog` event log, the cloze pipeline, and the frontend toolchain that all support this.
 
 **The word-learning state machine (PART 22 onward):** the model shifted from a flat per-card list to a per-**lemma** state machine — `BASE (recognition → production) → INFLECTIONS` — built on a sentence-aware classla lemmatizer (PART 22), always-on cloze cards with Fluent-Forever ending-blanks (PART 23), and an A1-tuned `morphology_focus` generator (PART 24). PART 25 ties these together: introduction gates, per-lemma mastery coloring, and a fully interactive transcript where any word is a one-click entry into the learning loop. PART 26 covers the f32 FSRS migration and parity Layers 49–66; PART 27 the (since-completed) move toward event-sourced sync; PART 28 the documentation set. **PART 29 covers the 2026-06/07 restructurings** — the sync and database module splits, the peer-sync-only surface, the language-plugin registry and Norwegian, the direction-field registry, the compound-breakdown plugin, the lesson-player rework, and parity Layers 67–80; read it alongside any pre-split reference in PARTs 12–27.
 
@@ -4800,7 +4800,7 @@ _______________ coverage: platform darwin, python 3.14.2-final-0 _______________
 Name                                            Stmts   Miss Branch BrPart  Cover   Missing
 -------------------------------------------------------------------------------------------
 app/__init__.py                                     0      0      0      0   100%
-app/anki/__init__.py                                0      0      0      0   100%
+app/cards/__init__.py                               0      0      0      0   100%
 app/plugins/anki_sync/add_vocab_notetype.py                     41      0     12      0   100%
 app/cards/field_map.py                              18      0      0      0   100%
 app/plugins/anki_sync/import_seed.py                           166      0     66      0   100%
@@ -5077,7 +5077,7 @@ backend/tests/test_vocab_media_endpoints.py: 3 tests
 backend/tests/test_vocab_notetype.py: 6 tests
 ```
 
-~1474 tests across 74 files. The big growth is in `app/anki/` — see PART 12.8 for a per-file breakdown of the Anki integration tests. The non-anki test files were largely unchanged in count from the original 26-file walkthrough snapshot; the additional ~48 anki/sync/media/queue-stats files are the diff.
+~1474 tests across 74 files. The big growth is in the Anki integration (`app/plugins/anki_sync/` + `app/cards/`) — see PART 12.8 for a per-file breakdown of those tests. The non-anki test files were largely unchanged in count from the original 26-file walkthrough snapshot; the additional ~48 anki/sync/media/queue-stats files are the diff.
 
 ### 8.3 Mocking Patterns
 
@@ -5472,7 +5472,7 @@ After successful open, `AnkiContext` exposes the connection plus an `audit_chang
 Two more pieces complete the protocol — they live alongside `safe_open` and the project rule file:
 
 - **GUID-aware writes.** Every mutation must set `row.usn = -1` and bump `mod`. `UPDATE col SET ..., usn = -1` runs after each batch. Without this, Anki's integrity check on next open re-detects the change itself, bumps `col.scm`, and forces an unnecessary full upload.
-- **`normalize_usns.py`** (in `app/anki/`). After a forced full upload the local `col.usn` resets to the server value, but per-row `usn` values stay at their old (now "newer than server") value — so AnkiWeb keeps re-uploading them forever. `normalize_usns` clamps `cards.usn`, `notes.usn`, `revlog.usn` back to `col.usn` with no content change. Run it after every schema-bumping migration.
+- **`normalize_usns.py`** (in `app/plugins/anki_sync/`). After a forced full upload the local `col.usn` resets to the server value, but per-row `usn` values stay at their old (now "newer than server") value — so AnkiWeb keeps re-uploading them forever. `normalize_usns` clamps `cards.usn`, `notes.usn`, `revlog.usn` back to `col.usn` with no content change. Run it after every schema-bumping migration.
 
 ### 12.3 Readers and Writers
 
@@ -5821,7 +5821,7 @@ The new test files exclusively for Anki integration:
 
 ### 12.9 Anki Bootstrap CLIs
 
-The four-phase sync described in 12.4 only works once a user's Anki collection has been brought into a TunaTale-compatible shape: every note needs a stable deterministic GUID, every word needs a unified two-template notetype (recognition + production on the same note), and homonyms need their disambiguation in a hidden field rather than baked into the visible text. Most users have a pre-existing Anki deck that doesn't satisfy any of these. The bootstrap CLIs in `app/anki/` cover the one-time transformation:
+The four-phase sync described in 12.4 only works once a user's Anki collection has been brought into a TunaTale-compatible shape: every note needs a stable deterministic GUID, every word needs a unified two-template notetype (recognition + production on the same note), and homonyms need their disambiguation in a hidden field rather than baked into the visible text. Most users have a pre-existing Anki deck that doesn't satisfy any of these. The one-time bootstrap CLIs cover the transformation:
 
 | Step | Module | What it does |
 |------|--------|--------------|
@@ -5831,7 +5831,7 @@ The four-phase sync described in 12.4 only works once a user's Anki collection h
 | **H4** | `app.anki.backfill_guids` | Rewrites every Anki note GUID to TunaTale's deterministic formula (sha256 of language + visible text + DisambigKey). After this, sync's GUID-based reconciliation works. (`app.anki.sqlite_writer` has since been deleted; the one-shot scripts now live in `backend/scripts/anki_archive/`.) |
 | **H5** | `app.plugins.anki_sync.normalize_usns` | Post-full-upload USN clamp (already covered in 12.2). Resets `cards.usn`, `notes.usn`, `revlog.usn` back to `col.usn` after the user has done a forced full upload. |
 
-Each step has a `__main__` entry point (`uv run python -m app.anki.<module>`), goes through `safe_open` for backup + lock probe, and emits a dry-run plan before mutating. All five test files in PART 12.8 cover these CLIs.
+Each step goes through `safe_open` for backup + lock probe and emits a dry-run plan before mutating. The H1–H4 one-shots are now archived under `backend/scripts/anki_archive/`; H5 (`normalize_usns`) remains live in `app/plugins/anki_sync/`. All five test files in PART 12.8 cover these CLIs.
 
 After this pipeline, ongoing sync uses only the peer-sync endpoint (PART 12.4) — no further bootstrap is needed unless the user adds a third notetype or imports a substantially new deck.
 
