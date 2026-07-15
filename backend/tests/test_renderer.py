@@ -206,6 +206,50 @@ class TestLessonRenderer:
         phrase_count = sum(len(s.phrases) for s in lesson.sections)
         assert len(synthesize_calls) == phrase_count + 1  # +1 for lesson title
 
+    async def test_render_reuses_synthesis_across_sections(self, tmp_path):
+        """A phrase appearing in multiple sections is synthesized once and reused.
+
+        The translated (L2→EN) and en_translated (EN→L2) sections share the same
+        L2 line and English translation audio; the renderer must not re-run TTS
+        for identical (processed_text, voice, rate) inputs.
+        """
+        from app.generation.section_builder import (
+            build_en_translated_section,
+            build_translated_section,
+        )
+
+        scenes = [{"label": "Cafe", "lines": [{"speaker": "female-1", "text": "Dober dan", "translation": "Good day"}]}]
+        voice_map = {"narrator": "en-US-GuyNeural", "female-1": "sl-SI-PetraNeural"}
+        lesson = Lesson(
+            title="T",
+            language_code="sl",
+            sections=[
+                build_translated_section(scenes, voice_map, "en-US-GuyNeural", "sl"),
+                build_en_translated_section(scenes, voice_map, "en-US-GuyNeural", "sl"),
+            ],
+        )
+
+        calls: list[tuple[str, str, str]] = []
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+            calls.append((text, voice_id, rate))
+            output_path.write_bytes(_make_wav_bytes())
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        rdr = _make_renderer(mock_tts)
+        await rdr.render(lesson, tmp_path / "out.wav")
+
+        # Each unique (text, voice, rate) triple is synthesized exactly once.
+        assert len(calls) == len(set(calls))
+        # Dedup actually happened: fewer calls than the raw phrase count.
+        total_phrases = sum(len(s.phrases) for s in lesson.sections)
+        assert len(calls) < total_phrases + 1  # +1 title
+        # The shared L2 line (only user of the female-1 voice) is synthesized once,
+        # though it appears in both sections.
+        assert sum(1 for (_t, v, _r) in calls if v == "sl-SI-PetraNeural") == 1
+
     async def test_render_speaks_lesson_title_first(self, tmp_path):
         """render() synthesizes the lesson title as the very first TTS call."""
         lesson = _minimal_lesson()

@@ -7,6 +7,7 @@
 	import type { CacheStorageLike } from '$lib/sw/audio-cache';
 	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
 	import { lessonPlayerPref, pillsForSection } from '$lib/stores/lessonPlayerPref.svelte';
+	import type { EnglishMode } from '$lib/stores/lessonPlayerPref.svelte';
 	import { createPlaybackController } from '$lib/playback/playbackController.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 
@@ -59,6 +60,11 @@
 		sectionTypes.has('translated') &&
 		sectionTypes.has('slow_speed') &&
 		sectionTypes.has('slow_translated');
+	// English-first audio only exists on lessons re-rendered after it was added.
+	// When absent, the English cycle skips the en_first state (off ↔ l2_first)
+	// so the button never selects a missing track.
+	const hasEnFirst =
+		sectionTypes.has('en_translated') && sectionTypes.has('slow_en_translated');
 
 	// --- Phase / Enunciation / English state ---
 
@@ -72,11 +78,19 @@
 		{ level: 'enunciated_0.8', label: 'Enun 0.8×', rate: 0.8 },
 	] as const;
 
-	function resolveSectionType(phase: Phase, enunLevel: string, engOn: boolean): string | null {
+	function resolveSectionType(phase: Phase, enunLevel: string, engMode: EnglishMode): string | null {
 		if (phase === 'key_phrases') return 'key_phrases';
-		if (enunLevel === 'natural') return engOn ? 'translated' : 'natural_speed';
-		return engOn ? 'slow_translated' : 'slow_speed';
+		const natural = enunLevel === 'natural';
+		if (engMode === 'off') return natural ? 'natural_speed' : 'slow_speed';
+		if (engMode === 'l2_first') return natural ? 'translated' : 'slow_translated';
+		return natural ? 'en_translated' : 'slow_en_translated'; // en_first
 	}
+
+	const ENGLISH_LABELS: Record<EnglishMode, string> = {
+		off: 'English Off',
+		l2_first: 'English After',
+		en_first: 'English Before'
+	};
 
 	function resolveRate(enunLevel: string): number {
 		const opt = ENUNCIATION_OPTIONS.find((o) => o.level === enunLevel);
@@ -85,14 +99,20 @@
 
 	let phase: Phase = $state('dialogue');
 	let enunLevel: string = $state('natural');
-	let englishOn: boolean = $state(false);
+	let englishMode: EnglishMode = $state('off');
 
-	let selectedSectionType = $derived(resolveSectionType(phase, enunLevel, englishOn));
+	let selectedSectionType = $derived(resolveSectionType(phase, enunLevel, englishMode));
 	let enunIndex = $derived(ENUNCIATION_OPTIONS.findIndex((o) => o.level === enunLevel));
 
 	function cycleEnunciation() {
 		const nextIdx = (enunIndex + 1) % ENUNCIATION_OPTIONS.length;
 		enunLevel = ENUNCIATION_OPTIONS[nextIdx].level;
+	}
+
+	function cycleEnglish() {
+		const order: EnglishMode[] = hasEnFirst ? ['off', 'l2_first', 'en_first'] : ['off', 'l2_first'];
+		const idx = order.indexOf(englishMode);
+		englishMode = order[(idx + 1) % order.length];
 	}
 
 	function applyTrack() {
@@ -103,7 +123,7 @@
 	}
 
 	function persistSelection() {
-		lessonPlayerPref.set({ phase, enunciation: enunLevel, english: englishOn });
+		lessonPlayerPref.set({ phase, enunciation: enunLevel, english: englishMode });
 	}
 
 	function onPhaseClick(p: Phase) {
@@ -118,8 +138,8 @@
 		persistSelection();
 	}
 
-	function onEnglishToggle() {
-		englishOn = !englishOn;
+	function onEnglishClick() {
+		cycleEnglish();
 		applyTrack();
 		persistSelection();
 	}
@@ -133,7 +153,7 @@
 		const p = pillsForSection(ctrl.activeSectionType);
 		if (p.phase !== undefined) phase = p.phase;
 		if (p.enunciation !== undefined) enunLevel = p.enunciation;
-		if (p.english !== undefined) englishOn = p.english;
+		if (p.english !== undefined) englishMode = p.english;
 	});
 
 	// --- Prefetch section URLs ---
@@ -144,21 +164,21 @@
 		trackMode: boolean,
 		phase: Phase,
 		enunLevel: string,
-		englishOn: boolean,
+		englishMode: EnglishMode,
 		currentEnunIndex: number,
 	): string[] {
 		if (!trackMode) {
 			return [api.audioUrl(fullAudioId)];
 		}
 		const byType = new Map(sections.map((s) => [s.section_type, s.audio_id]));
-		const currentType = resolveSectionType(phase, enunLevel, englishOn);
+		const currentType = resolveSectionType(phase, enunLevel, englishMode);
 		const currentUrl = currentType ? byType.get(currentType) : undefined;
 		// Resolved section missing: applyTrack's selectTrack no-ops there too, so
 		// the player stays on the full concatenated track — prefetch that instead.
 		if (!currentUrl) return [api.audioUrl(fullAudioId)];
 
 		const nextIdx = (currentEnunIndex + 1) % ENUNCIATION_OPTIONS.length;
-		const nextType = resolveSectionType(phase, ENUNCIATION_OPTIONS[nextIdx].level, englishOn);
+		const nextType = resolveSectionType(phase, ENUNCIATION_OPTIONS[nextIdx].level, englishMode);
 		const nextUrl = nextType && nextType !== currentType ? byType.get(nextType) : undefined;
 
 		const urls = [api.audioUrl(currentUrl)];
@@ -184,7 +204,7 @@
 			const sel = lessonPlayerPref.selection;
 			phase = sel.phase;
 			enunLevel = sel.enunciation;
-			englishOn = sel.english;
+			englishMode = sel.english;
 			applyTrack();
 		}
 
@@ -195,7 +215,7 @@
 			trackMode,
 			phase,
 			enunLevel,
-			englishOn,
+			englishMode,
 			enunIndex,
 		);
 		void maybePrefetchLesson(urls, {
@@ -255,6 +275,10 @@
 
 	{#if hasCues}
 		<div class="sentence-row">
+			<button class="ctrl-btn small" onclick={() => ctrl.restartSection()} title="Restart section">
+				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><rect x="2" y="2" width="2" height="12" rx="1" fill="currentColor"/><polygon points="14,2 6,8 14,14" fill="currentColor"/></svg>
+				Section
+			</button>
 			<button class="ctrl-btn small" onclick={() => ctrl.prevCue()} title="Previous sentence">
 				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="12,2 4,8 12,14" fill="currentColor"/></svg>
 				Sentence
@@ -295,8 +319,8 @@
 			<button class="enunciation-btn" onclick={onEnunClick}>
 				{ENUNCIATION_OPTIONS[enunIndex].label}
 			</button>
-			<button class="english-btn" onclick={onEnglishToggle}>
-				English {englishOn ? 'On' : 'Off'}
+			<button class="english-btn" onclick={onEnglishClick}>
+				{ENGLISH_LABELS[englishMode]}
 			</button>
 		</div>
 	{/if}

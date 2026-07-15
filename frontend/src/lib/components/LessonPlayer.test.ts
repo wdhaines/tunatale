@@ -187,6 +187,29 @@ const audioWithAllSections: LessonAudio = {
   ],
 };
 
+// Post-EN-first shape: adds the English-first bilingual sections so the English
+// control can cycle through all three states (off → l2_first → en_first).
+const audioWithEnFirstSections: LessonAudio = {
+  ...audioWithAllSections,
+  sections: [
+    ...audioWithAllSections.sections,
+    {
+      audio_id: "s6",
+      section_index: 5,
+      section_type: "en_translated",
+      title: "English Translated",
+      cues: [sectionCue(5, "en_translated", "Pozdravljeni")],
+    },
+    {
+      audio_id: "s7",
+      section_index: 6,
+      section_type: "slow_en_translated",
+      title: "Slow English Translated",
+      cues: [sectionCue(6, "slow_en_translated", "Pozdravljeni")],
+    },
+  ],
+};
+
 // trackMode but missing natural_speed — exercises the defensive
 // !currentUrl guard in computePrefetchUrls.
 const audioMissingCurrentSection: LessonAudio = {
@@ -541,14 +564,39 @@ describe("LessonPlayer", () => {
       expect(btn!.textContent).toContain("Off");
     });
 
-    it("english button toggles label on click", () => {
+    it("english cycles off → l2-first → en-first → off when en-first audio exists", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithEnFirstSections } });
+      const btn = container.querySelector<HTMLButtonElement>(".english-btn")!;
+      expect(btn.textContent).toContain("Off");
+      fireEvent.click(btn);
+      expect(btn.textContent).toContain("After"); // l2_first
+      fireEvent.click(btn);
+      expect(btn.textContent).toContain("Before"); // en_first
+      fireEvent.click(btn);
+      expect(btn.textContent).toContain("Off");
+    });
+
+    it("english cycle skips en-first when the lesson lacks en-first audio", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
       const btn = container.querySelector<HTMLButtonElement>(".english-btn")!;
       expect(btn.textContent).toContain("Off");
       fireEvent.click(btn);
-      expect(btn.textContent).toContain("On");
+      expect(btn.textContent).toContain("After"); // l2_first
       fireEvent.click(btn);
+      // No en_first track → cycle wraps straight back to Off.
       expect(btn.textContent).toContain("Off");
+      expect(btn.textContent).not.toContain("Before");
+    });
+
+    it("selecting en-first switches to the en_translated track", () => {
+      const srcSpy = vi.spyOn(HTMLMediaElement.prototype, "src", "set");
+      const { container } = render(LessonPlayer, { props: { audio: audioWithEnFirstSections } });
+      const btn = container.querySelector<HTMLButtonElement>(".english-btn")!;
+      fireEvent.click(btn); // l2_first
+      fireEvent.click(btn); // en_first
+      const srcs = srcSpy.mock.calls.map((c) => c[0]);
+      expect(srcs).toContain("/api/audio/s6"); // en_translated
+      srcSpy.mockRestore();
     });
 
     it("enunciation cycles through 4 states on click", () => {
@@ -585,6 +633,13 @@ describe("LessonPlayer", () => {
     it("fires forward on button click", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
       const btn = container.querySelector<HTMLButtonElement>('button[title="Forward 10s"]')!;
+      fireEvent.click(btn);
+    });
+
+    it("fires restartSection on section-start click", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
+      const btn = container.querySelector<HTMLButtonElement>('button[title="Restart section"]')!;
+      expect(btn).toBeTruthy();
       fireEvent.click(btn);
     });
 

@@ -26,6 +26,8 @@ SECTION_TITLES: dict[SectionType, str] = {
     SectionType.SLOW_SPEED: "Slow Speed",
     SectionType.TRANSLATED: "Translated",
     SectionType.SLOW_TRANSLATED: "Slow Translated",
+    SectionType.EN_TRANSLATED: "English Translated",
+    SectionType.SLOW_EN_TRANSLATED: "Slow English Translated",
 }
 
 
@@ -305,3 +307,101 @@ def build_slow_translated_section(
             phrases.append(Phrase(text=translation, voice_id=narrator_voice, language_code="en", role="narrator"))
 
     return Section(section_type=SectionType.SLOW_TRANSLATED, phrases=phrases)
+
+
+def build_en_translated_section(
+    scenes: list[Scene],
+    l2_voice_map: dict[str, str],
+    narrator_voice: str,
+    l2_code: str,
+) -> Section:
+    """Build the EN_TRANSLATED section — narrator translation FIRST, then the L2 line.
+
+    English-first counterpart of build_translated_section: for each dialogue
+    line the English narrator translation is spoken before the target-language
+    line. Same skip rules (lines without a translation are dropped).
+    """
+    phrases: list[Phrase] = [
+        Phrase(
+            text=SECTION_TITLES[SectionType.EN_TRANSLATED],
+            voice_id=narrator_voice,
+            language_code="en",
+            role="narrator",
+        )
+    ]
+
+    for scene in scenes:
+        if not isinstance(scene, dict):
+            logger.warning("Skipping non-dict scene: %r", scene)
+            continue
+        scene_label = scene.get("label", "")
+        if not scene_label:
+            logger.warning("Skipping scene with missing label: %r", scene)
+            continue
+        phrases.append(Phrase(text=scene_label, voice_id=narrator_voice, language_code="en", role="narrator"))
+        for line in scene.get("lines", []):
+            if not isinstance(line, dict):
+                logger.warning("Skipping non-dict dialogue line: %r", line)
+                continue
+            speaker = line.get("speaker", "").lower()
+            text = line.get("text", "")
+            translation = line.get("translation", "")
+            if not speaker or not text or not translation:
+                logger.warning("Skipping dialogue line with missing speaker, text, or translation: %r", line)
+                continue
+            voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
+            phrases.append(Phrase(text=translation, voice_id=narrator_voice, language_code="en", role="narrator"))
+            phrases.append(Phrase(text=text, voice_id=voice_id, language_code=l2_code, role=speaker))
+
+    return Section(section_type=SectionType.EN_TRANSLATED, phrases=phrases)
+
+
+def build_slow_en_translated_section(
+    scenes: list[Scene],
+    l2_voice_map: dict[str, str],
+    narrator_voice: str,
+    l2_code: str,
+) -> Section:
+    """Build the SLOW_EN_TRANSLATED section — narrator translation FIRST, then slowed L2.
+
+    English-first counterpart of build_slow_translated_section: the English
+    narrator translation precedes each '...'-separated (slowed) L2 line.
+    """
+    phrases: list[Phrase] = [
+        Phrase(
+            text=SECTION_TITLES[SectionType.SLOW_EN_TRANSLATED],
+            voice_id=narrator_voice,
+            language_code="en",
+            role="narrator",
+        )
+    ]
+
+    for scene in scenes:
+        if not isinstance(scene, dict):
+            logger.warning("Skipping non-dict scene: %r", scene)
+            continue
+        scene_label = scene.get("label", "")
+        if not scene_label:
+            logger.warning("Skipping scene with missing label: %r", scene)
+            continue
+        phrases.append(Phrase(text=scene_label, voice_id=narrator_voice, language_code="en", role="narrator"))
+        for line in scene.get("lines", []):
+            if not isinstance(line, dict):
+                logger.warning("Skipping non-dict dialogue line: %r", line)
+                continue
+            speaker = line.get("speaker", "").lower()
+            text = line.get("text", "")
+            translation = line.get("translation", "")
+            if not speaker or not text or not translation:
+                logger.warning("Skipping dialogue line with missing speaker, text, or translation: %r", line)
+                continue
+            voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
+            if uses_compound_word_breakdown(l2_code):
+                slow_fn = get_slow_word(l2_code)
+                slowed = " ... ".join(slow_fn(w) for w in text.split())
+            else:
+                slowed = " ... ".join(text.split())
+            phrases.append(Phrase(text=translation, voice_id=narrator_voice, language_code="en", role="narrator"))
+            phrases.append(Phrase(text=slowed, voice_id=voice_id, language_code=l2_code, role=speaker))
+
+    return Section(section_type=SectionType.SLOW_EN_TRANSLATED, phrases=phrases)

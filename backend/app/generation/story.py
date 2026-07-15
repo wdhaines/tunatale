@@ -8,8 +8,10 @@ import logging
 from app.generation.json_parsing import parse_json_object
 from app.generation.prompts import _build_cefr_block, build_story_system_prompt, get_strategy_prompt
 from app.generation.section_builder import (
+    build_en_translated_section,
     build_key_phrases_section,
     build_natural_speed_section,
+    build_slow_en_translated_section,
     build_slow_speed_section,
     build_slow_translated_section,
     build_translated_section,
@@ -172,6 +174,8 @@ def build_lesson_from_story(data: dict, language: Language) -> Lesson:
         build_slow_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
         build_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
         build_slow_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
+        build_en_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
+        build_slow_en_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
     ]
 
     kp_infos = []

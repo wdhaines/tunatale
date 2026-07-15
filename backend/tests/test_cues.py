@@ -177,6 +177,99 @@ class TestBuildCueManifestDialogue:
         # Narrator following L2 → same line 1
         assert cues[4].ref == {"kind": "line", "target_index": 1}
 
+    def test_en_translated_narrator_preceding_l2_refs_same_line(self):
+        """In en_translated the translation PRECEDES its L2 line and shares its line ref."""
+        lesson = Lesson(
+            title="Test",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.EN_TRANSLATED,
+                    phrases=[
+                        Phrase(
+                            text="English Translated", voice_id="en-US-GuyNeural", language_code="en", role="narrator"
+                        ),
+                        Phrase(text="At the cafe", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
+                        Phrase(text="Good day", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
+                        Phrase(text="Dober dan", voice_id="sl-SI-PetraNeural", language_code="sl", role="female-1"),
+                        Phrase(text="Thanks", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
+                        Phrase(text="Hvala", voice_id="sl-SI-PetraNeural", language_code="sl", role="female-1"),
+                    ],
+                )
+            ],
+        )
+        timing = [
+            CueTiming(section_index=0, phrase_index=i, start_frame=i * 2000, end_frame=i * 2000 + 1000)
+            for i in range(6)
+        ]
+        cues = build_cue_manifest(lesson, timing, rate=1000)
+
+        assert cues[0].ref == {"kind": "narration"}  # section title
+        assert cues[1].ref == {"kind": "narration"}  # scene label (narrator followed by narrator)
+        assert cues[2].ref == {"kind": "line", "target_index": 0}  # EN translation precedes L2 line 0
+        assert cues[3].ref == {"kind": "line", "target_index": 0}  # L2 line 0
+        assert cues[4].ref == {"kind": "line", "target_index": 1}  # EN translation precedes L2 line 1
+        assert cues[5].ref == {"kind": "line", "target_index": 1}  # L2 line 1
+
+    def test_slow_en_translated_narrator_preceding_l2_refs_same_line(self):
+        """slow_en_translated pairs the preceding translation with its slowed L2 line."""
+        lesson = Lesson(
+            title="Test",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.SLOW_EN_TRANSLATED,
+                    phrases=[
+                        Phrase(
+                            text="Slow English Translated",
+                            voice_id="en-US-GuyNeural",
+                            language_code="en",
+                            role="narrator",
+                        ),
+                        Phrase(text="Good day!", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
+                        Phrase(
+                            text="Dober ... dan!", voice_id="sl-SI-PetraNeural", language_code="sl", role="female-1"
+                        ),
+                    ],
+                )
+            ],
+        )
+        timing = [
+            CueTiming(section_index=0, phrase_index=i, start_frame=i * 2000, end_frame=i * 2000 + 1000)
+            for i in range(3)
+        ]
+        cues = build_cue_manifest(lesson, timing, rate=1000)
+
+        assert cues[0].ref == {"kind": "narration"}  # section title
+        assert cues[1].ref == {"kind": "line", "target_index": 0}  # EN translation precedes L2
+        assert cues[2].ref == {"kind": "line", "target_index": 0}  # slowed L2 line 0
+
+    def test_en_translated_trailing_narrator_gets_narration_ref(self):
+        """An en_translated narrator with no following L2 line (e.g. a trailing scene label) is narration."""
+        lesson = Lesson(
+            title="Test",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.EN_TRANSLATED,
+                    phrases=[
+                        Phrase(
+                            text="English Translated", voice_id="en-US-GuyNeural", language_code="en", role="narrator"
+                        ),
+                        Phrase(text="At the cafe", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
+                    ],
+                )
+            ],
+        )
+        timing = [
+            CueTiming(section_index=0, phrase_index=0, start_frame=0, end_frame=1000),
+            CueTiming(section_index=0, phrase_index=1, start_frame=2000, end_frame=3000),
+        ]
+        cues = build_cue_manifest(lesson, timing, rate=1000)
+
+        assert cues[0].ref == {"kind": "narration"}  # section title
+        assert cues[1].ref == {"kind": "narration"}  # trailing narrator, no L2 after
+
 
 class TestBuildCueManifestKeyPhrases:
     """Ref derivation for key_phrases section via deterministic builder."""

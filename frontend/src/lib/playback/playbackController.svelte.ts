@@ -21,6 +21,7 @@ export interface PlaybackController {
   seekToCue(cue: Cue): void;
   nextSection(): void;
   prevSection(): void;
+  restartSection(): void;
   nextCue(): void;
   prevCue(): void;
   repeatCue(): void;
@@ -357,6 +358,18 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     }
   }
 
+  function restartSection(): void {
+    if (!activeCues) return;
+    if (currentSectionIndex === null) {
+      doSeek(0);
+      return;
+    }
+    const firstCueInSection = activeCues.find((c) => c.section_index === currentSectionIndex);
+    if (firstCueInSection) {
+      doSeek(firstCueInSection.start_ms / 1000);
+    }
+  }
+
   // --- Ref-group cue stepping ---
 
   function findCurrentGroupIdx(): number {
@@ -556,6 +569,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     },
     nextSection,
     prevSection,
+    restartSection,
     nextCue: nextCueAction,
     prevCue: prevCueAction,
     repeatCue,

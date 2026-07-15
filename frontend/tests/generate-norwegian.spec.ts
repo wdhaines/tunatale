@@ -72,7 +72,7 @@ test('Norwegian curriculum + lesson generate with nb-NO voices (mock cassette)',
 		l2Phrases.every((p: { voice_id: string }) => p.voice_id.startsWith('nb-NO-'))
 	).toBe(true);
 
-	// The four Pimsleur sections are present.
+	// The Pimsleur dialogue sections are present.
 	const sectionTypes = lesson.sections.map((s: { type: string }) => s.type);
 	expect(sectionTypes).toContain('natural_speed');
 });

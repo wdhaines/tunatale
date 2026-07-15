@@ -30,16 +30,36 @@ class CueTiming:
     end_frame: int
 
 
+_L2_FIRST_TRANSLATED = (SectionType.TRANSLATED, SectionType.SLOW_TRANSLATED)
+_EN_FIRST_TRANSLATED = (SectionType.EN_TRANSLATED, SectionType.SLOW_EN_TRANSLATED)
+
+
+def _next_is_l2(section, timing: list[CueTiming], idx: int, l2_code: str) -> bool:
+    """Whether the phrase after ``timing[idx]`` is an L2 line (translation-first lookahead)."""
+    if idx + 1 >= len(timing):
+        return False
+    next_phrase = section.phrases[timing[idx + 1].phrase_index]
+    return next_phrase.language_code == l2_code
+
+
 def _build_dialogue_refs(lesson: Lesson, timing: list[CueTiming], section_idx: int) -> list[Cue]:
-    """Build cues for a dialogue section (natural_speed/slow_speed/translated)."""
+    """Build cues for a dialogue section.
+
+    Covers natural_speed / slow_speed (L2 lines only) and the bilingual
+    sections in both orderings: translated / slow_translated pair the narrator
+    translation with the *preceding* L2 line; en_translated / slow_en_translated
+    pair it with the *following* L2 line (translation-first). Either way the
+    translation cue shares its L2 line's ``line`` ref so the player groups them.
+    """
     section = lesson.sections[section_idx]
     cues: list[Cue] = []
     l2_code = lesson.language_code
     line_n = 0
-    # In translated, track whether we're "awaiting" a translation for the last L2
+    # In L2-first translated, track whether we're "awaiting" a translation for
+    # the last L2 line.
     pending_line: int | None = None
 
-    for te in timing:
+    for i, te in enumerate(timing):
         phrase = section.phrases[te.phrase_index]
         is_l2 = phrase.language_code == l2_code
         is_narrator = phrase.role == "narrator"
@@ -48,13 +68,13 @@ def _build_dialogue_refs(lesson: Lesson, timing: list[CueTiming], section_idx: i
             ref: dict = {"kind": "line", "target_index": line_n}
             pending_line = line_n
             line_n += 1
-        elif (
-            section.section_type in (SectionType.TRANSLATED, SectionType.SLOW_TRANSLATED)
-            and is_narrator
-            and pending_line is not None
-        ):
+        elif section.section_type in _L2_FIRST_TRANSLATED and is_narrator and pending_line is not None:
             ref = {"kind": "line", "target_index": pending_line}
             pending_line = None
+        elif section.section_type in _EN_FIRST_TRANSLATED and is_narrator and _next_is_l2(section, timing, i, l2_code):
+            # Translation-first: this narrator line translates the L2 line that
+            # follows it, which will take the upcoming line index (line_n).
+            ref = {"kind": "line", "target_index": line_n}
         else:
             ref = {"kind": "narration"}
             pending_line = None

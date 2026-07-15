@@ -112,6 +112,24 @@ class TestDynamicPauseCalculation:
         )
         assert pause == 500
 
+    def test_slow_en_translated_l2_applies_1_2x_factor(self, calc):
+        pause = calc.get_phrase_pause(
+            audio_duration_s=1.0,
+            word_count=2,
+            section_type=SectionType.SLOW_EN_TRANSLATED,
+            language_code="sl",
+        )
+        assert pause == 600
+
+    def test_slow_en_translated_english_no_factor(self, calc):
+        pause = calc.get_phrase_pause(
+            audio_duration_s=1.0,
+            word_count=2,
+            section_type=SectionType.SLOW_EN_TRANSLATED,
+            language_code="en",
+        )
+        assert pause == 500
+
     def test_pause_is_non_negative(self, calc):
         pause = calc.get_phrase_pause(
             audio_duration_s=0.0,

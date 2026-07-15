@@ -153,7 +153,13 @@ class LessonRenderer:
         return _concat(parts), section_cues
 
     async def _render_section(
-        self, section: Section, tmp: Path, section_idx: int, language_code: str
+        self,
+        section: Section,
+        tmp: Path,
+        section_idx: int,
+        language_code: str,
+        synth_memo: dict[tuple[str, str, str], tuple[Path, asyncio.Task]],
+        memo_lock: asyncio.Lock,
     ) -> tuple[_Audio, list[tuple[int, int, int]]]:
         """Render a single section to an audio buffer (no boundary silence).
 
@@ -162,6 +168,12 @@ class LessonRenderer:
             tmp: Temp directory for intermediate TTS files.
             section_idx: Index used for temp file naming.
             language_code: Language code for preprocessor lookup.
+            synth_memo: Render-scoped cache mapping ``(processed_text, voice_id,
+                rate)`` → ``(canonical_file, synth_task)``. Shared across all
+                sections so an identical utterance (e.g. the same L2 line in the
+                translated and en_translated sections) is synthesized once and
+                its audio file reused, not re-spoken.
+            memo_lock: Guards ``synth_memo`` while sections render concurrently.
 
         Returns:
             Tuple of (Audio buffer, per-phrase timing).
@@ -173,16 +185,35 @@ class LessonRenderer:
                 f"No preprocessor configured for language {language_code!r}; renderer has {sorted(self._preprocessors)}"
             )
         preprocessor = self._preprocessors[language_code]
-        phrase_files = [tmp / f"s{section_idx}_p{i}.mp3" for i in range(len(section.phrases))]
         processed_texts = [preprocessor.preprocess(phrase.text, section.section_type) for phrase in section.phrases]
 
-        # Synthesize all phrases in this section concurrently.
-        # EdgeTTSService._semaphore limits total concurrent requests globally.
-        await asyncio.gather(
-            *[
-                self._tts.synthesize(text, phrase.voice_id, phrase_files[i], rate=phrase.rate)
-                for i, (text, phrase) in enumerate(zip(processed_texts, section.phrases, strict=True))
-            ]
+        async def _synth(phrase_idx: int, text: str, voice_id: str, rate: str) -> Path:
+            """Synthesize (or reuse) one phrase; returns its audio file path.
+
+            The first requester of a given (text, voice, rate) key synthesizes it
+            into this phrase's natural ``s{section_idx}_p{i}.mp3`` file and records
+            the task; later requesters await that same task and reuse the file.
+            EdgeTTSService._semaphore still caps global TTS concurrency.
+            """
+            key = (text, voice_id, rate)
+            async with memo_lock:
+                entry = synth_memo.get(key)
+                if entry is None:
+                    canonical = tmp / f"s{section_idx}_p{phrase_idx}.mp3"
+                    task = asyncio.ensure_future(self._tts.synthesize(text, voice_id, canonical, rate=rate))
+                    entry = (canonical, task)
+                    synth_memo[key] = entry
+            canonical, task = entry
+            await task
+            return canonical
+
+        phrase_files = list(
+            await asyncio.gather(
+                *[
+                    _synth(i, text, phrase.voice_id, phrase.rate)
+                    for i, (text, phrase) in enumerate(zip(processed_texts, section.phrases, strict=True))
+                ]
+            )
         )
 
         # Assemble in phrase order while tracking frame positions.
@@ -232,10 +263,15 @@ class LessonRenderer:
 
             # Render all sections concurrently — phrases within each section are
             # also parallelised; EdgeTTSService._semaphore caps total concurrency.
+            # A render-scoped synthesis cache reuses identical utterances across
+            # sections (e.g. the shared L2 line + English gloss in the translated
+            # and en_translated sections) instead of re-running TTS for each.
             t0 = time.perf_counter()
+            synth_memo: dict[tuple[str, str, str], tuple[Path, asyncio.Task]] = {}
+            memo_lock = asyncio.Lock()
             section_results = await asyncio.gather(
                 *[
-                    self._render_section(section, tmp, i, language_code=lesson.language_code)
+                    self._render_section(section, tmp, i, lesson.language_code, synth_memo, memo_lock)
                     for i, section in enumerate(lesson.sections)
                 ]
             )

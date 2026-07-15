@@ -2,8 +2,10 @@
 
 from app.generation.section_builder import (
     SECTION_TITLES,
+    build_en_translated_section,
     build_key_phrases_section,
     build_natural_speed_section,
+    build_slow_en_translated_section,
     build_slow_speed_section,
     build_slow_translated_section,
     build_translated_section,
@@ -505,3 +507,162 @@ def test_slow_translated_mirrors_translated_line_count():
     nat_l2 = [p for p in nat.phrases if p.language_code == L2_CODE]
     slow_l2 = [p for p in slow.phrases if p.language_code == L2_CODE]
     assert len(slow_l2) == len(nat_l2)
+
+
+# ── build_en_translated_section (English-first) ──────────────────────────
+
+
+def test_en_translated_section_type():
+    section = build_en_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    assert section.section_type == SectionType.EN_TRANSLATED
+
+
+def test_en_translated_starts_with_title_phrase():
+    section = build_en_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    first = section.phrases[0]
+    assert first.text == "English Translated"
+    assert first.role == "narrator"
+    assert first.voice_id == NARRATOR_VOICE
+    assert first.language_code == "en"
+
+
+def test_en_translated_narrator_before_l2():
+    """Each dialogue line is the English narrator translation FIRST, then the L2 line."""
+    section = build_en_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    body = [p for p in section.phrases if p.text not in ("English Translated", "At the Riverside Café")]
+    for i, phrase in enumerate(body):
+        if i % 2 == 0:
+            assert phrase.role == "narrator"
+            assert phrase.language_code == "en"
+        else:
+            assert phrase.language_code == L2_CODE
+    # First line: English "Good day!" narration precedes the L2 "Dober dan!".
+    assert body[0].text == "Good day!"
+    assert body[1].text == "Dober dan!"
+
+
+def test_en_translated_preserves_scene_labels():
+    section = build_en_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    narrator_phrases = [p for p in section.phrases if p.role == "narrator"]
+    scene_labels = [p for p in narrator_phrases if "Riverside" in p.text]
+    assert len(scene_labels) == 1
+
+
+def test_en_translated_mirrors_translated_line_count():
+    en = build_en_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    l2 = build_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    en_l2 = [p for p in en.phrases if p.language_code == L2_CODE]
+    l2_l2 = [p for p in l2.phrases if p.language_code == L2_CODE]
+    assert len(en_l2) == len(l2_l2)
+
+
+def test_en_translated_skips_line_without_translation():
+    scenes = [
+        {
+            "label": "Scene",
+            "lines": [
+                {"speaker": "f1", "text": "Dober dan", "translation": "Good day"},
+                {"speaker": "f1", "text": "No translation here"},
+                {"speaker": "f1", "text": "Prosim kavo", "translation": "A coffee please"},
+            ],
+        }
+    ]
+    section = build_en_translated_section(scenes, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    l2_texts = [p.text for p in section.phrases if p.language_code == L2_CODE]
+    assert "Dober dan" in l2_texts
+    assert "Prosim kavo" in l2_texts
+    assert "No translation here" not in l2_texts
+
+
+def test_en_translated_skips_malformed_input():
+    scenes = [
+        {"label": "Good", "lines": [{"speaker": "f1", "text": "Dober dan", "translation": "Good day"}]},
+        {"not_a_label": True},
+        {"label": "", "lines": []},
+        42,
+        {
+            "label": "Bad",
+            "lines": [
+                {"speaker": "f1", "text": "Kava prosim", "translation": "Coffee please"},
+                {"missing": "speaker"},
+                {"speaker": "f1", "text": ""},
+                "not a dict",
+            ],
+        },
+    ]
+    section = build_en_translated_section(scenes, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    texts = [p.text for p in section.phrases]
+    assert "Good" in texts
+    assert "Bad" in texts
+    l2_texts = [p.text for p in section.phrases if p.language_code == L2_CODE]
+    assert len(l2_texts) == 2
+
+
+# ── build_slow_en_translated_section (English-first, slowed L2) ───────────
+
+
+def test_slow_en_translated_section_type():
+    section = build_slow_en_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    assert section.section_type == SectionType.SLOW_EN_TRANSLATED
+
+
+def test_slow_en_translated_starts_with_title_phrase():
+    section = build_slow_en_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    first = section.phrases[0]
+    assert first.text == "Slow English Translated"
+    assert first.role == "narrator"
+    assert first.language_code == "en"
+
+
+def test_slow_en_translated_narrator_before_ellipsis_l2():
+    section = build_slow_en_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    body = [p for p in section.phrases if p.text not in ("Slow English Translated", "At the Riverside Café")]
+    for i, phrase in enumerate(body):
+        if i % 2 == 0:
+            assert phrase.role == "narrator"
+            assert phrase.language_code == "en"
+        else:
+            assert phrase.language_code == L2_CODE
+    l2_phrases = [p for p in section.phrases if p.language_code == L2_CODE]
+    assert l2_phrases[0].text == "Dober ... dan!"
+    assert l2_phrases[1].text == "Prosim ... kavo."
+
+
+def test_slow_en_translated_skips_line_without_translation():
+    scenes = [
+        {
+            "label": "Scene",
+            "lines": [
+                {"speaker": "f1", "text": "Dober dan", "translation": "Good day"},
+                {"speaker": "f1", "text": "No translation here"},
+            ],
+        }
+    ]
+    section = build_slow_en_translated_section(scenes, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    l2_texts = [p.text for p in section.phrases if p.language_code == L2_CODE]
+    assert len(l2_texts) == 1
+    assert " ... " in l2_texts[0]
+
+
+def test_slow_en_translated_skips_malformed_input():
+    scenes = [
+        {"label": "Good", "lines": [{"speaker": "f1", "text": "Dober dan", "translation": "Good day"}]},
+        {"not_a_label": True},
+        {"label": "", "lines": []},
+        42,
+        {
+            "label": "Bad",
+            "lines": [
+                {"speaker": "f1", "text": "Kava prosim", "translation": "Coffee please"},
+                {"missing": "speaker"},
+                {"speaker": "f1", "text": ""},
+                "not a dict",
+            ],
+        },
+    ]
+    section = build_slow_en_translated_section(scenes, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    texts = [p.text for p in section.phrases]
+    assert "Good" in texts
+    assert "Bad" in texts
+    l2_texts = [p.text for p in section.phrases if p.language_code == L2_CODE]
+    assert len(l2_texts) == 2

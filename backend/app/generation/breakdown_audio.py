@@ -102,8 +102,12 @@ async def render_word_previews(words: list[str], out_dir: Path) -> dict[str, lis
             slug = _slug(word)
             sections = build_preview_sections(word, voice_id)
             out_paths: list[Path] = []
+            synth_memo: dict[tuple[str, str, str], tuple[Path, asyncio.Task]] = {}
+            memo_lock = asyncio.Lock()
             for idx, (section, suffix) in enumerate(zip(sections, ("breakdown", "slow"), strict=True)):
-                audio, _timing = await renderer._render_section(section, tmp, idx, language_code=_LANGUAGE_CODE)
+                audio, _timing = await renderer._render_section(
+                    section, tmp, idx, _LANGUAGE_CODE, synth_memo, memo_lock
+                )
                 path = out_dir / f"{slug}_{suffix}.{ext}"
                 await asyncio.to_thread(renderer._write_audio, path, audio)
                 out_paths.append(path)

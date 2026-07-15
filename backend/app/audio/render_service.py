@@ -22,6 +22,7 @@ from app.storage.store import ContentStore
 _SLOW_TEXT_SOURCE: dict[SectionType, SectionType] = {
     SectionType.SLOW_SPEED: SectionType.NATURAL_SPEED,
     SectionType.SLOW_TRANSLATED: SectionType.TRANSLATED,
+    SectionType.SLOW_EN_TRANSLATED: SectionType.EN_TRANSLATED,
 }
 
 

@@ -326,6 +326,51 @@ describe("playbackController", () => {
       ctrl.prevSection();
       expect(audioEl.currentTime).toBe(5);
     });
+
+    it("restartSection seeks back to the first cue of the current section", () => {
+      const ctrl = createController();
+      // t=3.0s → cues 0,1,2,3 have started; cue 3 (section 1) is current.
+      audioEl.currentTime = 3.0;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(ctrl.currentCue?.section_index).toBe(1);
+      ctrl.restartSection();
+      // First cue of section 1 is index 2 at 1500ms.
+      expect(audioEl.currentTime).toBeCloseTo(1.5, 3);
+    });
+
+    it("restartSection re-seeks even when already at the section start", () => {
+      const ctrl = createController();
+      // Land on the first cue of section 1 (index 2 @1500ms), then advance the
+      // playhead within the section without a timeupdate so currentCue holds.
+      audioEl.currentTime = 1.5;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(ctrl.currentCue?.section_index).toBe(1);
+      audioEl.currentTime = 2.2;
+      ctrl.restartSection();
+      expect(audioEl.currentTime).toBeCloseTo(1.5, 3);
+    });
+
+    it("restartSection during title (null section index) seeks to 0", () => {
+      const lateCues = basicCues.map((c) => ({
+        ...c,
+        start_ms: c.start_ms + 500,
+      }));
+      const lateAudio: LessonAudio = { ...lessonAudio, cues: lateCues };
+      const ctrl = createController({ audio: lateAudio });
+      audioEl.currentTime = 0.3;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(ctrl.currentSectionIndex).toBeNull();
+      ctrl.restartSection();
+      expect(audioEl.currentTime).toBe(0);
+    });
+
+    it("restartSection is a no-op when cues is null", () => {
+      const noCuesAudio: LessonAudio = { ...lessonAudio, cues: null };
+      const ctrl = createController({ audio: noCuesAudio });
+      audioEl.currentTime = 5;
+      ctrl.restartSection();
+      expect(audioEl.currentTime).toBe(5);
+    });
   });
 
   describe("ref-group cue stepping", () => {

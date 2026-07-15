@@ -21,13 +21,20 @@ class KeyPhraseInfo:
 
 
 class SectionType(Enum):
-    """Four Pimsleur section types for each lesson."""
+    """Pimsleur section types for each lesson.
+
+    The bilingual sections come in two orderings: TRANSLATED / SLOW_TRANSLATED
+    play the L2 line first then its English translation; EN_TRANSLATED /
+    SLOW_EN_TRANSLATED play the English translation first then the L2 line.
+    """
 
     KEY_PHRASES = "key_phrases"
     NATURAL_SPEED = "natural_speed"
     SLOW_SPEED = "slow_speed"
     TRANSLATED = "translated"
     SLOW_TRANSLATED = "slow_translated"
+    EN_TRANSLATED = "en_translated"
+    SLOW_EN_TRANSLATED = "slow_en_translated"
 
 
 @dataclass

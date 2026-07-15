@@ -1031,7 +1031,7 @@ class TestLessonAuthoringEndpoints:
         data = response.json()
         assert data["id"].startswith("ordering-coffee-")
         assert data["title"] == "Ordering Coffee"
-        assert len(data["sections"]) == 5
+        assert len(data["sections"]) == 7
         assert data["warnings"] == []
         assert store.get_lesson(data["id"]) is not None
         # Verify pipeline enqueued a render job

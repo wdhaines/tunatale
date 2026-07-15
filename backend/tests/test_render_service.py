@@ -1187,3 +1187,45 @@ class TestDeriveSectionCuesEdgeCases:
         by_target = {c.ref["target_index"]: c for c in l2}
         assert by_target[0].text == "Dober dan"
         assert by_target[1].text == "Kava ... prosim"
+
+
+class TestDeriveSectionCuesEnFirst:
+    """slow_en_translated scrubs its L2 subtitle text from the en_translated twin."""
+
+    def test_slow_en_translated_overwrites_with_natural_text(self):
+        from app.audio.cues import CueTiming, build_cue_manifest
+        from app.generation.section_builder import (
+            build_en_translated_section,
+            build_slow_en_translated_section,
+        )
+
+        scenes = [{"label": "Cafe", "lines": [{"speaker": "female-1", "text": "Dober dan", "translation": "Good day"}]}]
+        voice_map = {"narrator": "n", "female-1": "v"}
+        lesson = Lesson(
+            title="T",
+            language_code="sl",
+            sections=[
+                build_en_translated_section(scenes, voice_map, "n", "sl"),
+                build_slow_en_translated_section(scenes, voice_map, "n", "sl"),
+            ],
+        )
+
+        # Realistic timing: title (section None) + every phrase in order.
+        timing = [CueTiming(section_index=None, phrase_index=0, start_frame=0, end_frame=1000)]
+        frame = 2000
+        for si, section in enumerate(lesson.sections):
+            for pi in range(len(section.phrases)):
+                timing.append(CueTiming(section_index=si, phrase_index=pi, start_frame=frame, end_frame=frame + 1000))
+                frame += 2000
+        cues = build_cue_manifest(lesson, timing, rate=1000)
+
+        result = derive_section_cues(cues, lesson)
+        slow_cues = result[1]  # slow_en_translated
+        l2 = [c for c in slow_cues if c.ref and c.ref.get("kind") == "line" and c.language_code == "sl"]
+        assert len(l2) == 1
+        # Subtitle shows natural text, not the "..."-broken slowed text.
+        assert l2[0].text == "Dober dan"
+        # English narrator cue is left untouched.
+        en = [c for c in slow_cues if c.ref and c.ref.get("kind") == "line" and c.language_code == "en"]
+        assert len(en) == 1
+        assert en[0].text == "Good day"
