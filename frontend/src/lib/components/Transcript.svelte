@@ -821,8 +821,12 @@
 		color: var(--color-muted);
 		font-style: italic;
 	}
+	/* Mobile: the play button spans the full width of the stacked key-phrase row
+	   for an easy tap target. Reverts to a compact inline button on desktop. */
 	.key-phrases-list .seek-btn {
-		margin-left: auto;
+		width: 100%;
+		margin-top: 0.35rem;
+		min-height: 44px;
 	}
 	.scene-header {
 		margin: 1.25rem 0 0.5rem;
@@ -1108,6 +1112,11 @@
 			flex-direction: row;
 			justify-content: space-between;
 			gap: 0;
+		}
+		.key-phrases-list .seek-btn {
+			width: auto;
+			margin-top: 0;
+			min-height: 28px;
 		}
 	}
 </style>

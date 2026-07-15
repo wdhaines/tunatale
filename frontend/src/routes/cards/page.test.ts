@@ -1,7 +1,7 @@
 /**
  * Component tests for the /cards +page.svelte route.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import CardsPage from "./+page.svelte";
 
@@ -1055,6 +1055,73 @@ describe("cards/+page.svelte", () => {
 
     await waitFor(() => {
       expect(queryByText("Edit Image")).toBeNull();
+    });
+  });
+
+  // ── deep-link focus from the Review screen ─────────────────────────────
+  // /review links to /cards?focus=<id>&q=<text>. The q term filters the list
+  // so the row is on the first page; the focus id highlights + scrolls to it.
+
+  describe("focus deep-link", () => {
+    let scrollSpy: ReturnType<typeof vi.fn>;
+    let originalScroll: typeof Element.prototype.scrollIntoView;
+
+    beforeEach(() => {
+      scrollSpy = vi.fn();
+      originalScroll = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = scrollSpy as typeof Element.prototype.scrollIntoView;
+    });
+
+    afterEach(() => {
+      Element.prototype.scrollIntoView = originalScroll;
+      window.history.pushState({}, "", "/");
+    });
+
+    it("seeds the search box from the q query param", async () => {
+      window.history.pushState({}, "", "/cards?focus=1&q=banka");
+      mockList.mockResolvedValue({
+        items: [makeSRSItemDetail({ id: 1, text: "banka" })],
+        total: 1,
+      });
+      render(CardsPage);
+      await vi.waitFor(() => {
+        expect(mockList.mock.calls.at(-1)?.[0]?.search).toBe("banka");
+      });
+    });
+
+    it("highlights and scrolls to the focused row", async () => {
+      window.history.pushState({}, "", "/cards?focus=1&q=banka");
+      mockList.mockResolvedValue({
+        items: [makeSRSItemDetail({ id: 1, text: "banka" })],
+        total: 1,
+      });
+      const { findByText } = render(CardsPage);
+      const row = (await findByText("banka")).closest(".row");
+      expect(row?.className).toContain("focused");
+      expect(scrollSpy).toHaveBeenCalled();
+    });
+
+    it("does not highlight anything when the focus id is absent from the page", async () => {
+      window.history.pushState({}, "", "/cards?focus=999&q=banka");
+      mockList.mockResolvedValue({
+        items: [makeSRSItemDetail({ id: 1, text: "banka" })],
+        total: 1,
+      });
+      const { findByText, container } = render(CardsPage);
+      await findByText("banka");
+      expect(container.querySelector(".row.focused")).toBeNull();
+      expect(scrollSpy).not.toHaveBeenCalled();
+    });
+
+    it("ignores a non-numeric focus param", async () => {
+      window.history.pushState({}, "", "/cards?focus=abc&q=banka");
+      mockList.mockResolvedValue({
+        items: [makeSRSItemDetail({ id: 1, text: "banka" })],
+        total: 1,
+      });
+      const { findByText, container } = render(CardsPage);
+      await findByText("banka");
+      expect(container.querySelector(".row.focused")).toBeNull();
     });
   });
 });

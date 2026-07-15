@@ -25,6 +25,9 @@
 	let syncStatus = $state<string | null>(null);
 	let openMenuId = $state<number | null>(null);
 	let imageEditItem = $state<SRSItemDetail | null>(null);
+	// Row to highlight + scroll to, from a /cards?focus=<id> deep-link (the
+	// "Card details" link on the Review screen). null when not deep-linked.
+	let focusId = $state<number | null>(null);
 
 	function handleSyncResult() {
 		syncStatus = 'Synced with AnkiWeb';
@@ -223,7 +226,26 @@
 		if (syncStore.lastResult) handleSyncResult();
 	});
 
+	$effect(() => {
+		// After each load, bring the deep-linked row into view. Depends on `items`
+		// so it re-runs once the row is actually in the DOM.
+		if (focusId === null) return;
+		if (!items.some((i) => i.id === focusId)) return;
+		document.querySelector(`[data-item-id="${focusId}"]`)?.scrollIntoView({ block: 'center' });
+	});
+
 	onMount(() => {
+		// Honor a /cards?focus=<id>&q=<text> deep-link from the Review screen: seed
+		// the search box with the text (so the row is on the first page) and flag
+		// the id to highlight + scroll to once it loads.
+		const params = new URLSearchParams(window.location.search);
+		const q = params.get('q');
+		if (q) {
+			search = q;
+			lastSearch = q;
+		}
+		const focus = Number(params.get('focus'));
+		if (Number.isFinite(focus) && focus > 0) focusId = focus;
 		loadItems();
 	});
 </script>
@@ -296,7 +318,7 @@
 						</span>
 					</div>
 				{:else}
-					<div class="row">
+					<div class="row" class:focused={item.id === focusId} data-item-id={item.id}>
 						<span class="col-check">
 							<input type="checkbox" checked={selected.has(item.id)} onchange={() => toggleSelect(item.id)} />
 						</span>
@@ -441,9 +463,20 @@
 		display: block;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
-		overflow: hidden;
+		/* No `overflow: hidden` here — it would clip the row-actions dropdown, which
+		   opens below the trigger and, on a short stacked card, lands outside the
+		   container (the menu was invisible on mobile). Rounded corners are instead
+		   preserved by rounding the first/last rows directly, below. */
 		background: var(--color-surface);
 		box-shadow: var(--shadow-sm);
+	}
+	.table-wrap > :first-child {
+		border-top-left-radius: var(--radius-lg);
+		border-top-right-radius: var(--radius-lg);
+	}
+	.table-wrap > :last-child {
+		border-bottom-left-radius: var(--radius-lg);
+		border-bottom-right-radius: var(--radius-lg);
 	}
 	.table-wrap > p {
 		margin: 0;
@@ -470,6 +503,20 @@
 	.row.editing {
 		background: var(--color-highlight);
 	}
+	/* Deep-linked row: a one-shot flash that fades on its own, so it draws the eye
+	   on arrival without leaving a persistent, distracting highlight. */
+	.row.focused {
+		animation: focus-flash 2.4s ease-out;
+	}
+	@keyframes focus-flash {
+		0%,
+		30% {
+			background: var(--color-highlight);
+		}
+		100% {
+			background: transparent;
+		}
+	}
 	.sort-btn {
 		appearance: none;
 		background: none;
@@ -493,7 +540,10 @@
 	}
 	.col-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; padding-top: 0.25rem; }
 	.col-actions button { min-height: 44px; flex: 1; }
-	.col-img { display: flex; align-items: center; justify-content: center; }
+	/* Mobile: the row is a full-width stacked card, so left-align the thumbnail and
+	   give it real size. Compacted back to a centered 3rem cell in the desktop
+	   grid (its column is only 3rem wide) below. */
+	.col-img { display: flex; align-items: center; justify-content: flex-start; }
 	.thumb-btn {
 		padding: 0;
 		border: none;
@@ -501,8 +551,8 @@
 		cursor: pointer;
 		border-radius: 4px;
 		overflow: hidden;
-		width: 3rem;
-		height: 3rem;
+		width: 6rem;
+		height: 6rem;
 	}
 	.thumb-btn img {
 		width: 100%;
@@ -533,11 +583,13 @@
 	.menu {
 		position: absolute;
 		top: calc(100% + 0.25rem);
+		/* Mobile: span the full card width for big, easy-to-tap targets. Narrowed
+		   to a right-aligned dropdown at the desktop breakpoint below. */
+		left: 0;
 		right: 0;
 		z-index: 10;
 		display: flex;
 		flex-direction: column;
-		min-width: 9rem;
 		padding: 0.25rem;
 		gap: 0.15rem;
 		border: 1px solid var(--color-border);
@@ -622,6 +674,10 @@
 		.col-trans { color: inherit; font-style: normal; }
 		.col-actions { padding-top: 0; }
 		.col-actions button { min-height: 0; flex: 0 1 auto; }
+		.col-img { justify-content: center; }
+		.thumb-btn { width: 3rem; height: 3rem; }
+		/* Desktop: narrow right-aligned dropdown instead of the full-width mobile menu. */
+		.menu { left: auto; right: 0; min-width: 9rem; }
 		.pagination button { min-height: 0; padding: 0.3rem 0.7rem; }
 	}
 </style>

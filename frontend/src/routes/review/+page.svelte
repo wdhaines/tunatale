@@ -117,8 +117,19 @@
 			<a href="/">← Home</a>
 		</section>
 	{:else if current}
-		<p class="badge">{current.direction === 'recognition' ? 'Recognition' : 'Production'}</p>
-		<p class="badge state-{current.item.state}">{current.item.state}</p>
+		<div class="card-meta">
+			<p class="badge">{current.direction === 'recognition' ? 'Recognition' : 'Production'}</p>
+			<p class="badge state-{current.item.state}">{current.item.state}</p>
+			<!-- Deep-link to this card's row in the Cards viewer: the id highlights the
+			     exact row; the text seeds the search box so the row lands on page 1. -->
+			<a
+				class="cards-link"
+				href="/cards?focus={current.item.id}&q={encodeURIComponent(current.item.text)}"
+				target="_blank"
+				rel="noopener"
+				title="Open this card in the Cards viewer (new tab)">Card details ↗</a
+			>
+		</div>
 		<section class="card-section">
 			{#key reviewed}
 				<DrillCard item={current.item} direction={current.direction} onRate={rate} />
@@ -153,6 +164,12 @@
 		padding: 2rem;
 		text-align: center;
 	}
+	.card-meta {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		margin-bottom: 0.35rem;
+	}
 	.badge {
 		display: inline-block;
 		font-size: 0.75rem;
@@ -163,7 +180,18 @@
 		border-radius: 4px;
 		background: var(--color-border);
 		color: var(--color-muted);
-		margin-bottom: 0.35rem;
+	}
+	/* Unobtrusive: muted, pushed to the far edge, only gains emphasis on hover. */
+	.cards-link {
+		margin-left: auto;
+		font-size: 0.8rem;
+		color: var(--color-muted);
+		text-decoration: none;
+		white-space: nowrap;
+	}
+	.cards-link:hover {
+		color: var(--color-primary);
+		text-decoration: underline;
 	}
 	.error {
 		color: var(--color-danger);
@@ -193,6 +221,6 @@
 		main { margin: 2rem auto; }
 		h1 { font-size: 1.9rem; margin: 0.5rem 0 0.75rem; }
 		.stats { margin-bottom: 0.5rem; }
-		.badge { margin-bottom: 0.5rem; }
+		.card-meta { margin-bottom: 0.5rem; }
 	}
 </style>

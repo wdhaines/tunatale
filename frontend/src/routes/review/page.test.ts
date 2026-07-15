@@ -538,6 +538,51 @@ describe("review/+page.svelte", () => {
     expect(await findByText("okno")).toBeTruthy();
   });
 
+  // ── deep-link to the Cards viewer ──────────────────────────────────────
+  // An unobtrusive link from the card under review to its entry in the Cards
+  // table. Carries the item id (for precise highlight) plus its text as the
+  // search term (so the row lands on the first page of the filtered list).
+
+  it("shows a 'Card details' link to the cards viewer for the current item", async () => {
+    const item = makeReviewQueueItem({
+      id: 5,
+      text: "voda",
+      translation: "water",
+      direction: "recognition",
+    });
+    mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
+    const { findByRole } = render(ReviewPage);
+    const link = await findByRole("link", { name: /card details/i });
+    expect(link.getAttribute("href")).toBe("/cards?focus=5&q=voda");
+  });
+
+  it("opens the cards link in a new tab (does not leave the review session)", async () => {
+    const item = makeReviewQueueItem({
+      id: 5,
+      text: "voda",
+      translation: "water",
+      direction: "recognition",
+    });
+    mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
+    const { findByRole } = render(ReviewPage);
+    const link = await findByRole("link", { name: /card details/i });
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noopener");
+  });
+
+  it("url-encodes the search term for multi-word cards", async () => {
+    const item = makeReviewQueueItem({
+      id: 8,
+      text: "dober dan",
+      translation: "good day",
+      direction: "production",
+    });
+    mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
+    const { findByRole } = render(ReviewPage);
+    const link = await findByRole("link", { name: /card details/i });
+    expect(link.getAttribute("href")).toBe("/cards?focus=8&q=dober%20dan");
+  });
+
   it("displays state badge with correct text and class", async () => {
     const item = makeReviewQueueItem({
       id: 1,
