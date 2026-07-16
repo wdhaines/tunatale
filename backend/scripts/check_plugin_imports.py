@@ -34,10 +34,12 @@ APP_DIR = Path("app")
 
 # Core files allowed to function-level (lazy) import ``app.plugins.anki_sync.*``.
 # Module-level imports from these files are still violations.
-ANKI_SYNC_LAZY_ALLOW: frozenset[str] = frozenset({
-    "app/api/anki.py",
-    "app/api/admin.py",
-})
+ANKI_SYNC_LAZY_ALLOW: frozenset[str] = frozenset(
+    {
+        "app/api/anki.py",
+        "app/api/admin.py",
+    }
+)
 
 
 def _is_under(path: str, prefix: str) -> bool:
@@ -103,8 +105,12 @@ def _check_file(filepath: Path, app_dir: Path = APP_DIR) -> list[tuple[int, str]
         # We only skip when the import is NOT at module level.  Detecting
         # function-level requires walking the AST more carefully — we already
         # have the node, so check if it's directly inside a FunctionDef body.
-        if module.startswith("app.plugins.anki_sync") and _is_anki_sync_lazy_allow(rel) and _is_inside_function(tree, lineno):
-                continue
+        if (
+            module.startswith("app.plugins.anki_sync")
+            and _is_anki_sync_lazy_allow(rel)
+            and _is_inside_function(tree, lineno)
+        ):
+            continue
 
         violations.append((lineno, module))
 
