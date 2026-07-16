@@ -14,6 +14,10 @@ class ListenRequest(BaseModel):
     word_ratings: dict[str, str] = {}  # lemma → "hard"|"easy"|"again"
 
 
+class ImportListensRequest(BaseModel):
+    lesson_ids: list[str]
+
+
 class DrillRequest(BaseModel):
     rating: str | None = None
     signal: str | None = None

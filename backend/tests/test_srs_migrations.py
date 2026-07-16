@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 37
+        assert CURRENT_VERSION == 38
 
     def test_migrates_v35_to_v36_reclassifies_variant_cards(self, tmp_path):
         """v36 resets word_count=1 for comma-separated spelling-variant fronts.
@@ -2204,3 +2204,73 @@ class TestMigrateV33ToV34:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(collocations)").fetchall()}
         assert "extras" in cols
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 34
+
+
+class TestMigrateV37ToV38:
+    """Tests for v37→v38 (lesson_listens table + index)."""
+
+    def test_current_version_bumped(self):
+        assert CURRENT_VERSION == 38
+
+    def test_v37_to_v38_creates_lesson_listens_table_and_index(self):
+        from app.srs.migrations import migrate_v37_to_v38
+
+        conn = _make_v1_conn()
+        _insert(conn, "banka")
+        migrate(conn)  # rolls up to v37
+        conn.execute("PRAGMA user_version = 37")
+        conn.commit()
+
+        migrate_v37_to_v38(conn)
+
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        assert "lesson_listens" in tables
+        idx = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_lesson_listens_lesson_id'"
+        ).fetchone()
+        assert idx is not None
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 38
+
+    def test_v37_to_v38_idempotent(self):
+        from app.srs.migrations import migrate_v37_to_v38
+
+        conn = _make_v1_conn()
+        _insert(conn, "banka")
+        migrate(conn)
+        conn.execute("PRAGMA user_version = 37")
+        conn.commit()
+
+        migrate_v37_to_v38(conn)
+        migrate_v37_to_v38(conn)  # must not raise
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 38
+        count = conn.execute("SELECT COUNT(*) FROM lesson_listens").fetchone()[0]
+        assert count == 0
+
+    def test_fresh_srs_database_has_lesson_listens(self):
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(":memory:")
+        try:
+            tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            assert "lesson_listens" in tables
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 38
+        finally:
+            db.close()
+
+    def test_check_constraint_rejects_invalid_source(self):
+        import sqlite3
+
+        from app.srs.migrations import migrate_v37_to_v38
+
+        conn = _make_v1_conn()
+        _insert(conn, "banka")
+        migrate(conn)
+        conn.execute("PRAGMA user_version = 37")
+        conn.commit()
+        migrate_v37_to_v38(conn)
+        conn.commit()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO lesson_listens (lesson_id, listened_at, source) VALUES ('x', '2026-01-01T00:00:00', 'garbage')"
+            )

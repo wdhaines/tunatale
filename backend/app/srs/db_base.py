@@ -113,6 +113,15 @@ CREATE TABLE IF NOT EXISTS image_query_cache (
 )
 """
 
+_CREATE_LESSON_LISTENS = """
+CREATE TABLE IF NOT EXISTS lesson_listens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lesson_id TEXT NOT NULL,
+    listened_at TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'listen' CHECK(source IN ('listen','import'))
+)
+"""
+
 # Columns on `collocation_directions` mapped onto a DirectionState.
 # Derived from the field registry (app/srs/direction_fields.py) — register new
 # columns there, never append here.
@@ -196,6 +205,7 @@ class SRSDatabaseBase:
         conn.execute(_CREATE_ANKI_STATE_CACHE)
         conn.execute(_CREATE_LEMMA_ANALYSIS_CACHE)
         conn.execute(_CREATE_IMAGE_QUERY_CACHE)
+        conn.execute(_CREATE_LESSON_LISTENS)
         conn.commit()
 
     @contextmanager

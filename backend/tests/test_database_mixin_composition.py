@@ -51,4 +51,5 @@ def test_public_method_count_pinned() -> None:
     # +add_dirty_field_by_id (Step 6: manual image-update API)
     # +get_image_filenames (Step 6-tail: batched image lookup for /items)
     # +is_media_filename_referenced (fix #4: shared-file reference check for orphan cleanup)
-    assert count == 107
+    # +record_listen, has_listen, count_listens, get_listened_lessons (lesson_listens)
+    assert count == 111

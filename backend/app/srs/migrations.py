@@ -16,7 +16,7 @@ from app.srs.function_words import format_morphology_hint
 
 _logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 37
+CURRENT_VERSION = 38
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -1143,6 +1143,28 @@ def migrate_v36_to_v37(conn: sqlite3.Connection) -> None:
     _set_version(conn, 37)
 
 
+def migrate_v37_to_v38(conn: sqlite3.Connection) -> None:
+    """Create lesson_listens table for per-lesson 'listened' state.
+
+    TT-only: tracks which lessons the user has listened to, with a
+    per-lesson count and last-listened timestamp. Not involved in sync,
+    FSRS, or queue assembly.
+    """
+    if _table_exists(conn, "lesson_listens"):
+        _set_version(conn, 38)
+        return
+    conn.execute("""
+        CREATE TABLE lesson_listens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lesson_id TEXT NOT NULL,
+            listened_at TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'listen' CHECK(source IN ('listen','import'))
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_lesson_listens_lesson_id ON lesson_listens(lesson_id)")
+    _set_version(conn, 38)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -1181,6 +1203,7 @@ _MIGRATIONS = {
     34: migrate_v34_to_v35,
     35: migrate_v35_to_v36,
     36: migrate_v36_to_v37,
+    37: migrate_v37_to_v38,
 }
 
 

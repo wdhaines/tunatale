@@ -31,6 +31,7 @@ from app.srs.db_histogram import DbHistogramMixin as DbHistogramMixin
 from app.srs.db_ignored_lemmas import DbIgnoredLemmasMixin as DbIgnoredLemmasMixin
 from app.srs.db_kv_cache import DbKvCacheMixin as DbKvCacheMixin
 from app.srs.db_lemma_cache import DbLemmaCacheMixin as DbLemmaCacheMixin
+from app.srs.db_listens import DbListensMixin as DbListensMixin
 from app.srs.db_media import DbMediaMixin as DbMediaMixin
 from app.srs.db_queue import DbQueueMixin as DbQueueMixin
 from app.srs.db_revlog import DbRevlogMixin as DbRevlogMixin
@@ -49,6 +50,7 @@ class SRSDatabase(
     DbKvCacheMixin,
     DbHistogramMixin,
     DbLemmaCacheMixin,
+    DbListensMixin,
     DbIgnoredLemmasMixin,
     DbSyncConflictsMixin,
     SRSDatabaseBase,

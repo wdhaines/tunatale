@@ -19,6 +19,7 @@ from app.api.models import (
     CreateItemRequest,
     DrillRequest,
     IgnoreLemmaRequest,
+    ImportListensRequest,
     InflectionClozeRequest,
     ListenRequest,
     SetStateRequest,
@@ -691,6 +692,34 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
     registered = created_count + graded_count
     return {"status": "ok", "registered": registered}
+
+
+@router.get("/listens", status_code=200)
+async def get_listens(request: Request):
+    db = request.state.srs_db
+    return {"lessons": db.get_listened_lessons()}
+
+
+@router.post("/listens/import", status_code=200)
+async def import_listens(body: ImportListensRequest, request: Request):
+    store = request.state.content_store
+    db = request.state.srs_db
+    seen: set[str] = set()
+    imported: list[str] = []
+    already_present: list[str] = []
+    unknown: list[str] = []
+    for lesson_id in body.lesson_ids:
+        if lesson_id in seen:
+            continue
+        seen.add(lesson_id)
+        if store.get_lesson(lesson_id) is None:
+            unknown.append(lesson_id)
+        elif db.has_listen(lesson_id):
+            already_present.append(lesson_id)
+        else:
+            db.record_listen(lesson_id, source="import")
+            imported.append(lesson_id)
+    return {"imported": imported, "already_present": already_present, "unknown": unknown}
 
 
 @router.get("/lesson/{lesson_id}/transcript", status_code=200)
