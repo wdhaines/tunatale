@@ -6,6 +6,7 @@ import datetime
 import json
 import logging
 import re
+from collections import Counter
 from datetime import timedelta
 from pathlib import Path
 
@@ -407,6 +408,18 @@ def _listen_grade_eligible(
     return False
 
 
+def _rank_listen_candidates(key_phrases, lemmas, occurrences) -> list[tuple[str, object]]:
+    """Rank untracked creation candidates for a staged listen (plan D2).
+
+    Key phrases first, in lesson order — they're the lesson's pedagogical
+    core. Then lemmas by in-lesson occurrence count descending; the stable
+    sort keeps ties in first-appearance order (the order of ``lemmas``).
+    Returns ``("kp", key_phrase)`` / ``("lemma", lemma)`` tuples.
+    """
+    ranked_lemmas = sorted(lemmas, key=lambda lem: -occurrences.get(lem, 0))
+    return [("kp", kp) for kp in key_phrases] + [("lemma", lem) for lem in ranked_lemmas]
+
+
 @router.post("/listen", status_code=200)
 async def mark_lesson_listened(body: ListenRequest, request: Request):
     store = request.state.content_store
@@ -440,7 +453,10 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         None,
     )
 
-    unique_lemmas: set[str] = set()
+    # Per-lemma token occurrence counts across the section — the frequency key
+    # for _rank_listen_candidates. lemma_to_sentence doubles as the ordered set
+    # of unique lemmas (insertion order = first appearance).
+    lemma_occurrences: Counter[str] = Counter()
     lemma_to_sentence: dict[str, str] = {}
     lemma_to_surfaces: dict[str, set[str]] = {}
     # The surface as it first appeared, paired with lemma_to_sentence — used to
@@ -470,7 +486,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             for ta in analyze_sentence_cached(db, lemmatizer, phrase.text, lesson.language_code, model_version):
                 surface_to_upos.setdefault(ta.surface.casefold(), ta.upos)
             for surface, lemma in zip(surfaces, phrase_lemmas, strict=True):
-                unique_lemmas.add(lemma)
+                lemma_occurrences[lemma] += 1
                 if lemma not in lemma_to_sentence:
                     lemma_to_sentence[lemma] = phrase.text
                     lemma_to_first_surface[lemma] = surface
@@ -488,7 +504,18 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     created_count = 0
     graded_count = 0
 
-    for lemma in unique_lemmas:
+    # ── Per-listen creation budget (plan D1) ────────────────────────────
+    # One listen queues at most one Anki-day's worth of new cards, net of
+    # today's introductions and of still-NEW cards created earlier today
+    # (a same-day re-listen therefore creates ~0 more; refills next Anki
+    # day). Deliberately does NOT subtract the whole-deck NEW backlog —
+    # the queue engine's new-quota remains the real flow limiter.
+    new_cap, _ = resolve_daily_new_cap(db)
+    creation_budget = max(0, new_cap - db.count_new_introduced_today(today) - db.count_new_created_today(today))
+    lemma_candidates: list[str] = []
+    kp_candidates: list = []
+
+    for lemma in lemma_to_sentence:
         # Cloze cards are always on, for every language (no feature flag, no
         # language gate — see ~/.claude/plans/word-learning-state-machine.md
         # Phase 1). Whether a cloze is actually created is capability-driven:
@@ -512,57 +539,12 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         existing_id, existing = res if res is not None else (None, None)
 
         if existing is None:
-            # ── Create new row (cloze for function words, vocab for content words) ──
+            # ── Untracked → staged-creation candidate (created below, budget permitting) ──
             # Clozes-only verbs (e.g. biti) get no base card — only per-form
             # conjugation clozes created by click. Skip entirely.
             if is_func and is_clozes_only_verb(lemma, lesson.language_code):
                 continue
-
-            sent = lemma_to_sentence.get(lemma, "")
-            # Cloze rows blank the surface as it appeared, not the dictionary lemma:
-            # the lemmatizer may map an inflected surface to a different lemma (classla
-            # "sem" → "biti") that isn't in the sentence. Store the cloze pre-built;
-            # sync's idempotent make_cloze_text passes it through. (Phase 2b.)
-            stored_sentence = make_cloze_text(lemma_to_first_surface.get(lemma, lemma), sent) if is_func else sent
-            unit = SyntacticUnit(
-                text=lemma,
-                translation=_resolve_gloss_translation(
-                    lemma,
-                    token_glosses,
-                    lemma_to_surfaces.get(lemma, set()),
-                    lemma_to_first_surface.get(lemma, lemma),
-                    language_code=lesson.language_code,
-                ),
-                word_count=1,
-                difficulty=1,
-                source="llm",
-                lemma=lemma,
-                card_type="cloze" if is_func else "vocab",
-                source_sentence=stored_sentence,
-                source_sentence_translation=sentence_translations.get(sent, ""),
-            )
-            db.add_collocation(unit, language_code=lesson.language_code)
-            if is_func:
-                coll = db.get_collocation_by_lemma_with_id(lemma)
-                new_id, _ = coll
-                try:
-                    await synthesize_cloze_audios(
-                        db,
-                        new_id,
-                        sent,
-                        lemma_to_first_surface.get(lemma, lemma),
-                        voice=get_tts_voice(lesson.language_code),
-                    )
-                except Exception:
-                    _logger.warning("Failed to synthesize cloze audio for %r", lemma)
-            else:
-                # Mirror the cloze sibling above: the row was just inserted, so
-                # the lookup always resolves. Complete the vocab card inline.
-                new_id, _ = db.get_collocation_by_lemma_with_id(lemma)
-                await _generate_add_time_media(
-                    db, llm, new_id, unit, language_code=lesson.language_code, used_image_urls=used_image_urls
-                )
-            created_count += 1
+            lemma_candidates.append(lemma)
         else:
             # ── Existing row — skip cloze, grade recognition for eligible vocab ──
             if existing.syntactic_unit.card_type == "cloze":
@@ -636,22 +618,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     for kp in lesson.key_phrases:
         existing = db.get_collocation(kp.phrase)
         if existing is None:
-            unit = SyntacticUnit(
-                text=kp.phrase,
-                translation=kp.translation,
-                word_count=min(8, max(1, len(kp.phrase.split()))),
-                difficulty=1,
-                source="llm",
-            )
-            db.add_collocation(unit, language_code=lesson.language_code)
-            # Just inserted, so the guid always resolves. Complete the card inline.
-            kp_id = db.get_collocation_id_by_guid(
-                compute_guid(unit.text, lesson.language_code, unit.disambig_key or "")
-            )
-            await _generate_add_time_media(
-                db, llm, kp_id, unit, language_code=lesson.language_code, used_image_urls=used_image_urls
-            )
-            created_count += 1
+            kp_candidates.append(kp)
         else:
             if existing.syntactic_unit.card_type == "cloze":
                 continue
@@ -690,8 +657,107 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 )
                 graded_count += 1
 
+    # ── Staged creation over ranked candidates, truncated to budget (D2/D3) ──
+    # No persisted cursor: each listen recomputes lesson-word-set minus tracked
+    # cards and takes the top of the ranking; cards created by this listen are
+    # "existing" for the next one.
+    ranked = _rank_listen_candidates(kp_candidates, lemma_candidates, lemma_occurrences)
+    already_tracked = 0
+    for kind, cand in ranked:
+        if created_count >= creation_budget:
+            break
+        if kind == "kp":
+            kp = cand
+            # A single-word key phrase can share its text with a lemma (or a
+            # duplicate key phrase earlier in the list) created moments ago in
+            # this pass — re-check so it isn't double-created or double-counted.
+            if db.get_collocation(kp.phrase) is not None:
+                already_tracked += 1
+                continue
+            unit = SyntacticUnit(
+                text=kp.phrase,
+                translation=kp.translation,
+                word_count=min(8, max(1, len(kp.phrase.split()))),
+                difficulty=1,
+                source="llm",
+            )
+            db.add_collocation(unit, language_code=lesson.language_code)
+            # Just inserted, so the guid always resolves. Complete the card inline.
+            kp_id = db.get_collocation_id_by_guid(
+                compute_guid(unit.text, lesson.language_code, unit.disambig_key or "")
+            )
+            await _generate_add_time_media(
+                db, llm, kp_id, unit, language_code=lesson.language_code, used_image_urls=used_image_urls
+            )
+        else:
+            lemma = cand
+            # Same re-check as the key-phrase arm: a single-word key phrase
+            # created above may have auto-filled this lemma.
+            if db.get_collocation_by_lemma_with_id(lemma) is not None:
+                already_tracked += 1
+                continue
+            is_func = is_function_word_for(
+                lemma, lemma_to_surfaces.get(lemma, set()), lesson.language_code, surface_to_upos
+            )
+            sent = lemma_to_sentence.get(lemma, "")
+            # Cloze rows blank the surface as it appeared, not the dictionary lemma:
+            # the lemmatizer may map an inflected surface to a different lemma (classla
+            # "sem" → "biti") that isn't in the sentence. Store the cloze pre-built;
+            # sync's idempotent make_cloze_text passes it through. (Phase 2b.)
+            stored_sentence = make_cloze_text(lemma_to_first_surface.get(lemma, lemma), sent) if is_func else sent
+            unit = SyntacticUnit(
+                text=lemma,
+                translation=_resolve_gloss_translation(
+                    lemma,
+                    token_glosses,
+                    lemma_to_surfaces.get(lemma, set()),
+                    lemma_to_first_surface.get(lemma, lemma),
+                    language_code=lesson.language_code,
+                ),
+                word_count=1,
+                difficulty=1,
+                source="llm",
+                lemma=lemma,
+                card_type="cloze" if is_func else "vocab",
+                source_sentence=stored_sentence,
+                source_sentence_translation=sentence_translations.get(sent, ""),
+            )
+            db.add_collocation(unit, language_code=lesson.language_code)
+            if is_func:
+                coll = db.get_collocation_by_lemma_with_id(lemma)
+                new_id, _ = coll
+                try:
+                    await synthesize_cloze_audios(
+                        db,
+                        new_id,
+                        sent,
+                        lemma_to_first_surface.get(lemma, lemma),
+                        voice=get_tts_voice(lesson.language_code),
+                    )
+                except Exception:
+                    _logger.warning("Failed to synthesize cloze audio for %r", lemma)
+            else:
+                # Mirror the cloze sibling above: the row was just inserted, so
+                # the lookup always resolves. Complete the vocab card inline.
+                new_id, _ = db.get_collocation_by_lemma_with_id(lemma)
+                await _generate_add_time_media(
+                    db, llm, new_id, unit, language_code=lesson.language_code, used_image_urls=used_image_urls
+                )
+        created_count += 1
+    remaining_candidates = len(ranked) - created_count - already_tracked
+
+    # Server-side listened state (TT-only, never syncs): one row per listen.
+    db.record_listen(body.lesson_id)
+
     registered = created_count + graded_count
-    return {"status": "ok", "registered": registered}
+    return {
+        "status": "ok",
+        "registered": registered,
+        "created": created_count,
+        "graded": graded_count,
+        "remaining_candidates": remaining_candidates,
+        "listen_count": db.count_listens(body.lesson_id),
+    }
 
 
 @router.get("/listens", status_code=200)

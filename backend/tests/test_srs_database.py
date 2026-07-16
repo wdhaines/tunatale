@@ -3882,3 +3882,50 @@ class TestGetImageFilenames:
         finally:
             reader.close()
             db.close()
+
+
+class TestCountNewCreatedToday:
+    """count_new_created_today: distinct collocations created inside today's
+    Anki-day window that still have at least one NEW direction. Feeds the
+    per-listen creation budget (staged listen, plan D1) so same-day re-listens
+    don't re-fill a budget already spent on cards nobody has graded yet."""
+
+    def test_zero_on_empty_db(self, srs_db):
+        assert srs_db.count_new_created_today(date.today()) == 0
+
+    def test_counts_fresh_collocation_once_not_per_direction(self, srs_db):
+        # Vocab rows get two NEW directions; each collocation counts once.
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        srs_db.add_collocation(_unit("center", "center"), language_code="sl")
+        assert srs_db.count_new_created_today(date.today()) == 2
+
+    def test_excludes_rows_created_before_today(self, srs_db):
+        srs_db.add_collocation(_unit("stara beseda", "old word"), language_code="sl")
+        with srs_db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET created_at = datetime('now', '-2 days')")
+            conn.commit()
+        assert srs_db.count_new_created_today(date.today()) == 0
+
+    def test_excludes_collocation_with_no_new_direction_left(self, srs_db):
+        # Introduced same-day: the card charges introduced_today instead, so
+        # counting it here would double-subtract from the listen budget.
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        row_id = _id_for_text(srs_db, "banka")
+        with srs_db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET state='learning' WHERE collocation_id=?",
+                (row_id,),
+            )
+            conn.commit()
+        assert srs_db.count_new_created_today(date.today()) == 0
+
+    def test_counts_collocation_with_one_direction_still_new(self, srs_db):
+        srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        row_id = _id_for_text(srs_db, "banka")
+        with srs_db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET state='learning' WHERE collocation_id=? AND direction='recognition'",
+                (row_id,),
+            )
+            conn.commit()
+        assert srs_db.count_new_created_today(date.today()) == 1

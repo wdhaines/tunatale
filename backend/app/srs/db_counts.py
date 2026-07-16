@@ -154,6 +154,35 @@ class DbCountsMixin:
             ).fetchone()
             return row[0] if row else 0
 
+    def count_new_created_today(self, today: date) -> int:
+        """Count distinct collocations created inside today's Anki-day window
+        that still have at least one NEW direction.
+
+        Input to the per-listen creation budget (staged listen): cards created
+        by an earlier listen today that nobody has graded yet keep charging the
+        budget, so a same-day re-listen creates ~0 more. A card introduced the
+        same day it was created drops out here and charges the budget via
+        ``count_new_introduced_today`` instead — never both.
+
+        ``collocations.created_at`` is stored in SQLite ``datetime('now')``
+        format (UTC, space-separated); ``datetime(?)`` normalizes the ISO
+        bounds to the same shape so the string comparison is valid.
+        """
+        start_iso, end_iso = _anki_day_bounds_utc(today)
+        with self._get_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(DISTINCT c.id)
+                FROM collocations c
+                JOIN collocation_directions d ON d.collocation_id = c.id
+                WHERE d.state = 'new'
+                  AND c.created_at >= datetime(?)
+                  AND c.created_at < datetime(?)
+                """,
+                (start_iso, end_iso),
+            ).fetchone()
+            return row[0] if row else 0
+
     def count_reviews_completed_today(self, today: date) -> int:
         """Count today's review answers, mirroring Anki's per-deck ``review_today``.
 
