@@ -33,7 +33,13 @@ import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SENTINEL = os.path.join(REPO_ROOT, ".git", "tt-test-pass")
-COMMIT_RE = re.compile(r"\bgit\b[^|;&]*\bcommit\b")
+# Match `commit` only as git's subcommand — immediately after `git` bar global
+# options (`-C <path>`, `-c k=v`, `--no-pager`, …) — NOT as any later word.
+# Regression (2026-07-16): `git log … .pre-commit-config.yaml` triggered the
+# gate because hyphens are word boundaries, so `\bcommit\b` matched inside the
+# filename. Filenames/refs can never match now: they follow a non-option token
+# (the real subcommand), which ends the option loop before `commit` is required.
+COMMIT_RE = re.compile(r"\bgit(\s+-\S+(\s+[^\s-]\S*)?)*\s+commit\b")
 
 
 def _git(args, cwd):
