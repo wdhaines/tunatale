@@ -97,3 +97,7 @@ if [ "$backend_rc" -ne 0 ] || [ "$frontend_rc" -ne 0 ]; then
 fi
 
 echo "=== All checks passed ==="
+
+# Record the tree fingerprint so the Claude Code commit gate
+# (.claude/hooks/commit_gate.py) knows this exact state passed.
+python3 "$ROOT/.claude/hooks/commit_gate.py" --record 2>/dev/null || true

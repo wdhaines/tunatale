@@ -1,4 +1,18 @@
+---
+paths:
+  - "backend/app/api/srs.py"
+  - "backend/app/srs/**"
+  - "backend/app/plugins/anki_sync/**"
+  - "backend/tests/test_parity_*.py"
+  - "backend/tests/test_api_srs*.py"
+  - "backend/tests/test_srs*.py"
+  - "backend/tests/test_fsrs*.py"
+  - "backend/tests/test_direction_*.py"
+---
+
 # TT ↔ Anki Queue Parity
+
+*Path-scoped rule: auto-loads when a file matching the `paths:` frontmatter is read — keeps session startup lean. Don't remove the frontmatter; if you need this without touching those files (e.g. a divergence report in conversation), read it directly.*
 
 Required reading before changing `backend/app/api/srs.py`, `backend/app/srs/fsrs.py`, `backend/app/srs/anki_mirror/queue_stats.py`, or the sync modules (`backend/app/plugins/anki_sync/sync.py` — runner + facade; since the 2026-06-11 split, the reconcile engine lives in `sync_engine.py`, the collection I/O in `sync_reader.py`/`sync_writer.py`, shared leaf helpers in `sync_common.py`; `app.plugins.anki_sync.sync` re-exports everything, so "sync.py" references below mean the facade surface). Full layer history at `docs/anki-parity-layers.md` — open only when "have we hit this exact thing before?"
 

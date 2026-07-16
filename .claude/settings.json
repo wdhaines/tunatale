@@ -1,10 +1,30 @@
 {
   "permissions": {
-    "allow": [
-      "Bash(./venv/bin/pytest:*)",
-      "Bash(./venv/bin/python -m pytest:*)"
-    ],
+    "allow": [],
     "deny": [],
     "ask": []
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/commit_gate.py\""
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "find \"$CLAUDE_PROJECT_DIR/backend\" -name '*.py,cover' -delete 2>/dev/null; rm -f \"$CLAUDE_PROJECT_DIR/backend/coverage.json\"; exit 0"
+          }
+        ]
+      }
+    ]
   }
 }

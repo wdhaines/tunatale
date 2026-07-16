@@ -17,16 +17,4 @@
 
 ## Plan Step Ordering
 
-Steps are ordered by dependency. Never implement step N+1 until step N's tests are green.
-
-Original build-plan steps (all 10 completed long ago — kept as the worked example of the ordering rule; apply the same dependency-ordering to any new multi-step plan):
-1. Project scaffolding & health check
-2. Domain models
-3. Groq LLM client + cassette system
-4. FSRS SRS engine
-5. Curriculum generation
-6. Story generation + enforcement
-7. Audio pipeline — ports & preprocessing
-8. Audio pipeline — EdgeTTS + assembly
-9. API layer — full pipeline
-10. Simple web UI
+Multi-step plans are ordered by dependency. Never implement step N+1 until step N's tests are green.

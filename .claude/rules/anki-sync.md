@@ -1,4 +1,15 @@
+---
+paths:
+  - "backend/app/plugins/anki_sync/**"
+  - "backend/app/api/anki.py"
+  - "backend/scripts/anki_archive/**"
+  - "backend/tests/test_anki_*.py"
+  - "backend/tests/test_e2e_listen_to_sync.py"
+---
+
 # Anki Sync Protocol
+
+*Path-scoped rule: auto-loads when a file matching the `paths:` frontmatter is read. The always-loaded hard invariants live in `anki-safety-core.md`; this file is the full protocol.*
 
 Any tool under `backend/app/plugins/anki_sync/` that writes to `collection.anki2` must preserve AnkiWeb sync consistency. Skip this and the user's next sync re-uploads hundreds of cards every time.
 
