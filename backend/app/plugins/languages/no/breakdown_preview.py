@@ -40,6 +40,6 @@ def format_breakdown_preview(phrase: str) -> str:
 
 if __name__ == "__main__":  # pragma: no cover — CLI guard
     # Delegate to the audio CLI (prints this text report per word, then renders).
-    from app.generation.breakdown_audio import main
+    from app.plugins.languages.no.breakdown_audio import main
 
     main()

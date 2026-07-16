@@ -7,7 +7,7 @@ splits and pronunciation can be confirmed by ear:
   * ``<word>_breakdown.<ext>`` — the full Pimsleur breakdown sequence, and
   * ``<word>_slow.<ext>`` — the slow-speed form.
 
-    uv run python -m app.generation.breakdown_preview <word> [<word> ...] [--out DIR]
+    uv run python -m app.plugins.languages.no.breakdown_preview <word> [<word> ...] [--out DIR]
 
 This module is the thin audio/CLI glue: it wires the real audio pipeline
 (``EdgeTTSService`` + ``NaturalPauseCalculator`` + ``LessonRenderer``) to the
@@ -30,7 +30,7 @@ from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.renderer import LessonRenderer
 from app.audio.transcode import CODEC_EXT
 from app.config import settings
-from app.generation.breakdown_preview import format_breakdown_preview
+from app.plugins.languages.no.breakdown_preview import format_breakdown_preview
 from app.languages import get_preprocessor, get_tts_voice
 from app.models.lesson import Phrase, Section, SectionType
 from app.plugins.languages.no.norwegian_breakdown import (
@@ -117,7 +117,7 @@ async def render_word_previews(words: list[str], out_dir: Path) -> dict[str, lis
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="python -m app.generation.breakdown_preview",
+        prog="python -m app.plugins.languages.no.breakdown_preview",
         description="Preview + render Norwegian Pimsleur breakdowns.",
     )
     parser.add_argument("words", nargs="+", help="Word(s) to break down.")

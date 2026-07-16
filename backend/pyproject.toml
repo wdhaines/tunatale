@@ -151,7 +151,7 @@ omit = [
     "app/plugins/anki_sync/sync_driver.py",
     # CLI audio-preview glue: pure TTS-process + filesystem I/O. Testable logic
     # lives in norwegian_breakdown / breakdown_preview (both fully covered).
-    "app/generation/breakdown_audio.py",
+    "app/plugins/languages/no/breakdown_audio.py",
 ]
 
 [tool.coverage.report]

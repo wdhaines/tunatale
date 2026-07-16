@@ -1,6 +1,6 @@
 """Tests for breakdown_preview.py — CLI-friendly text-report helper."""
 
-from app.generation.breakdown_preview import format_breakdown_preview
+from app.plugins.languages.no.breakdown_preview import format_breakdown_preview
 
 
 def test_preview_contains_phrase():
