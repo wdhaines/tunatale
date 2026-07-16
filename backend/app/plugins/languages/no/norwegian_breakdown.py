@@ -43,6 +43,13 @@ _DERIVATIONAL_SUFFIX_SET: frozenset[str] = frozenset(_DERIVATIONAL_SUFFIXES)
 # Non-native vowel digraphs indicating loanword monosyllables
 _LOAN_DIGRAPHS: frozenset[str] = frozenset(["ea", "ou", "ai", "oa"])
 
+# Leading prefixes that form their own syllable group, overriding onset
+# maximization (mis|tenkt, not mi|stenkt). Gated on the remainder being a
+# content stem so it fires on real prefixed words (mis+tenkt, mis+tanke) but
+# NOT on homographs where "mis" is just the first syllable (mi|sjon — "jon" is
+# a proper name, not a content stem).
+_PREFIXES: tuple[str, ...] = ("mis",)
+
 # Minimum length for a content stem (prevents over-segmentation)
 _MIN_STEM_LEN = 3
 
@@ -196,7 +203,7 @@ _GUARD_EXEMPT_PREPOSITIONS: frozenset[str] = frozenset(
 # Human-ratified lexicalized wholes that the rank-based guard cannot catch
 # (the whole word does not outrank all non-exempt parts).  Each entry is a
 # one-off decision — this list must NOT grow into a general dumping ground.
-_LEXICALIZED_WHOLE_OVERRIDES: frozenset[str] = frozenset(["forstand"])
+_LEXICALIZED_WHOLE_OVERRIDES: frozenset[str] = frozenset(["forstand", "forbrytelsens"])
 
 
 @functools.cache
@@ -351,6 +358,12 @@ def _segment_surface(text: str, ranks: dict[str, int], *, initial: bool = True) 
         for link in _LINKING_ELEMENTS:
             if link and text[end : end + len(link)] != link:
                 continue
+            # A fuge-s attaches to a noun first-element (forsknings-, tings-,
+            # arbeids-), never to a monosyllabic preposition/prefix — "for"+s+X
+            # is a prefixed verb (forsvinne), not a fuge-s compound. Blocking it
+            # keeps forsvunnet whole rather than splitting it fors|vunnet.
+            if link == "s" and first in _GUARD_EXEMPT_PREPOSITIONS:
+                continue
             rest = text[end + len(link) :]
             if not rest:
                 continue
@@ -503,6 +516,20 @@ def _spoken_part(parts: list[str], i: int) -> str:
     return p
 
 
+def _syllabify_with_prefix(word: str) -> list[str] | None:
+    """Split off a leading prefix as its own syllable group, or return None.
+
+    Fires only when the remainder after a :data:`_PREFIXES` entry is a content
+    stem, so ``mistenkt`` -> ``mis | tenkt`` (remainder ``tenkt`` is a stem) but
+    ``misjon`` falls through to normal syllabification (``jon`` is not).
+    """
+    ranks = _load_ranked_lexicon()
+    for pfx in _PREFIXES:
+        if word.startswith(pfx) and _is_content_stem(word[len(pfx) :], ranks):
+            return [pfx, *syllabify_norwegian_word(word[len(pfx) :])]
+    return None
+
+
 def syllabify_morpheme(part: str) -> list[str]:
     """Syllabify a single morpheme, honoring derivational-suffix boundaries.
 
@@ -537,6 +564,9 @@ def syllabify_morpheme(part: str) -> list[str]:
         # No suffix boundary — standard syllabification
         if _is_loanword_monosyllable(word) and word in load_no_lexicon():
             return [word]
+        prefixed = _syllabify_with_prefix(word)
+        if prefixed is not None:
+            return prefixed
         return syllabify_norwegian_word(word)
 
     # Suffix boundary found — syllabify stem, append suffix groups

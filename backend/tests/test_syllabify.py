@@ -117,6 +117,13 @@ def test_norwegian_case_lowercased():
         # Guard: genuine hiatus must stay split (the second vowel is not a glide)
         ("noe", ["no", "e"]),
         ("intuisjon", ["in", "tu", "i", "sjon"]),  # "ui" is not a diphthong
+        # Stop+nasal (kn/gn) is a valid onset word-initially but never medially,
+        # so it must not open the preceding syllable (tek·nisk, not te·knisk).
+        ("teknisk", ["tek", "nisk"]),
+        ("regne", ["reg", "ne"]),
+        # Guard: a word-INITIAL kn onset is preserved (it never routes through
+        # the medial onset split).
+        ("knekke", ["knek", "ke"]),
     ],
 )
 def test_norwegian_syllabification(word, expected):

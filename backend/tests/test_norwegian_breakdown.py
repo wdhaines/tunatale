@@ -437,6 +437,41 @@ def test_syllabify_morpheme_loanword_with_derivational():
     assert "lig" in result
 
 
+def test_segment_compound_forsvunnet_no_false_fuge_s():
+    """'for' + fuge-s + 'vunnet' is a false compound: fuge-s attaches to noun
+    first-elements (forsknings-, tings-), never to the verbal prefix 'for-'.
+    Stays whole so it syllabifies as for·svun·net."""
+    assert segment_compound("forsvunnet") == ["forsvunnet"]
+
+
+def test_syllabify_morpheme_forsvunnet():
+    assert syllabify_morpheme("forsvunnet") == ["for", "svun", "net"]
+
+
+def test_syllabify_morpheme_mistenkt_prefix():
+    """The 'mis-' prefix beats onset-maximization (mis·tenkt, not mi·stenkt)."""
+    assert syllabify_morpheme("mistenkt") == ["mis", "tenkt"]
+
+
+def test_syllabify_morpheme_misjon_not_prefix_split():
+    """'mis' is a prefix only when the remainder is a content stem; 'jon' is not,
+    so misjon stays mi·sjon (sj-digraph onset)."""
+    assert syllabify_morpheme("misjon") == ["mi", "sjon"]
+
+
+def test_segment_compound_forbrytelsens_lexicalized_whole():
+    """forbrytelse is a lexeme; the rank guard can't catch its over-split
+    (for|bry|tel|s|ens), so it's a human-ratified whole → for·bry·tel·sens."""
+    assert segment_compound("forbrytelsens") == ["forbrytelsens"]
+
+
+def test_syllabify_morpheme_forbrytelsens():
+    """syllabify_morpheme already decomposes this correctly by morpheme
+    (for·bryt·else·ns); the only bug was segment_compound routing it to the
+    compound path as junk for|bry|tels|ens. Guards the morpheme output."""
+    assert syllabify_morpheme("forbrytelsens") == ["for", "bryt", "else", "ns"]
+
+
 # -- _spoken_syllable ----------------------------------------------------
 
 

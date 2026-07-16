@@ -131,6 +131,13 @@ _NO_VALID_ONSETS = frozenset(
     ]
 )
 
+# Onsets that are valid *word-initially* (kne, kniv, gni) but never occur as a
+# medial onset in Norwegian — a stop+nasal cluster between two vowels closes the
+# preceding syllable rather than opening the next (tek·nisk, reg·ne — not
+# te·knisk, re·gne). Excluded from the medial onset split only; a word-initial
+# ``kn`` never routes through it (it's part of the first syllable's own onset).
+_NO_INITIAL_ONLY_ONSETS = frozenset(["kn", "gn", "pn"])
+
 
 def _nuclei(word: str, vowels: frozenset[str], diphthongs: frozenset[str]) -> list[tuple[int, int]]:
     """Return each syllable nucleus as an ``(start, end)`` index pair.
@@ -159,6 +166,7 @@ def _syllabify(
     vowels: frozenset[str],
     valid_onsets: frozenset[str],
     diphthongs: frozenset[str] = frozenset(),
+    initial_only_onsets: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Onset-maximization syllabifier parameterised by language phonotactics.
 
@@ -175,6 +183,8 @@ def _syllabify(
         valid_onsets: The language's set of valid syllable onsets.
         diphthongs: Vowel+glide pairs that form a single nucleus (empty for
             languages, like Slovene, that don't merge any).
+        initial_only_onsets: Onsets valid word-initially but never as a medial
+            onset (empty for languages that don't distinguish).
 
     Returns:
         List of syllables, lowercased.
@@ -202,8 +212,9 @@ def _syllabify(
             syllables.append(word[start : curr_end + 1])
             start = curr_end + 1
         else:
-            # Multiple consonants — find longest valid onset suffix
-            split = _onset_split(cluster, curr_end + 1, valid_onsets)
+            # Multiple consonants — find longest valid onset suffix. The split
+            # is always medial, so word-initial-only onsets are never eligible.
+            split = _onset_split(cluster, curr_end + 1, valid_onsets - initial_only_onsets)
             syllables.append(word[start:split])
             start = split
 
@@ -232,7 +243,7 @@ def syllabify_slovene_word(word: str) -> list[str]:
 
 def syllabify_norwegian_word(word: str) -> list[str]:
     """Split a Norwegian (Bokmål) word into syllables."""
-    return _syllabify(word, _NO_VOWELS, _NO_VALID_ONSETS, _NO_DIPHTHONGS)
+    return _syllabify(word, _NO_VOWELS, _NO_VALID_ONSETS, _NO_DIPHTHONGS, _NO_INITIAL_ONLY_ONSETS)
 
 
 def syllabify_word(word: str, language_code: str) -> list[str]:
