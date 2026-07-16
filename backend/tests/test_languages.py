@@ -310,19 +310,19 @@ class TestGetSyllabifier:
     """Per-language syllabifier dispatch routed through the registry."""
 
     def test_returns_norwegian_syllabifier_for_no(self):
-        from app.generation.syllabify import syllabify_norwegian_word
+        from app.plugins.languages.no.syllabify import syllabify_norwegian_word
 
         assert get_syllabifier("no") is syllabify_norwegian_word
 
     def test_returns_slovene_syllabifier_for_sl(self):
-        from app.generation.syllabify import syllabify_slovene_word
+        from app.plugins.languages.sl.syllabify import syllabify_slovene_word
 
         assert get_syllabifier("sl") is syllabify_slovene_word
 
-    def test_unknown_code_falls_back_to_slovene(self):
-        from app.generation.syllabify import syllabify_slovene_word
+    def test_unknown_code_falls_back_to_default(self):
+        from app.generation.syllabify import default_syllabifier
 
-        assert get_syllabifier("xx") is syllabify_slovene_word
+        assert get_syllabifier("xx") is default_syllabifier
 
     def test_norwegian_syllabifier_actually_works(self):
         result = get_syllabifier("no")("snakke")

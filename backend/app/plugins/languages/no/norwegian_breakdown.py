@@ -3,7 +3,7 @@ from __future__ import annotations
 import functools
 import os
 
-from app.generation.syllabify import syllabify_norwegian_word
+from app.plugins.languages.no.syllabify import syllabify_norwegian_word
 
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 _WORDLIST_PATH = os.path.join(_DATA_DIR, "no_wordlist.txt")

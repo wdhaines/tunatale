@@ -1,12 +1,10 @@
-"""Unit tests for Slovene syllabification."""
+"""Unit tests for syllabification."""
 
 import pytest
 
-from app.generation.syllabify import (
-    syllabify_norwegian_word,
-    syllabify_slovene_word,
-    syllabify_word,
-)
+from app.generation.syllabify import syllabify_word
+from app.plugins.languages.no.syllabify import syllabify_norwegian_word
+from app.plugins.languages.sl.syllabify import syllabify_slovene_word
 
 # --- Edge cases ---
 
@@ -141,6 +139,8 @@ def test_syllabify_word_routes_norwegian():
     assert syllabify_word("snakke", "no") == ["snak", "ke"]
 
 
-def test_syllabify_word_unknown_code_falls_back_to_slovene():
-    # Unknown codes use the default (Slovene) onset rules rather than raising.
-    assert syllabify_word("prosim", "xx") == syllabify_slovene_word("prosim")
+def test_syllabify_word_unknown_code_falls_back_to_default():
+    # Unknown codes use the generic default syllabifier rather than raising.
+    from app.generation.syllabify import default_syllabifier
+
+    assert syllabify_word("prosim", "xx") == default_syllabifier("prosim")

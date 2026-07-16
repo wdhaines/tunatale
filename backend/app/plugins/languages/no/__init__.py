@@ -10,6 +10,7 @@ from app.plugins.languages.no.norwegian_breakdown import (
     slow_norwegian_word,
 )
 from app.plugins.languages.no.preprocessor import NorwegianPreprocessor
+from app.plugins.languages.no.syllabify import syllabify_norwegian_word
 
 _style_notes = (Path(__file__).parent / "data" / "style.md").read_text(encoding="utf-8").strip()
 
@@ -25,7 +26,7 @@ register(
         breakdown_fn=build_norwegian_breakdown,
         slow_word_fn=slow_norwegian_word,
         variant_separator=",",
-        syllabifier="norwegian",
+        syllabifier_fn=syllabify_norwegian_word,
         style_notes=_style_notes,
         function_words_path=Path(__file__).parent / "data" / "function_words.json",
     ),
