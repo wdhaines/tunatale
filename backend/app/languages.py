@@ -4,6 +4,8 @@ A ``LanguageConfig`` wraps a ``Language`` domain model plus phase-specific
 wiring (preprocessor factory, deck name, notetype profile). The registry is
 populated by language plugin packages under ``app.plugins.languages`` — each
 plugin imports its concrete wiring and calls :func:`register` at import time.
+
+English (``en``) is registered directly in :func:`discover` (no plugin package).
 """
 
 from __future__ import annotations
@@ -101,25 +103,35 @@ def register(code: str, config: LanguageConfig) -> None:
 _discovered = False
 
 
-def _discover_plugins() -> None:
+def discover() -> None:
     """Import every subpackage of ``app.plugins.languages`` so they self-register.
 
-    Idempotent — guarded by the module-level ``_discovered`` flag.
+    English (``en``) is registered first as a core language — no plugin package
+    needed.  Idempotent — guarded by the module-level ``_discovered`` flag.
     Raises ``RuntimeError`` when no language plugin (other than ``en``) is present.
+
+    This is called lazily by every public accessor that reads ``_CONFIGS``, and
+    eagerly by ``app.main.lifespan`` so a zero-plugin install hard-fails at
+    startup.
     """
     global _discovered  # noqa: PLW0603
     if _discovered:
         return
     _discovered = True
 
-    for _importer, modname, _ispkg in pkgutil.iter_modules(_plugins_pkg.__path__, prefix=_plugins_pkg.__name__ + "."):
+    # English is always available — registered in core, not via a plugin package.
+    register("en", LanguageConfig(language=Language.english()))
+
+    for _importer, modname, _ispkg in pkgutil.iter_modules(
+        _plugins_pkg.__path__, prefix=_plugins_pkg.__name__ + "."
+    ):
         importlib.import_module(modname)
 
     non_en = {c for c in _CONFIGS if c != "en"}
     if not non_en:
         raise RuntimeError(
-            "No language plugin registered.  Install a language plugin package "
-            "(e.g. the 'slovene' or 'norwegian' dependency group) so that at "
+            "No language plugin registered.  Place at least one language plugin "
+            "package under app/plugins/languages/ (e.g. sl/ or no/) so that at "
             "least one language besides 'en' is available."
         )
 
@@ -129,6 +141,7 @@ def get_language(code: str) -> Language:
 
     Raises ``KeyError`` when *code* is not a known language.
     """
+    discover()
     if code not in _CONFIGS:
         raise KeyError(f"Unknown language code: {code!r}. Valid: {sorted(_CONFIGS)}")
     return _CONFIGS[code].language
@@ -141,6 +154,7 @@ def known_language_codes() -> frozenset[str]:
     adding a language to ``_CONFIGS`` widens it automatically, so no caller
     hardcodes ``{"sl", "en", "no"}``.
     """
+    discover()
     return frozenset(_CONFIGS)
 
 
@@ -150,6 +164,7 @@ def get_preprocessor(code: str) -> TextPreprocessor:
     Raises ``KeyError`` for unknown codes and ``ValueError`` for codes that
     have no preprocessor configured (e.g. ``en``).
     """
+    discover()
     if code not in _CONFIGS:
         raise KeyError(f"Unknown language code: {code!r}. Valid: {sorted(_CONFIGS)}")
     factory = _CONFIGS[code].preprocessor_factory
@@ -164,6 +179,7 @@ def get_deck_name(code: str) -> str:
     Raises ``KeyError`` for unknown codes and ``ValueError`` for codes that have
     no TT-managed deck (e.g. ``en``).
     """
+    discover()
     if code not in _CONFIGS:
         raise KeyError(f"Unknown language code: {code!r}. Valid: {sorted(_CONFIGS)}")
     deck_name = _CONFIGS[code].deck_name
@@ -194,6 +210,7 @@ def get_lemmatizer_type(code: str) -> str:
     forced to lowercase) is the global ``settings.lemmatizer_type`` gate in
     ``app.srs.lemmatizer.get_lemmatizer``.
     """
+    discover()
     config = _CONFIGS.get(code)
     return config.lemmatizer_type if config else "lowercase"
 
@@ -228,6 +245,7 @@ def get_syllabifier(code: str) -> Callable[[str], list[str]]:
     Slovene onset rules (a reasonable pedagogical default rather than
     raising).
     """
+    discover()
     config = _CONFIGS.get(code)
     name = config.syllabifier if config else None
     if name is None:
@@ -243,6 +261,7 @@ def get_vocab_notetype(code: str) -> VocabNotetype | None:
     ``None`` for an unknown code or a language TT doesn't mint into (``en``) —
     callers fall back to the deck-discovered notetype.
     """
+    discover()
     config = _CONFIGS.get(code)
     return config.vocab_notetype if config else None
 
@@ -254,6 +273,7 @@ def uses_compound_word_breakdown(code: str) -> bool:
     Unknown codes → ``False`` (the generic path). Replaces the hardcoded
     ``if language_code == "no"`` branches in ``generation/section_builder.py``.
     """
+    discover()
     config = _CONFIGS.get(code)
     return config.compound_word_breakdown if config else False
 
@@ -265,6 +285,7 @@ def get_breakdown(code: str) -> Callable[..., list[str]] | None:
     ``None`` — callers fall back to the generic per-syllable buildup in
     ``section_builder.build_word_breakdown``.
     """
+    discover()
     config = _CONFIGS.get(code)
     return config.breakdown_fn if config else None
 
@@ -275,6 +296,7 @@ def get_slow_word(code: str) -> Callable[[str], str] | None:
     Norwegian uses morpheme-aware micro-pauses; other languages slow by simple
     whitespace splitting.
     """
+    discover()
     config = _CONFIGS.get(code)
     return config.slow_word_fn if config else None
 
@@ -286,6 +308,7 @@ def get_variant_separator(code: str) -> str | None:
     Unknown codes → ``None``. Norwegian uses ``","`` (``mot, imot``); every other
     wired language returns ``None``, so ``card_surface_variants`` is a no-op there.
     """
+    discover()
     config = _CONFIGS.get(code)
     return config.variant_separator if config else None
 
@@ -295,6 +318,7 @@ def get_style_notes(code: str) -> str:
 
     Empty string when the language has no style file or is unknown.
     """
+    discover()
     config = _CONFIGS.get(code)
     return config.style_notes if config else ""
 
@@ -303,6 +327,7 @@ def get_function_words_path(code: str) -> Path | None:
     """Return the path to the per-language function-word JSON config, or ``None``
     when the language has no curated function-word policy.
     """
+    discover()
     config = _CONFIGS.get(code)
     return config.function_words_path if config else None
 
@@ -332,6 +357,7 @@ def get_morphology_profile(code: str) -> str | None:
     tagging block injected into the story prompt), or ``None`` when the language gets
     no morphology block. Unknown codes → ``None``.
     """
+    discover()
     config = _CONFIGS.get(code)
     return config.morphology_profile if config else None
 
@@ -374,6 +400,7 @@ def resolve_language_context(code: str | None, settings: Settings) -> LanguageCo
     registry facets are attached whenever *code* is a known language, else
     ``None`` / the ``lowercase`` default.
     """
+    discover()
     config = _CONFIGS.get(code) if code else None
     configured_db = settings.database_urls.get(code) if code else None
     if configured_db:
@@ -392,11 +419,3 @@ def resolve_language_context(code: str | None, settings: Settings) -> LanguageCo
         lemmatizer_type=config.lemmatizer_type if config else "lowercase",
         vocab_notetype=config.vocab_notetype if config else None,
     )
-
-
-# ---------------------------------------------------------------------------
-# Trigger plugin discovery — must be last.  The plugin ``__init__`` files do
-# ``from app.languages import LanguageConfig, register`` which only resolves
-# because those names are defined above.
-# ---------------------------------------------------------------------------
-_discover_plugins()

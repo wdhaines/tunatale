@@ -33,16 +33,16 @@ class TestRegistryPopulatedByDiscovery:
         from app.languages import known_language_codes  # noqa: F811
 
         known_language_codes()  # ensure discovery has run
-        assert "app.plugins.languages.en" in sys.modules
+        assert "app.plugins.languages.sl" in sys.modules
+        assert "app.plugins.languages.no" in sys.modules
 
 
 class TestHardFailWhenNoLanguagePlugin:
-    """If no non-en plugin registers, _discover_plugins must raise."""
+    """If no non-en plugin registers, discover must raise."""
 
     def test_raises_runtime_error(self) -> None:
         import app.languages as mod
 
-        # Reset discovery state so _discover_plugins runs fresh
         old_configs = mod._CONFIGS.copy()
         old_discovered = mod._discovered
         try:
@@ -56,7 +56,7 @@ class TestHardFailWhenNoLanguagePlugin:
                 patch("importlib.import_module"),
                 pytest.raises(RuntimeError, match="No language plugin"),
             ):
-                mod._discover_plugins()
+                mod.discover()
         finally:
             mod._CONFIGS.clear()
             mod._CONFIGS.update(old_configs)
@@ -75,16 +75,16 @@ class TestRegisterDuplicateCode:
             register(code, LanguageConfig(language=Language.english()))
 
 
-class TestDiscoverPluginsIdempotent:
-    """_discover_plugins() must be a no-op when already executed."""
+class TestDiscoverIdempotent:
+    """discover() must be a no-op when already executed."""
 
     def test_second_call_is_noop(self) -> None:
         import app.languages as mod
 
-        # _discover_plugins() has already run at import time
+        # discover() has already run at import time
         assert mod._discovered is True
-        # Calling it again should just return immediately (line 97)
-        mod._discover_plugins()
+        # Calling it again should just return immediately
+        mod.discover()
 
 
 class TestOnePluginIsSufficient:

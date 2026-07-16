@@ -98,6 +98,10 @@ def _language_db_map() -> dict[str, str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.languages import discover
+
+    discover()
+
     activity_log = ActivityLog()
     real_client = LLMClient(
         groq_api_key=settings.groq_api_key,
