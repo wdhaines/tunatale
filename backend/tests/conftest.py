@@ -150,9 +150,9 @@ def _autoclose_sqlite_connections(monkeypatch):
 @pytest.fixture
 def language():
     """Slovene language configuration."""
-    from app.models.language import Language
+    from app.languages import get_language
 
-    return Language.slovene()
+    return get_language("sl")
 
 
 @pytest.fixture
@@ -823,8 +823,8 @@ def api_app_state():
     SRSDatabase for direct seeding inside the test, then tears down all four
     state attributes.
     """
+    from app.languages import get_language
     from app.main import app
-    from app.models.language import Language
     from app.srs.database import SRSDatabase
     from app.storage.store import ContentStore
 
@@ -832,7 +832,7 @@ def api_app_state():
     store = ContentStore(":memory:")
     app.state.srs_db = db
     app.state.content_store = store
-    app.state.language = Language.slovene()
+    app.state.language = get_language("sl")
     try:
         yield db
     finally:

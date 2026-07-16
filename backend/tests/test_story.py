@@ -587,9 +587,9 @@ class TestNorwegianStoryGeneration:
 
     @pytest.fixture
     def norwegian(self):
-        from app.models.language import Language
+        from app.languages import get_language
 
-        return Language.norwegian()
+        return get_language("no")
 
     @pytest.fixture
     def norwegian_generator(self):

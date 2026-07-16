@@ -4,7 +4,7 @@ from pathlib import Path
 
 from app.cards.vocab_notetype import NORWEGIAN_VOCAB
 from app.languages import LanguageConfig, register
-from app.models.language import Language
+from app.models.language import Language, NARRATOR_VOICE
 from app.plugins.languages.no.norwegian_breakdown import (
     build_norwegian_breakdown,
     slow_norwegian_word,
@@ -17,7 +17,21 @@ _style_notes = (Path(__file__).parent / "data" / "style.md").read_text(encoding=
 register(
     "no",
     LanguageConfig(
-        language=Language.norwegian(),
+        language=Language(
+            code="no",
+            name="Norwegian",
+            native_name="norsk",
+            script="latin",
+            tts_voice_map={
+                "narrator": NARRATOR_VOICE,
+                "female-1": "nb-NO-PernilleNeural",
+                "female-2": "nb-NO-PernilleNeural",
+                "male-1": "nb-NO-FinnNeural",
+                "male-2": "nb-NO-FinnNeural",
+                "female": "nb-NO-PernilleNeural",
+                "male": "nb-NO-FinnNeural",
+            },
+        ),
         preprocessor_factory=NorwegianPreprocessor,
         deck_name="0. 6000 Most Frequent Norwegian Words [Part 1]",
         vocab_notetype=NORWEGIAN_VOCAB,

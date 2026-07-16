@@ -21,42 +21,6 @@ class Language:
     tts_voice_map: dict[str, str] = field(default_factory=dict)  # role → EdgeTTS voice name
 
     @classmethod
-    def slovene(cls) -> Language:
-        return cls(
-            code="sl",
-            name="Slovene",
-            native_name="slovenščina",
-            script="latin",
-            tts_voice_map={
-                "narrator": NARRATOR_VOICE,
-                "female-1": "sl-SI-PetraNeural",
-                "female-2": "sl-SI-PetraNeural",
-                "male-1": "sl-SI-RokNeural",
-                "male-2": "sl-SI-RokNeural",
-                "female": "sl-SI-PetraNeural",  # legacy
-                "male": "sl-SI-RokNeural",  # legacy
-            },
-        )
-
-    @classmethod
-    def norwegian(cls) -> Language:
-        return cls(
-            code="no",
-            name="Norwegian",
-            native_name="norsk",
-            script="latin",
-            tts_voice_map={
-                "narrator": NARRATOR_VOICE,
-                "female-1": "nb-NO-PernilleNeural",
-                "female-2": "nb-NO-PernilleNeural",
-                "male-1": "nb-NO-FinnNeural",
-                "male-2": "nb-NO-FinnNeural",
-                "female": "nb-NO-PernilleNeural",
-                "male": "nb-NO-FinnNeural",
-            },
-        )
-
-    @classmethod
     def english(cls) -> Language:
         return cls(
             code="en",

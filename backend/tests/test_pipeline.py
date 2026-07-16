@@ -9,9 +9,9 @@ import pytest
 
 from app.generation.pipeline import LessonPipeline
 from app.generation.story import StoryGenerationError
+from app.languages import get_language
 from app.llm.activity import ActivityLog
 from app.models.curriculum import Curriculum, CurriculumDay
-from app.models.language import Language
 from app.models.lesson import Lesson, Section, SectionType
 from app.storage.store import ContentStore
 
@@ -125,7 +125,7 @@ def sleep_recorder():
 @pytest.fixture
 def pipeline(fake_generator, fake_renderer, fake_llm, activity_log, sleep_recorder, tmp_path):
     stores = {"sl": ContentStore(":memory:"), "no": ContentStore(":memory:")}
-    languages = {"sl": Language.slovene(), "no": Language.norwegian()}
+    languages = {"sl": get_language("sl"), "no": get_language("no")}
     srs_dbs: dict = {}
     return LessonPipeline(
         story_generator=fake_generator,
@@ -1218,7 +1218,7 @@ class TestWorkerEdgeCases:
             renderer=FakeRenderer(),
             audio_dir=tmp_path,
             content_stores={"sl": store},
-            languages={"sl": Language.slovene()},
+            languages={"sl": get_language("sl")},
             srs_dbs={},
             activity_log=ActivityLog(maxlen=100),
             llm_client=llm,

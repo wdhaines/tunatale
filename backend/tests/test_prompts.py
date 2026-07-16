@@ -8,7 +8,7 @@ from app.generation.prompts import (
     build_story_system_prompt,
     get_strategy_prompt,
 )
-from app.languages import get_style_notes
+from app.languages import get_language, get_style_notes
 from app.models.language import Language
 from app.models.strategy import ContentStrategy
 
@@ -98,18 +98,18 @@ def test_load_style_notes_returns_empty_for_unknown_language():
 
 def test_build_story_system_prompt_slovene_contains_oprostite():
     """Regression: Slovene prompt must guard against izvinite (Serbian/Croatian contamination)."""
-    prompt = build_story_system_prompt(Language.slovene())
+    prompt = build_story_system_prompt(get_language("sl"))
     assert "oprostite" in prompt.lower()
 
 
 def test_build_story_system_prompt_slovene_warns_against_izvinite():
     """The guardrail must explicitly name the word to avoid, so the LLM sees the contrast."""
-    prompt = build_story_system_prompt(Language.slovene())
+    prompt = build_story_system_prompt(get_language("sl"))
     assert "izvinite" in prompt.lower()
 
 
 def test_build_story_system_prompt_slovene_warns_against_croatian_chars():
-    prompt = build_story_system_prompt(Language.slovene())
+    prompt = build_story_system_prompt(get_language("sl"))
     # Must warn about ć and đ which don't exist in Slovene
     assert "ć" in prompt or "Croatian" in prompt
 
@@ -138,12 +138,12 @@ def test_build_story_system_prompt_fallback_for_language_without_style_file():
 
 
 def test_build_story_system_prompt_contains_language_name():
-    prompt = build_story_system_prompt(Language.slovene())
+    prompt = build_story_system_prompt(get_language("sl"))
     assert "Slovene" in prompt
 
 
 def test_build_story_system_prompt_contains_density_floor():
-    prompt = build_story_system_prompt(Language.slovene())
+    prompt = build_story_system_prompt(get_language("sl"))
     assert "5-12" in prompt or "5–12" in prompt
 
 
@@ -152,7 +152,7 @@ def test_build_story_system_prompt_contains_density_floor():
 
 def test_slovene_prompt_contains_morphology_block():
     """Slovene keeps the full morphology-tagging block (cases + dual)."""
-    prompt = build_story_system_prompt(Language.slovene())
+    prompt = build_story_system_prompt(get_language("sl"))
     assert "morphology_focus" in prompt
     assert "Allowed cases for A1" in prompt
     assert "dual" in prompt.lower()
@@ -161,7 +161,7 @@ def test_slovene_prompt_contains_morphology_block():
 def test_norwegian_prompt_omits_slavic_morphology_block():
     """Norwegian has neither grammatical case nor dual number — the Slavic
     morphology-tagging instructions must not leak into its prompt."""
-    prompt = build_story_system_prompt(Language.norwegian())
+    prompt = build_story_system_prompt(get_language("no"))
     assert "morphology_focus" not in prompt
     assert "Allowed cases for A1" not in prompt
     assert "noun:acc" not in prompt
@@ -169,7 +169,7 @@ def test_norwegian_prompt_omits_slavic_morphology_block():
 
 def test_norwegian_prompt_contains_bokmal_style_notes():
     """The Norwegian style file (Bokmål rules) must be injected."""
-    prompt = build_story_system_prompt(Language.norwegian())
+    prompt = build_story_system_prompt(get_language("no"))
     assert "Bokmål" in prompt
     # No T–V distinction is the headline Norwegian rule.
     assert "du" in prompt
@@ -177,7 +177,7 @@ def test_norwegian_prompt_contains_bokmal_style_notes():
 
 def test_norwegian_prompt_keeps_shared_sections():
     """Dropping the morphology block must not drop the shared instructions."""
-    prompt = build_story_system_prompt(Language.norwegian())
+    prompt = build_story_system_prompt(get_language("no"))
     assert "dialogue_glosses" in prompt
     assert "SCENE HEADER FORMAT" in prompt
     assert "5-12" in prompt or "5–12" in prompt

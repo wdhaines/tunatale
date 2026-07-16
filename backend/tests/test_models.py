@@ -5,6 +5,7 @@ from datetime import date
 
 import pytest
 
+from app.languages import get_language
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.language import Language
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
@@ -143,16 +144,16 @@ class TestLanguage:
     """Tests for Language factory methods and voice map structure."""
 
     def test_slovene_code(self):
-        lang = Language.slovene()
+        lang = get_language("sl")
         assert lang.code == "sl"
 
     def test_slovene_has_female_voice(self):
-        lang = Language.slovene()
+        lang = get_language("sl")
         assert "female" in lang.tts_voice_map
         assert "sl-SI" in lang.tts_voice_map["female"]
 
     def test_slovene_has_male_voice(self):
-        lang = Language.slovene()
+        lang = get_language("sl")
         assert "male" in lang.tts_voice_map
         assert "sl-SI" in lang.tts_voice_map["male"]
 
@@ -161,12 +162,12 @@ class TestLanguage:
         assert lang.code == "en"
 
     def test_slovene_voice_map_has_role_keys(self):
-        lang = Language.slovene()
+        lang = get_language("sl")
         for key in ("narrator", "female-1", "male-1"):
             assert key in lang.tts_voice_map, f"missing key '{key}' in {lang.code} voice map"
 
     def test_slovene_voice_map_has_legacy_keys(self):
-        lang = Language.slovene()
+        lang = get_language("sl")
         assert "female" in lang.tts_voice_map
         assert "male" in lang.tts_voice_map
 
@@ -176,26 +177,26 @@ class TestLanguage:
             assert key in lang.tts_voice_map, f"missing key '{key}' in {lang.code} voice map"
 
     def test_norwegian_code(self):
-        lang = Language.norwegian()
+        lang = get_language("no")
         assert lang.code == "no"
 
     def test_norwegian_name(self):
-        lang = Language.norwegian()
+        lang = get_language("no")
         assert lang.name == "Norwegian"
         assert lang.native_name == "norsk"
 
     def test_norwegian_has_all_voices(self):
-        lang = Language.norwegian()
+        lang = get_language("no")
         for key in ("narrator", "female-1", "female-2", "male-1", "male-2"):
             assert key in lang.tts_voice_map, f"missing '{key}' in Norwegian voice map"
 
     def test_norwegian_has_legacy_aliases(self):
-        lang = Language.norwegian()
+        lang = get_language("no")
         assert "female" in lang.tts_voice_map
         assert "male" in lang.tts_voice_map
 
     def test_norwegian_voices_are_nb_no(self):
-        lang = Language.norwegian()
+        lang = get_language("no")
         assert "nb-NO" in lang.tts_voice_map["female-1"]
         assert "nb-NO" in lang.tts_voice_map["male-1"]
 

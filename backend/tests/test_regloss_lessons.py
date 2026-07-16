@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock
 
-from app.models.language import Language
+from app.languages import get_language
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.srs.lemmatizer import LowercaseLemmatizer
 from app.storage.regloss_lessons import (
@@ -98,7 +98,7 @@ class TestReglossLesson:
     async def test_surface_keyed_with_lemma_fallback(self):
         lesson = _lesson(["Boste kavo?"])
         llm = _fake_llm([{"word": "boste", "translation": "you will"}, {"word": "kavo", "translation": "coffee"}])
-        result = await regloss_lesson(lesson, llm, LowercaseLemmatizer(), Language.slovene())
+        result = await regloss_lesson(lesson, llm, LowercaseLemmatizer(), get_language("sl"))
         # Surface keys carry the specific translation...
         assert result["boste"] == "you will"
         assert result["kavo"] == "coffee"
@@ -126,7 +126,7 @@ class TestReglossLesson:
 
         lesson = _lesson(["Boste bom"])
         llm = _fake_llm([{"word": "boste", "translation": "you will"}, {"word": "bom", "translation": "I will"}])
-        result = await regloss_lesson(lesson, llm, _Lem(), Language.slovene())
+        result = await regloss_lesson(lesson, llm, _Lem(), get_language("sl"))
         assert result["boste"] == "you will"
         assert result["bom"] == "I will"
         # setdefault: first surface (boste) wins the shared lemma "biti"
@@ -142,7 +142,7 @@ class TestReglossLesson:
                 {"translation": "no-word-key"},
             ]
         )
-        result = await regloss_lesson(lesson, llm, LowercaseLemmatizer(), Language.slovene())
+        result = await regloss_lesson(lesson, llm, LowercaseLemmatizer(), get_language("sl"))
         assert result == {"kje": "where"}
 
     async def test_word_absent_from_dialogue_gets_no_lemma_fallback(self):
@@ -155,13 +155,13 @@ class TestReglossLesson:
 
         lesson = _lesson(["Kje"])
         llm = _fake_llm([{"word": "kje", "translation": "where"}, {"word": "bonus", "translation": "extra"}])
-        result = await regloss_lesson(lesson, llm, _Lem(), Language.slovene())
+        result = await regloss_lesson(lesson, llm, _Lem(), get_language("sl"))
         assert result == {"kje": "where", "bonus": "extra"}
 
     async def test_returns_none_without_dialogue(self):
         lesson = _lesson([], narrator=True)
         llm = _fake_llm([])
-        assert await regloss_lesson(lesson, llm, LowercaseLemmatizer(), Language.slovene()) is None
+        assert await regloss_lesson(lesson, llm, LowercaseLemmatizer(), get_language("sl")) is None
         llm.complete.assert_not_called()
 
 
@@ -172,7 +172,7 @@ class TestReglossAll:
         store.save_lesson("l2", "c1", 2, _lesson([], narrator=True))  # no dialogue → skipped
         llm = _fake_llm([{"word": "kje", "translation": "where"}, {"word": "banka", "translation": "bank"}])
 
-        count = await regloss_all(store, llm, LowercaseLemmatizer(), Language.slovene())
+        count = await regloss_all(store, llm, LowercaseLemmatizer(), get_language("sl"))
 
         assert count == 1
         glosses = store.get_lesson("l1").generation_metadata["token_glosses"]
@@ -184,7 +184,7 @@ class TestReglossAll:
         store.save_lesson("l1", "c1", 1, _lesson(["Kje"]))
         llm = _fake_llm([])  # LLM returned nothing usable
 
-        count = await regloss_all(store, llm, LowercaseLemmatizer(), Language.slovene())
+        count = await regloss_all(store, llm, LowercaseLemmatizer(), get_language("sl"))
 
         assert count == 0
         # untouched legacy data still present (not clobbered with an empty map)

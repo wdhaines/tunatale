@@ -6,10 +6,10 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.generation.planner import PlannerError, PlannerTurn
+from app.languages import get_language
 from app.llm.activity import ActivityLog
 from app.main import app
 from app.models.curriculum import Curriculum, CurriculumDay
-from app.models.language import Language
 from app.storage.store import ContentStore
 
 
@@ -65,7 +65,7 @@ def _setup(curriculum: Curriculum | None = None, planner: StubPlanner | None = N
     if curriculum is not None:
         store.save_curriculum(curriculum.id, curriculum)
     app.state.content_store = store
-    app.state.language = Language.slovene()
+    app.state.language = get_language("sl")
     app.state.srs_db = SRSDatabase(":memory:")
     if planner is not None:
         app.state.curriculum_planner = planner
@@ -281,7 +281,7 @@ class TestPlanCommit:
             renderer=None,
             audio_dir=tmp_path,
             content_stores={"sl": store},
-            languages={"sl": Language.slovene()},
+            languages={"sl": get_language("sl")},
             srs_dbs={},
             activity_log=ActivityLog(maxlen=100),
             llm_client=None,

@@ -9,10 +9,10 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.generation.pipeline import LessonPipeline
+from app.languages import get_language
 from app.llm.activity import ActivityLog
 from app.main import app
 from app.models.curriculum import Curriculum, CurriculumDay
-from app.models.language import Language
 from app.models.lesson import Lesson, Section, SectionType
 from app.storage.store import ContentStore
 
@@ -90,7 +90,7 @@ def _pipeline(tmp_path) -> LessonPipeline:
         renderer=rdr,
         audio_dir=tmp_path,
         content_stores={"sl": store},
-        languages={"sl": Language.slovene()},
+        languages={"sl": get_language("sl")},
         srs_dbs={},
         activity_log=activity_log,
         llm_client=None,
@@ -109,7 +109,7 @@ class TestPipelineStatusEndpoint:
     async def test_unknown_curriculum_404(self, tmp_path):
         pipeline, store, _, _ = _pipeline(tmp_path)
         app.state.content_store = store
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
         app.state.srs_db = store
         app.state.pipeline = pipeline
 
@@ -122,7 +122,7 @@ class TestPipelineStatusEndpoint:
         curriculum = Curriculum(id="cur-1", topic="t", language_code="sl", cefr_level="A2", days=[_day(1)])
         store.save_curriculum("cur-1", curriculum)
         app.state.content_store = store
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
         app.state.srs_db = store
         app.state.pipeline = pipeline
 
@@ -150,7 +150,7 @@ class TestPipelineRetryEndpoint:
         curriculum = Curriculum(id="cur-1", topic="t", language_code="sl", cefr_level="A2", days=[_day(1)])
         store.save_curriculum("cur-1", curriculum)
         app.state.content_store = store
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
         app.state.srs_db = store
         app.state.pipeline = pipeline
 
@@ -163,7 +163,7 @@ class TestPipelineRetryEndpoint:
         curriculum = Curriculum(id="cur-1", topic="t", language_code="sl", cefr_level="A2", days=[_day(1)])
         store.save_curriculum("cur-1", curriculum)
         app.state.content_store = store
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
         app.state.srs_db = store
         app.state.pipeline = pipeline
 
@@ -180,7 +180,7 @@ class TestPipelineRetryEndpoint:
         curriculum = Curriculum(id="cur-1", topic="t", language_code="sl", cefr_level="A2", days=[_day(1)])
         store.save_curriculum("cur-1", curriculum)
         app.state.content_store = store
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
         app.state.srs_db = store
         app.state.pipeline = pipeline
 
@@ -210,7 +210,7 @@ class TestPipelineRegenerateEndpoint:
         curriculum = Curriculum(id="cur-1", topic="t", language_code="sl", cefr_level="A2", days=[_day(1)])
         store.save_curriculum("cur-1", curriculum)
         app.state.content_store = store
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
         app.state.srs_db = store
         app.state.pipeline = pipeline
 
@@ -223,7 +223,7 @@ class TestPipelineRegenerateEndpoint:
         curriculum = Curriculum(id="cur-1", topic="t", language_code="sl", cefr_level="A2", days=[_day(1)])
         store.save_curriculum("cur-1", curriculum)
         app.state.content_store = store
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
         app.state.srs_db = store
         app.state.pipeline = pipeline
 
@@ -242,7 +242,7 @@ class TestPipelineRegenerateEndpoint:
         )
         store.save_lesson("old-id", "cur-1", 1, lesson)
         app.state.content_store = store
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
         app.state.srs_db = store
         app.state.pipeline = pipeline
 

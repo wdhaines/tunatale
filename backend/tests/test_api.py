@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.languages import get_language
 from app.main import app
 from app.models.curriculum import Curriculum, CurriculumDay
-from app.models.language import Language
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 
 
@@ -617,7 +617,7 @@ class TestStoryEndpoints:
         )
         app.state.content_store = store
         app.state.story_generator = mock_generator
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
@@ -660,7 +660,7 @@ class TestStoryEndpoints:
         )
         app.state.content_store = store
         app.state.story_generator = mock_generator
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
@@ -707,7 +707,7 @@ class TestStoryEndpoints:
             ],
         )
         app.state.story_generator = mock_generator
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
         app.state.srs_db = SRSDatabase(":memory:")
 
         store = ContentStore(":memory:")
@@ -720,7 +720,7 @@ class TestStoryEndpoints:
             renderer=None,
             audio_dir=None,
             content_stores={"sl": store},
-            languages={"sl": Language.slovene()},
+            languages={"sl": get_language("sl")},
             srs_dbs={},
             activity_log=ActivityLog(maxlen=100),
             llm_client=None,
@@ -784,7 +784,7 @@ class TestStoryEndpoints:
             ],
         )
         app.state.story_generator = mock_generator
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
 
         store = ContentStore(":memory:")
         store.save_curriculum("cid", mock_curriculum)
@@ -973,7 +973,7 @@ class TestLessonAuthoringEndpoints:
         from app.generation.story import build_lesson_from_story
 
         store = self._store_with_curriculum()
-        lesson = build_lesson_from_story(self._story(), language=Language.slovene())
+        lesson = build_lesson_from_story(self._story(), language=get_language("sl"))
         store.save_lesson("lesson-1", "c1", 1, lesson)
         app.state.content_store = store
 
@@ -1006,7 +1006,7 @@ class TestLessonAuthoringEndpoints:
 
         store = self._store_with_curriculum()
         app.state.content_store = store
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
         app.state.srs_db = SRSDatabase(":memory:")
 
         pipeline = LessonPipeline(
@@ -1014,7 +1014,7 @@ class TestLessonAuthoringEndpoints:
             renderer=None,
             audio_dir=None,
             content_stores={"sl": store},
-            languages={"sl": Language.slovene()},
+            languages={"sl": get_language("sl")},
             srs_dbs={},
             activity_log=ActivityLog(maxlen=100),
             llm_client=None,
@@ -1044,7 +1044,7 @@ class TestLessonAuthoringEndpoints:
         from app.storage.store import ContentStore
 
         app.state.content_store = ContentStore(":memory:")
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/story/import",
@@ -1055,7 +1055,7 @@ class TestLessonAuthoringEndpoints:
     async def test_import_422_on_invalid_story_with_clear_message(self):
         store = self._store_with_curriculum()
         app.state.content_store = store
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
         story = self._story()
         del story["scenes"][0]["lines"][0]["speaker"]
 
@@ -1072,7 +1072,7 @@ class TestLessonAuthoringEndpoints:
     async def test_import_warns_on_unknown_speaker(self):
         store = self._store_with_curriculum()
         app.state.content_store = store
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
         story = self._story()
         story["scenes"][0]["lines"][1]["speaker"] = "robot-9"
 
@@ -1093,7 +1093,7 @@ class TestLessonAuthoringEndpoints:
 
         store = self._store_with_curriculum()
         app.state.content_store = store
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
         app.state.srs_db = SRSDatabase(":memory:")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

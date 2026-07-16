@@ -2,8 +2,7 @@
 
 from pathlib import Path
 
-from app.languages import get_function_words_path, get_style_notes
-from app.models.language import Language
+from app.languages import get_function_words_path, get_language, get_style_notes
 
 
 def test_sl_style_notes_non_empty() -> None:
@@ -23,7 +22,7 @@ def test_unknown_style_notes_empty() -> None:
 def test_build_story_prompt_wires_sl_style() -> None:
     from app.generation.prompts import build_story_system_prompt
 
-    prompt = build_story_system_prompt(Language.slovene())
+    prompt = build_story_system_prompt(get_language("sl"))
     assert "oprostite" in prompt.lower()
 
 

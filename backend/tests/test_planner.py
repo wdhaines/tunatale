@@ -5,8 +5,8 @@ from dataclasses import dataclass
 import pytest
 
 from app.generation.planner import CurriculumPlanner, PlannerError, PlannerTurn
+from app.languages import get_language
 from app.models.curriculum import Curriculum, CurriculumDay
-from app.models.language import Language
 
 
 @dataclass
@@ -60,7 +60,7 @@ class TestCurriculumPlanner:
             user_message="Focus day 2 on market food",
             batch_size=3,
             learner_snapshot="(no tracked vocabulary)",
-            language=Language.slovene(),
+            language=get_language("sl"),
         )
         assert llm.prompt_seen is not None
         assert "USER: Focus day 2 on market food" in llm.prompt_seen
@@ -72,7 +72,7 @@ class TestCurriculumPlanner:
             user_message="Let's plan!",
             batch_size=3,
             learner_snapshot="(no tracked vocabulary)",
-            language=Language.slovene(),
+            language=get_language("sl"),
         )
         assert result.proposed_days is None
         assert result.reply == "That sounds great! Let's focus on that."
@@ -86,7 +86,7 @@ class TestCurriculumPlanner:
             user_message="Plan next 3 days",
             batch_size=3,
             learner_snapshot="(no tracked vocabulary)",
-            language=Language.slovene(),
+            language=get_language("sl"),
         )
         assert result.proposed_days is not None
         assert len(result.proposed_days) == 3
@@ -107,7 +107,7 @@ class TestCurriculumPlanner:
             user_message="plan",
             batch_size=1,
             learner_snapshot="(none)",
-            language=Language.slovene(),
+            language=get_language("sl"),
         )
         assert result.proposed_days[0].day == 1
 
@@ -129,7 +129,7 @@ class TestCurriculumPlanner:
             user_message="plan",
             batch_size=1,
             learner_snapshot="(none)",
-            language=Language.slovene(),
+            language=get_language("sl"),
         )
         assert result.proposed_days[0].day == 6
 
@@ -142,7 +142,7 @@ class TestCurriculumPlanner:
                 user_message="plan",
                 batch_size=3,
                 learner_snapshot="(none)",
-                language=Language.slovene(),
+                language=get_language("sl"),
             )
 
     async def test_wrong_day_count(self):
@@ -156,7 +156,7 @@ class TestCurriculumPlanner:
                 user_message="plan",
                 batch_size=3,
                 learner_snapshot="(none)",
-                language=Language.slovene(),
+                language=get_language("sl"),
             )
 
     async def test_missing_days_key(self):
@@ -168,7 +168,7 @@ class TestCurriculumPlanner:
                 user_message="plan",
                 batch_size=3,
                 learner_snapshot="(none)",
-                language=Language.slovene(),
+                language=get_language("sl"),
             )
 
     async def test_invalid_day_fields(self):
@@ -181,7 +181,7 @@ class TestCurriculumPlanner:
                 user_message="plan",
                 batch_size=1,
                 learner_snapshot="(none)",
-                language=Language.slovene(),
+                language=get_language("sl"),
             )
 
     async def test_empty_collocations(self):
@@ -196,7 +196,7 @@ class TestCurriculumPlanner:
                 user_message="plan",
                 batch_size=1,
                 learner_snapshot="(none)",
-                language=Language.slovene(),
+                language=get_language("sl"),
             )
 
     async def test_non_dict_day_entries_raise_planner_error(self):
@@ -215,7 +215,7 @@ class TestCurriculumPlanner:
                 user_message="plan",
                 batch_size=2,
                 learner_snapshot="(none)",
-                language=Language.slovene(),
+                language=get_language("sl"),
             )
 
     async def test_returns_planner_turn_type(self):
@@ -225,7 +225,7 @@ class TestCurriculumPlanner:
             user_message="hi",
             batch_size=3,
             learner_snapshot="(none)",
-            language=Language.slovene(),
+            language=get_language("sl"),
         )
         assert isinstance(result, PlannerTurn)
 
@@ -237,7 +237,7 @@ class TestCurriculumPlanner:
             user_message="What should I learn first?",
             batch_size=3,
             learner_snapshot="(none)",
-            language=Language.slovene(),
+            language=get_language("sl"),
         )
         assert result.proposed_days is None
         assert "greetings" in result.reply
@@ -256,7 +256,7 @@ class TestCurriculumPlanner:
             user_message="plan",
             batch_size=1,
             learner_snapshot="(none)",
-            language=Language.slovene(),
+            language=get_language("sl"),
         )
         assert result.proposed_days is not None
         assert len(result.proposed_days) == 1

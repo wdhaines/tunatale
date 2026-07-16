@@ -92,12 +92,12 @@ def db():
 @pytest.fixture
 def api(db, monkeypatch):
     """Set up app state + yield an async client."""
+    from app.languages import get_language
     from app.main import app as _app
-    from app.models.language import Language
 
     _app.state.srs_db = db
     _app.state.content_store = MagicMock()
-    _app.state.language = Language.slovene()
+    _app.state.language = get_language("sl")
     try:
         yield db
     finally:

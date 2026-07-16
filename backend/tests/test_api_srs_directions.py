@@ -7,8 +7,8 @@ import datetime
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.languages import get_language
 from app.main import app
-from app.models.language import Language
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
@@ -25,7 +25,7 @@ def _clean_app_state():
     store = ContentStore(":memory:")
     app.state.srs_db = db
     app.state.content_store = store
-    app.state.language = Language.slovene()
+    app.state.language = get_language("sl")
     yield
     db.close()
     store.close()

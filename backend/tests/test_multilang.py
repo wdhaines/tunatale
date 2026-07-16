@@ -6,8 +6,8 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from app.languages import get_language
 from app.main import _language_db_map, app
-from app.models.language import Language
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 from app.storage.store import ContentStore
@@ -71,11 +71,11 @@ class TestPerRequestIsolation:
         )
         app.state.srs_dbs = {"sl": db_sl, "no": db_no}
         app.state.content_stores = {"sl": ContentStore(":memory:"), "no": ContentStore(":memory:")}
-        app.state.languages = {"sl": Language.slovene(), "no": Language.norwegian()}
+        app.state.languages = {"sl": get_language("sl"), "no": get_language("no")}
         # Singular defaults (the active language) — used by the no-header path.
         app.state.srs_db = db_sl
         app.state.content_store = app.state.content_stores["sl"]
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
         try:
             yield
         finally:
@@ -153,7 +153,7 @@ class TestLanguagesEndpointFallbacks:
                 delattr(app.state, attr)
 
     async def test_single_language_uses_singular_app_state(self):
-        app.state.language = Language.slovene()
+        app.state.language = get_language("sl")
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 body = (await client.get("/api/languages")).json()

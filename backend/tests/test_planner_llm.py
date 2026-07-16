@@ -10,8 +10,8 @@ Record with:
 """
 
 from app.generation.planner import CurriculumPlanner
+from app.languages import get_language
 from app.models.curriculum import Curriculum, CurriculumDay
-from app.models.language import Language
 
 
 def _empty_curriculum() -> Curriculum:
@@ -25,7 +25,7 @@ def _empty_curriculum() -> Curriculum:
 
 
 SNAPSHOT = "(no tracked vocabulary yet \u2014 assume a beginner at the stated CEFR level)"
-LANGUAGE = Language.slovene()
+LANGUAGE = get_language("sl")
 
 _NORWEGIAN_CHARS = frozenset("æøåÆØÅ")
 
@@ -131,7 +131,7 @@ class TestPlannerLLM:
             user_message="Legg til to dager med mer avansert ordforråd om restaurant og shopping",
             batch_size=2,
             learner_snapshot=SNAPSHOT,
-            language=Language.norwegian(),
+            language=get_language("no"),
         )
         assert turn.proposed_days is not None, "Should propose days"
         assert len(turn.proposed_days) == 2
