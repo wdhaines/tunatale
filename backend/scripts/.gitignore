@@ -11,5 +11,6 @@
 *
 !check_mock_boundaries.py
 !check_language_literals.py
+!check_plugin_imports.py
 !__init__.py
 !.gitignore

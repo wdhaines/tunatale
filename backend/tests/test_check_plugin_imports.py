@@ -5,7 +5,7 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-from scripts.check_plugin_imports import _check_file
+from scripts.check_plugin_imports import _check_file, do_check
 
 
 def _make_file(tmp_path: Path, name: str, code: str) -> Path:
@@ -100,3 +100,20 @@ class TestLazyAnkiSyncInNonAllowlistedFileFails:
         )
         violations = _check(f, tmp_path)
         assert len(violations) == 1
+
+
+class TestDoCheckCatchesInitPyViolation:
+    """do_check must not skip __init__.py files in core."""
+
+    def test_init_py_with_plugin_import_fails(self, tmp_path: Path, capsys) -> None:
+        _make_file(tmp_path, "generation/__init__.py", "from app.plugins.languages.sl import preprocessor\n")
+        _make_file(tmp_path, "ok.py", "import os\n")
+        rc = do_check(tmp_path / "app")
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "app/generation/__init__.py" in out
+
+    def test_clean_tree_passes(self, tmp_path: Path) -> None:
+        _make_file(tmp_path, "ok.py", "import os\n")
+        rc = do_check(tmp_path / "app")
+        assert rc == 0
