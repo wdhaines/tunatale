@@ -9,6 +9,7 @@ import re
 from collections import Counter
 from datetime import timedelta
 from pathlib import Path
+from typing import NamedTuple
 
 import anyio
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -420,6 +421,80 @@ def _rank_listen_candidates(key_phrases, lemmas, occurrences) -> list[tuple[str,
     return [("kp", kp) for kp in key_phrases] + [("lemma", lem) for lem in ranked_lemmas]
 
 
+class _LessonWords(NamedTuple):
+    """Lemma-level analysis of a lesson's NATURAL_SPEED section.
+
+    Shared by /listen and /lesson/{id}/review-queue so their word-set
+    derivations cannot drift (plan Step 4). All maps are keyed by lemma;
+    insertion order of ``first_sentence`` is first-appearance order and
+    doubles as the ordered set of unique lemmas.
+    """
+
+    occurrences: Counter[str]
+    first_sentence: dict[str, str]
+    surfaces: dict[str, set[str]]
+    first_surface: dict[str, str]
+    surface_upos: dict[str, str]
+
+
+def _analyze_lesson_words(lesson, db) -> _LessonWords:
+    """Run the lemmatizer over the lesson's L2 NATURAL_SPEED phrases.
+
+    Blocking (classla under the hood) — callers offload via
+    ``anyio.to_thread.run_sync``. Cheap after the first listen thanks to
+    ``db_lemma_cache``. ``surface_upos`` maps casefolded surface → UPOS for
+    POS-first function-word detection: empty under LowercaseLemmatizer (the
+    curated include-list is then the only signal, legacy behavior); classla
+    supplies AUX/ADP/PRON/… and catches the whole biti paradigm (ste/smo/so)
+    without enumerating surfaces.
+    """
+    from app.models.lesson import SectionType
+
+    words = _LessonWords(Counter(), {}, {}, {}, {})
+    natural_speed = next(
+        (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
+        None,
+    )
+    if natural_speed is None:
+        return words
+    lemmatizer = get_lemmatizer(lesson.language_code)
+    model_version = model_version_for(lemmatizer)
+    for phrase in natural_speed.phrases:
+        if phrase.language_code != lesson.language_code:
+            continue
+        surfaces = tokenize(phrase.text)
+        phrase_lemmas = lemmatize_surfaces_in_context(
+            surfaces, phrase.text, lemmatizer, lesson.language_code, db, model_version
+        )
+        for ta in analyze_sentence_cached(db, lemmatizer, phrase.text, lesson.language_code, model_version):
+            words.surface_upos.setdefault(ta.surface.casefold(), ta.upos)
+        for surface, lemma in zip(surfaces, phrase_lemmas, strict=True):
+            words.occurrences[lemma] += 1
+            if lemma not in words.first_sentence:
+                words.first_sentence[lemma] = phrase.text
+                words.first_surface[lemma] = surface
+            words.surfaces.setdefault(lemma, set()).add(surface)
+    return words
+
+
+def _resolve_card_for_lemma(db, lemma: str, surfaces: set[str]):
+    """Resolve the tracked card for a lemma, or None if untracked.
+
+    Falls back to surface-keyed rows (e.g. greeting "dobrodošli", whose
+    dictionary lemma "dobrodošel" has no card) so /listen grades the surface
+    card instead of spawning a duplicate — and the lesson review queue
+    resolves the same card /listen would.
+    """
+    res = db.get_collocation_by_lemma_with_id(lemma)
+    if res is None:
+        for s in surfaces:
+            if s.lower() != lemma:
+                res = db.get_collocation_by_lemma_with_id(s.lower())
+                if res is not None:
+                    break
+    return res
+
+
 @router.post("/listen", status_code=200)
 async def mark_lesson_listened(body: ListenRequest, request: Request):
     store = request.state.content_store
@@ -437,7 +512,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     balancer = build_live_load_balancer(db, now=datetime.datetime.now(datetime.UTC), col_crt=col_crt)
 
     # ── Word-level tracking from NATURAL_SPEED section ──────────────────
-    from app.models.lesson import Section, SectionType, extract_sentence_translations_from_translated
+    from app.models.lesson import extract_sentence_translations_from_translated
 
     token_glosses: dict[str, str] = lesson.generation_metadata.get("token_glosses", {})
     sentence_translations: dict[str, str] = lesson.generation_metadata.get("sentence_translations", {})
@@ -448,52 +523,15 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     for k, v in derived_st.items():
         sentence_translations.setdefault(k, v)
 
-    natural_speed = next(
-        (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
-        None,
-    )
-
-    # Per-lemma token occurrence counts across the section — the frequency key
-    # for _rank_listen_candidates. lemma_to_sentence doubles as the ordered set
-    # of unique lemmas (insertion order = first appearance).
-    lemma_occurrences: Counter[str] = Counter()
-    lemma_to_sentence: dict[str, str] = {}
-    lemma_to_surfaces: dict[str, set[str]] = {}
-    # The surface as it first appeared, paired with lemma_to_sentence — used to
-    # blank the *surface* (not the dictionary lemma) in plain function-word clozes.
-    lemma_to_first_surface: dict[str, str] = {}
-    # Surface (casefolded) → classla UPOS, for POS-first function-word detection.
-    # Empty/"" under LowercaseLemmatizer, so the curated include-list is the only
-    # signal there (legacy behavior); classla supplies AUX/ADP/PRON/... and catches
-    # the whole biti paradigm (ste/smo/so) without enumerating surfaces.
-    surface_to_upos: dict[str, str] = {}
-
-    lemmatizer = get_lemmatizer(lesson.language_code)
-    model_version = model_version_for(lemmatizer)
-
-    def _analyze_phrases(section: Section) -> None:
-        # Runs the (classla) lemmatizer over the lesson's L2 phrases, filling the
-        # dicts above. Offloaded to a worker thread (below) so the blocking pipeline
-        # doesn't stall the event loop. The await suspends this coroutine until the
-        # thread finishes, so the shared-dict mutation has no concurrent access.
-        for phrase in section.phrases:
-            if phrase.language_code != lesson.language_code:
-                continue
-            surfaces = tokenize(phrase.text)
-            phrase_lemmas = lemmatize_surfaces_in_context(
-                surfaces, phrase.text, lemmatizer, lesson.language_code, db, model_version
-            )
-            for ta in analyze_sentence_cached(db, lemmatizer, phrase.text, lesson.language_code, model_version):
-                surface_to_upos.setdefault(ta.surface.casefold(), ta.upos)
-            for surface, lemma in zip(surfaces, phrase_lemmas, strict=True):
-                lemma_occurrences[lemma] += 1
-                if lemma not in lemma_to_sentence:
-                    lemma_to_sentence[lemma] = phrase.text
-                    lemma_to_first_surface[lemma] = surface
-                lemma_to_surfaces.setdefault(lemma, set()).add(surface)
-
-    if natural_speed is not None:
-        await anyio.to_thread.run_sync(_analyze_phrases, natural_speed)
+    # Lemma analysis shared verbatim with /lesson/{id}/review-queue — the
+    # blocking (classla) pass runs on a worker thread so the event loop
+    # doesn't stall; the await means no concurrent access to the maps.
+    words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
+    lemma_occurrences = words.occurrences
+    lemma_to_sentence = words.first_sentence
+    lemma_to_surfaces = words.surfaces
+    lemma_to_first_surface = words.first_surface
+    surface_to_upos = words.surface_upos
 
     # ── Today window (mirrors count_new_introduced_today convention) ────
     local_tz = datetime.datetime.now().astimezone().tzinfo
@@ -526,16 +564,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             lemma, lemma_to_surfaces.get(lemma, set()), lesson.language_code, surface_to_upos
         )
 
-        res = db.get_collocation_by_lemma_with_id(lemma)
-        if res is None:
-            # A card may be keyed by its surface form (e.g. greeting "dobrodošli",
-            # whose dictionary lemma "dobrodošel" has no card) — grade it rather
-            # than spawning a duplicate.
-            for s in lemma_to_surfaces.get(lemma, set()):
-                if s.lower() != lemma:
-                    res = db.get_collocation_by_lemma_with_id(s.lower())
-                    if res is not None:
-                        break
+        res = _resolve_card_for_lemma(db, lemma, lemma_to_surfaces.get(lemma, set()))
         existing_id, existing = res if res is not None else (None, None)
 
         if existing is None:
@@ -786,6 +815,109 @@ async def import_listens(body: ImportListensRequest, request: Request):
             db.record_listen(lesson_id, source="import")
             imported.append(lesson_id)
     return {"imported": imported, "already_present": already_present, "unknown": unknown}
+
+
+@router.get("/lesson/{lesson_id}/review-queue", status_code=200)
+async def get_lesson_review_queue(lesson_id: str, request: Request, response: Response) -> dict:
+    """Lesson-scoped "Check your work" queue (learning-modes slice 1, D6).
+
+    Items share ``_queue_item_to_dict``'s shape with /review-queue; grading a
+    served item goes through the normal per-item feedback endpoint (an Again
+    on an auto-Good'ed card is an ordinary same-day lapse). Strictly
+    read-only w.r.t. parity state: no learning-cutoff advance, no
+    session_main_queue write, no unbury sweep, no queue-engine involvement —
+    the frozen main-queue order must survive this endpoint unchanged (pinned
+    by the parity-guard test). Off-main-queue grading already exists today
+    (Read mode); the freeze reconciliation drops graded keys by design.
+
+    Inclusion: learning/relearning cards; tracked NEW cards in D2 rank order
+    (grading one introduces it, same as Read mode's tap-to-introduce); REVIEW
+    cards touched today (the /listen auto-Good correction set — same
+    local-midnight window as ``_listen_grade_eligible``) or already due.
+    Everything else (known/suspended/buried/untracked, future-due untouched
+    REVIEW) is excluded. Vocab serves recognition only — never fighting
+    Layer 65's production gate — and cloze serves production only.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    store = request.state.content_store
+    lesson = store.get_lesson(lesson_id)
+    if lesson is None:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    db = request.state.srs_db
+
+    words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
+
+    local_tz = datetime.datetime.now().astimezone().tzinfo
+    today = datetime.date.today()
+    today_start = datetime.datetime.combine(today, datetime.time(0), tzinfo=local_tz).astimezone(datetime.UTC)
+    today_end = today_start + datetime.timedelta(days=1)
+    now = datetime.datetime.now(datetime.UTC)
+
+    seen: set[int] = set()
+    learning: list[tuple[datetime.datetime, int, SRSItem, Direction]] = []
+    review: list[tuple[datetime.datetime, int, SRSItem, Direction]] = []
+    new_kp: list[tuple[int, SRSItem, Direction]] = []
+    new_lemma_order: list[str] = []
+    new_by_lemma: dict[str, tuple[int, SRSItem, Direction]] = {}
+
+    def _classify(rid: int, item: SRSItem) -> str | None:
+        """Return the D6 bucket for a tracked card, or None if excluded."""
+        direction = Direction.PRODUCTION if item.syntactic_unit.card_type == "cloze" else Direction.RECOGNITION
+        ds = item.directions.get(direction)
+        if ds is None:
+            return None
+        if ds.state in (SRSState.LEARNING, SRSState.RELEARNING):
+            learning.append((ds.due_at, rid, item, direction))
+            return "learning"
+        if ds.state == SRSState.NEW:
+            return "new"
+        if ds.state == SRSState.REVIEW:
+            lr = ds.last_review
+            touched_today = lr is not None and today_start <= lr.astimezone(datetime.UTC) < today_end
+            if touched_today or ds.due_at <= now:
+                review.append((ds.due_at, rid, item, direction))
+                return "review"
+        return None
+
+    for kp in lesson.key_phrases:
+        item = db.get_collocation(kp.phrase)
+        if item is None:
+            continue
+        rid = db.get_collocation_id_by_guid(item.guid)
+        if rid is None or rid in seen:
+            continue
+        seen.add(rid)
+        if _classify(rid, item) == "new":
+            direction = Direction.PRODUCTION if item.syntactic_unit.card_type == "cloze" else Direction.RECOGNITION
+            new_kp.append((rid, item, direction))
+
+    for lemma in words.first_sentence:
+        res = _resolve_card_for_lemma(db, lemma, words.surfaces.get(lemma, set()))
+        if res is None:
+            continue
+        rid, item = res
+        if rid in seen:
+            continue
+        seen.add(rid)
+        if _classify(rid, item) == "new":
+            direction = Direction.PRODUCTION if item.syntactic_unit.card_type == "cloze" else Direction.RECOGNITION
+            new_lemma_order.append(lemma)
+            new_by_lemma[lemma] = (rid, item, direction)
+
+    # Bucket order (1)(2)(3) per D6; within learning/review due_at then row id,
+    # NEW re-uses the exact /listen creation ranking so "what you'd study next"
+    # and "what a listen would create next" never disagree.
+    learning.sort(key=lambda t: (t[0], t[1]))
+    review.sort(key=lambda t: (t[0], t[1]))
+    ordered: list[tuple[int, SRSItem, Direction]] = [(rid, item, d) for _, rid, item, d in learning]
+    for kind, entry in _rank_listen_candidates(new_kp, new_lemma_order, words.occurrences):
+        ordered.append(entry if kind == "kp" else new_by_lemma[entry])
+    ordered.extend((rid, item, d) for _, rid, item, d in review)
+
+    ambiguous = db.get_ambiguous_surfaces(lesson.language_code)
+    return {
+        "queue": [_queue_item_to_dict(rid, item, lesson.language_code, d, db, ambiguous) for rid, item, d in ordered]
+    }
 
 
 @router.get("/lesson/{lesson_id}/transcript", status_code=200)
