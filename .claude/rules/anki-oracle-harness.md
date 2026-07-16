@@ -8,7 +8,7 @@ paths:
 
 *Path-scoped rule: auto-loads when a file matching the `paths:` frontmatter is read.*
 
-Required reading before adding a test under `backend/tests/test_parity_*.py` or modifying anything in `backend/tests/anki_oracle/`. The harness was built in Phase 2 of the simplify effort (see `~/.claude/plans/you-ve-written-a-ton-happy-yeti.md` if it still exists, otherwise commit `0c076fe` and Phase 2.2.x commits) to pin TT↔Anki parity end-to-end. It surfaced two findings on first use (Layer 42 — a real lapse-stability bug; Layer 43 — Layer 38's "NULL-R at dr position" was a coincidence of `elapsed≈ivl`).
+Required reading before adding a test under `backend/tests/test_parity_*.py` or modifying anything in `backend/tests/anki_oracle/`. The harness was built in Phase 2 of the simplify effort (commit `0c076fe` and the Phase 2.2.x commits) to pin TT↔Anki parity end-to-end. It surfaced two findings on first use (Layer 42 — a real lapse-stability bug; Layer 43 — Layer 38's "NULL-R at dr position" was a coincidence of `elapsed≈ivl`).
 
 ## What the harness is
 
@@ -133,4 +133,3 @@ You're reading `/tmp/anki-source/` and the source predicts behavior X, but the P
 
 - `.claude/rules/anki-queue-parity.md` — load-bearing helpers (see the "Pre-Layer checklist") and the full divergence playbook.
 - `docs/anki-parity-layers.md` — every Layer's history, especially Layers 42 (real bug, surfaced by harness) and 43 (Layer 38 demystified).
-- `~/.claude/projects/-Users-wdhaines-CascadeProjects-tunatale/memory/reference_anki_ground_truth_capture.md` — pre-Phase-2 ad-hoc recipe that became this harness.

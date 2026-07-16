@@ -45,7 +45,7 @@ The PRD targets are still ahead:
 # Backend (Python 3.14, uv)
 cd backend
 uv sync --all-groups
-cp ../.env.example .env   # set GROQ_API_KEY for live generation; LLM_MODE=mock is CI-safe
+cp .env.example .env      # set GROQ_API_KEY for live generation; LLM_MODE=mock is CI-safe
 
 # Frontend (Bun)
 cd ../frontend

@@ -51,7 +51,7 @@ Two main packages:
 ```bash
 cd backend
 uv sync --all-groups
-cp ../.env.example .env   # set GROQ_API_KEY, LLM_MODE=mock for CI-safe
+cp .env.example .env      # set GROQ_API_KEY, LLM_MODE=mock for CI-safe
 ```
 
 All commands use `uv run` (no manual venv activation). Never commit `.env`. Groq model: `openai/gpt-oss-120b` (free tier ~30 RPM; `LLMClient` handles 429 backoff). CI needs no API key (mock cassettes) but the backend job requires `ffmpeg`.
@@ -71,7 +71,7 @@ All commands use `uv run` (no manual venv activation). Never commit `.env`. Groq
 - **No hardcoded language logic** — resolve every per-language facet through the registry `app/languages.py` (`get_language` / `get_preprocessor` / … / `resolve_language_context(code, settings)`). Enforced: `scripts/check_language_literals.py` (`./test.sh` + CI) fails on language literals (`"sl"`/`"no"`, `Slovene`/`Norwegian`, `classla`/`stanza`, `*-Neural` voices) in `backend/app/**` outside allowlisted plugin modules (`tests/language_literals_allowlist.txt`; shrink-only ledger `tests/language_literals_grandfather.txt`). Rationale: `docs/language-plugin-hardening.md`.
 - **No module-level side effects** — config via Pydantic Settings in `app/config.py`
 - **Anki safety**: hard invariants in `.claude/rules/anki-safety-core.md` (always loaded for Claude Code; other agents read it before any Anki/SRS work); full protocol in `.claude/rules/anki-sync.md`
-- **Cloze items** (Phase F): set `card_type="cloze"` on the `SyntacticUnit`; PRODUCTION direction only; sync via `OfflineWriter.create_cloze_note()` against Anki's built-in Cloze notetype
+- **Cloze items**: set `card_type="cloze"` on the `SyntacticUnit`; PRODUCTION direction only; sync via `OfflineWriter.create_cloze_note()` against Anki's built-in Cloze notetype
 
 ## Instruction Files (path-scoped, lazy-loaded)
 
