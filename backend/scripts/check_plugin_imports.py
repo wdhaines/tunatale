@@ -103,11 +103,7 @@ def _check_file(filepath: Path, app_dir: Path = APP_DIR) -> list[tuple[int, str]
         # We only skip when the import is NOT at module level.  Detecting
         # function-level requires walking the AST more carefully — we already
         # have the node, so check if it's directly inside a FunctionDef body.
-        if module.startswith("app.plugins.anki_sync") and _is_anki_sync_lazy_allow(rel):
-            # Check if this node is at module level (inside Module body) — if so,
-            # it's a violation.  If it's inside a FunctionDef/AsyncFunctionDef,
-            # it's an allowed lazy import.
-            if _is_inside_function(tree, lineno):
+        if module.startswith("app.plugins.anki_sync") and _is_anki_sync_lazy_allow(rel) and _is_inside_function(tree, lineno):
                 continue
 
         violations.append((lineno, module))
