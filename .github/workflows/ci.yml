@@ -40,6 +40,9 @@ jobs:
       - name: Language literal check
         run: uv run python scripts/check_language_literals.py
 
+      - name: Plugin import check
+        run: uv run python scripts/check_plugin_imports.py
+
       - name: Test
         run: uv run pytest -n auto
 

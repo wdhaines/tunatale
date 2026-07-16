@@ -122,9 +122,7 @@ def discover() -> None:
     # English is always available — registered in core, not via a plugin package.
     register("en", LanguageConfig(language=Language.english()))
 
-    for _importer, modname, _ispkg in pkgutil.iter_modules(
-        _plugins_pkg.__path__, prefix=_plugins_pkg.__name__ + "."
-    ):
+    for _importer, modname, _ispkg in pkgutil.iter_modules(_plugins_pkg.__path__, prefix=_plugins_pkg.__name__ + "."):
         importlib.import_module(modname)
 
     non_en = {c for c in _CONFIGS if c != "en"}
