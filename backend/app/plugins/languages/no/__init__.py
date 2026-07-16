@@ -4,7 +4,7 @@ from pathlib import Path
 
 from app.cards.vocab_notetype import NORWEGIAN_VOCAB
 from app.languages import LanguageConfig, register
-from app.models.language import Language, NARRATOR_VOICE
+from app.models.language import NARRATOR_VOICE, Language
 from app.plugins.languages.no.norwegian_breakdown import (
     build_norwegian_breakdown,
     slow_norwegian_word,
