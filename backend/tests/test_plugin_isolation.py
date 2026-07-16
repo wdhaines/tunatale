@@ -61,7 +61,7 @@ def test_sl_only_direct_import(isolated_app: Path) -> None:
         "print(sorted(known_language_codes()))",
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
-    assert "sl" in result.stdout
+    assert result.stdout.strip() == str(["en", "sl"])
 
 
 def test_no_only_direct_import(isolated_app: Path) -> None:
@@ -75,7 +75,7 @@ def test_no_only_direct_import(isolated_app: Path) -> None:
         "print(sorted(known_language_codes()))",
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
-    assert "no" in result.stdout
+    assert result.stdout.strip() == str(["en", "no"])
 
 
 def test_zero_plugins_hard_fail(isolated_app: Path) -> None:
