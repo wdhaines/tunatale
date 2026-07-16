@@ -435,6 +435,21 @@ def segment_compound(word: str) -> list[str]:
 
 _NORWEGIAN_VOWELS: frozenset[str] = frozenset("aeiouyæøå")
 
+# Isolated-chunk TTS pronunciation overrides. A short syllable *fragment* sent to
+# the nb-NO voice alone is read as the identically-spelled *word* rather than as
+# the unstressed fragment it represents — e.g. the weak-past ending ``-de``
+# (``bøy|DE``, ``had|DE``) is voiced as the pronoun ``de`` /diː/ instead of the
+# schwa /də/. Respelling steers the voice back. Applied ONLY to the isolated
+# chunk in :func:`_spoken_syllable`; reconstruction and running partials always
+# use the raw syllables, so joins stay exact and the pronoun ``de`` as a *whole
+# word* (which never routes through here) is untouched. edge-tts XML-escapes its
+# input and exposes no ``<phoneme>`` SSML, so orthographic respelling — the same
+# mechanism as the geminate lengthening below — is the only available lever.
+# Ear-confirmed against nb-NO-PernilleNeural.
+_SPOKEN_CHUNK_OVERRIDES: dict[str, str] = {
+    "de": "deh",
+}
+
 
 def _spoken_syllable(syllables: list[str], i: int) -> str:
     """Spoken form of syllable *i*, lengthening a geminate when spoken alone.
@@ -447,13 +462,17 @@ def _spoken_syllable(syllables: list[str], i: int) -> str:
     the pair is heard ``ett`` / ``ter`` rather than ``ett`` / ``er``.
     Reconstruction still uses the raw syllables, so joins remain exact
     (``et`` + ``ter`` = ``etter``, never ``ettter``).
+
+    A word-fragment that the voice would misread as a homographic *word*
+    (``de`` -> the pronoun) is respelled via :data:`_SPOKEN_CHUNK_OVERRIDES` —
+    also isolated-chunk only, so reconstruction is unaffected.
     """
     s = syllables[i]
     if i + 1 < len(syllables):
         nxt = syllables[i + 1]
         if s and nxt and s[-1] == nxt[0] and s[-1] not in _NORWEGIAN_VOWELS:
             return s + s[-1]
-    return s
+    return _SPOKEN_CHUNK_OVERRIDES.get(s, s)
 
 
 def _spoken_part(parts: list[str], i: int) -> str:

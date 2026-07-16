@@ -104,6 +104,19 @@ def test_norwegian_case_lowercased():
         ("lære", ["læ", "re"]),
         ("kjøre", ["kjø", "re"]),
         ("måne", ["må", "ne"]),
+        # Diphthongs (øy/ei/au) are a single nucleus — the glide is not stranded
+        # as its own syllable.
+        ("bøyde", ["bøy", "de"]),
+        ("bøye", ["bøy", "e"]),
+        ("høy", ["høy"]),  # monosyllabic diphthong
+        ("øy", ["øy"]),
+        ("leilig", ["lei", "lig"]),  # the "leilighet" stem
+        ("veien", ["vei", "en"]),
+        ("august", ["au", "gust"]),
+        ("restaurant", ["re", "stau", "rant"]),
+        # Guard: genuine hiatus must stay split (the second vowel is not a glide)
+        ("noe", ["no", "e"]),
+        ("intuisjon", ["in", "tu", "i", "sjon"]),  # "ui" is not a diphthong
     ],
 )
 def test_norwegian_syllabification(word, expected):
