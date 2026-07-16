@@ -36,7 +36,6 @@ register(
         deck_name="0. 6000 Most Frequent Norwegian Words [Part 1]",
         vocab_notetype=NORWEGIAN_VOCAB,
         lemmatizer_type="stanza",
-        compound_word_breakdown=True,
         breakdown_fn=build_norwegian_breakdown,
         slow_word_fn=slow_norwegian_word,
         variant_separator=",",

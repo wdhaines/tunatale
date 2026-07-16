@@ -59,9 +59,6 @@ class LanguageConfig:
     deck_name: str | None = None
     vocab_notetype: VocabNotetype | None = None
     lemmatizer_type: str = "lowercase"
-    # ``True`` when the Pimsleur word breakdown uses compound/morpheme-aware
-    # segmentation (Norwegian) instead of the generic per-syllable backward buildup.
-    compound_word_breakdown: bool = False
     # Onset-maximization syllabifier function for this language.
     # ``None`` for languages with no syllabifier wiring (``en``); callers
     # fall back to the generic core default.
@@ -242,14 +239,14 @@ def get_vocab_notetype(code: str) -> VocabNotetype | None:
 
 def uses_compound_word_breakdown(code: str) -> bool:
     """Whether *code*'s Pimsleur word breakdown uses compound/morpheme-aware
-    segmentation (Norwegian) rather than the generic per-syllable backward buildup.
+    segmentation rather than the generic per-syllable backward buildup.
 
-    Unknown codes → ``False`` (the generic path). Replaces the hardcoded
-    ``if language_code == "no"`` branches in ``generation/section_builder.py``.
+    Derived from whether ``breakdown_fn`` is set. Unknown codes → ``False``
+    (the generic path).
     """
     discover()
     config = _CONFIGS.get(code)
-    return config.compound_word_breakdown if config else False
+    return config.breakdown_fn is not None if config else False
 
 
 def get_breakdown(code: str) -> Callable[..., list[str]] | None:

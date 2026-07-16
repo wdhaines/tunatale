@@ -11,7 +11,6 @@ from app.cards.vocab_notetype import (
     build_notetype_config,
     build_template_config,
     create_vocab_notetype,
-    get_vocab_notetype_by_name,
 )
 
 
@@ -25,13 +24,6 @@ def test_norwegian_field_order_mirrors_slovene_with_norwegian_l2():
     assert NORWEGIAN_VOCAB.field_names == ("Norwegian", "English", "Audio", "Image", "Grammar", "Note", "DisambigKey")
     assert NORWEGIAN_VOCAB.l2_field == "Norwegian"
     assert NORWEGIAN_VOCAB.l2_css_class == "norwegian"
-
-
-def test_registry_lookup_by_name():
-    assert get_vocab_notetype_by_name("Slovene Vocabulary") is SLOVENE_VOCAB
-    assert get_vocab_notetype_by_name("Norwegian Vocabulary") is NORWEGIAN_VOCAB
-    assert get_vocab_notetype_by_name("Cloze") is None
-    assert get_vocab_notetype_by_name("nonexistent") is None
 
 
 def test_builders_emit_nonempty_bytes_containing_payload():

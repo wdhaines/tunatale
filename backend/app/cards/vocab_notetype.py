@@ -44,13 +44,6 @@ class VocabNotetype:
 SLOVENE_VOCAB = VocabNotetype(name="Slovene Vocabulary", l2_field="Slovene", l2_css_class="slovene")
 NORWEGIAN_VOCAB = VocabNotetype(name="Norwegian Vocabulary", l2_field="Norwegian", l2_css_class="norwegian")
 
-_BY_NAME: dict[str, VocabNotetype] = {nt.name: nt for nt in (SLOVENE_VOCAB, NORWEGIAN_VOCAB)}
-
-
-def get_vocab_notetype_by_name(name: str) -> VocabNotetype | None:
-    """Return the :class:`VocabNotetype` named *name*, or ``None`` if unknown."""
-    return _BY_NAME.get(name)
-
 
 # ── Card templates + CSS (parametrised by the L2 field/class) ─────────────
 
