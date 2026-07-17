@@ -10,6 +10,7 @@ from app.languages import get_language
 from app.main import app
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
+from app.models.srs_item import Direction, SRSState
 
 
 @pytest.fixture(autouse=True)
@@ -4693,21 +4694,16 @@ class TestLessonReviewQueue:
         )
 
     def _set_dir(self, db, text, direction, state, due_at=None, last_review=None):
-        sets, params = ["state=?"], [state]
+        item = db.get_collocation(text)
+        assert item is not None, f"collocation {text!r} not tracked"
+        dir_ = Direction(direction)
+        ds = item.directions[dir_]
+        ds.state = SRSState(state)
         if due_at is not None:
-            sets.append("due_at=?")
-            params.append(due_at)
+            ds.due_at = datetime.fromisoformat(due_at)
         if last_review is not None:
-            sets.append("last_review=?")
-            params.append(last_review)
-        params.extend([direction, text])
-        with db._get_conn() as conn:
-            conn.execute(
-                f"UPDATE collocation_directions SET {', '.join(sets)}"
-                " WHERE direction=? AND collocation_id=(SELECT id FROM collocations WHERE text=?)",
-                params,
-            )
-            conn.commit()
+            ds.last_review = datetime.fromisoformat(last_review)
+        db.update_direction(item.guid, dir_, ds)
 
     async def _get_queue(self, lesson_id="lesson-1"):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
