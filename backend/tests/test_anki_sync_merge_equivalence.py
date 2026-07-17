@@ -35,10 +35,10 @@ from datetime import UTC, datetime, timedelta
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.plugins.anki_sync.sync import AnkiSync
 from app.srs.database import SRSDatabase
+from tests._helpers.anki_sync_pull import FakeReader, FakeWriter, _add_banka, _make_tt_db
+from tests._helpers.anki_sync_push import FakeReader as PushFakeReader
+from tests._helpers.anki_sync_push import FakeWriter as PushFakeWriter
 from tests.conftest import make_card_record, make_note_record
-from tests.test_anki_sync_pull import FakeReader, FakeWriter, _add_banka, _make_tt_db
-from tests.test_anki_sync_push import FakeReader as PushFakeReader
-from tests.test_anki_sync_push import FakeWriter as PushFakeWriter
 
 # Matches make_card_record's default anki_card_id so the seeded direction and the
 # Anki record refer to the same card.

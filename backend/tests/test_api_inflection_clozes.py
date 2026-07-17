@@ -169,7 +169,7 @@ class TestInflectionClozes:
     async def test_sync_create_new_round_trip(self, api_app_state):
         """After creation, sync_create_new links an Anki Cloze note."""
         from app.plugins.anki_sync.sync import AnkiSync, OfflineWriter
-        from tests.test_anki_sync_create_new import (
+        from tests._helpers.anki_sync_create_new import (
             FakeReader,
             _make_dual_collection_conn,
         )

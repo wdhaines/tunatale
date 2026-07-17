@@ -477,7 +477,7 @@ class TestRefreshMediaBatchPreload:
         from app.models.srs_item import Direction
         from app.models.syntactic_unit import SyntacticUnit
         from app.plugins.anki_sync.import_seed import refresh_media_from_conn
-        from tests.test_anki_sync_create_new import _make_dual_collection_conn
+        from tests._helpers.anki_sync_create_new import _make_dual_collection_conn
 
         anki_dir = tmp_path / "anki_media"
         anki_dir.mkdir()

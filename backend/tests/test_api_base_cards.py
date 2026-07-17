@@ -270,7 +270,7 @@ class TestCreateBaseCard:
     async def test_sync_create_new_round_trip_vocab(self, api_app_state):
         """A vocab base links a 2-card Anki note via sync_create_new."""
         from app.plugins.anki_sync.sync import AnkiSync, OfflineWriter
-        from tests.test_anki_sync_create_new import FakeReader, _make_dual_collection_conn
+        from tests._helpers.anki_sync_create_new import FakeReader, _make_dual_collection_conn
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
@@ -301,7 +301,7 @@ class TestCreateBaseCard:
     async def test_sync_create_new_round_trip_cloze(self, api_app_state):
         """A function-word cloze base links a single-card Cloze note."""
         from app.plugins.anki_sync.sync import AnkiSync, OfflineWriter
-        from tests.test_anki_sync_create_new import FakeReader, _make_dual_collection_conn
+        from tests._helpers.anki_sync_create_new import FakeReader, _make_dual_collection_conn
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(

@@ -975,7 +975,7 @@ class TestRefreshMediaFromConn:
 
         from app.plugins.anki_sync.import_seed import refresh_media_from_conn
         from app.srs.database import SRSDatabase
-        from tests.test_anki_sync_create_new import _make_dual_collection_conn
+        from tests._helpers.anki_sync_create_new import _make_dual_collection_conn
 
         conn = _make_dual_collection_conn()
         db = SRSDatabase(":memory:")
@@ -999,7 +999,7 @@ class TestRefreshMediaFromConn:
         from app.models.syntactic_unit import SyntacticUnit
         from app.plugins.anki_sync.import_seed import refresh_media_from_conn
         from app.srs.database import SRSDatabase
-        from tests.test_anki_sync_create_new import _make_dual_collection_conn
+        from tests._helpers.anki_sync_create_new import _make_dual_collection_conn
 
         conn = _make_dual_collection_conn()
         conn.execute(
@@ -1041,7 +1041,7 @@ class TestRefreshMediaFromConn:
         from app.models.syntactic_unit import SyntacticUnit
         from app.plugins.anki_sync.import_seed import refresh_media_from_conn
         from app.srs.database import SRSDatabase
-        from tests.test_anki_sync_create_new import _make_dual_collection_conn
+        from tests._helpers.anki_sync_create_new import _make_dual_collection_conn
 
         conn = _make_dual_collection_conn()
         conn.execute(

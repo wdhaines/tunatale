@@ -468,7 +468,7 @@ class TestMainCreateNew:
     def test_main_creates_anki_notes_for_unlinked_collocations(self, tmp_path, monkeypatch):
         """A NEW collocation with anki_note_id IS NULL is linked + minted by main()."""
         from app.models.syntactic_unit import SyntacticUnit
-        from tests.test_anki_sync_create_new import _make_dual_collection_conn
+        from tests._helpers.anki_sync_create_new import _make_dual_collection_conn
 
         anki_conn = _make_dual_collection_conn()
         tt_db = SRSDatabase(":memory:")
@@ -511,7 +511,7 @@ class TestMainCreateNew:
         import app.plugins.anki_sync.sync as sync_mod
         from app.models.srs_item import Direction
         from app.models.syntactic_unit import SyntacticUnit
-        from tests.test_anki_sync_create_new import _make_dual_collection_conn
+        from tests._helpers.anki_sync_create_new import _make_dual_collection_conn
 
         anki_conn = _make_dual_collection_conn()
         note_id = 5555
@@ -573,7 +573,7 @@ class TestMainCreateNew:
     def test_main_dry_run_does_not_create_notes(self, tmp_path, monkeypatch):
         """Dry run reports the count but writes no Anki note and leaves TT unlinked."""
         from app.models.syntactic_unit import SyntacticUnit
-        from tests.test_anki_sync_create_new import _make_dual_collection_conn
+        from tests._helpers.anki_sync_create_new import _make_dual_collection_conn
 
         anki_conn = _make_dual_collection_conn()
         tt_db = SRSDatabase(":memory:")
@@ -614,7 +614,7 @@ class TestMainCreateNew:
         is pinned to tmp by conftest, so seed it explicitly."""
         import app.plugins.anki_sync.model_discovery as md
         from app.models.syntactic_unit import SyntacticUnit
-        from tests.test_anki_sync_create_new import _make_dual_collection_conn
+        from tests._helpers.anki_sync_create_new import _make_dual_collection_conn
 
         md._CACHE_PATH.write_text("Slovene Vocabulary\n")
 
