@@ -9,6 +9,7 @@
  *  - markListened(lessonId, wordRatings?) — async: calls API + returns response
  *  - hydrate()       — async: server fetch + one-time localStorage migration
  *  - refresh()       — async: resets hydration latch + re-runs hydrate()
+ *  - reset()         — sync: clears entries + hydration latch (test seam)
  */
 import { api, type ListenResponse, type WordRating } from "$lib/api";
 
@@ -77,6 +78,12 @@ function createListenedStore() {
     async refresh(): Promise<void> {
       hydrated = false;
       await hydrate();
+    },
+
+    /** Clear all entries and the hydration latch — test seam. */
+    reset(): void {
+      entries = {};
+      hydrated = false;
     },
   };
 }
