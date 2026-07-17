@@ -1,5 +1,12 @@
 # Master cleanup list — 2026-07-16
 
+> **COMPLETE 2026-07-17 — archived.** Every item is ✅ FIXED except the
+> "Deferred by design" section at the bottom, which stays deliberately
+> unpicked (each entry names its trigger: the learning-modes rewrite, the
+> ~2026-09 migration-removal window, the bucket split). Execution ran on
+> branch `cleanup/master-list-2026-07`; per-item commits are annotated
+> inline below.
+
 Supersedes `docs/archive/refactor-suggestions-2026-07.md` (its open items are absorbed
 below; its fixed/ruled-out findings are recorded at the bottom so nobody
 re-investigates). Sources: critique of the 2026-07-09→16 commits, status
@@ -78,7 +85,10 @@ never mechanical execution.
    segmentation bug. Tests exist (`test_norwegian_breakdown.py`).
    **Model: Big Pickle.**
 
-5. **`queue_stats.py` pragma audit** (was #3): 38 `# pragma: no cover` in
+5. ✅ FIXED (2026-07-17, c3520a8 — 27 pragmas removed + covered via
+   closed-connection/malformed-blob/corrupted-cache recipes, no mocks; 11
+   survivors carry structural unreachability proofs in their comments).
+   **`queue_stats.py` pragma audit** (was #3): 38 `# pragma: no cover` in
    `app/srs/anki_mirror/queue_stats.py` (1100 lines), mostly bare
    "defensive" — the project's own pragma-discipline rule says that's not a
    justification. Convert to `caplog`/malformed-blob tests or delete dead
@@ -139,7 +149,11 @@ never mechanical execution.
     (test_api.py:4595+, new in 321842a). Give it a public seam or use the
     directions mixin API. **Model: Sonnet (small API-design call).**
 
-14. **Frontend listened-store testability.** `listened.test.ts` needs
+14. ✅ FIXED (2026-07-17, 84bb17b — `reset()` seam per the llmActivity
+    house pattern; page tests use the real store with only `$lib/api`
+    mocked; page.test.ts split into 5 domain files, it-count conserved;
+    pipeline-store mock retained as a future item).
+    **Frontend listened-store testability.** `listened.test.ts` needs
     `vi.resetModules()` + dynamic re-import per test because the store is a
     non-resettable module singleton; `page.test.ts` (now 2,960 lines) mocks
     the internal store module rather than only the `api` boundary. Add a
@@ -148,7 +162,13 @@ never mechanical execution.
 
 ## Design work (needs a brief before anyone codes)
 
-15. **DB-persisted cache invalidation by convention** (hamster #5, untouched):
+15. ✅ FIXED (2026-07-17 — declarative `cache_registry.py`: 19 keys with
+    source/day-scoped/max-age/logic-version; KeyError write/read guard on
+    unregistered keys; sync-refresh conservation test in the sociable
+    harness, sabotage-drilled; `session_main_queue` payload carries a
+    logic-version "v" discarded on mismatch like a day mismatch — the
+    deploy-time stale-queue pitfall is now structural, not prose).
+    **DB-persisted cache invalidation by convention** (hamster #5, untouched):
     `session_main_queue` & friends survive deploys; invalidation is prose.
     Design a registry (cache keys declare their invalidation events) or a
     versioned-key scheme. **Model: Fable writes the short design brief;

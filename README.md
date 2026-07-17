@@ -90,7 +90,7 @@ CI runs four parallel jobs: backend (lint + mock-boundary and language-literal c
   - **[docs/refold.md](docs/refold.md)** — 1T sentence clozes, recognition-before-production direction split.
   - **[docs/bdt.md](docs/bdt.md)** — Luca Lampariello's Bi-Directional Translation method; reception side overlaps with TT today, production side (L1→L2 written reconstruction) is a future mode.
 - **[docs/anki-parity-layers.md](docs/anki-parity-layers.md)** — 80 layers of TT ↔ Anki scheduler parity work, each one a divergence found in production, the mechanism, and the fix. Load-bearing reference for the sync code, with [docs/anki-parity-diagnostics.md](docs/anki-parity-diagnostics.md) holding the runnable diagnostic snippets.
-- **[docs/stage-3b-empirical-measurement.md](docs/stage-3b-empirical-measurement.md)** — the measurement campaign that gated the event-sourced sync cutover (since shipped).
+- **[docs/archive/stage-3b-empirical-measurement.md](docs/archive/stage-3b-empirical-measurement.md)** — the measurement campaign that gated the event-sourced sync cutover (since shipped).
 - **[docs/adding-a-language.md](docs/adding-a-language.md)** — the touch-points to wire a new L2 (Norwegian, wired 2026-06/07, is the worked example), with [docs/language-plugin-hardening.md](docs/language-plugin-hardening.md) covering the no-hardcoded-language enforcement.
 - **[docs/anki-recovery.md](docs/anki-recovery.md)** — disaster-recovery procedure if TT ever corrupts `collection.anki2`. Read before you need it.
 - **`AGENTS.md` + `.claude/rules/`** — developer workflow and cross-model project rules: Anki safety invariants, USN sync protocol, queue-parity playbook + pre-Layer checklist, oracle harness workflow, testing strategy, TDD discipline.

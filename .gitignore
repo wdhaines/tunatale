@@ -73,3 +73,6 @@ backend/media/
 # — a root-level "backend/scripts/*" glob broke ruff's local file discovery.)
 backend/output/
 frontend/test-results/
+
+# Agent handoff briefs — session-scoped working docs, never committed
+docs/briefs/
