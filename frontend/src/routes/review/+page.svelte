@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
 	import type { QueueStats } from '$lib/api';
 	import { api } from '$lib/api';
 	import QueueStatsWidget from '$lib/components/QueueStatsWidget.svelte';
@@ -9,6 +10,11 @@
 	import { syncStore } from '$lib/stores/sync.svelte';
 
 	type QueueItem = { item: ReviewQueueItem; direction: 'recognition' | 'production' };
+
+	// C1: lesson mode — read from URL search params.
+	let lessonId = $derived($page.url.searchParams.get('lesson'));
+	let curriculumId = $derived($page.url.searchParams.get('c'));
+	let lessonMode = $derived(lessonId !== null);
 
 	let queue: QueueItem[] = $state([]);
 	let loading = $state(true);
@@ -27,7 +33,9 @@
 		try {
 			const [queueStats, queueData] = await Promise.all([
 				api.fetchQueueStats(),
-				api.fetchReviewQueue({ sessionStart }),
+				lessonMode
+					? api.fetchLessonReviewQueue(lessonId!)
+					: api.fetchReviewQueue({ sessionStart }),
 			]);
 			stats = queueStats;
 			// Share with the nav badge so it tracks every grade live, not just on focus.
@@ -114,7 +122,11 @@
 		<section class="done">
 			<h2>Done for today</h2>
 			<p>Reviewed: {reviewed}</p>
-			<a href="/">← Home</a>
+			{#if lessonMode && curriculumId}
+				<a href="/c/{curriculumId}/l/{lessonId}">← Back to lesson</a>
+			{:else}
+				<a href="/">← Home</a>
+			{/if}
 		</section>
 	{:else if current}
 		<div class="card-meta">

@@ -296,7 +296,7 @@
 	const fullyAcquired = $derived(listenResult !== null && listenResult.remaining_candidates === 0 && queueCount === 0);
 
 	// Derived booleans for template conditionals (avoid && phantom branches)
-	const showCheckWorkLink = $derived(isListened ? !fullyAcquired : false);
+	const showCheckWorkLink = $derived(isListened ? !fullyAcquired && queueCount > 0 : false);
 	const showFullyAcquiredBtn = $derived(isListened ? fullyAcquired : false);
 	const listenCount = $derived(listenedStore.count(data.lesson.id));
 
@@ -548,7 +548,7 @@
 	{#if mode === 'listen'}
 		<section class="card listen-card">
 		{#if showCheckWorkLink}
-			<a class="check-work-link" href="/review?lesson={data.lesson.id}">Check your work — review {queueCount} {queueCount === 1 ? 'word' : 'words'}</a>
+			<a class="check-work-link" href="/review?lesson={data.lesson.id}&c={data.curriculum.id}">Check your work — review {queueCount} {queueCount === 1 ? 'word' : 'words'}</a>
 		{/if}
 		{#if showFullyAcquiredBtn}
 				<button class="listen-btn listened" disabled>

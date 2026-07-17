@@ -694,7 +694,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await waitFor(() => {
         const link = getByText(/Check your work/);
         expect(link.textContent).toContain("2 words");
-        expect(link.getAttribute("href")).toBe("/review?lesson=l1");
+        expect(link.getAttribute("href")).toBe("/review?lesson=l1&c=cid-1");
       });
     });
 
@@ -709,6 +709,29 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
 
       await waitFor(() => {
         expect(queryByText(/Check your work/)).toBeNull();
+      });
+    });
+
+    // C2: reload-state fix — when already listened on reload (no listen this
+    // session) and the queue is empty, show the enabled "Mark as Listened"
+    // button, not a "review 0 words" link.
+    it("C2: already-listened reload with empty queue shows 'Mark as Listened', not check-work link", async () => {
+      vi.mocked(listenedStore.has).mockReturnValue(true);
+      mockListenedCount.mockReturnValue(1);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+
+      const { getByText, queryByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      fireEvent.click(getByText("Listen"));
+
+      await waitFor(() => {
+        // No check-work link when queue is empty
+        expect(queryByText(/Check your work/)).toBeNull();
+        // Enabled "Mark as Listened" button (not disabled, no "✓ Listened")
+        const btn = getByText("Mark as Listened");
+        expect(btn).toBeTruthy();
+        expect((btn as HTMLButtonElement).disabled).toBe(false);
       });
     });
 

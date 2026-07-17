@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import Page from "./+page.svelte";
+import { SvelteSet } from "svelte/reactivity";
 
 // Mock $app/navigation
 const mockGoto = vi.fn();
@@ -188,6 +189,35 @@ describe("Per-curriculum progress", () => {
 
     expect(await findByText("1 of 2 days listened")).toBeTruthy();
     expect(await findByText("1 of 4 days listened")).toBeTruthy();
+  });
+
+  // C3: progress must react to listenedStore changes without remounting.
+  // This test uses a SvelteSet-backed fake so that has() reads a reactive set.
+  it("C3: progress updates reactively when listenedStore changes (no remount)", async () => {
+    const listenedIds = new SvelteSet<string>();
+    mockListCurricula.mockResolvedValue([
+      { id: "curric-a", topic: "Ordering Coffee", created_at: "2026-04-10 12:00:00" },
+    ]);
+    mockGetCurriculumProgress.mockResolvedValue([
+      { day: 1, lesson_id: "lesson-1" },
+      { day: 2, lesson_id: "lesson-2" },
+      { day: 3, lesson_id: "lesson-3" },
+    ]);
+    mockListenedHas.mockImplementation((id: string) => listenedIds.has(id));
+
+    const { getByText, findByText } = render(Page);
+
+    // Initially empty set → 0 of 3
+    expect(await findByText("0 of 3 days listened")).toBeTruthy();
+    expect(getByText("Continue → Day 1")).toBeTruthy();
+
+    // Mutate the set WITHOUT remounting
+    listenedIds.add("lesson-1");
+
+    // The progress should update reactively
+    await waitFor(() => {
+      expect(getByText("1 of 3 days listened")).toBeTruthy();
+    });
   });
 });
 

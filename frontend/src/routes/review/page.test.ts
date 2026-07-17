@@ -7,6 +7,11 @@
  * and newSpread are all the server's job. These tests therefore mock
  * `fetchReviewQueue` per call to model what the server would return at each
  * step of the session.
+ *
+ * Lesson mode (C1): `?lesson=X` in the URL switches from `fetchReviewQueue`
+ * to `fetchLessonReviewQueue` for ALL refetches. The lesson mode never calls
+ * `fetchReviewQueue` — it is read-only server-side and never advances the
+ * learning cutoff.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, screen } from "@testing-library/svelte";
@@ -19,10 +24,22 @@ vi.mock("svelte", () => {
   };
 });
 
+// Mutable URL search params — individual tests set ?lesson= to enter lesson mode.
+const urlParams = vi.hoisted(() => new URLSearchParams());
+vi.mock("$app/stores", () => ({
+  page: {
+    subscribe: vi.fn((cb: (v: unknown) => void) => {
+      cb({ url: { searchParams: urlParams } });
+      return () => {};
+    }),
+  },
+}));
+
 vi.mock("$lib/api", () => ({
   api: {
     fetchQueueStats: vi.fn(),
     fetchReviewQueue: vi.fn(),
+    fetchLessonReviewQueue: vi.fn(),
     submitDrill: vi.fn(),
   },
 }));
@@ -32,11 +49,15 @@ import type { ReviewQueueItem } from "$lib/api";
 import { syncStore } from "$lib/stores/sync.svelte";
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 const mockFetchReviewQueue = vi.mocked(api.fetchReviewQueue);
+const mockFetchLessonReviewQueue = vi.mocked(api.fetchLessonReviewQueue);
 const mockSubmitDrill = vi.mocked(api.submitDrill);
 import { makeReviewQueueItem } from "../../test/factories";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: global mode (no ?lesson= param).
+  const keys = Array.from(urlParams.keys());
+  for (const k of keys) urlParams.delete(k);
   syncStore.notify(null);
   mockFetchQueueStats.mockResolvedValue({
     new: 0,
@@ -47,6 +68,7 @@ beforeEach(() => {
     fsrs_source: "default",
   });
   mockFetchReviewQueue.mockResolvedValue({ queue: [] });
+  mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
   mockSubmitDrill.mockResolvedValue({ new_due_at: "2026-04-25", new_state: "review" });
 });
 
@@ -685,5 +707,90 @@ describe("review/+page.svelte", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(mockFetchReviewQueue.mock.calls.at(-1)).toEqual([{ sessionStart: false }]);
+  });
+
+  // ── C1: lesson mode (?lesson= URL param) ─────────────────────────────────
+  // When mounted with ?lesson=X, the review page fetches the lesson-scoped
+  // queue via fetchLessonReviewQueue instead of fetchReviewQueue. This is
+  // read-only server-side and never advances the learning cutoff.
+
+  describe("C1 — lesson mode", () => {
+    beforeEach(() => {
+      urlParams.set("lesson", "lesson-abc");
+    });
+
+    it("mount with ?lesson=X never calls fetchReviewQueue", async () => {
+      const item = makeReviewQueueItem({
+        id: 1,
+        text: "okno",
+        translation: "window",
+        direction: "recognition",
+      });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item] });
+      render(ReviewPage);
+      await screen.findByText("okno");
+
+      expect(mockFetchLessonReviewQueue).toHaveBeenCalledWith("lesson-abc");
+      expect(mockFetchReviewQueue).not.toHaveBeenCalled();
+    });
+
+    it("after a grade in lesson mode, fetchLessonReviewQueue refetches and fetchReviewQueue still never called", async () => {
+      const item = makeReviewQueueItem({
+        id: 1,
+        text: "okno",
+        translation: "window",
+        direction: "recognition",
+      });
+      mockFetchLessonReviewQueue
+        .mockResolvedValueOnce({ queue: [item] })
+        .mockResolvedValueOnce({ queue: [] });
+      const { findByRole } = render(ReviewPage);
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      await fireEvent.click(await findByRole("button", { name: "Good" }));
+
+      expect(mockFetchLessonReviewQueue.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(mockFetchReviewQueue).not.toHaveBeenCalled();
+    });
+
+    it("rating in lesson mode goes through submitDrill and refetches the lesson queue", async () => {
+      const item = makeReviewQueueItem({
+        id: 5,
+        text: "voda",
+        translation: "water",
+        direction: "recognition",
+      });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item] });
+      const { findByRole } = render(ReviewPage);
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      await fireEvent.click(await findByRole("button", { name: "Good" }));
+
+      expect(mockSubmitDrill).toHaveBeenCalledWith(5, "recognition", "good", expect.any(Number));
+      // After grading, the lesson queue was refetched (before reviewed++ incremented the key)
+      expect(mockFetchLessonReviewQueue.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("done state shows '← Back to lesson' link when ?c= param is present", async () => {
+      urlParams.set("lesson", "lesson-abc");
+      urlParams.set("c", "curriculum-xyz");
+      const { findByText } = render(ReviewPage);
+
+      const link = await findByText("← Back to lesson");
+      expect(link.getAttribute("href")).toBe("/c/curriculum-xyz/l/lesson-abc");
+    });
+
+    it("done state shows '← Home' when no ?c= param", async () => {
+      // ?lesson is set but no ?c=
+      const { findByText } = render(ReviewPage);
+
+      const link = await findByText("← Home");
+      expect(link).toBeTruthy();
+    });
+
+    it("fetchLessonReviewQueue rejecting (e.g. 404) lands in the error state", async () => {
+      mockFetchLessonReviewQueue.mockRejectedValue(new Error("Lesson not found"));
+      const { findByText } = render(ReviewPage);
+
+      expect(await findByText("Lesson not found")).toBeTruthy();
+    });
   });
 });

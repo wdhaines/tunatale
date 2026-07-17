@@ -26,7 +26,18 @@
 	let listLoading = $state(true);
 	let listError = $state('');
 	let showForm = $state(false);
-	let progressById: Record<string, CardProgress> = $state({});
+
+	// C3: raw day-lists fetched once per curriculum; progress is derived from
+	// listenedStore so it reacts to late hydration / in-session markListened.
+	let daysById: Record<string, Array<{ day: number; lesson_id: string }>> = $state({});
+	let progressById: Record<string, CardProgress> = $derived.by(() => {
+		const next: Record<string, CardProgress> = {};
+		for (const [id, days] of Object.entries(daysById)) {
+			const progress = computeProgress(id, days);
+			if (progress) next[id] = progress;
+		}
+		return next;
+	});
 
 	// Mini-form for starting a new plan (chat-based; replaces one-shot generation)
 	let planTopic = $state('');
@@ -64,17 +75,17 @@
 			curricula.map(async (c) => {
 				try {
 					const days = await api.getCurriculumProgress(c.id);
-					return [c.id, computeProgress(c.id, days)] as const;
+					return [c.id, days] as const;
 				} catch {
 					return [c.id, null] as const;
 				}
 			})
 		);
-		const next: Record<string, CardProgress> = {};
-		for (const [id, progress] of entries) {
-			if (progress) next[id] = progress;
+		const next: Record<string, Array<{ day: number; lesson_id: string }>> = {};
+		for (const [id, days] of entries) {
+			if (days) next[id] = days;
 		}
-		progressById = next;
+		daysById = next;
 	});
 
 	function computeProgress(
