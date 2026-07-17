@@ -1,5 +1,10 @@
 # Refactor / cleanup suggestions — 2026-07-11 doc-sweep byproducts
 
+> **SUPERSEDED 2026-07-16** by `docs/master-cleanup-list-2026-07.md`, which
+> absorbs the open items (with re-verified line refs), records which of these
+> were since fixed, and adds a per-item model assignment. Kept for the audit
+> trail; don't work from this file.
+
 Assessment only — nothing here is implemented. Collected while verifying every doc
 claim against the code for the 2026-07-11 documentation refresh. Ranked by value.
 Items already tracked in `docs/archive/review-2026-07-10-followups.md`,
